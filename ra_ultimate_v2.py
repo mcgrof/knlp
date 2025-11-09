@@ -54,23 +54,19 @@ def ra_ultimate_v2(Q, K, V, w_std, w_rec, w_disc, d_bias, W_recip,
         # All heads use baseline SDPA (fast path)
         col_bias = None
         if d_bias is not None:
-            # Column bias: [B, H, 1, T] -> [B*H, 1, T]
+            # Column bias: [B, H, 1, T] - keep 4D for Flash Attention
             d = d_bias[:, :T].unsqueeze(0).unsqueeze(-2)  # [1, H, 1, T]
             d = d - d.mean(dim=-1, keepdim=True)  # Zero-mean
             d = d * w_disc.view(1, -1, 1, 1)  # Scale by w_disc
-            col_bias = d.expand(B, H, 1, T).reshape(B * H, 1, T).contiguous()
+            col_bias = d.expand(B, H, 1, T)  # [B, H, 1, T]
 
-        # Reshape to [B*H, T, D]
-        q = Q.transpose(1, 2).reshape(B * H, T, D)
-        k = K.transpose(1, 2).reshape(B * H, T, D)
-        v = V.transpose(1, 2).reshape(B * H, T, D)
-
+        # Keep 4D format [B, H, T, D] for Flash Attention
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
             out = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=col_bias, is_causal=True, dropout_p=dropout_p
+                Q, K, V, attn_mask=col_bias, is_causal=True, dropout_p=dropout_p
             )
 
-        return out.reshape(B, T, H, D).transpose(1, 2).contiguous()
+        return out
 
     # Shared low-rank projections (compute once per layer)
     QW = torch.matmul(Q, W_recip)  # [B, H, T, R]
@@ -96,39 +92,29 @@ def ra_ultimate_v2(Q, K, V, w_std, w_rec, w_disc, d_bias, W_recip,
 
     # Process baseline heads (if any)
     if len(idx_bl) > 0:
-        H_bl = len(idx_bl)
-
         # Symmetric scaling on Q and K
         Q_bl_scaled = Q_bl * ws_bl
         K_bl_scaled = K_bl * ws_bl
 
-        # Column bias: [B, H_bl, 1, T] -> [B*H_bl, 1, T]
+        # Column bias: [B, H_bl, 1, T] - keep 4D
         col_bias_bl = None
         if d_bias is not None:
             d_bl = d_bias[idx_bl, :T].unsqueeze(0).unsqueeze(-2)  # [1, H_bl, 1, T]
             d_bl = d_bl - d_bl.mean(dim=-1, keepdim=True)  # Zero-mean
             d_bl = d_bl * w_disc[idx_bl].view(1, -1, 1, 1)  # Scale
-            col_bias_bl = d_bl.expand(B, H_bl, 1, T).reshape(B * H_bl, 1, T).contiguous()
+            col_bias_bl = d_bl.expand(B, len(idx_bl), 1, T)  # [B, H_bl, 1, T]
 
-        # Reshape to [B*H_bl, T, D]
-        q_bl = Q_bl_scaled.transpose(1, 2).reshape(B * H_bl, T, D)
-        k_bl = K_bl_scaled.transpose(1, 2).reshape(B * H_bl, T, D)
-        v_bl = V_bl.transpose(1, 2).reshape(B * H_bl, T, D)
-
+        # Keep 4D format [B, H_bl, T, D] for Flash Attention
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-            out_bl = F.scaled_dot_product_attention(
-                q_bl, k_bl, v_bl,
+            out[:, idx_bl] = F.scaled_dot_product_attention(
+                Q_bl_scaled, K_bl_scaled, V_bl,
                 attn_mask=col_bias_bl,
                 is_causal=True,
                 dropout_p=dropout_p
             )
 
-        out[:, idx_bl] = out_bl.reshape(B, T, H_bl, D).transpose(1, 2).contiguous()
-
     # Process RA heads with same-FLOP folding
     if len(idx_ra) > 0:
-        H_ra = len(idx_ra)
-
         # Split standard and reciprocal channels
         Q_std = Q_ra[..., :D_std]
         K_std = K_ra[..., :D_std]
@@ -137,28 +123,22 @@ def ra_ultimate_v2(Q, K, V, w_std, w_rec, w_disc, d_bias, W_recip,
         Q_aug = torch.cat([ws_ra * Q_std, wr_ra * KW_ra], dim=-1).contiguous()
         K_aug = torch.cat([ws_ra * K_std, wr_ra * QW_ra], dim=-1).contiguous()
 
-        # Column bias: [B, H_ra, 1, T] -> [B*H_ra, 1, T]
+        # Column bias: [B, H_ra, 1, T] - keep 4D
         col_bias_ra = None
         if d_bias is not None:
             d_ra = d_bias[idx_ra, :T].unsqueeze(0).unsqueeze(-2)  # [1, H_ra, 1, T]
             d_ra = d_ra - d_ra.mean(dim=-1, keepdim=True)  # Zero-mean
             d_ra = d_ra * w_disc[idx_ra].view(1, -1, 1, 1)  # Scale
-            col_bias_ra = d_ra.expand(B, H_ra, 1, T).reshape(B * H_ra, 1, T).contiguous()
+            col_bias_ra = d_ra.expand(B, len(idx_ra), 1, T)  # [B, H_ra, 1, T]
 
-        # Reshape to [B*H_ra, T, D]
-        q_aug = Q_aug.transpose(1, 2).reshape(B * H_ra, T, D)
-        k_aug = K_aug.transpose(1, 2).reshape(B * H_ra, T, D)
-        v_ra = V_ra.transpose(1, 2).reshape(B * H_ra, T, D)
-
+        # Keep 4D format [B, H_ra, T, D] for Flash Attention
         with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-            out_ra = F.scaled_dot_product_attention(
-                q_aug, k_aug, v_ra,
+            out[:, idx_ra] = F.scaled_dot_product_attention(
+                Q_aug, K_aug, V_ra,
                 attn_mask=col_bias_ra,
                 is_causal=True,
                 dropout_p=dropout_p
             )
-
-        out[:, idx_ra] = out_ra.reshape(B, T, H_ra, D).transpose(1, 2).contiguous()
 
     return out
 
@@ -261,22 +241,18 @@ def benchmark_ultimate_v2():
         def forward(self, x):
             B, T, C = x.size()
             q, k, v = self.c_attn(x).split(n_embd, dim=2)
-            q = q.view(B, T, H, D).transpose(1, 2)
-            k = k.view(B, T, H, D).transpose(1, 2)
-            v = v.view(B, T, H, D).transpose(1, 2)
+            q = q.view(B, T, H, D).transpose(1, 2).contiguous()
+            k = k.view(B, T, H, D).transpose(1, 2).contiguous()
+            v = v.view(B, T, H, D).transpose(1, 2).contiguous()
 
-            # Reshape to [B*H, T, D]
-            q = q.transpose(1, 2).reshape(B * H, T, D)
-            k = k.transpose(1, 2).reshape(B * H, T, D)
-            v = v.transpose(1, 2).reshape(B * H, T, D)
-
+            # Keep 4D format [B, H, T, D] for Flash Attention
             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                 with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
                     out = F.scaled_dot_product_attention(
                         q, k, v, is_causal=True, dropout_p=0.0
                     )
 
-            out = out.reshape(B, T, H, D).transpose(1, 2).contiguous().view(B, T, C)
+            out = out.transpose(1, 2).contiguous().view(B, T, C)
             return self.c_proj(out)
 
     baseline = BaselineAttn().to(device).to(torch.bfloat16)
