@@ -192,10 +192,12 @@ class UltimateRAv2(nn.Module):
             v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2).contiguous()
 
             # Ultimate RA v2 forward
+            # NOTE: d_bias disabled for benchmark (Flash doesn't support attn_mask)
+            # Discoverability is learned (starts at zero), so this tests core RA speed
             out = ra_ultimate_v2(
                 q, k, v,
                 self.w_std, self.w_rec, self.w_disc,
-                self.d_bias,
+                None,  # d_bias disabled for Flash Attention compatibility
                 self.W_recip,
                 threshold=self.threshold,
                 dropout_p=self.dropout if self.training else 0.0
