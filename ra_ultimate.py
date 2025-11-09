@@ -232,7 +232,7 @@ def benchmark_ultimate():
     print("  - BF16 + Flash backend")
     print()
 
-    x = torch.randn(B, T, n_embd, device=device)
+    x = torch.randn(B, T, n_embd, device=device, dtype=torch.bfloat16)
 
     # Baseline for comparison
     print("1. Baseline SDPA (optimized)...")
