@@ -259,7 +259,7 @@ def benchmark_ultimate():
             out = out.transpose(1, 2).contiguous().view(B, T, C)
             return self.c_proj(out)
 
-    baseline = BaselineAttn().to(device)
+    baseline = BaselineAttn().to(device).to(torch.bfloat16)
     for _ in range(10):
         _ = baseline(x)
     torch.cuda.synchronize()
@@ -281,7 +281,7 @@ def benchmark_ultimate():
     results = []
     for thresh, desc in configs:
         print(f"\n2. Ultimate RA ({desc}, threshold={thresh})...")
-        model = UltimateRA(n_embd=n_embd, n_head=H, R=8, threshold=thresh).to(device)
+        model = UltimateRA(n_embd=n_embd, n_head=H, R=8, threshold=thresh).to(device).to(torch.bfloat16)
 
         # Set head gates to create desired distribution
         if thresh == 0.25:
