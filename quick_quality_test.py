@@ -128,17 +128,18 @@ class Attention(nn.Module):
         v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
 
         if self.use_ra:
-            # Use RA Triton kernel
+            # Use RA SDPA Folded (has automatic gradients, unlike Triton)
             try:
-                from triton_ra_attention import triton_ra_attention
+                from ra_sdpa_folded import ra_sdpa_folded_lowrank
                 d_bias = self.d_bias[:, :T].unsqueeze(0).expand(B, -1, -1)  # [B, H, T]
                 w_std = self.w_std.unsqueeze(0).expand(B, -1)  # [B, H]
                 w_rec = self.w_rec.unsqueeze(0).expand(B, -1)
                 w_disc = self.w_disc.unsqueeze(0).expand(B, -1)
 
-                y = triton_ra_attention(q, k, v, d_bias, w_std, w_rec, w_disc)
-            except:
-                # Fallback to SDPA if Triton fails
+                y = ra_sdpa_folded_lowrank(q, k, v, d_bias, w_std, w_rec, w_disc, rank=16)
+            except Exception as e:
+                print(f"⚠️  RA SDPA folded failed: {e}, falling back to standard SDPA")
+                # Fallback to SDPA if RA fails
                 y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         else:
             # Standard SDPA
@@ -259,10 +260,13 @@ def main():
     print("="*70)
     print("Trains two models for 10 minutes each:")
     print("  1. SDPA baseline (fast)")
-    print("  2. RA Triton (2.45x slower)")
+    print("  2. RA SDPA Folded R=16 (1.89x slower)")
     print()
     print("Question: Does RA achieve better validation loss")
     print("          despite completing fewer iterations?")
+    print()
+    print("Using SDPA folded low-rank (R=16) for RA - best performance")
+    print("from algebraic folding trick (3.78ms vs Triton's 4.86ms)")
     print("="*70)
 
     if not torch.cuda.is_available():
@@ -278,9 +282,9 @@ def main():
         time_budget_sec=time_budget
     )
 
-    # Test 2: RA Triton
+    # Test 2: RA SDPA Folded (low-rank R=16)
     iters_ra, loss_ra, speed_ra = quick_train_test(
-        "RA Triton",
+        "RA SDPA Folded (R=16)",
         use_ra=True,
         time_budget_sec=time_budget
     )
@@ -289,7 +293,7 @@ def main():
     print("\n\n" + "="*70)
     print("FINAL COMPARISON")
     print("="*70)
-    print(f"{'Metric':<30} {'SDPA':>15} {'RA Triton':>15} {'RA vs SDPA':>15}")
+    print(f"{'Metric':<30} {'SDPA':>15} {'RA (R=16)':>15} {'RA vs SDPA':>15}")
     print("-"*70)
     print(f"{'Iterations completed':<30} {iters_sdpa:>15d} {iters_ra:>15d} "
           f"{iters_ra/iters_sdpa:>14.2f}x")
