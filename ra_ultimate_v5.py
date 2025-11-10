@@ -114,12 +114,13 @@ class UltimateRAv5(nn.Module):
             V = v_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2).contiguous()
 
             # Single SDPA call (RA-only path)
-            with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                out = F.scaled_dot_product_attention(
-                    Qf, Kf, V,
-                    is_causal=True,
-                    dropout_p=self.dropout if self.training else 0.0
-                )
+            # Note: sdpa_kernel context not compatible with torch.compile
+            # PyTorch will auto-select Flash Attention for FP16 causal attention
+            out = F.scaled_dot_product_attention(
+                Qf, Kf, V,
+                is_causal=True,
+                dropout_p=self.dropout if self.training else 0.0
+            )
 
             # Reshape back
             out = out.transpose(1, 2).contiguous().view(B, T, C)
@@ -170,10 +171,9 @@ def benchmark_ultimate_v5():
             v = v.view(B, T, H, D).transpose(1, 2).contiguous()
 
             with torch.autocast(device_type='cuda', dtype=torch.float16):
-                with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
-                    out = F.scaled_dot_product_attention(
-                        q, k, v, is_causal=True, dropout_p=0.0
-                    )
+                out = F.scaled_dot_product_attention(
+                    q, k, v, is_causal=True, dropout_p=0.0
+                )
 
             out = out.transpose(1, 2).contiguous().view(B, T, C)
             return self.c_proj(out)
