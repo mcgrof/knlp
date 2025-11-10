@@ -190,8 +190,29 @@ def benchmark_ultimate_v5():
     baseline_time = (time.time() - start) / 100 * 1000
     print(f"   {baseline_time:.2f} ms/iter")
 
+    # Baseline + torch.compile (for fair comparison)
+    print(f"\n2. Baseline SDPA + torch.compile...")
+    baseline_compiled = torch.compile(
+        BaselineAttn(),
+        fullgraph=True,
+        dynamic=False,
+        mode="max-autotune"
+    )
+
+    # Warmup compile
+    for _ in range(10):
+        _ = baseline_compiled(x)
+    torch.cuda.synchronize()
+
+    start = time.time()
+    for _ in range(100):
+        _ = baseline_compiled(x)
+    torch.cuda.synchronize()
+    baseline_compiled_time = (time.time() - start) / 100 * 1000
+    print(f"   {baseline_compiled_time:.2f} ms/iter ({baseline_compiled_time/baseline_time:.2f}x)")
+
     # RA v5
-    print(f"\n2. Ultimate RA v5 (R=4, RA-only path)...")
+    print(f"\n3. Ultimate RA v5 (R=4, RA-only path)...")
     model = UltimateRAv5(n_embd=n_embd, n_head=H, R=4)
 
     for _ in range(10):
@@ -207,7 +228,7 @@ def benchmark_ultimate_v5():
     print(f"   {ra_time:.2f} ms/iter ({ra_time/baseline_time:.2f}x)")
 
     # With torch.compile
-    print(f"\n3. Ultimate RA v5 + torch.compile...")
+    print(f"\n4. Ultimate RA v5 + torch.compile...")
     model_compiled = UltimateRAv5(n_embd=n_embd, n_head=H, R=4)
     model_compiled = torch.compile(
         model_compiled,
@@ -236,6 +257,7 @@ def benchmark_ultimate_v5():
     print(f"{'Configuration':<40} {'ms/iter':>10} {'vs Baseline':>12}")
     print("-"*70)
     print(f"{'Baseline SDPA (FP16)':<40} {baseline_time:>10.2f} {1.00:>11.2f}x")
+    print(f"{'Baseline SDPA + compile':<40} {baseline_compiled_time:>10.2f} {baseline_compiled_time/baseline_time:>11.2f}x")
     print(f"{'RA v5 (direct layout)':<40} {ra_time:>10.2f} {ra_time/baseline_time:>11.2f}x")
     print(f"{'RA v5 + torch.compile':<40} {ra_compiled_time:>10.2f} {ra_compiled_time/baseline_time:>11.2f}x")
 
@@ -248,27 +270,31 @@ def benchmark_ultimate_v5():
     print(f"v5 (FP16, direct layout):  {ra_time:.2f}ms ({ra_time/baseline_time:.2f}x)")
     print(f"v5 + compile:              {ra_compiled_time:.2f}ms ({ra_compiled_time/baseline_time:.2f}x)")
 
-    best_time = min(ra_time, ra_compiled_time)
+    best_ra_time = min(ra_time, ra_compiled_time)
+    best_baseline_time = min(baseline_time, baseline_compiled_time)
 
     print("\n" + "="*70)
-    print("VERDICT")
+    print("FAIR COMPARISON (Best vs Best)")
     print("="*70)
+    print(f"Best RA v5:     {best_ra_time:.2f}ms {'(compiled)' if best_ra_time == ra_compiled_time else '(eager)'}")
+    print(f"Best Baseline:  {best_baseline_time:.2f}ms {'(compiled)' if best_baseline_time == baseline_compiled_time else '(eager)'}")
+    print()
 
-    if best_time <= baseline_time * 1.05:
-        print(f"🎉 SUCCESS! Within 5% of baseline!")
-        print(f"Best: {best_time:.2f}ms vs {baseline_time:.2f}ms baseline")
-        print(f"Overhead: {(best_time/baseline_time - 1)*100:.1f}%")
-    elif best_time <= baseline_time * 1.15:
-        print(f"✅ GOOD! Within 15% of baseline")
-        print(f"Best: {best_time:.2f}ms vs {baseline_time:.2f}ms baseline")
-        print(f"Overhead: {(best_time/baseline_time - 1)*100:.1f}%")
+    if best_ra_time <= best_baseline_time * 1.05:
+        speedup = (best_baseline_time / best_ra_time - 1) * 100
+        if best_ra_time < best_baseline_time:
+            print(f"🎉 SUCCESS! RA v5 is {speedup:.1f}% FASTER than best baseline!")
+        else:
+            print(f"🎉 SUCCESS! RA v5 matches baseline (within 5%)")
+        print(f"Difference: {abs(best_baseline_time - best_ra_time):.2f}ms")
+    elif best_ra_time <= best_baseline_time * 1.15:
+        overhead = (best_ra_time / best_baseline_time - 1) * 100
+        print(f"✅ GOOD! Within 15% of best baseline")
+        print(f"Overhead: {overhead:.1f}%")
     else:
-        print(f"Progress made:")
-        print(f"Best: {best_time:.2f}ms vs {baseline_time:.2f}ms baseline")
-        print(f"Overhead: {(best_time/baseline_time - 1)*100:.1f}%")
-
-    if best_time < baseline_time:
-        print(f"\n🚀 FASTER THAN BASELINE by {baseline_time - best_time:.2f}ms!")
+        overhead = (best_ra_time / best_baseline_time - 1) * 100
+        print(f"Progress made, but overhead remains:")
+        print(f"Overhead: {overhead:.1f}%")
 
     print("="*70)
 
