@@ -44,6 +44,33 @@ try:
         os.environ.setdefault("PYTORCH_ALLOC_CONF", alloc_conf)
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", alloc_conf)
 
+    # Detect GPU type and clear ROCm variables if on NVIDIA
+    # This prevents spurious "No ROCm runtime found" messages on NVIDIA GPUs
+    try:
+        import subprocess
+
+        # Try nvidia-smi first (fast check for NVIDIA GPUs)
+        nvidia_result = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if nvidia_result.returncode == 0:
+            # NVIDIA GPU detected - clear ROCm environment variables
+            for var in ["ROCM_PATH", "ROCM_HOME", "HIP_PATH", "HIP_PLATFORM"]:
+                if var in os.environ:
+                    del os.environ[var]
+            # Also remove ROCm paths from LD_LIBRARY_PATH
+            if "LD_LIBRARY_PATH" in os.environ:
+                ld_paths = os.environ["LD_LIBRARY_PATH"].split(":")
+                ld_paths = [
+                    p for p in ld_paths if "/opt/rocm" not in p and "/hip/" not in p
+                ]
+                os.environ["LD_LIBRARY_PATH"] = ":".join(ld_paths)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass  # nvidia-smi not available
+
     # Enable experimental flash attention for Navi31/32/33 when explicitly requested
     # Only set environment variable if CONFIG_GPT2_FLASH_ATTENTION=y AND we detect Navi3x
     flash_attention_enabled = (
