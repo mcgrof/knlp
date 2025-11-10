@@ -155,51 +155,13 @@ class UnifiedRAttention(nn.Module):
 
     def _apply_gate_scaling_to_weights(self):
         """
-        Apply sqrt(w_std) and sqrt(w_rec) scaling to c_attn weights.
-        Called during init or after gate updates.
+        DEPRECATED: Gates are now applied dynamically in forward pass.
 
-        Weight layout in c_attn.weight (rows = outputs):
-        [Qf (all heads), Kf (all heads), V (all heads)]
-
-        For each head:
-        - Qf[h] = [sqrt(w_std[h]) * Q_std[h]; sqrt(w_rec[h]) * K_low[h]]
-        - Kf[h] = [sqrt(w_std[h]) * K_std[h]; sqrt(w_rec[h]) * Q_low[h]]
-
-        Handles both per-head gates (vector) and per-layer gates (scalar).
+        This function is kept for compatibility but does nothing.
+        Gate scaling happens in forward() to allow gradients to flow.
         """
-        with torch.no_grad():
-            # Get gate values and ensure they're tensors
-            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))
-            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))
-
-            # Expand scalars to per-head if using per-layer gates
-            if not self.per_head_gates:
-                # Broadcast scalar to [n_head] for uniform indexing
-                g_std = g_std.expand(self.n_head)
-                g_rec = g_rec.expand(self.n_head)
-
-            # Process Qf block (first n_embd rows)
-            for h in range(self.n_head):
-                start_dim = h * self.head_dim
-                # Q_std part: [:D_std]
-                self.c_attn.weight[start_dim : start_dim + self.D_std, :] *= g_std[h]
-                # K_low part: [D_std:D]
-                self.c_attn.weight[
-                    start_dim + self.D_std : start_dim + self.head_dim, :
-                ] *= g_rec[h]
-
-            # Process Kf block (second n_embd rows)
-            offset = self.n_embd
-            for h in range(self.n_head):
-                start_dim = offset + h * self.head_dim
-                # K_std part: [:D_std]
-                self.c_attn.weight[start_dim : start_dim + self.D_std, :] *= g_std[h]
-                # Q_low part: [D_std:D]
-                self.c_attn.weight[
-                    start_dim + self.D_std : start_dim + self.head_dim, :
-                ] *= g_rec[h]
-
-            # V block (third n_embd rows) - no gate scaling needed
+        # Gates are applied dynamically now - no weight baking
+        pass
 
     def repack_baseline_qkv_into_unified_ra(self, W_q, W_k, W_v, P=None, seed=0):
         """
@@ -369,6 +331,40 @@ class UnifiedRAttention(nn.Module):
         Qf = qf_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         Kf = kf_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         V = v_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # Apply learnable gate scaling dynamically (allows gradients to flow!)
+        # Qf = [Q_std | K_low] where Q_std is [:D_std], K_low is [D_std:]
+        # Kf = [K_std | Q_low] where K_std is [:D_std], Q_low is [D_std:]
+        # Apply: sqrt(w_std) to Q_std and K_std, sqrt(w_rec) to K_low and Q_low
+
+        # Compute gate scalings (with gradient tracking!)
+        g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))  # [H] or scalar
+        g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))  # [H] or scalar
+
+        # Reshape gates for broadcasting to [1, H, 1, 1]
+        if self.per_head_gates:
+            g_std = g_std.view(1, -1, 1, 1)  # [1, H, 1, 1]
+            g_rec = g_rec.view(1, -1, 1, 1)  # [1, H, 1, 1]
+        else:
+            # Scalar gates - broadcast to all heads
+            g_std = g_std.view(1, 1, 1, 1)  # [1, 1, 1, 1]
+            g_rec = g_rec.view(1, 1, 1, 1)  # [1, 1, 1, 1]
+
+        # Split Qf and Kf into standard and reciprocal components
+        Q_std = Qf[:, :, :, :self.D_std]  # [B, H, T, D_std]
+        K_low = Qf[:, :, :, self.D_std:]  # [B, H, T, R]
+        K_std = Kf[:, :, :, :self.D_std]  # [B, H, T, D_std]
+        Q_low = Kf[:, :, :, self.D_std:]  # [B, H, T, R]
+
+        # Apply gate scaling
+        Q_std = Q_std * g_std
+        K_std = K_std * g_std
+        K_low = K_low * g_rec
+        Q_low = Q_low * g_rec
+
+        # Reconstruct Qf and Kf with gate scaling
+        Qf = torch.cat([Q_std, K_low], dim=-1)  # [B, H, T, D]
+        Kf = torch.cat([K_std, Q_low], dim=-1)  # [B, H, T, D]
 
         # Single SDPA call (RA-only path)
         # PyTorch will auto-select Flash Attention for FP16 causal attention
