@@ -1117,9 +1117,22 @@ if args.ra_mla_ablation_step is not None:
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 6.0  # 50% wider MLP
+    elif step == "V11":
+        # V11: R-MLP standalone (no RA, golden ratio split)
+        # Tests reciprocal MLP without attention modifications
+        # R_ff=1152 gives ratio 1.67:1 (near golden ratio φ=1.618)
+        args.use_ra_v5 = False  # No Unified RA
+        args.use_rmlp = True  # Enable R-MLP
+        args.rmlp_R_ff = 1152  # Golden ratio split (64-aligned)
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V10."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V11."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -1905,6 +1918,56 @@ def main():
         ra_cfg = {
             "R": getattr(args, "ra_v5_R", 4),
             "use_self_restart": use_self_restart,
+            "R_ff": getattr(args, "rmlp_R_ff", 64),
+            "use_mixer": getattr(args, "rmlp_use_mixer", False),
+            "use_gates": getattr(args, "rmlp_use_gates", False),
+            "tie_up_low": getattr(args, "rmlp_tie_up_low", False),
+        }
+
+    elif not getattr(args, "use_ra_v5", False) and getattr(args, "use_rmlp", False):
+        # === R-MLP standalone (no RA) ===
+        print("=" * 70)
+        print("Applying R-MLP standalone (baseline GPT-2 attention):")
+        print(f"  MLP R_ff value:       {getattr(args, 'rmlp_R_ff', 64)}")
+        print(f"  MLP expansion:        {args.mlp_expansion_ratio}x")
+
+        D_ff = int(args.mlp_expansion_ratio * model.config.n_embd)
+        R_ff = getattr(args, "rmlp_R_ff", 64)
+        D_ff_std = D_ff - R_ff
+        ratio = D_ff_std / R_ff
+        print(f"  Split: D_ff_std={D_ff_std}, R_ff={R_ff} (ratio {ratio:.2f}:1)")
+
+        rmlp_features = []
+        if getattr(args, "rmlp_use_mixer", False):
+            rmlp_features.append("mixer")
+        if getattr(args, "rmlp_use_gates", False):
+            rmlp_features.append("per-token gates")
+        if getattr(args, "rmlp_tie_up_low", False):
+            rmlp_features.append("weight tying")
+
+        if rmlp_features:
+            print(f"  R-MLP features:       {', '.join(rmlp_features)}")
+        else:
+            print(f"  R-MLP features:       basic (no mixer/gates)")
+        print("=" * 70)
+
+        # Import R-MLP patching function
+        from ra_v5_patch import patch_gpt2_with_rmlp
+
+        model = patch_gpt2_with_rmlp(
+            model,
+            expansion=args.mlp_expansion_ratio,
+            R_ff=getattr(args, "rmlp_R_ff", 64),
+            dropout=args.dropout,
+            use_mixer=getattr(args, "rmlp_use_mixer", False),
+            use_gates=getattr(args, "rmlp_use_gates", False),
+            tie_up_low=getattr(args, "rmlp_tie_up_low", False),
+        )
+
+        # Set config for gate logging
+        ra_cfg = {
+            "use_rmlp": True,
+            "use_ra_v5": False,
             "R_ff": getattr(args, "rmlp_R_ff", 64),
             "use_mixer": getattr(args, "rmlp_use_mixer", False),
             "use_gates": getattr(args, "rmlp_use_gates", False),

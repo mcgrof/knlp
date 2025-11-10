@@ -171,6 +171,11 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 # - Step V10: Unified RA (R=4) + Self-Restart + 6x MLP expansion
 #   Purpose: Test if wider MLP (6x vs 4x) compensates for RA
 #
+# - Step V11: R-MLP standalone (golden ratio split)
+#   Architecture: Baseline GPT-2 attention + R-MLP only
+#   R_ff=1152, D_ff_std=1920 (ratio 1.67:1, near φ=1.618)
+#   Purpose: Isolate R-MLP contribution without RA interference
+#
 # Usage:
 # 1. Full ablation (2 hours/step, 22 hours total):
 #    make defconfig-gpt2-unified-ra-ablation && make

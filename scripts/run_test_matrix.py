@@ -2149,6 +2149,7 @@ def main():
                         "V8": "Unified RA R=8 + Self-Restart: High rank + stabilization",
                         "V9": "Unified RA R=2: Minimal reciprocal rank",
                         "V10": "Unified RA R=4 + Self-Restart + 6x MLP: Wider MLP compensation",
+                        "V11": "R-MLP standalone (golden ratio): R_ff=1152, no RA",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
