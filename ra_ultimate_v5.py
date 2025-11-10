@@ -51,14 +51,20 @@ class UltimateRAv5(nn.Module):
         # Fused projection: [Qf | Kf | V] = 2*n_embd + n_embd = 3*n_embd
         # Same dimension as baseline QKV projection!
         fused_dim = 3 * n_embd
-        self.c_attn = nn.Linear(n_embd, fused_dim, bias=False,
-                                dtype=torch.float16, device="cuda")
-        self.c_proj = nn.Linear(n_embd, n_embd, bias=False,
-                                dtype=torch.float16, device="cuda")
+        self.c_attn = nn.Linear(
+            n_embd, fused_dim, bias=False, dtype=torch.float16, device="cuda"
+        )
+        self.c_proj = nn.Linear(
+            n_embd, n_embd, bias=False, dtype=torch.float16, device="cuda"
+        )
 
         # Per-head learnable gates (for quality, not routing)
-        self.w_std = nn.Parameter(torch.ones(n_head, dtype=torch.float16, device="cuda") * 0.5)
-        self.w_rec = nn.Parameter(torch.ones(n_head, dtype=torch.float16, device="cuda") * 0.3)
+        self.w_std = nn.Parameter(
+            torch.ones(n_head, dtype=torch.float16, device="cuda") * 0.5
+        )
+        self.w_rec = nn.Parameter(
+            torch.ones(n_head, dtype=torch.float16, device="cuda") * 0.3
+        )
 
         # Flag for weight initialization
         self._weights_initialized = False
@@ -101,7 +107,7 @@ class UltimateRAv5(nn.Module):
             self._initialize_fused_weights()
 
         # FP16 autocast
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
             # Single fused GEMM: x @ W → [Qf | Kf | V]
             fused = self.c_attn(x)  # [B, T, 3*n_embd]
 
@@ -109,17 +115,31 @@ class UltimateRAv5(nn.Module):
             qf_flat, kf_flat, v_flat = fused.split(self.n_embd, dim=-1)
 
             # Reshape to [B, H, T, D]
-            Qf = qf_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2).contiguous()
-            Kf = kf_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2).contiguous()
-            V = v_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2).contiguous()
+            Qf = (
+                qf_flat.view(B, T, self.n_head, self.head_dim)
+                .transpose(1, 2)
+                .contiguous()
+            )
+            Kf = (
+                kf_flat.view(B, T, self.n_head, self.head_dim)
+                .transpose(1, 2)
+                .contiguous()
+            )
+            V = (
+                v_flat.view(B, T, self.n_head, self.head_dim)
+                .transpose(1, 2)
+                .contiguous()
+            )
 
             # Single SDPA call (RA-only path)
             # Note: sdpa_kernel context not compatible with torch.compile
             # PyTorch will auto-select Flash Attention for FP16 causal attention
             out = F.scaled_dot_product_attention(
-                Qf, Kf, V,
+                Qf,
+                Kf,
+                V,
                 is_causal=True,
-                dropout_p=self.dropout if self.training else 0.0
+                dropout_p=self.dropout if self.training else 0.0,
             )
 
             # Reshape back
@@ -137,9 +157,9 @@ def benchmark_ultimate_v5():
     B, H, T, D = 8, 12, 1024, 64
     n_embd = H * D
 
-    print("="*70)
+    print("=" * 70)
     print("ULTIMATE RA v5 Benchmark (Direct Folded Layout)")
-    print("="*70)
+    print("=" * 70)
     print("Optimizations:")
     print("  - Single SDPA call (RA-only path)")
     print("  - Direct [Qf|Kf|V] emission from GEMM (zero copies!)")
@@ -158,10 +178,12 @@ def benchmark_ultimate_v5():
     class BaselineAttn(nn.Module):
         def __init__(self):
             super().__init__()
-            self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False,
-                                  dtype=torch.float16, device="cuda")
-            self.c_proj = nn.Linear(n_embd, n_embd, bias=False,
-                                  dtype=torch.float16, device="cuda")
+            self.c_attn = nn.Linear(
+                n_embd, 3 * n_embd, bias=False, dtype=torch.float16, device="cuda"
+            )
+            self.c_proj = nn.Linear(
+                n_embd, n_embd, bias=False, dtype=torch.float16, device="cuda"
+            )
 
         def forward(self, x):
             B, T, C = x.size()
@@ -170,7 +192,7 @@ def benchmark_ultimate_v5():
             k = k.view(B, T, H, D).transpose(1, 2).contiguous()
             v = v.view(B, T, H, D).transpose(1, 2).contiguous()
 
-            with torch.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
                 out = F.scaled_dot_product_attention(
                     q, k, v, is_causal=True, dropout_p=0.0
                 )
@@ -193,10 +215,7 @@ def benchmark_ultimate_v5():
     # Baseline + torch.compile (for fair comparison)
     print(f"\n2. Baseline SDPA + torch.compile...")
     baseline_compiled = torch.compile(
-        BaselineAttn(),
-        fullgraph=True,
-        dynamic=False,
-        mode="max-autotune"
+        BaselineAttn(), fullgraph=True, dynamic=False, mode="max-autotune"
     )
 
     # Warmup compile
@@ -209,7 +228,9 @@ def benchmark_ultimate_v5():
         _ = baseline_compiled(x)
     torch.cuda.synchronize()
     baseline_compiled_time = (time.time() - start) / 100 * 1000
-    print(f"   {baseline_compiled_time:.2f} ms/iter ({baseline_compiled_time/baseline_time:.2f}x)")
+    print(
+        f"   {baseline_compiled_time:.2f} ms/iter ({baseline_compiled_time/baseline_time:.2f}x)"
+    )
 
     # RA v5
     print(f"\n3. Ultimate RA v5 (R=4, RA-only path)...")
@@ -231,10 +252,7 @@ def benchmark_ultimate_v5():
     print(f"\n4. Ultimate RA v5 + torch.compile...")
     model_compiled = UltimateRAv5(n_embd=n_embd, n_head=H, R=4)
     model_compiled = torch.compile(
-        model_compiled,
-        fullgraph=True,
-        dynamic=False,
-        mode="max-autotune"
+        model_compiled, fullgraph=True, dynamic=False, mode="max-autotune"
     )
 
     # Warmup compile
@@ -250,34 +268,115 @@ def benchmark_ultimate_v5():
 
     print(f"   {ra_compiled_time:.2f} ms/iter ({ra_compiled_time/baseline_time:.2f}x)")
 
-    # Summary
-    print("\n" + "="*70)
-    print("RESULTS")
-    print("="*70)
-    print(f"{'Configuration':<40} {'ms/iter':>10} {'vs Baseline':>12}")
-    print("-"*70)
-    print(f"{'Baseline SDPA (FP16)':<40} {baseline_time:>10.2f} {1.00:>11.2f}x")
-    print(f"{'Baseline SDPA + compile':<40} {baseline_compiled_time:>10.2f} {baseline_compiled_time/baseline_time:>11.2f}x")
-    print(f"{'RA v5 (direct layout)':<40} {ra_time:>10.2f} {ra_time/baseline_time:>11.2f}x")
-    print(f"{'RA v5 + torch.compile':<40} {ra_compiled_time:>10.2f} {ra_compiled_time/baseline_time:>11.2f}x")
+    # Baseline + CUDA graph
+    print(f"\n5. Baseline SDPA + CUDA graph...")
+    baseline_graph = BaselineAttn()
 
-    print("\n" + "="*70)
+    # Static tensor for graph capture
+    static_x = torch.empty(B, T, n_embd, device=device, dtype=torch.float16)
+    static_y = torch.empty(B, T, n_embd, device=device, dtype=torch.float16)
+
+    # Warmup
+    for _ in range(10):
+        _ = baseline_graph(x)
+    torch.cuda.synchronize()
+
+    # Capture graph
+    g_baseline = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(g_baseline):
+        static_y = baseline_graph(static_x)
+
+    # Benchmark with graph replay
+    start = time.time()
+    for _ in range(100):
+        static_x.copy_(x)
+        g_baseline.replay()
+    torch.cuda.synchronize()
+    baseline_graph_time = (time.time() - start) / 100 * 1000
+    print(
+        f"   {baseline_graph_time:.2f} ms/iter ({baseline_graph_time/baseline_time:.2f}x)"
+    )
+
+    # RA v5 + CUDA graph
+    print(f"\n6. Ultimate RA v5 + CUDA graph...")
+    model_graph = UltimateRAv5(n_embd=n_embd, n_head=H, R=4)
+
+    # Warmup
+    for _ in range(10):
+        _ = model_graph(x)
+    torch.cuda.synchronize()
+
+    # Capture graph
+    g_ra = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(g_ra):
+        static_y = model_graph(static_x)
+
+    # Benchmark with graph replay
+    start = time.time()
+    for _ in range(100):
+        static_x.copy_(x)
+        g_ra.replay()
+    torch.cuda.synchronize()
+    ra_graph_time = (time.time() - start) / 100 * 1000
+    print(f"   {ra_graph_time:.2f} ms/iter ({ra_graph_time/baseline_time:.2f}x)")
+
+    # Summary
+    print("\n" + "=" * 70)
+    print("RESULTS")
+    print("=" * 70)
+    print(f"{'Configuration':<40} {'ms/iter':>10} {'vs Baseline':>12}")
+    print("-" * 70)
+    print(f"{'Baseline SDPA (FP16 eager)':<40} {baseline_time:>10.2f} {1.00:>11.2f}x")
+    print(
+        f"{'Baseline SDPA + compile':<40} {baseline_compiled_time:>10.2f} {baseline_compiled_time/baseline_time:>11.2f}x"
+    )
+    print(
+        f"{'Baseline SDPA + CUDA graph':<40} {baseline_graph_time:>10.2f} {baseline_graph_time/baseline_time:>11.2f}x"
+    )
+    print(
+        f"{'RA v5 (direct layout)':<40} {ra_time:>10.2f} {ra_time/baseline_time:>11.2f}x"
+    )
+    print(
+        f"{'RA v5 + torch.compile':<40} {ra_compiled_time:>10.2f} {ra_compiled_time/baseline_time:>11.2f}x"
+    )
+    print(
+        f"{'RA v5 + CUDA graph':<40} {ra_graph_time:>10.2f} {ra_graph_time/baseline_time:>11.2f}x"
+    )
+
+    print("\n" + "=" * 70)
     print("EVOLUTION")
-    print("="*70)
+    print("=" * 70)
     print("v2 (BF16, 2 GEMMs):        2.00ms (1.66x)")
     print("v3 (BF16, fused):          2.23ms (1.85x) - SLOWER!")
     print("v4 (FP16, zero-cat):       1.96ms (1.48x)")
     print(f"v5 (FP16, direct layout):  {ra_time:.2f}ms ({ra_time/baseline_time:.2f}x)")
-    print(f"v5 + compile:              {ra_compiled_time:.2f}ms ({ra_compiled_time/baseline_time:.2f}x)")
+    print(
+        f"v5 + compile:              {ra_compiled_time:.2f}ms ({ra_compiled_time/baseline_time:.2f}x)"
+    )
 
-    best_ra_time = min(ra_time, ra_compiled_time)
-    best_baseline_time = min(baseline_time, baseline_compiled_time)
+    # Find best time for each approach
+    baseline_times = {
+        "eager": baseline_time,
+        "compiled": baseline_compiled_time,
+        "cuda_graph": baseline_graph_time,
+    }
+    ra_times = {
+        "eager": ra_time,
+        "compiled": ra_compiled_time,
+        "cuda_graph": ra_graph_time,
+    }
 
-    print("\n" + "="*70)
+    best_baseline_time = min(baseline_times.values())
+    best_baseline_mode = min(baseline_times.items(), key=lambda x: x[1])[0]
+
+    best_ra_time = min(ra_times.values())
+    best_ra_mode = min(ra_times.items(), key=lambda x: x[1])[0]
+
+    print("\n" + "=" * 70)
     print("FAIR COMPARISON (Best vs Best)")
-    print("="*70)
-    print(f"Best RA v5:     {best_ra_time:.2f}ms {'(compiled)' if best_ra_time == ra_compiled_time else '(eager)'}")
-    print(f"Best Baseline:  {best_baseline_time:.2f}ms {'(compiled)' if best_baseline_time == baseline_compiled_time else '(eager)'}")
+    print("=" * 70)
+    print(f"Best Baseline:  {best_baseline_time:.2f}ms ({best_baseline_mode})")
+    print(f"Best RA v5:     {best_ra_time:.2f}ms ({best_ra_mode})")
     print()
 
     if best_ra_time <= best_baseline_time * 1.05:
@@ -296,7 +395,7 @@ def benchmark_ultimate_v5():
         print(f"Progress made, but overhead remains:")
         print(f"Overhead: {overhead:.1f}%")
 
-    print("="*70)
+    print("=" * 70)
 
 
 if __name__ == "__main__":
