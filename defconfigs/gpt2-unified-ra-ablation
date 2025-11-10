@@ -1,0 +1,133 @@
+# Unified RA: 2-Step Quality Comparison (Baseline vs Unified RA)
+# Tests whether Unified RA provides quality improvements at matched speed
+#
+# Hardware: 4× NVIDIA A10G (24GB each) with DDP
+# Victory condition: Step V1 (Unified RA) >= Step V0 (baseline)
+# at same speed (1.33ms per attention)
+#
+# To run: make defconfig-gpt2-unified-ra-ablation && make
+#
+# Time-based training: Set GPT2_MAX_TIME=7200 for 2 hour runs per step
+# Iteration-based training: Uses CONFIG_GPT2_MAX_ITERS (default)
+
+# Enable GPT-2 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Configuration
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+CONFIG_GPT2_MAX_ITERS=10400
+CONFIG_GPT2_EVAL_INTERVAL=500
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=2000
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_FLASH_ATTENTION=n
+CONFIG_GPT2_COMPILE=n
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_BIAS=y
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Training parameters - GPU-optimized for A10G 24GB
+CONFIG_BATCH_SIZE=8
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Optimizer - AdamWSPAM
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMWSPAM=y
+CONFIG_OPTIMIZER="adamwspam"
+
+# SPAM Configuration
+CONFIG_SPAM_THETA="50.0"
+CONFIG_SPAM_ENABLE_CLIP=y
+CONFIG_SPAM_SPIKE_THRESHOLD="2.0"
+CONFIG_SPAM_PERIODIC_RESET=y
+CONFIG_SPAM_INTERVAL=1000
+CONFIG_SPAM_WARMUP=y
+CONFIG_SPAM_WARMUP_STEPS=1000
+
+# Pruning - Disabled
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# RA+MLA Configuration - Disabled (Unified RA uses different mechanism)
+CONFIG_ENABLE_RA_MLA=y
+CONFIG_RA_MLA_LATENT_DIM=128
+CONFIG_RA_MLA_RA_WINDOW=64
+CONFIG_RA_MLA_RA_ALPHA="0.3"
+CONFIG_RA_MLA_PER_HEAD_Q_LATENT=y
+CONFIG_RA_MLA_PER_HEAD_V_UP=y
+CONFIG_RA_MLA_USE_FLASH=n
+CONFIG_RA_MLA_LOG_METRICS=n
+CONFIG_RA_MLA_CACHE_Q_WINDOW=y
+CONFIG_RA_MLA_USE_ROPE=n
+
+# Enable ablation study mode with Unified RA steps
+CONFIG_RA_MLA_ABLATION_MODE=y
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V1"
+
+# Disable test matrix mode - ablation mode runs its own test sequence
+CONFIG_TEST_MATRIX_MODE=n
+
+# Experiment Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=n
+CONFIG_TRACKER_PROJECT="gpt2-unified-ra-ablation"
+
+# Advanced options
+CONFIG_COMPILE_MODEL=n
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Test execution
+CONFIG_TEST_PARALLEL_JOBS=1
+CONFIG_OUTPUT_DIR="test_matrix_results_unified_ra"
+
+# Ablation step details:
+# - Step V0: Baseline GPT-2 (standard SDPA)
+#   Speed: 1.33ms per attention (eager), 1.15ms (compiled)
+#   Architecture: Standard Q,K,V projection + SDPA
+#
+# - Step V1: Unified RA (R=4, direct folded layout)
+#   Speed: 1.33ms per attention (MATCHES baseline!)
+#   Architecture: Folded [Qf|Kf] emission, per-head learned gates
+#   Key principle: Match baseline speed by splitting per-head dimension
+#   D into (D_std + R) and using fused projection to emit folded layout
+#   [Q_std|K_low] and [K_std|Q_low], so reciprocal attention is computed
+#   inside same SDPA call without increasing FLOPs.
+#
+# Usage examples:
+# 1. Standard iteration-based training (10400 iters):
+#    make defconfig-gpt2-unified-ra-ablation && make
+#
+# 2. Time-based training (2 hours per step):
+#    make defconfig-gpt2-unified-ra-ablation
+#    GPT2_MAX_TIME=7200 make
+#
+# 3. Quick quality test (30 minutes per step):
+#    make defconfig-gpt2-unified-ra-ablation
+#    GPT2_MAX_TIME=1800 make
