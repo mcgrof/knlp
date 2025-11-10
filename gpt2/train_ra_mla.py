@@ -1405,8 +1405,16 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
                 # Get raw gate values (not necessarily normalized)
                 w_std = module.w_std.cpu()
                 w_rec = module.w_rec.cpu()
-                w_std_list.extend(w_std.tolist())
-                w_rec_list.extend(w_rec.tolist())
+
+                # Handle both scalar (per-layer) and vector (per-head) gates
+                if w_std.dim() == 0:
+                    # Scalar gate (per-layer)
+                    w_std_list.append(w_std.item())
+                    w_rec_list.append(w_rec.item())
+                else:
+                    # Vector gate (per-head)
+                    w_std_list.extend(w_std.tolist())
+                    w_rec_list.extend(w_rec.tolist())
 
                 # Get rwr_alpha if self-restart is enabled
                 if (
@@ -1416,7 +1424,10 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
                 ):
                     # Clamp to [0, 0.5] like in forward pass
                     alpha = torch.clamp(module.rwr_alpha, 0.0, 0.5).cpu()
-                    rwr_alpha_list.extend(alpha.tolist())
+                    if alpha.dim() == 0:
+                        rwr_alpha_list.append(alpha.item())
+                    else:
+                        rwr_alpha_list.extend(alpha.tolist())
 
     if not w_std_list:
         return {}
