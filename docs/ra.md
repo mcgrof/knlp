@@ -2,7 +2,9 @@
 
 **Bidirectional Information Flow at Zero Computational Cost**
 
-## Quick Facts
+This document focuses on **Reciprocal Attention (RA)** - the attention mechanism that achieves bidirectional flow through folded Q/K layout. For the related **Reciprocal MLP (R-MLP)** work, see the planned V3-V6 ablation steps below.
+
+## Quick Facts (Reciprocal Attention)
 
 ```
 Status:      ✅ Production-Ready
@@ -143,7 +145,21 @@ Where α ≈ 0.05 (per-head, learnable, clamped [0, 0.5])
 
 ## V-Series Ablations
 
-### Current Steps
+The ablation study tests two distinct reciprocity mechanisms:
+
+```
+Reciprocal Attention (RA)
+ ├── Unified RA (folded layout, R=4)
+ │     ├── RA gates (w_std, w_rec)
+ │     ├── One-step RWR stabilization
+ │     └── Integrated SDPA fusion
+ └── Reciprocal MLP (R-MLP) [Planned]
+       ├── MLP symmetry analogue
+       ├── MLP reciprocal gating
+       └── Latent mixing / rebalancing
+```
+
+### Current Steps: Reciprocal Attention (RA)
 
 ```
 V0: Baseline GPT-2
@@ -165,42 +181,49 @@ V2: Unified RA + Self-Restart
     └────────────────┘
 ```
 
-### Planned Steps (Reciprocal MLP)
+### Planned Steps: Reciprocal MLP (R-MLP)
+
+These steps add MLP reciprocity on top of Unified RA (V1):
 
 ```
-V3: + MLP_ATTN_GATE
-    ┌────┐  attn_weights
-    │Attn│────────────┐
-    └────┘            ↓
-    ┌────┐       ┌────────┐
-    │MLP │ ←─────│  Gate  │  MLP modulates by attention
-    └────┘       └────────┘
+V3: R-MLP + MLP_ATTN_GATE
+    ┌────────┐  attn_weights
+    │Unified │────────────┐
+    │   RA   │            ↓
+    └────────┘       ┌────────┐
+    ┌────────┐       │  Gate  │  MLP modulates by attention
+    │ R-MLP  │ ←─────│(w_attn)│
+    └────────┘       └────────┘
 
-V4: + MLP_CROSS_TOKEN
-    ┌────┐  attn_context
-    │Attn│────────────┐
-    └────┘            ↓
-    ┌────┐       ┌────────┐
-    │MLP │       │ Cross  │  MLP learns attention-like mixing
-    └────┘       │ Token  │
-                 └────────┘
+V4: R-MLP + MLP_CROSS_TOKEN
+    ┌────────┐  attn_context
+    │Unified │────────────┐
+    │   RA   │            ↓
+    └────────┘       ┌────────┐
+    ┌────────┐       │ Cross  │  MLP learns attention-like mixing
+    │ R-MLP  │       │ Token  │
+    └────────┘       └────────┘
 
-V5: + MLP_LATENT_RECIP
-    ┌────┐  compressed_latent
-    │Attn│────────────┐
-    └────┘            ↓
-    ┌────┐       ┌────────┐
-    │MLP │ ←─────│Latent  │  Efficient compressed context
-    └────┘       └────────┘
+V5: R-MLP + MLP_LATENT_RECIP
+    ┌────────┐  compressed_latent
+    │Unified │────────────┐
+    │   RA   │            ↓
+    └────────┘       ┌────────┐
+    ┌────────┐       │Latent  │  Efficient compressed context
+    │ R-MLP  │ ←─────│ Recip  │
+    └────────┘       └────────┘
 
-V6: All Mechanisms
-    ┌────┐  All three contexts
-    │Attn│────────────┬───────┬────────┐
-    └────┘            ↓       ↓        ↓
-    ┌────┐       ┌────────────────────┐
-    │MLP │ ←─────│   Unified Context  │  Test composition
-    └────┘       └────────────────────┘
+V6: R-MLP + All Mechanisms
+    ┌────────┐  All three contexts
+    │Unified │────────────┬───────┬────────┐
+    │   RA   │            ↓       ↓        ↓
+    └────────┘       ┌────────────────────┐
+    ┌────────┐       │   Unified Context  │
+    │ R-MLP  │ ←─────│ (attn+cross+latent)│
+    └────────┘       └────────────────────┘
 ```
+
+**Note**: All R-MLP steps build on Unified RA (V1) as the attention foundation. R-MLP adds reciprocity to the MLP layers, complementing RA's attention-layer reciprocity.
 
 ---
 
@@ -353,20 +376,21 @@ at baseline speed. Production-ready. ✅
 
 ## Future Directions
 
-### Short-Term (V3-V6)
-- Reciprocal MLP ablations
+### Short-Term: Reciprocal MLP (R-MLP)
+- **V3-V6 ablations**: Test R-MLP mechanisms on top of Unified RA
 - Quality validation (2+ hour runs)
-- Head-level gate analysis
+- MLP-level gate analysis
 
-### Medium-Term
-- `torch.compile()` integration (expect 13.5% speedup)
+### Medium-Term: Reciprocal Attention (RA) Improvements
+- `torch.compile()` integration (expect 13.5% speedup for RA)
 - Mixed Unified RA + standard attention (selective per-head)
-- Adaptive R per layer
+- Adaptive R per layer (different reciprocal rank per transformer layer)
 
-### Long-Term
+### Long-Term: Integration
 - Sparse attention + Unified RA
-- Multimodal applications
-- Inference optimization (KV cache structure)
+- Multimodal applications (vision + language)
+- Inference optimization (KV cache structure for RA)
+- Combined RA + R-MLP production deployment
 
 ---
 
