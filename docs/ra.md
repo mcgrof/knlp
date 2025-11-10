@@ -389,7 +389,7 @@ Test all ablation steps quickly with dry-run mode (CPU, ~60 seconds total):
 
 ```bash
 # Test all RA+R-MLP steps (V0-V6)
-make defconfig-gpt2-ra-rmlp-ablation
+make defconfig-gpt2-unified-ra-ablation
 make check
 ```
 
@@ -399,41 +399,29 @@ Run complete ablation study on 4× A10G GPUs (14 hours @ 2hrs/step):
 
 ```bash
 # Default: 2 hours per step (recommended for initial experiments)
-make defconfig-gpt2-ra-rmlp-ablation && make
+make defconfig-gpt2-unified-ra-ablation && make
 
 # Quick sanity check: 60 seconds per step
-make defconfig-gpt2-ra-rmlp-ablation
+make defconfig-gpt2-unified-ra-ablation
 GPT2_MAX_TIME=60 make
 
 # Extended validation: 8 hours per step (56 hours total)
-make defconfig-gpt2-ra-rmlp-ablation
+make defconfig-gpt2-unified-ra-ablation
 GPT2_MAX_TIME=28800 make
 ```
 
-### Available Defconfigs
+### Main Defconfig
 
-**Unified RA Only** (V0-V1, 2 steps):
+**Complete Ablation** (V0-V6, 7 steps):
 ```bash
 make defconfig-gpt2-unified-ra-ablation && make
 ```
-Tests baseline vs Unified RA for speed/quality validation.
-
-**Extended RA** (V0-V6 parameter sweep, 7 steps):
-```bash
-make defconfig-gpt2-unified-ra-extended-ablation && make
-```
-Tests RA with different R values (2,4,8) and self-restart combinations.
-
-**RA + R-MLP** (V0-V6 full architecture, 7 steps):
-```bash
-make defconfig-gpt2-ra-rmlp-ablation && make
-```
-Tests RA foundation (V0-V2) then R-MLP features (V3-V6). This is the main experiment for reciprocal architecture validation.
+Tests RA foundation (V0-V2) then R-MLP features (V3-V6). This is the single unified experiment for reciprocal architecture validation.
 
 ### Results Location
 
 ```
-test_matrix_results_ra_rmlp/
+test_matrix_results_ra/
 ├── test_V0_adamwspam_none/
 │   ├── model.pt
 │   ├── metrics.json
@@ -491,10 +479,8 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 - `gpt2/ra_v5_patch.py`: GPT-2 patching utilities (RA/R-MLP/combined)
 - `gpt2/train_ra_mla.py`: Training integration with ablation support
 
-**Defconfigs**:
-- `defconfigs/gpt2-unified-ra-ablation`: V0-V1 baseline validation
-- `defconfigs/gpt2-unified-ra-extended-ablation`: V0-V6 parameter sweep
-- `defconfigs/gpt2-ra-rmlp-ablation`: V0-V6 RA+R-MLP full test
+**Defconfig**:
+- `defconfigs/gpt2-unified-ra-ablation`: V0-V6 complete RA+R-MLP ablation
 
 **Related** (L/S/R series, legacy):
 - `gpt2/ra_lens_gpt2.py`: Lens-gated architecture
@@ -507,6 +493,4 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 **Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental)
 **Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations)
 
-**Quick Start**:
-- RA validation: `make defconfig-gpt2-unified-ra-ablation && make check`
-- R-MLP test: `make defconfig-gpt2-ra-rmlp-ablation && make check`
+**Quick Start**: `make defconfig-gpt2-unified-ra-ablation && make check`
