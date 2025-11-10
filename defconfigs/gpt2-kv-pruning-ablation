@@ -1,0 +1,168 @@
+# GPT-2 KV Cache Pruning Ablation Study
+# Tests delayed activation + KV cache pruning strategies
+#
+# Hardware: 4× NVIDIA A10G (24GB each) with DDP
+# Research: Does delayed activation help? Can we prune KV cache without quality loss?
+#
+# To run: make defconfig-gpt2-kv-pruning-ablation && make
+#
+# Training modes:
+# 1. Time-based (recommended): Set CONFIG_GPT2_MAX_TIME for fixed duration
+#    - 2 hours:  CONFIG_GPT2_MAX_TIME=7200
+#    - 8 hours:  CONFIG_GPT2_MAX_TIME=28800
+#    - Override: GPT2_MAX_TIME=7200 make
+# 2. Iteration-based: Set CONFIG_GPT2_MAX_ITERS (traditional)
+
+# Enable GPT-2 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Configuration
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+# Time-based training (2 hours per step for quality convergence)
+# For quick test, use: GPT2_MAX_TIME=600 make (10 minutes)
+CONFIG_GPT2_MAX_TIME=7200
+# Iteration-based alternative (uncomment to use instead of time-based)
+# CONFIG_GPT2_MAX_ITERS=10400
+CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_FLASH_ATTENTION=n
+CONFIG_GPT2_COMPILE=y
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_BIAS=y
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Training parameters - GPU-optimized for A10G 24GB
+CONFIG_BATCH_SIZE=8
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Optimizer - AdamWSPAM
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMWSPAM=y
+CONFIG_OPTIMIZER="adamwspam"
+
+# SPAM Configuration
+CONFIG_SPAM_THETA="50.0"
+CONFIG_SPAM_ENABLE_CLIP=y
+CONFIG_SPAM_SPIKE_THRESHOLD="2.0"
+CONFIG_SPAM_PERIODIC_RESET=y
+CONFIG_SPAM_INTERVAL=1000
+CONFIG_SPAM_WARMUP=y
+CONFIG_SPAM_WARMUP_STEPS=1000
+
+# Pruning - Disabled
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# RA+MLA Configuration - Disabled (using ablation mode instead)
+CONFIG_ENABLE_RA_MLA=n
+
+# Enable ablation study mode with KV pruning + delayed activation tests
+CONFIG_RA_MLA_ABLATION_MODE=y
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V11,V12,V13,V14,V15"
+
+# Disable test matrix mode - ablation mode runs its own test sequence
+CONFIG_TEST_MATRIX_MODE=n
+
+# Experiment Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=n
+CONFIG_TRACKER_PROJECT="gpt2-kv-pruning"
+
+# Advanced options
+CONFIG_COMPILE_MODEL=y
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Test execution
+CONFIG_TEST_PARALLEL_JOBS=1
+CONFIG_OUTPUT_DIR="test_matrix_results_kv_pruning"
+
+# Ablation step details:
+#
+# BASELINE - Step V0
+# ==================
+# - Step V0: Pure baseline GPT-2
+#   Architecture: Standard SDPA attention, standard MLP
+#   Purpose: Baseline reference for all comparisons
+#
+# DELAYED ACTIVATION - Steps V11-V13
+# ===================================
+# All use 75-step warmup before enabling reciprocal mechanisms
+# Based on ra-mean.png observation: w_rec drops before step 75
+#
+# - Step V11: R-MLP basic with delayed activation
+#   Architecture: R_ff=64 (ratio 47:1), delayed start at step 75
+#   Purpose: Simple R-MLP baseline with warmup
+#
+# - Step V12: Unified RA with delayed activation
+#   Architecture: R=4, delayed start at step 75
+#   Purpose: Test if RA benefits from established features first
+#
+# - Step V13: R-MLP golden ratio with delayed activation
+#   Architecture: R_ff=1152 (ratio 1.67:1, near φ=1.618), delayed at 75
+#   Purpose: Test if balanced MLP split needs warmup
+#
+# KV CACHE PRUNING - Steps V14-V15
+# =================================
+# Test memory reduction via attention token pruning
+#
+# - Step V14: V11 + KV pruning (golden ratio)
+#   Base: R-MLP basic delayed (V11)
+#   KV pruning: Fixed k=391 of 1024 tokens (38.2% kept)
+#   Strategy: Top-327 by score + Last-64 recency buffer
+#   Memory: 61.8% reduction (1,572,864 → 600,576 elements per layer)
+#   Purpose: Test if golden ratio pruning maintains quality
+#
+# - Step V15: V13 + KV pruning (learned ratio)
+#   Base: R-MLP golden delayed (V13)
+#   KV pruning: Learnable keep_ratio (init 0.382)
+#   Strategy: Model learns optimal k vs fixed golden ratio
+#   Constraints: ratio ∈ [0.05, 1.0], minimum k=64 tokens
+#   Purpose: Discover if learned ratio > fixed ratio
+#
+# Expected comparisons:
+# - V11 vs V0: Does basic R-MLP + delayed help?
+# - V12 vs V0: Does delayed RA help?
+# - V13 vs V11: Does golden ratio R-MLP > basic R-MLP?
+# - V14 vs V11: Quality loss from 61.8% KV cache reduction?
+# - V15 vs V14: Does learned ratio > fixed golden ratio?
+#
+# Usage:
+# 1. Full ablation (2 hours/step, 12 hours total for 6 steps):
+#    make defconfig-gpt2-kv-pruning-ablation && make
+#
+# 2. Quick sanity check (60 seconds/step):
+#    make defconfig-gpt2-kv-pruning-ablation
+#    GPT2_MAX_TIME=60 make
+#
+# 3. Dry-run validation (CPU, ~60 seconds total):
+#    make defconfig-gpt2-kv-pruning-ablation
+#    make check
