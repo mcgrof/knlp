@@ -387,6 +387,12 @@ parser.add_argument(
     "--gradient-accumulation", type=int, default=4, help="Gradient accumulation steps"
 )
 parser.add_argument("--max-iters", type=int, default=10000, help="Maximum iterations")
+parser.add_argument(
+    "--max-time",
+    type=int,
+    default=None,
+    help="Maximum training time in seconds (alternative to max-iters)",
+)
 parser.add_argument("--learning-rate", type=float, default=6e-4, help="Learning rate")
 parser.add_argument("--weight-decay", type=float, default=0.1, help="Weight decay")
 parser.add_argument("--warmup-steps", type=int, default=100, help="Warmup steps")
@@ -577,9 +583,11 @@ if os.environ.get("GPT2_MAX_ITERS"):
 
 # Override max_time from environment if set (time-based training limit in seconds)
 # If both MAX_ITERS and MAX_TIME are set, training stops when EITHER is reached
-args.max_time = None
+# Environment variable takes precedence over command line argument
 if os.environ.get("GPT2_MAX_TIME"):
     args.max_time = int(os.environ.get("GPT2_MAX_TIME"))
+
+if args.max_time is not None:
     print(
         f"Time-based training enabled: max {args.max_time} seconds ({args.max_time/3600:.2f} hours)"
     )
