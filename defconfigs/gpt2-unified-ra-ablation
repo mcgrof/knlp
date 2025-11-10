@@ -1,9 +1,8 @@
-# Unified RA: 2-Step Quality Comparison (Baseline vs Unified RA)
-# Tests whether Unified RA provides quality improvements at matched speed
+# Unified RA + R-MLP: Complete Ablation Study
+# Tests Reciprocal Attention (V0-V2) and Reciprocal MLP (V3-V6)
 #
 # Hardware: 4× NVIDIA A10G (24GB each) with DDP
-# Victory condition: Step V1 (Unified RA) >= Step V0 (baseline)
-# at same speed (1.33ms per attention)
+# Research: Does reciprocal folding improve quality at matched speed?
 #
 # To run: make defconfig-gpt2-unified-ra-ablation && make
 #
@@ -88,9 +87,9 @@ CONFIG_RA_MLA_LOG_METRICS=n
 CONFIG_RA_MLA_CACHE_Q_WINDOW=y
 CONFIG_RA_MLA_USE_ROPE=n
 
-# Enable ablation study mode with Unified RA steps
+# Enable ablation study mode with Unified RA + R-MLP steps
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1"
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V2,V3,V4,V5,V6"
 
 # Disable test matrix mode - ablation mode runs its own test sequence
 CONFIG_TEST_MATRIX_MODE=n
@@ -98,7 +97,7 @@ CONFIG_TEST_MATRIX_MODE=n
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=n
-CONFIG_TRACKER_PROJECT="gpt2-unified-ra-ablation"
+CONFIG_TRACKER_PROJECT="gpt2-ra-ablation"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=y
@@ -112,33 +111,50 @@ CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 # Test execution
 CONFIG_TEST_PARALLEL_JOBS=1
-CONFIG_OUTPUT_DIR="test_matrix_results_unified_ra"
+CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 
 # Ablation step details:
+#
+# RECIPROCAL ATTENTION (RA) - Steps V0-V2
+# ========================================
 # - Step V0: Baseline GPT-2 (standard SDPA)
-#   Speed: 1.33ms (eager), ~1.15ms (compiled - expect 13.5% speedup)
+#   Speed: 1.33ms (eager), ~1.15ms (compiled)
 #   Architecture: Standard Q,K,V projection + SDPA
 #
-# - Step V1: Unified RA (R=4, direct folded layout)
+# - Step V1: Unified RA (R=4, folded layout)
 #   Speed: 1.33ms eager (MATCHES baseline!), ~1.15ms compiled
-#   Architecture: Folded [Qf|Kf] emission, per-head learned gates
-#   Key principle: Match baseline speed by splitting per-head dimension
-#   D into (D_std + R) and using fused projection to emit folded layout
-#   [Q_std|K_low] and [K_std|Q_low], so reciprocal attention is computed
-#   inside same SDPA call without increasing FLOPs.
+#   Architecture: Folded [Qf|Kf] emission, learned gates (w_std, w_rec)
+#   Key: Split head dim D = D_std + R, fold reciprocal in single SDPA
 #
-# Usage examples:
-# 1. Default time-based training (2 hours per step - recommended):
+# - Step V2: Unified RA + Self-Restart
+#   Architecture: V1 + identity path: out = (1-α)·attn + α·V
+#   Purpose: Test if self-restart stabilizes training
+#
+# RECIPROCAL MLP (R-MLP) - Steps V3-V6
+# ======================================
+# All build on Unified RA (V1) as attention foundation
+#
+# - Step V3: Unified RA + R-MLP (basic, R_ff=64)
+#   Architecture: Folded MLP [h_std|h_low], gates (w_std, w_rec)
+#   Key: Split expansion D_ff = D_ff_std + R_ff, FLOPs match baseline
+#
+# - Step V4: V3 + 1x1 mixer on h_low
+#   Purpose: Test if mixer enhances low-rank features
+#
+# - Step V5: V3 + per-token gates (discoverability)
+#   Purpose: Test adaptive scaling of reciprocal features
+#
+# - Step V6: V3 + mixer + gates (all mechanisms)
+#   Purpose: Test composition of R-MLP features
+#
+# Usage:
+# 1. Full ablation (2 hours/step, 14 hours total):
 #    make defconfig-gpt2-unified-ra-ablation && make
 #
-# 2. Extended training (8 hours per step for thorough validation):
+# 2. Quick sanity check (60 seconds/step):
 #    make defconfig-gpt2-unified-ra-ablation
-#    GPT2_MAX_TIME=28800 make
+#    GPT2_MAX_TIME=60 make
 #
-# 3. Quick test (30 minutes per step for debugging):
+# 3. Dry-run validation (CPU, ~60 seconds total):
 #    make defconfig-gpt2-unified-ra-ablation
-#    GPT2_MAX_TIME=1800 make
-#
-# 4. Iteration-based training (traditional, uncomment CONFIG_GPT2_MAX_ITERS):
-#    Edit defconfig: comment CONFIG_GPT2_MAX_TIME, uncomment CONFIG_GPT2_MAX_ITERS
-#    make defconfig-gpt2-unified-ra-ablation && make
+#    make check
