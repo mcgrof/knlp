@@ -632,6 +632,7 @@ class ReciprocalMLP(nn.Module):
         self._gates_frozen = False
 
 
+@torch._dynamo.disable
 class PrunedKVAttention(nn.Module):
     """
     Standard GPT-2 attention with KV cache pruning.
@@ -640,6 +641,11 @@ class PrunedKVAttention(nn.Module):
     - Keep last N tokens (recency buffer) for local context
     - Keep top k-N tokens by attention scores for global context
     - Reduces KV cache memory by only storing k tokens per head
+
+    NOTE: This module is marked with @torch._dynamo.disable because
+    torch.compile generates buggy Triton kernels for the top-k and
+    gather operations used in KV pruning. The rest of the model
+    can still be compiled.
 
     Args:
         n_embd: Model embedding dimension
