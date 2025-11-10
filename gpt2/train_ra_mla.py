@@ -1692,6 +1692,17 @@ def main():
                 print(f"  [3] MLP Latent Reciprocity: α={args.mlp_recip_alpha}")
         print("=" * 70)
 
+        # Read per-head gates config (default: per-layer gates)
+        try:
+            per_head_gates = getattr(config, "RA_V5_PER_HEAD_GATES", False)
+            if per_head_gates in ("y", True):
+                per_head_gates = True
+            else:
+                per_head_gates = False
+        except NameError:
+            # config not defined
+            per_head_gates = False
+
         # Import Unified RA patching function
         from ra_v5_patch import patch_gpt2_with_ra_v5
 
@@ -1701,6 +1712,7 @@ def main():
             R=getattr(args, "ra_v5_R", 4),
             dropout=args.dropout,
             use_self_restart=use_self_restart,
+            per_head_gates=per_head_gates,
         )
 
         # Then patch MLP with R-MLP mechanisms
@@ -1771,6 +1783,17 @@ def main():
             print(f"  R-MLP features:       {', '.join(rmlp_features)}")
         print("=" * 70)
 
+        # Read per-head gates config (default: per-layer gates)
+        try:
+            per_head_gates = getattr(config, "RA_V5_PER_HEAD_GATES", False)
+            if per_head_gates in ("y", True):
+                per_head_gates = True
+            else:
+                per_head_gates = False
+        except NameError:
+            # config not defined
+            per_head_gates = False
+
         # Import patching functions
         from ra_v5_patch import patch_gpt2_with_unified_ra_and_rmlp
 
@@ -1785,6 +1808,7 @@ def main():
             use_mixer=getattr(args, "rmlp_use_mixer", False),
             use_gates=getattr(args, "rmlp_use_gates", False),
             tie_up_low=getattr(args, "rmlp_tie_up_low", False),
+            per_head_gates=per_head_gates,
         )
 
         ra_cfg = {
@@ -1811,6 +1835,17 @@ def main():
         print(f"  Performance:          Matches baseline SDPA (1.33ms)")
         print("=" * 70)
 
+        # Read per-head gates config (default: per-layer gates)
+        try:
+            per_head_gates = getattr(config, "RA_V5_PER_HEAD_GATES", False)
+            if per_head_gates in ("y", True):
+                per_head_gates = True
+            else:
+                per_head_gates = False
+        except NameError:
+            # config not defined
+            per_head_gates = False
+
         # Import Unified RA patching function
         from ra_v5_patch import patch_gpt2_with_ra_v5
 
@@ -1819,6 +1854,7 @@ def main():
             R=getattr(args, "ra_v5_R", 4),
             dropout=args.dropout,
             use_self_restart=use_self_restart,
+            per_head_gates=per_head_gates,
         )
         ra_cfg = None  # Unified RA has own gate parameters
 

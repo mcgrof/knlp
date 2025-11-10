@@ -177,6 +177,36 @@ config RA_MLA_USE_ROPE
 
 	  Recommended: Disable (GPT-2 standard)
 
+config RA_V5_PER_HEAD_GATES
+	bool "Use per-head gates for Unified RA (vs per-layer)"
+	default n
+	help
+	  Control gate granularity for Unified RA's w_std and w_rec gates.
+
+	  Per-layer gates (default, RECOMMENDED for small models):
+	    - One scalar gate pair (w_std, w_rec) per layer
+	    - All heads in a layer share the same standard/reciprocal mixing
+	    - Less backward pass overhead (~7% faster per iteration)
+	    - Sufficient for GPT-2 class models (12-24 layers)
+	    - Rationale: Heads within a layer operate in related geometric
+	      subspaces with low spectral diversity. Transformer blocks warp
+	      the embedding manifold gradually. Per-head gating introduces
+	      backward complexity without capturing meaningfully different
+	      geometric behaviors.
+
+	  Per-head gates (enable for large models):
+	    - Separate gate pair (w_std, w_rec) for each head
+	    - Each head learns independent standard/reciprocal balance
+	    - More parameters, slower backward pass
+	    - Beneficial for large models (>40 layers) where deeper layers
+	      exhibit strong spectral divergence
+
+	  Memory impact:
+	    Per-layer:  2 scalars per layer (negligible)
+	    Per-head:   2*n_head scalars per layer (e.g., 24 for n_head=12)
+
+	  Recommended: Disable (per-layer) for GPT-2 class models
+
 menu "Reciprocal MLP Mechanisms (Experimental)"
 	depends on ENABLE_RA_MLA
 

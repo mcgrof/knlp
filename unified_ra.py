@@ -63,6 +63,7 @@ class UnifiedRAttention(nn.Module):
         dropout=0.0,
         debug=False,
         use_self_restart=False,
+        per_head_gates=False,
     ):
         super().__init__()
         assert (
@@ -77,6 +78,7 @@ class UnifiedRAttention(nn.Module):
         self.dropout = dropout
         self.debug = debug
         self.use_self_restart = use_self_restart
+        self.per_head_gates = per_head_gates
 
         # Tensor core alignment check
         if debug:
@@ -93,10 +95,18 @@ class UnifiedRAttention(nn.Module):
         self.c_attn = nn.Linear(n_embd, fused_dim, bias=False)
         self.c_proj = nn.Linear(n_embd, n_embd, bias=False)
 
-        # Per-head learnable gates (baked into weights at init time)
+        # Learnable gates (baked into weights at init time)
+        # Per-head gates (opt-in for large models): [n_head] shape
+        # Per-layer gates (default for small models): scalar shape
         # Initialize to near-identity: w_std high, w_rec low
-        self.register_parameter("w_std", nn.Parameter(torch.ones(n_head) * 0.9))
-        self.register_parameter("w_rec", nn.Parameter(torch.ones(n_head) * 0.1))
+        if per_head_gates:
+            # Separate gate pair for each head
+            self.register_parameter("w_std", nn.Parameter(torch.ones(n_head) * 0.9))
+            self.register_parameter("w_rec", nn.Parameter(torch.ones(n_head) * 0.1))
+        else:
+            # Single scalar gate pair shared across all heads in layer
+            self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
+            self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))
 
         # Self-restart mechanism (optional): out = (1-α)*SDPA + α*V
         # Provides identity residual path for stability
@@ -154,11 +164,19 @@ class UnifiedRAttention(nn.Module):
         For each head:
         - Qf[h] = [sqrt(w_std[h]) * Q_std[h]; sqrt(w_rec[h]) * K_low[h]]
         - Kf[h] = [sqrt(w_std[h]) * K_std[h]; sqrt(w_rec[h]) * Q_low[h]]
+
+        Handles both per-head gates (vector) and per-layer gates (scalar).
         """
         with torch.no_grad():
-            # Get gate values
-            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))  # [n_head]
-            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))  # [n_head]
+            # Get gate values and ensure they're tensors
+            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))
+            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))
+
+            # Expand scalars to per-head if using per-layer gates
+            if not self.per_head_gates:
+                # Broadcast scalar to [n_head] for uniform indexing
+                g_std = g_std.expand(self.n_head)
+                g_rec = g_rec.expand(self.n_head)
 
             # Process Qf block (first n_embd rows)
             for h in range(self.n_head):
@@ -212,8 +230,13 @@ class UnifiedRAttention(nn.Module):
             W_v = W_v.to(device=device, dtype=dtype)
 
             # Get gate values
-            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))  # [n_head]
-            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))  # [n_head]
+            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))
+            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))
+
+            # Expand scalars to per-head if using per-layer gates
+            if not self.per_head_gates:
+                g_std = g_std.expand(self.n_head)
+                g_rec = g_rec.expand(self.n_head)
 
             # Initialize projection for low-rank if not provided
             if P is None:
@@ -480,6 +503,7 @@ class ReciprocalMLP(nn.Module):
             self.mixer = None
 
         # Gates analogous to RA (w_std, w_rec)
+        # Always per-layer (scalar) since MLP has no head dimension
         # Initialize near-identity: w_std high, w_rec low
         self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
         self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))

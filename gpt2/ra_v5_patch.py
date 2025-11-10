@@ -30,7 +30,9 @@ import torch.nn as nn
 from unified_ra import UnifiedRAttention, ReciprocalMLP
 
 
-def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
+def patch_gpt2_with_ra_v5(
+    model, R=4, dropout=0.1, use_self_restart=False, per_head_gates=False
+):
     """
     Replace all attention modules in GPT-2 with Unified RA.
 
@@ -39,6 +41,7 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
         R: Reciprocal rank (default 4, validated optimal)
         dropout: Dropout probability
         use_self_restart: Enable self-restart mechanism (default False)
+        per_head_gates: Use per-head gates instead of per-layer (default False)
 
     Returns:
         Patched model
@@ -48,7 +51,8 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
     block_size = model.config.block_size
 
     restart_str = " + Self-Restart" if use_self_restart else ""
-    print(f"Patching GPT-2 with Unified RA (R={R}){restart_str}...")
+    gate_str = "per-head" if per_head_gates else "per-layer"
+    print(f"Patching GPT-2 with Unified RA (R={R}, {gate_str} gates){restart_str}...")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
@@ -63,6 +67,7 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
             R=R,
             dropout=dropout,
             use_self_restart=use_self_restart,
+            per_head_gates=per_head_gates,
         )
 
         # Copy over any bias if it exists
@@ -152,6 +157,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
     use_mixer=False,
     use_gates=False,
     tie_up_low=False,
+    per_head_gates=False,
 ):
     """
     Replace both attention and MLP modules in GPT-2 with Unified RA + R-MLP.
@@ -167,6 +173,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         use_mixer: Add 1x1 mixer on h_low
         use_gates: Add per-token learned gates
         tie_up_low: Tie up_low to transposed subset of up_std
+        per_head_gates: Use per-head gates for RA (default False=per-layer)
 
     Returns:
         Patched model
@@ -177,6 +184,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         R=R,
         dropout=attn_dropout,
         use_self_restart=use_self_restart,
+        per_head_gates=per_head_gates,
     )
 
     # Then patch MLP with R-MLP
