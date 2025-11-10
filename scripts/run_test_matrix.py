@@ -2145,6 +2145,10 @@ def main():
                         "V4": "Unified RA + R-MLP + Mixer: 1x1 linear on h_low",
                         "V5": "Unified RA + R-MLP + Gates: Per-token discoverability",
                         "V6": "Unified RA + R-MLP + Mixer + Gates: All mechanisms",
+                        "V7": "Unified RA R=8: Higher reciprocal rank (2x capacity)",
+                        "V8": "Unified RA R=8 + Self-Restart: High rank + stabilization",
+                        "V9": "Unified RA R=2: Minimal reciprocal rank",
+                        "V10": "Unified RA R=4 + Self-Restart + 6x MLP: Wider MLP compensation",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"

@@ -1077,9 +1077,49 @@ if args.ra_mla_ablation_step is not None:
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
+    elif step == "V7":
+        # V7: Unified RA with R=8 (higher reciprocal rank)
+        # Tests if doubling reciprocal capacity improves quality
+        args.use_ra_v5 = True
+        args.ra_v5_R = 8  # Double the reciprocal rank
+        args.ra_v5_use_self_restart = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V8":
+        # V8: Unified RA with R=8 + Self-Restart
+        # Tests high reciprocal capacity with identity stabilization
+        args.use_ra_v5 = True
+        args.ra_v5_R = 8
+        args.ra_v5_use_self_restart = True  # Enable self-restart
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V9":
+        # V9: Unified RA with R=2 (minimal reciprocal rank)
+        # Tests if minimal reciprocal capacity is sufficient
+        args.use_ra_v5 = True
+        args.ra_v5_R = 2  # Minimal reciprocal rank
+        args.ra_v5_use_self_restart = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V10":
+        # V10: Unified RA (R=4) + Self-Restart + 6x MLP expansion
+        # Tests if wider MLP compensates for attention modifications
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4
+        args.ra_v5_use_self_restart = True
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 6.0  # 50% wider MLP
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V6."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V10."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)

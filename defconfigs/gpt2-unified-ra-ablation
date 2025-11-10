@@ -89,7 +89,7 @@ CONFIG_RA_MLA_USE_ROPE=n
 
 # Enable ablation study mode with Unified RA + R-MLP steps
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V2,V3,V4,V5,V6"
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V2,V3,V4,V5,V6,V7,V8,V9,V10"
 
 # Disable test matrix mode - ablation mode runs its own test sequence
 CONFIG_TEST_MATRIX_MODE=n
@@ -147,8 +147,24 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 # - Step V6: V3 + mixer + gates (all mechanisms)
 #   Purpose: Test composition of R-MLP features
 #
+# RA PARAMETER SENSITIVITY - Steps V7-V10
+# ========================================
+# Test Unified RA with different hyperparameters
+#
+# - Step V7: Unified RA with R=8 (higher reciprocal rank)
+#   Purpose: Test if doubling reciprocal capacity improves quality
+#
+# - Step V8: Unified RA with R=8 + Self-Restart
+#   Purpose: Test high reciprocal rank with stabilization
+#
+# - Step V9: Unified RA with R=2 (minimal reciprocal rank)
+#   Purpose: Test if minimal reciprocal capacity is sufficient
+#
+# - Step V10: Unified RA (R=4) + Self-Restart + 6x MLP expansion
+#   Purpose: Test if wider MLP (6x vs 4x) compensates for RA
+#
 # Usage:
-# 1. Full ablation (2 hours/step, 14 hours total):
+# 1. Full ablation (2 hours/step, 22 hours total):
 #    make defconfig-gpt2-unified-ra-ablation && make
 #
 # 2. Quick sanity check (60 seconds/step):
