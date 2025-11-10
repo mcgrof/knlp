@@ -1118,12 +1118,12 @@ if args.ra_mla_ablation_step is not None:
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 6.0  # 50% wider MLP
     elif step == "V11":
-        # V11: R-MLP standalone (no RA, golden ratio split)
-        # Tests reciprocal MLP without attention modifications
-        # R_ff=1152 gives ratio 1.67:1 (near golden ratio φ=1.618)
+        # V11: R-MLP basic with delayed activation (75 steps)
+        # Simple R-MLP (R_ff=64) with delayed start
         args.use_ra_v5 = False  # No Unified RA
         args.use_rmlp = True  # Enable R-MLP
-        args.rmlp_R_ff = 1152  # Golden ratio split (64-aligned)
+        args.rmlp_R_ff = 64  # Basic R-MLP configuration
+        args.rmlp_delay_steps = 75  # Freeze reciprocal gates for first 75 steps
         args.rmlp_use_mixer = False
         args.rmlp_use_gates = False
         args.rmlp_tie_up_low = False
@@ -1144,7 +1144,7 @@ if args.ra_mla_ablation_step is not None:
         args.mlp_expansion_ratio = 4.0
     elif step == "V13":
         # V13: R-MLP golden ratio with delayed activation (75 steps)
-        # Tests if R-MLP also benefits from delayed warmup
+        # R_ff=1152 gives ratio 1.67:1 (near golden ratio φ=1.618)
         args.use_ra_v5 = False  # No RA
         args.use_rmlp = True
         args.rmlp_R_ff = 1152  # Golden ratio split
@@ -1155,9 +1155,43 @@ if args.ra_mla_ablation_step is not None:
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
+    elif step == "V14":
+        # V14: V11 + KV cache pruning (golden ratio target)
+        # R-MLP basic delayed + KV pruning to 38.2% (k=391 of 1024)
+        args.use_ra_v5 = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 64
+        args.rmlp_delay_steps = 75
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # KV cache pruning config
+        args.kv_cache_prune = True
+        args.kv_prune_k = 391  # Golden ratio: 1/(1+φ) × 1024 ≈ 391
+        args.kv_prune_recency = 64  # Keep last 64 tokens always
+    elif step == "V15":
+        # V15: V13 + KV cache pruning (learned ratio)
+        # R-MLP golden delayed + KV pruning with learnable keep_ratio
+        args.use_ra_v5 = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 1152  # Golden ratio split
+        args.rmlp_delay_steps = 75
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # KV cache pruning config with learned ratio
+        args.kv_cache_prune = True
+        args.kv_prune_learned = True  # Learn optimal pruning ratio
+        args.kv_prune_recency = 64
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V13."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V15."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -1976,6 +2010,18 @@ def main():
             print(f"  R-MLP features:       basic (no mixer/gates)")
         print("=" * 70)
 
+        # Apply KV cache pruning if requested
+        if getattr(args, "kv_cache_prune", False):
+            from ra_v5_patch import patch_gpt2_with_kv_pruning
+
+            model = patch_gpt2_with_kv_pruning(
+                model,
+                k_keep=getattr(args, "kv_prune_k", 391),
+                recency=getattr(args, "kv_prune_recency", 64),
+                learn_ratio=getattr(args, "kv_prune_learned", False),
+                dropout=args.dropout,
+            )
+
         # Import R-MLP patching function
         from ra_v5_patch import patch_gpt2_with_rmlp
 
@@ -1997,6 +2043,7 @@ def main():
             "use_mixer": getattr(args, "rmlp_use_mixer", False),
             "use_gates": getattr(args, "rmlp_use_gates", False),
             "tie_up_low": getattr(args, "rmlp_tie_up_low", False),
+            "kv_cache_prune": getattr(args, "kv_cache_prune", False),
         }
 
     elif getattr(args, "use_ra_v5", False):

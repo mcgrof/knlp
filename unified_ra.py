@@ -632,6 +632,152 @@ class ReciprocalMLP(nn.Module):
         self._gates_frozen = False
 
 
+class PrunedKVAttention(nn.Module):
+    """
+    Standard GPT-2 attention with KV cache pruning.
+
+    Implements top-k + recency pruning strategy:
+    - Keep last N tokens (recency buffer) for local context
+    - Keep top k-N tokens by attention scores for global context
+    - Reduces KV cache memory by only storing k tokens per head
+
+    Args:
+        n_embd: Model embedding dimension
+        n_head: Number of attention heads
+        block_size: Maximum sequence length
+        k_keep: Number of tokens to keep (default: 391 for golden ratio)
+        recency: Number of recent tokens to always keep (default: 64)
+        learn_ratio: If True, k_keep is learned during training
+        dropout: Dropout probability
+    """
+
+    def __init__(
+        self,
+        n_embd=768,
+        n_head=12,
+        block_size=1024,
+        k_keep=391,
+        recency=64,
+        learn_ratio=False,
+        dropout=0.1,
+    ):
+        super().__init__()
+        assert n_embd % n_head == 0
+        self.n_embd = n_embd
+        self.n_head = n_head
+        self.head_dim = n_embd // n_head
+        self.block_size = block_size
+        self.recency = recency
+        self.learn_ratio = learn_ratio
+
+        # Q, K, V projections
+        self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False)
+        self.c_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+
+        # Learnable keep ratio or fixed k
+        if learn_ratio:
+            # Initialize to golden ratio: 1/(1+φ) ≈ 0.382
+            init_ratio = 1.0 / (1.0 + 1.618)
+            self.register_parameter(
+                "keep_ratio", nn.Parameter(torch.tensor(init_ratio))
+            )
+            self.k_keep = None  # Computed dynamically
+        else:
+            self.k_keep = k_keep
+            self.keep_ratio = None
+
+        # Causal mask (for safety, though we prune before applying)
+        self.register_buffer(
+            "bias",
+            torch.tril(torch.ones(block_size, block_size)).view(
+                1, 1, block_size, block_size
+            ),
+        )
+
+    def forward(self, x):
+        B, T, C = x.size()
+
+        # Compute Q, K, V
+        qkv = self.c_attn(x)  # [B, T, 3*C]
+        q, k, v = qkv.split(self.n_embd, dim=2)
+
+        # Reshape to [B, H, T, D]
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # Compute k_keep dynamically if learning ratio
+        if self.learn_ratio:
+            # Clamp ratio to [0.05, 1.0] to prevent degenerate solutions
+            ratio = torch.clamp(self.keep_ratio, 0.05, 1.0)
+            k_keep = max(64, int(T * ratio.item()))  # Minimum 64 tokens
+            k_keep = min(k_keep, T)  # Cannot exceed sequence length
+        else:
+            k_keep = min(self.k_keep, T)
+
+        # Compute attention scores: [B, H, T, T]
+        inv_sqrt_d = 1.0 / (self.head_dim**0.5)
+        scores = (q @ k.transpose(-2, -1)) * inv_sqrt_d  # [B, H, T, T]
+
+        # Apply causal mask
+        scores = scores.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+
+        # For each query position, compute scores to all keys
+        # We want to prune the K/V cache, keeping only top-k per HEAD
+        # Strategy: Use scores from LAST query position as proxy for importance
+
+        # Get scores from last query position: [B, H, 1, T]
+        last_scores = scores[:, :, -1:, :]  # [B, H, 1, T]
+
+        # Recency: Force keep last recency tokens
+        if self.recency > 0 and T > self.recency:
+            recent_mask = torch.zeros_like(last_scores, dtype=torch.bool)
+            recent_mask[:, :, :, -self.recency :] = True
+            # Set recent tokens to max score to guarantee top-k selection
+            last_scores = last_scores.masked_fill(
+                recent_mask, last_scores.max().item() + 1.0
+            )
+
+        # Select top-k tokens per head
+        vals, idx = torch.topk(last_scores.squeeze(2), k_keep, dim=-1)  # [B, H, k_keep]
+
+        # Gather K and V for selected tokens
+        # idx: [B, H, k_keep], need to expand for gathering along T dimension
+        idx_expanded = idx.unsqueeze(-1).expand(
+            -1, -1, -1, self.head_dim
+        )  # [B, H, k, D]
+        K_keep = torch.gather(k, 2, idx_expanded)  # [B, H, k, D]
+        V_keep = torch.gather(v, 2, idx_expanded)  # [B, H, k, D]
+
+        # Recompute attention with pruned K/V
+        # Q: [B, H, T, D], K_keep: [B, H, k, D]
+        attn_scores = (q @ K_keep.transpose(-2, -1)) * inv_sqrt_d  # [B, H, T, k]
+        attn = torch.softmax(attn_scores, dim=-1)  # [B, H, T, k]
+        attn = self.attn_dropout(attn)
+
+        # Weighted sum over pruned values
+        out = attn @ V_keep  # [B, H, T, D]
+
+        # Reshape and project
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = self.resid_dropout(self.c_proj(out))
+
+        return out
+
+    def get_pruning_stats(self):
+        """Return KV cache pruning statistics."""
+        stats = {}
+        if self.learn_ratio:
+            ratio = torch.clamp(self.keep_ratio, 0.05, 1.0)
+            stats["kv_keep_ratio"] = ratio.item()
+        else:
+            stats["kv_keep_k"] = self.k_keep
+        stats["kv_recency"] = self.recency
+        return stats
+
+
 def test_unified_ra_shapes():
     """Test shape correctness across different batch sizes and sequence lengths."""
     print("\n" + "=" * 70)

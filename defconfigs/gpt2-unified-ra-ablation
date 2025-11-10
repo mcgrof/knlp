@@ -171,10 +171,9 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 # - Step V10: Unified RA (R=4) + Self-Restart + 6x MLP expansion
 #   Purpose: Test if wider MLP (6x vs 4x) compensates for RA
 #
-# - Step V11: R-MLP standalone (golden ratio split)
-#   Architecture: Baseline GPT-2 attention + R-MLP only
-#   R_ff=1152, D_ff_std=1920 (ratio 1.67:1, near φ=1.618)
-#   Purpose: Isolate R-MLP contribution without RA interference
+# - Step V11: R-MLP basic with delayed activation (75 steps)
+#   Architecture: R-MLP (R_ff=64) delayed start at step 75
+#   Purpose: Simple R-MLP baseline with warmup
 #
 # - Step V12: Unified RA (R=4) with delayed activation (75 steps)
 #   Architecture: Baseline GPT-2 for first 75 steps, then Unified RA
@@ -183,7 +182,15 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 #
 # - Step V13: R-MLP golden ratio with delayed activation (75 steps)
 #   Architecture: Baseline MLP for first 75 steps, then R-MLP (R_ff=1152)
-#   Purpose: Test if R-MLP also benefits from delayed start
+#   Purpose: Test if golden ratio R-MLP benefits from delayed start
+#
+# - Step V14: V11 + KV cache pruning (golden ratio)
+#   Architecture: R-MLP basic delayed + KV pruning (k=391, 38.2% kept)
+#   Purpose: Test KV cache reduction via top-k + recency pruning
+#
+# - Step V15: V13 + KV cache pruning (learned ratio)
+#   Architecture: R-MLP golden delayed + learned KV pruning ratio
+#   Purpose: Learn optimal KV pruning vs fixed golden ratio
 #
 # Usage:
 # 1. Full ablation (2 hours/step, 22 hours total):

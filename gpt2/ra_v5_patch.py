@@ -286,3 +286,52 @@ def analyze_rmlp_gates(model):
         )
 
     return stats
+
+
+def patch_gpt2_with_kv_pruning(
+    model, k_keep=391, recency=64, learn_ratio=False, dropout=0.1
+):
+    """
+    Replace all attention modules in GPT-2 with KV-pruned attention.
+
+    Args:
+        model: GPT-2 model to patch
+        k_keep: Number of tokens to keep (default: 391 for golden ratio)
+        recency: Number of recent tokens to always keep (default: 64)
+        learn_ratio: If True, learn optimal pruning ratio (default: False)
+        dropout: Dropout probability
+
+    Returns:
+        Patched model
+    """
+    from unified_ra import PrunedKVAttention
+
+    n_head = model.config.n_head
+    n_embd = model.config.n_embd
+    block_size = model.config.block_size
+
+    ratio_str = "learned" if learn_ratio else f"k={k_keep}"
+    print(f"Patching GPT-2 with KV cache pruning ({ratio_str}, recency={recency})...")
+
+    # Iterate through all transformer blocks
+    for i, block in enumerate(model.transformer.h):
+        # Replace the attention module
+        pruned_attn = PrunedKVAttention(
+            n_embd=n_embd,
+            n_head=n_head,
+            block_size=block_size,
+            k_keep=k_keep,
+            recency=recency,
+            learn_ratio=learn_ratio,
+            dropout=dropout,
+        )
+
+        # Replace the attention module
+        block.attn = pruned_attn
+
+        print(f"  Layer {i}: Standard Attention → KV-Pruned Attention")
+
+    num_layers = len(model.transformer.h)
+    print(f"Successfully patched {num_layers} layers with KV-pruned attention")
+
+    return model
