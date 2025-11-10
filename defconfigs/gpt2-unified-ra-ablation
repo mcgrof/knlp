@@ -176,6 +176,15 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 #   R_ff=1152, D_ff_std=1920 (ratio 1.67:1, near φ=1.618)
 #   Purpose: Isolate R-MLP contribution without RA interference
 #
+# - Step V12: Unified RA (R=4) with delayed activation (75 steps)
+#   Architecture: Baseline GPT-2 for first 75 steps, then Unified RA
+#   Purpose: Test if early training w_rec drop indicates RA hurts warmup
+#   Based on: ra-mean.png observation (w_rec drops before step 75)
+#
+# - Step V13: R-MLP golden ratio with delayed activation (75 steps)
+#   Architecture: Baseline MLP for first 75 steps, then R-MLP (R_ff=1152)
+#   Purpose: Test if R-MLP also benefits from delayed start
+#
 # Usage:
 # 1. Full ablation (2 hours/step, 22 hours total):
 #    make defconfig-gpt2-unified-ra-ablation && make

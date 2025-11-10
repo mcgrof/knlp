@@ -1130,9 +1130,34 @@ if args.ra_mla_ablation_step is not None:
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
+    elif step == "V12":
+        # V12: Unified RA (R=4) with delayed activation (75 steps)
+        # Based on ra-mean.png observation: w_rec drops before step 75
+        # Strategy: Freeze w_rec=0 until step 75, then enable training
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4
+        args.ra_v5_use_self_restart = False
+        args.ra_delay_steps = 75  # Freeze reciprocal gates for first 75 steps
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V13":
+        # V13: R-MLP golden ratio with delayed activation (75 steps)
+        # Tests if R-MLP also benefits from delayed warmup
+        args.use_ra_v5 = False  # No RA
+        args.use_rmlp = True
+        args.rmlp_R_ff = 1152  # Golden ratio split
+        args.rmlp_delay_steps = 75  # Freeze reciprocal gates for first 75 steps
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V11."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V13."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -2112,6 +2137,29 @@ def main():
         print("Using standard GPT-2 (no RA/MLA patching needed)")
         ra_cfg = None
 
+    # Apply delayed activation if requested
+    ra_delay_steps = getattr(args, "ra_delay_steps", 0)
+    rmlp_delay_steps = getattr(args, "rmlp_delay_steps", 0)
+
+    if ra_delay_steps > 0 or rmlp_delay_steps > 0:
+        from unified_ra import UnifiedRAttention, ReciprocalMLP
+
+        if ra_delay_steps > 0:
+            print(
+                f"Freezing Unified RA gates for first {ra_delay_steps} steps (delayed activation)"
+            )
+            for module in model.modules():
+                if isinstance(module, UnifiedRAttention):
+                    module.freeze_reciprocal_gates()
+
+        if rmlp_delay_steps > 0:
+            print(
+                f"Freezing R-MLP gates for first {rmlp_delay_steps} steps (delayed activation)"
+            )
+            for module in model.modules():
+                if isinstance(module, ReciprocalMLP):
+                    module.freeze_reciprocal_gates()
+
     model = model.to(device)
 
     # Wrap model in DDP if enabled
@@ -2379,6 +2427,33 @@ def main():
         )
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
+
+        # Unfreeze reciprocal gates after delay period
+        if ra_delay_steps > 0 and iter_num == ra_delay_steps:
+            from unified_ra import UnifiedRAttention
+
+            if master_process:
+                print(f"\n{'='*70}")
+                print(
+                    f"Step {iter_num}: Unfreezing Unified RA gates (enabling reciprocal attention)"
+                )
+                print(f"{'='*70}\n")
+            for module in (model.module if ddp else model).modules():
+                if isinstance(module, UnifiedRAttention):
+                    module.unfreeze_reciprocal_gates()
+
+        if rmlp_delay_steps > 0 and iter_num == rmlp_delay_steps:
+            from unified_ra import ReciprocalMLP
+
+            if master_process:
+                print(f"\n{'='*70}")
+                print(
+                    f"Step {iter_num}: Unfreezing R-MLP gates (enabling reciprocal MLP)"
+                )
+                print(f"{'='*70}\n")
+            for module in (model.module if ddp else model).modules():
+                if isinstance(module, ReciprocalMLP):
+                    module.unfreeze_reciprocal_gates()
 
         # Evaluation
         if iter_num % args.eval_interval == 0 or iter_num == args.max_iters - 1:

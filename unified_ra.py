@@ -118,6 +118,9 @@ class UnifiedRAttention(nn.Module):
         else:
             self.rwr_alpha = None
 
+        # Track if gates are frozen for delayed activation
+        self._gates_frozen = False
+
         # Track if gates have been updated (need rebaking)
         self.register_buffer("_gates_dirty", torch.tensor(False))
 
@@ -351,10 +354,10 @@ class UnifiedRAttention(nn.Module):
             g_rec = g_rec.view(1, 1, 1, 1)  # [1, 1, 1, 1]
 
         # Split Qf and Kf into standard and reciprocal components
-        Q_std = Qf[:, :, :, :self.D_std]  # [B, H, T, D_std]
-        K_low = Qf[:, :, :, self.D_std:]  # [B, H, T, R]
-        K_std = Kf[:, :, :, :self.D_std]  # [B, H, T, D_std]
-        Q_low = Kf[:, :, :, self.D_std:]  # [B, H, T, R]
+        Q_std = Qf[:, :, :, : self.D_std]  # [B, H, T, D_std]
+        K_low = Qf[:, :, :, self.D_std :]  # [B, H, T, R]
+        K_std = Kf[:, :, :, : self.D_std]  # [B, H, T, D_std]
+        Q_low = Kf[:, :, :, self.D_std :]  # [B, H, T, R]
 
         # Apply gate scaling
         Q_std = Q_std * g_std
@@ -419,6 +422,24 @@ class UnifiedRAttention(nn.Module):
                 )
 
             return stats
+
+    def freeze_reciprocal_gates(self):
+        """
+        Freeze w_rec and set to 0 for delayed activation warmup.
+        This disables reciprocal attention during early training.
+        """
+        with torch.no_grad():
+            self.w_rec.fill_(0.0)
+        self.w_rec.requires_grad = False
+        self._gates_frozen = True
+
+    def unfreeze_reciprocal_gates(self):
+        """
+        Unfreeze w_rec to enable reciprocal attention training.
+        Call after warmup period (e.g., after 75 steps).
+        """
+        self.w_rec.requires_grad = True
+        self._gates_frozen = False
 
 
 # ---------------------------------------------------------------------
@@ -504,6 +525,9 @@ class ReciprocalMLP(nn.Module):
         self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
         self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))
 
+        # Track if gates are frozen for delayed activation
+        self._gates_frozen = False
+
         # Optional per-token learnable gates (discoverability)
         if use_gates:
             # Single learnable parameter broadcast to all positions
@@ -588,6 +612,24 @@ class ReciprocalMLP(nn.Module):
                 stats["gate_alpha"] = self.gate_alpha.item()
 
             return stats
+
+    def freeze_reciprocal_gates(self):
+        """
+        Freeze w_rec and set to 0 for delayed activation warmup.
+        This disables reciprocal MLP features during early training.
+        """
+        with torch.no_grad():
+            self.w_rec.fill_(0.0)
+        self.w_rec.requires_grad = False
+        self._gates_frozen = True
+
+    def unfreeze_reciprocal_gates(self):
+        """
+        Unfreeze w_rec to enable reciprocal MLP training.
+        Call after warmup period (e.g., after 75 steps).
+        """
+        self.w_rec.requires_grad = True
+        self._gates_frozen = False
 
 
 def test_unified_ra_shapes():
