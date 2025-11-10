@@ -2140,6 +2140,11 @@ def main():
                         "R3": "RWR full: R2 + reciprocal + discoverability",
                         "V0": "Unified RA baseline: Standard GPT-2 SDPA (1.33ms)",
                         "V1": "Unified RA: Folded layout, learned gates, R=4 (1.33ms)",
+                        "V2": "Unified RA + Self-Restart: V1 + identity path (1-α)attn+αV",
+                        "V3": "Unified RA: R=8 (higher reciprocal rank)",
+                        "V4": "Unified RA: R=8 + Self-Restart",
+                        "V5": "Unified RA: R=2 (minimal reciprocal rank)",
+                        "V6": "Unified RA: R=4 + Self-Restart + 6x MLP",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"

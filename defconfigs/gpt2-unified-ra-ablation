@@ -39,7 +39,7 @@ CONFIG_GPT2_DECAY_LR=y
 CONFIG_GPT2_MIN_LR="6e-5"
 CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_FLASH_ATTENTION=n
-CONFIG_GPT2_COMPILE=n
+CONFIG_GPT2_COMPILE=y
 CONFIG_GPT2_WEIGHT_TYING=y
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_CUDNN_BENCHMARK=y
@@ -101,7 +101,7 @@ CONFIG_ENABLE_WANDB=n
 CONFIG_TRACKER_PROJECT="gpt2-unified-ra-ablation"
 
 # Advanced options
-CONFIG_COMPILE_MODEL=n
+CONFIG_COMPILE_MODEL=y
 CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 CONFIG_SAVE_CHECKPOINT=y
@@ -116,11 +116,11 @@ CONFIG_OUTPUT_DIR="test_matrix_results_unified_ra"
 
 # Ablation step details:
 # - Step V0: Baseline GPT-2 (standard SDPA)
-#   Speed: 1.33ms per attention (eager), 1.15ms (compiled)
+#   Speed: 1.33ms (eager), ~1.15ms (compiled - expect 13.5% speedup)
 #   Architecture: Standard Q,K,V projection + SDPA
 #
 # - Step V1: Unified RA (R=4, direct folded layout)
-#   Speed: 1.33ms per attention (MATCHES baseline!)
+#   Speed: 1.33ms eager (MATCHES baseline!), ~1.15ms compiled
 #   Architecture: Folded [Qf|Kf] emission, per-head learned gates
 #   Key principle: Match baseline speed by splitting per-head dimension
 #   D into (D_std + R) and using fused projection to emit folded layout

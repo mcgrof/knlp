@@ -994,9 +994,45 @@ if args.ra_mla_ablation_step is not None:
         # Unified RA + Self-Restart: adds (1-α)*attn + α*V identity path
         # Per-head learnable α (init 0.05, clamped [0, 0.5])
         # Tests: Does identity residual improve training stability/quality?
+    elif step == "V3":
+        # V3: Unified RA (R=8, higher reciprocal rank)
+        # Tests if higher R improves quality at acceptable speed cost
+        args.use_ra_v5 = True
+        args.ra_v5_R = 8  # Double the reciprocal rank
+        args.ra_v5_use_self_restart = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V4":
+        # V4: Unified RA + Self-Restart (R=8)
+        # Tests self-restart with higher R
+        args.use_ra_v5 = True
+        args.ra_v5_R = 8
+        args.ra_v5_use_self_restart = True  # Enable self-restart
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V5":
+        # V5: Unified RA (R=2, minimal reciprocal rank)
+        # Tests if minimal R is sufficient
+        args.use_ra_v5 = True
+        args.ra_v5_R = 2  # Minimal reciprocal rank
+        args.ra_v5_use_self_restart = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+    elif step == "V6":
+        # V6: Unified RA (R=4) + Self-Restart + Larger MLP
+        # Tests composition: V2 + 6x MLP expansion
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4
+        args.ra_v5_use_self_restart = True
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 6.0  # Larger MLP
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V2."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V6."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -1498,8 +1534,88 @@ def main():
         )
         ra_cfg = lens_cfg  # Alias for compatibility
 
+    elif getattr(args, "use_ra_v5", False) and (
+        args.enable_mla
+        or args.mlp_attn_gate
+        or args.mlp_cross_token
+        or args.mlp_latent_recip
+    ):
+        # === Unified RA + R-MLP (Combined) ===
+        use_self_restart = getattr(args, "ra_v5_use_self_restart", False)
+        restart_str = " + Self-Restart" if use_self_restart else ""
+
+        print("=" * 70)
+        print(f"Applying Unified RA{restart_str} + R-MLP:")
+        print(f"  R value:              {getattr(args, 'ra_v5_R', 4)}")
+        print(f"  Architecture:         Direct folded Q/K emission")
+        print(f"  Learned gates:        Per-head w_std, w_rec")
+        if use_self_restart:
+            print(f"  Self-restart:         Enabled (α init=0.05, clamped [0, 0.5])")
+        print(f"  Performance:          Matches baseline SDPA (1.33ms)")
+        if args.mlp_attn_gate or args.mlp_cross_token or args.mlp_latent_recip:
+            print("R-MLP mechanisms:")
+            if args.mlp_attn_gate:
+                print(f"  [1] MLP-to-Attention Gating: α={args.mlp_gate_alpha}")
+            if args.mlp_cross_token:
+                print(f"  [2] Cross-Token MLP Aggregation: α={args.mlp_cross_alpha}")
+            if args.mlp_latent_recip:
+                print(f"  [3] MLP Latent Reciprocity: α={args.mlp_recip_alpha}")
+        print("=" * 70)
+
+        # Import Unified RA patching function
+        from ra_v5_patch import patch_gpt2_with_ra_v5
+
+        # First patch with Unified RA (attention only)
+        model = patch_gpt2_with_ra_v5(
+            model,
+            R=getattr(args, "ra_v5_R", 4),
+            dropout=args.dropout,
+            use_self_restart=use_self_restart,
+        )
+
+        # Then patch MLP with R-MLP mechanisms
+        from ra_mla_gpt2 import ReciprocalMLP, RA_MLA_Block, RA_MLA_Config
+
+        # Create R-MLP config
+        mlp_cfg = RA_MLA_Config(
+            mlp_attn_gate=args.mlp_attn_gate,
+            mlp_cross_token=args.mlp_cross_token,
+            mlp_latent_recip=args.mlp_latent_recip,
+            mlp_gate_alpha=args.mlp_gate_alpha,
+            mlp_cross_alpha=args.mlp_cross_alpha,
+            mlp_recip_alpha=args.mlp_recip_alpha,
+            mlp_gate_dim=args.mlp_gate_dim,
+            mlp_latent_dim=args.mlp_latent_dim,
+            mlp_expansion_ratio=args.mlp_expansion_ratio,
+            mlp_tying_mode=args.mlp_tying_mode,
+            mlp_sparse_mode=args.mlp_sparse_mode,
+            mlp_sparse_k=args.mlp_sparse_k,
+            mlp_sparse_tau=args.mlp_sparse_tau,
+            mlp_sparse_normalize=args.mlp_sparse_normalize,
+            mlp_sparse_head_average=args.mlp_sparse_head_average,
+            latent_dim=args.latent_dim,
+            resid_dropout=args.dropout,
+        )
+
+        # Replace MLPs with ReciprocalMLP and wrap blocks for context flow
+        n_embd = model.config.n_embd
+        n_head = model.config.n_head
+        for i, block in enumerate(model.transformer.h):
+            # Create ReciprocalMLP to replace standard MLP
+            reciprocal_mlp = ReciprocalMLP(n_embd=n_embd, n_head=n_head, cfg=mlp_cfg)
+
+            # Wrap block with RA_MLA_Block for cross-layer context flow
+            # (MLP→Attention in next layer)
+            block_wrapper = RA_MLA_Block(block.attn, reciprocal_mlp, block)
+            model.transformer.h[i] = block_wrapper
+
+            print(f"  Layer {i}: Standard MLP → R-MLP")
+
+        print(f"Successfully patched {len(model.transformer.h)} layers with R-MLP")
+        ra_cfg = mlp_cfg
+
     elif getattr(args, "use_ra_v5", False):
-        # === Unified RA ===
+        # === Unified RA only (no R-MLP) ===
         use_self_restart = getattr(args, "ra_v5_use_self_restart", False)
         restart_str = " + Self-Restart" if use_self_restart else ""
 
