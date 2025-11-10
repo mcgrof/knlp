@@ -1453,6 +1453,86 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
     return stats
 
 
+def analyze_rmlp_gates(model) -> Dict[str, float]:
+    """
+    Analyze R-MLP gate values (w_std, w_rec) across all layers.
+
+    R-MLP gates control blending of standard and reciprocal MLP features:
+    - w_std: Standard MLP feature weight (h_std)
+    - w_rec: Reciprocal MLP feature weight (h_low)
+
+    Returns:
+        dict with gate statistics (mean across all layers)
+    """
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from unified_ra import ReciprocalMLP
+
+    w_std_list = []
+    w_rec_list = []
+    gate_alpha_list = []
+
+    for name, module in model.named_modules():
+        if isinstance(module, ReciprocalMLP):
+            with torch.no_grad():
+                # R-MLP gates are scalars (per-layer, not per-head)
+                w_std = module.w_std.cpu()
+                w_rec = module.w_rec.cpu()
+
+                # Handle both scalar and vector gates
+                if w_std.dim() == 0:
+                    # Scalar gate (per-layer)
+                    w_std_list.append(w_std.item())
+                    w_rec_list.append(w_rec.item())
+                else:
+                    # Vector gate (should not happen for R-MLP, but handle gracefully)
+                    w_std_list.extend(w_std.tolist())
+                    w_rec_list.extend(w_rec.tolist())
+
+                # Get gate_alpha if per-token gates are enabled
+                if hasattr(module, "gate_alpha") and module.gate_alpha is not None:
+                    gate_alpha = module.gate_alpha.cpu()
+                    if gate_alpha.dim() == 0:
+                        gate_alpha_list.append(gate_alpha.item())
+                    else:
+                        gate_alpha_list.extend(gate_alpha.tolist())
+
+    if not w_std_list:
+        return {}
+
+    # Compute statistics
+    w_std_tensor = torch.tensor(w_std_list)
+    w_rec_tensor = torch.tensor(w_rec_list)
+
+    stats = {
+        # Standard MLP feature weights
+        "rmlp_w_std_mean": w_std_tensor.mean().item(),
+        "rmlp_w_std_std": w_std_tensor.std().item(),
+        "rmlp_w_std_min": w_std_tensor.min().item(),
+        "rmlp_w_std_max": w_std_tensor.max().item(),
+        # Reciprocal MLP feature weights
+        "rmlp_w_rec_mean": w_rec_tensor.mean().item(),
+        "rmlp_w_rec_std": w_rec_tensor.std().item(),
+        "rmlp_w_rec_min": w_rec_tensor.min().item(),
+        "rmlp_w_rec_max": w_rec_tensor.max().item(),
+    }
+
+    # Add per-token gate statistics if enabled
+    if gate_alpha_list:
+        gate_alpha_tensor = torch.tensor(gate_alpha_list)
+        stats.update(
+            {
+                "rmlp_gate_alpha_mean": gate_alpha_tensor.mean().item(),
+                "rmlp_gate_alpha_std": gate_alpha_tensor.std().item(),
+                "rmlp_gate_alpha_min": gate_alpha_tensor.min().item(),
+                "rmlp_gate_alpha_max": gate_alpha_tensor.max().item(),
+            }
+        )
+
+    return stats
+
+
 # ============================================================================
 # Main Training Loop
 # ============================================================================
@@ -2272,6 +2352,13 @@ def main():
                         val_str += f" | UA_w_std {unified_ra_stats['unified_ra_w_std_mean']:.3f}"
                         val_str += f" | UA_w_rec {unified_ra_stats['unified_ra_w_rec_mean']:.3f}"
 
+                # Add R-MLP gates if using R-MLP
+                if getattr(args, "use_rmlp", False):
+                    rmlp_stats = analyze_rmlp_gates(model.module if ddp else model)
+                    if rmlp_stats:
+                        val_str += f" | RMLP_w_std {rmlp_stats['rmlp_w_std_mean']:.3f}"
+                        val_str += f" | RMLP_w_rec {rmlp_stats['rmlp_w_rec_mean']:.3f}"
+
                 print(val_str)
 
             # Log evaluation metrics to trackers (only master process)
@@ -2305,6 +2392,12 @@ def main():
                     )
                     if unified_ra_stats:
                         eval_metrics.update(unified_ra_stats)
+
+                # Add R-MLP gate stats if using R-MLP
+                if getattr(args, "use_rmlp", False):
+                    rmlp_stats = analyze_rmlp_gates(model.module if ddp else model)
+                    if rmlp_stats:
+                        eval_metrics.update(rmlp_stats)
 
                 if "trackio" in tracker_names:
                     import trackio
@@ -2423,6 +2516,12 @@ def main():
                 if unified_ra_stats:
                     ra_metrics.update(unified_ra_stats)
 
+            # Add R-MLP gate stats if using R-MLP
+            if getattr(args, "use_rmlp", False):
+                rmlp_stats = analyze_rmlp_gates(model.module if ddp else model)
+                if rmlp_stats:
+                    ra_metrics.update(rmlp_stats)
+
             if "trackio" in tracker_names:
                 import trackio
 
@@ -2463,6 +2562,13 @@ def main():
                     progress_str += (
                         f" | UA_w_rec {unified_ra_stats['unified_ra_w_rec_mean']:.3f}"
                     )
+
+            # Add R-MLP gates if using R-MLP
+            if getattr(args, "use_rmlp", False):
+                rmlp_stats = analyze_rmlp_gates(model.module if ddp else model)
+                if rmlp_stats:
+                    progress_str += f" | RMLP_w_std {rmlp_stats['rmlp_w_std_mean']:.3f}"
+                    progress_str += f" | RMLP_w_rec {rmlp_stats['rmlp_w_rec_mean']:.3f}"
 
             print(progress_str)
 
