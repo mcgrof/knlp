@@ -160,13 +160,23 @@ def run_training_with_monitoring(
                 spec.loader.exec_module(config_module)
 
                 if hasattr(config_module, "config"):
-                    enable_ra_mla = getattr(
-                        config_module.config, "ENABLE_RA_MLA", False
+                    # Check for ablation mode first - ablation mode always uses train_ra_mla.py
+                    ablation_mode = getattr(
+                        config_module.config, "RA_MLA_ABLATION_MODE", False
                     )
-                    use_ra_mla = enable_ra_mla is True or enable_ra_mla == "y"
-                    if use_ra_mla:
+                    if ablation_mode is True or ablation_mode == "y":
+                        use_ra_mla = True
                         train_script = model_dir / "train_ra_mla.py"
-                        logger.info("RA+MLA enabled - using train_ra_mla.py")
+                        logger.info("Ablation mode enabled - using train_ra_mla.py")
+                    else:
+                        # Fall back to checking ENABLE_RA_MLA
+                        enable_ra_mla = getattr(
+                            config_module.config, "ENABLE_RA_MLA", False
+                        )
+                        use_ra_mla = enable_ra_mla is True or enable_ra_mla == "y"
+                        if use_ra_mla:
+                            train_script = model_dir / "train_ra_mla.py"
+                            logger.info("RA+MLA enabled - using train_ra_mla.py")
         except Exception as e:
             logger.warning(f"Could not check RA+MLA config: {e}")
 
