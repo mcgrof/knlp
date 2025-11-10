@@ -1176,7 +1176,15 @@ class RAMLAMetrics:
         self.reciprocity_score = []
         self.forward_time = []
         self.memory_allocated = []
+        self.memory_reserved = []
         self.iteration = []
+        # Evaluation metrics (logged at eval_interval)
+        self.eval_iteration = []
+        self.train_loss = []
+        self.val_loss = []
+        self.train_perplexity = []
+        self.val_perplexity = []
+        self.learning_rate = []
 
     def log(self, iter: int, model: GPT, forward_time_ms: float):
         """Log metrics from the model."""
@@ -1202,10 +1210,36 @@ class RAMLAMetrics:
             self.reciprocity_score.append(np.mean(reciprocity_vals))
 
         self.forward_time.append(forward_time_ms)
-        self.memory_allocated.append(
-            torch.cuda.memory_allocated() / 1024**2 if torch.cuda.is_available() else 0
-        )
+        if torch.cuda.is_available():
+            # Sum memory across all GPUs for DDP
+            total_allocated = 0
+            total_reserved = 0
+            for i in range(torch.cuda.device_count()):
+                total_allocated += torch.cuda.memory_allocated(i) / 1024**2
+                total_reserved += torch.cuda.memory_reserved(i) / 1024**2
+            self.memory_allocated.append(total_allocated)
+            self.memory_reserved.append(total_reserved)
+        else:
+            self.memory_allocated.append(0)
+            self.memory_reserved.append(0)
         self.iteration.append(iter)
+
+    def log_eval(
+        self,
+        iter: int,
+        train_loss: float,
+        val_loss: float,
+        train_perplexity: float,
+        val_perplexity: float,
+        learning_rate: float,
+    ):
+        """Log evaluation metrics (called at eval_interval)."""
+        self.eval_iteration.append(iter)
+        self.train_loss.append(train_loss)
+        self.val_loss.append(val_loss)
+        self.train_perplexity.append(train_perplexity)
+        self.val_perplexity.append(val_perplexity)
+        self.learning_rate.append(learning_rate)
 
     def save(self, path: str):
         """Save metrics to JSON."""
@@ -1214,8 +1248,17 @@ class RAMLAMetrics:
             "attention_entropy": self.attention_entropy,
             "reciprocity_score": self.reciprocity_score,
             "forward_time_ms": self.forward_time,
-            "memory_mb": self.memory_allocated,
+            "memory_allocated_mb": self.memory_allocated,
+            "memory_reserved_mb": self.memory_reserved,
         }
+        # Add evaluation metrics if available
+        if self.eval_iteration:
+            data["eval_iteration"] = self.eval_iteration
+            data["train_loss"] = self.train_loss
+            data["val_loss"] = self.val_loss
+            data["train_perplexity"] = self.train_perplexity
+            data["val_perplexity"] = self.val_perplexity
+            data["learning_rate"] = self.learning_rate
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
         print(f"Saved metrics to {path}")
@@ -2086,6 +2129,21 @@ def main():
                 model, args.eval_samples, args.batch_size, args.block_size, device
             )
             if master_process:
+                # Calculate perplexity (exp of loss)
+                train_perplexity = math.exp(losses["train"])
+                val_perplexity = math.exp(losses["val"])
+
+                # Log to RAMLAMetrics
+                if args.log_metrics:
+                    metrics.log_eval(
+                        iter_num,
+                        losses["train"],
+                        losses["val"],
+                        train_perplexity,
+                        val_perplexity,
+                        lr,
+                    )
+
                 # Build validation output string
                 val_str = f"Iter {iter_num:6d} | train loss {losses['train']:.4f} | val loss {losses['val']:.4f} | lr {lr:.2e}"
 
@@ -2115,9 +2173,7 @@ def main():
 
             # Log evaluation metrics to trackers (only master process)
             if tracker_names and master_process:
-                # Calculate perplexity (exp of loss)
-                train_perplexity = math.exp(losses["train"])
-                val_perplexity = math.exp(losses["val"])
+                # Perplexity already calculated above (reuse those values)
 
                 eval_metrics = {
                     "iteration": iter_num,
