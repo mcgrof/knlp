@@ -89,9 +89,9 @@ CONFIG_RA_MLA_CACHE_Q_WINDOW = y
 CONFIG_RA_MLA_USE_ROPE = n
 
 # Unified RA gate configuration
-# Enable per-head gates to match current implementation
-# (Default per-layer gates recommended for GPT-2 - see Kconfig for details)
-CONFIG_RA_V5_PER_HEAD_GATES = y
+# Using default per-layer gates (recommended for GPT-2)
+# Per-layer: 2 scalars/layer, faster backward pass
+# Per-head: 24 scalars/layer, more flexibility (large models only)
 
 # Enable ablation study mode with Unified RA + R-MLP steps
 # Focus on most promising configurations based on 5-minute test results
