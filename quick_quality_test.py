@@ -114,11 +114,11 @@ class Attention(nn.Module):
         self.use_ra = use_ra
 
         if use_ra:
-            # Use UltimateRAv5 (matches baseline speed!)
+            # Use UnifiedRAttention (matches baseline speed!)
             try:
-                from ra_ultimate_v5 import UltimateRAv5
+                from unified_ra import UnifiedRAttention
 
-                self.attn_module = UltimateRAv5(
+                self.attn_module = UnifiedRAttention(
                     n_embd=config.n_embd,
                     n_head=config.n_head,
                     block_size=config.block_size,
@@ -126,7 +126,7 @@ class Attention(nn.Module):
                     dropout=config.dropout,
                 )
             except ImportError as e:
-                print(f"⚠️  Could not import UltimateRAv5: {e}")
+                print(f"⚠️  Could not import UnifiedRAttention: {e}")
                 print("    Falling back to baseline SDPA")
                 self.use_ra = False
                 self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
