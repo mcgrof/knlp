@@ -30,7 +30,7 @@ import torch.nn as nn
 from unified_ra import UnifiedRAttention
 
 
-def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1):
+def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
     """
     Replace all attention modules in GPT-2 with Unified RA.
 
@@ -38,6 +38,7 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1):
         model: GPT-2 model to patch
         R: Reciprocal rank (default 4, validated optimal)
         dropout: Dropout probability
+        use_self_restart: Enable self-restart mechanism (default False)
 
     Returns:
         Patched model
@@ -46,7 +47,8 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1):
     n_embd = model.config.n_embd
     block_size = model.config.block_size
 
-    print(f"Patching GPT-2 with Unified RA (R={R})...")
+    restart_str = " + Self-Restart" if use_self_restart else ""
+    print(f"Patching GPT-2 with Unified RA (R={R}){restart_str}...")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
@@ -55,7 +57,12 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1):
 
         # Create Unified RA module
         unified_ra_attn = UnifiedRAttention(
-            n_embd=n_embd, n_head=n_head, block_size=block_size, R=R, dropout=dropout
+            n_embd=n_embd,
+            n_head=n_head,
+            block_size=block_size,
+            R=R,
+            dropout=dropout,
+            use_self_restart=use_self_restart,
         )
 
         # Copy over any bias if it exists
@@ -65,10 +72,10 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1):
         # Replace the attention module
         block.attn = unified_ra_attn
 
-        print(f"  Layer {i}: Standard Attention → Unified RA")
+        print(f"  Layer {i}: Standard Attention → Unified RA{restart_str}")
 
     num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with Unified RA")
+    print(f"Successfully patched {num_layers} layers with Unified RA{restart_str}")
 
     return model
 

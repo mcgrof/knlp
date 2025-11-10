@@ -978,13 +978,25 @@ if args.ra_mla_ablation_step is not None:
         # V1: Unified RA (direct folded layout, R=4, matches baseline speed)
         args.use_ra_v5 = True
         args.ra_v5_R = 4  # Validated optimal R value
+        args.ra_v5_use_self_restart = False  # Disable self-restart for V1
         args.enable_mla = False
         args.ra_alpha = 0.0  # Unified RA doesn't use legacy RA
         args.mlp_expansion_ratio = 4.0
         # Unified RA: direct folded layout, learned per-head gates, zero overhead
+    elif step == "V2":
+        # V2: Unified RA + Self-Restart (identity residual path)
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4
+        args.ra_v5_use_self_restart = True  # Enable self-restart mechanism
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # Unified RA + Self-Restart: adds (1-α)*attn + α*V identity path
+        # Per-head learnable α (init 0.05, clamped [0, 0.5])
+        # Tests: Does identity residual improve training stability/quality?
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V1."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V2."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -1200,12 +1212,13 @@ def estimate_loss(
 
 def analyze_unified_ra_gates(model) -> Dict[str, float]:
     """
-    Analyze Unified RA gate values (w_std, w_rec) across all layers.
+    Analyze Unified RA gate values (w_std, w_rec, rwr_alpha) across all layers.
 
     Unified RA gates control per-head blending of standard and
     reciprocal attention:
     - w_std: Standard attention weight (Q_std @ K_std^T)
     - w_rec: Reciprocal attention weight (K_low @ Q_low^T)
+    - rwr_alpha: Self-restart weight (optional, if use_self_restart=True)
 
     Returns:
         dict with gate statistics (mean across all heads and layers)
@@ -1217,6 +1230,7 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
 
     w_std_list = []
     w_rec_list = []
+    rwr_alpha_list = []
 
     for name, module in model.named_modules():
         if isinstance(module, UnifiedRAttention):
@@ -1228,6 +1242,16 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
                 w_std_list.extend(w_std.tolist())
                 w_rec_list.extend(w_rec.tolist())
 
+                # Get rwr_alpha if self-restart is enabled
+                if (
+                    hasattr(module, "use_self_restart")
+                    and module.use_self_restart
+                    and module.rwr_alpha is not None
+                ):
+                    # Clamp to [0, 0.5] like in forward pass
+                    alpha = torch.clamp(module.rwr_alpha, 0.0, 0.5).cpu()
+                    rwr_alpha_list.extend(alpha.tolist())
+
     if not w_std_list:
         return {}
 
@@ -1235,7 +1259,7 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
     w_std_tensor = torch.tensor(w_std_list)
     w_rec_tensor = torch.tensor(w_rec_list)
 
-    return {
+    stats = {
         # Standard attention weights
         "unified_ra_w_std_mean": w_std_tensor.mean().item(),
         "unified_ra_w_std_std": w_std_tensor.std().item(),
@@ -1247,6 +1271,20 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
         "unified_ra_w_rec_min": w_rec_tensor.min().item(),
         "unified_ra_w_rec_max": w_rec_tensor.max().item(),
     }
+
+    # Add self-restart statistics if enabled
+    if rwr_alpha_list:
+        rwr_alpha_tensor = torch.tensor(rwr_alpha_list)
+        stats.update(
+            {
+                "unified_ra_rwr_alpha_mean": rwr_alpha_tensor.mean().item(),
+                "unified_ra_rwr_alpha_std": rwr_alpha_tensor.std().item(),
+                "unified_ra_rwr_alpha_min": rwr_alpha_tensor.min().item(),
+                "unified_ra_rwr_alpha_max": rwr_alpha_tensor.max().item(),
+            }
+        )
+
+    return stats
 
 
 # ============================================================================
@@ -1462,11 +1500,16 @@ def main():
 
     elif getattr(args, "use_ra_v5", False):
         # === Unified RA ===
+        use_self_restart = getattr(args, "ra_v5_use_self_restart", False)
+        restart_str = " + Self-Restart" if use_self_restart else ""
+
         print("=" * 70)
-        print("Applying Unified RA:")
+        print(f"Applying Unified RA{restart_str}:")
         print(f"  R value:              {getattr(args, 'ra_v5_R', 4)}")
         print(f"  Architecture:         Direct folded Q/K emission")
         print(f"  Learned gates:        Per-head w_std, w_rec")
+        if use_self_restart:
+            print(f"  Self-restart:         Enabled (α init=0.05, clamped [0, 0.5])")
         print(f"  Performance:          Matches baseline SDPA (1.33ms)")
         print("=" * 70)
 
@@ -1474,7 +1517,10 @@ def main():
         from ra_v5_patch import patch_gpt2_with_ra_v5
 
         model = patch_gpt2_with_ra_v5(
-            model, R=getattr(args, "ra_v5_R", 4), dropout=args.dropout
+            model,
+            R=getattr(args, "ra_v5_R", 4),
+            dropout=args.dropout,
+            use_self_restart=use_self_restart,
         )
         ra_cfg = None  # Unified RA has own gate parameters
 
