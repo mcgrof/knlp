@@ -2150,6 +2150,8 @@ def main():
                         "V9": "Unified RA R=2: Minimal reciprocal rank",
                         "V10": "Unified RA R=4 + Self-Restart + 6x MLP: Wider MLP compensation",
                         "V11": "R-MLP standalone (golden ratio): R_ff=1152, no RA",
+                        "V12": "Unified RA R=4 delayed (75 steps): Baseline warmup, then RA",
+                        "V13": "R-MLP golden delayed (75 steps): Baseline warmup, then R-MLP",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
