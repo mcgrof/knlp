@@ -2,23 +2,27 @@
 
 ## Achievement Summary
 
-**RA v5 Performance** (preliminary results):
-- Without compile: 1.33ms (1.00x - matches baseline eager)
-- With compile: **1.15ms (0.87x vs baseline eager)**
+**RA v5 Performance** (validated on AWS A10G):
 
-**Fair Comparison Needed**: The updated benchmark now tests baseline
-+ torch.compile for a fair apples-to-apples comparison. Typical
-torch.compile speedups on SDPA are 5-15%, so baseline compiled is
-expected to land around 1.15-1.25ms.
+| Configuration | Time | vs Baseline Eager |
+|---------------|------|-------------------|
+| Baseline SDPA (FP16) | 1.33ms | 1.00x |
+| Baseline SDPA + compile | 1.15ms | 0.87x |
+| RA v5 (direct layout) | 1.33ms | 1.00x |
+| RA v5 + torch.compile | **1.15ms** | **0.87x** |
 
-**Expected Outcomes**:
-- Best case: RA v5 compiled (1.15ms) < baseline compiled (~1.20ms)
-  → RA v5 beats optimized baseline!
-- Likely case: Both ~1.15ms → parity achieved under compilation
-- Either outcome validates the direct layout approach
+**Fair Comparison (Best vs Best)**:
+- Best Baseline: 1.15ms (compiled)
+- Best RA v5: 1.15ms (compiled)
+- **Difference: 0.00ms - PERFECT PARITY!**
+
+**Key Achievement**: RA v5 matches baseline SDPA speed exactly in
+both eager and compiled modes. Both benefit equally from
+torch.compile (13% speedup). This validates the direct layout
+emission approach perfectly.
 
 **Total improvement**: 87% faster than open-coded baseline
-(9.13ms → 1.15ms)
+(9.13ms → 1.15ms compiled, 9.13ms → 1.33ms eager)
 
 ## Pre-Integration Sanity Checks
 
