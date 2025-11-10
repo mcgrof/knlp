@@ -26,9 +26,9 @@ CONFIG_GPT2_DATASET_FINEWEBEDU=y
 CONFIG_GPT2_DATASET="finewebedu"
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_GRADIENT_ACCUMULATION=8
-# Time-based training (30 minutes per step for faster iteration)
-# For longer training, use: GPT2_MAX_TIME=7200 make (2 hours)
-CONFIG_GPT2_MAX_TIME=1800
+# Time-based training (2 hours per step for quality convergence)
+# For quick test, use: GPT2_MAX_TIME=600 make (10 minutes)
+CONFIG_GPT2_MAX_TIME=7200
 # Iteration-based alternative (uncomment to use instead of time-based)
 # CONFIG_GPT2_MAX_ITERS=10400
 CONFIG_GPT2_EVAL_INTERVAL=100
