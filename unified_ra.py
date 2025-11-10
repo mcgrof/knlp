@@ -45,6 +45,12 @@ class UnifiedRAttention(nn.Module):
 
     Gates are baked into weight matrix at initialization time.
     No copies, no buffers, no routing - just one SDPA call.
+
+    Optional self-restart mechanism (use_self_restart=True):
+    - Adds identity residual path: out = (1-α)*attention + α*V
+    - Per-head learnable α (initialized to 0.05, clamped to [0, 0.5])
+    - Provides training stability and enables head specialization
+    - Zero overhead (single element-wise mix after SDPA)
     """
 
     def __init__(
@@ -55,6 +61,7 @@ class UnifiedRAttention(nn.Module):
         R=4,
         dropout=0.0,
         debug=False,
+        use_self_restart=False,
     ):
         super().__init__()
         assert (
@@ -68,6 +75,7 @@ class UnifiedRAttention(nn.Module):
         self.D_std = self.head_dim - R
         self.dropout = dropout
         self.debug = debug
+        self.use_self_restart = use_self_restart
 
         # Tensor core alignment check
         if debug:
@@ -88,6 +96,16 @@ class UnifiedRAttention(nn.Module):
         # Initialize to near-identity: w_std high, w_rec low
         self.register_parameter("w_std", nn.Parameter(torch.ones(n_head) * 0.9))
         self.register_parameter("w_rec", nn.Parameter(torch.ones(n_head) * 0.1))
+
+        # Self-restart mechanism (optional): out = (1-α)*SDPA + α*V
+        # Provides identity residual path for stability
+        if use_self_restart:
+            # Initialize to small value (0.05) for minimal disruption
+            self.register_parameter(
+                "rwr_alpha", nn.Parameter(torch.full([n_head], 0.05))
+            )
+        else:
+            self.rwr_alpha = None
 
         # Track if gates have been updated (need rebaking)
         self.register_buffer("_gates_dirty", torch.tensor(False))
@@ -338,6 +356,16 @@ class UnifiedRAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
         )
 
+        # Self-restart mixing (optional): out = (1-α)*attention + α*V
+        # Provides identity residual path for training stability
+        if self.use_self_restart and self.rwr_alpha is not None:
+            # Clamp α to [0, 0.5] to prevent excessive identity mixing
+            alpha = torch.clamp(self.rwr_alpha, 0.0, 0.5).view(
+                1, -1, 1, 1
+            )  # [1, H, 1, 1]
+            # Mix: (1-α)*attention_output + α*V (restart to self)
+            out = (1.0 - alpha) * out + alpha * V
+
         # Reshape back - keep final .contiguous() for reshape
         out = self.c_proj(out.transpose(1, 2).reshape(B, T, C))
 
@@ -346,7 +374,7 @@ class UnifiedRAttention(nn.Module):
     def get_gate_stats(self):
         """Return dictionary of gate statistics for logging."""
         with torch.no_grad():
-            return {
+            stats = {
                 "w_std_mean": self.w_std.mean().item(),
                 "w_std_min": self.w_std.min().item(),
                 "w_std_max": self.w_std.max().item(),
@@ -356,6 +384,21 @@ class UnifiedRAttention(nn.Module):
                 "w_rec_max": self.w_rec.max().item(),
                 "w_rec_std": self.w_rec.std().item(),
             }
+
+            # Add self-restart statistics if enabled
+            if self.use_self_restart and self.rwr_alpha is not None:
+                # Clamp to [0, 0.5] like in forward pass
+                alpha_clamped = torch.clamp(self.rwr_alpha, 0.0, 0.5)
+                stats.update(
+                    {
+                        "rwr_alpha_mean": alpha_clamped.mean().item(),
+                        "rwr_alpha_min": alpha_clamped.min().item(),
+                        "rwr_alpha_max": alpha_clamped.max().item(),
+                        "rwr_alpha_std": alpha_clamped.std().item(),
+                    }
+                )
+
+            return stats
 
 
 def test_unified_ra_shapes():
