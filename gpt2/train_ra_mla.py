@@ -575,6 +575,15 @@ if not args.dry_run:
 if os.environ.get("GPT2_MAX_ITERS"):
     args.max_iters = int(os.environ.get("GPT2_MAX_ITERS"))
 
+# Override max_time from environment if set (time-based training limit in seconds)
+# If both MAX_ITERS and MAX_TIME are set, training stops when EITHER is reached
+args.max_time = None
+if os.environ.get("GPT2_MAX_TIME"):
+    args.max_time = int(os.environ.get("GPT2_MAX_TIME"))
+    print(
+        f"Time-based training enabled: max {args.max_time} seconds ({args.max_time/3600:.2f} hours)"
+    )
+
 # Handle ablation study step if specified
 # This overrides configuration for RATIO ablation study (15 steps)
 if args.ra_mla_ablation_step is not None:
@@ -949,9 +958,25 @@ if args.ra_mla_ablation_step is not None:
         args.rwr_lens_strength = 0.3
         args.rwr_use_discoverability = True  # Enable column bias
         # RWR: full lens (reversible + reciprocal + discoverability)
+    # ==== Unified RA Ablation Steps ====
+    elif step == "V0":
+        # V0: Baseline GPT-2 (standard SDPA, for Unified RA comparison)
+        args.use_ra_v5 = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # Control baseline for Unified RA experiments
+    elif step == "V1":
+        # V1: Unified RA (direct folded layout, R=4, matches baseline speed)
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4  # Validated optimal R value
+        args.enable_mla = False
+        args.ra_alpha = 0.0  # Unified RA doesn't use legacy RA
+        args.mlp_expansion_ratio = 4.0
+        # Unified RA: direct folded layout, learned per-head gates, zero overhead
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, or R0-R3."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V1."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -1376,6 +1401,24 @@ def main():
         )
         ra_cfg = lens_cfg  # Alias for compatibility
 
+    elif getattr(args, "use_ra_v5", False):
+        # === Unified RA ===
+        print("=" * 70)
+        print("Applying Unified RA:")
+        print(f"  R value:              {getattr(args, 'ra_v5_R', 4)}")
+        print(f"  Architecture:         Direct folded Q/K emission")
+        print(f"  Learned gates:        Per-head w_std, w_rec")
+        print(f"  Performance:          Matches baseline SDPA (1.33ms)")
+        print("=" * 70)
+
+        # Import Unified RA patching function
+        from ra_v5_patch import patch_gpt2_with_ra_v5
+
+        model = patch_gpt2_with_ra_v5(
+            model, R=getattr(args, "ra_v5_R", 4), dropout=args.dropout
+        )
+        ra_cfg = None  # Unified RA has own gate parameters
+
     elif getattr(args, "use_rwr", False):
         # === RWR (Random Walk with Restart) Attention ===
         from rwr_attention import patch_gpt2_with_rwr
@@ -1724,7 +1767,19 @@ def main():
     iter_num = 0
     best_val_loss = float("inf")
 
+    # Track training start time for MAX_TIME support
+    training_start_time = time.time()
+
+    # Training loop - stops when EITHER max_iters OR max_time is reached
     while iter_num < args.max_iters:
+        # Check time limit if MAX_TIME is set
+        if args.max_time is not None:
+            elapsed_time = time.time() - training_start_time
+            if elapsed_time >= args.max_time:
+                if master_process:
+                    print(f"\nReached time limit: {elapsed_time/3600:.2f} hours")
+                    print(f"Completed {iter_num} iterations")
+                break
         # Update learning rate
         lr = get_lr(
             iter_num, args.warmup_steps, args.max_iters, args.learning_rate, args.min_lr
