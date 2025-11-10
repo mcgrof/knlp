@@ -1198,6 +1198,57 @@ def estimate_loss(
     return losses
 
 
+def analyze_unified_ra_gates(model) -> Dict[str, float]:
+    """
+    Analyze Unified RA gate values (w_std, w_rec) across all layers.
+
+    Unified RA gates control per-head blending of standard and
+    reciprocal attention:
+    - w_std: Standard attention weight (Q_std @ K_std^T)
+    - w_rec: Reciprocal attention weight (K_low @ Q_low^T)
+
+    Returns:
+        dict with gate statistics (mean across all heads and layers)
+    """
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from unified_ra import UnifiedRAttention
+
+    w_std_list = []
+    w_rec_list = []
+
+    for name, module in model.named_modules():
+        if isinstance(module, UnifiedRAttention):
+            # Gates are learnable parameters or buffers
+            with torch.no_grad():
+                # Get raw gate values (not necessarily normalized)
+                w_std = module.w_std.cpu()
+                w_rec = module.w_rec.cpu()
+                w_std_list.extend(w_std.tolist())
+                w_rec_list.extend(w_rec.tolist())
+
+    if not w_std_list:
+        return {}
+
+    # Compute statistics
+    w_std_tensor = torch.tensor(w_std_list)
+    w_rec_tensor = torch.tensor(w_rec_list)
+
+    return {
+        # Standard attention weights
+        "unified_ra_w_std_mean": w_std_tensor.mean().item(),
+        "unified_ra_w_std_std": w_std_tensor.std().item(),
+        "unified_ra_w_std_min": w_std_tensor.min().item(),
+        "unified_ra_w_std_max": w_std_tensor.max().item(),
+        # Reciprocal attention weights
+        "unified_ra_w_rec_mean": w_rec_tensor.mean().item(),
+        "unified_ra_w_rec_std": w_rec_tensor.std().item(),
+        "unified_ra_w_rec_min": w_rec_tensor.min().item(),
+        "unified_ra_w_rec_max": w_rec_tensor.max().item(),
+    }
+
+
 # ============================================================================
 # Main Training Loop
 # ============================================================================
@@ -1817,14 +1868,30 @@ def main():
                         val_str += f" | w_rec {lens_stats['w_rec_mean']:.3f}"
                         val_str += f" | w_disc {lens_stats['w_disc_mean']:.3f}"
 
+                # Add Unified RA gates if using Unified RA
+                if getattr(args, "use_ra_v5", False):
+                    unified_ra_stats = analyze_unified_ra_gates(
+                        model.module if ddp else model
+                    )
+                    if unified_ra_stats:
+                        val_str += f" | UA_w_std {unified_ra_stats['unified_ra_w_std_mean']:.3f}"
+                        val_str += f" | UA_w_rec {unified_ra_stats['unified_ra_w_rec_mean']:.3f}"
+
                 print(val_str)
 
             # Log evaluation metrics to trackers (only master process)
             if tracker_names and master_process:
+                # Calculate perplexity (exp of loss)
+                train_perplexity = math.exp(losses["train"])
+                val_perplexity = math.exp(losses["val"])
+
                 eval_metrics = {
                     "iteration": iter_num,
                     "train_loss": losses["train"],
                     "val_loss": losses["val"],
+                    "train_perplexity": train_perplexity,
+                    "val_perplexity": val_perplexity,
+                    "best_val_loss": best_val_loss,
                     "learning_rate": lr,
                 }
 
@@ -1837,6 +1904,14 @@ def main():
                     lens_stats = analyze_lens_gates(model.module if ddp else model)
                     if lens_stats:
                         eval_metrics.update(lens_stats)
+
+                # Add Unified RA gate stats if using Unified RA
+                if getattr(args, "use_ra_v5", False):
+                    unified_ra_stats = analyze_unified_ra_gates(
+                        model.module if ddp else model
+                    )
+                    if unified_ra_stats:
+                        eval_metrics.update(unified_ra_stats)
 
                 if "trackio" in tracker_names:
                     import trackio
@@ -1947,6 +2022,14 @@ def main():
                     # Log all lens gate statistics to tracker
                     ra_metrics.update(lens_stats)
 
+            # Add Unified RA gate stats if using Unified RA
+            if getattr(args, "use_ra_v5", False):
+                unified_ra_stats = analyze_unified_ra_gates(
+                    model.module if ddp else model
+                )
+                if unified_ra_stats:
+                    ra_metrics.update(unified_ra_stats)
+
             if "trackio" in tracker_names:
                 import trackio
 
@@ -1974,6 +2057,19 @@ def main():
                     progress_str += f" | w_std {lens_stats['w_std_mean']:.3f}"
                     progress_str += f" | w_rec {lens_stats['w_rec_mean']:.3f}"
                     progress_str += f" | w_disc {lens_stats['w_disc_mean']:.3f}"
+
+            # Add Unified RA gates if using Unified RA
+            if getattr(args, "use_ra_v5", False):
+                unified_ra_stats = analyze_unified_ra_gates(
+                    model.module if ddp else model
+                )
+                if unified_ra_stats:
+                    progress_str += (
+                        f" | UA_w_std {unified_ra_stats['unified_ra_w_std_mean']:.3f}"
+                    )
+                    progress_str += (
+                        f" | UA_w_rec {unified_ra_stats['unified_ra_w_rec_mean']:.3f}"
+                    )
 
             print(progress_str)
 
