@@ -279,6 +279,40 @@ config TRACKIO_PORT
 
 endmenu
 
+menu "Reciprocal Attention (RA) + MLA (Experimental)"
+
+config ENABLE_RA_MLA
+	bool "Enable RA+MLA experimental features"
+	default n
+	help
+	  Enable Reciprocal Attention and Multi-Latent Attention
+	  experimental features for GPT-2 training.
+
+config RA_MLA_ABLATION_MODE
+	bool "Enable RA+MLA ablation study mode"
+	default n
+	help
+	  Run ablation study testing different RA/MLA configurations.
+	  Disables standard test matrix mode.
+
+config RA_MLA_ABLATION_STEPS
+	string "Ablation steps to run (comma-separated)"
+	default "V0,V1,V2,V3"
+	depends on RA_MLA_ABLATION_MODE
+	help
+	  Comma-separated list of ablation steps to run.
+	  Example: "V0,V1,V2,V3" or "V0,V11,V12,V13,V14,V15"
+
+config TEST_MATRIX_MODE
+	bool "Enable standard test matrix mode"
+	default y
+	depends on !RA_MLA_ABLATION_MODE
+	help
+	  Run standard test matrix testing optimizer/pruning combinations.
+	  Cannot be used simultaneously with ablation mode.
+
+endmenu
+
 menu "Test Matrix"
 
 config TEST_RESULTS_DIR
