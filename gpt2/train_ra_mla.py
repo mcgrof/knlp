@@ -995,41 +995,61 @@ if args.ra_mla_ablation_step is not None:
         # Per-head learnable α (init 0.05, clamped [0, 0.5])
         # Tests: Does identity residual improve training stability/quality?
     elif step == "V3":
-        # V3: Unified RA (R=8, higher reciprocal rank)
-        # Tests if higher R improves quality at acceptable speed cost
+        # V3: Unified RA + R-MLP (basic)
+        # Tests reciprocal MLP folding without optional features
         args.use_ra_v5 = True
-        args.ra_v5_R = 8  # Double the reciprocal rank
+        args.ra_v5_R = 4
         args.ra_v5_use_self_restart = False
+        args.use_rmlp = True  # Enable R-MLP
+        args.rmlp_R_ff = 64  # Low-rank reciprocal dimension
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
     elif step == "V4":
-        # V4: Unified RA + Self-Restart (R=8)
-        # Tests self-restart with higher R
+        # V4: Unified RA + R-MLP + Mixer
+        # Tests 1x1 linear mixer on h_low for enhanced expressivity
         args.use_ra_v5 = True
-        args.ra_v5_R = 8
-        args.ra_v5_use_self_restart = True  # Enable self-restart
+        args.ra_v5_R = 4
+        args.ra_v5_use_self_restart = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 64
+        args.rmlp_use_mixer = True  # Enable mixer
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
     elif step == "V5":
-        # V5: Unified RA (R=2, minimal reciprocal rank)
-        # Tests if minimal R is sufficient
+        # V5: Unified RA + R-MLP + Per-token gates
+        # Tests learned discoverability gates
         args.use_ra_v5 = True
-        args.ra_v5_R = 2  # Minimal reciprocal rank
+        args.ra_v5_R = 4
         args.ra_v5_use_self_restart = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 64
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = True  # Enable per-token gates
+        args.rmlp_tie_up_low = False
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
     elif step == "V6":
-        # V6: Unified RA (R=4) + Self-Restart + Larger MLP
-        # Tests composition: V2 + 6x MLP expansion
+        # V6: Unified RA + R-MLP + Mixer + Gates
+        # Tests composition of all R-MLP mechanisms
         args.use_ra_v5 = True
         args.ra_v5_R = 4
-        args.ra_v5_use_self_restart = True
+        args.ra_v5_use_self_restart = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 64
+        args.rmlp_use_mixer = True  # Enable mixer
+        args.rmlp_use_gates = True  # Enable per-token gates
+        args.rmlp_tie_up_low = False
         args.enable_mla = False
         args.ra_alpha = 0.0
-        args.mlp_expansion_ratio = 6.0  # Larger MLP
+        args.mlp_expansion_ratio = 4.0
     else:
         raise ValueError(
             f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V6."
@@ -1613,6 +1633,58 @@ def main():
 
         print(f"Successfully patched {len(model.transformer.h)} layers with R-MLP")
         ra_cfg = mlp_cfg
+
+    elif getattr(args, "use_ra_v5", False) and getattr(args, "use_rmlp", False):
+        # === Unified RA + R-MLP ===
+        use_self_restart = getattr(args, "ra_v5_use_self_restart", False)
+        restart_str = " + Self-Restart" if use_self_restart else ""
+
+        print("=" * 70)
+        print(f"Applying Unified RA{restart_str} + R-MLP:")
+        print(f"  Attention R value:    {getattr(args, 'ra_v5_R', 4)}")
+        print(f"  Architecture:         Direct folded Q/K emission")
+        print(f"  Learned gates:        Per-head w_std, w_rec")
+        if use_self_restart:
+            print(f"  Self-restart:         Enabled (α init=0.05, clamped [0, 0.5])")
+        print(f"  MLP R_ff value:       {getattr(args, 'rmlp_R_ff', 64)}")
+        print(f"  MLP expansion:        {args.mlp_expansion_ratio}x")
+
+        rmlp_features = []
+        if getattr(args, "rmlp_use_mixer", False):
+            rmlp_features.append("mixer")
+        if getattr(args, "rmlp_use_gates", False):
+            rmlp_features.append("per-token gates")
+        if getattr(args, "rmlp_tie_up_low", False):
+            rmlp_features.append("weight tying")
+
+        if rmlp_features:
+            print(f"  R-MLP features:       {', '.join(rmlp_features)}")
+        print("=" * 70)
+
+        # Import patching functions
+        from ra_v5_patch import patch_gpt2_with_unified_ra_and_rmlp
+
+        model = patch_gpt2_with_unified_ra_and_rmlp(
+            model,
+            R=getattr(args, "ra_v5_R", 4),
+            attn_dropout=args.dropout,
+            use_self_restart=use_self_restart,
+            mlp_expansion=args.mlp_expansion_ratio,
+            R_ff=getattr(args, "rmlp_R_ff", 64),
+            mlp_dropout=args.dropout,
+            use_mixer=getattr(args, "rmlp_use_mixer", False),
+            use_gates=getattr(args, "rmlp_use_gates", False),
+            tie_up_low=getattr(args, "rmlp_tie_up_low", False),
+        )
+
+        ra_cfg = {
+            "R": getattr(args, "ra_v5_R", 4),
+            "use_self_restart": use_self_restart,
+            "R_ff": getattr(args, "rmlp_R_ff", 64),
+            "use_mixer": getattr(args, "rmlp_use_mixer", False),
+            "use_gates": getattr(args, "rmlp_use_gates", False),
+            "tie_up_low": getattr(args, "rmlp_tie_up_low", False),
+        }
 
     elif getattr(args, "use_ra_v5", False):
         # === Unified RA only (no R-MLP) ===
