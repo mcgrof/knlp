@@ -22,6 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.attention import sdpa_kernel, SDPBackend
 import math
+import contextlib
 
 # Enable TF32 for GEMMs
 torch.set_float32_matmul_precision("high")
@@ -397,6 +398,174 @@ class UnifiedRAttention(nn.Module):
                         "rwr_alpha_std": alpha_clamped.std().item(),
                     }
                 )
+
+            return stats
+
+
+# ---------------------------------------------------------------------
+# Reciprocal MLP (R-MLP)
+# ---------------------------------------------------------------------
+class ReciprocalMLP(nn.Module):
+    """
+    Reciprocal MLP (R-MLP)
+
+    Mirrors Unified RA's folded layout concept but for MLP expansion dimension.
+
+    Key principle: Split expansion dim D_ff = D_ff_std + R_ff and use separate
+    up-projections to create [h_std | h_low], then down-project the concatenated
+    features. This creates reciprocity in the MLP feature space analogous to
+    RA's Q/K reciprocity.
+
+    FLOPs match baseline MLP since total expansion dimension is unchanged.
+
+    Architecture:
+    - up_std: D → D_ff_std
+    - up_low: D → R_ff
+    - activation on both paths
+    - optional mixer: 1x1 linear on h_low before concat
+    - optional per-token gates (discoverability) on h_low
+    - concatenate: [w_std * h_std | w_rec * h_low]
+    - down: (D_ff_std + R_ff) → D
+
+    Args:
+        n_embd: Model embedding dimension
+        expansion: MLP expansion ratio (typically 4)
+        R_ff: Low-rank reciprocal dimension (e.g., 64)
+        dropout: Dropout probability
+        use_mixer: Add 1x1 linear mixer on h_low
+        use_gates: Add learned per-token gates on h_low
+        tie_up_low: Tie up_low weight to transpose of up_std subset
+    """
+
+    def __init__(
+        self,
+        n_embd=768,
+        expansion=4,
+        R_ff=64,
+        dropout=0.0,
+        use_mixer=False,
+        use_gates=False,
+        tie_up_low=False,
+    ):
+        super().__init__()
+        self.n_embd = n_embd
+        D_ff = int(expansion * n_embd)
+        assert 0 < R_ff < D_ff, f"R_ff={R_ff} must be in (0, D_ff={D_ff})"
+
+        self.R_ff = int(R_ff)
+        self.D_ff_std = int(D_ff - R_ff)
+        self.dropout = dropout
+        self.use_mixer = use_mixer
+        self.use_gates = use_gates
+        self.tie_up_low = tie_up_low
+
+        # Up projections: split into std and low branches
+        # Same total parameters as single large up projection
+        self.up_std = nn.Linear(n_embd, self.D_ff_std, bias=False)
+
+        if not tie_up_low:
+            self.up_low = nn.Linear(n_embd, R_ff, bias=False)
+        else:
+            # Tied: up_low uses transposed subset of up_std
+            # This enforces structural reciprocity
+            self.register_parameter("up_low", None)
+
+        # Down projection: takes concatenated [D_ff_std + R_ff] features
+        self.down = nn.Linear(self.D_ff_std + R_ff, n_embd, bias=False)
+
+        # Optional mixer: 1x1 linear on h_low for enhanced expressivity
+        if use_mixer:
+            self.mixer = nn.Linear(R_ff, R_ff, bias=False)
+        else:
+            self.mixer = None
+
+        # Gates analogous to RA (w_std, w_rec)
+        # Initialize near-identity: w_std high, w_rec low
+        self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
+        self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))
+
+        # Optional per-token learnable gates (discoverability)
+        if use_gates:
+            # Single learnable parameter broadcast to all positions
+            self.register_parameter("gate_alpha", nn.Parameter(torch.tensor(0.1)))
+        else:
+            self.gate_alpha = None
+
+        # Activation (GELU for GPT-2 compatibility)
+        self.act = nn.GELU()
+
+        self._weights_initialized = False
+
+    def _initialize_weights(self):
+        """Initialize weights with Xavier uniform."""
+        with torch.no_grad():
+            nn.init.xavier_uniform_(self.up_std.weight)
+            if self.up_low is not None:
+                nn.init.xavier_uniform_(self.up_low.weight)
+            nn.init.xavier_uniform_(self.down.weight)
+            if self.mixer is not None:
+                nn.init.xavier_uniform_(self.mixer.weight)
+        self._weights_initialized = True
+
+    def forward(self, x):
+        """
+        Forward pass with reciprocal MLP folding.
+
+        Args:
+            x: [B, T, C] input tensor
+
+        Returns:
+            y: [B, T, C] output tensor
+        """
+        if not self._weights_initialized:
+            self._initialize_weights()
+
+        # Up projections
+        h_std = self.up_std(x)  # [B, T, D_ff_std]
+
+        if self.tie_up_low:
+            # Tied mode: use transposed subset of up_std
+            # Take first R_ff rows of up_std.weight transposed
+            with torch.no_grad() if not self.training else contextlib.suppress():
+                h_low = F.linear(x, self.up_std.weight[: self.R_ff, :].t())
+        else:
+            h_low = self.up_low(x)  # [B, T, R_ff]
+
+        # Apply activation
+        h_std = self.act(h_std)
+        h_low = self.act(h_low)
+
+        # Optional mixer on h_low
+        if self.mixer is not None:
+            h_low = self.mixer(h_low)
+
+        # Optional per-token gates (discoverability)
+        if self.gate_alpha is not None:
+            # gate_alpha scales the reciprocal contribution per position
+            h_low = h_low * self.gate_alpha
+
+        # Reciprocal fold: concatenate [w_std * h_std | w_rec * h_low]
+        h_fold = torch.cat([self.w_std * h_std, self.w_rec * h_low], dim=-1)
+
+        # Down projection
+        y = self.down(h_fold)
+
+        # Dropout
+        if self.dropout > 0.0:
+            y = F.dropout(y, p=self.dropout, training=self.training)
+
+        return y
+
+    def get_gate_stats(self):
+        """Return dictionary of gate statistics for logging."""
+        with torch.no_grad():
+            stats = {
+                "w_std": self.w_std.item(),
+                "w_rec": self.w_rec.item(),
+            }
+
+            if self.gate_alpha is not None:
+                stats["gate_alpha"] = self.gate_alpha.item()
 
             return stats
 

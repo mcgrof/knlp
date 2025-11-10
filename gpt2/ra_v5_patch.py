@@ -27,7 +27,7 @@ sys.path.insert(0, parent_dir)
 
 import torch
 import torch.nn as nn
-from unified_ra import UnifiedRAttention
+from unified_ra import UnifiedRAttention, ReciprocalMLP
 
 
 def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
@@ -80,6 +80,119 @@ def patch_gpt2_with_ra_v5(model, R=4, dropout=0.1, use_self_restart=False):
     return model
 
 
+def patch_gpt2_with_rmlp(
+    model,
+    expansion=4,
+    R_ff=64,
+    dropout=0.0,
+    use_mixer=False,
+    use_gates=False,
+    tie_up_low=False,
+):
+    """
+    Replace all MLP modules in GPT-2 with Reciprocal MLP.
+
+    Args:
+        model: GPT-2 model to patch
+        expansion: MLP expansion ratio (default 4)
+        R_ff: Reciprocal rank for MLP (default 64)
+        dropout: Dropout probability
+        use_mixer: Add 1x1 mixer on h_low
+        use_gates: Add per-token learned gates
+        tie_up_low: Tie up_low to transposed subset of up_std
+
+    Returns:
+        Patched model
+    """
+    n_embd = model.config.n_embd
+
+    print(f"Patching GPT-2 with R-MLP (R_ff={R_ff}, expansion={expansion})...")
+    if use_mixer:
+        print("  - Mixer enabled (1x1 linear on h_low)")
+    if use_gates:
+        print("  - Per-token gates enabled (discoverability)")
+    if tie_up_low:
+        print("  - Weight tying enabled (up_low tied to up_std^T)")
+
+    # Iterate through all transformer blocks
+    for i, block in enumerate(model.transformer.h):
+        # Replace the MLP module with Reciprocal MLP
+        original_mlp = block.mlp
+
+        # Create Reciprocal MLP module
+        reciprocal_mlp = ReciprocalMLP(
+            n_embd=n_embd,
+            expansion=expansion,
+            R_ff=R_ff,
+            dropout=dropout,
+            use_mixer=use_mixer,
+            use_gates=use_gates,
+            tie_up_low=tie_up_low,
+        )
+
+        # Replace the MLP module
+        block.mlp = reciprocal_mlp
+
+        print(f"  Layer {i}: Standard MLP → R-MLP")
+
+    num_layers = len(model.transformer.h)
+    print(f"Successfully patched {num_layers} layers with R-MLP")
+
+    return model
+
+
+def patch_gpt2_with_unified_ra_and_rmlp(
+    model,
+    R=4,
+    attn_dropout=0.1,
+    use_self_restart=False,
+    mlp_expansion=4,
+    R_ff=64,
+    mlp_dropout=0.0,
+    use_mixer=False,
+    use_gates=False,
+    tie_up_low=False,
+):
+    """
+    Replace both attention and MLP modules in GPT-2 with Unified RA + R-MLP.
+
+    Args:
+        model: GPT-2 model to patch
+        R: Reciprocal rank for attention (default 4)
+        attn_dropout: Attention dropout probability
+        use_self_restart: Enable self-restart for attention
+        mlp_expansion: MLP expansion ratio (default 4)
+        R_ff: Reciprocal rank for MLP (default 64)
+        mlp_dropout: MLP dropout probability
+        use_mixer: Add 1x1 mixer on h_low
+        use_gates: Add per-token learned gates
+        tie_up_low: Tie up_low to transposed subset of up_std
+
+    Returns:
+        Patched model
+    """
+    # First patch attention with Unified RA
+    model = patch_gpt2_with_ra_v5(
+        model,
+        R=R,
+        dropout=attn_dropout,
+        use_self_restart=use_self_restart,
+    )
+
+    # Then patch MLP with R-MLP
+    model = patch_gpt2_with_rmlp(
+        model,
+        expansion=mlp_expansion,
+        R_ff=R_ff,
+        dropout=mlp_dropout,
+        use_mixer=use_mixer,
+        use_gates=use_gates,
+        tie_up_low=tie_up_low,
+    )
+
+    return model
+
+
 def analyze_ra_v5_gates(model):
     """
     Analyze learned gate values across all Unified RA layers.
@@ -113,3 +226,55 @@ def analyze_ra_v5_gates(model):
         "w_rec_max": w_rec_tensor.max().item(),
         "w_rec_std": w_rec_tensor.std().item(),
     }
+
+
+def analyze_rmlp_gates(model):
+    """
+    Analyze learned gate values across all R-MLP layers.
+
+    Returns:
+        Dictionary with gate statistics
+    """
+    w_std_values = []
+    w_rec_values = []
+    gate_alpha_values = []
+
+    for block in model.transformer.h:
+        if hasattr(block.mlp, "w_std") and hasattr(block.mlp, "w_rec"):
+            w_std_values.append(block.mlp.w_std.detach().cpu().item())
+            w_rec_values.append(block.mlp.w_rec.detach().cpu().item())
+
+            if hasattr(block.mlp, "gate_alpha") and block.mlp.gate_alpha is not None:
+                gate_alpha_values.append(block.mlp.gate_alpha.detach().cpu().item())
+
+    if not w_std_values:
+        return None
+
+    import torch as t
+
+    w_std_tensor = t.tensor(w_std_values)
+    w_rec_tensor = t.tensor(w_rec_values)
+
+    stats = {
+        "w_std_mean": w_std_tensor.mean().item(),
+        "w_std_min": w_std_tensor.min().item(),
+        "w_std_max": w_std_tensor.max().item(),
+        "w_std_std": w_std_tensor.std().item(),
+        "w_rec_mean": w_rec_tensor.mean().item(),
+        "w_rec_min": w_rec_tensor.min().item(),
+        "w_rec_max": w_rec_tensor.max().item(),
+        "w_rec_std": w_rec_tensor.std().item(),
+    }
+
+    if gate_alpha_values:
+        gate_alpha_tensor = t.tensor(gate_alpha_values)
+        stats.update(
+            {
+                "gate_alpha_mean": gate_alpha_tensor.mean().item(),
+                "gate_alpha_min": gate_alpha_tensor.min().item(),
+                "gate_alpha_max": gate_alpha_tensor.max().item(),
+                "gate_alpha_std": gate_alpha_tensor.std().item(),
+            }
+        )
+
+    return stats
