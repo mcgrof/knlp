@@ -975,6 +975,10 @@ def run_single_test(
         max_iters = os.environ.get("GPT2_MAX_ITERS") or config.get("GPT2_MAX_ITERS")
         if max_iters:
             cmd.extend(["--max-iters", str(max_iters)])
+        # Support MAX_TIME from environment or config (time-based training in seconds)
+        max_time = os.environ.get("GPT2_MAX_TIME") or config.get("GPT2_MAX_TIME")
+        if max_time:
+            cmd.extend(["--max-time", str(max_time)])
         if config.get("GPT2_DECAY_LR") == "y":
             cmd.append("--decay-lr")
         if "GPT2_MIN_LR" in config:
@@ -1102,10 +1106,12 @@ def run_single_test(
     log_file = os.path.join(test_output_dir, "output.log")
 
     try:
-        # Prepare environment - copy current env and ensure GPT2_MAX_ITERS is propagated
+        # Prepare environment - copy current env and ensure GPT2_MAX_ITERS and GPT2_MAX_TIME are propagated
         env = os.environ.copy()
         if "GPT2_MAX_ITERS" in os.environ:
             env["GPT2_MAX_ITERS"] = os.environ["GPT2_MAX_ITERS"]
+        if "GPT2_MAX_TIME" in os.environ:
+            env["GPT2_MAX_TIME"] = os.environ["GPT2_MAX_TIME"]
 
         # Set PyTorch memory allocator configuration for better memory management
         # This helps prevent OOM errors by allowing expandable memory segments
@@ -1128,7 +1134,7 @@ def run_single_test(
                 bufsize=1,  # Line buffered
                 universal_newlines=True,
                 cwd=working_dir,  # Run from the model directory
-                env=env,  # Pass environment variables including GPT2_MAX_ITERS
+                env=env,  # Pass environment variables including GPT2_MAX_ITERS and GPT2_MAX_TIME
             )
 
             # Create colorized test prefix for output
@@ -2095,6 +2101,7 @@ def main():
                     # Lens-gated architecture step descriptions (8 steps: L0-L7)
                     # SinkGD optimizer ablation step descriptions (4 steps: S0-S3)
                     # RWR attention ablation step descriptions (4 steps: R0-R3)
+                    # Unified RA ablation step descriptions (2 steps: V0-V1)
                     step_descriptions = {
                         "0": "Baseline GPT-2 (ratio 1:2.0, standard attention)",
                         "1": "Baseline + SPAM pruning 50%",
@@ -2131,6 +2138,8 @@ def main():
                         "R1": "RWR default: LOCAL+RWR (α=0.2, T=4, topk=32)",
                         "R2": "RWR reversible: R1 + detailed balance (P_rev)",
                         "R3": "RWR full: R2 + reciprocal + discoverability",
+                        "V0": "Unified RA baseline: Standard GPT-2 SDPA (1.33ms)",
+                        "V1": "Unified RA: Folded layout, learned gates, R=4 (1.33ms)",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
