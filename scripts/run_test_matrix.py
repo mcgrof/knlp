@@ -2149,9 +2149,11 @@ def main():
                         "V8": "Unified RA R=8 + Self-Restart: High rank + stabilization",
                         "V9": "Unified RA R=2: Minimal reciprocal rank",
                         "V10": "Unified RA R=4 + Self-Restart + 6x MLP: Wider MLP compensation",
-                        "V11": "R-MLP standalone (golden ratio): R_ff=1152, no RA",
+                        "V11": "R-MLP basic delayed (75 steps): R_ff=64, delayed start",
                         "V12": "Unified RA R=4 delayed (75 steps): Baseline warmup, then RA",
-                        "V13": "R-MLP golden delayed (75 steps): Baseline warmup, then R-MLP",
+                        "V13": "R-MLP golden delayed (75 steps): R_ff=1152, delayed start",
+                        "V14": "V11 + KV pruning (golden): k=391 (38.2%), recency=64",
+                        "V15": "V13 + KV pruning (learned): Learned keep_ratio, recency=64",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
