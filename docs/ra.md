@@ -16,18 +16,10 @@ Overhead:    0 FLOPs, 0 extra allocations
 
 A single-line summary: **We fold reciprocal attention into Q/K layout, achieving bidirectional flow in one SDPA call.**
 
-```
-Standard Attention:          Unified RA:
-┌─────┐   ┌─────┐           ┌─────┐   ┌─────┐
-│  Q  │ @ │ K^T │           │ Qf  │ @ │Kf^T │  ← Same dimensions!
-└─────┘   └─────┘           └─────┘   └─────┘
-  ↓                            ↓
-Asymmetric flow              Bidirectional flow
-  ↓                            ↓
-softmax → @ V                softmax → @ V
-```
+**Standard Attention**: Q @ K^T (asymmetric flow) → softmax → @ V
+**Unified RA**: Qf @ Kf^T (bidirectional flow) → softmax → @ V
 
-**The Magic**: Qf and Kf are **pre-folded** to contain both standard and reciprocal components.
+**The Magic**: Qf and Kf are **pre-folded** to contain both standard and reciprocal components, achieving reciprocity in a single SDPA call with the same dimensions as baseline.
 
 ---
 
@@ -35,38 +27,19 @@ softmax → @ V                softmax → @ V
 
 ### Folded Layout (The Core Insight)
 
-```
-HEAD DIMENSION SPLIT (D = 64):
-┌──────────────────────────────┬──────┐
-│        D_std = 60            │ R=4  │
-└──────────────────────────────┴──────┘
+![Folded Q/K Layout](images/folded_layout.png)
 
-PER-HEAD LAYOUT:
+The key insight: we split each head's dimension D=64 into D_std=60 and R=4, then emit:
+- **Qf = [Q_std | K_low]**: Standard query + reciprocal component
+- **Kf = [K_std | Q_low]**: Standard key + reciprocal component
 
-Qf[h] = [Q_std[h] | K_low[h]]
-        └────60───┘ └───4───┘
-        Standard    Reciprocal
+When computing **Qf @ Kf^T**, we get four terms in a single matrix multiplication:
+1. Q_std @ K_std^T (standard attention)
+2. Q_std @ Q_low^T (cross-term, reciprocal)
+3. K_low @ K_std^T (cross-term, reciprocal)
+4. K_low @ Q_low^T (low-rank reciprocal)
 
-Kf[h] = [K_std[h] | Q_low[h]]
-        └────60───┘ └───4───┘
-        Standard    Reciprocal
-
-WHEN WE COMPUTE Qf @ Kf^T:
-
-                   K_std^T    Q_low^T
-                  ┌────60───┐ ┌─4─┐
-        ┌────60───│    ✓    │ │ ✓ │  Q_std
-  Qf =  ├─────────┼─────────┼─┼───┤
-        └────4────│    ✓    │ │ ✓ │  K_low
-                  └─────────┘ └───┘
-
-  Result = Q_std @ K_std^T  ← Standard attention
-         + Q_std @ Q_low^T  ← Cross-term (reciprocal)
-         + K_low @ K_std^T  ← Cross-term (reciprocal)
-         + K_low @ Q_low^T  ← Low-rank reciprocal
-
-All in ONE matmul! No routing, no copies, no cats.
-```
+All in ONE matmul with no routing, copies, or concatenations.
 
 ### Weight Layout in c_attn.weight
 
@@ -90,44 +63,16 @@ Gates BAKED into weights at initialization!
 
 ### Forward Pass Flow
 
-```
-                    INPUT x [B, T, C]
-                          ↓
-                    ┌─────────────┐
-                    │   c_attn    │  Single GEMM
-                    │  (3C → 3C)  │
-                    └─────────────┘
-                          ↓
-         ┌────────────────┼────────────────┐
-         ↓                ↓                ↓
-      Qf [B,T,C]      Kf [B,T,C]      V [B,T,C]
-         │                │                │
-         │ view + transpose                │
-         ↓                ↓                ↓
-    [B,H,T,D]       [B,H,T,D]        [B,H,T,D]
-         └────────────────┼────────────────┘
-                          ↓
-                    ┌─────────────┐
-                    │    SDPA     │  Single Flash Attn
-                    │  (causal)   │
-                    └─────────────┘
-                          ↓
-                   [B, H, T, D]
-                          ↓
-               transpose + reshape
-                          ↓
-                   [B, T, C]
-                          ↓
-                    ┌─────────────┐
-                    │   c_proj    │  Output GEMM
-                    └─────────────┘
-                          ↓
-                   OUTPUT [B, T, C]
+![Forward Pass Flow](images/forward_pass.png)
 
-Total allocations: 2 (fused GEMM out, SDPA out)
-Total SDPA calls: 1
-Total overhead: 0%
-```
+The forward pass is remarkably simple:
+1. **c_attn**: Single GEMM (3C → 3C) produces fused [Qf | Kf | V]
+2. **Split + Reshape**: Split into Qf, Kf, V and reshape to [B,H,T,D]
+3. **SDPA**: Single Flash Attention call (causal masking)
+4. **Reshape**: Transpose and reshape back to [B,T,C]
+5. **c_proj**: Output GEMM
+
+**Efficiency**: 2 total allocations, 1 SDPA call, 0% overhead compared to baseline.
 
 ---
 
@@ -135,43 +80,24 @@ Total overhead: 0%
 
 ### Performance Comparison
 
-```
-FORWARD TIME (ms/iteration):
-         V0 Baseline        V1 Unified RA      Difference
-         ┌────────┐         ┌────────┐
-1600 ms  │        │         │        │
-         │  1555  │         │  1522  │         -33 ms
-1500 ms  │   ms   │    →    │   ms   │         -2.17%
-         │        │         │        │         FASTER!
-         └────────┘         └────────┘
+![Performance Comparison](images/performance_comparison.png)
 
-MEMORY (MB):
-         V0 Baseline        V1 Unified RA      Difference
-         ┌────────┐         ┌────────┐
-3200 MB  │        │         │        │
-         │  3177  │         │  3176  │         -0.69 MB
-3100 MB  │   MB   │    =    │   MB   │         -0.022%
-         │        │         │        │         IDENTICAL
-         └────────┘         └────────┘
+**Forward Time**: V0 baseline 1555 ms → V1 Unified RA 1522 ms (**2.17% faster**)
+**Memory**: V0 baseline 3177 MB → V1 Unified RA 3176 MB (**identical**)
 
-SPEEDUP: 1.0217× (TARGET WAS ≤1.05×) ✅
-```
+**Speedup**: 1.0217× (target was ≤1.05×) ✅ **EXCEEDS ACCEPTANCE CRITERIA**
 
 ### Evolution Timeline
 
-```
-RA v2 (2 GEMMs)     RA v3 (Fused)      RA v4 (Zero-cat)   Unified RA
-    2000 ms             2230 ms             1960 ms           1522 ms
-    ┌─────┐             ┌─────┐             ┌─────┐           ┌─────┐
-    │     │             │     │             │     │           │     │
-    │ 66% │   WORSE     │ 85% │   WORSE     │ 48% │   WORSE   │ -2% │  ✅
-    │SLOW │    ───→     │SLOW │    ───→     │SLOW │    ───→   │FAST │
-    │     │             │     │             │     │           │     │
-    └─────┘             └─────┘             └─────┘           └─────┘
-        ❌                  ❌                  ❌               ✅
+![Evolution Timeline](images/evolution_timeline.png)
 
-Key insight: Pre-fold layout, single SDPA → WIN
-```
+The journey from complex to simple:
+- **RA v2** (2 GEMMs): 2000 ms, +66% slower ❌
+- **RA v3** (Fused): 2230 ms, +85% slower ❌
+- **RA v4** (Zero-cat): 1960 ms, +48% slower ❌
+- **Unified RA** (Folded): 1522 ms, **2% faster** ✅
+
+**Key insight**: Pre-fold layout + single SDPA = WIN
 
 ### Acceptance Criteria
 
@@ -189,60 +115,29 @@ Zero Allocations       No cats/copies      Single SDPA          ✅ PASS
 
 ## One-Step RWR (Self-Restart)
 
+![One-Step RWR Concept](images/rwr_concept.png)
+
 ### The Concept
 
-```
-Standard SDPA:              One-Step RWR:
-┌──────────┐               ┌──────────────┐
-│   SDPA   │               │ (1-α)·SDPA   │  Attention path
-│  (Q,K,V) │               │   + α·V      │  + Identity path
-└────┬─────┘               └───────┬──────┘
-     ↓                             ↓
-   Output                      Stabilized
-                               Output
+One-Step RWR adds a lightweight identity residual path to stabilize attention:
 
-α = 0.05 (per head, learnable, clamped [0, 0.5])
-```
+**out = (1-α) · SDPA(Q,K,V) + α · V**
+
+Where α ≈ 0.05 (per-head, learnable, clamped [0, 0.5])
 
 ### Why It Works
 
-```
-PROBLEM: RA slightly perturbs attention geometry
-┌──────────────────────────────────────────────┐
-│ S_RA = Q_std @ K_std^T                       │
-│      + Q_std @ Q_low^T    ← Cross-terms      │
-│      + K_low @ K_std^T    ← Add noise early  │
-└──────────────────────────────────────────────┘
+**Problem**: Reciprocal Attention slightly perturbs the attention geometry through cross-terms (Q_std @ Q_low^T and K_low @ K_std^T), which can introduce noise early in training.
 
-SOLUTION: Add identity path (V) for stability
-┌──────────────────────────────────────────────┐
-│ out = (1-α) · attention + α · V              │
-│                           ↑                   │
-│                     "restart to self"        │
-│                     prevents collapse        │
-└──────────────────────────────────────────────┘
+**Solution**: Add an identity path (V) that provides stability. This "restart to self" mechanism prevents collapse and improves long-tail connectivity through diffusion.
 
-Benefits:
-✓ Stabilizes training (prevents runaway hubs)
-✓ Improves long-tail connectivity (diffusion)
-✓ Zero overhead (single element-wise mix)
-✓ Learnable per-head (adapts to data)
-```
+**Benefits**:
+- Stabilizes training (prevents runaway hubs)
+- Improves long-tail connectivity (diffusion)
+- Zero overhead (single element-wise mix)
+- Learnable per-head (adapts to data)
 
-### Cost Comparison
-
-```
-Full RWR (T=4 steps):      One-Step RWR:
-┌──────────┐               ┌─────┐
-│   SDPA   │               │SDPA │
-├──────────┤               ├─────┤
-│   Walk   │  4× cost      │Mix  │  ~0% cost
-├──────────┤      vs       └─────┘
-│   Walk   │
-├──────────┤
-│   Walk   │
-└──────────┘
-```
+**Cost**: Full RWR (T=4 steps) costs 4× baseline, while One-Step RWR costs ~0% overhead.
 
 ---
 
