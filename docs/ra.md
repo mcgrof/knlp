@@ -2,7 +2,7 @@
 
 **Bidirectional Information Flow at Zero Computational Cost**
 
-This document focuses on **Reciprocal Attention (RA)** - the attention mechanism that achieves bidirectional flow through folded Q/K layout. For the related **Reciprocal MLP (R-MLP)** work, see the planned V3-V6 ablation steps below.
+This document covers both **Reciprocal Attention (RA)** and **Reciprocal MLP (R-MLP)** - complementary mechanisms that apply the folding concept to attention and MLP layers respectively.
 
 ## Quick Facts (Reciprocal Attention)
 
@@ -148,15 +148,16 @@ Where α ≈ 0.05 (per-head, learnable, clamped [0, 0.5])
 The ablation study tests two distinct reciprocity mechanisms:
 
 ```
-Reciprocal Attention (RA)
- ├── Unified RA (folded layout, R=4)
- │     ├── RA gates (w_std, w_rec)
- │     ├── One-step RWR stabilization
- │     └── Integrated SDPA fusion
- └── Reciprocal MLP (R-MLP) [Planned]
-       ├── MLP symmetry analogue
-       ├── MLP reciprocal gating
-       └── Latent mixing / rebalancing
+Reciprocal Architecture
+ ├── Reciprocal Attention (RA)
+ │     ├── Unified RA (folded Q/K layout, R=4)
+ │     ├── Per-head gates (w_std, w_rec)
+ │     └── One-step RWR (self-restart stabilization)
+ └── Reciprocal MLP (R-MLP)
+       ├── Folded MLP features (D_ff = D_ff_std + R_ff)
+       ├── Per-layer gates (w_std, w_rec)
+       ├── Optional 1x1 mixer on h_low
+       └── Optional per-token gates (discoverability)
 ```
 
 ### Current Steps: Reciprocal Attention (RA)
@@ -181,49 +182,55 @@ V2: Unified RA + Self-Restart
     └────────────────┘
 ```
 
-### Planned Steps: Reciprocal MLP (R-MLP)
+### Reciprocal MLP (R-MLP) Steps
 
-These steps add MLP reciprocity on top of Unified RA (V1):
+R-MLP mirrors RA's folding concept for MLP layers. All steps build on Unified RA (V1) as the attention foundation.
+
+![R-MLP Folding Concept](images/rmlp_folding.png)
+
+**Key Principle**: Split expansion dim `D_ff = D_ff_std + R_ff`, apply GELU to both paths, then fold: `[w_std·h_std | w_rec·h_low]` before down-projection. Total expansion dimension unchanged → FLOPs match baseline!
+
+![R-MLP Ablation Steps](images/rmlp_ablation_steps.png)
 
 ```
-V3: R-MLP + MLP_ATTN_GATE
-    ┌────────┐  attn_weights
-    │Unified │────────────┐
-    │   RA   │            ↓
-    └────────┘       ┌────────┐
-    ┌────────┐       │  Gate  │  MLP modulates by attention
-    │ R-MLP  │ ←─────│(w_attn)│
-    └────────┘       └────────┘
+V3: Basic R-MLP (R_ff=64)
+    ┌────────────────────┐
+    │ Unified RA (V1)    │  Attention foundation
+    └────────────────────┘
+    ┌────────────────────┐
+    │ Folded MLP         │  up_std, up_low → GELU
+    │ [h_std|h_low]      │  → fold → down
+    │ Gates: w_std,w_rec │
+    └────────────────────┘
 
-V4: R-MLP + MLP_CROSS_TOKEN
-    ┌────────┐  attn_context
-    │Unified │────────────┐
-    │   RA   │            ↓
-    └────────┘       ┌────────┐
-    ┌────────┐       │ Cross  │  MLP learns attention-like mixing
-    │ R-MLP  │       │ Token  │
-    └────────┘       └────────┘
+V4: R-MLP + Mixer
+    ┌────────────────────┐
+    │ V3 architecture    │
+    │ + 1x1 mixer on     │  Enhanced expressivity
+    │   h_low features   │  for low-rank path
+    └────────────────────┘
 
-V5: R-MLP + MLP_LATENT_RECIP
-    ┌────────┐  compressed_latent
-    │Unified │────────────┐
-    │   RA   │            ↓
-    └────────┘       ┌────────┐
-    ┌────────┐       │Latent  │  Efficient compressed context
-    │ R-MLP  │ ←─────│ Recip  │
-    └────────┘       └────────┘
+V5: R-MLP + Per-token Gates
+    ┌────────────────────┐
+    │ V3 architecture    │
+    │ + Learnable        │  Discoverability:
+    │   gate_alpha       │  adaptive scaling
+    │   per token        │  of reciprocal features
+    └────────────────────┘
 
-V6: R-MLP + All Mechanisms
-    ┌────────┐  All three contexts
-    │Unified │────────────┬───────┬────────┐
-    │   RA   │            ↓       ↓        ↓
-    └────────┘       ┌────────────────────┐
-    ┌────────┐       │   Unified Context  │
-    │ R-MLP  │ ←─────│ (attn+cross+latent)│
-    └────────┘       └────────────────────┘
+V6: R-MLP + All Features
+    ┌────────────────────┐
+    │ V3 architecture    │
+    │ + Mixer            │  Test composition:
+    │ + Per-token gates  │  do features combine
+    └────────────────────┘  effectively?
 ```
 
-**Note**: All R-MLP steps build on Unified RA (V1) as the attention foundation. R-MLP adds reciprocity to the MLP layers, complementing RA's attention-layer reciprocity.
+**Research Questions**:
+1. Does basic R-MLP folding (V3) improve quality over RA-only (V1)?
+2. Does the mixer (V4) enhance low-rank feature expressivity?
+3. Do per-token gates (V5) enable better feature selection?
+4. Do R-MLP features compose well (V6 vs V4/V5 individually)?
 
 ---
 
@@ -374,23 +381,91 @@ at baseline speed. Production-ready. ✅
 
 ---
 
+## Running Experiments
+
+### Quick Start: Validate Architecture
+
+Test all ablation steps quickly with dry-run mode (CPU, ~60 seconds total):
+
+```bash
+# Test all RA+R-MLP steps (V0-V6)
+make defconfig-gpt2-ra-rmlp-ablation
+make check
+```
+
+### Production: Full Training
+
+Run complete ablation study on 4× A10G GPUs (14 hours @ 2hrs/step):
+
+```bash
+# Default: 2 hours per step (recommended for initial experiments)
+make defconfig-gpt2-ra-rmlp-ablation && make
+
+# Quick sanity check: 60 seconds per step
+make defconfig-gpt2-ra-rmlp-ablation
+GPT2_MAX_TIME=60 make
+
+# Extended validation: 8 hours per step (56 hours total)
+make defconfig-gpt2-ra-rmlp-ablation
+GPT2_MAX_TIME=28800 make
+```
+
+### Available Defconfigs
+
+**Unified RA Only** (V0-V1, 2 steps):
+```bash
+make defconfig-gpt2-unified-ra-ablation && make
+```
+Tests baseline vs Unified RA for speed/quality validation.
+
+**Extended RA** (V0-V6 parameter sweep, 7 steps):
+```bash
+make defconfig-gpt2-unified-ra-extended-ablation && make
+```
+Tests RA with different R values (2,4,8) and self-restart combinations.
+
+**RA + R-MLP** (V0-V6 full architecture, 7 steps):
+```bash
+make defconfig-gpt2-ra-rmlp-ablation && make
+```
+Tests RA foundation (V0-V2) then R-MLP features (V3-V6). This is the main experiment for reciprocal architecture validation.
+
+### Results Location
+
+```
+test_matrix_results_ra_rmlp/
+├── test_V0_adamwspam_none/
+│   ├── model.pt
+│   ├── metrics.json
+│   └── training.log
+├── test_V1_adamwspam_none/
+├── test_V2_adamwspam_none/
+├── test_V3_adamwspam_none/  # R-MLP starts here
+├── ...
+└── test_V6_adamwspam_none/
+```
+
+---
+
 ## Future Directions
 
-### Short-Term: Reciprocal MLP (R-MLP)
-- **V3-V6 ablations**: Test R-MLP mechanisms on top of Unified RA
-- Quality validation (2+ hour runs)
-- MLP-level gate analysis
+### Short-Term: R-MLP Production Validation
+- Complete V3-V6 ablation quality analysis
+- Benchmark R-MLP forward/backward time on A10G
+- Determine optimal R_ff value (currently 64)
+- Gate statistics analysis (w_std/w_rec evolution)
 
-### Medium-Term: Reciprocal Attention (RA) Improvements
-- `torch.compile()` integration (expect 13.5% speedup for RA)
+### Medium-Term: Architecture Refinements
+- Adaptive R per layer (different reciprocal ranks per transformer layer)
 - Mixed Unified RA + standard attention (selective per-head)
-- Adaptive R per layer (different reciprocal rank per transformer layer)
+- Hybrid R-MLP + standard MLP (selective per-layer)
+- Weight tying experiments (up_low tied to up_std transpose)
 
-### Long-Term: Integration
-- Sparse attention + Unified RA
-- Multimodal applications (vision + language)
-- Inference optimization (KV cache structure for RA)
-- Combined RA + R-MLP production deployment
+### Long-Term: Integration & Deployment
+- Sparse attention + Unified RA combination
+- Multimodal applications (vision + language with RA/R-MLP)
+- Inference optimization (KV cache structure for folded RA)
+- Combined RA + R-MLP production deployment at scale
 
 ---
 
@@ -411,12 +486,17 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 
 ### Implementation Files
 
-**Core**:
-- `unified_ra.py`: UnifiedRAttention implementation
-- `gpt2/ra_v5_patch.py`: GPT-2 patching utilities
-- `gpt2/train_ra_mla.py`: Training integration
+**Core Architecture**:
+- `unified_ra.py`: UnifiedRAttention + ReciprocalMLP implementation
+- `gpt2/ra_v5_patch.py`: GPT-2 patching utilities (RA/R-MLP/combined)
+- `gpt2/train_ra_mla.py`: Training integration with ablation support
 
-**Related** (L/S/R series):
+**Defconfigs**:
+- `defconfigs/gpt2-unified-ra-ablation`: V0-V1 baseline validation
+- `defconfigs/gpt2-unified-ra-extended-ablation`: V0-V6 parameter sweep
+- `defconfigs/gpt2-ra-rmlp-ablation`: V0-V6 RA+R-MLP full test
+
+**Related** (L/S/R series, legacy):
 - `gpt2/ra_lens_gpt2.py`: Lens-gated architecture
 - `rwr_attention.py`: Full RWR implementation
 - `lib/optimizers.py`: SinkGD optimizer
@@ -424,7 +504,9 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 ---
 
 **Last Updated**: 2025-11-09
-**Version**: Unified RA v1.0 (Production)
-**Status**: ✅ Production-ready, exceeds all acceptance criteria
+**Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental)
+**Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations)
 
-**Quick Start**: `python gpt2/train_ra_mla.py --ra-mla-ablation-step V1 --dry-run`
+**Quick Start**:
+- RA validation: `make defconfig-gpt2-unified-ra-ablation && make check`
+- R-MLP test: `make defconfig-gpt2-ra-rmlp-ablation && make check`

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Generate visual diagrams for Unified RA documentation.
+Generate visual diagrams for Unified RA and R-MLP documentation.
 
-Creates SVG/PNG images to replace ASCII art in docs/ra.md.
+Creates PNG images to replace ASCII art in docs/ra.md.
 """
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch, FancyArrowPatch, Rectangle
 import numpy as np
 
 # Set style
@@ -870,6 +870,230 @@ def create_forward_pass_flow():
     plt.close()
 
 
+def create_rmlp_folding_diagram():
+    """Create R-MLP folding concept diagram."""
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 10)
+    ax.axis("off")
+
+    # Title
+    ax.text(
+        5,
+        9.5,
+        "R-MLP: Folded MLP Architecture",
+        ha="center",
+        fontsize=16,
+        fontweight="bold",
+    )
+    ax.text(
+        5,
+        9.0,
+        "Mirrors RA's folding concept in MLP expansion dimension",
+        ha="center",
+        fontsize=11,
+        style="italic",
+    )
+
+    # Standard MLP
+    ax.text(2.5, 8.0, "Standard MLP", ha="center", fontsize=12, fontweight="bold")
+
+    rect1 = FancyBboxPatch(
+        (1.3, 6.5), 2.4, 0.8,
+        boxstyle="round,pad=0.1",
+        edgecolor="black",
+        facecolor="#fee090",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(rect1)
+    ax.text(2.5, 6.9, "up: D → D_ff", ha="center", fontweight="bold", fontsize=10)
+
+    arrow1 = FancyArrowPatch((2.5, 6.5), (2.5, 5.8), arrowstyle="->", lw=2, color="black", mutation_scale=20)
+    ax.add_patch(arrow1)
+    ax.text(2.5, 5.5, "GELU", ha="center", fontsize=9, style="italic")
+
+    arrow2 = FancyArrowPatch((2.5, 5.2), (2.5, 4.5), arrowstyle="->", lw=2, color="black", mutation_scale=20)
+    ax.add_patch(arrow2)
+
+    rect2 = FancyBboxPatch(
+        (1.3, 3.5), 2.4, 0.8,
+        boxstyle="round,pad=0.1",
+        edgecolor="black",
+        facecolor="#fee090",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(rect2)
+    ax.text(2.5, 3.9, "down: D_ff → D", ha="center", fontweight="bold", fontsize=10)
+
+    # R-MLP (right side)
+    ax.text(7.5, 8.0, "R-MLP (Folded)", ha="center", fontsize=12, fontweight="bold", color="green")
+
+    # Split up-projections
+    rect3 = FancyBboxPatch(
+        (5.5, 6.8), 2.0, 0.4,
+        boxstyle="round,pad=0.05",
+        edgecolor="black",
+        facecolor="#4575b4",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(rect3)
+    ax.text(6.5, 7.0, "up_std: D → D_ff_std", ha="center", fontsize=9, fontweight="bold", color="white")
+
+    rect4 = FancyBboxPatch(
+        (5.5, 6.1), 2.0, 0.4,
+        boxstyle="round,pad=0.05",
+        edgecolor="black",
+        facecolor="#d73027",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(rect4)
+    ax.text(6.5, 6.3, "up_low: D → R_ff", ha="center", fontsize=9, fontweight="bold", color="white")
+
+    # GELU on both
+    arrow3 = FancyArrowPatch((6.5, 6.8), (6.5, 5.5), arrowstyle="->", lw=1.5, color="black", mutation_scale=15)
+    ax.add_patch(arrow3)
+    arrow4 = FancyArrowPatch((6.5, 6.1), (6.5, 5.5), arrowstyle="->", lw=1.5, color="black", mutation_scale=15)
+    ax.add_patch(arrow4)
+    ax.text(6.5, 5.3, "GELU on both", ha="center", fontsize=9, style="italic")
+
+    # Folding box
+    fold_box = FancyBboxPatch(
+        (5.3, 4.2), 2.4, 0.9,
+        boxstyle="round,pad=0.1",
+        edgecolor="green",
+        facecolor="lightgreen",
+        linewidth=3,
+        alpha=0.8,
+    )
+    ax.add_patch(fold_box)
+    ax.text(6.5, 4.8, "Fold", ha="center", fontweight="bold", fontsize=11, color="darkgreen")
+    ax.text(6.5, 4.5, "[w_std·h_std | w_rec·h_low]", ha="center", fontsize=9, color="darkgreen")
+
+    arrow5 = FancyArrowPatch((6.5, 5.0), (6.5, 4.2), arrowstyle="->", lw=2, color="green", mutation_scale=20)
+    ax.add_patch(arrow5)
+
+    # Down projection
+    arrow6 = FancyArrowPatch((6.5, 4.2), (6.5, 3.5), arrowstyle="->", lw=2, color="black", mutation_scale=20)
+    ax.add_patch(arrow6)
+
+    rect5 = FancyBboxPatch(
+        (5.5, 2.5), 2.0, 0.8,
+        boxstyle="round,pad=0.1",
+        edgecolor="black",
+        facecolor="#91bfdb",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(rect5)
+    ax.text(6.5, 2.9, "down: (D_ff_std+R_ff) → D", ha="center", fontweight="bold", fontsize=9)
+
+    # Key insight
+    insight_box = FancyBboxPatch(
+        (1.5, 0.5), 7.0, 1.2,
+        boxstyle="round,pad=0.1",
+        edgecolor="green",
+        facecolor="lightgreen",
+        linewidth=3,
+        alpha=0.8,
+    )
+    ax.add_patch(insight_box)
+    ax.text(5, 1.4, "Key Principle: D_ff = D_ff_std + R_ff", ha="center", fontweight="bold", fontsize=12, color="darkgreen")
+    ax.text(5, 1.0, "Total expansion dimension unchanged → FLOPs match baseline!", ha="center", fontsize=10, style="italic", color="darkgreen")
+    ax.text(5, 0.7, "Reciprocity through feature folding, not cross-layer flow", ha="center", fontsize=10, style="italic", color="darkgreen")
+
+    plt.tight_layout()
+    plt.savefig("docs/images/rmlp_folding.png", dpi=150, bbox_inches="tight")
+    print("✓ Created: docs/images/rmlp_folding.png")
+    plt.close()
+
+
+def create_rmlp_ablation_diagram():
+    """Create R-MLP ablation steps comparison diagram."""
+    fig, ax = plt.subplots(figsize=(12, 10))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 12)
+    ax.axis("off")
+
+    # Title
+    ax.text(5, 11.5, "R-MLP Ablation Steps (V3-V6)", ha="center", fontsize=16, fontweight="bold")
+
+    steps = [
+        {
+            "name": "V3: Basic R-MLP",
+            "y": 9.5,
+            "features": ["Folded [h_std|h_low]", "Gates: w_std, w_rec", "R_ff=64"],
+            "color": "#91bfdb",
+        },
+        {
+            "name": "V4: R-MLP + Mixer",
+            "y": 7.5,
+            "features": ["V3 features", "+ 1x1 mixer on h_low", "Enhanced expressivity"],
+            "color": "#4575b4",
+        },
+        {
+            "name": "V5: R-MLP + Gates",
+            "y": 5.5,
+            "features": ["V3 features", "+ Per-token gate_alpha", "Discoverability"],
+            "color": "#fee090",
+        },
+        {
+            "name": "V6: R-MLP + All",
+            "y": 3.5,
+            "features": ["V3 features", "+ Mixer", "+ Gates", "All mechanisms"],
+            "color": "#91cf60",
+        },
+    ]
+
+    for step in steps:
+        # Box
+        box = FancyBboxPatch(
+            (1.5, step["y"]-0.6), 7.0, 1.3,
+            boxstyle="round,pad=0.1",
+            edgecolor="black",
+            facecolor=step["color"],
+            linewidth=2,
+            alpha=0.7,
+        )
+        ax.add_patch(box)
+
+        # Title
+        ax.text(5, step["y"]+0.5, step["name"], ha="center", fontsize=13, fontweight="bold")
+
+        # Features
+        for i, feature in enumerate(step["features"]):
+            ax.text(5, step["y"]+0.2-i*0.25, f"• {feature}", ha="center", fontsize=10)
+
+    # Arrows between steps
+    for i in range(len(steps)-1):
+        arrow = FancyArrowPatch(
+            (5, steps[i]["y"]-0.7), (5, steps[i+1]["y"]+0.7),
+            arrowstyle="->", lw=3, color="black", mutation_scale=30
+        )
+        ax.add_patch(arrow)
+
+    # Foundation note
+    note_box = FancyBboxPatch(
+        (1.0, 0.5), 8.0, 1.0,
+        boxstyle="round,pad=0.1",
+        edgecolor="blue",
+        facecolor="lightblue",
+        linewidth=2,
+        alpha=0.7,
+    )
+    ax.add_patch(note_box)
+    ax.text(5, 1.2, "Foundation: All R-MLP steps build on Unified RA (V1)", ha="center", fontsize=11, fontweight="bold")
+    ax.text(5, 0.8, "Research: Which R-MLP features improve quality?", ha="center", fontsize=10, style="italic")
+
+    plt.tight_layout()
+    plt.savefig("docs/images/rmlp_ablation_steps.png", dpi=150, bbox_inches="tight")
+    print("✓ Created: docs/images/rmlp_ablation_steps.png")
+    plt.close()
+
+
 if __name__ == "__main__":
     print("\nGenerating visual diagrams for docs/ra.md...")
     print("=" * 60)
@@ -879,6 +1103,8 @@ if __name__ == "__main__":
     create_folded_layout_diagram()
     create_rwr_concept_diagram()
     create_forward_pass_flow()
+    create_rmlp_folding_diagram()
+    create_rmlp_ablation_diagram()
 
     print("=" * 60)
     print("✓ All diagrams generated successfully!")
@@ -888,3 +1114,5 @@ if __name__ == "__main__":
     print("  - docs/images/folded_layout.png")
     print("  - docs/images/rwr_concept.png")
     print("  - docs/images/forward_pass.png")
+    print("  - docs/images/rmlp_folding.png")
+    print("  - docs/images/rmlp_ablation_steps.png")
