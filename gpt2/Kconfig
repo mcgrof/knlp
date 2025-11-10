@@ -163,6 +163,26 @@ config GPT2_MAX_ITERS
 	  Maximum number of training iterations.
 	  For FineWebEdu: 50000 iterations is typical for baseline.
 	  For Shakespeare: 5000-10000 iterations is sufficient.
+	  Ignored if GPT2_MAX_TIME is set (time-based training).
+
+config GPT2_MAX_TIME
+	int "Maximum training time (seconds)"
+	default 0
+	range 0 86400
+	help
+	  Maximum training time in seconds (time-based training).
+	  When set to non-zero, training stops when this time limit is reached,
+	  regardless of iteration count. This provides more consistent training
+	  duration across different hardware configurations.
+
+	  Common values:
+	    - 1800 (30 minutes) for quick tests
+	    - 7200 (2 hours) for quality comparisons
+	    - 28800 (8 hours) for production validation
+
+	  Set to 0 to disable time-based limits (use MAX_ITERS instead).
+	  When both MAX_TIME and MAX_ITERS are set, training stops when
+	  EITHER limit is reached.
 
 config GPT2_LOG_INTERVAL
 	int "Logging interval (steps)"
