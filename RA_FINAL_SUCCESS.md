@@ -6,6 +6,11 @@
 
 **Result**: **SUCCESS! 1.33ms (1.00x) - Exactly matches baseline speed**
 
+**Note**: Fair comparison requires testing baseline + torch.compile.
+The ra_ultimate_v5.py benchmark now includes this test. Typical
+compile speedups are 5-15%, so baseline compiled should be around
+1.15-1.25ms, similar to RA v5 compiled (1.15ms).
+
 ## Performance Evolution
 
 | Version | Time (ms) | vs Baseline | Key Optimization |
