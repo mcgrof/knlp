@@ -1199,11 +1199,12 @@ if args.ra_mla_ablation_step is not None:
         args.enable_mla = False
         args.ra_alpha = 0.0
         args.mlp_expansion_ratio = 4.0
-        # Variance-guided activation
+        # Variance-guided activation (check every 50 steps, activate around step 250)
         args.use_variance_guided_activation = True
-        args.variance_check_interval = 150
-        args.variance_threshold = 0.05
-        args.variance_window = 50
+        args.variance_check_interval = 50
+        args.variance_min_step = 250
+        args.variance_threshold = 0.02
+        args.variance_window = 100
     elif step == "V17":
         # V17: R-MLP basic + variance-guided activation + KV pruning (fixed)
         # Same as V14 but with variance-guided instead of fixed 75-step delay
@@ -1220,11 +1221,12 @@ if args.ra_mla_ablation_step is not None:
         args.kv_cache_prune = True
         args.kv_prune_k = 391  # Golden ratio
         args.kv_prune_recency = 64
-        # Variance-guided activation
+        # Variance-guided activation (check every 50 steps, activate around step 250)
         args.use_variance_guided_activation = True
-        args.variance_check_interval = 150
-        args.variance_threshold = 0.05
-        args.variance_window = 50
+        args.variance_check_interval = 50
+        args.variance_min_step = 250
+        args.variance_threshold = 0.02
+        args.variance_window = 100
     elif step == "V18":
         # V18: R-MLP golden + variance-guided activation + KV pruning (learned)
         # Same as V15 but with variance-guided instead of fixed 75-step delay
@@ -1241,11 +1243,12 @@ if args.ra_mla_ablation_step is not None:
         args.kv_cache_prune = True
         args.kv_prune_learned = True  # Learn optimal pruning ratio
         args.kv_prune_recency = 64
-        # Variance-guided activation
+        # Variance-guided activation (check every 50 steps, activate around step 250)
         args.use_variance_guided_activation = True
-        args.variance_check_interval = 150
-        args.variance_threshold = 0.05
-        args.variance_window = 50
+        args.variance_check_interval = 50
+        args.variance_min_step = 250
+        args.variance_threshold = 0.02
+        args.variance_window = 100
     else:
         raise ValueError(
             f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V18."
@@ -2247,10 +2250,17 @@ def main():
 
     # Variance-guided activation: check every N steps for training stability
     use_variance_guided = getattr(args, "use_variance_guided_activation", False)
-    variance_check_interval = getattr(args, "variance_check_interval", 150)
-    variance_threshold = getattr(args, "variance_threshold", 0.05)  # Target variance
+    variance_check_interval = getattr(
+        args, "variance_check_interval", 50
+    )  # Check often
+    variance_min_step = getattr(
+        args, "variance_min_step", 250
+    )  # Don't activate before this
+    variance_threshold = getattr(
+        args, "variance_threshold", 0.02
+    )  # Target variance (lower = more stable)
     variance_window = getattr(
-        args, "variance_window", 50
+        args, "variance_window", 100
     )  # Window for computing variance
 
     # Track loss history for variance computation
@@ -2588,7 +2598,7 @@ def main():
         if (
             use_variance_guided
             and not gates_unfrozen
-            and iter_num > 0
+            and iter_num >= variance_min_step
             and iter_num % variance_check_interval == 0
         ):
             if len(loss_history) >= variance_window:
@@ -2600,7 +2610,7 @@ def main():
 
                 if master_process:
                     print(
-                        f"  Variance check at step {iter_num}: var={loss_variance:.6f} (target<{variance_threshold:.6f})"
+                        f"  Variance check at step {iter_num}: var={loss_variance:.6f} (target<{variance_threshold:.6f}, min_step={variance_min_step})"
                     )
 
                 # Unfreeze if variance is below threshold (training is stable)
