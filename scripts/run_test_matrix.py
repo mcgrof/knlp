@@ -2151,6 +2151,9 @@ def main():
                         "V13": "R-MLP golden delayed (75 steps): R_ff=1152, delayed start",
                         "V14": "V11 + KV pruning (golden): k=391 (38.2%), recency=64",
                         "V15": "V13 + KV pruning (learned): Learned keep_ratio, recency=64",
+                        "V16": "Unified RA R=4 variance-guided: Activates at step ~250 based on loss variance",
+                        "V17": "R-MLP basic + variance-guided + KV pruning: Fixed k=391, variance activation",
+                        "V18": "R-MLP golden + variance-guided + KV pruning: Learned ratio, variance activation",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
