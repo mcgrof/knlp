@@ -637,10 +637,10 @@ class PrunedKVAttention(nn.Module):
     """
     Standard GPT-2 attention with KV cache pruning.
 
-    Implements top-k + recency pruning strategy:
-    - Keep last N tokens (recency buffer) for local context
-    - Keep top k-N tokens by attention scores for global context
-    - Reduces KV cache memory by only storing k tokens per head
+    Supports multiple pruning strategies:
+    - v_only: Keep K full, prune V only (minimal semantic drift, single softmax)
+    - kv_scores_reuse: Prune K&V but reuse scores (no double GEMM)
+    - legacy: Original implementation (double softmax, for comparison)
 
     NOTE: This module is marked with @torch._dynamo.disable because
     torch.compile generates buggy Triton kernels for the top-k and
@@ -655,6 +655,9 @@ class PrunedKVAttention(nn.Module):
         recency: Number of recent tokens to always keep (default: 64)
         learn_ratio: If True, k_keep is learned during training
         dropout: Dropout probability
+        prune_mode: "v_only", "kv_scores_reuse", or "legacy"
+        exposure_correct: Correct for causal attention bias
+        ema_momentum: EMA smoothing for importance (0 disables)
     """
 
     def __init__(
@@ -666,15 +669,19 @@ class PrunedKVAttention(nn.Module):
         recency=64,
         learn_ratio=False,
         dropout=0.1,
+        prune_mode="v_only",
+        exposure_correct=True,
+        ema_momentum=0.9,
     ):
         super().__init__()
         assert n_embd % n_head == 0
+        assert prune_mode in ["v_only", "kv_scores_reuse", "legacy"]
+
         self.n_embd = n_embd
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         self.block_size = block_size
-        self.recency = recency
-        self.learn_ratio = learn_ratio
+        self.prune_mode = prune_mode
 
         # Q, K, V projections
         self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False)
@@ -682,19 +689,40 @@ class PrunedKVAttention(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
 
-        # Learnable keep ratio or fixed k
-        if learn_ratio:
-            # Initialize to golden ratio: 1/(1+φ) ≈ 0.382
-            init_ratio = 1.0 / (1.0 + 1.618)
-            self.register_parameter(
-                "keep_ratio", nn.Parameter(torch.tensor(init_ratio))
-            )
-            self.k_keep = None  # Computed dynamically
-        else:
-            self.k_keep = k_keep
-            self.keep_ratio = None
+        # Configure pruning strategy
+        from lib.kv_pruning import KVPruneCfg, VOnlyPruner, KVScoresReusePruner
 
-        # Causal mask (for safety, though we prune before applying)
+        keep_ratio = 1.0 / (1.0 + 1.618) if learn_ratio else (k_keep / block_size)
+        cfg = KVPruneCfg(
+            keep_ratio=keep_ratio,
+            k_min=64,
+            recency=recency,
+            exposure_correct=exposure_correct,
+            ema_momentum=ema_momentum,
+            ema_update_interval=8,
+            v_recon_hidden_dim=0,  # No V-recon in base class
+            mode=prune_mode,
+        )
+
+        if prune_mode == "v_only":
+            self.pruner = VOnlyPruner(cfg, n_head, self.head_dim)
+        elif prune_mode == "kv_scores_reuse":
+            self.pruner = KVScoresReusePruner(cfg, n_head, self.head_dim)
+        else:  # legacy
+            self.pruner = None
+            self.recency = recency
+            self.learn_ratio = learn_ratio
+            if learn_ratio:
+                init_ratio = 1.0 / (1.0 + 1.618)
+                self.register_parameter(
+                    "keep_ratio", nn.Parameter(torch.tensor(init_ratio))
+                )
+                self.k_keep = None
+            else:
+                self.k_keep = k_keep
+                self.keep_ratio = None
+
+        # Causal mask
         self.register_buffer(
             "bias",
             torch.tril(torch.ones(block_size, block_size)).view(
@@ -714,65 +742,67 @@ class PrunedKVAttention(nn.Module):
         k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
 
+        inv_sqrt_d = 1.0 / (self.head_dim**0.5)
+
+        # Use new pruning strategies or legacy implementation
+        if self.prune_mode == "v_only":
+            # V-only pruning: single softmax, no distribution shift
+            out, idx = self.pruner(q, k, v, inv_sqrt_d)
+        elif self.prune_mode == "kv_scores_reuse":
+            # KV pruning with score reuse: no double GEMM
+            out, idx = self.pruner(q, k, v, inv_sqrt_d)
+        else:
+            # Legacy implementation (for comparison)
+            out = self._forward_legacy(q, k, v, inv_sqrt_d, T)
+
+        # Reshape and project
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = self.resid_dropout(self.c_proj(out))
+
+        return out
+
+    def _forward_legacy(self, q, k, v, inv_sqrt_d, T):
+        """Legacy KV pruning implementation (double softmax)."""
         # Compute k_keep dynamically if learning ratio
         if self.learn_ratio:
-            # Clamp ratio to [0.05, 1.0] to prevent degenerate solutions
             ratio = torch.clamp(self.keep_ratio, 0.05, 1.0)
-            k_keep = max(64, int(T * ratio.item()))  # Minimum 64 tokens
-            k_keep = min(k_keep, T)  # Cannot exceed sequence length
+            k_keep = max(64, int(T * ratio.item()))
+            k_keep = min(k_keep, T)
         else:
             k_keep = min(self.k_keep, T)
 
-        # Compute attention scores: [B, H, T, T]
-        inv_sqrt_d = 1.0 / (self.head_dim**0.5)
-        scores = (q @ k.transpose(-2, -1)) * inv_sqrt_d  # [B, H, T, T]
-
-        # Apply causal mask
+        # Compute attention scores
+        scores = (q @ k.transpose(-2, -1)) * inv_sqrt_d
         scores = scores.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
 
-        # For each query position, compute scores to all keys
-        # We want to prune the K/V cache, keeping only top-k per HEAD
-        # Strategy: Use attention weights (post-softmax) to measure token importance
-        # Apply softmax per query, then average to get importance of each key token
+        # Compute attention weights
+        attn_weights = torch.softmax(scores, dim=-1)
 
-        # Compute attention weights: [B, H, T, T]
-        attn_weights = torch.softmax(scores, dim=-1)  # [B, H, T_query, T_key]
-
-        # Average attention weights each key receives across all queries: [B, H, T]
-        # This measures how much attention each key token receives on average
-        mean_importance = attn_weights.mean(dim=2)  # [B, H, T]
+        # Average attention weights each key receives
+        mean_importance = attn_weights.mean(dim=2)
 
         # Recency: Force keep last recency tokens
         if self.recency > 0 and T > self.recency:
             recent_mask = torch.zeros_like(mean_importance, dtype=torch.bool)
             recent_mask[:, :, -self.recency :] = True
-            # Set recent tokens to high importance to guarantee top-k selection
-            # Use 1.0 as max possible importance (since these are attention weights)
             mean_importance = mean_importance.masked_fill(recent_mask, 1.0)
 
-        # Select top-k tokens per head based on importance
-        vals, idx = torch.topk(mean_importance, k_keep, dim=-1)  # [B, H, k_keep]
+        # Select top-k tokens per head
+        vals, idx = torch.topk(mean_importance, k_keep, dim=-1)
 
         # Gather K and V for selected tokens
-        # idx: [B, H, k_keep], need to expand for gathering along T dimension
-        idx_expanded = idx.unsqueeze(-1).expand(
-            -1, -1, -1, self.head_dim
-        )  # [B, H, k, D]
-        K_keep = torch.gather(k, 2, idx_expanded)  # [B, H, k, D]
-        V_keep = torch.gather(v, 2, idx_expanded)  # [B, H, k, D]
+        B, H, _, D = q.shape
+        idx_expanded = idx.unsqueeze(-1).expand(-1, -1, -1, D)
+        K_keep = torch.gather(k, 2, idx_expanded)
+        V_keep = torch.gather(v, 2, idx_expanded)
 
-        # Recompute attention with pruned K/V
-        # Q: [B, H, T, D], K_keep: [B, H, k, D]
-        attn_scores = (q @ K_keep.transpose(-2, -1)) * inv_sqrt_d  # [B, H, T, k]
-        attn = torch.softmax(attn_scores, dim=-1)  # [B, H, T, k]
+        # Recompute attention with pruned K/V (second softmax!)
+        attn_scores = (q @ K_keep.transpose(-2, -1)) * inv_sqrt_d
+        attn = torch.softmax(attn_scores, dim=-1)
         attn = self.attn_dropout(attn)
 
         # Weighted sum over pruned values
-        out = attn @ V_keep  # [B, H, T, D]
-
-        # Reshape and project
-        out = out.transpose(1, 2).contiguous().view(B, T, C)
-        out = self.resid_dropout(self.c_proj(out))
+        out = attn @ V_keep
 
         return out
 
