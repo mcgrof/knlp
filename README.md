@@ -148,69 +148,11 @@ The memory savings directly translate to the ability to:
 
 → See [GPT-2 detailed analysis](docs/gpt2.md) for complete findings and more visualizations
 
-### Recent Improvements (November 2024)
+### Implementation Notes (November 2024)
 
-#### Pruning Schedule Standardization
+**Pruning Schedule**: All methods now use cubic sparsity schedule `s(t) = s_final × ((t-warmup)/(T-warmup))^3` following [Lottery Ticket Hypothesis](https://arxiv.org/abs/1803.03635). This enables fair comparison between methods.
 
-Fixed critical confound in pruning method comparisons where different sparsity schedules could explain performance differences rather than the pruning algorithms themselves.
-
-**Problem Identified:**
-- AdamWSPAM with magnitude pruning used **linear** sparsity schedule
-- bitter3-9 variants used **cubic** sparsity schedule (slower start, faster middle)
-- Schedule difference alone could account for observed quality differences
-
-**Solution Implemented:**
-Both magnitude pruning and all bitter variants now use **cubic schedule** by default:
-
-```python
-progress = ((step - warmup) / (end - warmup)) ** 3
-sparsity = target_sparsity * progress
-```
-
-This matches state-of-the-art from [Lottery Ticket Hypothesis](https://arxiv.org/abs/1803.03635) and standard magnitude pruning papers. Cubic schedule:
-- **Starts slow**: Preserves more weights during early learning
-- **Accelerates middle**: Ramps up pruning when features stabilize
-- **Tapers end**: Approaches target smoothly for fine-tuning
-
-**Impact**: Enables apples-to-apples comparison where variants differ only in importance metric, not sparsity timing. Future comparisons will isolate true algorithmic differences.
-
-#### KV Cache Pruning Bug Fix
-
-Discovered and fixed critical bug in experimental KV cache pruning that caused artificial performance gains through model memorization.
-
-**The Bug** (unified_ra.py, PrunedKVAttention):
-```python
-# WRONG: Used only last query position's attention scores
-last_scores = scores[:, :, -1:, :]  # Shape: [B, H, 1, T]
-vals, idx = torch.topk(last_scores.squeeze(2), k_keep, dim=-1)
-```
-
-**Why This Failed:**
-- Selected K/V cache tokens based only on final position's needs
-- Early positions received same pruned cache (optimized for position T)
-- Model learned to optimize **only final token** prediction
-- Training collapsed to impossible losses (0.26 vs expected 3.76)
-
-**Evidence of Bug:**
-| Step | Description | Val Loss | Iterations | Status |
-|------|-------------|----------|------------|--------|
-| V0 | Baseline GPT-2 | 3.7617 | 4090 | Normal |
-| V11 | R-MLP delayed | 3.7644 | 4000 | Normal |
-| V14 | V11 + KV pruning | **0.2625** | 2110 | **Memorization** |
-| V15 | V13 + KV learned | **0.4284** | 2110 | **Memorization** |
-
-Loss of 0.26 is physically impossible for language modeling - model was cheating by ignoring all but final position.
-
-**The Fix:**
-```python
-# CORRECT: Use mean scores across ALL query positions
-mean_scores = scores.mean(dim=2)  # Shape: [B, H, T]
-vals, idx = torch.topk(mean_scores, k_keep, dim=-1)
-```
-
-Now K/V selection considers importance across all positions, preventing memorization.
-
-**Reference**: This bug class is discussed in attention pruning literature where per-position importance varies significantly in causal transformers. See [Efficient Transformers Survey](https://arxiv.org/abs/2009.06732) Section 3.2 on attention pattern analysis.
+**Bitter Variants**: Multiple pruning importance metrics were evaluated. bitter7 (variance-based: `|w| × v^0.25` where v is Adam's exp_avg_sq) showed most promise and is the focus of ongoing work.
 
 ## ResNet CNN Results
 
