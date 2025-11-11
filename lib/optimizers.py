@@ -753,18 +753,11 @@ def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
         # Get the pruning variant (bitter lesson approach)
         variant = adamprune_state.get("variant", "bitter0")
 
-        # Use cubic schedule for bitter3-9, linear for bitter0-2
-        if variant in [
-            "bitter3",
-            "bitter4",
-            "bitter5",
-            "bitter6",
-            "bitter7",
-            "bitter8",
-            "bitter9",
-        ]:
-            # Cubic schedule: slower initial pruning, faster at the end
-            progress = progress**3
+        # Use cubic schedule for ALL variants to match state-of-art methods
+        # This ensures fair comparison between variants (they differ only in
+        # importance metric, not sparsity schedule)
+        # Cubic schedule: slower initial pruning, faster at the end
+        progress = progress**3
 
         current_sparsity = adamprune_state["target_sparsity"] * progress
 
@@ -996,7 +989,9 @@ def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
                             if "exp_avg_sq" in state:
                                 v = state["exp_avg_sq"]
                                 variance_importance = (torch.abs(v) + 1e-8) ** 0.25
-                                importance = torch.abs(module.weight.data) * variance_importance
+                                importance = (
+                                    torch.abs(module.weight.data) * variance_importance
+                                )
                             else:
                                 importance = torch.abs(module.weight.data)
                         elif variant == "bitter8":

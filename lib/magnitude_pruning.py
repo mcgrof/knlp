@@ -26,6 +26,7 @@ class MagnitudePruning:
         warmup_steps=0,
         pruning_frequency=100,
         ramp_end_step=3000,
+        schedule="cubic",
     ):
         """
         Initialize Magnitude Pruning.
@@ -37,6 +38,8 @@ class MagnitudePruning:
             warmup_steps: Number of steps before pruning starts
             pruning_frequency: Update masks every N steps
             ramp_end_step: Step at which target sparsity is reached
+            schedule: Sparsity schedule ("linear" or "cubic"). Default is "cubic"
+                     to match state-of-art and bitter3-9 variants.
         """
         self.model = model
         self.initial_sparsity = initial_sparsity
@@ -44,6 +47,7 @@ class MagnitudePruning:
         self.warmup_steps = warmup_steps
         self.pruning_frequency = pruning_frequency
         self.ramp_end_step = ramp_end_step
+        self.schedule = schedule
         self.step = 0
 
         # Initialize masks for prunable layers
@@ -72,10 +76,18 @@ class MagnitudePruning:
         if self.step >= self.ramp_end_step:
             return self.target_sparsity
 
-        # Linear ramp from initial to target sparsity
+        # Calculate ramp progress
         ramp_progress = (self.step - self.warmup_steps) / (
             self.ramp_end_step - self.warmup_steps
         )
+
+        # Apply schedule transformation
+        if self.schedule == "cubic":
+            # Cubic schedule: slower initial pruning, faster at the end
+            # Matches bitter3-9 variants and state-of-art methods
+            ramp_progress = ramp_progress**3
+        # else: linear (no transformation)
+
         current_sparsity = (
             self.initial_sparsity
             + (self.target_sparsity - self.initial_sparsity) * ramp_progress
