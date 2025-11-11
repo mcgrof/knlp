@@ -732,23 +732,26 @@ class PrunedKVAttention(nn.Module):
 
         # For each query position, compute scores to all keys
         # We want to prune the K/V cache, keeping only top-k per HEAD
-        # Strategy: Use MEAN scores across all query positions as proxy for importance
-        # (Using only last position causes model to only optimize for final token)
+        # Strategy: Use attention weights (post-softmax) to measure token importance
+        # Apply softmax per query, then average to get importance of each key token
 
-        # Average attention scores across all query positions: [B, H, T]
-        mean_scores = scores.mean(dim=2)  # [B, H, T]
+        # Compute attention weights: [B, H, T, T]
+        attn_weights = torch.softmax(scores, dim=-1)  # [B, H, T_query, T_key]
+
+        # Average attention weights each key receives across all queries: [B, H, T]
+        # This measures how much attention each key token receives on average
+        mean_importance = attn_weights.mean(dim=2)  # [B, H, T]
 
         # Recency: Force keep last recency tokens
         if self.recency > 0 and T > self.recency:
-            recent_mask = torch.zeros_like(mean_scores, dtype=torch.bool)
+            recent_mask = torch.zeros_like(mean_importance, dtype=torch.bool)
             recent_mask[:, :, -self.recency :] = True
-            # Set recent tokens to max score to guarantee top-k selection
-            mean_scores = mean_scores.masked_fill(
-                recent_mask, mean_scores.max().item() + 1.0
-            )
+            # Set recent tokens to high importance to guarantee top-k selection
+            # Use 1.0 as max possible importance (since these are attention weights)
+            mean_importance = mean_importance.masked_fill(recent_mask, 1.0)
 
-        # Select top-k tokens per head
-        vals, idx = torch.topk(mean_scores, k_keep, dim=-1)  # [B, H, k_keep]
+        # Select top-k tokens per head based on importance
+        vals, idx = torch.topk(mean_importance, k_keep, dim=-1)  # [B, H, k_keep]
 
         # Gather K and V for selected tokens
         # idx: [B, H, k_keep], need to expand for gathering along T dimension

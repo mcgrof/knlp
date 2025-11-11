@@ -2603,8 +2603,6 @@ def main():
         ):
             if len(loss_history) >= variance_window:
                 # Compute variance over recent loss window
-                import numpy as np
-
                 recent_losses = loss_history[-variance_window:]
                 loss_variance = np.var(recent_losses)
 
