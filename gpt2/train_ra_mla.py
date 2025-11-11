@@ -1189,9 +1189,66 @@ if args.ra_mla_ablation_step is not None:
         args.kv_cache_prune = True
         args.kv_prune_learned = True  # Learn optimal pruning ratio
         args.kv_prune_recency = 64
+    elif step == "V16":
+        # V16: Unified RA (R=4) with variance-guided activation
+        # Enables RA once training stabilizes based on loss variance
+        args.use_ra_v5 = True
+        args.ra_v5_R = 4
+        args.ra_v5_per_head_gates = True
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # Variance-guided activation
+        args.use_variance_guided_activation = True
+        args.variance_check_interval = 150
+        args.variance_threshold = 0.05
+        args.variance_window = 50
+    elif step == "V17":
+        # V17: R-MLP basic + variance-guided activation + KV pruning (fixed)
+        # Same as V14 but with variance-guided instead of fixed 75-step delay
+        args.use_ra_v5 = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 64
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # KV cache pruning config
+        args.kv_cache_prune = True
+        args.kv_prune_k = 391  # Golden ratio
+        args.kv_prune_recency = 64
+        # Variance-guided activation
+        args.use_variance_guided_activation = True
+        args.variance_check_interval = 150
+        args.variance_threshold = 0.05
+        args.variance_window = 50
+    elif step == "V18":
+        # V18: R-MLP golden + variance-guided activation + KV pruning (learned)
+        # Same as V15 but with variance-guided instead of fixed 75-step delay
+        args.use_ra_v5 = False
+        args.use_rmlp = True
+        args.rmlp_R_ff = 1152  # Golden ratio split
+        args.rmlp_use_mixer = False
+        args.rmlp_use_gates = False
+        args.rmlp_tie_up_low = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # KV cache pruning config with learned ratio
+        args.kv_cache_prune = True
+        args.kv_prune_learned = True  # Learn optimal pruning ratio
+        args.kv_prune_recency = 64
+        # Variance-guided activation
+        args.use_variance_guided_activation = True
+        args.variance_check_interval = 150
+        args.variance_threshold = 0.05
+        args.variance_window = 50
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V15."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V18."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
@@ -2184,14 +2241,39 @@ def main():
         print("Using standard GPT-2 (no RA/MLA patching needed)")
         ra_cfg = None
 
-    # Apply delayed activation if requested
+    # Apply delayed activation if requested (step-based or variance-guided)
     ra_delay_steps = getattr(args, "ra_delay_steps", 0)
     rmlp_delay_steps = getattr(args, "rmlp_delay_steps", 0)
 
-    if ra_delay_steps > 0 or rmlp_delay_steps > 0:
+    # Variance-guided activation: check every N steps for training stability
+    use_variance_guided = getattr(args, "use_variance_guided_activation", False)
+    variance_check_interval = getattr(args, "variance_check_interval", 150)
+    variance_threshold = getattr(args, "variance_threshold", 0.05)  # Target variance
+    variance_window = getattr(
+        args, "variance_window", 50
+    )  # Window for computing variance
+
+    # Track loss history for variance computation
+    loss_history = []
+    gates_unfrozen = False  # Track if we've already unfrozen
+
+    if ra_delay_steps > 0 or rmlp_delay_steps > 0 or use_variance_guided:
         from unified_ra import UnifiedRAttention, ReciprocalMLP
 
-        if ra_delay_steps > 0:
+        if use_variance_guided:
+            print(
+                f"Using variance-guided activation (check every {variance_check_interval} steps)"
+            )
+            print(
+                f"  Target variance: {variance_threshold:.4f}, window: {variance_window} losses"
+            )
+            # Always start frozen for variance-guided mode
+            for module in model.modules():
+                if isinstance(module, UnifiedRAttention):
+                    module.freeze_reciprocal_gates()
+                if isinstance(module, ReciprocalMLP):
+                    module.freeze_reciprocal_gates()
+        elif ra_delay_steps > 0:
             print(
                 f"Freezing Unified RA gates for first {ra_delay_steps} steps (delayed activation)"
             )
@@ -2199,7 +2281,7 @@ def main():
                 if isinstance(module, UnifiedRAttention):
                     module.freeze_reciprocal_gates()
 
-        if rmlp_delay_steps > 0:
+        if rmlp_delay_steps > 0 and not use_variance_guided:
             print(
                 f"Freezing R-MLP gates for first {rmlp_delay_steps} steps (delayed activation)"
             )
@@ -2502,6 +2584,45 @@ def main():
                 if isinstance(module, ReciprocalMLP):
                     module.unfreeze_reciprocal_gates()
 
+        # Variance-guided activation: check if training is stable
+        if (
+            use_variance_guided
+            and not gates_unfrozen
+            and iter_num > 0
+            and iter_num % variance_check_interval == 0
+        ):
+            if len(loss_history) >= variance_window:
+                # Compute variance over recent loss window
+                import numpy as np
+
+                recent_losses = loss_history[-variance_window:]
+                loss_variance = np.var(recent_losses)
+
+                if master_process:
+                    print(
+                        f"  Variance check at step {iter_num}: var={loss_variance:.6f} (target<{variance_threshold:.6f})"
+                    )
+
+                # Unfreeze if variance is below threshold (training is stable)
+                if loss_variance < variance_threshold:
+                    from unified_ra import UnifiedRAttention, ReciprocalMLP
+
+                    if master_process:
+                        print(f"\n{'='*70}")
+                        print(
+                            f"Step {iter_num}: Training stabilized (var={loss_variance:.6f})"
+                        )
+                        print(f"Unfreezing reciprocal gates (enabling RA/R-MLP)")
+                        print(f"{'='*70}\n")
+
+                    for module in (model.module if ddp else model).modules():
+                        if isinstance(module, UnifiedRAttention):
+                            module.unfreeze_reciprocal_gates()
+                        if isinstance(module, ReciprocalMLP):
+                            module.unfreeze_reciprocal_gates()
+
+                    gates_unfrozen = True  # Mark as unfrozen to prevent re-checking
+
         # Evaluation
         if iter_num % args.eval_interval == 0 or iter_num == args.max_iters - 1:
             losses = estimate_loss(
@@ -2645,6 +2766,13 @@ def main():
 
             total_loss += loss.item()
             loss.backward()
+
+        # Track loss for variance-guided activation
+        if use_variance_guided and not gates_unfrozen:
+            loss_history.append(total_loss)
+            # Keep history bounded
+            if len(loss_history) > variance_window * 3:
+                loss_history = loss_history[-variance_window * 2 :]
 
         # Disable metrics computation after forward pass
         if should_log_metrics:
