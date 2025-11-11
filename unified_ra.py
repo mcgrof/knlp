@@ -732,22 +732,23 @@ class PrunedKVAttention(nn.Module):
 
         # For each query position, compute scores to all keys
         # We want to prune the K/V cache, keeping only top-k per HEAD
-        # Strategy: Use scores from LAST query position as proxy for importance
+        # Strategy: Use MEAN scores across all query positions as proxy for importance
+        # (Using only last position causes model to only optimize for final token)
 
-        # Get scores from last query position: [B, H, 1, T]
-        last_scores = scores[:, :, -1:, :]  # [B, H, 1, T]
+        # Average attention scores across all query positions: [B, H, T]
+        mean_scores = scores.mean(dim=2)  # [B, H, T]
 
         # Recency: Force keep last recency tokens
         if self.recency > 0 and T > self.recency:
-            recent_mask = torch.zeros_like(last_scores, dtype=torch.bool)
-            recent_mask[:, :, :, -self.recency :] = True
+            recent_mask = torch.zeros_like(mean_scores, dtype=torch.bool)
+            recent_mask[:, :, -self.recency :] = True
             # Set recent tokens to max score to guarantee top-k selection
-            last_scores = last_scores.masked_fill(
-                recent_mask, last_scores.max().item() + 1.0
+            mean_scores = mean_scores.masked_fill(
+                recent_mask, mean_scores.max().item() + 1.0
             )
 
         # Select top-k tokens per head
-        vals, idx = torch.topk(last_scores.squeeze(2), k_keep, dim=-1)  # [B, H, k_keep]
+        vals, idx = torch.topk(mean_scores, k_keep, dim=-1)  # [B, H, k_keep]
 
         # Gather K and V for selected tokens
         # idx: [B, H, k_keep], need to expand for gathering along T dimension
