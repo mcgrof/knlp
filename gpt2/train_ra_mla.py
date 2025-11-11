@@ -191,6 +191,131 @@ def supports_tensorcore_fp32():
 
 
 # ============================================================================
+# KV-Geometry Calibrator (V-only)
+# ============================================================================
+
+
+class KVGeomCalibrator:
+    """
+    Registers hooks on attention V projections to collect V tensors from
+    warmup batches, sub-samples to budget, then fits KVGeometryV.
+
+    This learns a data-specific Spline->PCA geometry that compresses V
+    vectors better than plain PCA by learning to warp the space before
+    dimensionality reduction.
+    """
+
+    def __init__(
+        self, model, n_heads: int, head_dim: int, k: int, knots: int, device, dtype
+    ):
+        self.model = model
+        self.nh = n_heads
+        self.hd = head_dim
+        self.k = k
+        self.knots = knots
+        self.device = device
+        self.dtype = dtype
+        self.samples = []
+        self.hooks = []
+        self.kvg = None
+
+    def _v_hook(self, mod, inp, out):
+        """Hook to capture V projection outputs."""
+        # out shape varies by architecture:
+        # GPT-2: [B, T, n_embd] where n_embd = nh * hd
+        # LLaMA: [B, T, nh * hd]
+        B, T, hidden = out.shape
+
+        # Reshape to [B*T, nh, hd]
+        try:
+            v = out.view(B * T, self.nh, self.hd)
+        except RuntimeError:
+            # If reshape fails, hidden might not equal nh*hd
+            # Fall back to treating as flattened
+            v = out.view(B * T, -1, self.hd)
+
+        # Flatten to [N, hd] where N = B*T*nh
+        v = v.reshape(-1, self.hd).detach()
+
+        # Subsample to avoid OOM (take max 4096 vectors per batch)
+        take = min(4096, v.shape[0])
+        if take < v.shape[0]:
+            idx = torch.randint(0, v.shape[0], (take,), device=v.device)
+            v = v[idx]
+
+        # Move to CPU to free GPU memory
+        self.samples.append(v.to("cpu", dtype=torch.float32))
+
+    def register(self):
+        """Find and hook V projection layers."""
+        hooked = 0
+        for name, m in self.model.named_modules():
+            # Match common V projection naming patterns
+            if any(
+                pattern in name
+                for pattern in [
+                    "self_attn.v_proj",
+                    "attn.v_proj",
+                    ".v_proj",
+                    "attn.c_attn",  # GPT-2 combined QKV projection
+                ]
+            ):
+                self.hooks.append(m.register_forward_hook(self._v_hook))
+                hooked += 1
+
+        if hooked == 0:
+            raise RuntimeError(
+                "No V projection layers found! Check model architecture."
+            )
+        print(f"[KVGeom] Registered hooks on {hooked} V projection layers")
+
+    def remove(self):
+        """Remove all hooks."""
+        for h in self.hooks:
+            h.remove()
+        self.hooks = []
+
+    def fit_after_collect(self, epochs=8, lr=2e-3):
+        """Fit Spline->PCA geometry on collected samples."""
+        if not self.samples:
+            raise RuntimeError(
+                "No V samples collected; ensure forward() ran after register()."
+            )
+
+        # Concatenate all samples
+        X = torch.cat(self.samples, dim=0)  # [N, hd]
+        print(f"[KVGeom] Total samples collected: {X.shape[0]:,}")
+
+        # Budget: keep ~2000 samples per latent dimension
+        # This balances fitting quality vs memory/time
+        N = X.shape[0]
+        budget = min(N, self.k * 2000)
+
+        if budget < N:
+            print(f"[KVGeom] Subsampling {budget:,} / {N:,} for fitting")
+            idx = torch.randperm(N)[:budget]
+            X = X[idx]
+
+        # Move to device and convert dtype
+        X = X.to(self.device, self.dtype)
+
+        # Import and create geometry
+        from kv_geometry_v1 import KVGeometryV
+
+        kvg = KVGeometryV(Hd=self.hd, k_latent=self.k, knots=self.knots).to(
+            self.device, self.dtype
+        )
+
+        print(
+            f"[KVGeom] Fitting Spline->PCA (k={self.k}, knots={self.knots}, epochs={epochs})"
+        )
+        kvg.fit(X, epochs=epochs, lr=lr)
+
+        self.kvg = kvg
+        return kvg
+
+
+# ============================================================================
 # Argument Parsing
 # ============================================================================
 
@@ -590,6 +715,46 @@ parser.add_argument(
     help="Quick architecture validation: create model, run single "
     "forward/backward pass with dummy data on CPU, exit. "
     "Catches config/architecture errors without GPU time.",
+)
+
+# KV-Geometry (V-only) calibration
+parser.add_argument(
+    "--kvgeom-enable",
+    action="store_true",
+    help="Collect V vectors and fit Spline->PCA geometry",
+)
+parser.add_argument(
+    "--kvgeom-k",
+    type=int,
+    default=64,
+    help="Latent k for V (per-head dim reduce)",
+)
+parser.add_argument(
+    "--kvgeom-knots", type=int, default=7, help="Number of spline knots"
+)
+parser.add_argument(
+    "--kvgeom-samples",
+    type=int,
+    default=120_000,
+    help="Target number of V samples",
+)
+parser.add_argument(
+    "--kvgeom-save",
+    type=str,
+    default="kvgeom.pt",
+    help="Where to save the fitted geometry",
+)
+parser.add_argument(
+    "--kvgeom-max-batches",
+    type=int,
+    default=64,
+    help="Max warmup batches to collect Vs",
+)
+parser.add_argument(
+    "--kvgeom-epochs", type=int, default=8, help="Spline fitting epochs"
+)
+parser.add_argument(
+    "--kvgeom-lr", type=float, default=2e-3, help="Spline fitting learning rate"
 )
 
 args = parser.parse_args()
@@ -2331,6 +2496,72 @@ def main():
     print(
         f"Optimizer: {args.optimizer}, LR: {args.learning_rate}, weight_decay: {args.weight_decay}"
     )
+
+    # =========================================================================
+    # KV-Geometry Calibration (if enabled)
+    # =========================================================================
+    if args.kvgeom_enable:
+        print("\n" + "=" * 70)
+        print("KV-Geometry Calibration: Collecting V vectors")
+        print("=" * 70)
+
+        # Get actual model (unwrap DDP if needed)
+        actual_model = model.module if hasattr(model, "module") else model
+
+        # Infer architecture params
+        n_heads = actual_model.config.n_head
+        head_dim = actual_model.config.n_embd // n_heads
+
+        print(f"  Architecture: n_heads={n_heads}, head_dim={head_dim}")
+        print(f"  Target latent dimension: k={args.kvgeom_k}")
+        print(f"  Spline knots: {args.kvgeom_knots}")
+        print(f"  Target samples: {args.kvgeom_samples:,}")
+        print(f"  Max batches: {args.kvgeom_max_batches}")
+
+        # Create calibrator
+        calib = KVGeomCalibrator(
+            model=actual_model,
+            n_heads=n_heads,
+            head_dim=head_dim,
+            k=args.kvgeom_k,
+            knots=args.kvgeom_knots,
+            device=torch.device(device),
+            dtype=dtype,
+        )
+
+        # Register hooks to collect V vectors
+        calib.register()
+
+        # Run warmup batches to collect samples
+        print(f"\nCollecting V samples from {args.kvgeom_max_batches} batches...")
+        for batch_idx in range(args.kvgeom_max_batches):
+            x, y = get_batch("train", args.batch_size, args.block_size, device)
+            with torch.no_grad():
+                logits, loss = actual_model(x, y)
+
+            if batch_idx % 4 == 0:
+                total_samples = sum(s.shape[0] for s in calib.samples)
+                print(
+                    f"  Batch {batch_idx}/{args.kvgeom_max_batches}: {total_samples:,} vectors collected"
+                )
+
+        # Remove hooks
+        calib.remove()
+
+        # Fit Spline->PCA geometry
+        print("\nFitting Spline->PCA geometry...")
+        kvg = calib.fit_after_collect(epochs=args.kvgeom_epochs, lr=args.kvgeom_lr)
+
+        # Save fitted geometry
+        save_dict = {
+            "Hd": head_dim,
+            "k": args.kvgeom_k,
+            "knots": args.kvgeom_knots,
+            "state_dict": kvg.state_dict(),
+        }
+        torch.save(save_dict, args.kvgeom_save)
+        print(f"\n✓ KV-Geometry saved to: {args.kvgeom_save}")
+        print("=" * 70)
 
     # =========================================================================
     # DRY-RUN MODE: Quick architecture validation
