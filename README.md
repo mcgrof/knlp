@@ -608,12 +608,12 @@ Based on ["Movement Pruning: Adaptive Sparsity by Fine-Tuning"](https://arxiv.or
 If you use this work, please cite:
 
 ```bibtex
-@misc{AdamWPrune2025,
-  title        = {AdamWPrune: Multi-Model State-based Pruning},
+@misc{knlp2025,
+  title        = {knlp: Kernel Developer Loves Machine Learning - Transformer Architecture Research},
   author       = {Luis Chamberlain},
   year         = {2025},
   howpublished = {\url{https://github.com/mcgrof/knlp}},
-  note         = {State-based pruning across LeNet-5 and ResNet-18}
+  note         = {Reciprocal mechanisms, geometric compression, and state-based optimization}
 }
 ```
 
