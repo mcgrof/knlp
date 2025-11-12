@@ -960,8 +960,8 @@ def main():
 
             running_loss = 0.0
 
-        # Evaluation
-        if iter_num % args.eval_interval == 0:
+        # Evaluation (only on master process)
+        if iter_num % args.eval_interval == 0 and master_process:
             val_loss = evaluate(
                 model,
                 args.data_dir,
@@ -1017,21 +1017,22 @@ def main():
                 print(f"Saved best model (val_loss: {val_loss:.4f})", flush=True)
 
     # -----------------------------------------------------------------------------
-    # Final evaluation and saving
+    # Final evaluation and saving (only on master process)
 
-    print("\n" + "=" * 50, flush=True)
-    print("Training complete!", flush=True)
+    if master_process:
+        print("\n" + "=" * 50, flush=True)
+        print("Training complete!", flush=True)
 
-    # Final evaluation
-    final_val_loss = evaluate(
-        model,
-        args.data_dir,
-        args.dataset,
-        args.block_size,
-        args.batch_size,
-        device,
-        args.eval_samples * 2,
-    )
+        # Final evaluation
+        final_val_loss = evaluate(
+            model,
+            args.data_dir,
+            args.dataset,
+            args.block_size,
+            args.batch_size,
+            device,
+            args.eval_samples * 2,
+        )
 
     final_perplexity = math.exp(min(final_val_loss, 20))
     best_perplexity = math.exp(min(best_val_loss, 20))
@@ -1108,44 +1109,45 @@ def main():
             json.dump(metrics, f, indent=2)
         print(f"Saved metrics to {args.json_output}", flush=True)
 
-    # Save detailed metrics
-    metrics_path = os.path.join(args.output_dir, "training_metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Saved detailed metrics to {metrics_path}", flush=True)
+        # Save detailed metrics
+        metrics_path = os.path.join(args.output_dir, "training_metrics.json")
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Saved detailed metrics to {metrics_path}", flush=True)
 
-    print("\nTraining complete!", flush=True)
+        print("\nTraining complete!", flush=True)
 
-    # Finish experiment tracking
-    if "trackio" in trackers:
-        import trackio
+        # Finish experiment tracking
+        if "trackio" in trackers:
+            import trackio
 
-        trackio.log(
-            {
-                "final_val_loss": final_val_loss,
-                "best_val_loss": best_val_loss,
-                "total_time": metrics["total_time"],
-            }
-        )
-        trackio.finish()
-        print(
-            "Trackio tracking finished. Run 'trackio show' to view results.", flush=True
-        )
-    if "wandb" in trackers:
-        import wandb
+            trackio.log(
+                {
+                    "final_val_loss": final_val_loss,
+                    "best_val_loss": best_val_loss,
+                    "total_time": metrics["total_time"],
+                }
+            )
+            trackio.finish()
+            print(
+                "Trackio tracking finished. Run 'trackio show' to view results.",
+                flush=True,
+            )
+        if "wandb" in trackers:
+            import wandb
 
-        wandb.log(
-            {
-                "final_val_loss": final_val_loss,
-                "best_val_loss": best_val_loss,
-                "total_time": metrics["total_time"],
-            }
-        )
-        wandb.finish()
-        print(
-            "WandB tracking finished. Check your WandB dashboard for results.",
-            flush=True,
-        )
+            wandb.log(
+                {
+                    "final_val_loss": final_val_loss,
+                    "best_val_loss": best_val_loss,
+                    "total_time": metrics["total_time"],
+                }
+            )
+            wandb.finish()
+            print(
+                "WandB tracking finished. Check your WandB dashboard for results.",
+                flush=True,
+            )
 
     # Cleanup DDP
     if ddp:
