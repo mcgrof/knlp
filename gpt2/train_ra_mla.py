@@ -1414,9 +1414,90 @@ if args.ra_mla_ablation_step is not None:
         args.variance_min_step = 250
         args.variance_threshold = 0.02
         args.variance_window = 100
+    elif step == "V19":
+        # V19: V-only pruning baseline (clean isolation test)
+        # Standard GPT-2 + V-only KV pruning (no RA, no R-MLP, no compression)
+        args.use_ra_v5 = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # V-only KV cache pruning with fixed golden ratio
+        args.kv_cache_prune = True
+        args.kv_prune_learned = False  # Fixed ratio
+        args.kv_prune_recency = 64
+        args.kv_prune_keep_ratio = 0.382  # Golden ratio
+        # No KV-Geometry compression
+        args.kvgeom_enable = False
+    elif step == "C1":
+        # C1: V-only pruning + light geometric compression (k=32)
+        # Same as V19 but with Spline->PCA compression 64->32 dims
+        args.use_ra_v5 = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # V-only KV cache pruning
+        args.kv_cache_prune = True
+        args.kv_prune_learned = False
+        args.kv_prune_recency = 64
+        args.kv_prune_keep_ratio = 0.382
+        # KV-Geometry compression: 64 -> 32 dims (50% reduction)
+        args.kvgeom_enable = True
+        args.kvgeom_k = 32
+        args.kvgeom_knots = 7
+        args.kvgeom_samples = 120_000
+        args.kvgeom_max_batches = 64
+        args.kvgeom_epochs = 8
+        args.kvgeom_lr = 2e-3
+        args.kvgeom_save = "kvgeom_c1.pt"
+    elif step == "C2":
+        # C2: V-only pruning + medium geometric compression (k=16)
+        # Same as V19 but with Spline->PCA compression 64->16 dims
+        args.use_ra_v5 = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # V-only KV cache pruning
+        args.kv_cache_prune = True
+        args.kv_prune_learned = False
+        args.kv_prune_recency = 64
+        args.kv_prune_keep_ratio = 0.382
+        # KV-Geometry compression: 64 -> 16 dims (75% reduction)
+        args.kvgeom_enable = True
+        args.kvgeom_k = 16
+        args.kvgeom_knots = 7
+        args.kvgeom_samples = 120_000
+        args.kvgeom_max_batches = 64
+        args.kvgeom_epochs = 8
+        args.kvgeom_lr = 2e-3
+        args.kvgeom_save = "kvgeom_c2.pt"
+    elif step == "C3":
+        # C3: V-only pruning + heavy geometric compression (k=8)
+        # Same as V19 but with Spline->PCA compression 64->8 dims
+        args.use_ra_v5 = False
+        args.use_rmlp = False
+        args.enable_mla = False
+        args.ra_alpha = 0.0
+        args.mlp_expansion_ratio = 4.0
+        # V-only KV cache pruning
+        args.kv_cache_prune = True
+        args.kv_prune_learned = False
+        args.kv_prune_recency = 64
+        args.kv_prune_keep_ratio = 0.382
+        # KV-Geometry compression: 64 -> 8 dims (87.5% reduction)
+        args.kvgeom_enable = True
+        args.kvgeom_k = 8
+        args.kvgeom_knots = 7
+        args.kvgeom_samples = 120_000
+        args.kvgeom_max_batches = 64
+        args.kvgeom_epochs = 8
+        args.kvgeom_lr = 2e-3
+        args.kvgeom_save = "kvgeom_c3.pt"
     else:
         raise ValueError(
-            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, or V0-V18."
+            f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, V0-V19, or C1-C3."
         )
 
 # Override RA+MLA config from config.py if available (for test matrix integration)
