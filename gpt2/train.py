@@ -596,17 +596,10 @@ def main():
                     args.tracker_run_name
                     or f"gpt2_{args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 )
-                # Configure wandb for DDP - only master process initializes
-                wandb_group = f"{run_name}_ddp" if ddp else run_name
                 wandb.init(
                     project=args.tracker_project,
                     config=vars(args),
                     name=run_name,
-                    group=wandb_group if ddp else None,
-                    settings=wandb.Settings(
-                        _disable_stats=True,  # Disable system stats from all processes
-                        _disable_meta=True,  # Disable metadata from all processes
-                    ),
                 )
                 trackers.add("wandb")
                 print(
@@ -914,8 +907,8 @@ def main():
             pruner.update_masks(iter_num)
             pruner.apply_masks()  # Apply masks to zero out pruned weights
 
-        # Logging (only on master process - use explicit RANK check)
-        if iter_num % args.log_interval == 0 and (not ddp or master_process):
+        # Logging (only on master process)
+        if iter_num % args.log_interval == 0 and master_process:
             t1 = time.time()
             dt = t1 - t0
             t0 = t1
