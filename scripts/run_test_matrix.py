@@ -974,7 +974,7 @@ def run_single_test(
             cmd.extend(["--max-iters", str(max_iters)])
         # Support MAX_TIME from environment or config (time-based training in seconds)
         max_time = os.environ.get("GPT2_MAX_TIME") or config.get("GPT2_MAX_TIME")
-        if max_time:
+        if max_time and int(max_time) > 0:
             cmd.extend(["--max-time", str(max_time)])
         if config.get("GPT2_DECAY_LR") == "y":
             cmd.append("--decay-lr")
@@ -1058,6 +1058,15 @@ def run_single_test(
     elif "TRACKER_CLI_VALUE" in config and config["TRACKER_CLI_VALUE"]:
         # Pass all trackers as comma-separated value
         tracker = config["TRACKER_CLI_VALUE"]
+    else:
+        # Build tracker string from individual enable flags
+        trackers = []
+        if config.get("ENABLE_WANDB") in ("y", True):
+            trackers.append("wandb")
+        if config.get("ENABLE_TRACKIO") in ("y", True):
+            trackers.append("trackio")
+        if trackers:
+            tracker = ",".join(trackers)
 
     if tracker and tracker != "none":
         cmd.extend(["--tracker", tracker])
