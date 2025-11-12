@@ -1,12 +1,14 @@
-# AdamWPrune: Multi-Model State-Based Weight Pruning
+# AdamWPrune: Transformer Architecture Research & Optimization
 
-> **🚀 GPT-2 Transformer Validation**: AdamWPrune achieves **20% training speedup** and **8.2% GPU memory reduction** on GPT-2 (124M), confirming the bitter lesson - simpler algorithms outperform complex approaches, with a cost of a modest 3-9 perplexity increase compared to magnitude pruning.
+> **🎯 Latest: Reciprocal MLP Breakthrough (Nov 2025)**: R-MLP achieves **12% validation loss improvement** (3.75 → 3.32) over baseline GPT-2 by learning to use bidirectional information flow between attention and MLP layers. Reciprocal weights learned positive values (mean=+0.13), demonstrating the model discovered attention signals enhance MLP computation.
 
-> **🏆 ResNet-50 Breakthrough**: AdamWPrune with AdamWSpam base achieves **74.56% accuracy** at 50% sparsity - surpassing all previous results! Consistently outperforms AdamWSpam across all sparsity levels while maintaining competitive memory usage (12602.5 MB).
+> **🚀 Reciprocal Attention (RA)**: Production-ready bidirectional attention mechanism achieves **2.17% speedup** over baseline with zero extra FLOPs or memory. Single-SDPA-call folded architecture validated on GPT-2 124M.
 
-> **📊 ResNet-18 Results**: AdamWPrune with AdamW base achieves **90.69% accuracy** at 50% sparsity (tied with movement pruning), while maintaining minimal memory overhead (1474.6 MB). Without pruning, AdamW and AdamWPrune perform identically (90.30% vs 90.28%) at ~1307 MB.
+> **📦 KVSplice Compression**: Geometric KV cache compression using Spline→PCA learns data-specific manifold transformations. Targets 90% memory reduction (391 tokens × 16 dims) while maintaining quality. See [docs/ra.md](docs/ra.md) for technical details.
 
-AdamWPrune demonstrates efficient neural network compression by reusing Adam optimizer states for pruning decisions.
+> **⚡ Legacy Pruning Results**: AdamWPrune achieves 20% training speedup and 8.2% GPU memory reduction on GPT-2, plus 74.56% accuracy on ResNet-50 at 50% sparsity.
+
+AdamWPrune explores efficient transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization.
 
 ## Key Results
 
@@ -23,9 +25,35 @@ AdamWPrune demonstrates efficient neural network compression by reusing Adam opt
 
 ## GPT-2 Transformer Results (124M Parameters)
 
-### The Bitter Lesson Confirmed
+### Latest: Reciprocal Architecture Results (Nov 2025)
 
-Our GPT-2 experiments validate Rich Sutton's Bitter Lesson: **simpler algorithms leveraging computation outperform complex, engineered approaches**.
+**R-MLP (Reciprocal MLP) achieves 12% improvement over baseline**
+by learning bidirectional information flow between attention and
+MLP layers.
+
+| Architecture | Val Loss | Improvement | Key Innovation |
+|--------------|----------|-------------|----------------|
+| Baseline GPT-2 | 3.75 | - | Standard transformer |
+| RA only (V16) | 3.38 | 10% | Folded reciprocal attention |
+| RA + frozen R-MLP (V17) | 3.38 | 10% | No reciprocal learning |
+| **RA + R-MLP (V18)** | **3.32** | **12%** | **Learned reciprocal weights (+0.13 mean)** |
+
+**Key finding**: R-MLP learned **positive** reciprocal weights,
+proving the model discovered attention information from previous
+layers enhances MLP computation. See
+[docs/ra.md](docs/ra.md#kvsplice-geometric-kv-cache-compression)
+for architecture details.
+
+**Training**: 2 hours per step, ~2065 iterations, 4× NVIDIA A10G
+(24GB). Minimal overhead (~4ms/iter). Production-ready stability.
+
+---
+
+### Legacy: The Bitter Lesson Confirmed (Pruning Research)
+
+Our GPT-2 pruning experiments validated Rich Sutton's Bitter
+Lesson: **simpler algorithms leveraging computation outperform
+complex, engineered approaches**.
 
 **Test Configuration:**
 - Model: GPT-2 (124M parameters)
