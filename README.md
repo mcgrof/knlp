@@ -1,5 +1,7 @@
 # knlp: Kernel Developer ❤️ Machine Learning
 
+A Linux kernel hacker's journey into ML.
+
 **Transformer architecture research from a kernel developer's perspective**
 
 > **🎯 Latest: Reciprocal MLP Breakthrough (Nov 2025)**: R-MLP achieves **12% validation loss improvement** (3.75 → 3.32) over baseline GPT-2 by learning to use bidirectional information flow between attention and MLP layers. Reciprocal weights learned positive values (mean=+0.13), demonstrating the model discovered attention signals enhance MLP computation.
