@@ -1,4 +1,6 @@
-# AdamWPrune: Transformer Architecture Research & Optimization
+# knlp: Kernel Developer ❤️ Machine Learning
+
+**Transformer architecture research from a kernel developer's perspective**
 
 > **🎯 Latest: Reciprocal MLP Breakthrough (Nov 2025)**: R-MLP achieves **12% validation loss improvement** (3.75 → 3.32) over baseline GPT-2 by learning to use bidirectional information flow between attention and MLP layers. Reciprocal weights learned positive values (mean=+0.13), demonstrating the model discovered attention signals enhance MLP computation.
 
@@ -8,7 +10,7 @@
 
 > **⚡ Legacy Pruning Results**: AdamWPrune achieves 20% training speedup and 8.2% GPU memory reduction on GPT-2, plus 74.56% accuracy on ResNet-50 at 50% sparsity.
 
-AdamWPrune explores efficient transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization.
+knlp explores efficient transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization - bringing kernel development rigor to ML research.
 
 ## Key Results
 
@@ -345,12 +347,13 @@ Industry best practices recommend saving model checkpoints at peak accuracy, not
 - **[ResNet-18 Results](docs/resnet18.md)**: Production-scale validation on CIFAR-10
 - **[ResNet-50 Results](docs/resnet50.md)**: ImageNet-scale demonstration of superior memory efficiency
 - **[GPT-2 Results](docs/gpt2.md)**: Transformer validation confirming bitter lesson with 20% speedup
-- **[Key Test Results Archive](https://github.com/mcgrof/AdamWPrune-key-results)**: Complete test matrix results with all graphs and metrics
-  - [ResNet-50 AdamWSpam Base Results](https://github.com/mcgrof/AdamWPrune-key-results/tree/master/key_results/test_matrix_results_20250913_200218/ANALYSIS.md): **AdamWPrune with AdamWSpam base achieves 74.56% at 50% sparsity** - new state-of-the-art!
-  - [ResNet-50 CIFAR-100 Extended Results](https://github.com/mcgrof/AdamWPrune-key-results/tree/master/key_results/test_matrix_results_20250908_190856/summary_report.txt): AdamWPrune with AdamW base achieves 74.54% at 50% sparsity
-  - [ResNet-50 CIFAR-100 Initial Results](https://github.com/mcgrof/AdamWPrune-key-results/tree/master/key_results/test_matrix_results_20250908_121537/summary_report.txt): AdamWPrune achieves 72.38% at 70% sparsity with lowest GPU memory
-  - [ResNet-18 CIFAR-10 Results](https://github.com/mcgrof/AdamWPrune-key-results/tree/master/key_results/test_matrix_results_20250903_180836/report.md): AdamWPrune achieves 90.66% accuracy with lowest memory usage
-  - [GPT-2 Bitter Lesson Test Results](https://github.com/mcgrof/AdamWPrune-key-results/tree/master/key_results/test_matrix_results_20250923_010926/): **Confirms bitter lesson** - simpler algorithms outperform complex ones
+- **[Key Test Results Archive](https://github.com/mcgrof/knlp-key-results)**: Complete test matrix results with all graphs and metrics
+  - [R-MLP Validation (Nov 2025)](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20251111_170325/FINDINGS.md): **12% improvement** over baseline GPT-2, reciprocal weights learned positive
+  - [ResNet-50 AdamWSpam Base Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250913_200218/ANALYSIS.md): **74.56% at 50% sparsity** - state-of-the-art
+  - [ResNet-50 CIFAR-100 Extended Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250908_190856/summary_report.txt): 74.54% at 50% sparsity with AdamW base
+  - [ResNet-50 CIFAR-100 Initial Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250908_121537/summary_report.txt): 72.38% at 70% sparsity with lowest GPU memory
+  - [ResNet-18 CIFAR-10 Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250903_180836/report.md): 90.66% accuracy with lowest memory usage
+  - [GPT-2 Bitter Lesson Test Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250923_010926/): Confirms bitter lesson - simpler algorithms outperform complex ones
 
 ## Transformer Model Findings (GPT-2)
 
@@ -609,7 +612,7 @@ If you use this work, please cite:
   title        = {AdamWPrune: Multi-Model State-based Pruning},
   author       = {Luis Chamberlain},
   year         = {2025},
-  howpublished = {\url{https://github.com/mcgrof/AdamWPrune}},
+  howpublished = {\url{https://github.com/mcgrof/knlp}},
   note         = {State-based pruning across LeNet-5 and ResNet-18}
 }
 ```
