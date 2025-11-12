@@ -497,11 +497,11 @@ def main():
         import config as cfg
 
         if hasattr(cfg, "config") and hasattr(cfg.config, "GPT2_USE_DDP"):
-            use_ddp = cfg.config.GPT2_USE_DDP == "y"
+            use_ddp = cfg.config.GPT2_USE_DDP in ("y", True)
             ddp_backend = getattr(cfg.config, "GPT2_DDP_BACKEND", "nccl")
-            ddp_find_unused = (
-                getattr(cfg.config, "GPT2_DDP_FIND_UNUSED_PARAMS", "y") == "y"
-            )
+            ddp_find_unused = getattr(
+                cfg.config, "GPT2_DDP_FIND_UNUSED_PARAMS", "y"
+            ) in ("y", True)
         else:
             use_ddp = False
             ddp_backend = "nccl"
@@ -513,7 +513,10 @@ def main():
 
     # Initialize DDP if enabled and environment variables are set
     # DEBUG: Print environment check
-    print(f"DEBUG: use_ddp={use_ddp}, RANK in env={'RANK' in os.environ}, RANK={os.environ.get('RANK', 'NOT SET')}", flush=True)
+    print(
+        f"DEBUG: use_ddp={use_ddp}, RANK in env={'RANK' in os.environ}, RANK={os.environ.get('RANK', 'NOT SET')}",
+        flush=True,
+    )
     if use_ddp and "RANK" in os.environ:
         ddp = True
         init_process_group(backend=ddp_backend)
