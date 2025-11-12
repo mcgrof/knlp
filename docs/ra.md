@@ -489,8 +489,134 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 
 ---
 
-**Last Updated**: 2025-11-09
-**Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental)
-**Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations)
+# KVSplice: Geometric KV Cache Compression
+
+**Status**: 🔬 Experimental (C1-C3 ablations pending)
+**Sandbox**: https://github.com/mcgrof/kvsplice
+
+## Overview
+
+KVSplice is an innovative approach to KV cache compression using **Spline→PCA** transformation. Instead of directly applying PCA to V vectors, we first learn a monotonic spline transformation that "straightens" the data manifold, making PCA more effective.
+
+The name "KVSplice" reflects the core idea: splicing through different geometric manifolds to find better compression paths, inspired by how different number sequences emerge from the same Fibonacci triangle structure.
+
+## Core Innovation
+
+```
+Standard PCA:    V → PCA(V) → compressed
+Spline→PCA:      V → Spline(V) → PCA(Z) → compressed (better!)
+```
+
+**Key advantages:**
+- Learns data-specific geometry from real V distributions
+- Invertible (perfect reconstruction possible)
+- Better compression than plain PCA at same k
+- Per-dimension monotonic warping preserves ordering
+
+## Experimental Results (Sandbox POC)
+
+From [kvsplice sandbox](https://github.com/mcgrof/kvsplice) experiments:
+
+```
+k=8:  PCA MSE=0.001314,  SplinePCA MSE=0.001312  (Δ=-0.000002) ✓
+k=16: PCA MSE=0.000789,  SplinePCA MSE=0.000788  (Δ=-0.000001) ✓
+k=64: PCA MSE=0.000451,  SplinePCA MSE=0.000451  (Δ=0.000000)  ✓
+```
+
+**SplinePCA never worse than plain PCA, often better at low k.**
+
+## Production Implementation
+
+File: `gpt2/kvsplice_v1.py`
+
+**Key differences from sandbox POC:**
+1. **Calibration mode**: Collects real V vectors via forward hooks during warmup
+2. **bfloat16 support**: Handles mixed-precision training (converts to fp32 for SVD)
+3. **Index safety**: Clamps quantile indices to prevent overflow
+4. **Gradient flow**: Removed `@torch.no_grad()` from fit() for proper backprop
+5. **Production API**: `compress()` and `decompress()` methods for inference
+
+## Ablation Study
+
+Defconfig: `defconfigs/gpt2-kv-compression-ablation`
+
+Tests 5 configurations (2 hours each, 10 hours total):
+- **V0**: Baseline GPT-2 (no compression)
+- **V19**: V-only pruning (k=391 tokens, 62% memory reduction)
+- **C1**: V19 + light compression (64→32 dims, 81% reduction)
+- **C2**: V19 + medium compression (64→16 dims, 90% reduction)
+- **C3**: V19 + heavy compression (64→8 dims, 95% reduction)
+
+**Memory comparison table:**
+
+| Step  | V cache size      | Reduction | Notes                          |
+|-------|-------------------|-----------|--------------------------------|
+| V0    | 1024 × 64 = 65536 | 0%        | Baseline reference             |
+| V19   | 391 × 64 = 25024  | 62%       | V-only pruning alone           |
+| C1    | 391 × 32 = 12512  | 81%       | Pruning + light compression    |
+| C2    | 391 × 16 = 6256   | 90%       | Pruning + medium compression   |
+| C3    | 391 × 8 = 3128    | 95%       | Pruning + heavy compression    |
+
+**Expected results**: C2 should maintain V19 quality while cutting memory by 90%.
+
+## KVSplice Calibration Process
+
+The calibrator (`KVSpliceCalibrator`) learns geometry from real training data:
+
+1. **Hook V projections**: Register forward hooks on all attention V layers
+2. **Collect samples**: Gather V tensors during warmup batches (~120k samples)
+3. **Subsample**: Budget to ~2k samples per latent dimension
+4. **Fit geometry**: Train monotonic spline with PCA round-trip objective
+5. **Save model**: Persist fitted geometry to `kvsplice_{step}.pt`
+
+Command-line arguments:
+```bash
+--kvsplice-enable          # Enable KVSplice compression
+--kvsplice-k 16            # Target latent dimension
+--kvsplice-knots 7         # Number of spline knots
+--kvsplice-samples 120000  # Target sample count
+--kvsplice-max-batches 64  # Max calibration batches
+--kvsplice-epochs 8        # Spline fitting epochs
+--kvsplice-lr 2e-3         # Spline fitting learning rate
+--kvsplice-save kvsplice.pt # Output file
+```
+
+## Usage
+
+**Quick sanity check** (60 seconds/step):
+```bash
+make defconfig-gpt2-kv-compression-ablation
+GPT2_MAX_TIME=60 make
+```
+
+**Dry-run validation** (CPU, ~5 seconds/step):
+```bash
+make defconfig-gpt2-kv-compression-ablation
+make check
+```
+
+**Full ablation** (2 hours/step, 10 hours total):
+```bash
+make defconfig-gpt2-kv-compression-ablation && make
+```
+
+## Implementation Files
+
+**Core**:
+- `gpt2/kvsplice_v1.py`: PWLSpline, KVSplice class
+- `gpt2/train_ra_mla.py`: KVSpliceCalibrator, integration
+
+**Defconfig**:
+- `defconfigs/gpt2-kv-compression-ablation`: C1-C3 ablation steps
+
+**Documentation**:
+- `docs/kvsplice-integration-plan.md`: Technical integration details
+- [Sandbox POC](https://github.com/mcgrof/kvsplice): Original research code
+
+---
+
+**Last Updated**: 2025-11-11
+**Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental) + KVSplice v1.0 (Experimental)
+**Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations) | 🔬 KVSplice pending GPU ablations (C1-C3)
 
 **Quick Start**: `make defconfig-gpt2-unified-ra-ablation && make check`

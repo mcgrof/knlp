@@ -111,9 +111,10 @@ def build_spline_from_data(x: torch.Tensor, K: int = 7) -> PWLSpline:
     return PWLSpline(xk)
 
 
-class KVGeometryV(nn.Module):
+class KVSplice(nn.Module):
     """
     V-only geometry compressor: y = PCA(g(x)), g = per-dim monotone spline.
+    Splices through different geometric manifolds to find better compression paths.
     API:
       fit(calib_V), compress(V), decompress(Vc)
     """
