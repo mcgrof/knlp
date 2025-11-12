@@ -438,6 +438,8 @@ class UnifiedRAttention(nn.Module):
         Unfreeze w_rec to enable reciprocal attention training.
         Call after warmup period (e.g., after 75 steps).
         """
+        with torch.no_grad():
+            self.w_rec.fill_(0.1)  # Reinitialize to small non-zero value
         self.w_rec.requires_grad = True
         self._gates_frozen = False
 
@@ -628,6 +630,8 @@ class ReciprocalMLP(nn.Module):
         Unfreeze w_rec to enable reciprocal MLP training.
         Call after warmup period (e.g., after 75 steps).
         """
+        with torch.no_grad():
+            self.w_rec.fill_(0.1)  # Reinitialize to small non-zero value
         self.w_rec.requires_grad = True
         self._gates_frozen = False
 
