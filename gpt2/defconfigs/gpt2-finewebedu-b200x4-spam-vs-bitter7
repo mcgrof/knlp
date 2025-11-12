@@ -99,11 +99,11 @@ CONFIG_GPT2_DDP_NUM_GPUS=4
 CONFIG_GPT2_DDP_BACKEND="nccl"
 CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=n
 
-# Training Parameters - MASSIVE batch size for 768GB total VRAM
-# Per-GPU batch size of 128=512 total across 4 GPUs
-# With gradient accumulation of 2=effective batch size of 1024
-CONFIG_BATCH_SIZE=128
-CONFIG_GPT2_GRADIENT_ACCUMULATION=2
+# Training Parameters - Optimized for 4x B200 (732GB total VRAM)
+# Per-GPU batch size of 32=128 total across 4 GPUs
+# With gradient accumulation of 8=effective batch size of 1024
+CONFIG_BATCH_SIZE=32
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
 CONFIG_NUM_EPOCHS=10
 CONFIG_GPT2_MAX_ITERS=50000
 CONFIG_GPT2_EVAL_INTERVAL=500
