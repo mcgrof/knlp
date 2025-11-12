@@ -1,8 +1,10 @@
-# KV-Geometry Integration Plan
+# KVSplice Integration Plan
 
 ## Overview
 
-KV-Geometry is an innovative approach to KV cache compression using **Spline→PCA** transformation. Instead of directly applying PCA to V vectors, we first learn a monotonic spline transformation that "straightens" the data manifold, making PCA more effective.
+KVSplice is an innovative approach to KV cache compression using **Spline→PCA** transformation. Instead of directly applying PCA to V vectors, we first learn a monotonic spline transformation that "straightens" the data manifold, making PCA more effective.
+
+The name "KVSplice" reflects the core idea: splicing through different geometric manifolds to find better compression paths, inspired by how different number sequences emerge from the same Fibonacci triangle structure.
 
 ## Core Innovation
 
@@ -19,7 +21,7 @@ Spline→PCA:      V → Spline(V) → PCA(Z) → compressed (better!)
 
 ## Experimental Results (Standalone Tests)
 
-From `~/devel/kv-compress/` experiments:
+From `~/devel/kvsplice/` experiments:
 
 ```
 k=8:  PCA MSE=0.001314,  SplinePCA MSE=0.001312  (Δ=-0.000002) ✓
@@ -32,37 +34,36 @@ k=64: PCA MSE=0.000451,  SplinePCA MSE=0.000451  (Δ=0.000000)  ✓
 ## Implementation Status
 
 ### ✅ Completed
-- [x] `gpt2/kv_geometry_v1.py` - Core Spline→PCA implementation
+- [x] `gpt2/kvsplice_v1.py` - Core Spline→PCA implementation
 - [x] Numerical stability fixes (clamping, epsilon guards)
 - [x] Standalone validation on synthetic data
-
-### 🔄 In Progress
-- [ ] Integration into `train_ra_mla.py`
-- [ ] KVGeomCalibrator class
-- [ ] Argument parsing
+- [x] Integration into `train_ra_mla.py`
+- [x] KVSpliceCalibrator class
+- [x] Argument parsing (--kvsplice-*)
+- [x] Ablation test configurations (C1-C3 steps)
+- [x] Defconfig: gpt2-kv-compression-ablation
 
 ### 📋 Pending
-- [ ] Ablation test configurations
 - [ ] Documentation in `docs/ra.md`
-- [ ] V-only pruning + KV-Geometry combined testing
+- [ ] V-only pruning + KVSplice combined testing on real GPUs
 
 ## Integration Steps
 
 ### 1. Add Arguments to train_ra_mla.py
 
 ```python
-# KV-Geometry (V-only) calibration
-parser.add_argument("--kvgeom-enable", action="store_true")
-parser.add_argument("--kvgeom-k", type=int, default=64)
-parser.add_argument("--kvgeom-knots", type=int, default=7)
-parser.add_argument("--kvgeom-samples", type=int, default=120_000)
-parser.add_argument("--kvgeom-save", type=str, default="kvgeom.pt")
-parser.add_argument("--kvgeom-max-batches", type=int, default=64)
-parser.add_argument("--kvgeom-epochs", type=int, default=8)
-parser.add_argument("--kvgeom-lr", type=float, default=2e-3)
+# KVSplice (V-only) calibration
+parser.add_argument("--kvsplice-enable", action="store_true")
+parser.add_argument("--kvsplice-k", type=int, default=64)
+parser.add_argument("--kvsplice-knots", type=int, default=7)
+parser.add_argument("--kvsplice-samples", type=int, default=120_000)
+parser.add_argument("--kvsplice-save", type=str, default="kvsplice.pt")
+parser.add_argument("--kvsplice-max-batches", type=int, default=64)
+parser.add_argument("--kvsplice-epochs", type=int, default=8)
+parser.add_argument("--kvsplice-lr", type=float, default=2e-3)
 ```
 
-### 2. Add KVGeomCalibrator Class
+### 2. Add KVSpliceCalibrator Class
 
 See `/tmp/kv_geom_integration.py` for complete implementation.
 
@@ -76,49 +77,49 @@ Key responsibilities:
 ### 3. Calibration in main()
 
 ```python
-if args.kvgeom_enable:
+if args.kvsplice_enable:
     # Infer architecture params
     actual_model = model.module if hasattr(model, "module") else model
     n_heads = actual_model.config.n_head
     head_dim = actual_model.config.n_embd // n_heads
 
     # Create calibrator
-    calib = KVGeomCalibrator(
+    calib = KVSpliceCalibrator(
         model=actual_model,
         n_heads=n_heads,
         head_dim=head_dim,
-        k=args.kvgeom_k,
-        knots=args.kvgeom_knots,
+        k=args.kvsplice_k,
+        knots=args.kvsplice_knots,
         device=torch.device(args.device),
         dtype=get_dtype(args.dtype)
     )
 
     # Collect samples
     calib.register()
-    for batch_idx in range(args.kvgeom_max_batches):
+    for batch_idx in range(args.kvsplice_max_batches):
         x, y = get_batch("train", args.batch_size, args.block_size, device)
         with torch.no_grad():
             logits, loss = model(x, y)
         if batch_idx % 4 == 0:
-            print(f"[KVGeom] batch {batch_idx}, collected {sum(s.shape[0] for s in calib.samples):,} vectors")
+            print(f"[KVSplice] batch {batch_idx}, collected {sum(s.shape[0] for s in calib.samples):,} vectors")
     calib.remove()
 
     # Fit geometry
-    kvg = calib.fit_after_collect(epochs=args.kvgeom_epochs, lr=args.kvgeom_lr)
+    kvg = calib.fit_after_collect(epochs=args.kvsplice_epochs, lr=args.kvsplice_lr)
 
     # Save
     torch.save({
         "Hd": head_dim,
-        "k": args.kvgeom_k,
-        "knots": args.kvgeom_knots,
+        "k": args.kvsplice_k,
+        "knots": args.kvsplice_knots,
         "state_dict": kvg.state_dict(),
-    }, args.kvgeom_save)
-    print(f"[KVGeom] Saved to {args.kvgeom_save}")
+    }, args.kvsplice_save)
+    print(f"[KVSplice] Saved to {args.kvsplice_save}")
 ```
 
 ### 4. Integration with V-only Pruning
 
-The KV-Geometry can be combined with V-only pruning from `lib/kv_pruning.py`:
+The KVSplice can be combined with V-only pruning from `lib/kv_pruning.py`:
 
 **Strategy A**: Prune first, then compress
 ```python
@@ -150,17 +151,17 @@ Add to existing V16-V18 sequence:
 - Standard GPT-2 attention
 - V-only pruning (from lib/kv_pruning.py)
 - No R-MLP
-- No KV-Geometry
+- No KVSplice
 - **Purpose**: Isolate V-only pruning effect
 
-**V20**: V19 + KV-Geometry compression (k=64)
+**V20**: V19 + KVSplice compression (k=64)
 - V-only pruning selects 391 tokens
-- KV-Geometry compresses each V from 64→16 dims
+- KVSplice compresses each V from 64→16 dims
 - Total memory: 391 × 16 = 6,256 per head (vs 1024 × 64 = 65,536 baseline)
 - **90% memory reduction**
 - **Purpose**: Test if geometric compression hurts quality
 
-**V21**: R-MLP + V-only pruning + KV-Geometry
+**V21**: R-MLP + V-only pruning + KVSplice
 - Full feature stack
 - **Purpose**: Does R-MLP + geometry synergize?
 
@@ -208,7 +209,7 @@ This is one-time calibration cost, acceptable.
 The fitted geometry must be loaded during inference and applied in attention:
 ```python
 # Load geometry
-kvg = torch.load("kvgeom.pt")
+kvg = torch.load("kvsplice.pt")
 
 # In attention forward
 V_compressed = kvg.compress(V)
@@ -219,7 +220,7 @@ V_decompressed = kvg.decompress(V_compressed)
 ## Next Steps
 
 1. **Complete integration** into train_ra_mla.py
-2. **Test calibration** on small run (--kvgeom-max-batches 16)
+2. **Test calibration** on small run (--kvsplice-max-batches 16)
 3. **Verify saved geometry** can be loaded and used
 4. **Add V19-V21** to ablation defconfig
 5. **Run full test** with 2-hour time limit

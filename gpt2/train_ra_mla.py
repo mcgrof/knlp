@@ -191,14 +191,14 @@ def supports_tensorcore_fp32():
 
 
 # ============================================================================
-# KV-Geometry Calibrator (V-only)
+# KVSplice Calibrator (V-only)
 # ============================================================================
 
 
-class KVGeomCalibrator:
+class KVSpliceCalibrator:
     """
     Registers hooks on attention V projections to collect V tensors from
-    warmup batches, sub-samples to budget, then fits KVGeometryV.
+    warmup batches, sub-samples to budget, then fits KVSplice.
 
     This learns a data-specific Spline->PCA geometry that compresses V
     vectors better than plain PCA by learning to warp the space before
@@ -267,7 +267,7 @@ class KVGeomCalibrator:
             raise RuntimeError(
                 "No V projection layers found! Check model architecture."
             )
-        print(f"[KVGeom] Registered hooks on {hooked} V projection layers")
+        print(f"[KVSplice] Registered hooks on {hooked} V projection layers")
 
     def remove(self):
         """Remove all hooks."""
@@ -284,7 +284,7 @@ class KVGeomCalibrator:
 
         # Concatenate all samples
         X = torch.cat(self.samples, dim=0)  # [N, hd]
-        print(f"[KVGeom] Total samples collected: {X.shape[0]:,}")
+        print(f"[KVSplice] Total samples collected: {X.shape[0]:,}")
 
         # Budget: keep ~2000 samples per latent dimension
         # This balances fitting quality vs memory/time
@@ -292,7 +292,7 @@ class KVGeomCalibrator:
         budget = min(N, self.k * 2000)
 
         if budget < N:
-            print(f"[KVGeom] Subsampling {budget:,} / {N:,} for fitting")
+            print(f"[KVSplice] Subsampling {budget:,} / {N:,} for fitting")
             idx = torch.randperm(N)[:budget]
             X = X[idx]
 
@@ -300,14 +300,14 @@ class KVGeomCalibrator:
         X = X.to(self.device, self.dtype)
 
         # Import and create geometry
-        from kv_geometry_v1 import KVGeometryV
+        from kvsplice_v1 import KVSplice
 
-        kvg = KVGeometryV(Hd=self.hd, k_latent=self.k, knots=self.knots).to(
+        kvg = KVSplice(Hd=self.hd, k_latent=self.k, knots=self.knots).to(
             self.device, self.dtype
         )
 
         print(
-            f"[KVGeom] Fitting Spline->PCA (k={self.k}, knots={self.knots}, epochs={epochs})"
+            f"[KVSplice] Fitting Spline->PCA (k={self.k}, knots={self.knots}, epochs={epochs})"
         )
         kvg.fit(X, epochs=epochs, lr=lr)
 
@@ -719,42 +719,42 @@ parser.add_argument(
 
 # KV-Geometry (V-only) calibration
 parser.add_argument(
-    "--kvgeom-enable",
+    "--kvsplice-enable",
     action="store_true",
     help="Collect V vectors and fit Spline->PCA geometry",
 )
 parser.add_argument(
-    "--kvgeom-k",
+    "--kvsplice-k",
     type=int,
     default=64,
     help="Latent k for V (per-head dim reduce)",
 )
 parser.add_argument(
-    "--kvgeom-knots", type=int, default=7, help="Number of spline knots"
+    "--kvsplice-knots", type=int, default=7, help="Number of spline knots"
 )
 parser.add_argument(
-    "--kvgeom-samples",
+    "--kvsplice-samples",
     type=int,
     default=120_000,
     help="Target number of V samples",
 )
 parser.add_argument(
-    "--kvgeom-save",
+    "--kvsplice-save",
     type=str,
-    default="kvgeom.pt",
+    default="kvsplice.pt",
     help="Where to save the fitted geometry",
 )
 parser.add_argument(
-    "--kvgeom-max-batches",
+    "--kvsplice-max-batches",
     type=int,
     default=64,
     help="Max warmup batches to collect Vs",
 )
 parser.add_argument(
-    "--kvgeom-epochs", type=int, default=8, help="Spline fitting epochs"
+    "--kvsplice-epochs", type=int, default=8, help="Spline fitting epochs"
 )
 parser.add_argument(
-    "--kvgeom-lr", type=float, default=2e-3, help="Spline fitting learning rate"
+    "--kvsplice-lr", type=float, default=2e-3, help="Spline fitting learning rate"
 )
 
 args = parser.parse_args()
@@ -1428,7 +1428,7 @@ if args.ra_mla_ablation_step is not None:
         args.kv_prune_recency = 64
         args.kv_prune_keep_ratio = 0.382  # Golden ratio
         # No KV-Geometry compression
-        args.kvgeom_enable = False
+        args.kvsplice_enable = False
     elif step == "C1":
         # C1: V-only pruning + light geometric compression (k=32)
         # Same as V19 but with Spline->PCA compression 64->32 dims
@@ -1443,14 +1443,14 @@ if args.ra_mla_ablation_step is not None:
         args.kv_prune_recency = 64
         args.kv_prune_keep_ratio = 0.382
         # KV-Geometry compression: 64 -> 32 dims (50% reduction)
-        args.kvgeom_enable = True
-        args.kvgeom_k = 32
-        args.kvgeom_knots = 7
-        args.kvgeom_samples = 120_000
-        args.kvgeom_max_batches = 64
-        args.kvgeom_epochs = 8
-        args.kvgeom_lr = 2e-3
-        args.kvgeom_save = "kvgeom_c1.pt"
+        args.kvsplice_enable = True
+        args.kvsplice_k = 32
+        args.kvsplice_knots = 7
+        args.kvsplice_samples = 120_000
+        args.kvsplice_max_batches = 64
+        args.kvsplice_epochs = 8
+        args.kvsplice_lr = 2e-3
+        args.kvsplice_save = "kvsplice_c1.pt"
     elif step == "C2":
         # C2: V-only pruning + medium geometric compression (k=16)
         # Same as V19 but with Spline->PCA compression 64->16 dims
@@ -1465,14 +1465,14 @@ if args.ra_mla_ablation_step is not None:
         args.kv_prune_recency = 64
         args.kv_prune_keep_ratio = 0.382
         # KV-Geometry compression: 64 -> 16 dims (75% reduction)
-        args.kvgeom_enable = True
-        args.kvgeom_k = 16
-        args.kvgeom_knots = 7
-        args.kvgeom_samples = 120_000
-        args.kvgeom_max_batches = 64
-        args.kvgeom_epochs = 8
-        args.kvgeom_lr = 2e-3
-        args.kvgeom_save = "kvgeom_c2.pt"
+        args.kvsplice_enable = True
+        args.kvsplice_k = 16
+        args.kvsplice_knots = 7
+        args.kvsplice_samples = 120_000
+        args.kvsplice_max_batches = 64
+        args.kvsplice_epochs = 8
+        args.kvsplice_lr = 2e-3
+        args.kvsplice_save = "kvsplice_c2.pt"
     elif step == "C3":
         # C3: V-only pruning + heavy geometric compression (k=8)
         # Same as V19 but with Spline->PCA compression 64->8 dims
@@ -1487,14 +1487,14 @@ if args.ra_mla_ablation_step is not None:
         args.kv_prune_recency = 64
         args.kv_prune_keep_ratio = 0.382
         # KV-Geometry compression: 64 -> 8 dims (87.5% reduction)
-        args.kvgeom_enable = True
-        args.kvgeom_k = 8
-        args.kvgeom_knots = 7
-        args.kvgeom_samples = 120_000
-        args.kvgeom_max_batches = 64
-        args.kvgeom_epochs = 8
-        args.kvgeom_lr = 2e-3
-        args.kvgeom_save = "kvgeom_c3.pt"
+        args.kvsplice_enable = True
+        args.kvsplice_k = 8
+        args.kvsplice_knots = 7
+        args.kvsplice_samples = 120_000
+        args.kvsplice_max_batches = 64
+        args.kvsplice_epochs = 8
+        args.kvsplice_lr = 2e-3
+        args.kvsplice_save = "kvsplice_c3.pt"
     else:
         raise ValueError(
             f"Invalid ablation step: {step}. Must be 0-18, L0-L7, S0-S3, R0-R3, V0-V19, or C1-C3."
@@ -2581,7 +2581,7 @@ def main():
     # =========================================================================
     # KV-Geometry Calibration (if enabled)
     # =========================================================================
-    if args.kvgeom_enable:
+    if args.kvsplice_enable:
         print("\n" + "=" * 70)
         print("KV-Geometry Calibration: Collecting V vectors")
         print("=" * 70)
@@ -2594,18 +2594,18 @@ def main():
         head_dim = actual_model.config.n_embd // n_heads
 
         print(f"  Architecture: n_heads={n_heads}, head_dim={head_dim}")
-        print(f"  Target latent dimension: k={args.kvgeom_k}")
-        print(f"  Spline knots: {args.kvgeom_knots}")
-        print(f"  Target samples: {args.kvgeom_samples:,}")
-        print(f"  Max batches: {args.kvgeom_max_batches}")
+        print(f"  Target latent dimension: k={args.kvsplice_k}")
+        print(f"  Spline knots: {args.kvsplice_knots}")
+        print(f"  Target samples: {args.kvsplice_samples:,}")
+        print(f"  Max batches: {args.kvsplice_max_batches}")
 
         # Create calibrator
-        calib = KVGeomCalibrator(
+        calib = KVSpliceCalibrator(
             model=actual_model,
             n_heads=n_heads,
             head_dim=head_dim,
-            k=args.kvgeom_k,
-            knots=args.kvgeom_knots,
+            k=args.kvsplice_k,
+            knots=args.kvsplice_knots,
             device=torch.device(device),
             dtype=dtype,
         )
@@ -2614,8 +2614,8 @@ def main():
         calib.register()
 
         # Run warmup batches to collect samples
-        print(f"\nCollecting V samples from {args.kvgeom_max_batches} batches...")
-        for batch_idx in range(args.kvgeom_max_batches):
+        print(f"\nCollecting V samples from {args.kvsplice_max_batches} batches...")
+        for batch_idx in range(args.kvsplice_max_batches):
             x, y = get_batch("train", args.batch_size, args.block_size, device)
             with torch.no_grad():
                 logits, loss = actual_model(x, y)
@@ -2623,7 +2623,7 @@ def main():
             if batch_idx % 4 == 0:
                 total_samples = sum(s.shape[0] for s in calib.samples)
                 print(
-                    f"  Batch {batch_idx}/{args.kvgeom_max_batches}: {total_samples:,} vectors collected"
+                    f"  Batch {batch_idx}/{args.kvsplice_max_batches}: {total_samples:,} vectors collected"
                 )
 
         # Remove hooks
@@ -2631,17 +2631,17 @@ def main():
 
         # Fit Spline->PCA geometry
         print("\nFitting Spline->PCA geometry...")
-        kvg = calib.fit_after_collect(epochs=args.kvgeom_epochs, lr=args.kvgeom_lr)
+        kvg = calib.fit_after_collect(epochs=args.kvsplice_epochs, lr=args.kvsplice_lr)
 
         # Save fitted geometry
         save_dict = {
             "Hd": head_dim,
-            "k": args.kvgeom_k,
-            "knots": args.kvgeom_knots,
+            "k": args.kvsplice_k,
+            "knots": args.kvsplice_knots,
             "state_dict": kvg.state_dict(),
         }
-        torch.save(save_dict, args.kvgeom_save)
-        print(f"\n✓ KV-Geometry saved to: {args.kvgeom_save}")
+        torch.save(save_dict, args.kvsplice_save)
+        print(f"\n✓ KV-Geometry saved to: {args.kvsplice_save}")
         print("=" * 70)
 
     # =========================================================================

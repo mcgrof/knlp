@@ -1,5 +1,5 @@
 # GPT-2 KV Cache Compression Ablation Study
-# Tests V-only pruning + Spline->PCA geometric compression (KV-Geometry)
+# Tests V-only pruning + Spline->PCA geometric compression (KVSplice)
 #
 # Hardware: 4× NVIDIA A10G (24GB each) with DDP
 # Research: How does geometric compression interact with V-only pruning?
@@ -79,7 +79,7 @@ CONFIG_PRUNING_METHOD="none"
 # RA+MLA Configuration - Disabled (using ablation mode instead)
 CONFIG_ENABLE_RA_MLA=n
 
-# Enable ablation study mode with V-pruning + KV-Geometry compression
+# Enable ablation study mode with V-pruning + KVSplice compression
 CONFIG_RA_MLA_ABLATION_MODE=y
 CONFIG_RA_MLA_ABLATION_STEPS="V0,V19,C1,C2,C3"
 
@@ -121,11 +121,11 @@ CONFIG_OUTPUT_DIR="test_matrix_results_kv_compression"
 #   Memory: 391 × 64 = 25,024 per head (62% reduction vs baseline)
 #   Purpose: Isolate V-only pruning effect without other mechanisms
 #
-# KV-GEOMETRY COMPRESSION - Steps C1-C3
-# ======================================
+# KVSPLICE COMPRESSION - Steps C1-C3
+# ====================================
 # All C-steps use Spline->PCA geometric compression on V vectors.
 # Compression learned via calibration: collect V samples, fit geometry,
-# save to kvgeom.pt. Each step tests different compression ratios.
+# save to kvsplice.pt. Each step tests different compression ratios.
 #
 # - Step C1: V-only pruning + light compression (k=32)
 #   V compression: 64 → 32 dims (50% reduction per vector)
@@ -158,11 +158,11 @@ CONFIG_OUTPUT_DIR="test_matrix_results_kv_compression"
 # - C2 vs C1: Is 4:1 compression viable with Spline->PCA geometry?
 # - C3 vs C2: Where is the quality cliff for geometric compression?
 #
-# KV-Geometry calibration:
-# - Enabled for C1-C3 steps via --kvgeom-enable
+# KVSplice calibration:
+# - Enabled for C1-C3 steps via --kvsplice-enable
 # - Collects 120k V samples during warmup (64 batches)
 # - Fits Spline->PCA with 7 knots, 8 epochs, lr=2e-3
-# - Saves geometry to kvgeom_{step}.pt for inference
+# - Saves geometry to kvsplice_{step}.pt for inference
 #
 # Usage:
 # 1. Full ablation (2 hours/step, 10 hours total for 5 steps):
