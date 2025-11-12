@@ -411,73 +411,6 @@ def main():
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Initialize experiment tracker(s) - support multiple trackers
-    trackers = set()  # Use set to track active trackers
-    if args.tracker != "none":
-        # Parse comma-separated trackers
-        tracker_names = [t.strip() for t in args.tracker.split(",")]
-
-        # Auto-generate project name if not provided
-        if not args.tracker_project:
-            import hashlib
-
-            cwd = os.getcwd()
-            dir_name = os.path.basename(cwd)
-            # Create a short checksum of the full path for uniqueness
-            path_hash = hashlib.md5(cwd.encode()).hexdigest()[:8]
-            args.tracker_project = f"{dir_name}-{path_hash}"
-            print(f"Auto-generated project name: {args.tracker_project}", flush=True)
-    else:
-        tracker_names = []
-
-    if "trackio" in tracker_names:
-        try:
-            import trackio
-
-            run_name = (
-                args.tracker_run_name
-                or f"gpt2_{args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            )
-            trackio.init(
-                project=args.tracker_project,
-                config=vars(args),
-                name=run_name,
-            )
-            trackers.add("trackio")
-            print(
-                f"Initialized Trackio tracking for project: {args.tracker_project}",
-                flush=True,
-            )
-        except ImportError:
-            print(
-                "Warning: trackio not installed. Install with: pip install trackio",
-                flush=True,
-            )
-
-    if "wandb" in tracker_names:
-        try:
-            import wandb
-
-            run_name = (
-                args.tracker_run_name
-                or f"gpt2_{args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            )
-            wandb.init(
-                project=args.tracker_project,
-                config=vars(args),
-                name=run_name,
-            )
-            trackers.add("wandb")
-            print(
-                f"Initialized WandB tracking for project: {args.tracker_project}",
-                flush=True,
-            )
-        except ImportError:
-            print(
-                "Warning: wandb not installed. Install with: pip install wandb",
-                flush=True,
-            )
-
     # Device setup - auto-detect if CUDA is available
     if args.device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available, falling back to CPU", flush=True)
@@ -596,6 +529,77 @@ def main():
                 "DDP enabled in config but RANK environment variable not set. Running in single GPU mode.",
                 flush=True,
             )
+
+    # -----------------------------------------------------------------------------
+    # Initialize experiment tracker(s) - only on master process to avoid duplicates
+    trackers = set()  # Use set to track active trackers
+    if master_process:
+        if args.tracker != "none":
+            # Parse comma-separated trackers
+            tracker_names = [t.strip() for t in args.tracker.split(",")]
+
+            # Auto-generate project name if not provided
+            if not args.tracker_project:
+                import hashlib
+
+                cwd = os.getcwd()
+                dir_name = os.path.basename(cwd)
+                # Create a short checksum of the full path for uniqueness
+                path_hash = hashlib.md5(cwd.encode()).hexdigest()[:8]
+                args.tracker_project = f"{dir_name}-{path_hash}"
+                print(
+                    f"Auto-generated project name: {args.tracker_project}", flush=True
+                )
+        else:
+            tracker_names = []
+
+        if "trackio" in tracker_names:
+            try:
+                import trackio
+
+                run_name = (
+                    args.tracker_run_name
+                    or f"gpt2_{args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                trackio.init(
+                    project=args.tracker_project,
+                    config=vars(args),
+                    name=run_name,
+                )
+                trackers.add("trackio")
+                print(
+                    f"Initialized Trackio tracking for project: {args.tracker_project}",
+                    flush=True,
+                )
+            except ImportError:
+                print(
+                    "Warning: trackio not installed. Install with: pip install trackio",
+                    flush=True,
+                )
+
+        if "wandb" in tracker_names:
+            try:
+                import wandb
+
+                run_name = (
+                    args.tracker_run_name
+                    or f"gpt2_{args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                wandb.init(
+                    project=args.tracker_project,
+                    config=vars(args),
+                    name=run_name,
+                )
+                trackers.add("wandb")
+                print(
+                    f"Initialized WandB tracking for project: {args.tracker_project}",
+                    flush=True,
+                )
+            except ImportError:
+                print(
+                    "Warning: wandb not installed. Install with: pip install wandb",
+                    flush=True,
+                )
 
     # -----------------------------------------------------------------------------
     # Model initialization
