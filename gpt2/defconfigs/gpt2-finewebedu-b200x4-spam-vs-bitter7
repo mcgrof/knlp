@@ -1,13 +1,13 @@
 #
 # GPT-2 Configuration for 4x NVIDIA B200 (192GB each, 768GB total)
-# FineWebEdu dataset - Comparing AdamWSPAM vs baseline Adam at 50%
-# sparsity:
+# FineWebEdu dataset - Comparing pruning methods at 50% sparsity:
 #   1. AdamWSPAM + magnitude pruning @ 50%
-#   2. Adam + magnitude pruning @ 50%
+#   2. AdamWPrune + bitter7 variant @ 50%
 #
-# Tests if SPAM spike detection and mitigation provides better
-# training dynamics compared to baseline Adam optimizer when both
-# use identical magnitude-based pruning at 50% sparsity target.
+# bitter7: Conservative variance-based pruning using
+# |w| * (exp_avg_sq^0.25). Tests if variance accumulation
+# (beta2=0.999) over ~1000 steps provides better pruning signal
+# than standard magnitude pruning.
 #
 # Optimized for MAXIMUM SPEED with 4x B200 GPUs using DDP
 #
@@ -24,19 +24,19 @@ CONFIG_COMPILE_MODEL=y
 # Enable test matrix mode for 2-test comparison
 CONFIG_TEST_MATRIX_MODE=y
 
-# Optimizer Configuration - Test AdamWSPAM vs baseline Adam
+# Optimizer Configuration - Test AdamWSPAM and AdamWPrune
 CONFIG_OPTIMIZER_MODE_MULTIPLE=y
 CONFIG_OPTIMIZER_ENABLE_ADAMWSPAM=y
-CONFIG_OPTIMIZER_ENABLE_ADAM=y
+CONFIG_OPTIMIZER_ENABLE_ADAMWPRUNE=y
 CONFIG_TEST_OPTIMIZER_ENABLED_ADAMWSPAM=y
-CONFIG_TEST_OPTIMIZER_ENABLED_ADAM=y
+CONFIG_TEST_OPTIMIZER_ENABLED_ADAMWPRUNE=y
 # Disable all other optimizers
 CONFIG_OPTIMIZER_ENABLE_SGD=n
+CONFIG_OPTIMIZER_ENABLE_ADAM=n
 CONFIG_OPTIMIZER_ENABLE_ADAMW=n
 CONFIG_OPTIMIZER_ENABLE_ADAMWADV=n
-CONFIG_OPTIMIZER_ENABLE_ADAMWPRUNE=n
 
-# SPAM settings (used by AdamWSPAM)
+# SPAM settings (used by both AdamWSPAM and AdamWPrune)
 CONFIG_SPAM_ENABLE_CLIP=y
 CONFIG_SPAM_SPIKE_THRESHOLD="2.0"
 CONFIG_SPAM_THETA="50.0"
@@ -45,15 +45,40 @@ CONFIG_SPAM_WARMUP_STEPS=1000
 CONFIG_SPAM_INTERVAL=1000
 CONFIG_SPAM_PERIODIC_RESET=y
 
-# Pruning Configuration - Both optimizers use magnitude pruning
-# at 50% sparsity. This isolates the effect of SPAM spike
-# detection by keeping pruning method constant.
+# AdamWPrune specific settings
+CONFIG_ADAMWPRUNE_BASE_ADAMWSPAM=y
+CONFIG_ADAMWPRUNE_ENABLE_PRUNING=y
+CONFIG_ADAMWPRUNE_TARGET_SPARSITY="0.5"
+CONFIG_ADAMWPRUNE_FREQUENCY=100
+CONFIG_ADAMWPRUNE_WARMUP_STEPS=1000
+CONFIG_ADAMWPRUNE_BETA1="0.9"
+CONFIG_ADAMWPRUNE_BETA2="0.999"
+CONFIG_ADAMWPRUNE_WEIGHT_DECAY="0.1"
+CONFIG_ADAMWPRUNE_AMSGRAD=n
+
+# AdamWPrune Variants - Enable ONLY bitter7 for this test
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER0=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER1=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER2=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER3=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER4=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER5=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER6=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER7=y
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER8=n
+CONFIG_GPT2_ADAMWPRUNE_VARIANT_BITTER9=n
+CONFIG_GPT2_ADAMWPRUNE_DEFAULT_VARIANT="bitter7"
+
+# Pruning Configuration - Test both magnitude and state at 50%
+# AdamWSPAM will use magnitude pruning (standard |w| importance)
+# AdamWPrune will use state pruning with bitter7 variant
 CONFIG_PRUNING_MODE_MULTIPLE=y
 CONFIG_PRUNING_ENABLE_MAGNITUDE=y
 CONFIG_PRUNING_ENABLE_MOVEMENT=n
-CONFIG_PRUNING_ENABLE_STATE=n
+CONFIG_PRUNING_ENABLE_STATE=y
 CONFIG_PRUNING_ENABLE_NONE=n
 CONFIG_PRUNING_ENABLED_MAGNITUDE=y
+CONFIG_PRUNING_ENABLED_STATE=y
 CONFIG_TEST_PRUNING_MAGNITUDE=y
 CONFIG_TEST_PRUNING_METHODS="magnitude"
 
@@ -119,7 +144,7 @@ CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # Checkpointing
 CONFIG_SAVE_CHECKPOINT=y
 CONFIG_CHECKPOINT_INTERVAL=1000
-CONFIG_OUTPUT_DIR="./results/gpt2-adamwspam-vs-adam-b200x4"
+CONFIG_OUTPUT_DIR="./results/gpt2-spam-vs-bitter7-b200x4"
 
 # Experiment Tracking
 CONFIG_GPT2_TRACKER="none"
