@@ -93,17 +93,17 @@ CONFIG_TEST_SPARSITY_50=y
 CONFIG_TEST_SPARSITY_70=n
 CONFIG_TEST_SPARSITY_90=n
 
-# Distributed Training - DISABLED for now due to logging issues
-# CONFIG_GPT2_USE_DDP is not set
-CONFIG_GPT2_DDP_NUM_GPUS=1
+# Distributed Training - 4x B200 with DDP for MAXIMUM SPEED
+CONFIG_GPT2_USE_DDP=y
+CONFIG_GPT2_DDP_NUM_GPUS=4
 CONFIG_GPT2_DDP_BACKEND="nccl"
 CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=n
 
-# Training Parameters - Single GPU mode
-# Per-GPU batch size of 32
-# With gradient accumulation of 32=effective batch size of 1024
+# Training Parameters - Optimized for 4x B200 (732GB total VRAM)
+# Per-GPU batch size of 32=128 total across 4 GPUs
+# With gradient accumulation of 8=effective batch size of 1024
 CONFIG_BATCH_SIZE=32
-CONFIG_GPT2_GRADIENT_ACCUMULATION=32
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
 CONFIG_NUM_EPOCHS=10
 CONFIG_GPT2_MAX_ITERS=50000
 CONFIG_GPT2_EVAL_INTERVAL=500
