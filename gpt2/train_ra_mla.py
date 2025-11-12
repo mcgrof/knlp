@@ -221,18 +221,21 @@ class KVSpliceCalibrator:
 
     def _v_hook(self, mod, inp, out):
         """Hook to capture V projection outputs."""
-        # out shape varies by architecture:
-        # GPT-2: [B, T, n_embd] where n_embd = nh * hd
-        # LLaMA: [B, T, nh * hd]
         B, T, hidden = out.shape
 
-        # Reshape to [B*T, nh, hd]
-        try:
-            v = out.view(B * T, self.nh, self.hd)
-        except RuntimeError:
-            # If reshape fails, hidden might not equal nh*hd
-            # Fall back to treating as flattened
-            v = out.view(B * T, -1, self.hd)
+        # Handle GPT-2's combined c_attn projection [B, T, 3*n_embd]
+        # Need to split QKV first before extracting V
+        if hidden == 3 * self.nh * self.hd:
+            qkv = out.view(B, T, 3, self.nh, self.hd)
+            v = qkv[:, :, 2, :, :]
+        elif hidden == self.nh * self.hd:
+            v = out.view(B, T, self.nh, self.hd)
+        else:
+            raise RuntimeError(
+                f"Unexpected hidden dim {hidden}, expected "
+                f"{3 * self.nh * self.hd} (QKV) or "
+                f"{self.nh * self.hd} (V only)"
+            )
 
         # Flatten to [N, hd] where N = B*T*nh
         v = v.reshape(-1, self.hd).detach()
