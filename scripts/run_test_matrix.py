@@ -2154,6 +2154,10 @@ def main():
                         "V16": "Unified RA R=4 variance-guided: Activates at step ~250 based on loss variance",
                         "V17": "R-MLP basic + variance-guided + KV pruning: Fixed k=391, variance activation",
                         "V18": "R-MLP golden + variance-guided + KV pruning: Learned ratio, variance activation",
+                        "V19": "V-only pruning baseline: k=391 (38.2%), no RA/R-MLP, clean isolation test",
+                        "C1": "V-pruning + light compression: k=391 tokens, 64→32 dims (81% memory reduction)",
+                        "C2": "V-pruning + medium compression: k=391 tokens, 64→16 dims (90% memory reduction)",
+                        "C3": "V-pruning + heavy compression: k=391 tokens, 64→8 dims (95% memory reduction)",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
