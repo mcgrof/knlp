@@ -747,9 +747,11 @@ class PrunedKVAttention(nn.Module):
         # Use new pruning strategies or legacy implementation
         if self.prune_mode == "v_only":
             # V-only pruning: single softmax, no distribution shift
-            out, idx = self.pruner(q, k, v, inv_sqrt_d)
+            # VOnlyPruner returns: out, idx, attn_pruned, V_keep
+            out, idx, attn_pruned, V_keep = self.pruner(q, k, v, inv_sqrt_d)
         elif self.prune_mode == "kv_scores_reuse":
             # KV pruning with score reuse: no double GEMM
+            # KVScoresReusePruner returns: out, idx
             out, idx = self.pruner(q, k, v, inv_sqrt_d)
         else:
             # Legacy implementation (for comparison)
