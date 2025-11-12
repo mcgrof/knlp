@@ -783,9 +783,11 @@ def main():
         return min_lr + coeff * (learning_rate - min_lr)
 
     # Training metrics
+    # Get underlying model if wrapped in DDP
+    raw_model = model.module if ddp else model
     metrics = {
         "config": vars(args),
-        "model_params": model.get_num_params(),
+        "model_params": raw_model.get_num_params(),
         "train_losses": [],
         "val_losses": [],
         "train_perplexities": [],
@@ -818,7 +820,7 @@ def main():
 
     if master_process:
         print(f"\nStarting training...", flush=True)
-        print(f"Parameters: {model.get_num_params()/1e6:.2f}M", flush=True)
+        print(f"Parameters: {raw_model.get_num_params()/1e6:.2f}M", flush=True)
         print(f"Device: {device}, dtype: {dtype}", flush=True)
         print(
             f"Batch size: {args.batch_size}, Gradient accumulation: {args.gradient_accumulation}",
