@@ -630,6 +630,12 @@ def main():
     model = GPT(config)
     model.to(device)
 
+    # Compile model if requested (must compile BEFORE wrapping in DDP)
+    if args.compile and hasattr(torch, "compile"):
+        if master_process:
+            print("Compiling model with torch.compile()...", flush=True)
+        model = torch.compile(model)
+
     # Wrap model in DDP if enabled
     if ddp:
         model = DDP(
@@ -638,11 +644,6 @@ def main():
 
     # Get underlying model for methods that need direct access to parameters
     raw_model = model.module if ddp else model
-
-    # Compile model if requested (only compile the base model, not DDP wrapper)
-    if args.compile and hasattr(torch, "compile") and not ddp:
-        print("Compiling model with torch.compile()...", flush=True)
-        model = torch.compile(model)
 
     # -----------------------------------------------------------------------------
     # Optimizer setup
