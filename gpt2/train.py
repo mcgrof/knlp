@@ -512,6 +512,8 @@ def main():
         ddp_find_unused = True
 
     # Initialize DDP if enabled and environment variables are set
+    # DEBUG: Print environment check
+    print(f"DEBUG: use_ddp={use_ddp}, RANK in env={'RANK' in os.environ}, RANK={os.environ.get('RANK', 'NOT SET')}", flush=True)
     if use_ddp and "RANK" in os.environ:
         ddp = True
         init_process_group(backend=ddp_backend)
