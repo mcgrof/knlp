@@ -636,6 +636,9 @@ def main():
             model, device_ids=[ddp_local_rank], find_unused_parameters=ddp_find_unused
         )
 
+    # Get underlying model for methods that need direct access to parameters
+    raw_model = model.module if ddp else model
+
     # Compile model if requested (only compile the base model, not DDP wrapper)
     if args.compile and hasattr(torch, "compile") and not ddp:
         print("Compiling model with torch.compile()...", flush=True)
@@ -783,8 +786,6 @@ def main():
         return min_lr + coeff * (learning_rate - min_lr)
 
     # Training metrics
-    # Get underlying model if wrapped in DDP
-    raw_model = model.module if ddp else model
     metrics = {
         "config": vars(args),
         "model_params": raw_model.get_num_params(),
