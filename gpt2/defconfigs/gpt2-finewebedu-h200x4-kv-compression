@@ -1,0 +1,192 @@
+#
+# GPT-2 KV Cache Compression Ablation Study
+# Optimized for 4× NVIDIA H200 (141GB each, 564GB total) with DDP
+#
+# Tests V-only pruning + Spline->PCA geometric compression (KVSplice):
+#   - V0: Pure baseline GPT-2
+#   - V19: V-only pruning (391 tokens, 62% reduction)
+#   - C1: V-pruning + light compression (k=32, 81% reduction)
+#   - C2: V-pruning + medium compression (k=16, 90% reduction)
+#   - C3: V-pruning + heavy compression (k=8, 95% reduction)
+#
+# Optimized for MAXIMUM SPEED with 4x H200 GPUs using DDP
+# Time-based training: 2 hours per step (5 steps = 10 hours total)
+#
+# To run: make defconfig-gpt2-finewebedu-h200x4-kv-compression && make
+#
+
+# Model Selection - GPT-2
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL="gpt2"
+CONFIG_TEST_MODELS="gpt2"
+CONFIG_GPT2_MODEL_SIZE="124M"
+
+# Enable model compilation for maximum performance
+CONFIG_COMPILE_MODEL=y
+
+# Optimizer Configuration - AdamWSPAM
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_ENABLE_ADAMWSPAM=y
+CONFIG_OPTIMIZER="adamwspam"
+# Disable all other optimizers
+CONFIG_OPTIMIZER_ENABLE_SGD=n
+CONFIG_OPTIMIZER_ENABLE_ADAM=n
+CONFIG_OPTIMIZER_ENABLE_ADAMW=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWADV=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWPRUNE=n
+
+# SPAM settings
+CONFIG_SPAM_ENABLE_CLIP=y
+CONFIG_SPAM_SPIKE_THRESHOLD="2.0"
+CONFIG_SPAM_THETA="50.0"
+CONFIG_SPAM_WARMUP=y
+CONFIG_SPAM_WARMUP_STEPS=1000
+CONFIG_SPAM_INTERVAL=1000
+CONFIG_SPAM_PERIODIC_RESET=y
+
+# Pruning - Disabled (using ablation mode for KV compression)
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# RA+MLA Configuration - Disabled (using ablation mode instead)
+CONFIG_ENABLE_RA_MLA=n
+
+# Enable ablation study mode with V-pruning + KVSplice compression
+CONFIG_RA_MLA_ABLATION_MODE=y
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V19,C1,C2,C3"
+
+# Disable test matrix mode - ablation mode runs its own test sequence
+CONFIG_TEST_MATRIX_MODE=n
+
+# Distributed Training - 4x H200 with DDP for MAXIMUM SPEED
+CONFIG_GPT2_USE_DDP=y
+CONFIG_GPT2_DDP_NUM_GPUS=4
+CONFIG_GPT2_DDP_BACKEND="nccl"
+CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=n
+
+# Training Parameters - Optimized for 4x H200 (564GB total VRAM)
+# Per-GPU batch size of 64 = 256 total across 4 GPUs
+# With gradient accumulation of 2 = effective batch size of 512
+CONFIG_BATCH_SIZE=64
+CONFIG_GPT2_GRADIENT_ACCUMULATION=2
+CONFIG_NUM_EPOCHS=10
+
+# Time-based training (2 hours per step for quality convergence)
+# Total time: 5 steps × 2 hours = 10 hours
+# For quick test: GPT2_MAX_TIME=600 make (10 minutes per step)
+CONFIG_GPT2_MAX_TIME=7200
+
+# Evaluation and logging
+CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+
+# Learning Rate Schedule
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_GPT2_MIN_LR="6e-5"
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+
+# Dataset Configuration
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+
+# Data Loading Optimization
+CONFIG_NUM_WORKERS=16
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Mixed Precision Training
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Performance Optimizations - ALL THE BELLS AND WHISTLES
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPU_WARMUP=y
+CONFIG_GPT2_FLASH_ATTENTION=y
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Checkpointing
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_OUTPUT_DIR="./results/gpt2-kv-compression-h200x4"
+
+# Experiment Tracking - Enable both TrackIO and WandB
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="gpt2-kv-compression-h200x4"
+
+# GPT-2 Model Configuration
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_COMPILE=y
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_BIAS=y
+
+# Ablation step details:
+#
+# BASELINE - Step V0
+# ==================
+# - Step V0: Pure baseline GPT-2
+#   Architecture: Standard SDPA attention, standard MLP
+#   Purpose: Reference point for all memory/quality comparisons
+#
+# V-ONLY PRUNING - Step V19
+# ==========================
+# - Step V19: V-only pruning (clean isolation test)
+#   Architecture: Keep K full, prune V to 391 tokens (38.2%)
+#   KV pruning: Fixed golden ratio, exposure correction enabled
+#   Memory: 391 × 64 = 25,024 per head (62% reduction vs baseline)
+#   Purpose: Isolate V-only pruning effect without other mechanisms
+#
+# KVSPLICE COMPRESSION - Steps C1-C3
+# ====================================
+# All C-steps use Spline->PCA geometric compression on V vectors.
+# Compression learned via calibration: collect V samples, fit geometry,
+# save to kvsplice.pt. Each step tests different compression ratios.
+#
+# - Step C1: V-only pruning + light compression (k=32)
+#   V compression: 64 → 32 dims (50% reduction per vector)
+#   Total memory: 391 × 32 = 12,512 per head (81% reduction vs baseline)
+#   Purpose: Conservative compression - does geometry help at 2:1 ratio?
+#
+# - Step C2: V-only pruning + medium compression (k=16)
+#   V compression: 64 → 16 dims (75% reduction per vector)
+#   Total memory: 391 × 16 = 6,256 per head (90% reduction vs baseline)
+#   Purpose: Aggressive compression - quality vs memory tradeoff
+#
+# - Step C3: V-only pruning + heavy compression (k=8)
+#   V compression: 64 → 8 dims (87.5% reduction per vector)
+#   Total memory: 391 × 8 = 3,128 per head (95% reduction vs baseline)
+#   Purpose: Extreme compression - lower bound for usable quality
+#
+# Memory comparison table:
+# ========================
+# Step  | V cache size      | Reduction | Notes
+# ------|-------------------|-----------|----------------------------------
+# V0    | 1024 × 64 = 65536 | 0%        | Baseline reference
+# V19   | 391 × 64 = 25024  | 62%       | V-only pruning alone
+# C1    | 391 × 32 = 12512  | 81%       | Pruning + light compression
+# C2    | 391 × 16 = 6256   | 90%       | Pruning + medium compression
+# C3    | 391 × 8 = 3128    | 95%       | Pruning + heavy compression
+#
+# Expected comparisons:
+# - V19 vs V0: V-only pruning baseline (should match or improve V0)
+# - C1 vs V19: Does 2:1 geometric compression hurt quality?
+# - C2 vs C1: Is 4:1 compression viable with Spline->PCA geometry?
+# - C3 vs C2: Where is the quality cliff for geometric compression?
+#
+# Performance estimate (4x H200):
+# - ~1000-1500ms/iter at batch_size=64 with DDP
+# - 2 hours = 7200s ≈ 4800-7200 iterations per step
+# - Total: 10 hours for all 5 ablation steps
+# - Cost: 10 hours × hourly_rate
+#
