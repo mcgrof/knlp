@@ -685,20 +685,20 @@ def main():
         )
     )
 
-    # Pruning setup
+    # Pruning setup - use raw_model (not DDP wrapper) for pruning
     pruner = None
     if args.pruning_method != "none" and args.pruning_method != "state":
         print(f"Setting up {args.pruning_method} pruning...", flush=True)
         if args.pruning_method == "magnitude":
             pruner = MagnitudePruning(
-                model=model,
+                model=raw_model,
                 target_sparsity=args.target_sparsity,
                 warmup_steps=args.pruning_warmup,
                 ramp_end_step=args.max_iters,
             )
         elif args.pruning_method == "movement":
             pruner = MovementPruning(
-                model=model,
+                model=raw_model,
                 target_sparsity=args.target_sparsity,
                 warmup_steps=args.pruning_warmup,
                 pruning_frequency=50,
