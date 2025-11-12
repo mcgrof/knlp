@@ -413,7 +413,8 @@ def main():
 
     # Device setup - auto-detect if CUDA is available
     if args.device == "cuda" and not torch.cuda.is_available():
-        print("CUDA not available, falling back to CPU", flush=True)
+        if os.environ.get("RANK", "0") == "0":
+            print("CUDA not available, falling back to CPU", flush=True)
         device = "cpu"
     else:
         device = args.device
@@ -422,9 +423,13 @@ def main():
     # WMMA on AMD RDNA3+, Tensor Cores on NVIDIA Volta+
     if device == "cuda" and supports_tensorcore_fp32():
         torch.set_float32_matmul_precision("high")
-        print("Enabled TensorFloat32 matmul precision (WMMA/Tensor Cores)", flush=True)
+        if os.environ.get("RANK", "0") == "0":
+            print(
+                "Enabled TensorFloat32 matmul precision (WMMA/Tensor Cores)", flush=True
+            )
     elif device == "cuda":
-        print("Tensor cores/WMMA not detected, using default precision", flush=True)
+        if os.environ.get("RANK", "0") == "0":
+            print("Tensor cores/WMMA not detected, using default precision", flush=True)
 
     dtype = {
         "float32": torch.float32,
@@ -517,10 +522,11 @@ def main():
         torch.cuda.set_device(device)
         master_process = ddp_rank == 0
         seed_offset = ddp_rank
-        print(
-            f"DDP initialized: rank {ddp_rank}/{ddp_world_size}, local rank {ddp_local_rank}, device {device}",
-            flush=True,
-        )
+        if master_process:
+            print(
+                f"DDP initialized: {ddp_world_size} ranks, backend: {ddp_backend}",
+                flush=True,
+            )
     else:
         master_process = True
         seed_offset = 0
@@ -800,18 +806,19 @@ def main():
 
         scaler = DummyScaler()
 
-    print(f"\nStarting training...", flush=True)
-    print(f"Parameters: {model.get_num_params()/1e6:.2f}M", flush=True)
-    print(f"Device: {device}, dtype: {dtype}", flush=True)
-    print(
-        f"Batch size: {args.batch_size}, Gradient accumulation: {args.gradient_accumulation}",
-        flush=True,
-    )
-    print(
-        f"Effective batch size: {args.batch_size * args.gradient_accumulation}",
-        flush=True,
-    )
-    print("-" * 50, flush=True)
+    if master_process:
+        print(f"\nStarting training...", flush=True)
+        print(f"Parameters: {model.get_num_params()/1e6:.2f}M", flush=True)
+        print(f"Device: {device}, dtype: {dtype}", flush=True)
+        print(
+            f"Batch size: {args.batch_size}, Gradient accumulation: {args.gradient_accumulation}",
+            flush=True,
+        )
+        print(
+            f"Effective batch size: {args.batch_size * args.gradient_accumulation}",
+            flush=True,
+        )
+        print("-" * 50, flush=True)
 
     # Training loop
     model.train()
