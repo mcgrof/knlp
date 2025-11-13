@@ -707,8 +707,12 @@ def compute_layer_sparsity(base_sparsity, layer_idx, total_layers, variant):
     return layer_sparsity
 
 
+@torch.no_grad()
 def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
     """Update AdamWPrune pruning masks based on Adam states.
+
+    Importance calculation doesn't need gradients - using @torch.no_grad() decorator
+    to prevent computation graph building and save significant memory during pruning.
 
     Args:
         optimizer: The optimizer with Adam states
