@@ -34,7 +34,7 @@ k=64: PCA MSE=0.000451,  SplinePCA MSE=0.000451  (Δ=0.000000)  ✓
 ## Implementation Status
 
 ### ✅ Completed
-- [x] `gpt2/kvsplice_v1.py` - Core Spline→PCA implementation
+- [x] `gpt2/kvsplice.py` - Core Spline→PCA implementation
 - [x] Numerical stability fixes (clamping, epsilon guards)
 - [x] Standalone validation on synthetic data
 - [x] Integration into `train_ra_mla.py`
