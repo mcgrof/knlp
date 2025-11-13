@@ -128,8 +128,8 @@ except ImportError:
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model import GPT, GPTConfig
-from ra_mla_gpt2 import patch_gpt2_with_ra_mla, score_heads_for_prune_gpt2
-from ra_lens_gpt2 import (
+from gpt2.old.ra_mla_gpt2 import patch_gpt2_with_ra_mla, score_heads_for_prune_gpt2
+from gpt2.old.ra_lens_gpt2 import (
     patch_gpt2_with_lens_attention,
     apply_route_annealing,
     get_mean_route_gate,
@@ -1773,7 +1773,7 @@ def analyze_unified_ra_gates(model) -> Dict[str, float]:
     import sys
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from unified_ra import UnifiedRAttention
+    from ra import UnifiedRAttention
 
     w_std_list = []
     w_rec_list = []
@@ -1859,7 +1859,7 @@ def analyze_rmlp_gates(model) -> Dict[str, float]:
     import sys
 
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from unified_ra import ReciprocalMLP
+    from ra import ReciprocalMLP
 
     w_std_list = []
     w_rec_list = []
@@ -2188,7 +2188,7 @@ def main():
         )
 
         # Then patch MLP with R-MLP mechanisms
-        from ra_mla_gpt2 import ReciprocalMLP, RA_MLA_Block, RA_MLA_Config
+        from gpt2.old.ra_mla_gpt2 import ReciprocalMLP, RA_MLA_Block, RA_MLA_Config
 
         # Create R-MLP config
         mlp_cfg = RA_MLA_Config(
@@ -2517,7 +2517,7 @@ def main():
     gates_unfrozen = False  # Track if we've already unfrozen
 
     if ra_delay_steps > 0 or rmlp_delay_steps > 0 or use_variance_guided:
-        from unified_ra import UnifiedRAttention, ReciprocalMLP
+        from ra import UnifiedRAttention, ReciprocalMLP
 
         if use_variance_guided:
             print(
@@ -2884,7 +2884,7 @@ def main():
 
         # Unfreeze reciprocal gates after delay period
         if ra_delay_steps > 0 and iter_num == ra_delay_steps:
-            from unified_ra import UnifiedRAttention
+            from ra import UnifiedRAttention
 
             if master_process:
                 print(f"\n{'='*70}")
@@ -2897,7 +2897,7 @@ def main():
                     module.unfreeze_reciprocal_gates()
 
         if rmlp_delay_steps > 0 and iter_num == rmlp_delay_steps:
-            from unified_ra import ReciprocalMLP
+            from ra import ReciprocalMLP
 
             if master_process:
                 print(f"\n{'='*70}")
@@ -2928,7 +2928,7 @@ def main():
 
                 # Unfreeze if variance is below threshold (training is stable)
                 if loss_variance < variance_threshold:
-                    from unified_ra import UnifiedRAttention, ReciprocalMLP
+                    from ra import UnifiedRAttention, ReciprocalMLP
 
                     if master_process:
                         print(f"\n{'='*70}")
