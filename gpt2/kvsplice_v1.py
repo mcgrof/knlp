@@ -145,6 +145,7 @@ class KVSplice(nn.Module):
             shuffle=True,
             drop_last=True,
         )
+        first_epoch = True
         for _ in range(epochs):
             with torch.no_grad():
                 z_all = geom(x)
@@ -164,6 +165,20 @@ class KVSplice(nn.Module):
                 loss = F.mse_loss(xr, xb)  # Compare reconstruction to target
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
+
+                # Validate gradient flow on first batch of first epoch
+                if first_epoch:
+                    for name, param in geom.named_parameters():
+                        if param.grad is None:
+                            print(f"WARNING: No gradient for {name}")
+                        else:
+                            grad_norm = param.grad.norm().item()
+                            if grad_norm < 1e-8:
+                                print(
+                                    f"WARNING: Near-zero gradient for {name}: {grad_norm:.2e}"
+                                )
+                    first_epoch = False
+
                 opt.step()
         with torch.no_grad():
             z_all = geom(x)
