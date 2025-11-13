@@ -67,17 +67,33 @@ class BaseGPT2Trainer:
         # Data loading
         self.setup_data()
 
+        # Tracker setup
+        self.trackers = set()
+        if self.master_process:
+            self.setup_trackers()
+
         # Model and optimizer (to be created by subclass)
         self.model = None
+        self.raw_model = None  # Non-DDP wrapped model
         self.optimizer = None
         self.scaler = None
+        self.scheduler = None
 
         # Training state
         self.iter_num = 0
         self.best_val_loss = float('inf')
+        self.training_start_time = None
 
         # Metrics
-        self.metrics = {}
+        self.metrics = {
+            'train_losses': [],
+            'val_losses': [],
+            'train_perplexities': [],
+            'val_perplexities': [],
+            'learning_rates': [],
+            'timestamps': [],
+            'iterations': [],
+        }
 
     def setup_device(self):
         """Setup device (CPU/CUDA) and dtype."""
@@ -114,6 +130,54 @@ class BaseGPT2Trainer:
     def setup_data(self):
         """Setup data loading (to be implemented by subclass if needed)."""
         pass
+
+    def setup_trackers(self):
+        """Setup experiment tracking (trackio, wandb)."""
+        if not hasattr(self.args, 'tracker') or self.args.tracker == 'none':
+            return
+
+        # Parse comma-separated trackers
+        tracker_names = [t.strip() for t in self.args.tracker.split(',')]
+
+        # Auto-generate project name if not provided
+        if not hasattr(self.args, 'tracker_project') or not self.args.tracker_project:
+            import hashlib
+            cwd = os.getcwd()
+            dir_name = os.path.basename(cwd)
+            path_hash = hashlib.md5(cwd.encode()).hexdigest()[:8]
+            self.args.tracker_project = f"{dir_name}-{path_hash}"
+            if self.master_process:
+                print(f"Auto-generated project name: {self.args.tracker_project}")
+
+        if 'trackio' in tracker_names:
+            try:
+                import trackio
+                run_name = getattr(self.args, 'tracker_run_name', None) or \
+                          f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                trackio.init(
+                    project=self.args.tracker_project,
+                    config=vars(self.args),
+                    name=run_name,
+                )
+                self.trackers.add('trackio')
+                print(f"Initialized Trackio tracking for project: {self.args.tracker_project}")
+            except ImportError:
+                print("Warning: trackio not installed. Install with: pip install trackio")
+
+        if 'wandb' in tracker_names:
+            try:
+                import wandb
+                run_name = getattr(self.args, 'tracker_run_name', None) or \
+                          f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                wandb.init(
+                    project=self.args.tracker_project,
+                    config=vars(self.args),
+                    name=run_name,
+                )
+                self.trackers.add('wandb')
+                print(f"Initialized WandB tracking for project: {self.args.tracker_project}")
+            except ImportError:
+                print("Warning: wandb not installed. Install with: pip install wandb")
 
     def get_batch(self, split: str) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -263,4 +327,75 @@ class BaseGPT2Trainer:
         Returns:
             True if checkpoint should be saved
         """
+        if not hasattr(self.args, 'checkpoint_interval'):
+            return False
         return self.iter_num % self.args.checkpoint_interval == 0
+
+    def wrap_model_ddp(self, model: nn.Module) -> nn.Module:
+        """
+        Wrap model in DDP if distributed training is enabled.
+
+        Args:
+            model: Model to wrap
+
+        Returns:
+            DDP-wrapped model or original model
+        """
+        if self.ddp:
+            # Check if find_unused_parameters should be enabled
+            find_unused = getattr(self.args, 'ddp_find_unused_params', True)
+            model = DDP(model, device_ids=[self.ddp_local_rank], find_unused_parameters=find_unused)
+        return model
+
+    def setup_mixed_precision(self):
+        """Setup mixed precision training scaler."""
+        if self.device == "cuda":
+            enabled = (self.dtype == 'float16')  # Only for FP16, not BF16
+            self.scaler = torch.amp.GradScaler("cuda", enabled=enabled)
+        else:
+            # CPU doesn't support GradScaler
+            class DummyScaler:
+                def scale(self, loss):
+                    return loss
+                def unscale_(self, optimizer):
+                    pass
+                def step(self, optimizer):
+                    optimizer.step()
+                def update(self):
+                    pass
+            self.scaler = DummyScaler()
+
+    def log_metrics(self, metrics_dict: Dict[str, float]):
+        """
+        Log metrics to configured trackers.
+
+        Args:
+            metrics_dict: Dictionary of metric name -> value
+        """
+        if not self.master_process:
+            return
+
+        # Add iteration number
+        metrics_dict['iteration'] = self.iter_num
+
+        # Log to trackio
+        if 'trackio' in self.trackers:
+            try:
+                import trackio
+                trackio.log(metrics_dict)
+            except Exception as e:
+                print(f"Warning: Failed to log to trackio: {e}")
+
+        # Log to wandb
+        if 'wandb' in self.trackers:
+            try:
+                import wandb
+                wandb.log(metrics_dict, step=self.iter_num)
+            except Exception as e:
+                print(f"Warning: Failed to log to wandb: {e}")
+
+    def train(self):
+        """
+        Main training loop. Must be implemented by subclass.
+        """
+        raise NotImplementedError("Subclass must implement train()")
