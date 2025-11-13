@@ -10,8 +10,10 @@ import os
 import sys
 import time
 import math
+import json
 from typing import Dict, Tuple, Optional
 from contextlib import nullcontext
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -22,6 +24,8 @@ from torch.distributed import init_process_group, destroy_process_group
 # Add parent directory to path
 parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, parent_dir)
+
+from gpt2.model import GPT, GPTConfig
 
 
 class BaseGPT2Trainer:
@@ -121,7 +125,37 @@ class BaseGPT2Trainer:
         Returns:
             (x, y) tensors
         """
-        raise NotImplementedError("Subclass must implement get_batch()")
+        # Load data
+        if split == "train":
+            data_path = os.path.join(self.args.data_dir, self.args.dataset, "train.bin")
+        else:
+            data_path = os.path.join(self.args.data_dir, self.args.dataset, "val.bin")
+
+        data = np.memmap(data_path, dtype=np.uint16, mode="r")
+
+        # Generate random positions
+        ix = torch.randint(len(data) - self.args.block_size, (self.args.batch_size,))
+
+        # Create batch
+        x = torch.stack(
+            [torch.from_numpy((data[i : i + self.args.block_size]).astype(np.int64)) for i in ix]
+        )
+        y = torch.stack(
+            [
+                torch.from_numpy((data[i + 1 : i + 1 + self.args.block_size]).astype(np.int64))
+                for i in ix
+            ]
+        )
+
+        if self.device == "cuda":
+            # Pin arrays for async transfer
+            x, y = x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(
+                self.device, non_blocking=True
+            )
+        else:
+            x, y = x.to(self.device), y.to(self.device)
+
+        return x, y
 
     def get_lr(self, it: int) -> float:
         """
