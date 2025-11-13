@@ -1661,10 +1661,7 @@ class GPUTop:
 
         # For multi-GPU setups, also log all GPUs in a separate structure
         if self.gpu_monitor.gpu_count > 1:
-            all_gpu_entry = {
-                "timestamp": timestamp,
-                "multi_gpu_data": []
-            }
+            all_gpu_entry = {"timestamp": timestamp, "multi_gpu_data": []}
 
             # Collect data for all GPUs and calculate aggregates
             total_memory_used = 0
@@ -1676,18 +1673,20 @@ class GPUTop:
 
             for gpu_idx in range(self.gpu_monitor.gpu_count):
                 gpu_stats = self.gpu_monitor.get_stats(gpu_idx)
-                all_gpu_entry["multi_gpu_data"].append({
-                    "gpu_index": gpu_idx,
-                    "gpu_name": gpu_stats["name"],
-                    "utilization": gpu_stats["utilization"],
-                    "memory_used": gpu_stats["memory_used"],
-                    "memory_total": gpu_stats["memory_total"],
-                    "memory_percent": gpu_stats["memory_percent"],
-                    "temperatures": gpu_stats.get("temperatures", {}),
-                    "power": gpu_stats["power"],
-                    "power_limit": gpu_stats["power_limit"],
-                    "clocks": gpu_stats.get("clocks", {}),
-                })
+                all_gpu_entry["multi_gpu_data"].append(
+                    {
+                        "gpu_index": gpu_idx,
+                        "gpu_name": gpu_stats["name"],
+                        "utilization": gpu_stats["utilization"],
+                        "memory_used": gpu_stats["memory_used"],
+                        "memory_total": gpu_stats["memory_total"],
+                        "memory_percent": gpu_stats["memory_percent"],
+                        "temperatures": gpu_stats.get("temperatures", {}),
+                        "power": gpu_stats["power"],
+                        "power_limit": gpu_stats["power_limit"],
+                        "clocks": gpu_stats.get("clocks", {}),
+                    }
+                )
 
                 # Accumulate for aggregates
                 total_memory_used += gpu_stats["memory_used"]
@@ -1704,7 +1703,11 @@ class GPUTop:
 
             # Add aggregate summary
             avg_utilization = avg_utilization / self.gpu_monitor.gpu_count
-            total_memory_percent = (total_memory_used / total_memory_total * 100) if total_memory_total > 0 else 0
+            total_memory_percent = (
+                (total_memory_used / total_memory_total * 100)
+                if total_memory_total > 0
+                else 0
+            )
 
             all_gpu_entry["aggregate_stats"] = {
                 "total_memory_used": total_memory_used,
@@ -1714,11 +1717,11 @@ class GPUTop:
                 "total_power": total_power,
                 "total_power_limit": total_power_limit,
                 "max_temperature": max_temp,
-                "gpu_count": self.gpu_monitor.gpu_count
+                "gpu_count": self.gpu_monitor.gpu_count,
             }
 
             # Store multi-GPU data separately
-            if not hasattr(self, 'multi_gpu_data'):
+            if not hasattr(self, "multi_gpu_data"):
                 self.multi_gpu_data = []
             self.multi_gpu_data.append(all_gpu_entry)
 
@@ -1728,8 +1731,8 @@ class GPUTop:
                 json.dump(self.json_data, f, indent=2)
 
             # Write multi-GPU data to separate file if available
-            if hasattr(self, 'multi_gpu_data') and self.multi_gpu_data:
-                multi_gpu_file = self.stats_file.replace('.json', '_multi_gpu.json')
+            if hasattr(self, "multi_gpu_data") and self.multi_gpu_data:
+                multi_gpu_file = self.stats_file.replace(".json", "_multi_gpu.json")
                 with open(multi_gpu_file, "w") as f:
                     json.dump(self.multi_gpu_data, f, indent=2)
         except Exception as e:
@@ -2515,7 +2518,7 @@ class GPUTop:
             axes[3, 0].set_yticks([])
 
         # All Temperature Sensors Overlay (Row 4, Column 2)
-        # Show all available temperature sensors for complete view
+        # Show all available temperature sensors for comprehensive view
         if common_sensors:
             for sensor in sorted(common_sensors):
                 # Plot Run 1
