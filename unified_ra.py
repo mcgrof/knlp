@@ -491,6 +491,11 @@ class ReciprocalMLP(nn.Module):
     ):
         super().__init__()
         self.n_embd = n_embd
+
+        # Global scalar for gradually turning on attention↔MLP coupling.
+        # Training loop will call set_coupling_scale() to ramp this from 0 → 1.
+        self.register_buffer("coupling_scale", torch.tensor(0.0))
+
         D_ff = int(expansion * n_embd)
         assert 0 < R_ff < D_ff, f"R_ff={R_ff} must be in (0, D_ff={D_ff})"
 
@@ -634,6 +639,12 @@ class ReciprocalMLP(nn.Module):
             self.w_rec.fill_(0.1)  # Reinitialize to small non-zero value
         self.w_rec.requires_grad = True
         self._gates_frozen = False
+
+    def set_coupling_scale(self, scale: float):
+        """Set global 0–1 scale for attention↔MLP coupling."""
+        # Clamp to [0,1] for safety
+        scale_val = float(max(0.0, min(1.0, scale)))
+        self.coupling_scale.fill_(scale_val)
 
 
 @torch._dynamo.disable
