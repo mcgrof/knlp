@@ -609,7 +609,7 @@ k=64: PCA MSE=0.000451,  SplinePCA MSE=0.000451  (Δ=0.000000)  ✓
 
 ## Production Implementation
 
-File: `gpt2/kvsplice_v1.py`
+File: `gpt2/kvsplice.py`
 
 **Key differences from sandbox POC:**
 1. **Calibration mode**: Collects real V vectors via forward hooks during warmup
@@ -685,7 +685,7 @@ make defconfig-gpt2-kv-compression-ablation && make
 ## Implementation Files
 
 **Core**:
-- `gpt2/kvsplice_v1.py`: PWLSpline, KVSplice class
+- `gpt2/kvsplice.py`: PWLSpline, KVSplice class
 - `gpt2/train_ra_mla.py`: KVSpliceCalibrator, integration
 
 **Defconfig**:

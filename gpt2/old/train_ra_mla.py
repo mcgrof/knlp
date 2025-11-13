@@ -303,7 +303,7 @@ class KVSpliceCalibrator:
         X = X.to(self.device, self.dtype)
 
         # Import and create geometry
-        from kvsplice_v1 import KVSplice
+        from kvsplice import KVSplice
 
         kvg = KVSplice(Hd=self.hd, k_latent=self.k, knots=self.knots).to(
             self.device, self.dtype
