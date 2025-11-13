@@ -43,8 +43,8 @@ CONFIG_GPT2_MIN_LR="6e-5"
 CONFIG_GPT2_DROPOUT="0.1"
 # Flash attention enabled on W7900
 CONFIG_GPT2_FLASH_ATTENTION=y
-# Disable torch.compile() for ROCm stability
-CONFIG_GPT2_COMPILE=n
+# Enable torch.compile() - test for RA+MLA compatibility
+CONFIG_GPT2_COMPILE=y
 CONFIG_GPT2_WEIGHT_TYING=y
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_CUDNN_BENCHMARK=y
@@ -97,8 +97,8 @@ CONFIG_ENABLE_WANDB=y
 CONFIG_TRACKER_PROJECT="gpt2-kv-compression-w7900"
 
 # Advanced options
-# Disable torch.compile() for ROCm stability
-CONFIG_COMPILE_MODEL=n
+# Enable torch.compile() - test for RA+MLA compatibility
+CONFIG_COMPILE_MODEL=y
 CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 CONFIG_SAVE_CHECKPOINT=y
