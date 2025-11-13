@@ -380,6 +380,10 @@ class ReciprocalMLP(nn.Module):
         self.n_embd = n_embd
         self.n_head = n_head
 
+        # Global scalar for gradually turning on attention↔MLP coupling.
+        # Training loop will call set_coupling_scale() to ramp this from 0 → 1.
+        self.register_buffer("coupling_scale", torch.tensor(0.0))
+
         # MLP projections (configurable expansion ratio)
         self.mlp_dim = int(cfg.mlp_expansion_ratio * n_embd)
         self.c_fc = nn.Linear(n_embd, self.mlp_dim, bias=True)
@@ -454,13 +458,16 @@ class ReciprocalMLP(nn.Module):
         # Standard MLP
         hidden = F.gelu(self.c_fc(x))  # [B, T, 4*E]
 
+        # Global warmup scale for all coupling terms
+        coupling_scale = self.coupling_scale
+
         # Mechanism 3: MLP Latent Reciprocity (attention -> MLP) with parameter tying
         if self.cfg.mlp_latent_recip and attn_latent is not None:
             # Use ReciprocalCoupler for bidirectional coupling
             mlp_enrich, attn_context = self.coupler(
                 mlp_hidden=hidden, attn_latent=attn_latent
             )
-            hidden = hidden + self.mlp_recip_alpha_mlp * mlp_enrich
+            hidden = hidden + coupling_scale * self.mlp_recip_alpha_mlp * mlp_enrich
 
             # Store MLP latent context for attention layer (next block)
             self._mlp_latent_context = attn_context  # [B, T, L_attn]
@@ -472,7 +479,7 @@ class ReciprocalMLP(nn.Module):
 
             # Mix into current hidden state (learnable mixing weight)
             cross_contribution = self.cross_proj(cross_context)
-            hidden = hidden + self.mlp_cross_alpha * cross_contribution
+            hidden = hidden + coupling_scale * self.mlp_cross_alpha * cross_contribution
 
         # Mechanism 1: MLP-to-Attention Gating
         if self.cfg.mlp_attn_gate:
@@ -501,6 +508,12 @@ class ReciprocalMLP(nn.Module):
     def get_mlp_latent_context(self) -> Optional[torch.Tensor]:
         """Retrieve MLP latent context for attention (mechanism 3)."""
         return self._mlp_latent_context
+
+    def set_coupling_scale(self, scale: float):
+        """Set global 0–1 scale for attention↔MLP coupling."""
+        # Clamp to [0,1] for safety
+        scale_val = float(max(0.0, min(1.0, scale)))
+        self.coupling_scale.fill_(scale_val)
 
 
 # --------------------------- RA+MLA Attention --------------------------- #
@@ -594,6 +607,9 @@ class RA_MLA_Attention(nn.Module):
             None  # Export attention weights for MLP (mechanism 2)
         )
         self._latent_k_export = None  # Export latent K for MLP (mechanism 3)
+
+        # Global coupling warmup for RA and MLP→Attention effects
+        self.register_buffer("coupling_scale", torch.tensor(0.0))
 
         # === Reciprocal Attention (RA) Learnable Mixing ===
         if cfg.ra_alpha > 0.0:
@@ -705,6 +721,9 @@ class RA_MLA_Attention(nn.Module):
         B, T, E = hidden_states.shape
         H, D, L = self.n_head, self.head_dim, self.cfg.latent_dim
 
+        # Global coupling warmup scale
+        coupling_scale = self.coupling_scale
+
         # Note: mlp_gate_context and mlp_latent_context may be None for
         # the first block in the model (no previous block). The code
         # handles None gracefully - reciprocity features only apply when
@@ -719,7 +738,10 @@ class RA_MLA_Attention(nn.Module):
         # === 1a. Apply MLP Latent Reciprocity (Mechanism 3) ===
         if self.cfg.mlp_latent_recip and mlp_latent_context is not None:
             # Mix MLP latent context into our latent K (learnable mixing weight)
-            latent_k_new = latent_k_new + self.mlp_recip_alpha_attn * mlp_latent_context
+            latent_k_new = (
+                latent_k_new
+                + coupling_scale * self.mlp_recip_alpha_attn * mlp_latent_context
+            )
 
         # === 2. Concatenate with Past (for autoregressive generation) ===
         if past_key_value is not None:
@@ -770,7 +792,7 @@ class RA_MLA_Attention(nn.Module):
         )
 
         # === 7. Reciprocal Attention (RA) ===
-        if self.ra_alpha > 0.0:
+        if self.ra_alpha > 0.0 and coupling_scale > 0:
             # Get all queries (past + current) for reciprocal computation
             if (
                 past_key_value is not None
@@ -815,7 +837,7 @@ class RA_MLA_Attention(nn.Module):
             # Add reciprocal term within band (learnable mixing weight)
             logits = torch.where(
                 band_mask.unsqueeze(0).unsqueeze(0),
-                logits + self.ra_alpha * logits_recip_curr,
+                logits + coupling_scale * self.ra_alpha * logits_recip_curr,
                 logits,
             )
 
@@ -828,9 +850,9 @@ class RA_MLA_Attention(nn.Module):
             # Reshape for broadcasting: [B, H, 1, 1]
             gate = mlp_gate_context.unsqueeze(-1).unsqueeze(-1)  # [B, H, 1, 1]
             # Mix gated attention with learnable mixing weight
-            attn = (1 - self.mlp_gate_alpha) * attn + self.mlp_gate_alpha * (
-                attn * gate
-            )
+            attn = (1 - coupling_scale * self.mlp_gate_alpha) * attn + (
+                coupling_scale * self.mlp_gate_alpha
+            ) * (attn * gate)
 
         # === 8b. Apply Cross-Token RA (RA-CT) Gating ===
         ra_ct_gate = None  # Will store gate for output mode
@@ -1010,6 +1032,11 @@ class RA_MLA_Attention(nn.Module):
     def get_latent_k_export(self) -> Optional[torch.Tensor]:
         """Retrieve latent K for MLP (mechanism 3)."""
         return self._latent_k_export
+
+    def set_coupling_scale(self, scale: float):
+        """Set global 0–1 scale for RA and MLP→Attention coupling."""
+        scale_val = float(max(0.0, min(1.0, scale)))
+        self.coupling_scale.fill_(scale_val)
 
 
 # --------------------------- Block wrapper for context flow -------------- #
@@ -1352,3 +1379,14 @@ def prune_heads_ra_mla_gpt2(model, keep_fraction: float = 0.75):
         keep = int(max(1, round(H * keep_fraction)))
         head_plan[li] = list(range(keep))  # keep first K heads (placeholder)
     return head_plan
+
+
+def set_ra_mlp_coupling_scale(model: nn.Module, scale: float):
+    """
+    Set global 0–1 warmup scale for all RA_MLA_Attention and ReciprocalMLP modules
+    in the model.
+    """
+    scale_val = float(max(0.0, min(1.0, scale)))
+    for m in model.modules():
+        if hasattr(m, "set_coupling_scale"):
+            m.set_coupling_scale(scale_val)
