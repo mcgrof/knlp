@@ -102,10 +102,11 @@ CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=n
 # Training Parameters - Optimized for 4x B200 (732GB total VRAM)
 # Per-GPU batch size of 128=512 total across 4 GPUs
 # With gradient accumulation of 2=effective batch size of 1024
+# Time-based training: 6 hours per test for fair "compute budget" comparison
 CONFIG_BATCH_SIZE=128
 CONFIG_GPT2_GRADIENT_ACCUMULATION=2
 CONFIG_NUM_EPOCHS=10
-CONFIG_GPT2_MAX_ITERS=50000
+CONFIG_GPT2_MAX_TIME=21600
 CONFIG_GPT2_EVAL_INTERVAL=500
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
