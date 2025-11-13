@@ -65,18 +65,42 @@ class AblationCoordinator:
         Returns:
             Dictionary with results for each step
         """
-        for step in self.steps:
+        import time
+
+        for i, step in enumerate(self.steps):
             print(f"\n{'='*70}")
-            print(f"Running ablation step {step}: {self.step_descriptions.get(step, 'Unknown')}")
+            print(f"Ablation step {i+1}/{len(self.steps)}: {step}")
+            print(f"Description: {self.step_descriptions.get(step, 'Unknown')}")
             print(f"{'='*70}\n")
+
+            step_start_time = time.time()
 
             # Create trainer for this step
             from .unified_ra import UnifiedRATrainer
             trainer = UnifiedRATrainer(self.args, self.config, ablation_step=step)
 
-            # TODO: Run training and collect results
-            # result = trainer.train()
-            # self.results[step] = result
+            # Run training
+            trainer.train()
+
+            # Collect results
+            step_time = time.time() - step_start_time
+            self.results[step] = {
+                'best_val_loss': trainer.best_val_loss,
+                'training_time': step_time,
+                'final_iter': trainer.iter_num,
+            }
+
+            print(f"\nStep {step} complete in {step_time/60:.2f} minutes")
+            print(f"Best val loss: {trainer.best_val_loss:.4f}\n")
+
+        # Print summary
+        print(f"\n{'='*70}")
+        print("ABLATION STUDY COMPLETE")
+        print(f"{'='*70}")
+        for step, result in self.results.items():
+            print(f"{step}: val_loss={result['best_val_loss']:.4f}, "
+                  f"time={result['training_time']/60:.1f}min")
+        print(f"{'='*70}\n")
 
         return self.results
 
