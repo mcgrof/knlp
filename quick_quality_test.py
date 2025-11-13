@@ -116,7 +116,7 @@ class Attention(nn.Module):
         if use_ra:
             # Use UnifiedRAttention (matches baseline speed!)
             try:
-                from unified_ra import UnifiedRAttention
+                from ra import UnifiedRAttention
 
                 self.attn_module = UnifiedRAttention(
                     n_embd=config.n_embd,

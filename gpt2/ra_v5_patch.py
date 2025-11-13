@@ -21,13 +21,13 @@ Usage:
 import sys
 import os
 
-# Add parent directory to path to import unified_ra
+# Add parent directory to path to import ra
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 
 import torch
 import torch.nn as nn
-from unified_ra import UnifiedRAttention, ReciprocalMLP
+from ra import UnifiedRAttention, ReciprocalMLP
 
 
 def patch_gpt2_with_ra_v5(
