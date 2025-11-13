@@ -17,10 +17,9 @@ try:
 
     config = Config()
     if hasattr(config, "PYTORCH_CUDA_ALLOC_CONF"):
-        # Set both old and new variable names for compatibility
+        # Only set the new unified variable to avoid deprecated warnings
         alloc_conf = config.PYTORCH_CUDA_ALLOC_CONF
         os.environ.setdefault("PYTORCH_ALLOC_CONF", alloc_conf)
-        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", alloc_conf)
 
     # Detect GPU type and clear ROCm variables if on NVIDIA
     # This prevents spurious "No ROCm runtime found" messages on NVIDIA GPUs
@@ -82,7 +81,6 @@ try:
 except (ImportError, AttributeError):
     # Fallback to safe defaults if config.py doesn't exist or doesn't have the settings
     os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import time
 import math
@@ -250,6 +248,12 @@ parser.add_argument(
     type=int,
     default=10000,
     help="Maximum iterations (for better convergence)",
+)
+parser.add_argument(
+    "--max-time",
+    type=int,
+    default=0,
+    help="Maximum training time in seconds (0 = no time limit, uses max-iters instead)",
 )
 parser.add_argument("--learning-rate", type=float, default=6e-4, help="Learning rate")
 parser.add_argument("--weight-decay", type=float, default=0.1, help="Weight decay")
@@ -839,10 +843,22 @@ def main():
     optimizer.zero_grad(set_to_none=True)
 
     t0 = time.time()
+    training_start_time = time.time()
     running_loss = 0.0
     best_val_loss = float("inf")
 
-    for iter_num in range(args.max_iters):
+    iter_num = 0
+    while iter_num < args.max_iters:
+        # Check time limit if time-based training is enabled
+        if args.max_time > 0:
+            elapsed_time = time.time() - training_start_time
+            if elapsed_time >= args.max_time:
+                if master_process:
+                    print(
+                        f"\nReached max training time of {args.max_time}s ({elapsed_time:.1f}s elapsed)",
+                        flush=True,
+                    )
+                break
 
         # Determine learning rate
         if args.decay_lr:
@@ -1037,12 +1053,22 @@ def main():
                 torch.save(checkpoint, os.path.join(args.output_dir, "best_model.pt"))
                 print(f"Saved best model (val_loss: {val_loss:.4f})", flush=True)
 
+        # Increment iteration counter
+        iter_num += 1
+
     # -----------------------------------------------------------------------------
     # Final evaluation and saving (only on master process)
 
     if master_process:
         print("\n" + "=" * 50, flush=True)
-        print("Training complete!", flush=True)
+        if args.max_time > 0:
+            elapsed_time = time.time() - training_start_time
+            print(
+                f"Training complete! ({iter_num} iterations in {elapsed_time/3600:.2f}h)",
+                flush=True,
+            )
+        else:
+            print(f"Training complete! ({iter_num} iterations)", flush=True)
 
         # Final evaluation
         final_val_loss = evaluate(
@@ -1081,7 +1107,9 @@ def main():
         latency_results = {}
         for seq_len in [512, 1024]:
             try:
-                p50, p95 = measure_latency(model, seq_len, batch_size=1, num_iterations=50)
+                p50, p95 = measure_latency(
+                    model, seq_len, batch_size=1, num_iterations=50
+                )
                 latency_results[f"latency_seq{seq_len}_p50"] = p50
                 latency_results[f"latency_seq{seq_len}_p95"] = p95
                 print(f"  Seq {seq_len}: p50={p50:.2f}ms, p95={p95:.2f}ms", flush=True)
@@ -1101,7 +1129,7 @@ def main():
         checkpoint = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
-            "iter_num": args.max_iters,
+            "iter_num": iter_num,
             "val_loss": final_val_loss,
             "best_val_loss": best_val_loss,
             "config": config,
@@ -1119,6 +1147,12 @@ def main():
         metrics["total_time"] = (
             time.time() - metrics["timestamps"][0] if metrics["timestamps"] else 0
         )
+        metrics["total_iterations"] = iter_num
+        metrics["training_mode"] = (
+            "time_based" if args.max_time > 0 else "iteration_based"
+        )
+        metrics["max_time"] = args.max_time
+        metrics["max_iters"] = args.max_iters
 
         # Add latency and memory metrics
         metrics.update(latency_results)
