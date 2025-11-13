@@ -447,6 +447,9 @@ defconfig-%: FORCE
 	@if [ -f defconfigs/$* ]; then \
 		echo "Loading defconfig: $*"; \
 		cp defconfigs/$* .config; \
+	elif [ -f gpt2/defconfigs/$* ]; then \
+		echo "Loading GPT-2 defconfig: $*"; \
+		cp gpt2/defconfigs/$* .config; \
 	elif [ -f lenet5/defconfigs/$* ]; then \
 		echo "Loading LeNet-5 defconfig: $*"; \
 		cp lenet5/defconfigs/$* .config; \
@@ -480,6 +483,8 @@ list-all-defconfigs:
 	@echo "Available defconfigs by category:"
 	@echo "  Main configs:"
 	@ls defconfigs/ 2>/dev/null | sed 's/^/    /' || echo "    (none)"
+	@echo "  GPT-2 configs:"
+	@ls gpt2/defconfigs/ 2>/dev/null | sed 's/^/    /' || echo "    (none)"
 	@echo "  LeNet-5 configs:"
 	@ls lenet5/defconfigs/ 2>/dev/null | sed 's/^/    /' || echo "    (none)"
 	@echo "  ResNet-18 configs:"
