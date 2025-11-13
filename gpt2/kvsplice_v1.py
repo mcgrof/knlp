@@ -126,8 +126,6 @@ class KVSplice(nn.Module):
         self.knots = knots
         self.register_buffer("mu", torch.zeros(1, Hd))
         self.register_buffer("Vk", torch.zeros(Hd, k_latent))
-        self.register_buffer("x_mu", torch.zeros(1, Hd))
-        self.register_buffer("x_std", torch.ones(1, Hd))
         self.geom: Optional[nn.Module] = None
         self.fitted = False
 
@@ -135,22 +133,21 @@ class KVSplice(nn.Module):
         self, calib_V: torch.Tensor, epochs: int = 8, lr: float = 2e-3, wd: float = 1e-4
     ):
         x = calib_V
-        self.x_mu = x.mean(dim=0, keepdim=True)
-        self.x_std = x.std(dim=0, keepdim=True) + 1e-6
-        x_n = (x - self.x_mu) / self.x_std
-        geom = build_spline_from_data(x_n, K=self.knots).to(x.device, x.dtype)
+        # Build spline directly from raw data (no normalization)
+        # The spline has internal scale/shift parameters that learn normalization
+        geom = build_spline_from_data(x, K=self.knots).to(x.device, x.dtype)
         geom.train()  # Ensure training mode
         opt = torch.optim.AdamW(geom.parameters(), lr=lr, weight_decay=wd)
         bs = min(4096, max(256, x.shape[0] // 8))
         loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(x_n),
+            torch.utils.data.TensorDataset(x),
             batch_size=bs,
             shuffle=True,
             drop_last=True,
         )
         for _ in range(epochs):
             with torch.no_grad():
-                z_all = geom(x_n)
+                z_all = geom(x)
                 mu_z, Vk = pca_fit(z_all, self.k)
             # Detach mu_z and Vk since they're constants for this epoch
             mu_z = mu_z.detach()
@@ -169,7 +166,7 @@ class KVSplice(nn.Module):
                 loss.backward()
                 opt.step()
         with torch.no_grad():
-            z_all = geom(x_n)
+            z_all = geom(x)
             mu_z, Vk = pca_fit(z_all, self.k)
             self.mu.copy_(mu_z)
             self.Vk.copy_(Vk)
@@ -182,8 +179,7 @@ class KVSplice(nn.Module):
     def compress(self, V: torch.Tensor) -> torch.Tensor:
         assert self.fitted
         V2 = V.reshape(-1, self.Hd).contiguous()
-        x_n = (V2 - self.x_mu) / self.x_std
-        z = self.geom(x_n)
+        z = self.geom(V2)
         zc = pca_proj(z, self.mu, self.Vk)
         return zc.reshape(*V.shape[:-1], self.k).contiguous()
 
@@ -192,6 +188,5 @@ class KVSplice(nn.Module):
         assert self.fitted
         Vc2 = Vc.reshape(-1, self.k).contiguous()
         z = pca_back(Vc2, self.mu, self.Vk)
-        x = self.geom.inverse(z)
-        V = x * self.x_std + self.x_mu
+        V = self.geom.inverse(z)
         return V.reshape(*Vc.shape[:-1], self.Hd).contiguous()
