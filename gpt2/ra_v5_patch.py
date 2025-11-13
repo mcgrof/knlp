@@ -304,7 +304,7 @@ def patch_gpt2_with_kv_pruning(
     Returns:
         Patched model
     """
-    from unified_ra import PrunedKVAttention
+    from ra import PrunedKVAttention
 
     n_head = model.config.n_head
     n_embd = model.config.n_embd

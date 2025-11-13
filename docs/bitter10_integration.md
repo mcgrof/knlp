@@ -208,7 +208,7 @@ if variant in ["bitter3", "bitter4", "bitter5", "bitter6",
 
 ## Memory-Efficient Alternatives (RECOMMENDED)
 
-Given the memory violation, **three alternative implementations** are provided in `gpt2/bitter10_variants.py` that capture temporal coherence aspects while respecting the zero-new-memory design goal:
+Given the memory violation, **three alternative implementations** are provided in `lib/bitter10_variants.py` that capture temporal coherence aspects while respecting the zero-new-memory design goal:
 
 ### bitter10z (Zero-New-Memory) - PRODUCTION RECOMMENDED ✅
 
@@ -341,7 +341,7 @@ CPU/disk storage:
 
 ## References
 
-- Memory-efficient implementations: `gpt2/bitter10_variants.py`
+- Memory-efficient implementations: `lib/bitter10_variants.py`
 - Original (memory-heavy) implementation: `lib/bitter10_coherence.py`
 - Original idea: Extends bitter3 with temporal features
 - Related: bitter6 (coherence-weighted) is simpler, stateless version
