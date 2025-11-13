@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 import argparse
 import math
+import sys
+import os
 from collections import Counter
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch.nn.functional as F
+
+# Add gpt2 directory to path to import model
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "gpt2"))
+from model import GPT, GPTConfig
+
+try:
+    import tiktoken
+except ImportError:
+    print("Error: tiktoken not installed. Install with: pip install tiktoken")
+    sys.exit(1)
 
 
 PROMPTS = [
@@ -19,37 +30,41 @@ PROMPTS = [
 
 @torch.no_grad()
 def sample_and_measure(
-    model, tokenizer, prompt, device, max_new_tokens=64, temperature=0.8, top_k=0
+    model, enc, prompt, device, max_new_tokens=64, temperature=0.8, top_k=0
 ):
     model.eval()
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-    input_ids = inputs["input_ids"]
+    # Encode prompt
+    input_ids = torch.tensor([enc.encode(prompt)], dtype=torch.long, device=device)
 
-    output_ids = model.generate(
-        input_ids,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
-        temperature=temperature,
-        top_k=top_k if top_k > 0 else None,
-        pad_token_id=tokenizer.eos_token_id,
-    )[0]
+    # Generate tokens
+    gen_ids = []
+    curr_ids = input_ids
 
-    # Only look at newly generated tokens
-    gen_ids = output_ids[input_ids.shape[-1] :]
+    for _ in range(max_new_tokens):
+        # Forward pass
+        logits, _ = model(curr_ids)
+        logits = logits[:, -1, :] / temperature
 
-    # Compute per-step entropy for new tokens
-    all_entropies = []
-    curr_ids = input_ids.clone()
-    for tok in gen_ids:
-        logits = model(curr_ids).logits[:, -1, :]
+        # Apply top-k if specified
+        if top_k > 0:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits[logits < v[:, [-1]]] = -float("Inf")
+
+        # Sample
         probs = F.softmax(logits, dim=-1)
-        # H = -sum p log p
-        entropy = -(probs * (probs.clamp_min(1e-12).log())).sum(dim=-1)
-        all_entropies.append(entropy.item())
-        curr_ids = torch.cat([curr_ids, tok.view(1, 1)], dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
 
-    # Diversity inside this one sample (distinct-1 / distinct-2)
-    tokens = gen_ids.tolist()
+        # Compute entropy for this step
+        entropy = -(probs * (probs.clamp_min(1e-12).log())).sum(dim=-1)
+
+        gen_ids.append((next_token.item(), entropy.item()))
+        curr_ids = torch.cat([curr_ids, next_token], dim=1)
+
+    # Extract tokens and entropies
+    tokens = [t for t, _ in gen_ids]
+    entropies = [e for _, e in gen_ids]
+
+    # Diversity metrics
     unigrams = Counter(tokens)
     bigrams = Counter(zip(tokens, tokens[1:])) if len(tokens) > 1 else Counter()
 
@@ -58,8 +73,8 @@ def sample_and_measure(
 
     return {
         "prompt": prompt,
-        "text": tokenizer.decode(gen_ids, skip_special_tokens=True),
-        "avg_entropy": sum(all_entropies) / max(len(all_entropies), 1),
+        "text": enc.decode(tokens),
+        "avg_entropy": sum(entropies) / max(len(entropies), 1),
         "distinct1": distinct1,
         "distinct2": distinct2,
     }
@@ -97,34 +112,29 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Check if this is a .pt checkpoint or HF model
-    if args.model.endswith(".pt"):
-        # Load from custom checkpoint
-        print(f"Loading checkpoint from {args.model}")
-        tokenizer = AutoTokenizer.from_pretrained(args.base_model)
-        if tokenizer.eos_token is None:
-            tokenizer.eos_token = tokenizer.pad_token or ""
+    # Load tokenizer (tiktoken for GPT-2)
+    enc = tiktoken.get_encoding("gpt2")
 
-        # Load base model and override with checkpoint weights
-        model = AutoModelForCausalLM.from_pretrained(args.base_model).to(device)
-        checkpoint = torch.load(args.model, map_location=device, weights_only=False)
+    # Load checkpoint
+    print(f"Loading checkpoint from {args.model}")
+    checkpoint = torch.load(args.model, map_location=device, weights_only=False)
 
-        # Extract state dict (handle different checkpoint formats)
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint["model_state_dict"]
-        elif "model" in checkpoint:
-            state_dict = checkpoint["model"]
-        else:
-            state_dict = checkpoint
-
-        model.load_state_dict(state_dict, strict=False)
+    # Extract state dict (handle different checkpoint formats)
+    if "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+    elif "model" in checkpoint:
+        state_dict = checkpoint["model"]
     else:
-        # Load from HuggingFace
-        tokenizer = AutoTokenizer.from_pretrained(args.model)
-        if tokenizer.eos_token is None:
-            tokenizer.eos_token = tokenizer.pad_token or ""
+        state_dict = checkpoint
 
-        model = AutoModelForCausalLM.from_pretrained(args.model).to(device)
+    # Create model architecture (GPT-2 small: 12 layers, 768 dim)
+    config = GPTConfig.from_name(args.base_model)
+    model = GPT(config)
+
+    # Load weights
+    model.load_state_dict(state_dict, strict=False)
+    model = model.to(device)
+    model.eval()
 
     print(f"Using device: {device}")
     print(f"Testing model: {args.model}")
@@ -137,7 +147,7 @@ def main():
         for i in range(args.samples_per_prompt):
             res = sample_and_measure(
                 model,
-                tokenizer,
+                enc,
                 p,
                 device,
                 max_new_tokens=args.max_new_tokens,
@@ -181,6 +191,44 @@ def main():
         " - Healthy models show varied outputs, decent distinct-1/2 "
         "and different shapes per prompt."
     )
+
+    # Detect collapse and return error code
+    is_collapsed = False
+    reasons = []
+
+    # Repetition collapse: very few unique outputs
+    if unique_texts <= 2 and len(all_outputs) >= 5:
+        is_collapsed = True
+        reasons.append(f"repetition collapse (only {unique_texts} unique outputs)")
+
+    # Low diversity collapse
+    if avg_distinct1 < 0.1 and avg_distinct2 < 0.2:
+        is_collapsed = True
+        reasons.append(
+            f"low diversity (distinct1={avg_distinct1:.3f}, distinct2={avg_distinct2:.3f})"
+        )
+
+    # Extremely low entropy (deterministic/stuck)
+    if avg_entropy_global < 1.0:
+        is_collapsed = True
+        reasons.append(f"low entropy ({avg_entropy_global:.3f})")
+
+    # Extremely high entropy (random noise)
+    if avg_entropy_global > 9.0:
+        is_collapsed = True
+        reasons.append(f"random output (entropy={avg_entropy_global:.3f})")
+
+    print("\n" + "=" * 80)
+    if is_collapsed:
+        print("COLLAPSE DETECTED:")
+        for reason in reasons:
+            print(f"  - {reason}")
+        print("=" * 80)
+        sys.exit(1)
+    else:
+        print("Model appears HEALTHY - no collapse detected")
+        print("=" * 80)
+        sys.exit(0)
 
 
 if __name__ == "__main__":
