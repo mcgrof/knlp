@@ -1055,120 +1055,120 @@ def main():
             args.eval_samples * 2,
         )
 
-    final_perplexity = math.exp(min(final_val_loss, 20))
-    best_perplexity = math.exp(min(best_val_loss, 20))
+        final_perplexity = math.exp(min(final_val_loss, 20))
+        best_perplexity = math.exp(min(best_val_loss, 20))
 
-    # Calculate ΔPPL (change in perplexity from first to best)
-    if metrics["val_perplexities"]:
-        initial_perplexity = metrics["val_perplexities"][0]
-        delta_ppl = best_perplexity - initial_perplexity
-    else:
-        initial_perplexity = float("inf")
-        delta_ppl = 0.0
+        # Calculate ΔPPL (change in perplexity from first to best)
+        if metrics["val_perplexities"]:
+            initial_perplexity = metrics["val_perplexities"][0]
+            delta_ppl = best_perplexity - initial_perplexity
+        else:
+            initial_perplexity = float("inf")
+            delta_ppl = 0.0
 
-    print(
-        f"Final validation loss: {final_val_loss:.4f} | ppl: {final_perplexity:.2f}",
-        flush=True,
-    )
-    print(
-        f"Best validation loss: {best_val_loss:.4f} | ppl: {best_perplexity:.2f}",
-        flush=True,
-    )
-    print(f"ΔPPL (improvement): {delta_ppl:.2f}", flush=True)
+        print(
+            f"Final validation loss: {final_val_loss:.4f} | ppl: {final_perplexity:.2f}",
+            flush=True,
+        )
+        print(
+            f"Best validation loss: {best_val_loss:.4f} | ppl: {best_perplexity:.2f}",
+            flush=True,
+        )
+        print(f"ΔPPL (improvement): {delta_ppl:.2f}", flush=True)
 
-    # Measure inference latency at different sequence lengths
-    print("\nMeasuring inference latency...", flush=True)
-    latency_results = {}
-    for seq_len in [512, 1024]:
-        try:
-            p50, p95 = measure_latency(model, seq_len, batch_size=1, num_iterations=50)
-            latency_results[f"latency_seq{seq_len}_p50"] = p50
-            latency_results[f"latency_seq{seq_len}_p95"] = p95
-            print(f"  Seq {seq_len}: p50={p50:.2f}ms, p95={p95:.2f}ms", flush=True)
-        except Exception as e:
-            print(f"  Seq {seq_len}: measurement failed - {e}", flush=True)
-            latency_results[f"latency_seq{seq_len}_p50"] = -1
-            latency_results[f"latency_seq{seq_len}_p95"] = -1
+        # Measure inference latency at different sequence lengths
+        print("\nMeasuring inference latency...", flush=True)
+        latency_results = {}
+        for seq_len in [512, 1024]:
+            try:
+                p50, p95 = measure_latency(model, seq_len, batch_size=1, num_iterations=50)
+                latency_results[f"latency_seq{seq_len}_p50"] = p50
+                latency_results[f"latency_seq{seq_len}_p95"] = p95
+                print(f"  Seq {seq_len}: p50={p50:.2f}ms, p95={p95:.2f}ms", flush=True)
+            except Exception as e:
+                print(f"  Seq {seq_len}: measurement failed - {e}", flush=True)
+                latency_results[f"latency_seq{seq_len}_p50"] = -1
+                latency_results[f"latency_seq{seq_len}_p95"] = -1
 
-    # Measure final memory usage
-    allocated_mb, reserved_mb = measure_memory()
-    print(
-        f"\nGPU Memory: {allocated_mb:.1f}MB allocated, {reserved_mb:.1f}MB reserved",
-        flush=True,
-    )
+        # Measure final memory usage
+        allocated_mb, reserved_mb = measure_memory()
+        print(
+            f"\nGPU Memory: {allocated_mb:.1f}MB allocated, {reserved_mb:.1f}MB reserved",
+            flush=True,
+        )
 
-    # Save final model
-    checkpoint = {
-        "model": model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "iter_num": args.max_iters,
-        "val_loss": final_val_loss,
-        "best_val_loss": best_val_loss,
-        "config": config,
-        "args": args,
-    }
-    torch.save(checkpoint, os.path.join(args.output_dir, "final_model.pt"))
+        # Save final model
+        checkpoint = {
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "iter_num": args.max_iters,
+            "val_loss": final_val_loss,
+            "best_val_loss": best_val_loss,
+            "config": config,
+            "args": args,
+        }
+        torch.save(checkpoint, os.path.join(args.output_dir, "final_model.pt"))
 
-    # Save metrics
-    metrics["final_val_loss"] = final_val_loss
-    metrics["best_val_loss"] = best_val_loss
-    metrics["final_perplexity"] = final_perplexity
-    metrics["best_perplexity"] = best_perplexity
-    metrics["initial_perplexity"] = initial_perplexity
-    metrics["delta_ppl"] = delta_ppl
-    metrics["total_time"] = (
-        time.time() - metrics["timestamps"][0] if metrics["timestamps"] else 0
-    )
+        # Save metrics
+        metrics["final_val_loss"] = final_val_loss
+        metrics["best_val_loss"] = best_val_loss
+        metrics["final_perplexity"] = final_perplexity
+        metrics["best_perplexity"] = best_perplexity
+        metrics["initial_perplexity"] = initial_perplexity
+        metrics["delta_ppl"] = delta_ppl
+        metrics["total_time"] = (
+            time.time() - metrics["timestamps"][0] if metrics["timestamps"] else 0
+        )
 
-    # Add latency and memory metrics
-    metrics.update(latency_results)
-    metrics["gpu_memory_allocated_mb"] = allocated_mb
-    metrics["gpu_memory_reserved_mb"] = reserved_mb
+        # Add latency and memory metrics
+        metrics.update(latency_results)
+        metrics["gpu_memory_allocated_mb"] = allocated_mb
+        metrics["gpu_memory_reserved_mb"] = reserved_mb
 
-    if args.json_output:
-        with open(args.json_output, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Saved metrics to {args.json_output}", flush=True)
+        if args.json_output:
+            with open(args.json_output, "w") as f:
+                json.dump(metrics, f, indent=2)
+            print(f"Saved metrics to {args.json_output}", flush=True)
 
-        # Save detailed metrics
-        metrics_path = os.path.join(args.output_dir, "training_metrics.json")
-        with open(metrics_path, "w") as f:
-            json.dump(metrics, f, indent=2)
-        print(f"Saved detailed metrics to {metrics_path}", flush=True)
+            # Save detailed metrics
+            metrics_path = os.path.join(args.output_dir, "training_metrics.json")
+            with open(metrics_path, "w") as f:
+                json.dump(metrics, f, indent=2)
+            print(f"Saved detailed metrics to {metrics_path}", flush=True)
 
-        print("\nTraining complete!", flush=True)
+            print("\nTraining complete!", flush=True)
 
-        # Finish experiment tracking
-        if "trackio" in trackers:
-            import trackio
+            # Finish experiment tracking
+            if "trackio" in trackers:
+                import trackio
 
-            trackio.log(
-                {
-                    "final_val_loss": final_val_loss,
-                    "best_val_loss": best_val_loss,
-                    "total_time": metrics["total_time"],
-                }
-            )
-            trackio.finish()
-            print(
-                "Trackio tracking finished. Run 'trackio show' to view results.",
-                flush=True,
-            )
-        if "wandb" in trackers:
-            import wandb
+                trackio.log(
+                    {
+                        "final_val_loss": final_val_loss,
+                        "best_val_loss": best_val_loss,
+                        "total_time": metrics["total_time"],
+                    }
+                )
+                trackio.finish()
+                print(
+                    "Trackio tracking finished. Run 'trackio show' to view results.",
+                    flush=True,
+                )
+            if "wandb" in trackers:
+                import wandb
 
-            wandb.log(
-                {
-                    "final_val_loss": final_val_loss,
-                    "best_val_loss": best_val_loss,
-                    "total_time": metrics["total_time"],
-                }
-            )
-            wandb.finish()
-            print(
-                "WandB tracking finished. Check your WandB dashboard for results.",
-                flush=True,
-            )
+                wandb.log(
+                    {
+                        "final_val_loss": final_val_loss,
+                        "best_val_loss": best_val_loss,
+                        "total_time": metrics["total_time"],
+                    }
+                )
+                wandb.finish()
+                print(
+                    "WandB tracking finished. Check your WandB dashboard for results.",
+                    flush=True,
+                )
 
     # Cleanup DDP
     if ddp:
