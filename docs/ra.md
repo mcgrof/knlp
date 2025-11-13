@@ -7,12 +7,72 @@ This document covers both **Reciprocal Attention (RA)** and **Reciprocal MLP (R-
 ## Quick Facts (Reciprocal Attention)
 
 ```
-Status:      ✅ Production-Ready
+Status:      ✅ Production-Ready (Unified RA, V-series)
 Speed:       1.0217× faster than baseline (2.17% speedup!)
 Memory:      Identical to baseline
 Complexity:  Lower than baseline (cleaner code)
 Overhead:    0 FLOPs, 0 extra allocations
 ```
+
+## Evolution: Three Generations of RA
+
+### Generation 1: Explicit S.T Mixing (DEPRECATED)
+**Location**: Removed in commit c2bbed3
+**Approach**: Computed `S = Q@K.T` and `S_rec = S.T` separately, then mixed
+**Problem**: ~2× computational cost, unacceptable overhead
+
+```python
+# Gen 1 (deprecated)
+S = Q @ K.T
+S_rec = S.T         # Transpose full score matrix
+logits = w_std * S + w_rec * S_rec
+```
+
+### Generation 2: MLA-Based RA (LEGACY)
+**Location**: `gpt2/old/ra_mla_gpt2.py` (moved to old/)
+**Approach**: DeepSeek MLA latent compression + local reciprocal band
+**Defconfigs**: `defconfigs/old/gpt2-ratio-ablation`, `gpt2-ra-mla-*`
+
+Key features:
+- Shared latent K/V compression (latent_dim=128)
+- Recomputes Q·K within local band (ra_window=64)
+- Reciprocal MLP mechanisms (3 types of attention↔MLP coupling)
+- Some overhead from recomputation and context flow
+
+```python
+# Gen 2 (legacy - in gpt2/old/)
+# MLA compression
+latent_k = k_down(hidden_states)  # E → L
+latent_v = v_down(hidden_states)
+
+# Reciprocal attention in local band
+logits_recip = q_all_latent @ latent_k
+logits = logits + ra_alpha * logits_recip  # within band
+```
+
+### Generation 3: Unified RA (CURRENT)
+**Location**: `ra.py` (renamed from unified_ra.py)
+**Approach**: Pre-folded layout, single SDPA call
+**Defconfigs**: `defconfigs/gpt2-unified-ra-ablation`
+
+Key innovation:
+- Split head dimension: D = D_std + R (e.g., 64 = 60 + 4)
+- Emit folded layout: `Qf=[Q_std|K_low]`, `Kf=[K_std|Q_low]`
+- Achieves reciprocity in ONE matmul
+- Learned per-head gates (w_std, w_rec)
+- **Zero overhead**: Matches baseline speed (1.33ms) ✅
+
+```python
+# Gen 3 (current - in ra.py)
+# Direct folded layout emission
+Qf[h] = [Q_std | K_low]  # 60 + 4 = 64 dims
+Kf[h] = [K_std | Q_low]
+
+# Single SDPA call gets all four terms:
+# Qf @ Kf.T = Q_std@K_std.T + reciprocal cross-terms
+```
+
+**Migration guide**: All new work should use Generation 3 (Unified RA). Generation 2 (MLA-based) configs are kept in `gpt2/old/` and `defconfigs/old/` for reproducibility of past experiments.
 
 ## What is Unified RA?
 
