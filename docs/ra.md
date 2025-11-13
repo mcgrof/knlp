@@ -234,6 +234,28 @@ V6: R-MLP + All Features
 
 ---
 
+## Coupling Warmup (Collapse Prevention)
+
+**Problem**: Reciprocal pathways hitting MLP at full strength from step 0 causes collapse.
+
+**Solution**: Global `coupling_scale` buffer gates all attention↔MLP bidirectional flow, ramping from 0→1 over warmup period.
+
+```python
+# In training loop
+warmup_steps = int(0.1 * total_steps)
+if global_step < warmup_steps:
+    scale = global_step / max(1, warmup_steps)
+else:
+    scale = 1.0
+set_ra_mlp_coupling_scale(model, scale)
+```
+
+**Gated pathways**:
+- ReciprocalMLP: `mlp_cross_alpha`, `mlp_recip_alpha_mlp`
+- RA_MLA_Attention: `ra_alpha`, `mlp_gate_alpha`, `mlp_recip_alpha_attn`
+
+At step 0: vanilla GPT-2 (scale=0). Gradually activates reciprocity without shocking optimization landscape.
+
 ## Implementation Details
 
 ### Gate Baking Explained
