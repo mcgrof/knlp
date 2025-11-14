@@ -1,0 +1,136 @@
+# GPT-2 with Adam State-Based Tiering (Real Offload Mode)
+#
+# Tests hierarchical memory tiering with actual weight offloading to
+# CPU RAM and disk. Reduces GPU memory usage at the cost of transfer
+# latency.
+#
+# Purpose: Validate that tiering reduces GPU memory consumption and
+# measure real offloading overhead (not just emulated delays).
+#
+# After training, generates tier_hints.json based on Adam optimizer
+# states. Offloaded modules are moved to CPU/disk and loaded just
+# before use.
+#
+# Usage:
+#   make defconfig-gpt2-adam-tier-offload && make
+#   python3 scripts/benchmark_tiered_inference.py \
+#     --tier-hints tier_hints.json \
+#     --mode real \
+#     --baseline
+
+# Enable GPT-2 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Configuration
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+# Shorter training for tiering experiment (2 hours)
+CONFIG_GPT2_MAX_TIME=7200
+CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_FLASH_ATTENTION=n
+CONFIG_GPT2_COMPILE=n
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_BIAS=y
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Training parameters
+CONFIG_BATCH_SIZE=8
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Optimizer - AdamW (needed for Adam state analysis)
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+
+# Pruning - Disabled
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# NO RA+MLA - Vanilla GPT-2 for tiering baseline
+CONFIG_ENABLE_RA_MLA=n
+
+# Hierarchical Memory Tiering - Real Offload Mode
+CONFIG_ENABLE_HIERARCHICAL_TIERING=y
+CONFIG_TIERING_ADAM_STATE=y
+CONFIG_TIERING_REAL_OFFLOAD=y
+CONFIG_TIERING_GENERATE_JSON=y
+CONFIG_TIERING_JSON_OUTPUT="tier_hints_offload.json"
+# More aggressive thresholds for real offloading (reduce GPU memory)
+# Only 20% in HBM, 60% in CPU, 20% in SSD
+CONFIG_TIERING_HBM_THRESHOLD="0.2"
+CONFIG_TIERING_CPU_THRESHOLD="0.6"
+CONFIG_TIERING_INFERENCE_BENCHMARK=n
+
+# Experiment Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=n
+CONFIG_TRACKER_PROJECT="gpt2-adam-tiering"
+
+# Advanced options
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Test execution (single training run)
+CONFIG_TEST_MATRIX_MODE=n
+CONFIG_OUTPUT_DIR="test_matrix_results_tier_offload"
+
+# Workflow:
+# 1. Train model (generates tier_hints_offload.json)
+#    NOTE: Real offloading during training not implemented yet.
+#    Tier hints are generated from Adam states at end of training.
+#
+# 2. Benchmark inference with real offloading:
+#    python3 scripts/benchmark_tiered_inference.py \
+#      --tier-hints tier_hints_offload.json \
+#      --mode real \
+#      --baseline \
+#      --batch-size 1 \
+#      --seq-length 128 \
+#      --num-iterations 100
+#
+# 3. Monitor GPU memory:
+#    watch -n 1 nvidia-smi
+#    Should see reduced GPU memory usage during inference.
+#
+# 4. Analyze results:
+#    - GPU memory reduction: How much VRAM saved?
+#    - Latency overhead: Real transfer cost vs emulated
+#    - Throughput degradation: Impact on tokens/sec?
+#
+# 5. Tune thresholds:
+#    - If degradation too high: increase HBM% (keep more on GPU)
+#    - If memory reduction insufficient: decrease HBM% (more aggressive)
+#
+# Comparison with emulated mode:
+# - Emulated: Tests algorithm without memory movement (fake delays)
+# - Real: Tests actual offloading with real transfer costs
+# - Real mode validates that memory reduction works as expected
+# - Real mode may have different overhead than emulated (PCIe contention, etc)

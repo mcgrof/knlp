@@ -1,0 +1,116 @@
+# GPT-2 with Adam State-Based Tiering (Emulated Mode)
+#
+# Tests hierarchical memory tiering using emulated delays to simulate
+# offloading to CPU RAM and SSD without actual memory movement.
+#
+# Purpose: Evaluate tier placement strategies and measure inference
+# impact before deploying to real hardware (CXL, fabric-attached memory).
+#
+# After training, generates tier_hints.json based on Adam optimizer
+# states (momentum/variance analysis). Run inference benchmark to
+# measure latency overhead from tiered memory placement.
+#
+# Usage:
+#   make defconfig-gpt2-adam-tier-emulated && make
+#   python3 scripts/benchmark_tiered_inference.py \
+#     --tier-hints tier_hints.json \
+#     --mode emulated \
+#     --baseline
+
+# Enable GPT-2 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Configuration
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+# Shorter training for tiering experiment (2 hours)
+CONFIG_GPT2_MAX_TIME=7200
+CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_FLASH_ATTENTION=n
+CONFIG_GPT2_COMPILE=n
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_BIAS=y
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Training parameters
+CONFIG_BATCH_SIZE=8
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Optimizer - AdamW (needed for Adam state analysis)
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+
+# Pruning - Disabled
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# NO RA+MLA - Vanilla GPT-2 for tiering baseline
+CONFIG_ENABLE_RA_MLA=n
+
+# Hierarchical Memory Tiering - Emulated Mode
+CONFIG_ENABLE_HIERARCHICAL_TIERING=y
+CONFIG_TIERING_ADAM_STATE=y
+CONFIG_TIERING_EMULATED=y
+CONFIG_TIERING_GENERATE_JSON=y
+CONFIG_TIERING_JSON_OUTPUT="tier_hints_emulated.json"
+# Conservative thresholds: 30% HBM, 50% CPU, 20% SSD
+CONFIG_TIERING_HBM_THRESHOLD="0.3"
+CONFIG_TIERING_CPU_THRESHOLD="0.5"
+CONFIG_TIERING_INFERENCE_BENCHMARK=n
+
+# Experiment Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=n
+CONFIG_TRACKER_PROJECT="gpt2-adam-tiering"
+
+# Advanced options
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Test execution (single training run)
+CONFIG_TEST_MATRIX_MODE=n
+CONFIG_OUTPUT_DIR="test_matrix_results_tier_emulated"
+
+# Workflow:
+# 1. Train model (generates tier_hints_emulated.json)
+# 2. Benchmark inference impact:
+#    python3 scripts/benchmark_tiered_inference.py \
+#      --tier-hints tier_hints_emulated.json \
+#      --mode emulated \
+#      --baseline \
+#      --batch-size 1 \
+#      --seq-length 128 \
+#      --num-iterations 100
+# 3. Analyze results:
+#    - Latency overhead: How much slower due to tier delays?
+#    - Throughput degradation: Impact on tokens/sec?
+# 4. Tune thresholds if needed (increase HBM% if overhead too high)
