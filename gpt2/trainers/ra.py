@@ -518,6 +518,12 @@ class RATrainer(BaseGPT2Trainer):
                             }
                         )
 
+                        # Print variance monitoring stats to console
+                        print(
+                            f"  Variance: CV={cv:.4f}, rate={rate:.4f}, "
+                            f"coupling={coupling_scale:.3f}, activated={self.variance_activated}"
+                        )
+
                     # Combine all metrics and log
                     metrics = {
                         "train_loss": avg_loss,
