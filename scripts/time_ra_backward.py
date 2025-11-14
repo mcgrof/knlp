@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Quick timing comparison of V0 (baseline) vs V1 (Unified RA).
+Quick timing comparison of V0 (baseline) vs V1 (RA).
 
 Shows forward, backward, and total iteration times.
 """
@@ -44,12 +44,12 @@ def time_step(step_name: str, num_iters: int = 50):
     model = model.to(device)
     model.train()
 
-    # Patch with Unified RA if V1
+    # Patch with RA if V1
     if step_name == "V1":
         from ra_patch import patch_gpt2_with_ra_v5
 
         model = patch_gpt2_with_ra_v5(model, R=4, use_self_restart=False)
-        print("✓ Patched with Unified RA (R=4)")
+        print("✓ Patched with RA (R=4)")
 
     # Optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, weight_decay=0.1)
@@ -137,7 +137,7 @@ def main():
     # Time V0 (baseline)
     v0_times = time_step("V0", num_iters=50)
 
-    # Time V1 (Unified RA)
+    # Time V1 (RA)
     v1_times = time_step("V1", num_iters=50)
 
     # Comparison

@@ -19,7 +19,7 @@ Following the bitter7 pattern:
 
 ## Findings
 
-### 1. Gate Scaling Overhead (UnifiedRAttention)
+### 1. Gate Scaling Overhead (ReciprocalAttention)
 
 **Current implementation** (ra.py:343-370):
 ```python
@@ -163,7 +163,7 @@ else:
 ## Optimized Code
 
 See `scripts/optimize_ra.py` for:
-- `UnifiedRAttentionOptimized`: Fused gate scaling
+- `ReciprocalAttentionOptimized`: Fused gate scaling
 - `PrunedKVAttentionOptimized`: Sampling-based topk
 
 Both implementations validated for correctness.
@@ -211,7 +211,7 @@ At longer contexts (T=128K for long-range tasks):
 
 ## Next Steps
 
-1. Integrate `UnifiedRAttentionOptimized` into production code
+1. Integrate `ReciprocalAttentionOptimized` into production code
 2. Add `use_sampling` flag to PrunedKVAttention
 3. Add config option: `CONFIG_RA_USE_SAMPLING=y` (default for T>4K)
 4. Benchmark end-to-end training to validate savings

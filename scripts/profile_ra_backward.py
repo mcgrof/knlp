@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Profile V0 (baseline) vs V1 (Unified RA) to identify backward pass overhead.
+Profile V0 (baseline) vs V1 (RA) to identify backward pass overhead.
 
 Usage:
     python3 scripts/profile_ra_backward.py --step V0
@@ -50,7 +50,7 @@ def profile_step(step_name: str, num_iters: int = 20):
     model = model.to(device)
     model.train()
 
-    # Patch with Unified RA if V1
+    # Patch with RA if V1
     if step_name == "V1":
         from ra_patch import patch_gpt2_with_ra_v5
 
@@ -59,7 +59,7 @@ def profile_step(step_name: str, num_iters: int = 20):
             R=4,
             use_self_restart=False,
         )
-        print("Patched with Unified RA (R=4)")
+        print("Patched with RA (R=4)")
 
     # Optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, weight_decay=0.1)
@@ -128,7 +128,7 @@ def main():
         type=str,
         required=True,
         choices=["V0", "V1"],
-        help="Ablation step to profile (V0=baseline, V1=Unified RA)",
+        help="Ablation step to profile (V0=baseline, V1=RA)",
     )
     parser.add_argument(
         "--iters",
