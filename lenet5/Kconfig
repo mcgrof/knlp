@@ -14,3 +14,111 @@ config LENET5_DATASET
 	default "mnist"
 	help
 	  Dataset for LeNet-5. Currently only MNIST is supported.
+
+config LENET5_DATASET_MNIST
+	bool
+	default y
+	help
+	  LeNet-5 trained on MNIST dataset.
+
+menu "Image Tokenization (Experimental)"
+
+config LENET5_ENABLE_TOKENIZER
+	bool "Enable PCA-based image tokenization"
+	default n
+	help
+	  Enable PCA-based tokenization for image inputs. Compresses
+	  images into principal component space before feeding to model.
+
+	  Benefits:
+	  - Dimensionality reduction (784→64 for MNIST)
+	  - Natural tiering hierarchy (by variance explained)
+	  - Potential regularization effect
+
+	  Requires fitting PCA on training data before use.
+
+choice LENET5_TOKENIZER_TYPE
+	prompt "Tokenizer type"
+	default LENET5_TOKENIZER_PCA
+	depends on LENET5_ENABLE_TOKENIZER
+	help
+	  Choose tokenization strategy.
+
+config LENET5_TOKENIZER_PCA
+	bool "PCA tokenizer"
+	help
+	  Simple PCA-based tokenization. Projects images into
+	  principal component space and tiers by variance explained.
+
+	  Fast, simple, effective for MNIST.
+
+config LENET5_TOKENIZER_SPLINE_PCA
+	bool "Spline-PCA tokenizer"
+	help
+	  Advanced tokenization with spline trajectory compression.
+	  Tracks how PCA components evolve during training and fits
+	  cubic splines to trajectories.
+
+	  Enables:
+	  - Temporal tiering (by component update frequency)
+	  - Trajectory compression (splines vs full history)
+	  - Online learning (update control points)
+
+	  Slower but more sophisticated than basic PCA.
+
+endchoice
+
+config LENET5_TOKENIZER_METHOD
+	string
+	default "none" if !LENET5_ENABLE_TOKENIZER
+	default "pca" if LENET5_TOKENIZER_PCA
+	default "spline-pca" if LENET5_TOKENIZER_SPLINE_PCA
+
+config LENET5_PCA_COMPONENTS
+	int "Number of PCA components"
+	default 64
+	range 8 784
+	depends on LENET5_ENABLE_TOKENIZER
+	help
+	  Number of principal components to keep. For MNIST (784 dims):
+	  - 32 components: ~90% variance, 24x compression
+	  - 64 components: ~95% variance, 12x compression
+	  - 128 components: ~98% variance, 6x compression
+
+	  Lower values = more compression but potential quality loss.
+	  Higher values = less compression but better quality.
+
+config LENET5_PCA_WHITEN
+	bool "Enable PCA whitening"
+	default n
+	depends on LENET5_ENABLE_TOKENIZER
+	help
+	  Normalize PCA components by their variance. Makes all
+	  components have unit variance, which can help with
+	  optimization but removes natural importance hierarchy.
+
+	  Usually not needed for tiering (we want variance hierarchy).
+
+config LENET5_SPLINE_CONTROL_POINTS
+	int "Number of spline control points"
+	default 8
+	range 4 32
+	depends on LENET5_TOKENIZER_SPLINE_PCA
+	help
+	  Number of control points for cubic spline fitting of
+	  component trajectories. More points = better fit but
+	  less compression.
+
+	  For 10-epoch training:
+	  - 4 points: High compression, smooth approximation
+	  - 8 points: Balanced (recommended)
+	  - 16 points: Low compression, detailed trajectory
+
+config LENET5_TOKENIZER_SAVE_PATH
+	string "Tokenizer save path"
+	default "lenet5_tokenizer.pkl"
+	depends on LENET5_ENABLE_TOKENIZER
+	help
+	  Path to save fitted tokenizer for later use.
+
+endmenu
