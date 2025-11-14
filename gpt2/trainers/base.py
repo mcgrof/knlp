@@ -404,6 +404,12 @@ class BaseGPT2Trainer:
                 def update(self):
                     pass
 
+                def state_dict(self):
+                    return {}
+
+                def load_state_dict(self, state_dict):
+                    pass
+
             self.scaler = DummyScaler()
 
     def log_metrics(self, metrics_dict: Dict[str, float]):
