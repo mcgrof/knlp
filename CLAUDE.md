@@ -54,6 +54,17 @@ Architectural changes include:
 
 ### Defconfig Files
 - **CRITICAL**: Defconfig files must use exact Kconfig syntax: `CONFIG_XXX=y` (no spaces around `=`)
+- **CRITICAL**: NO inline comments allowed - comments MUST be on separate lines starting with `#`
+  - ✅ CORRECT:
+    ```
+    # This is a comment
+    CONFIG_SOMETHING=y
+    ```
+  - ❌ WRONG (breaks Kconfig parser):
+    ```
+    CONFIG_SOMETHING=y  # This breaks everything
+    CONFIG_SOMETHING=y # This also breaks
+    ```
 - **DO NOT** apply `black` formatter to defconfig files or `.config` files
 - Kconfig parser silently ignores lines with spaces around equals signs
 - After any edit to defconfigs, verify syntax: `grep " = " defconfigs/*` should return nothing

@@ -37,7 +37,7 @@ config LENET5_ENABLE_TOKENIZER
 
 	  Requires fitting PCA on training data before use.
 
-choice LENET5_TOKENIZER_TYPE
+choice
 	prompt "Tokenizer type"
 	default LENET5_TOKENIZER_PCA
 	depends on LENET5_ENABLE_TOKENIZER
