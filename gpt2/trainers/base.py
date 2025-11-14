@@ -442,6 +442,26 @@ class BaseGPT2Trainer:
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
 
+    def _sanitize_for_json(self, obj):
+        """
+        Recursively convert PyTorch Tensors to Python scalars for JSON
+        serialization.
+
+        Args:
+            obj: Object to sanitize (can be dict, list, Tensor, or scalar)
+
+        Returns:
+            JSON-serializable version of obj
+        """
+        if isinstance(obj, torch.Tensor):
+            return obj.item()
+        elif isinstance(obj, dict):
+            return {k: self._sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._sanitize_for_json(item) for item in obj]
+        else:
+            return obj
+
     def save_metrics_json(self, output_path: str):
         """
         Save training metrics to JSON file.
@@ -458,9 +478,12 @@ class BaseGPT2Trainer:
             "metrics": self.metrics,
         }
 
+        # Sanitize all values to ensure JSON serializability
+        sanitized_data = self._sanitize_for_json(metrics_data)
+
         try:
             with open(output_path, "w") as f:
-                json.dump(metrics_data, f, indent=2)
+                json.dump(sanitized_data, f, indent=2)
             print(f"Metrics saved to {output_path}")
         except Exception as e:
             print(f"Warning: Failed to save metrics to {output_path}: {e}")
