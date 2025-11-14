@@ -558,7 +558,7 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 
 **Core Architecture**:
 - `unified_ra.py`: UnifiedRAttention + ReciprocalMLP implementation
-- `gpt2/ra_v5_patch.py`: GPT-2 patching utilities (RA/R-MLP/combined)
+- `gpt2/ra_patch.py`: GPT-2 patching utilities (RA/R-MLP/combined)
 - `gpt2/train_ra_mla.py`: Training integration with ablation support
 
 **Defconfig**:

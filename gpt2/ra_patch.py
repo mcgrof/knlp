@@ -14,7 +14,7 @@ attention is computed inside the same SDPA call without increasing
 FLOPs. RA becomes a reparameterization of attention, not an extra cost.
 
 Usage:
-    from ra_v5_patch import patch_gpt2_with_ra_v5
+    from ra_patch import patch_gpt2_with_ra_v5
     model = patch_gpt2_with_ra_v5(model, R=4, dropout=0.1)
 """
 
