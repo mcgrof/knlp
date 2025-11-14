@@ -277,25 +277,30 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if self.iter_num % self.args.eval_interval == 0:
                 losses = self.estimate_loss()
                 if self.master_process:
+                    val_ppl = math.exp(min(losses["val"], 20))
                     print(
-                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}"
+                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}, ppl {val_ppl:.2f}"
                     )
 
                     self.metrics["val_losses"].append(losses["val"])
-                    self.metrics["val_perplexities"].append(
-                        math.exp(min(losses["val"], 20))
-                    )
+                    self.metrics["val_perplexities"].append(val_ppl)
+
+                    # Update best metrics
+                    if losses["val"] < self.best_val_loss:
+                        self.best_val_loss = losses["val"]
+                    if val_ppl < self.best_perplexity:
+                        self.best_perplexity = val_ppl
 
                     self.log_metrics(
                         {
                             "val_loss": losses["val"],
-                            "val_perplexity": math.exp(min(losses["val"], 20)),
+                            "val_perplexity": val_ppl,
+                            "best_perplexity": self.best_perplexity,
                         }
                     )
 
                     # Save best model
                     if losses["val"] < self.best_val_loss:
-                        self.best_val_loss = losses["val"]
                         if getattr(self.args, "save_checkpoint", False):
                             checkpoint_path = os.path.join(
                                 getattr(self.args, "output_dir", "."), "best_model.pt"
