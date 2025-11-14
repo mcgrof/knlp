@@ -249,8 +249,8 @@ def run_training_with_monitoring(
                 if "NCCL_DEBUG" not in env:
                     env["NCCL_DEBUG"] = "WARN"
                 # Async error handling for better crash recovery
-                if "NCCL_ASYNC_ERROR_HANDLING" not in env:
-                    env["NCCL_ASYNC_ERROR_HANDLING"] = "1"
+                if "TORCH_NCCL_ASYNC_ERROR_HANDLING" not in env:
+                    env["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
             result = subprocess.run(
                 cmd,
