@@ -92,12 +92,12 @@ class RATrainer(BaseGPT2Trainer):
 
         # Variance-guided activation defaults (disabled by default)
         args.use_variance_guided = False
-        args.variance_check_interval = 50
-        args.variance_min_step = 200  # Reduced from 250
-        args.variance_window = 100
-        # Hybrid stability thresholds
-        args.stability_cv_threshold = 0.05  # Coefficient of variation < 5%
-        args.stability_rate_threshold = 0.01  # Rate of change < 0.01 per step
+        args.variance_check_interval = 10  # Check every 10 steps (~30 seconds)
+        args.variance_min_step = 50  # Start checking after 50 steps (~2.5 minutes)
+        args.variance_window = 50  # Smaller window for faster response
+        # Aggressive hybrid stability thresholds (activate within 10 minutes)
+        args.stability_cv_threshold = 0.20  # Coefficient of variation < 20%
+        args.stability_rate_threshold = 0.10  # Rate of change < 0.1 per step
 
         if step == "V0":
             # Baseline GPT-2
@@ -170,13 +170,8 @@ class RATrainer(BaseGPT2Trainer):
             args.ra_v5_R = 4
             args.ra_v5_per_head_gates = True
             args.use_rmlp = False
-            # Variance-guided activation with hybrid stability
+            # Variance-guided activation (uses aggressive defaults: activates within 10 min)
             args.use_variance_guided = True
-            args.variance_check_interval = 50
-            args.variance_min_step = 200
-            args.variance_window = 100
-            args.stability_cv_threshold = 0.05
-            args.stability_rate_threshold = 0.01
         elif step == "V17":
             # R-MLP basic (R_ff=64) + KV pruning (k=391) + variance-guided activation
             args.use_ra_v5 = False
@@ -188,13 +183,8 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_cache_prune = True
             args.kv_prune_k = 391  # Golden ratio: 391/1024 ≈ 0.382
             args.kv_prune_recency = 64
-            # Variance-guided activation with hybrid stability
+            # Variance-guided activation (uses aggressive defaults: activates within 10 min)
             args.use_variance_guided = True
-            args.variance_check_interval = 50
-            args.variance_min_step = 200
-            args.variance_window = 100
-            args.stability_cv_threshold = 0.05
-            args.stability_rate_threshold = 0.01
         elif step == "V18":
             # R-MLP golden (R_ff=1152) + KV pruning (learned ratio) + variance-guided
             args.use_ra_v5 = False
@@ -207,13 +197,8 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382  # Start at golden ratio
             args.kv_prune_recency = 64
-            # Variance-guided activation with hybrid stability
+            # Variance-guided activation (uses aggressive defaults: activates within 10 min)
             args.use_variance_guided = True
-            args.variance_check_interval = 50
-            args.variance_min_step = 200
-            args.variance_window = 100
-            args.stability_cv_threshold = 0.05
-            args.stability_rate_threshold = 0.01
         else:
             if self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
