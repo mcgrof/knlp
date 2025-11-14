@@ -238,8 +238,8 @@ def create_argument_parser():
     parser.add_argument(
         "--ddp-find-unused-params",
         action="store_true",
-        default=True,
-        help="DDP find unused params",
+        default=False,
+        help="Enable DDP find unused params (not needed for vanilla GPT-2)",
     )
 
     # Dry-run validation
