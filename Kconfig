@@ -324,6 +324,122 @@ config TEST_MATRIX_MODE
 
 endmenu
 
+menu "Hierarchical Memory Tiering (Experimental)"
+
+config ENABLE_HIERARCHICAL_TIERING
+	bool "Enable hierarchical memory tiering"
+	default n
+	help
+	  Enable hierarchical memory tiering to place model weights across
+	  different memory tiers (GPU HBM, CPU RAM, SSD) based on usage
+	  patterns inferred from Adam optimizer states.
+
+	  This can reduce memory pressure on GPU while maintaining good
+	  performance for frequently accessed weights.
+
+config TIERING_METHOD
+	string
+	default "none" if !ENABLE_HIERARCHICAL_TIERING
+	default "adam_state" if TIERING_ADAM_STATE
+
+choice TIERING_STRATEGY
+	prompt "Tiering strategy"
+	default TIERING_ADAM_STATE
+	depends on ENABLE_HIERARCHICAL_TIERING
+	help
+	  Choose which strategy to use for determining weight placement
+	  across memory tiers.
+
+config TIERING_ADAM_STATE
+	bool "Adam state-based tiering"
+	help
+	  Analyze Adam optimizer states (momentum, variance) to infer
+	  which weights are frequently updated vs stable. Frequently
+	  updated weights stay in HBM, stable weights move to slower
+	  tiers (CPU RAM, SSD).
+
+endchoice
+
+choice TIERING_MODE
+	prompt "Tiering mode"
+	default TIERING_EMULATED
+	depends on ENABLE_HIERARCHICAL_TIERING
+	help
+	  Choose between emulated delays (for testing without real
+	  hardware changes) or real offloading (actual movement).
+
+config TIERING_EMULATED
+	bool "Emulated tiering (fake delays)"
+	help
+	  Use forward hooks to inject realistic latency delays based on
+	  tier placement, but keep all weights on GPU. This allows testing
+	  tier strategies without actual memory movement or specialized
+	  hardware (CXL, fabric-attached memory, etc).
+
+	  Latency model accounts for:
+	  - Setup overhead (PCIe, fabric latency)
+	  - Transfer bandwidth (HBM: ~800 GB/s, DDR5: ~150 GB/s, NVMe: ~10 GB/s)
+
+config TIERING_REAL_OFFLOAD
+	bool "Real offloading (CPU/disk)"
+	help
+	  Actually move weights to CPU RAM or disk storage using PyTorch
+	  hooks and device_map. Weights are loaded to GPU just before use
+	  and evicted afterward.
+
+	  This reduces GPU memory usage but may impact performance if tier
+	  assignments are too aggressive. Requires careful tuning.
+
+endchoice
+
+config TIERING_GENERATE_JSON
+	bool "Generate tier hints JSON after training"
+	default y
+	depends on ENABLE_HIERARCHICAL_TIERING && TIERING_ADAM_STATE
+	help
+	  After training completes, analyze Adam optimizer states and
+	  generate a JSON file with tier placement hints for each module.
+	  Format: {"transformer.h.0.attn": "HBM", "transformer.h.5.mlp": "CPU", ...}
+
+	  This JSON can be used for inference benchmarking to evaluate
+	  impact of tier placement on inference latency.
+
+config TIERING_JSON_OUTPUT
+	string "Tier hints JSON output path"
+	default "tier_hints.json"
+	depends on TIERING_GENERATE_JSON
+	help
+	  Path where tier placement hints JSON will be written.
+
+config TIERING_HBM_THRESHOLD
+	string "HBM tier threshold (top percentile)"
+	default "0.3"
+	depends on ENABLE_HIERARCHICAL_TIERING
+	help
+	  Fraction of weights to keep in HBM (GPU memory). Most frequently
+	  accessed weights stay here. Default: 30% in HBM.
+
+config TIERING_CPU_THRESHOLD
+	string "CPU tier threshold (middle percentile)"
+	default "0.5"
+	depends on ENABLE_HIERARCHICAL_TIERING
+	help
+	  Fraction of weights to place in CPU RAM (offloaded from GPU but
+	  fast to access). Moderately accessed weights. Default: 50% in CPU.
+
+	  Remaining weights go to SSD (slowest tier).
+
+config TIERING_INFERENCE_BENCHMARK
+	bool "Run inference benchmark after training"
+	default n
+	depends on TIERING_GENERATE_JSON
+	help
+	  After training and generating tier hints, run inference benchmark
+	  to measure impact of tier placement on inference latency and
+	  throughput.
+
+endmenu
+
 menu "Test Matrix"
 
 config TEST_RESULTS_DIR
