@@ -433,10 +433,16 @@ class RATrainer(BaseGPT2Trainer):
             if self.iter_num % self.args.eval_interval == 0:
                 losses = self.estimate_loss()
                 if self.master_process:
+                    val_ppl = math.exp(min(losses["val"], 20))
                     print(
-                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}"
+                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}, ppl {val_ppl:.2f}"
                     )
-                    self.log_metrics({"val_loss": losses["val"]})
+                    self.log_metrics(
+                        {
+                            "val_loss": losses["val"],
+                            "val_perplexity": val_ppl,
+                        }
+                    )
 
                     if losses["val"] < self.best_val_loss:
                         self.best_val_loss = losses["val"]
