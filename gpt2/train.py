@@ -86,7 +86,7 @@ def create_argument_parser():
         help="Dataset",
     )
     parser.add_argument(
-        "--data-dir", type=str, default="./gpt2/data", help="Data directory"
+        "--data-dir", type=str, default="./data", help="Data directory"
     )
 
     # Training
