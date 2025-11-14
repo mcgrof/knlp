@@ -1,0 +1,22 @@
+(.venv) root@kdevops:~/knlp# ./benchmark_bitter7.py --dim 4096 \
+    --layers 24 \
+    --sparsity 0.5 \
+    --num-calls 50 \
+    --imp-dtype bf16 \
+    --device-index 0
+Using device: cuda:0
+Model: dim=4096, layers=24
+Sparsity: 0.500
+Importance dtype: bf16
+Prune calls per benchmark: 50
+Total prunable params: 402.65 M
+
+[MagnitudePruning (baseline)]
+  Avg prune-op time: 3417.656 ms
+  Peak CUDA memory:  6976.00 MB
+
+
+
+[Bitter7 Optimized (scratch + bf16)]
+  Avg prune-op time: 3242.059 ms
+  Peak CUDA memory:  5440.00 MB

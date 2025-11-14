@@ -1,0 +1,72 @@
+(.venv) root@kdevops:~/knlp# time ./benchmark_bitter7-karpathy.py   --dim 4096   --layers 24   --sparsity 0.5   --num-calls 50   --imp-dtype bf16   --pad-multiple 0
+Using device: cuda:0
+Model: dim=4096, layers=24
+Sparsity: 0.500
+Importance dtype: bf16
+Pad multiple: 0
+Prune calls per benchmark: 50
+Total prunable params: 402.65 M
+
+
+[MagnitudePruning (baseline)]
+  Avg prune-op time: 3417.660 ms
+  Peak CUDA memory:  6976.00 MB
+
+
+[Bitter7 Optimized (scratch + bf16, no pad)]
+  Avg prune-op time: 3242.178 ms
+  Peak CUDA memory:  5440.00 MB
+
+real    5m55.131s
+user    4m14.280s
+sys     1m45.982s
+(.venv) root@kdevops:~/knlp# 
+(.venv) root@kdevops:~/knlp# 
+(.venv) root@kdevops:~/knlp# time ./benchmark_bitter7-karpathy.py   --dim 2048   --layers 12   --sparsity 0.5   --num-calls 10   --imp-dtype bf16   --pad-multiple 64
+Using device: cuda:0
+Model: dim=2048, layers=12
+Sparsity: 0.500
+Importance dtype: bf16
+Pad multiple: 64
+Prune calls per benchmark: 10
+Total prunable params: 50.33 M
+
+
+[MagnitudePruning (baseline)]
+  Avg prune-op time: 426.782 ms
+  Peak CUDA memory:  880.00 MB
+
+
+[Bitter7 Optimized (scratch + bf16, pad=64)]
+  Avg prune-op time: 405.753 ms
+  Peak CUDA memory:  688.00 MB
+
+
+real    0m23.617s
+user    0m15.128s
+sys     0m13.591s
+(.venv) root@kdevops:~/knlp# 
+(.venv) root@kdevops:~/knlp# 
+(.venv) root@kdevops:~/knlp# 
+(.venv) root@kdevops:~/knlp# time ./benchmark_bitter7-karpathy.py   --dim 2048   --layers 12   --sparsity 0.5   --num-calls 10   --imp-dtype bf16   --pad-multiple 128
+Using device: cuda:0
+Model: dim=2048, layers=12
+Sparsity: 0.500
+Importance dtype: bf16
+Pad multiple: 128
+Prune calls per benchmark: 10
+Total prunable params: 50.33 M
+
+
+[MagnitudePruning (baseline)]
+  Avg prune-op time: 426.776 ms
+  Peak CUDA memory:  880.00 MB
+
+
+[Bitter7 Optimized (scratch + bf16, pad=128)]
+  Avg prune-op time: 405.884 ms
+  Peak CUDA memory:  688.00 MB
+
+real    0m23.601s
+user    0m15.120s
+sys     0m13.582s
