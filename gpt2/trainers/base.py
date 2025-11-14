@@ -84,6 +84,7 @@ class BaseGPT2Trainer:
         # Training state
         self.iter_num = 0
         self.best_val_loss = float("inf")
+        self.best_perplexity = float("inf")
         self.training_start_time = None
 
         # Metrics
