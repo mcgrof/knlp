@@ -70,6 +70,10 @@ def patch_gpt2_with_ra_v5(
             per_head_gates=per_head_gates,
         )
 
+        # Move to same device as original module
+        device = next(original_attn.parameters()).device
+        unified_ra_attn = unified_ra_attn.to(device)
+
         # Copy over any bias if it exists
         if hasattr(original_attn, "bias") and hasattr(unified_ra_attn, "bias"):
             unified_ra_attn.bias = original_attn.bias
@@ -134,6 +138,10 @@ def patch_gpt2_with_rmlp(
             use_gates=use_gates,
             tie_up_low=tie_up_low,
         )
+
+        # Move to same device as original module
+        device = next(original_mlp.parameters()).device
+        reciprocal_mlp = reciprocal_mlp.to(device)
 
         # Replace the MLP module
         block.mlp = reciprocal_mlp
