@@ -97,7 +97,7 @@ CONFIG_RA_V5_PER_HEAD_GATES=y
 # Enable ablation study mode with Unified RA + R-MLP steps
 # Focus on most promising configurations based on 5-minute test results
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V3,V7,V9"
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V3,V7,V9,V16"
 
 # Disable test matrix mode - ablation mode runs its own test sequence
 CONFIG_TEST_MATRIX_MODE=n
@@ -191,6 +191,12 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 # - Step V15: V13 + KV cache pruning (learned ratio)
 #   Architecture: R-MLP golden delayed + learned KV pruning ratio
 #   Purpose: Learn optimal KV pruning vs fixed golden ratio
+#
+# - Step V16: Unified RA + R-MLP with weight tying
+#   Architecture: V3 (basic R-MLP) but with tie_up_low=True
+#   Purpose: Test if tying up_low to transposed up_std subset reduces
+#            parameters (~49K/layer saved) without quality loss
+#   Params saved: 64 × 768 × 12 layers ≈ 590K parameters
 #
 # Usage:
 # 1. Full ablation (2 hours/step, 22 hours total):
