@@ -286,17 +286,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         math.exp(min(losses["val"], 20))
                     )
 
-                    val_ppl = math.exp(min(losses["val"], 20))
-
-                    # Update best perplexity
-                    if val_ppl < self.best_perplexity:
-                        self.best_perplexity = val_ppl
-
                     self.log_metrics(
                         {
                             "val_loss": losses["val"],
-                            "val_perplexity": val_ppl,
-                            "best_perplexity": self.best_perplexity,
+                            "val_perplexity": math.exp(min(losses["val"], 20)),
                         }
                     )
 
@@ -309,7 +302,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             )
                             self.save_checkpoint(checkpoint_path)
                             print(
-                                f"Saved best model (val_loss={self.best_val_loss:.4f}, best_ppl={self.best_perplexity:.2f})"
+                                f"Saved best model (val_loss={self.best_val_loss:.4f})"
                             )
 
             # Periodic checkpoint
@@ -333,6 +326,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             print(
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
+
+            # Save metrics to JSON if requested
+            if hasattr(self.args, "json_output") and self.args.json_output:
+                self.save_metrics_json(self.args.json_output)
 
             # Save final model
             if getattr(self.args, "save_checkpoint", False):
