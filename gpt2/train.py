@@ -8,7 +8,7 @@ Usage:
     # Vanilla GPT-2
     python gpt2/train.py --architecture vanilla
 
-    # Unified RA single step
+    # RA single step
     python gpt2/train.py --architecture unified-ra --ra-step V1
 
     # Ablation study
@@ -273,7 +273,7 @@ def main():
         coordinator.run()
 
     elif args.architecture == "unified-ra":
-        # Single Unified RA run
+        # Single RA run
         from gpt2.trainers import RATrainer
 
         print(f"Running RA trainer (step {args.ra_step})")

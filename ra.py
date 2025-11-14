@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unified Reciprocal Attention (Unified RA)
+Reciprocal Attention (RA)
 
 The key principle: we match baseline speed by splitting the per-head
 dimension D into (D_std + R) and using a fused projection to emit
@@ -29,9 +29,9 @@ torch.set_float32_matmul_precision("high")
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
-class UnifiedRAttention(nn.Module):
+class ReciprocalAttention(nn.Module):
     """
-    Unified Reciprocal Attention (Unified RA)
+    Reciprocal Attention (RA)
 
     The key principle: we match baseline speed by splitting the per-head
     dimension D into (D_std + R) and using a fused projection to emit
@@ -168,7 +168,7 @@ class UnifiedRAttention(nn.Module):
 
     def repack_baseline_qkv_into_unified_ra(self, W_q, W_k, W_v, P=None, seed=0):
         """
-        Repack baseline Q/K/V weights into Unified RA's folded layout with gates baked in.
+        Repack baseline Q/K/V weights into RA's folded layout with gates baked in.
 
         Args:
             W_q: torch.Tensor [n_embd, n_embd] baseline Q weight
@@ -447,7 +447,7 @@ class ReciprocalMLP(nn.Module):
     """
     Reciprocal MLP (R-MLP)
 
-    Mirrors Unified RA's folded layout concept but for MLP expansion dimension.
+    Mirrors RA's folded layout concept but for MLP expansion dimension.
 
     Key principle: Split expansion dim D_ff = D_ff_std + R_ff and use separate
     up-projections to create [h_std | h_low], then down-project the concatenated
@@ -871,7 +871,7 @@ def set_coupling_scale(model: nn.Module, scale: float):
     Prevents MLP collapse during early training by starting with standard pathways.
 
     Args:
-        model: GPT-2 model with UnifiedRAttention and/or ReciprocalMLP modules
+        model: GPT-2 model with ReciprocalAttention and/or ReciprocalMLP modules
         scale: Warmup scale in [0, 1]
                0.0 = vanilla GPT-2 (no reciprocal coupling)
                1.0 = full RA+R-MLP (all reciprocal pathways active)
@@ -913,7 +913,7 @@ def test_unified_ra_shapes():
     R = 4
 
     for B, T in configs:
-        model = UnifiedRAttention(n_embd=n_embd, n_head=n_head, R=R)
+        model = ReciprocalAttention(n_embd=n_embd, n_head=n_head, R=R)
         x = torch.randn(B, T, n_embd)
 
         try:
@@ -934,7 +934,7 @@ def test_unified_ra_shapes():
 
 def test_numeric_parity():
     """
-    Test that with w_rec=0, Unified RA output ≈ baseline output.
+    Test that with w_rec=0, RA output ≈ baseline output.
 
     This validates that the folded Q/K layout with pure standard attention
     (no reciprocal component) matches baseline SDPA.
@@ -969,7 +969,7 @@ def test_numeric_parity():
 
     # Create models
     baseline = BaselineAttn()
-    unified = UnifiedRAttention(n_embd=n_embd, n_head=n_head, R=R, dropout=0.0)
+    unified = ReciprocalAttention(n_embd=n_embd, n_head=n_head, R=R, dropout=0.0)
 
     # Set w_rec=0 for pure standard attention
     with torch.no_grad():
@@ -983,7 +983,7 @@ def test_numeric_parity():
         W_k = W[n_embd : 2 * n_embd, :]
         W_v = W[2 * n_embd : 3 * n_embd, :]
 
-        # Initialize Unified RA with same weights
+        # Initialize RA with same weights
         unified.from_pretrained_qkv(W_q, W_k, W_v)
 
         # Copy projection weights
@@ -1024,7 +1024,7 @@ def test_numeric_parity():
 
 
 def benchmark_unified_ra():
-    """Benchmark Unified RA vs Baseline with fair comparisons."""
+    """Benchmark RA vs Baseline with fair comparisons."""
     import time
 
     device = "cuda"
@@ -1032,7 +1032,7 @@ def benchmark_unified_ra():
     n_embd = H * D
 
     print("=" * 70)
-    print("Unified RA Benchmark (Direct Folded Layout)")
+    print("RA Benchmark (Direct Folded Layout)")
     print("=" * 70)
     print("Optimizations:")
     print("  - Single SDPA call (RA-only path)")
@@ -1102,9 +1102,9 @@ def benchmark_unified_ra():
         f"   {baseline_compiled_time:.2f} ms/iter ({baseline_compiled_time/baseline_time:.2f}x)"
     )
 
-    # Unified RA
-    print(f"\n3. Unified RA (R=4, RA-only path)...")
-    model = UnifiedRAttention(n_embd=n_embd, n_head=H, R=4).to(
+    # RA
+    print(f"\n3. RA (R=4, RA-only path)...")
+    model = ReciprocalAttention(n_embd=n_embd, n_head=H, R=4).to(
         device=device, dtype=torch.float16
     )
 
@@ -1121,8 +1121,8 @@ def benchmark_unified_ra():
     print(f"   {ra_time:.2f} ms/iter ({ra_time/baseline_time:.2f}x)")
 
     # With torch.compile
-    print(f"\n4. Unified RA + torch.compile...")
-    model_compiled = UnifiedRAttention(n_embd=n_embd, n_head=H, R=4).to(
+    print(f"\n4. RA + torch.compile...")
+    model_compiled = ReciprocalAttention(n_embd=n_embd, n_head=H, R=4).to(
         device=device, dtype=torch.float16
     )
     model_compiled = torch.compile(
@@ -1153,10 +1153,10 @@ def benchmark_unified_ra():
         f"{'Baseline SDPA + compile':<40} {baseline_compiled_time:>10.2f} {baseline_compiled_time/baseline_time:>11.2f}x"
     )
     print(
-        f"{'Unified RA (direct layout)':<40} {ra_time:>10.2f} {ra_time/baseline_time:>11.2f}x"
+        f"{'RA (direct layout)':<40} {ra_time:>10.2f} {ra_time/baseline_time:>11.2f}x"
     )
     print(
-        f"{'Unified RA + torch.compile':<40} {ra_compiled_time:>10.2f} {ra_compiled_time/baseline_time:>11.2f}x"
+        f"{'RA + torch.compile':<40} {ra_compiled_time:>10.2f} {ra_compiled_time/baseline_time:>11.2f}x"
     )
 
     best_baseline = min(baseline_time, baseline_compiled_time)
@@ -1166,17 +1166,15 @@ def benchmark_unified_ra():
     print("FAIR COMPARISON (Best vs Best)")
     print("=" * 70)
     print(f"Best Baseline:  {best_baseline:.2f}ms")
-    print(f"Best Unified RA: {best_ra:.2f}ms")
+    print(f"Best RA: {best_ra:.2f}ms")
     print()
 
     if best_ra <= best_baseline * 1.05:
         speedup = (best_baseline / best_ra - 1) * 100
         if best_ra < best_baseline:
-            print(
-                f"🎉 SUCCESS! Unified RA is {speedup:.1f}% FASTER than best baseline!"
-            )
+            print(f"🎉 SUCCESS! RA is {speedup:.1f}% FASTER than best baseline!")
         else:
-            print(f"🎉 SUCCESS! Unified RA matches baseline (within 5%)")
+            print(f"🎉 SUCCESS! RA matches baseline (within 5%)")
         print(f"Difference: {abs(best_baseline - best_ra):.2f}ms")
     else:
         overhead = (best_ra / best_baseline - 1) * 100

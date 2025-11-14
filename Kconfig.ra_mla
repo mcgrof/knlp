@@ -178,10 +178,10 @@ config RA_MLA_USE_ROPE
 	  Recommended: Disable (GPT-2 standard)
 
 config RA_V5_PER_HEAD_GATES
-	bool "Use per-head gates for Unified RA (vs per-layer)"
+	bool "Use per-head gates for RA (vs per-layer)"
 	default n
 	help
-	  Control gate granularity for Unified RA's w_std and w_rec gates.
+	  Control gate granularity for RA's w_std and w_rec gates.
 
 	  Per-layer gates (default, RECOMMENDED for small models):
 	    - One scalar gate pair (w_std, w_rec) per layer

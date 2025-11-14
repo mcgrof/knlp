@@ -12,9 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class UnifiedRAttentionOptimized(nn.Module):
+class ReciprocalAttentionOptimized(nn.Module):
     """
-    Optimized Unified RA with fused gate scaling.
+    Optimized RA with fused gate scaling.
 
     Changes from original:
     - Fused gate application (single multiply instead of split+scale+cat)
@@ -244,7 +244,7 @@ def test_optimization_correctness():
 
     # Test RA optimization
     print("\n1. Testing fused gate scaling...")
-    model = UnifiedRAttentionOptimized(n_embd=C, n_head=12, R=4).to(device)
+    model = ReciprocalAttentionOptimized(n_embd=C, n_head=12, R=4).to(device)
     try:
         out = model(x)
         assert out.shape == (B, T, C)

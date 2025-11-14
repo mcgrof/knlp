@@ -1,7 +1,7 @@
 """
-Unified RA Patching for GPT-2
+RA Patching for GPT-2
 
-Replaces standard attention with UnifiedRAttention (direct layout emission).
+Replaces standard attention with ReciprocalAttention (direct layout emission).
 Matches baseline speed (1.33ms) while providing architectural benefits:
 - Reciprocity: Q can attend to K's context and vice versa
 - Learned gates: Per-head w_std, w_rec control reciprocity usage
@@ -27,14 +27,14 @@ sys.path.insert(0, parent_dir)
 
 import torch
 import torch.nn as nn
-from ra import UnifiedRAttention, ReciprocalMLP
+from ra import ReciprocalAttention, ReciprocalMLP
 
 
 def patch_gpt2_with_ra_v5(
     model, R=4, dropout=0.1, use_self_restart=False, per_head_gates=False
 ):
     """
-    Replace all attention modules in GPT-2 with Unified RA.
+    Replace all attention modules in GPT-2 with RA.
 
     Args:
         model: GPT-2 model to patch
@@ -52,15 +52,15 @@ def patch_gpt2_with_ra_v5(
 
     restart_str = " + Self-Restart" if use_self_restart else ""
     gate_str = "per-head" if per_head_gates else "per-layer"
-    print(f"Patching GPT-2 with Unified RA (R={R}, {gate_str} gates){restart_str}...")
+    print(f"Patching GPT-2 with RA (R={R}, {gate_str} gates){restart_str}...")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
-        # Replace the attention module with Unified RA
+        # Replace the attention module with RA
         original_attn = block.attn
 
-        # Create Unified RA module
-        unified_ra_attn = UnifiedRAttention(
+        # Create RA module
+        unified_ra_attn = ReciprocalAttention(
             n_embd=n_embd,
             n_head=n_head,
             block_size=block_size,
@@ -81,10 +81,10 @@ def patch_gpt2_with_ra_v5(
         # Replace the attention module
         block.attn = unified_ra_attn
 
-        print(f"  Layer {i}: Standard Attention → Unified RA{restart_str}")
+        print(f"  Layer {i}: Standard Attention → RA{restart_str}")
 
     num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with Unified RA{restart_str}")
+    print(f"Successfully patched {num_layers} layers with RA{restart_str}")
 
     return model
 
@@ -168,7 +168,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
     per_head_gates=False,
 ):
     """
-    Replace both attention and MLP modules in GPT-2 with Unified RA + R-MLP.
+    Replace both attention and MLP modules in GPT-2 with RA + R-MLP.
 
     Args:
         model: GPT-2 model to patch
@@ -186,7 +186,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
     Returns:
         Patched model
     """
-    # First patch attention with Unified RA
+    # First patch attention with RA
     model = patch_gpt2_with_ra_v5(
         model,
         R=R,
@@ -211,7 +211,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
 
 def analyze_ra_v5_gates(model):
     """
-    Analyze learned gate values across all Unified RA layers.
+    Analyze learned gate values across all RA layers.
 
     Returns:
         Dictionary with gate statistics
