@@ -131,8 +131,10 @@ class BaseGPT2Trainer:
             torch.cuda.set_device(self.device)
             self.master_process = self.ddp_rank == 0
             self.seed_offset = self.ddp_rank
-            assert self.args.gradient_accumulation_steps % self.ddp_world_size == 0
-            self.args.gradient_accumulation_steps //= self.ddp_world_size
+            assert (
+                self.args.gradient_accumulation % self.ddp_world_size == 0
+            ), f"gradient_accumulation ({self.args.gradient_accumulation}) must be divisible by world_size ({self.ddp_world_size})"
+            self.args.gradient_accumulation //= self.ddp_world_size
         else:
             self.master_process = True
             self.seed_offset = 0
