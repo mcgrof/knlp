@@ -240,6 +240,18 @@ def run_training_with_monitoring(
             if "OMP_NUM_THREADS" not in env:
                 env["OMP_NUM_THREADS"] = "1"
 
+            # NCCL settings for more robust NVLink communication
+            if use_ddp and num_gpus > 1:
+                # Increase timeout for NVLink operations (default 600s -> 1800s)
+                if "NCCL_TIMEOUT" not in env:
+                    env["NCCL_TIMEOUT"] = "1800"
+                # Enable better error reporting
+                if "NCCL_DEBUG" not in env:
+                    env["NCCL_DEBUG"] = "WARN"
+                # Async error handling for better crash recovery
+                if "NCCL_ASYNC_ERROR_HANDLING" not in env:
+                    env["NCCL_ASYNC_ERROR_HANDLING"] = "1"
+
             result = subprocess.run(
                 cmd,
                 cwd=model_dir,
