@@ -567,6 +567,9 @@ class RATrainer(BaseGPT2Trainer):
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
 
+            # Generate tier hints if configured
+            self._generate_tier_hints()
+
             # Save metrics to JSON if requested
             if hasattr(self.args, "json_output") and self.args.json_output:
                 self.save_metrics_json(self.args.json_output)
@@ -746,3 +749,65 @@ class RATrainer(BaseGPT2Trainer):
                 print(f"\nWarning: Failed to fetch baseline metrics: {e}")
                 print("Continuing without baseline reference...")
             return None
+
+    def _generate_tier_hints(self):
+        """
+        Generate tier hints JSON from Adam optimizer states.
+
+        Called at the end of training if tiering is enabled in config.
+        """
+        # Check if tiering is enabled
+        tiering_enabled = getattr(self.config, "ENABLE_HIERARCHICAL_TIERING", False)
+        generate_json = getattr(self.config, "TIERING_GENERATE_JSON", False)
+
+        if not (tiering_enabled and generate_json):
+            return
+
+        print("\nGenerating tier hints from Adam optimizer states...")
+
+        try:
+            from lib.tiering import AdamStateTierAnalyzer
+
+            # Get thresholds from config
+            hbm_threshold = float(
+                getattr(self.config, "TIERING_HBM_THRESHOLD", "0.3").strip('"')
+            )
+            cpu_threshold = float(
+                getattr(self.config, "TIERING_CPU_THRESHOLD", "0.5").strip('"')
+            )
+
+            # Create analyzer
+            analyzer = AdamStateTierAnalyzer(
+                hbm_threshold=hbm_threshold, cpu_threshold=cpu_threshold
+            )
+
+            # Analyze optimizer states
+            tier_assignments = analyzer.analyze_optimizer_states(
+                self.optimizer, self.raw_model
+            )
+
+            # Count tier distribution
+            tier_counts = {}
+            for tier in tier_assignments.values():
+                tier_counts[tier] = tier_counts.get(tier, 0) + 1
+
+            print(f"  Tier distribution:")
+            for tier in ["HBM", "CPU", "SSD"]:
+                count = tier_counts.get(tier, 0)
+                if count > 0:
+                    pct = 100 * count / len(tier_assignments)
+                    print(f"    {tier}: {count} modules ({pct:.1f}%)")
+
+            # Save to JSON
+            output_path = getattr(
+                self.config, "TIERING_JSON_OUTPUT", "tier_hints.json"
+            ).strip('"')
+
+            analyzer.save_tier_hints(tier_assignments, output_path)
+            print(f"  Saved tier hints to {output_path}")
+
+        except Exception as e:
+            print(f"  Warning: Failed to generate tier hints: {e}")
+            import traceback
+
+            traceback.print_exc()
