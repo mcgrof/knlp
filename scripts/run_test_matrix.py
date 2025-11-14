@@ -871,6 +871,21 @@ def run_single_test(
     variant = combination.get("variant", None)
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
 
+    # Check if we should skip V0 baseline and use a reference run instead
+    baseline_run_id = config.get("BASELINE_RUN_ID", "").strip('"')
+    if baseline_run_id and ra_mla_ablation_step == "V0":
+        if not parallel_mode:
+            print(f"\n{'='*60}")
+            print(f"Skipping V0 baseline - using reference run")
+            print(f"Baseline run: {baseline_run_id}")
+            print(f"{'='*60}")
+        return {
+            "success": True,
+            "test_id": f"{model}_{optimizer}_ramla_stepV0",
+            "skipped": True,
+            "baseline_run_id": baseline_run_id,
+        }
+
     # Create test identifier including sparsity level, variant, and ablation step if applicable
     if pruning == "none":
         if ra_mla_ablation_step:

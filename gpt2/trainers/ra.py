@@ -75,6 +75,12 @@ class RATrainer(BaseGPT2Trainer):
         self.loss_history = []
         self.activation_step = None
 
+        # Fetch baseline metrics if configured
+        self.baseline_metrics = None
+        baseline_run_id = getattr(config, "BASELINE_RUN_ID", None)
+        if baseline_run_id and baseline_run_id.strip():
+            self.baseline_metrics = self._fetch_baseline_metrics(baseline_run_id)
+
     def _configure_step(self, args, step: str):
         """Configure args based on ablation step."""
         # Default values
@@ -519,6 +525,11 @@ class RATrainer(BaseGPT2Trainer):
                         "learning_rate": lr,
                     }
                     metrics.update(gate_metrics)
+
+                    # Add baseline metrics as reference lines if available
+                    if self.baseline_metrics:
+                        metrics.update(self.baseline_metrics)
+
                     self.log_metrics(metrics)
 
                 running_loss = 0.0
@@ -691,3 +702,47 @@ class RATrainer(BaseGPT2Trainer):
             pass
 
         return {}
+
+    def _fetch_baseline_metrics(
+        self, baseline_run_id: str
+    ) -> Optional[Dict[str, float]]:
+        """
+        Fetch baseline metrics from W&B for comparison.
+
+        Args:
+            baseline_run_id: W&B run ID in format "entity/project/run_id"
+
+        Returns:
+            Dictionary with baseline metrics or None if fetch fails
+        """
+        try:
+            import wandb
+
+            api = wandb.Api()
+            run = api.run(baseline_run_id)
+
+            # Extract key metrics from the baseline run
+            baseline_metrics = {
+                "baseline/val_loss": run.summary.get("val_loss"),
+                "baseline/val_perplexity": run.summary.get("val_perplexity"),
+                "baseline/train_loss": run.summary.get("train_loss"),
+                "baseline/train_perplexity": run.summary.get("train_perplexity"),
+            }
+
+            # Filter out None values
+            baseline_metrics = {
+                k: v for k, v in baseline_metrics.items() if v is not None
+            }
+
+            if self.master_process and baseline_metrics:
+                print(f"\nFetched baseline metrics from {baseline_run_id}:")
+                for k, v in baseline_metrics.items():
+                    print(f"  {k}: {v:.4f}")
+
+            return baseline_metrics
+
+        except Exception as e:
+            if self.master_process:
+                print(f"\nWarning: Failed to fetch baseline metrics: {e}")
+                print("Continuing without baseline reference...")
+            return None
