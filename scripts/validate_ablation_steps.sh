@@ -20,8 +20,9 @@ PASSED_STEPS=()
 for step in {0..18}; do
     echo -n "Step $step: "
 
-    if python3 gpt2/train_ra_mla.py \
-        --ra-mla-ablation-step $step \
+    if python3 gpt2/train.py \
+        --architecture unified-ra \
+        --ra-step V$step \
         --optimizer adamwspam \
         --dataset finewebedu \
         --dry-run \
@@ -47,7 +48,7 @@ if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
     echo
     echo "Run with --dry-run to see detailed errors:"
     for step in "${FAILED_STEPS[@]}"; do
-        echo "  python3 gpt2/train_ra_mla.py --ra-mla-ablation-step $step --optimizer adamwspam --dataset finewebedu --dry-run"
+        echo "  python3 gpt2/train.py --architecture unified-ra --ra-step V$step --optimizer adamwspam --dataset finewebedu --dry-run"
     done
     exit 1
 else

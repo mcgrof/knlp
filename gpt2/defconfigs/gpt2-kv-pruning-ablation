@@ -113,30 +113,40 @@ CONFIG_OUTPUT_DIR="test_matrix_results_kv_pruning"
 #   Architecture: Standard SDPA attention, standard MLP
 #   Purpose: Baseline reference for all comparisons
 #
-# NEW ARCHITECTURE WITH COUPLING WARMUP - Steps V16-V18
-# =======================================================
-# All steps use NEW Unified RA + R-MLP from ra.py with automatic
-# coupling warmup (200 steps) instead of old MLA-based RA.
+# NEW ARCHITECTURE WITH VARIANCE-GUIDED ACTIVATION - Steps V16-V18
+# =================================================================
+# All steps use NEW Unified RA + R-MLP from ra.py with variance-guided
+# activation instead of old MLA-based RA. Reciprocal pathways remain
+# disabled until loss variance drops below threshold, then ramp 0→1
+# over 200 steps. This data-driven approach prevents premature
+# activation and MLP collapse.
 #
-# TODO: Implement variance-guided activation (currently uses standard
-# coupling warmup over 200 steps instead of variance-based timing)
+# Variance-guided parameters:
+#   - Check interval: every 50 steps
+#   - Minimum step: 250 (earliest possible activation)
+#   - Window size: 100 samples
+#   - Threshold: 0.02 (variance must be < 0.02 to activate)
+#   - Warmup: 200 steps after activation
 #
-# - Step V16: Unified RA (R=4) with per-head gates + coupling warmup
+# - Step V16: Unified RA (R=4) with per-head gates + variance-guided
 #   Architecture: UnifiedRAttention with learned per-head w_std/w_rec
-#   Coupling: Ramps 0→1 over 200 steps (prevents MLP collapse)
-#   Purpose: Test RA with learned gate ratios per attention head
+#   Activation: Variance-guided (delayed until loss stabilizes)
+#   Coupling: Ramps 0→1 over 200 steps after activation
+#   Purpose: Test RA with learned gate ratios and delayed activation
 #
-# - Step V17: R-MLP basic (R_ff=64) + KV pruning + coupling warmup
+# - Step V17: R-MLP basic (R_ff=64) + KV pruning + variance-guided
 #   Architecture: ReciprocalMLP from ra.py (NEW, not old MLA-based!)
 #   KV pruning: Fixed golden ratio k=391 (38.2% of cache kept)
-#   Coupling: Ramps R-MLP pathways 0→1 over 200 steps
-#   Purpose: NEW R-MLP architecture + memory reduction
+#   Activation: Variance-guided (delayed until loss stabilizes)
+#   Coupling: Ramps R-MLP pathways 0→1 over 200 steps after activation
+#   Purpose: NEW R-MLP architecture + memory reduction + delayed start
 #
-# - Step V18: R-MLP golden (R_ff=1152) + learned KV pruning + coupling
+# - Step V18: R-MLP golden (R_ff=1152) + learned KV pruning + variance
 #   Architecture: ReciprocalMLP with golden ratio split
 #   KV pruning: LEARNED keep_ratio (init 0.382, adapts during training)
-#   Coupling: Ramps R-MLP pathways 0→1 over 200 steps
-#   Purpose: Large R-MLP capacity + adaptive pruning
+#   Activation: Variance-guided (delayed until loss stabilizes)
+#   Coupling: Ramps R-MLP pathways 0→1 over 200 steps after activation
+#   Purpose: Large R-MLP + adaptive pruning + delayed activation
 #
 # Expected comparisons:
 # - V16 vs V0: Does variance-guided RA improve over baseline?
