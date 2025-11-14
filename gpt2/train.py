@@ -152,7 +152,25 @@ def create_argument_parser():
         "--spam-warmup-steps", type=int, default=1000, help="SPAM warmup steps"
     )
     parser.add_argument(
-        "--spam-enable-clip", action="store_true", help="Enable SPAM gradient clipping"
+        "--spam-enable-clip",
+        action="store_true",
+        default=True,
+        help="Enable gradient clipping for SPAM",
+    )
+    parser.add_argument(
+        "--spam-spike-threshold",
+        type=float,
+        default=2.0,
+        help="SPAM spike detection threshold",
+    )
+    parser.add_argument(
+        "--spam-periodic-reset",
+        action="store_true",
+        default=True,
+        help="Enable periodic momentum reset",
+    )
+    parser.add_argument(
+        "--spam-warmup", action="store_true", default=True, help="Enable SPAM warmup"
     )
 
     # AdamWPrune config
@@ -183,14 +201,6 @@ def create_argument_parser():
     # System
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--compile", action="store_true", help="Use torch.compile()")
-    parser.add_argument(
-        "--flash-attention",
-        action="store_true",
-        help="Enable Flash Attention (ignored, for backward compatibility)",
-    )
-    parser.add_argument(
-        "--json-output", type=str, default="", help="JSON output file for metrics"
-    )
 
     # Tracking
     parser.add_argument(
@@ -214,6 +224,13 @@ def create_argument_parser():
         help="DDP find unused params",
     )
 
+    # Dry-run validation
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Dry-run mode (architecture validation only)",
+    )
+
     return parser
 
 
@@ -221,6 +238,11 @@ def main():
     """Main entry point."""
     parser = create_argument_parser()
     args = parser.parse_args()
+
+    # Dry-run mode: force CPU to avoid GPU allocation
+    if args.dry_run:
+        args.device = "cpu"
+        print("DRY-RUN MODE: Using CPU device for architecture validation")
 
     # Load config if available
     if config is not None:
@@ -247,7 +269,10 @@ def main():
 
         print(f"Running RA trainer (step {args.ra_step})")
         trainer = RATrainer(args, config, ablation_step=args.ra_step)
-        trainer.train()
+        if args.dry_run:
+            trainer.run_dry_run()
+        else:
+            trainer.train()
 
     else:  # vanilla
         # Standard GPT-2 training
@@ -255,7 +280,10 @@ def main():
 
         print("Running Vanilla GPT-2 trainer")
         trainer = VanillaGPT2Trainer(args, config)
-        trainer.train()
+        if args.dry_run:
+            trainer.run_dry_run()
+        else:
+            trainer.train()
 
     print("\nTraining complete!")
 

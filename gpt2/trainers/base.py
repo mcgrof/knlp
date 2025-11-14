@@ -84,7 +84,6 @@ class BaseGPT2Trainer:
         # Training state
         self.iter_num = 0
         self.best_val_loss = float("inf")
-        self.best_perplexity = float("inf")
         self.training_start_time = None
 
         # Metrics
@@ -131,10 +130,8 @@ class BaseGPT2Trainer:
             torch.cuda.set_device(self.device)
             self.master_process = self.ddp_rank == 0
             self.seed_offset = self.ddp_rank
-            assert (
-                self.args.gradient_accumulation % self.ddp_world_size == 0
-            ), f"gradient_accumulation ({self.args.gradient_accumulation}) must be divisible by world_size ({self.ddp_world_size})"
-            self.args.gradient_accumulation //= self.ddp_world_size
+            assert self.args.gradient_accumulation_steps % self.ddp_world_size == 0
+            self.args.gradient_accumulation_steps //= self.ddp_world_size
         else:
             self.master_process = True
             self.seed_offset = 0
@@ -188,15 +185,6 @@ class BaseGPT2Trainer:
         if "wandb" in tracker_names:
             try:
                 import wandb
-
-                # Import weave for improved LLM call tracing
-                try:
-                    import weave
-
-                    if self.master_process:
-                        print("Weave enabled for LLM call tracing")
-                except ImportError:
-                    pass  # Weave is optional
 
                 run_name = (
                     getattr(self.args, "tracker_run_name", None)
@@ -317,7 +305,6 @@ class BaseGPT2Trainer:
             "optimizer": self.optimizer.state_dict(),
             "iter_num": self.iter_num,
             "best_val_loss": self.best_val_loss,
-            "best_perplexity": self.best_perplexity,
             "config": self.args,
         }
         if self.scaler is not None:
@@ -337,9 +324,6 @@ class BaseGPT2Trainer:
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.iter_num = checkpoint["iter_num"]
         self.best_val_loss = checkpoint["best_val_loss"]
-        self.best_perplexity = checkpoint.get(
-            "best_perplexity", float("inf")
-        )  # Backward compatibility
         if "scaler" in checkpoint and self.scaler is not None:
             self.scaler.load_state_dict(checkpoint["scaler"])
 
@@ -419,36 +403,6 @@ class BaseGPT2Trainer:
 
             self.scaler = DummyScaler()
 
-    def get_gpu_memory_stats(self) -> Dict[str, float]:
-        """
-        Get GPU memory stats for all available GPUs.
-
-        Returns:
-            Dictionary with memory stats for each GPU and total across all GPUs.
-        """
-        if not torch.cuda.is_available():
-            return {}
-
-        stats = {}
-        total_allocated = 0
-        total_reserved = 0
-
-        for gpu_id in range(torch.cuda.device_count()):
-            allocated = torch.cuda.memory_allocated(gpu_id) / (1024**3)  # GB
-            reserved = torch.cuda.memory_reserved(gpu_id) / (1024**3)  # GB
-
-            stats[f"gpu{gpu_id}/memory_allocated_gb"] = allocated
-            stats[f"gpu{gpu_id}/memory_reserved_gb"] = reserved
-
-            total_allocated += allocated
-            total_reserved += reserved
-
-        # Add total across all GPUs
-        stats["gpu_total/memory_allocated_gb"] = total_allocated
-        stats["gpu_total/memory_reserved_gb"] = total_reserved
-
-        return stats
-
     def log_metrics(self, metrics_dict: Dict[str, float]):
         """
         Log metrics to configured trackers.
@@ -461,10 +415,6 @@ class BaseGPT2Trainer:
 
         # Add iteration number
         metrics_dict["iteration"] = self.iter_num
-
-        # Add GPU memory stats
-        gpu_stats = self.get_gpu_memory_stats()
-        metrics_dict.update(gpu_stats)
 
         # Log to trackio
         if "trackio" in self.trackers:
@@ -483,6 +433,67 @@ class BaseGPT2Trainer:
                 wandb.log(metrics_dict, step=self.iter_num)
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
+
+    def run_dry_run(self):
+        """
+        Dry-run validation: tests architecture with minimal forward/backward
+        pass. Exits with status 0 if successful, 1 if error.
+        """
+        if not self.master_process:
+            return
+
+        print("\n" + "=" * 60)
+        print("DRY-RUN MODE: Architecture Validation")
+        print("=" * 60)
+        print(f"  Model: {self.args.model_name}")
+        print(f"  Parameters: {self.raw_model.get_num_params() / 1e6:.2f}M")
+        print(f"  Device: {self.device}")
+
+        # Create minimal dummy batch (batch_size=2, seq_len=32)
+        batch_size = 2
+        seq_len = 32
+        x = torch.randint(0, 50257, (batch_size, seq_len), device=self.device)
+        y = torch.randint(0, 50257, (batch_size, seq_len), device=self.device)
+
+        print(f"  Dummy batch: {batch_size}x{seq_len}")
+
+        try:
+            # Forward pass
+            print("  ✓ Testing forward pass...")
+            with self.ctx:
+                logits, loss = self.model(x, y)
+            print(f"    Output shape: {logits.shape}, Loss: {loss.item():.4f}")
+
+            # Backward pass
+            print("  ✓ Testing backward pass...")
+            self.scaler.scale(loss).backward()
+            print("    Gradients computed")
+
+            # Optimizer step
+            print("  ✓ Testing optimizer step...")
+            if self.device == "cuda":
+                self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad(set_to_none=True)
+            print("    Parameters updated")
+
+            # Success
+            print("\n" + "=" * 60)
+            print("✓ DRY-RUN PASSED: Architecture is valid")
+            print("=" * 60 + "\n")
+            sys.exit(0)
+
+        except Exception as e:
+            print("\n" + "=" * 60)
+            print("✗ DRY-RUN FAILED: Architecture validation error")
+            print("=" * 60)
+            print(f"Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            sys.exit(1)
 
     def train(self):
         """
