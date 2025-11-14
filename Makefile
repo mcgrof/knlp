@@ -7,6 +7,11 @@
 # Include Kconfig support to get CONFIG variables
 include Makefile.kconfig
 
+# TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
+ifdef TIME
+export GPT2_MAX_TIME := $(TIME)
+endif
+
 # Define what the default target does based on configuration
 .PHONY: all
 ifeq ($(CONFIG_OPTIMIZER_MODE_MULTIPLE),y)
