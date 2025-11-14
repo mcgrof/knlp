@@ -145,7 +145,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 model=self.raw_model,
                 pruning_method=pruning_method,
                 target_sparsity=getattr(self.args, "target_sparsity", 0.5),
-                args=self.args,
+                warmup_steps=getattr(self.args, "pruning_warmup", 1000),
             )
         return None
 
