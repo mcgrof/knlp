@@ -376,7 +376,8 @@ class BaseGPT2Trainer:
         """
         if self.ddp:
             # Check if find_unused_parameters should be enabled
-            find_unused = getattr(self.args, "ddp_find_unused_params", True)
+            # Default to False for better performance (vanilla GPT-2 has no unused params)
+            find_unused = getattr(self.args, "ddp_find_unused_params", False)
             model = DDP(
                 model,
                 device_ids=[self.ddp_local_rank],
