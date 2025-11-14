@@ -76,8 +76,8 @@ class AblationCoordinator:
             step_start_time = time.time()
 
             # Create trainer for this step
-            from .unified_ra import UnifiedRATrainer
-            trainer = UnifiedRATrainer(self.args, self.config, ablation_step=step)
+            from .ra import RATrainer
+            trainer = RATrainer(self.args, self.config, ablation_step=step)
 
             # Run training
             trainer.train()

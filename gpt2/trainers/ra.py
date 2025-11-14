@@ -1,8 +1,8 @@
 """
-Unified RA Trainer
+RA Trainer
 
-Trainer for Unified RA (V-series) ablation studies.
-Supports V0-V19 ablation steps with R-MLP, KV pruning variants.
+Trainer for Reciprocal Attention (RA) and Reciprocal MLP (R-MLP) ablation studies.
+Supports V0-V19 ablation steps with coupling warmup to prevent MLP collapse.
 """
 
 import os
@@ -26,9 +26,9 @@ from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
 
 
-class UnifiedRATrainer(BaseGPT2Trainer):
+class RATrainer(BaseGPT2Trainer):
     """
-    Trainer for Unified RA ablation studies.
+    Trainer for RA+R-MLP ablation studies with coupling warmup.
 
     Implements:
     - Unified RA model patching (ra.py)
@@ -285,6 +285,18 @@ class UnifiedRATrainer(BaseGPT2Trainer):
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad(set_to_none=True)
+
+            # Coupling warmup: ramp reciprocal pathways from 0 to 1
+            # Prevents MLP collapse by starting with vanilla GPT-2 pathways
+            warmup_steps = getattr(self.args, 'warmup_steps', 200)
+            if self.iter_num < warmup_steps:
+                coupling_scale = self.iter_num / warmup_steps
+            else:
+                coupling_scale = 1.0
+
+            # Import and apply coupling warmup
+            from ra import set_coupling_scale
+            set_coupling_scale(self.raw_model, coupling_scale)
 
             # Logging
             if self.iter_num % self.args.log_interval == 0 and self.master_process:

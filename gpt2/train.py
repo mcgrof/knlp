@@ -233,7 +233,7 @@ def main():
     # Dispatch to appropriate trainer
     if args.ablation_mode:
         # Ablation study mode
-        from gpt2.trainers import AblationCoordinator, UnifiedRATrainer
+        from gpt2.trainers import AblationCoordinator, RATrainer
 
         steps = [s.strip() for s in args.ablation_steps.split(",")]
         print(f"Running ablation study with {len(steps)} steps: {steps}")
@@ -243,10 +243,10 @@ def main():
 
     elif args.architecture == "unified-ra":
         # Single Unified RA run
-        from gpt2.trainers import UnifiedRATrainer
+        from gpt2.trainers import RATrainer
 
-        print(f"Running Unified RA trainer (step {args.ra_step})")
-        trainer = UnifiedRATrainer(args, config, ablation_step=args.ra_step)
+        print(f"Running RA trainer (step {args.ra_step})")
+        trainer = RATrainer(args, config, ablation_step=args.ra_step)
         trainer.train()
 
     else:  # vanilla
