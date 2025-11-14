@@ -858,6 +858,44 @@ class PrunedKVAttention(nn.Module):
         return stats
 
 
+# ==============================================================================
+# Coupling Warmup Helper
+# ==============================================================================
+
+
+def set_coupling_scale(model: nn.Module, scale: float):
+    """
+    Set global coupling warmup scale for all RA modules in the model.
+
+    Gradually ramps reciprocal pathways from 0 (vanilla GPT-2) to 1 (full RA+R-MLP).
+    Prevents MLP collapse during early training by starting with standard pathways.
+
+    Args:
+        model: GPT-2 model with UnifiedRAttention and/or ReciprocalMLP modules
+        scale: Warmup scale in [0, 1]
+               0.0 = vanilla GPT-2 (no reciprocal coupling)
+               1.0 = full RA+R-MLP (all reciprocal pathways active)
+
+    Usage in training loop:
+        for step in range(max_steps):
+            # Ramp coupling from 0 to 1 over warmup_steps
+            if step < warmup_steps:
+                scale = step / warmup_steps
+                set_coupling_scale(model, scale)
+
+            optimizer.step()
+    """
+    scale_val = float(max(0.0, min(1.0, scale)))
+    for m in model.modules():
+        if hasattr(m, "set_coupling_scale"):
+            m.set_coupling_scale(scale_val)
+
+
+# ==============================================================================
+# Tests and Benchmarks
+# ==============================================================================
+
+
 def test_unified_ra_shapes():
     """Test shape correctness across different batch sizes and sequence lengths."""
     print("\n" + "=" * 70)

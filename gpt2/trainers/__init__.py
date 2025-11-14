@@ -11,12 +11,12 @@ functionality like data loading, checkpointing, and DDP setup.
 
 from .base import BaseGPT2Trainer
 from .vanilla import VanillaGPT2Trainer
-from .unified_ra import UnifiedRATrainer
+from .ra import RATrainer
 from .ablation import AblationCoordinator
 
 __all__ = [
     "BaseGPT2Trainer",
     "VanillaGPT2Trainer",
-    "UnifiedRATrainer",
+    "RATrainer",
     "AblationCoordinator",
 ]
