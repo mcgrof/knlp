@@ -166,6 +166,16 @@ class BaseGPT2Trainer:
         if "trackio" in tracker_names:
             try:
                 import trackio
+                import shutil
+                from pathlib import Path
+
+                # Clear Trackio cache for this specific project
+                trackio_cache = Path.home() / ".cache" / "huggingface" / "trackio"
+                project_cache = trackio_cache / self.args.tracker_project
+                if project_cache.exists():
+                    if self.master_process:
+                        print(f"Clearing Trackio project cache: {project_cache}")
+                    shutil.rmtree(project_cache, ignore_errors=True)
 
                 run_name = (
                     getattr(self.args, "tracker_run_name", None)
