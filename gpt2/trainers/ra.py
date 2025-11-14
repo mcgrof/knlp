@@ -437,15 +437,20 @@ class RATrainer(BaseGPT2Trainer):
                     print(
                         f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}, ppl {val_ppl:.2f}"
                     )
+
+                    # Update best metrics
+                    if losses["val"] < self.best_val_loss:
+                        self.best_val_loss = losses["val"]
+                    if val_ppl < self.best_perplexity:
+                        self.best_perplexity = val_ppl
+
                     self.log_metrics(
                         {
                             "val_loss": losses["val"],
                             "val_perplexity": val_ppl,
+                            "best_perplexity": self.best_perplexity,
                         }
                     )
-
-                    if losses["val"] < self.best_val_loss:
-                        self.best_val_loss = losses["val"]
 
             self.iter_num += 1
 
