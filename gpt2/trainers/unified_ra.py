@@ -144,6 +144,16 @@ class UnifiedRATrainer(BaseGPT2Trainer):
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = True
             args.mlp_expansion_ratio = 6.0
+        elif step == "V16":
+            # Unified RA + R-MLP with weight tying (tie_up_low=True)
+            args.use_ra_v5 = True
+            args.ra_v5_R = 4
+            args.ra_v5_use_self_restart = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 64
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            args.rmlp_tie_up_low = True
         else:
             if self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
@@ -182,6 +192,7 @@ class UnifiedRATrainer(BaseGPT2Trainer):
                 mlp_dropout=self.args.dropout,
                 use_mixer=getattr(self.args, "rmlp_use_mixer", False),
                 use_gates=getattr(self.args, "rmlp_use_gates", False),
+                tie_up_low=getattr(self.args, "rmlp_tie_up_low", False),
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
             )
         elif getattr(self.args, "use_ra_v5", False):

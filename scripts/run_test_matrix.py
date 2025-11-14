@@ -2160,7 +2160,7 @@ def main():
                         "V13": "R-MLP golden delayed (75 steps): R_ff=1152, delayed start",
                         "V14": "V11 + KV pruning (golden): k=391 (38.2%), recency=64",
                         "V15": "V13 + KV pruning (learned): Learned keep_ratio, recency=64",
-                        "V16": "Unified RA R=4 variance-guided: Activates at step ~250 based on loss variance",
+                        "V16": "Unified RA + R-MLP weight tying: V3 + tie_up_low=True (~590K params saved)",
                         "V17": "R-MLP basic + variance-guided + KV pruning: Fixed k=391, variance activation",
                         "V18": "R-MLP golden + variance-guided + KV pruning: Learned ratio, variance activation",
                         "V19": "V-only pruning baseline: k=391 (38.2%), no RA/R-MLP, clean isolation test",
