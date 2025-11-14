@@ -1,10 +1,10 @@
-# Unified RA + R-MLP: Complete Ablation Study
+# RA + R-MLP: Complete Ablation Study
 # Tests Reciprocal Attention (V0-V2) and Reciprocal MLP (V3-V6)
 #
 # Hardware: 4× NVIDIA A10G (24GB each) with DDP
 # Research: Does reciprocal folding improve quality at matched speed?
 #
-# To run: make defconfig-gpt2-unified-ra-ablation && make
+# To run: make defconfig-gpt2-ra-ablation && make
 #
 # Training modes:
 # 1. Time-based (recommended): Set CONFIG_GPT2_MAX_TIME for fixed duration
@@ -105,7 +105,7 @@ CONFIG_TEST_MATRIX_MODE=n
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=n
-CONFIG_TRACKER_PROJECT="gpt2-ra-ablation"
+CONFIG_TRACKER_PROJECT="gpt2-ra"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=y
@@ -200,12 +200,12 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra"
 #
 # Usage:
 # 1. Full ablation (2 hours/step, 22 hours total):
-#    make defconfig-gpt2-unified-ra-ablation && make
+#    make defconfig-gpt2-ra-ablation && make
 #
 # 2. Quick sanity check (60 seconds/step):
-#    make defconfig-gpt2-unified-ra-ablation
+#    make defconfig-gpt2-ra-ablation
 #    GPT2_MAX_TIME=60 make
 #
 # 3. Dry-run validation (CPU, ~60 seconds total):
-#    make defconfig-gpt2-unified-ra-ablation
+#    make defconfig-gpt2-ra-ablation
 #    make check

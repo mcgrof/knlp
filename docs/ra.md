@@ -53,7 +53,7 @@ logits = logits + ra_alpha * logits_recip  # within band
 ### Generation 3: Unified RA (CURRENT)
 **Location**: `ra.py` (renamed from unified_ra.py)
 **Approach**: Pre-folded layout, single SDPA call
-**Defconfigs**: `defconfigs/gpt2-unified-ra-ablation`
+**Defconfigs**: `defconfigs/gpt2-ra-ablation`
 
 Key innovation:
 - Split head dimension: D = D_std + R (e.g., 64 = 60 + 4)
@@ -378,12 +378,12 @@ if hasattr(attn, 'rwr_alpha'):
 python gpt2/train_ra_mla.py --ra-mla-ablation-step V1 --dry-run
 
 # Run V0 baseline (2-hour quality test)
-make defconfig-gpt2-unified-ra-ablation
+make defconfig-gpt2-ra-ablation
 GPT2_MAX_TIME=7200 make
 
 # Or use iteration-based (traditional)
 # Edit defconfig: uncomment CONFIG_GPT2_MAX_ITERS=10400
-make defconfig-gpt2-unified-ra-ablation && make
+make defconfig-gpt2-ra-ablation && make
 ```
 
 ### Tracked Metrics
@@ -471,7 +471,7 @@ Test all ablation steps quickly with dry-run mode (CPU, ~60 seconds total):
 
 ```bash
 # Test all RA+R-MLP steps (V0-V6)
-make defconfig-gpt2-unified-ra-ablation
+make defconfig-gpt2-ra-ablation
 make check
 ```
 
@@ -481,14 +481,14 @@ Run complete ablation study on 4× A10G GPUs (14 hours @ 2hrs/step):
 
 ```bash
 # Default: 2 hours per step (recommended for initial experiments)
-make defconfig-gpt2-unified-ra-ablation && make
+make defconfig-gpt2-ra-ablation && make
 
 # Quick sanity check: 60 seconds per step
-make defconfig-gpt2-unified-ra-ablation
+make defconfig-gpt2-ra-ablation
 GPT2_MAX_TIME=60 make
 
 # Extended validation: 8 hours per step (56 hours total)
-make defconfig-gpt2-unified-ra-ablation
+make defconfig-gpt2-ra-ablation
 GPT2_MAX_TIME=28800 make
 ```
 
@@ -496,7 +496,7 @@ GPT2_MAX_TIME=28800 make
 
 **Complete Ablation** (V0-V6, 7 steps):
 ```bash
-make defconfig-gpt2-unified-ra-ablation && make
+make defconfig-gpt2-ra-ablation && make
 ```
 Tests RA foundation (V0-V2) then R-MLP features (V3-V6). This is the single unified experiment for reciprocal architecture validation.
 
@@ -562,7 +562,7 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 - `gpt2/train_ra_mla.py`: Training integration with ablation support
 
 **Defconfig**:
-- `defconfigs/gpt2-unified-ra-ablation`: V0-V6 complete RA+R-MLP ablation
+- `defconfigs/gpt2-ra-ablation`: V0-V6 complete RA+R-MLP ablation
 
 **Related** (L/S/R series, legacy):
 - `gpt2/ra_lens_gpt2.py`: Lens-gated architecture
@@ -701,4 +701,4 @@ make defconfig-gpt2-kv-compression-ablation && make
 **Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental) + KVSplice v1.0 (Experimental)
 **Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations) | 🔬 KVSplice pending GPU ablations (C1-C3)
 
-**Quick Start**: `make defconfig-gpt2-unified-ra-ablation && make check`
+**Quick Start**: `make defconfig-gpt2-ra-ablation && make check`
