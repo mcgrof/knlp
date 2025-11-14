@@ -434,6 +434,29 @@ class BaseGPT2Trainer:
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
 
+    def save_metrics_json(self, output_path: str):
+        """
+        Save training metrics to JSON file.
+
+        Args:
+            output_path: Path to save JSON file
+        """
+        if not self.master_process:
+            return
+
+        metrics_data = {
+            "final_iteration": self.iter_num,
+            "best_val_loss": self.best_val_loss,
+            "metrics": self.metrics,
+        }
+
+        try:
+            with open(output_path, "w") as f:
+                json.dump(metrics_data, f, indent=2)
+            print(f"Metrics saved to {output_path}")
+        except Exception as e:
+            print(f"Warning: Failed to save metrics to {output_path}: {e}")
+
     def run_dry_run(self):
         """
         Dry-run validation: tests architecture with minimal forward/backward

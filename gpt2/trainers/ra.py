@@ -451,6 +451,10 @@ class RATrainer(BaseGPT2Trainer):
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
 
+            # Save metrics to JSON if requested
+            if hasattr(self.args, "json_output") and self.args.json_output:
+                self.save_metrics_json(self.args.json_output)
+
     def _analyze_ra_gates(self) -> Dict[str, float]:
         """Analyze Unified RA gate values."""
         try:

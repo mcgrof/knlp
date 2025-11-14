@@ -215,6 +215,12 @@ def create_argument_parser():
     parser.add_argument(
         "--tracker-run-name", type=str, default="", help="Tracker run name"
     )
+    parser.add_argument(
+        "--json-output",
+        type=str,
+        default="",
+        help="Path to JSON output file for training metrics",
+    )
 
     # DDP
     parser.add_argument(
