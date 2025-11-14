@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate visual diagrams for Unified RA and R-MLP documentation.
+Generate visual diagrams for RA and R-MLP documentation.
 
 Creates PNG images to replace ASCII art in docs/ra.md.
 """
@@ -20,7 +20,7 @@ def create_performance_comparison():
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
     # Forward time comparison
-    versions = ["V0\nBaseline", "V1\nUnified RA"]
+    versions = ["V0\nBaseline", "V1\nRA"]
     times = [1555.23, 1522.17]
     colors = ["#d73027", "#4575b4"]
 
@@ -99,14 +99,14 @@ def create_performance_comparison():
 
 
 def create_evolution_timeline():
-    """Create evolution timeline showing RA v2 → Unified RA."""
+    """Create evolution timeline showing RA v2 → RA."""
     fig, ax = plt.subplots(figsize=(14, 6))
 
     versions = [
         "RA v2\n(2 GEMMs)",
         "RA v3\n(Fused)",
         "RA v4\n(Zero-cat)",
-        "Unified RA\n(Folded)",
+        "RA\n(Folded)",
     ]
     times = [2000, 2230, 1960, 1522]
     slowdowns = [66, 85, 48, -2]  # Percent slower than baseline (1522 is faster)
@@ -579,7 +579,7 @@ def create_forward_pass_flow():
 
     # Title
     ax.text(
-        5, 11.5, "Unified RA Forward Pass", ha="center", fontsize=16, fontweight="bold"
+        5, 11.5, "RA Forward Pass", ha="center", fontsize=16, fontweight="bold"
     )
 
     # Input
@@ -1085,7 +1085,7 @@ def create_rmlp_ablation_diagram():
         alpha=0.7,
     )
     ax.add_patch(note_box)
-    ax.text(5, 1.2, "Foundation: All R-MLP steps build on Unified RA (V1)", ha="center", fontsize=11, fontweight="bold")
+    ax.text(5, 1.2, "Foundation: All R-MLP steps build on RA (V1)", ha="center", fontsize=11, fontweight="bold")
     ax.text(5, 0.8, "Research: Which R-MLP features improve quality?", ha="center", fontsize=10, style="italic")
 
     plt.tight_layout()

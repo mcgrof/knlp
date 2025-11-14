@@ -31,7 +31,7 @@ class RATrainer(BaseGPT2Trainer):
     Trainer for RA+R-MLP ablation studies with coupling warmup.
 
     Implements:
-    - Unified RA model patching (ra.py)
+    - RA model patching (ra.py)
     - R-MLP support
     - KV pruning/compression variants
     - V-series step configuration (V0-V19)
@@ -41,7 +41,7 @@ class RATrainer(BaseGPT2Trainer):
 
     def __init__(self, args, config, ablation_step: Optional[str] = None):
         """
-        Initialize Unified RA trainer.
+        Initialize RA trainer.
 
         Args:
             args: Command-line arguments
@@ -87,25 +87,27 @@ class RATrainer(BaseGPT2Trainer):
         # Variance-guided activation defaults (disabled by default)
         args.use_variance_guided = False
         args.variance_check_interval = 50
-        args.variance_min_step = 250
-        args.variance_threshold = 0.02
+        args.variance_min_step = 200  # Reduced from 250
         args.variance_window = 100
+        # Hybrid stability thresholds
+        args.stability_cv_threshold = 0.05  # Coefficient of variation < 5%
+        args.stability_rate_threshold = 0.01  # Rate of change < 0.01 per step
 
         if step == "V0":
             # Baseline GPT-2
             pass
         elif step == "V1":
-            # Unified RA (R=4)
+            # RA (R=4)
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = False
         elif step == "V2":
-            # Unified RA + Self-Restart
+            # RA + Self-Restart
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = True
         elif step == "V3":
-            # Unified RA + R-MLP (basic)
+            # RA + R-MLP (basic)
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = False
@@ -114,7 +116,7 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_use_mixer = False
             args.rmlp_use_gates = False
         elif step == "V4":
-            # Unified RA + R-MLP + Mixer
+            # RA + R-MLP + Mixer
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.use_rmlp = True
@@ -122,7 +124,7 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_use_mixer = True
             args.rmlp_use_gates = False
         elif step == "V5":
-            # Unified RA + R-MLP + Gates
+            # RA + R-MLP + Gates
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.use_rmlp = True
@@ -130,7 +132,7 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_use_mixer = False
             args.rmlp_use_gates = True
         elif step == "V6":
-            # Unified RA + R-MLP + Mixer + Gates
+            # RA + R-MLP + Mixer + Gates
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.use_rmlp = True
@@ -138,36 +140,37 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_use_mixer = True
             args.rmlp_use_gates = True
         elif step == "V7":
-            # Unified RA (R=8)
+            # RA (R=8)
             args.use_ra_v5 = True
             args.ra_v5_R = 8
         elif step == "V8":
-            # Unified RA (R=8) + Self-Restart
+            # RA (R=8) + Self-Restart
             args.use_ra_v5 = True
             args.ra_v5_R = 8
             args.ra_v5_use_self_restart = True
         elif step == "V9":
-            # Unified RA (R=2)
+            # RA (R=2)
             args.use_ra_v5 = True
             args.ra_v5_R = 2
         elif step == "V10":
-            # Unified RA + Self-Restart + 6x MLP
+            # RA + Self-Restart + 6x MLP
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = True
             args.mlp_expansion_ratio = 6.0
         elif step == "V16":
-            # Unified RA (R=4) with per-head gates + variance-guided activation
+            # RA (R=4) with per-head gates + variance-guided activation
             args.use_ra_v5 = True
             args.ra_v5_R = 4
             args.ra_v5_per_head_gates = True
             args.use_rmlp = False
-            # Variance-guided activation
+            # Variance-guided activation with hybrid stability
             args.use_variance_guided = True
             args.variance_check_interval = 50
-            args.variance_min_step = 250
-            args.variance_threshold = 0.02
+            args.variance_min_step = 200
             args.variance_window = 100
+            args.stability_cv_threshold = 0.05
+            args.stability_rate_threshold = 0.01
         elif step == "V17":
             # R-MLP basic (R_ff=64) + KV pruning (k=391) + variance-guided activation
             args.use_ra_v5 = False
@@ -179,12 +182,13 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_cache_prune = True
             args.kv_prune_k = 391  # Golden ratio: 391/1024 ≈ 0.382
             args.kv_prune_recency = 64
-            # Variance-guided activation
+            # Variance-guided activation with hybrid stability
             args.use_variance_guided = True
             args.variance_check_interval = 50
-            args.variance_min_step = 250
-            args.variance_threshold = 0.02
+            args.variance_min_step = 200
             args.variance_window = 100
+            args.stability_cv_threshold = 0.05
+            args.stability_rate_threshold = 0.01
         elif step == "V18":
             # R-MLP golden (R_ff=1152) + KV pruning (learned ratio) + variance-guided
             args.use_ra_v5 = False
@@ -197,18 +201,19 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382  # Start at golden ratio
             args.kv_prune_recency = 64
-            # Variance-guided activation
+            # Variance-guided activation with hybrid stability
             args.use_variance_guided = True
             args.variance_check_interval = 50
-            args.variance_min_step = 250
-            args.variance_threshold = 0.02
+            args.variance_min_step = 200
             args.variance_window = 100
+            args.stability_cv_threshold = 0.05
+            args.stability_rate_threshold = 0.01
         else:
             if self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
 
     def create_model(self):
-        """Create Unified RA model based on ablation step."""
+        """Create RA model based on ablation step."""
         if self.master_process:
             print(f"Initializing model for ablation step {self.ablation_step}")
 
@@ -222,14 +227,14 @@ class RATrainer(BaseGPT2Trainer):
         model = GPT(config)
         model.to(self.device)
 
-        # Apply Unified RA / R-MLP patching
+        # Apply RA / R-MLP patching
         if getattr(self.args, "use_ra_v5", False) and getattr(
             self.args, "use_rmlp", False
         ):
             # Both RA and R-MLP
             if self.master_process:
                 print(
-                    f"Patching with Unified RA (R={self.args.ra_v5_R}) + R-MLP (R_ff={self.args.rmlp_R_ff})"
+                    f"Patching with RA (R={self.args.ra_v5_R}) + R-MLP (R_ff={self.args.rmlp_R_ff})"
                 )
             model = patch_gpt2_with_unified_ra_and_rmlp(
                 model,
@@ -244,9 +249,9 @@ class RATrainer(BaseGPT2Trainer):
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
             )
         elif getattr(self.args, "use_ra_v5", False):
-            # Unified RA only
+            # RA only
             if self.master_process:
-                print(f"Patching with Unified RA (R={self.args.ra_v5_R})")
+                print(f"Patching with RA (R={self.args.ra_v5_R})")
             model = patch_gpt2_with_ra_v5(
                 model,
                 R=getattr(self.args, "ra_v5_R", 4),
@@ -345,11 +350,27 @@ class RATrainer(BaseGPT2Trainer):
                 ):
 
                     if len(self.loss_history) >= self.args.variance_window:
-                        # Compute variance over recent window
+                        # Hybrid stability metric: CV + Rate of Change
                         recent_losses = self.loss_history[-self.args.variance_window :]
-                        loss_variance = torch.tensor(recent_losses).var().item()
+                        losses_tensor = torch.tensor(recent_losses)
 
-                        if loss_variance < self.args.variance_threshold:
+                        mean_loss = losses_tensor.mean().item()
+                        std_loss = losses_tensor.std().item()
+                        cv = std_loss / mean_loss if mean_loss > 0 else float("inf")
+
+                        rate_of_change = abs(
+                            recent_losses[-1] - recent_losses[0]
+                        ) / len(recent_losses)
+
+                        # Check both conditions
+                        cv_threshold = getattr(
+                            self.args, "stability_cv_threshold", 0.05
+                        )
+                        rate_threshold = getattr(
+                            self.args, "stability_rate_threshold", 0.01
+                        )
+
+                        if cv < cv_threshold and rate_of_change < rate_threshold:
                             self.variance_activated = True
                             self.activation_step = self.iter_num
                             if self.master_process:
@@ -358,7 +379,13 @@ class RATrainer(BaseGPT2Trainer):
                                     f"✓ Variance-guided activation triggered at step {self.iter_num}"
                                 )
                                 print(
-                                    f"  Loss variance: {loss_variance:.6f} < {self.args.variance_threshold}"
+                                    f"  Coefficient of Variation: {cv:.6f} < {cv_threshold}"
+                                )
+                                print(
+                                    f"  Rate of Change: {rate_of_change:.6f} < {rate_threshold}"
+                                )
+                                print(
+                                    f"  Loss mean: {mean_loss:.4f}, std: {std_loss:.4f}"
                                 )
                                 print(
                                     f"  Beginning {self.args.warmup_steps}-step coupling warmup"
@@ -410,22 +437,71 @@ class RATrainer(BaseGPT2Trainer):
                         f"lr {lr:.2e} | {dt*1000/self.args.log_interval:.1f}ms/iter"
                     )
 
-                    # Analyze gates if RA/R-MLP enabled
+                    # Collect gate metrics for logging
+                    gate_metrics = {}
+
+                    # Analyze RA gates if enabled
                     if getattr(self.args, "use_ra_v5", False):
-                        gate_stats = self._analyze_ra_gates()
-                        if gate_stats:
+                        ra_gate_stats = self._analyze_ra_gates()
+                        if ra_gate_stats:
+                            gate_metrics.update(
+                                {f"ra_gates/{k}": v for k, v in ra_gate_stats.items()}
+                            )
                             print(
-                                f"  RA gates: w_std={gate_stats.get('w_std_mean', 0):.3f}, "
-                                f"w_rec={gate_stats.get('w_rec_mean', 0):.3f}"
+                                f"  RA gates: w_std={ra_gate_stats.get('w_std_mean', 0):.3f}, "
+                                f"w_rec={ra_gate_stats.get('w_rec_mean', 0):.3f}"
                             )
 
-                    self.log_metrics(
-                        {
-                            "train_loss": avg_loss,
-                            "train_perplexity": avg_ppl,
-                            "learning_rate": lr,
-                        }
-                    )
+                    # Analyze R-MLP gates if enabled
+                    if getattr(self.args, "use_rmlp", False):
+                        rmlp_gate_stats = self._analyze_rmlp_gates()
+                        if rmlp_gate_stats:
+                            gate_metrics.update(
+                                {
+                                    f"rmlp_gates/{k}": v
+                                    for k, v in rmlp_gate_stats.items()
+                                }
+                            )
+                            print(
+                                f"  R-MLP gates: w_std={rmlp_gate_stats.get('w_std_mean', 0):.3f}, "
+                                f"w_rec={rmlp_gate_stats.get('w_rec_mean', 0):.3f}"
+                            )
+
+                    # Add variance-guided monitoring if enabled
+                    if (
+                        getattr(self.args, "use_variance_guided", False)
+                        and len(self.loss_history) >= 10
+                    ):
+                        recent = self.loss_history[-min(100, len(self.loss_history)) :]
+                        losses_tensor = torch.tensor(recent)
+                        mean_loss = losses_tensor.mean().item()
+                        std_loss = losses_tensor.std().item()
+                        cv = std_loss / mean_loss if mean_loss > 0 else 0
+                        rate = (
+                            abs(recent[-1] - recent[0]) / len(recent)
+                            if len(recent) > 1
+                            else 0
+                        )
+
+                        gate_metrics.update(
+                            {
+                                "variance/cv": cv,
+                                "variance/rate_of_change": rate,
+                                "variance/coupling_scale": coupling_scale,
+                                "variance/activated": float(self.variance_activated),
+                                "variance/loss_mean": mean_loss,
+                                "variance/loss_std": std_loss,
+                            }
+                        )
+
+                    # Combine all metrics and log
+                    metrics = {
+                        "train_loss": avg_loss,
+                        "train_perplexity": avg_ppl,
+                        "learning_rate": lr,
+                    }
+                    metrics.update(gate_metrics)
+                    self.log_metrics(metrics)
 
                 running_loss = 0.0
 
@@ -467,15 +543,48 @@ class RATrainer(BaseGPT2Trainer):
                 self.save_metrics_json(self.args.json_output)
 
     def _analyze_ra_gates(self) -> Dict[str, float]:
-        """Analyze Unified RA gate values."""
+        """Analyze RA gate values."""
         try:
-            from ra import UnifiedRAttention
+            from ra import ReciprocalAttention
 
             w_std_list = []
             w_rec_list = []
 
             for name, module in self.raw_model.named_modules():
-                if isinstance(module, UnifiedRAttention):
+                if isinstance(module, ReciprocalAttention):
+                    with torch.no_grad():
+                        w_std = module.w_std.cpu()
+                        w_rec = module.w_rec.cpu()
+
+                        if w_std.dim() == 0:
+                            w_std_list.append(w_std.item())
+                            w_rec_list.append(w_rec.item())
+                        else:
+                            w_std_list.extend(w_std.tolist())
+                            w_rec_list.extend(w_rec.tolist())
+
+            if w_std_list:
+                return {
+                    "w_std_mean": np.mean(w_std_list),
+                    "w_rec_mean": np.mean(w_rec_list),
+                    "w_std_std": np.std(w_std_list),
+                    "w_rec_std": np.std(w_rec_list),
+                }
+        except Exception as e:
+            pass
+
+        return {}
+
+    def _analyze_rmlp_gates(self) -> Dict[str, float]:
+        """Analyze R-MLP gate values."""
+        try:
+            from ra import ReciprocalMLP
+
+            w_std_list = []
+            w_rec_list = []
+
+            for name, module in self.raw_model.named_modules():
+                if isinstance(module, ReciprocalMLP):
                     with torch.no_grad():
                         w_std = module.w_std.cpu()
                         w_rec = module.w_rec.cpu()

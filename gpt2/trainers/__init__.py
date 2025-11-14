@@ -3,7 +3,7 @@ GPT-2 Training Module
 
 Provides trainer classes for different GPT-2 variants:
 - VanillaGPT2Trainer: Standard GPT-2 training
-- UnifiedRATrainer: Unified RA (V-series) ablation studies
+- UnifiedRATrainer: RA (V-series) ablation studies
 
 All trainers inherit from BaseGPT2Trainer which provides common
 functionality like data loading, checkpointing, and DDP setup.

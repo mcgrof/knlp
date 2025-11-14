@@ -7,7 +7,7 @@ This document covers both **Reciprocal Attention (RA)** and **Reciprocal MLP (R-
 ## Quick Facts (Reciprocal Attention)
 
 ```
-Status:      ✅ Production-Ready (Unified RA, V-series)
+Status:      ✅ Production-Ready (RA, V-series)
 Speed:       1.0217× faster than baseline (2.17% speedup!)
 Memory:      Identical to baseline
 Complexity:  Lower than baseline (cleaner code)
@@ -50,7 +50,7 @@ logits_recip = q_all_latent @ latent_k
 logits = logits + ra_alpha * logits_recip  # within band
 ```
 
-### Generation 3: Unified RA (CURRENT)
+### Generation 3: RA (CURRENT)
 **Location**: `ra.py` (renamed from unified_ra.py)
 **Approach**: Pre-folded layout, single SDPA call
 **Defconfigs**: `defconfigs/gpt2-ra-ablation`
@@ -72,14 +72,14 @@ Kf[h] = [K_std | Q_low]
 # Qf @ Kf.T = Q_std@K_std.T + reciprocal cross-terms
 ```
 
-**Migration guide**: All new work should use Generation 3 (Unified RA). Generation 2 (MLA-based) configs are kept in `gpt2/old/` and `defconfigs/old/` for reproducibility of past experiments.
+**Migration guide**: All new work should use Generation 3 (RA). Generation 2 (MLA-based) configs are kept in `gpt2/old/` and `defconfigs/old/` for reproducibility of past experiments.
 
-## What is Unified RA?
+## What is RA?
 
 A single-line summary: **We fold reciprocal attention into Q/K layout, achieving bidirectional flow in one SDPA call.**
 
 **Standard Attention**: Q @ K^T (asymmetric flow) → softmax → @ V
-**Unified RA**: Qf @ Kf^T (bidirectional flow) → softmax → @ V
+**RA**: Qf @ Kf^T (bidirectional flow) → softmax → @ V
 
 **The Magic**: Qf and Kf are **pre-folded** to contain both standard and reciprocal components, achieving reciprocity in a single SDPA call with the same dimensions as baseline.
 
@@ -144,8 +144,8 @@ The forward pass is remarkably simple:
 
 ![Performance Comparison](images/performance_comparison.png)
 
-**Forward Time**: V0 baseline 1555 ms → V1 Unified RA 1522 ms (**2.17% faster**)
-**Memory**: V0 baseline 3177 MB → V1 Unified RA 3176 MB (**identical**)
+**Forward Time**: V0 baseline 1555 ms → V1 RA 1522 ms (**2.17% faster**)
+**Memory**: V0 baseline 3177 MB → V1 RA 3176 MB (**identical**)
 
 **Speedup**: 1.0217× (target was ≤1.05×) ✅ **EXCEEDS ACCEPTANCE CRITERIA**
 
@@ -157,7 +157,7 @@ The journey from complex to simple:
 - **RA v2** (2 GEMMs): 2000 ms, +66% slower ❌
 - **RA v3** (Fused): 2230 ms, +85% slower ❌
 - **RA v4** (Zero-cat): 1960 ms, +48% slower ❌
-- **Unified RA** (Folded): 1522 ms, **2% faster** ✅
+- **RA** (Folded): 1522 ms, **2% faster** ✅
 
 **Key insight**: Pre-fold layout + single SDPA = WIN
 
@@ -210,7 +210,7 @@ The ablation study tests two distinct reciprocity mechanisms:
 ```
 Reciprocal Architecture
  ├── Reciprocal Attention (RA)
- │     ├── Unified RA (folded Q/K layout, R=4)
+ │     ├── RA (folded Q/K layout, R=4)
  │     ├── Per-head gates (w_std, w_rec)
  │     └── One-step RWR (self-restart stabilization)
  └── Reciprocal MLP (R-MLP)
@@ -229,13 +229,13 @@ V0: Baseline GPT-2
     │  Q @ K^T → V   │
     └────────────────┘
 
-V1: Unified RA
+V1: RA
     ┌────────────────┐
     │  Folded Q/K    │  2.17% faster
     │ Learnable gates│  w_std, w_rec
     └────────────────┘
 
-V2: Unified RA + Self-Restart
+V2: RA + Self-Restart
     ┌────────────────┐
     │  Folded Q/K    │  + Identity path
     │ + (1-α)attn+αV │  Stabilization
@@ -244,7 +244,7 @@ V2: Unified RA + Self-Restart
 
 ### Reciprocal MLP (R-MLP) Steps
 
-R-MLP mirrors RA's folding concept for MLP layers. All steps build on Unified RA (V1) as the attention foundation.
+R-MLP mirrors RA's folding concept for MLP layers. All steps build on RA (V1) as the attention foundation.
 
 ![R-MLP Folding Concept](images/rmlp_folding.png)
 
@@ -255,7 +255,7 @@ R-MLP mirrors RA's folding concept for MLP layers. All steps build on Unified RA
 ```
 V3: Basic R-MLP (R_ff=64)
     ┌────────────────────┐
-    │ Unified RA (V1)    │  Attention foundation
+    │ RA (V1)    │  Attention foundation
     └────────────────────┘
     ┌────────────────────┐
     │ Folded MLP         │  up_std, up_low → GELU
@@ -350,7 +350,7 @@ Gates learned during training, NO runtime overhead!
 
 ```python
 # Basic initialization
-attn = UnifiedRAttention(
+attn = ReciprocalAttention(
     n_embd=768,
     n_head=12,
     R=4,                    # Reciprocal rank (validated optimal)
@@ -409,14 +409,14 @@ Per-step logging (every 10 iters):
 
 ## Related Architectures
 
-While Unified RA is production-ready, related architectures exist for research:
+While RA is production-ready, related architectures exist for research:
 
 ### Architecture Comparison
 
 ```
 Architecture       Speed      Memory    Complexity   Status
 ─────────────────────────────────────────────────────────────
-Unified RA (V)    1.02× ✅   Same ✅   Low ✅       Production
+RA (V)    1.02× ✅   Same ✅   Low ✅       Production
 Lens-Gated (L)    1.85×      Higher    High         Deprecated
 Full RWR (R)      4.00×      O(nk)     High         Research
 ─────────────────────────────────────────────────────────────
@@ -426,7 +426,7 @@ Full RWR (R)      4.00×      O(nk)     High         Research
 
 ```
 ┌─────────────────┬──────────────────────────────────┐
-│  Unified RA     │  Production training             │
+│  RA     │  Production training             │
 │  (V-series)     │  Quality + speed balanced        │
 ├─────────────────┼──────────────────────────────────┤
 │  Lens-Gated     │  Legacy experiments              │
@@ -457,7 +457,7 @@ Full RWR (R)      4.00×      O(nk)     High         Research
 5. ONE-STEP RWR SUFFICES
    └─ Full multi-hop overkill for most cases
 
-BOTTOM LINE: Unified RA achieves bidirectional flow
+BOTTOM LINE: RA achieves bidirectional flow
 at baseline speed. Production-ready. ✅
 ```
 
@@ -527,12 +527,12 @@ test_matrix_results_ra/
 
 ### Medium-Term: Architecture Refinements
 - Adaptive R per layer (different reciprocal ranks per transformer layer)
-- Mixed Unified RA + standard attention (selective per-head)
+- Mixed RA + standard attention (selective per-head)
 - Hybrid R-MLP + standard MLP (selective per-layer)
 - Weight tying experiments (up_low tied to up_std transpose)
 
 ### Long-Term: Integration & Deployment
-- Sparse attention + Unified RA combination
+- Sparse attention + RA combination
 - Multimodal applications (vision + language with RA/R-MLP)
 - Inference optimization (KV cache structure for folded RA)
 - Combined RA + R-MLP production deployment at scale
@@ -548,7 +548,7 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 - **Sinkformer**: Michael E. Sander et al. "Sinkhorn Attention." arXiv:2110.11773, 2021.
 - **ESPFormer**: "Extremely Sparse Attention." arXiv:2502.07962, 2025.
 
-**Key Difference**: DSA methods use iterative Sinkhorn (5-10× overhead). Unified RA modifies scores before softmax (zero overhead).
+**Key Difference**: DSA methods use iterative Sinkhorn (5-10× overhead). RA modifies scores before softmax (zero overhead).
 
 ### Random Walk with Restart
 
@@ -557,7 +557,7 @@ The transpose-based reciprocity draws conceptual inspiration from doubly-stochas
 ### Implementation Files
 
 **Core Architecture**:
-- `unified_ra.py`: UnifiedRAttention + ReciprocalMLP implementation
+- `unified_ra.py`: ReciprocalAttention + ReciprocalMLP implementation
 - `gpt2/ra_patch.py`: GPT-2 patching utilities (RA/R-MLP/combined)
 - `gpt2/train_ra_mla.py`: Training integration with ablation support
 
@@ -698,7 +698,7 @@ make defconfig-gpt2-kv-compression-ablation && make
 ---
 
 **Last Updated**: 2025-11-11
-**Version**: Unified RA v1.0 (Production) + R-MLP v1.0 (Experimental) + KVSplice v1.0 (Experimental)
+**Version**: RA v1.0 (Production) + R-MLP v1.0 (Experimental) + KVSplice v1.0 (Experimental)
 **Status**: ✅ RA production-ready | 🔬 R-MLP under validation (V3-V6 ablations) | 🔬 KVSplice pending GPU ablations (C1-C3)
 
 **Quick Start**: `make defconfig-gpt2-ra-ablation && make check`
