@@ -1,58 +1,42 @@
 """
-Pruning utilities for neural network weight pruning.
+Pruning factory module.
 
-Provides factory function to create pruners based on pruning method.
+Provides factory function for creating pruners based on pruning method.
 """
 
-import torch
-import torch.nn as nn
-from typing import Any
+from lib.magnitude_pruning import MagnitudePruning
+from lib.movement_pruning import MovementPruning
 
 
 def create_pruner(
-    model: nn.Module,
-    pruning_method: str,
-    target_sparsity: float,
-    args: Any,
+    model, pruning_method: str, target_sparsity: float = 0.5, warmup_steps: int = 1000
 ):
     """
-    Create a pruner based on the specified pruning method.
+    Create pruner based on pruning method.
 
     Args:
-        model: The model to prune
-        pruning_method: Pruning method ("magnitude", "movement", etc.)
+        model: PyTorch model to prune
+        pruning_method: Pruning method ("magnitude", "movement")
         target_sparsity: Target sparsity level (0.0 to 1.0)
-        args: Additional arguments
+        warmup_steps: Number of warmup steps before pruning starts
 
     Returns:
-        Pruner instance or None
+        Pruner object (MagnitudePruning or MovementPruning)
+
+    Raises:
+        ValueError: If pruning method is unknown
     """
     if pruning_method == "magnitude":
-        from lib.magnitude_pruning import MagnitudePruning
-
-        pruning_warmup = getattr(args, "pruning_warmup", 1000)
         return MagnitudePruning(
             model=model,
             target_sparsity=target_sparsity,
-            warmup_steps=pruning_warmup,
+            warmup_steps=warmup_steps,
         )
-
     elif pruning_method == "movement":
-        from lib.movement_pruning import MovementPruning
-
-        pruning_warmup = getattr(args, "pruning_warmup", 1000)
         return MovementPruning(
             model=model,
             target_sparsity=target_sparsity,
-            warmup_steps=pruning_warmup,
+            warmup_steps=warmup_steps,
         )
-
-    elif pruning_method == "state":
-        # State pruning is handled by AdamWPrune optimizer, not here
-        return None
-
-    elif pruning_method == "none":
-        return None
-
     else:
         raise ValueError(f"Unknown pruning method: {pruning_method}")
