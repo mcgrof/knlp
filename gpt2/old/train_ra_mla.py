@@ -2176,7 +2176,7 @@ def main():
             per_head_gates = False
 
         # Import Unified RA patching function
-        from ra_v5_patch import patch_gpt2_with_ra_v5
+        from ra_patch import patch_gpt2_with_ra_v5
 
         # First patch with Unified RA (attention only)
         model = patch_gpt2_with_ra_v5(
@@ -2267,7 +2267,7 @@ def main():
             per_head_gates = False
 
         # Import patching functions
-        from ra_v5_patch import patch_gpt2_with_unified_ra_and_rmlp
+        from ra_patch import patch_gpt2_with_unified_ra_and_rmlp
 
         model = patch_gpt2_with_unified_ra_and_rmlp(
             model,
@@ -2321,7 +2321,7 @@ def main():
 
         # Apply KV cache pruning if requested
         if getattr(args, "kv_cache_prune", False):
-            from ra_v5_patch import patch_gpt2_with_kv_pruning
+            from ra_patch import patch_gpt2_with_kv_pruning
 
             model = patch_gpt2_with_kv_pruning(
                 model,
@@ -2332,7 +2332,7 @@ def main():
             )
 
         # Import R-MLP patching function
-        from ra_v5_patch import patch_gpt2_with_rmlp
+        from ra_patch import patch_gpt2_with_rmlp
 
         model = patch_gpt2_with_rmlp(
             model,
@@ -2382,7 +2382,7 @@ def main():
             per_head_gates = False
 
         # Import Unified RA patching function
-        from ra_v5_patch import patch_gpt2_with_ra_v5
+        from ra_patch import patch_gpt2_with_ra_v5
 
         model = patch_gpt2_with_ra_v5(
             model,

@@ -46,9 +46,9 @@ def time_step(step_name: str, num_iters: int = 50):
 
     # Patch with Unified RA if V1
     if step_name == "V1":
-        from ra_v5_patch import patch_gpt_with_unified_ra
+        from ra_patch import patch_gpt2_with_ra_v5
 
-        model = patch_gpt_with_unified_ra(model, R=4, use_self_restart=False)
+        model = patch_gpt2_with_ra_v5(model, R=4, use_self_restart=False)
         print("✓ Patched with Unified RA (R=4)")
 
     # Optimizer

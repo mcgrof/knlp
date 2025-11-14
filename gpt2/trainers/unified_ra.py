@@ -19,7 +19,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT, GPTConfig
-from gpt2.ra_v5_patch import patch_gpt2_with_ra_v5, patch_gpt2_with_unified_ra_and_rmlp
+from gpt2.ra_patch import patch_gpt2_with_ra_v5, patch_gpt2_with_unified_ra_and_rmlp
 from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
 
