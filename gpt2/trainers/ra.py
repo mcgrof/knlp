@@ -572,9 +572,11 @@ class RATrainer(BaseGPT2Trainer):
 
             w_std_list = []
             w_rec_list = []
+            count = 0
 
             for name, module in self.raw_model.named_modules():
                 if isinstance(module, ReciprocalAttention):
+                    count += 1
                     with torch.no_grad():
                         w_std = module.w_std.cpu()
                         w_rec = module.w_rec.cpu()
@@ -592,9 +594,11 @@ class RATrainer(BaseGPT2Trainer):
                     "w_rec_mean": np.mean(w_rec_list),
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
+                    "module_count": float(count),
                 }
         except Exception as e:
-            pass
+            if self.master_process and self.iter_num < 20:
+                print(f"  Warning: RA gate analysis failed: {e}")
 
         return {}
 
@@ -605,9 +609,11 @@ class RATrainer(BaseGPT2Trainer):
 
             w_std_list = []
             w_rec_list = []
+            count = 0
 
             for name, module in self.raw_model.named_modules():
                 if isinstance(module, ReciprocalMLP):
+                    count += 1
                     with torch.no_grad():
                         w_std = module.w_std.cpu()
                         w_rec = module.w_rec.cpu()
@@ -625,9 +631,11 @@ class RATrainer(BaseGPT2Trainer):
                     "w_rec_mean": np.mean(w_rec_list),
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
+                    "module_count": float(count),
                 }
         except Exception as e:
-            pass
+            if self.master_process and self.iter_num < 20:
+                print(f"  Warning: R-MLP gate analysis failed: {e}")
 
         return {}
 
