@@ -416,12 +416,20 @@ class BaseGPT2Trainer:
         # Add iteration number
         metrics_dict["iteration"] = self.iter_num
 
+        # Sanitize metrics: convert tensors to Python scalars
+        sanitized_metrics = {}
+        for key, value in metrics_dict.items():
+            if isinstance(value, torch.Tensor):
+                sanitized_metrics[key] = value.item()
+            else:
+                sanitized_metrics[key] = value
+
         # Log to trackio
         if "trackio" in self.trackers:
             try:
                 import trackio
 
-                trackio.log(metrics_dict)
+                trackio.log(sanitized_metrics)
             except Exception as e:
                 print(f"Warning: Failed to log to trackio: {e}")
 
@@ -430,7 +438,7 @@ class BaseGPT2Trainer:
             try:
                 import wandb
 
-                wandb.log(metrics_dict, step=self.iter_num)
+                wandb.log(sanitized_metrics, step=self.iter_num)
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
 
