@@ -269,6 +269,17 @@ config WANDB_OFFLINE
 	  Run WandB in offline mode without requiring login.
 	  Runs can be synced later with 'wandb sync'.
 
+config BASELINE_RUN_ID
+	string "Baseline run ID for comparison (entity/project/run_id)"
+	default ""
+	depends on ENABLE_WANDB || ENABLE_TRACKIO
+	help
+	  Reference a previous baseline run instead of re-running V0.
+	  Format: entity/project/run_id (for W&B)
+	  When set, ablation studies skip V0 and fetch baseline metrics
+	  from the specified run for comparison.
+	  CLI: make BASELINE=entity/project/run_id
+
 config TRACKIO_PORT
 	int "Port for Trackio dashboard"
 	default 7860
