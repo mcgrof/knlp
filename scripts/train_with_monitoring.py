@@ -236,6 +236,9 @@ def run_training_with_monitoring(
             # Set environment to disable Python buffering
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            # Set OMP_NUM_THREADS to suppress torchrun warning
+            if "OMP_NUM_THREADS" not in env:
+                env["OMP_NUM_THREADS"] = "1"
 
             result = subprocess.run(
                 cmd,
