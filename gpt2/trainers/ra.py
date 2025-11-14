@@ -145,15 +145,37 @@ class RATrainer(BaseGPT2Trainer):
             args.ra_v5_use_self_restart = True
             args.mlp_expansion_ratio = 6.0
         elif step == "V16":
-            # Unified RA + R-MLP with weight tying (tie_up_low=True)
+            # Unified RA (R=4) with per-head gates
+            # TODO: Add variance-guided activation (currently uses standard coupling warmup)
             args.use_ra_v5 = True
             args.ra_v5_R = 4
-            args.ra_v5_use_self_restart = False
+            args.ra_v5_per_head_gates = True
+            args.use_rmlp = False
+        elif step == "V17":
+            # R-MLP basic (R_ff=64) + KV pruning (k=391)
+            # TODO: Add variance-guided activation (currently uses standard coupling warmup)
+            args.use_ra_v5 = False
             args.use_rmlp = True
             args.rmlp_R_ff = 64
             args.rmlp_use_mixer = False
             args.rmlp_use_gates = False
-            args.rmlp_tie_up_low = True
+            # KV pruning config
+            args.kv_cache_prune = True
+            args.kv_prune_k = 391  # Golden ratio: 391/1024 ≈ 0.382
+            args.kv_prune_recency = 64
+        elif step == "V18":
+            # R-MLP golden (R_ff=1152) + KV pruning (learned ratio)
+            # TODO: Add variance-guided activation (currently uses standard coupling warmup)
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152  # Golden ratio split of expansion
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            # KV pruning with learned ratio
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382  # Start at golden ratio
+            args.kv_prune_recency = 64
         else:
             if self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
