@@ -15,7 +15,9 @@ import torch
 import numpy as np
 
 # Add parent to path for imports
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+parent_dir = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT, GPTConfig
@@ -43,8 +45,13 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         self.raw_model = self.model.module if self.ddp else self.model
 
         # Initialize optimizer and related components
-        (self.optimizer, self.scheduler, self.gradient_clip_norm,
-         self.spam_state, self.adamwprune_state) = self.create_optimizer()
+        (
+            self.optimizer,
+            self.scheduler,
+            self.gradient_clip_norm,
+            self.spam_state,
+            self.adamwprune_state,
+        ) = self.create_optimizer()
 
         # Setup mixed precision
         self.setup_mixed_precision()
@@ -61,14 +68,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         config = GPTConfig.from_name(self.args.model_name)
         config.block_size = self.args.block_size
         config.dropout = self.args.dropout
-        config.bias = getattr(self.args, 'bias', True)
+        config.bias = getattr(self.args, "bias", True)
 
         # Create model
         model = GPT(config)
         model.to(self.device)
 
         # Compile if requested (must be before DDP)
-        if getattr(self.args, 'compile', False) and hasattr(torch, 'compile'):
+        if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
             if self.master_process:
                 print("Compiling model with torch.compile()...")
             model = torch.compile(model)
@@ -85,23 +92,38 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             print(f"Weight decay: {self.args.weight_decay}")
 
         # Handle state pruning for AdamWPrune
-        if self.args.optimizer == "adamwprune" and getattr(self.args, 'pruning_method', 'none') == "state":
+        if (
+            self.args.optimizer == "adamwprune"
+            and getattr(self.args, "pruning_method", "none") == "state"
+        ):
             self.args.adamwprune_enable_pruning = True
-            self.args.adamwprune_target_sparsity = getattr(self.args, 'target_sparsity', 0.5)
-            self.args.adamwprune_warmup_steps = getattr(self.args, 'pruning_warmup', 1000)
+            self.args.adamwprune_target_sparsity = getattr(
+                self.args, "target_sparsity", 0.5
+            )
+            self.args.adamwprune_warmup_steps = getattr(
+                self.args, "pruning_warmup", 1000
+            )
             self.args.adamwprune_ramp_end_epoch = min(8, self.args.num_epochs - 1)
             self.args.adamwprune_ramp_end_step = self.args.max_iters
 
             # Handle bitter variants
-            variant = getattr(self.args, 'adamwprune_variant', None)
+            variant = getattr(self.args, "adamwprune_variant", None)
             if variant == "bitter2" and self.args.max_iters == 10000:
                 self.args.max_iters = 12100
                 if self.master_process:
-                    print(f"Bitter2 variant: Increased max_iters to {self.args.max_iters} (+21%)")
-            elif variant in ["bitter3", "bitter4", "bitter5", "bitter6", "bitter8", "bitter9"] and self.args.max_iters == 10000:
+                    print(
+                        f"Bitter2 variant: Increased max_iters to {self.args.max_iters} (+21%)"
+                    )
+            elif (
+                variant
+                in ["bitter3", "bitter4", "bitter5", "bitter6", "bitter8", "bitter9"]
+                and self.args.max_iters == 10000
+            ):
                 self.args.max_iters = 13000
                 if self.master_process:
-                    print(f"{variant.capitalize()} variant: Increased max_iters to {self.args.max_iters} (+30%)")
+                    print(
+                        f"{variant.capitalize()} variant: Increased max_iters to {self.args.max_iters} (+30%)"
+                    )
 
         # Create optimizer using library function
         return create_optimizer(
@@ -115,14 +137,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
     def create_pruner(self):
         """Create pruner if pruning method is specified."""
-        pruning_method = getattr(self.args, 'pruning_method', 'none')
+        pruning_method = getattr(self.args, "pruning_method", "none")
         if pruning_method != "none" and pruning_method != "state":
             if self.master_process:
                 print(f"Setting up {pruning_method} pruning...")
             return create_pruner(
                 model=self.raw_model,
                 pruning_method=pruning_method,
-                target_sparsity=getattr(self.args, 'target_sparsity', 0.5),
+                target_sparsity=getattr(self.args, "target_sparsity", 0.5),
                 args=self.args,
             )
         return None
@@ -133,8 +155,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             print(f"\nStarting training...")
             print(f"Parameters: {self.raw_model.get_num_params()/1e6:.2f}M")
             print(f"Device: {self.device}, dtype: {self.dtype}")
-            print(f"Batch size: {self.args.batch_size}, Gradient accumulation: {self.args.gradient_accumulation}")
-            print(f"Effective batch size: {self.args.batch_size * self.args.gradient_accumulation}")
+            print(
+                f"Batch size: {self.args.batch_size}, Gradient accumulation: {self.args.gradient_accumulation}"
+            )
+            print(
+                f"Effective batch size: {self.args.batch_size * self.args.gradient_accumulation}"
+            )
             print("-" * 50)
 
         # Training setup
@@ -148,24 +174,26 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         # Training loop
         while self.iter_num < self.args.max_iters:
             # Check time limit
-            if getattr(self.args, 'max_time', 0) > 0:
+            if getattr(self.args, "max_time", 0) > 0:
                 elapsed = time.time() - self.training_start_time
                 if elapsed >= self.args.max_time:
                     if self.master_process:
-                        print(f"\nReached max training time of {self.args.max_time}s ({elapsed:.1f}s elapsed)")
+                        print(
+                            f"\nReached max training time of {self.args.max_time}s ({elapsed:.1f}s elapsed)"
+                        )
                     break
 
             # Update learning rate
-            if getattr(self.args, 'decay_lr', True):
+            if getattr(self.args, "decay_lr", True):
                 lr = self.get_lr(self.iter_num)
                 for param_group in self.optimizer.param_groups:
-                    param_group['lr'] = lr
+                    param_group["lr"] = lr
             else:
                 lr = self.args.learning_rate
 
             # Gradient accumulation
             for micro_step in range(self.args.gradient_accumulation):
-                X, Y = self.get_batch('train')
+                X, Y = self.get_batch("train")
 
                 with self.ctx:
                     logits, loss = self.model(X, Y)
@@ -202,7 +230,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.pruner.apply_masks()
 
             # Update pruning
-            if self.adamwprune_state and self.adamwprune_state.get('enabled', False):
+            if self.adamwprune_state and self.adamwprune_state.get("enabled", False):
                 self._update_adamprune_masks()
 
             if self.pruner is not None:
@@ -221,23 +249,27 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 # Calculate sparsity
                 sparsity = self._get_sparsity()
 
-                print(f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
-                      f"lr {lr:.2e} | sparsity {sparsity:.1%} | {dt*1000/self.args.log_interval:.1f}ms/iter")
+                print(
+                    f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
+                    f"lr {lr:.2e} | sparsity {sparsity:.1%} | {dt*1000/self.args.log_interval:.1f}ms/iter"
+                )
 
                 # Update metrics
-                self.metrics['train_losses'].append(avg_loss)
-                self.metrics['train_perplexities'].append(avg_ppl)
-                self.metrics['learning_rates'].append(lr)
-                self.metrics['iterations'].append(self.iter_num)
-                self.metrics['timestamps'].append(time.time())
+                self.metrics["train_losses"].append(avg_loss)
+                self.metrics["train_perplexities"].append(avg_ppl)
+                self.metrics["learning_rates"].append(lr)
+                self.metrics["iterations"].append(self.iter_num)
+                self.metrics["timestamps"].append(time.time())
 
                 # Log to trackers
-                self.log_metrics({
-                    'train_loss': avg_loss,
-                    'train_perplexity': avg_ppl,
-                    'learning_rate': lr,
-                    'sparsity': sparsity,
-                })
+                self.log_metrics(
+                    {
+                        "train_loss": avg_loss,
+                        "train_perplexity": avg_ppl,
+                        "learning_rate": lr,
+                        "sparsity": sparsity,
+                    }
+                )
 
                 running_loss = 0.0
 
@@ -245,27 +277,47 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if self.iter_num % self.args.eval_interval == 0:
                 losses = self.estimate_loss()
                 if self.master_process:
-                    print(f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}")
+                    print(
+                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}"
+                    )
 
-                    self.metrics['val_losses'].append(losses['val'])
-                    self.metrics['val_perplexities'].append(math.exp(min(losses['val'], 20)))
+                    self.metrics["val_losses"].append(losses["val"])
+                    self.metrics["val_perplexities"].append(
+                        math.exp(min(losses["val"], 20))
+                    )
 
-                    self.log_metrics({
-                        'val_loss': losses['val'],
-                        'val_perplexity': math.exp(min(losses['val'], 20)),
-                    })
+                    val_ppl = math.exp(min(losses["val"], 20))
+
+                    # Update best perplexity
+                    if val_ppl < self.best_perplexity:
+                        self.best_perplexity = val_ppl
+
+                    self.log_metrics(
+                        {
+                            "val_loss": losses["val"],
+                            "val_perplexity": val_ppl,
+                            "best_perplexity": self.best_perplexity,
+                        }
+                    )
 
                     # Save best model
-                    if losses['val'] < self.best_val_loss:
-                        self.best_val_loss = losses['val']
-                        if getattr(self.args, 'save_checkpoint', False):
-                            checkpoint_path = os.path.join(getattr(self.args, 'output_dir', '.'), 'best_model.pt')
+                    if losses["val"] < self.best_val_loss:
+                        self.best_val_loss = losses["val"]
+                        if getattr(self.args, "save_checkpoint", False):
+                            checkpoint_path = os.path.join(
+                                getattr(self.args, "output_dir", "."), "best_model.pt"
+                            )
                             self.save_checkpoint(checkpoint_path)
-                            print(f"Saved best model (val_loss={self.best_val_loss:.4f})")
+                            print(
+                                f"Saved best model (val_loss={self.best_val_loss:.4f}, best_ppl={self.best_perplexity:.2f})"
+                            )
 
             # Periodic checkpoint
             if self.should_save_checkpoint() and self.master_process:
-                checkpoint_path = os.path.join(getattr(self.args, 'output_dir', '.'), f'checkpoint_iter_{self.iter_num}.pt')
+                checkpoint_path = os.path.join(
+                    getattr(self.args, "output_dir", "."),
+                    f"checkpoint_iter_{self.iter_num}.pt",
+                )
                 self.save_checkpoint(checkpoint_path)
                 print(f"Saved checkpoint at iteration {self.iter_num}")
 
@@ -278,11 +330,15 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
             # Final evaluation
             final_losses = self.estimate_loss()
-            print(f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}")
+            print(
+                f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
+            )
 
             # Save final model
-            if getattr(self.args, 'save_checkpoint', False):
-                final_path = os.path.join(getattr(self.args, 'output_dir', '.'), 'final_model.pt')
+            if getattr(self.args, "save_checkpoint", False):
+                final_path = os.path.join(
+                    getattr(self.args, "output_dir", "."), "final_model.pt"
+                )
                 self.save_checkpoint(final_path)
                 print(f"Saved final model")
 
@@ -293,6 +349,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         # Import helper
         try:
             from lib.optimizers import apply_adamprune_masking
+
             apply_adamprune_masking(self.optimizer, self.adamwprune_state)
         except ImportError:
             pass
@@ -303,7 +360,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             return
         try:
             from lib.optimizers import apply_spam_gradient_processing
-            apply_spam_gradient_processing(self.optimizer, self.model, self.spam_state, self.gradient_clip_norm)
+
+            apply_spam_gradient_processing(
+                self.optimizer, self.model, self.spam_state, self.gradient_clip_norm
+            )
         except ImportError:
             pass
 
@@ -313,6 +373,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             return
         try:
             from lib.optimizers import apply_periodic_spam_reset
+
             apply_periodic_spam_reset(self.optimizer, self.spam_state)
         except ImportError:
             pass
@@ -321,7 +382,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         """Update AdamWPrune state-based pruning masks."""
         try:
             from lib.optimizers import update_adamprune_masks
-            update_adamprune_masks(self.optimizer, self.adamwprune_state, None, self.iter_num)
+
+            update_adamprune_masks(
+                self.optimizer, self.adamwprune_state, None, self.iter_num
+            )
         except ImportError:
             pass
 
@@ -329,11 +393,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         """Calculate current model sparsity."""
         if self.pruner is not None:
             return self.pruner.get_sparsity()
-        elif self.args.optimizer == "adamwprune" and getattr(self.args, 'pruning_method', 'none') == "state":
-            if self.adamwprune_state and 'masks' in self.adamwprune_state:
+        elif (
+            self.args.optimizer == "adamwprune"
+            and getattr(self.args, "pruning_method", "none") == "state"
+        ):
+            if self.adamwprune_state and "masks" in self.adamwprune_state:
                 total_params = 0
                 total_pruned = 0
-                for module, mask in self.adamwprune_state['masks'].items():
+                for module, mask in self.adamwprune_state["masks"].items():
                     total_params += mask.numel()
                     total_pruned += (mask == 0).sum().item()
                 return total_pruned / total_params if total_params > 0 else 0.0

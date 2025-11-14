@@ -15,7 +15,9 @@ import torch
 import numpy as np
 
 # Add parent to path for imports
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+parent_dir = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT, GPTConfig
@@ -47,7 +49,7 @@ class UnifiedRATrainer(BaseGPT2Trainer):
             ablation_step: Ablation step (e.g., "V1", "V3"). If None, uses args.ra_step
         """
         # Configure ablation step
-        self.ablation_step = ablation_step or getattr(args, 'ra_step', 'V0')
+        self.ablation_step = ablation_step or getattr(args, "ra_step", "V0")
         self._configure_step(args, self.ablation_step)
 
         super().__init__(args, config)
@@ -57,8 +59,13 @@ class UnifiedRATrainer(BaseGPT2Trainer):
         self.raw_model = self.model.module if self.ddp else self.model
 
         # Initialize optimizer
-        (self.optimizer, self.scheduler, self.gradient_clip_norm,
-         self.spam_state, self.adamwprune_state) = self.create_optimizer()
+        (
+            self.optimizer,
+            self.scheduler,
+            self.gradient_clip_norm,
+            self.spam_state,
+            self.adamwprune_state,
+        ) = self.create_optimizer()
 
         # Setup mixed precision
         self.setup_mixed_precision()
@@ -150,43 +157,47 @@ class UnifiedRATrainer(BaseGPT2Trainer):
         config = GPTConfig.from_name(self.args.model_name)
         config.block_size = self.args.block_size
         config.dropout = self.args.dropout
-        config.bias = getattr(self.args, 'bias', True)
+        config.bias = getattr(self.args, "bias", True)
 
         # Create base model
         model = GPT(config)
         model.to(self.device)
 
         # Apply Unified RA / R-MLP patching
-        if getattr(self.args, 'use_ra_v5', False) and getattr(self.args, 'use_rmlp', False):
+        if getattr(self.args, "use_ra_v5", False) and getattr(
+            self.args, "use_rmlp", False
+        ):
             # Both RA and R-MLP
             if self.master_process:
-                print(f"Patching with Unified RA (R={self.args.ra_v5_R}) + R-MLP (R_ff={self.args.rmlp_R_ff})")
+                print(
+                    f"Patching with Unified RA (R={self.args.ra_v5_R}) + R-MLP (R_ff={self.args.rmlp_R_ff})"
+                )
             model = patch_gpt2_with_unified_ra_and_rmlp(
                 model,
-                R=getattr(self.args, 'ra_v5_R', 4),
+                R=getattr(self.args, "ra_v5_R", 4),
                 attn_dropout=self.args.dropout,
-                use_self_restart=getattr(self.args, 'ra_v5_use_self_restart', False),
+                use_self_restart=getattr(self.args, "ra_v5_use_self_restart", False),
                 mlp_expansion=self.args.mlp_expansion_ratio,
-                R_ff=getattr(self.args, 'rmlp_R_ff', 64),
+                R_ff=getattr(self.args, "rmlp_R_ff", 64),
                 mlp_dropout=self.args.dropout,
-                use_mixer=getattr(self.args, 'rmlp_use_mixer', False),
-                use_gates=getattr(self.args, 'rmlp_use_gates', False),
-                per_head_gates=getattr(self.args, 'ra_v5_per_head_gates', True),
+                use_mixer=getattr(self.args, "rmlp_use_mixer", False),
+                use_gates=getattr(self.args, "rmlp_use_gates", False),
+                per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
             )
-        elif getattr(self.args, 'use_ra_v5', False):
+        elif getattr(self.args, "use_ra_v5", False):
             # Unified RA only
             if self.master_process:
                 print(f"Patching with Unified RA (R={self.args.ra_v5_R})")
             model = patch_gpt2_with_ra_v5(
                 model,
-                R=getattr(self.args, 'ra_v5_R', 4),
+                R=getattr(self.args, "ra_v5_R", 4),
                 dropout=self.args.dropout,
-                use_self_restart=getattr(self.args, 'ra_v5_use_self_restart', False),
-                per_head_gates=getattr(self.args, 'ra_v5_per_head_gates', True),
+                use_self_restart=getattr(self.args, "ra_v5_use_self_restart", False),
+                per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
             )
 
         # Compile if requested (must be before DDP)
-        if getattr(self.args, 'compile', False) and hasattr(torch, 'compile'):
+        if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
             if self.master_process:
                 print("Compiling model with torch.compile()...")
             model = torch.compile(model)
@@ -229,7 +240,7 @@ class UnifiedRATrainer(BaseGPT2Trainer):
         # Training loop
         while self.iter_num < self.args.max_iters:
             # Check time limit
-            if getattr(self.args, 'max_time', 0) > 0:
+            if getattr(self.args, "max_time", 0) > 0:
                 elapsed = time.time() - self.training_start_time
                 if elapsed >= self.args.max_time:
                     if self.master_process:
@@ -237,13 +248,17 @@ class UnifiedRATrainer(BaseGPT2Trainer):
                     break
 
             # Update learning rate
-            lr = self.get_lr(self.iter_num) if getattr(self.args, 'decay_lr', True) else self.args.learning_rate
+            lr = (
+                self.get_lr(self.iter_num)
+                if getattr(self.args, "decay_lr", True)
+                else self.args.learning_rate
+            )
             for param_group in self.optimizer.param_groups:
-                param_group['lr'] = lr
+                param_group["lr"] = lr
 
             # Gradient accumulation
             for micro_step in range(self.args.gradient_accumulation):
-                X, Y = self.get_batch('train')
+                X, Y = self.get_batch("train")
                 with self.ctx:
                     logits, loss = self.model(X, Y)
                     loss = loss / self.args.gradient_accumulation
@@ -269,21 +284,39 @@ class UnifiedRATrainer(BaseGPT2Trainer):
                 avg_loss = running_loss / self.args.log_interval
                 avg_ppl = math.exp(min(avg_loss, 20))
 
-                print(f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
-                      f"lr {lr:.2e} | {dt*1000/self.args.log_interval:.1f}ms/iter")
+                print(
+                    f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
+                    f"lr {lr:.2e} | {dt*1000/self.args.log_interval:.1f}ms/iter"
+                )
 
                 # Analyze gates if RA/R-MLP enabled
-                if getattr(self.args, 'use_ra_v5', False):
+                gate_stats = {}
+                if getattr(self.args, "use_ra_v5", False):
                     gate_stats = self._analyze_ra_gates()
                     if gate_stats:
-                        print(f"  RA gates: w_std={gate_stats.get('w_std_mean', 0):.3f}, "
-                              f"w_rec={gate_stats.get('w_rec_mean', 0):.3f}")
+                        print(
+                            f"  RA gates: w_std={gate_stats.get('ra_gate/w_std_mean', 0):.3f}, "
+                            f"w_rec={gate_stats.get('ra_gate/w_rec_mean', 0):.3f}"
+                        )
 
-                self.log_metrics({
-                    'train_loss': avg_loss,
-                    'train_perplexity': avg_ppl,
-                    'learning_rate': lr,
-                })
+                # Analyze R-MLP gates
+                rmlp_stats = self._analyze_rmlp_gates()
+                if rmlp_stats:
+                    print(
+                        f"  R-MLP gates: w_std={rmlp_stats.get('rmlp_gate/w_std_mean', 0):.3f}, "
+                        f"w_rec={rmlp_stats.get('rmlp_gate/w_rec_mean', 0):.3f}"
+                    )
+
+                # Combine all metrics
+                metrics = {
+                    "train_loss": avg_loss,
+                    "train_perplexity": avg_ppl,
+                    "learning_rate": lr,
+                }
+                metrics.update(gate_stats)
+                metrics.update(rmlp_stats)
+
+                self.log_metrics(metrics)
 
                 running_loss = 0.0
 
@@ -291,11 +324,25 @@ class UnifiedRATrainer(BaseGPT2Trainer):
             if self.iter_num % self.args.eval_interval == 0:
                 losses = self.estimate_loss()
                 if self.master_process:
-                    print(f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}")
-                    self.log_metrics({'val_loss': losses['val']})
+                    val_ppl = math.exp(min(losses["val"], 20))
+                    print(
+                        f"\nEval @ iter {self.iter_num}: train {losses['train']:.4f}, val {losses['val']:.4f}, ppl {val_ppl:.2f}"
+                    )
 
-                    if losses['val'] < self.best_val_loss:
-                        self.best_val_loss = losses['val']
+                    # Update best perplexity
+                    if val_ppl < self.best_perplexity:
+                        self.best_perplexity = val_ppl
+
+                    self.log_metrics(
+                        {
+                            "val_loss": losses["val"],
+                            "val_perplexity": val_ppl,
+                            "best_perplexity": self.best_perplexity,
+                        }
+                    )
+
+                    if losses["val"] < self.best_val_loss:
+                        self.best_val_loss = losses["val"]
 
             self.iter_num += 1
 
@@ -303,7 +350,9 @@ class UnifiedRATrainer(BaseGPT2Trainer):
         if self.master_process:
             print(f"\nTraining complete for step {self.ablation_step}!")
             final_losses = self.estimate_loss()
-            print(f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}")
+            print(
+                f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
+            )
 
     def _analyze_ra_gates(self) -> Dict[str, float]:
         """Analyze Unified RA gate values."""
@@ -328,10 +377,51 @@ class UnifiedRATrainer(BaseGPT2Trainer):
 
             if w_std_list:
                 return {
-                    'w_std_mean': np.mean(w_std_list),
-                    'w_rec_mean': np.mean(w_rec_list),
-                    'w_std_std': np.std(w_std_list),
-                    'w_rec_std': np.std(w_rec_list),
+                    "ra_gate/w_std_mean": np.mean(w_std_list),
+                    "ra_gate/w_std_min": np.min(w_std_list),
+                    "ra_gate/w_std_max": np.max(w_std_list),
+                    "ra_gate/w_std_std": np.std(w_std_list),
+                    "ra_gate/w_rec_mean": np.mean(w_rec_list),
+                    "ra_gate/w_rec_min": np.min(w_rec_list),
+                    "ra_gate/w_rec_max": np.max(w_rec_list),
+                    "ra_gate/w_rec_std": np.std(w_rec_list),
+                }
+        except Exception as e:
+            pass
+
+        return {}
+
+    def _analyze_rmlp_gates(self) -> Dict[str, float]:
+        """Analyze R-MLP gate values."""
+        try:
+            from ra import ReciprocalMLP
+
+            w_std_list = []
+            w_rec_list = []
+
+            for name, module in self.raw_model.named_modules():
+                if isinstance(module, ReciprocalMLP):
+                    with torch.no_grad():
+                        w_std = module.w_std.cpu()
+                        w_rec = module.w_rec.cpu()
+
+                        if w_std.dim() == 0:
+                            w_std_list.append(w_std.item())
+                            w_rec_list.append(w_rec.item())
+                        else:
+                            w_std_list.extend(w_std.tolist())
+                            w_rec_list.extend(w_rec.tolist())
+
+            if w_std_list:
+                return {
+                    "rmlp_gate/w_std_mean": np.mean(w_std_list),
+                    "rmlp_gate/w_std_min": np.min(w_std_list),
+                    "rmlp_gate/w_std_max": np.max(w_std_list),
+                    "rmlp_gate/w_std_std": np.std(w_std_list),
+                    "rmlp_gate/w_rec_mean": np.mean(w_rec_list),
+                    "rmlp_gate/w_rec_min": np.min(w_rec_list),
+                    "rmlp_gate/w_rec_max": np.max(w_rec_list),
+                    "rmlp_gate/w_rec_std": np.std(w_rec_list),
                 }
         except Exception as e:
             pass
