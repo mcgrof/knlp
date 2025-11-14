@@ -187,6 +187,15 @@ class BaseGPT2Trainer:
             try:
                 import wandb
 
+                # Import weave for improved LLM call tracing
+                try:
+                    import weave
+
+                    if self.master_process:
+                        print("Weave enabled for LLM call tracing")
+                except ImportError:
+                    pass  # Weave is optional
+
                 run_name = (
                     getattr(self.args, "tracker_run_name", None)
                     or f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
