@@ -872,7 +872,10 @@ def run_single_test(
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
 
     # Check if we should skip V0 baseline and use a reference run instead
-    baseline_run_id = config.get("BASELINE_RUN_ID", "").strip('"')
+    # Check environment first, then config (same pattern as GPT2_MAX_TIME)
+    baseline_run_id = (
+        os.environ.get("CONFIG_BASELINE_RUN_ID") or config.get("BASELINE_RUN_ID", "")
+    ).strip('"')
     if baseline_run_id and ra_mla_ablation_step == "V0":
         if not parallel_mode:
             print(f"\n{'='*60}")
