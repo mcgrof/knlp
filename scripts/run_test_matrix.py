@@ -1039,9 +1039,10 @@ def run_single_test(
         if variant:
             cmd.extend(["--adamwprune-variant", variant])
 
-    # Add RA_MLA ablation step parameter if specified
+    # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
-        cmd.extend(["--ra-mla-ablation-step", ra_mla_ablation_step])
+        cmd.extend(["--architecture", "unified-ra"])
+        cmd.extend(["--ra-step", ra_mla_ablation_step])
 
     # Note: batch size is configured via config.py, not command line arguments
 
