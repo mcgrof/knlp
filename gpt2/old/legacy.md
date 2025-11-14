@@ -78,7 +78,7 @@ make  # Uses gpt2/old/train_ra_mla.py
    - Location: `ra.py` (project root)
    - Status: Production-ready
    - Trainers: `gpt2/trainers/unified_ra.py`
-   - Defconfigs: `defconfigs/gpt2-unified-ra-ablation`
+   - Defconfigs: `gpt2/defconfigs/gpt2-ra-ablation`
 
 ## Why Keep This?
 
