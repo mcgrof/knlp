@@ -1,0 +1,97 @@
+# LeNet-5 with Adam State-Based Tiering (Emulated Mode)
+#
+# Tests hierarchical memory tiering on LeNet-5 using emulated delays.
+# Runs on CPU to avoid GPU contention and because CPU memory hierarchy
+# (RAM vs SSD) shows bigger tiering impact than GPU (HBM vs RAM).
+#
+# Purpose: Validate tiering infrastructure on simple model before
+# adding PCA/spline tokenizer complexity. Establishes baseline for
+# understanding which layers are "hot" vs "cold".
+#
+# After training, generates tier_hints.json based on Adam optimizer
+# states. Early conv layers expected to be hot (feature extraction),
+# later FC layers may be cold (stable features).
+#
+# Usage:
+#   make defconfig-lenet5-adam-tier-emulated && make DEVICE=cpu
+#   python3 scripts/benchmark_tiered_inference.py \
+#     --model lenet5 \
+#     --tier-hints tier_hints_lenet5.json \
+#     --mode emulated \
+#     --baseline
+
+# Enable LeNet-5 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_LENET5=y
+CONFIG_MODEL_LENET5=y
+CONFIG_MODEL="lenet5"
+CONFIG_LENET5_DATASET_MNIST=y
+
+# Use AdamW optimizer (needed for Adam state analysis)
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+CONFIG_ADAMW_EPSILON="1e-8"
+CONFIG_ADAMW_WEIGHT_DECAY="0.0001"
+
+# No pruning for baseline
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# Training configuration - CPU optimized
+CONFIG_BATCH_SIZE=128
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=4
+CONFIG_DEVICE="cpu"
+
+# Disable GPU-specific features for CPU training
+CONFIG_COMPILE_MODEL=n
+CONFIG_MIXED_PRECISION=n
+CONFIG_GPU_WARMUP=n
+CONFIG_PIN_MEMORY=n
+CONFIG_PERSISTENT_WORKERS=y
+
+# Hierarchical Memory Tiering - Emulated Mode
+CONFIG_ENABLE_HIERARCHICAL_TIERING=y
+CONFIG_TIERING_ADAM_STATE=y
+CONFIG_TIERING_EMULATED=y
+CONFIG_TIERING_GENERATE_JSON=y
+CONFIG_TIERING_JSON_OUTPUT="tier_hints_lenet5.json"
+# Conservative thresholds: 30% hot (L1/L2), 50% warm (RAM), 20% cold (SSD)
+CONFIG_TIERING_HBM_THRESHOLD="0.3"
+CONFIG_TIERING_CPU_THRESHOLD="0.5"
+CONFIG_TIERING_INFERENCE_BENCHMARK=n
+
+# Experiment Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=n
+CONFIG_TRACKER_PROJECT="lenet5-tiering"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_VERBOSE=y
+
+# Test execution (single training run)
+CONFIG_TEST_MATRIX_MODE=n
+CONFIG_OUTPUT_DIR="test_matrix_results_lenet5_tier_emulated"
+
+# Expected results:
+# - Training time: ~50 minutes on modern CPU (10 epochs)
+# - Model size: ~60K parameters (~240KB)
+# - Accuracy: ~99.2% (MNIST baseline)
+#
+# Tier analysis:
+# - Conv1 (20 filters): Likely hot (early feature extraction)
+# - Conv2 (50 filters): Likely hot (mid-level features)
+# - FC1 (800 → 500): May be warm/cold (stable features)
+# - FC2 (500 → 10): May be cold (output layer, low gradient variance)
+#
+# Next steps after validation:
+# 1. Analyze tier_hints_lenet5.json - which layers are hot/cold?
+# 2. Run inference benchmark to measure emulated tiering overhead
+# 3. If tiering works, add PCA tokenizer (lib/tokenizers.py)
+# 4. Then add spline representation for component trajectories
