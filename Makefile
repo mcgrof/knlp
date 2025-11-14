@@ -12,6 +12,11 @@ ifdef TIME
 export GPT2_MAX_TIME := $(TIME)
 endif
 
+# BASELINE= for referencing previous baseline run (e.g., make BASELINE=entity/project/run_id)
+ifdef BASELINE
+export CONFIG_BASELINE_RUN_ID := $(BASELINE)
+endif
+
 # Define what the default target does based on configuration
 .PHONY: all
 ifeq ($(CONFIG_OPTIMIZER_MODE_MULTIPLE),y)
