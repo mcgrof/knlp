@@ -342,7 +342,7 @@ config TIERING_METHOD
 	default "none" if !ENABLE_HIERARCHICAL_TIERING
 	default "adam_state" if TIERING_ADAM_STATE
 
-choice TIERING_STRATEGY
+choice
 	prompt "Tiering strategy"
 	default TIERING_ADAM_STATE
 	depends on ENABLE_HIERARCHICAL_TIERING
@@ -360,7 +360,7 @@ config TIERING_ADAM_STATE
 
 endchoice
 
-choice TIERING_MODE
+choice
 	prompt "Tiering mode"
 	default TIERING_EMULATED
 	depends on ENABLE_HIERARCHICAL_TIERING
