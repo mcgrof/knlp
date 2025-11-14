@@ -59,6 +59,13 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         # Setup pruner (if applicable)
         self.pruner = self.create_pruner()
 
+        # Fetch baseline metrics if configured
+        self.baseline_metrics = None
+        if config is not None:
+            baseline_run_id = getattr(config, "BASELINE_RUN_ID", None)
+            if baseline_run_id and baseline_run_id.strip():
+                self.baseline_metrics = self._fetch_baseline_metrics(baseline_run_id)
+
     def create_model(self):
         """Create standard GPT-2 model."""
         if self.master_process:
@@ -291,13 +298,17 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     if val_ppl < self.best_perplexity:
                         self.best_perplexity = val_ppl
 
-                    self.log_metrics(
-                        {
-                            "val_loss": losses["val"],
-                            "val_perplexity": val_ppl,
-                            "best_perplexity": self.best_perplexity,
-                        }
-                    )
+                    metrics_to_log = {
+                        "val_loss": losses["val"],
+                        "val_perplexity": val_ppl,
+                        "best_perplexity": self.best_perplexity,
+                    }
+
+                    # Add baseline metrics if available
+                    if self.baseline_metrics:
+                        metrics_to_log.update(self.baseline_metrics)
+
+                    self.log_metrics(metrics_to_log)
 
                     # Save best model
                     if losses["val"] < self.best_val_loss:
@@ -407,3 +418,45 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     total_pruned += (mask == 0).sum().item()
                 return total_pruned / total_params if total_params > 0 else 0.0
         return 0.0
+
+    def _fetch_baseline_metrics(self, baseline_run_id: str):
+        """
+        Fetch baseline metrics from W&B for comparison.
+
+        Args:
+            baseline_run_id: W&B run ID in format "entity/project/run_id"
+
+        Returns:
+            Dictionary with baseline metrics or None if fetch fails
+        """
+        try:
+            import wandb
+
+            api = wandb.Api()
+            run = api.run(baseline_run_id)
+
+            # Extract key metrics from the baseline run
+            baseline_metrics = {
+                "baseline/val_loss": run.summary.get("val_loss"),
+                "baseline/val_perplexity": run.summary.get("val_perplexity"),
+                "baseline/train_loss": run.summary.get("train_loss"),
+                "baseline/train_perplexity": run.summary.get("train_perplexity"),
+            }
+
+            # Filter out None values
+            baseline_metrics = {
+                k: v for k, v in baseline_metrics.items() if v is not None
+            }
+
+            if self.master_process and baseline_metrics:
+                print(f"\nFetched baseline metrics from {baseline_run_id}:")
+                for k, v in baseline_metrics.items():
+                    print(f"  {k}: {v:.4f}")
+
+            return baseline_metrics
+
+        except Exception as e:
+            if self.master_process:
+                print(f"\nWarning: Failed to fetch baseline metrics: {e}")
+                print("Continuing without baseline reference...")
+            return None
