@@ -467,6 +467,24 @@ class RATrainer(BaseGPT2Trainer):
                                 f"w_rec={rmlp_gate_stats.get('w_rec_mean', 0):.3f}"
                             )
 
+                    # Analyze KV pruning stats if enabled
+                    kv_pruning_stats = self._analyze_kv_pruning()
+                    if kv_pruning_stats:
+                        gate_metrics.update(
+                            {f"kv_pruning/{k}": v for k, v in kv_pruning_stats.items()}
+                        )
+                        # Print either fixed or learned ratio stats
+                        if "kv_keep_ratio" in kv_pruning_stats:
+                            print(
+                                f"  KV pruning: keep={kv_pruning_stats['kv_keep_ratio']:.3f} "
+                                f"({kv_pruning_stats['kv_memory_reduction_pct']:.1f}% reduction)"
+                            )
+                        elif "kv_learned_ratio" in kv_pruning_stats:
+                            print(
+                                f"  KV pruning (learned): ratio={kv_pruning_stats['kv_learned_ratio']:.3f} "
+                                f"({kv_pruning_stats['kv_learned_memory_reduction_pct']:.1f}% reduction)"
+                            )
+
                     # Add variance-guided monitoring if enabled
                     if (
                         getattr(self.args, "use_variance_guided", False)
@@ -603,6 +621,72 @@ class RATrainer(BaseGPT2Trainer):
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
                 }
+        except Exception as e:
+            pass
+
+        return {}
+
+    def _analyze_kv_pruning(self) -> Dict[str, float]:
+        """
+        Analyze KV cache pruning statistics.
+
+        Returns metrics for both fixed ratio (V17) and learned ratio (V18) pruning.
+        """
+        try:
+            from ra import PrunedKVAttention
+
+            fixed_ratios = []
+            learned_ratios = []
+            ratio_grads = []
+
+            for name, module in self.raw_model.named_modules():
+                if isinstance(module, PrunedKVAttention):
+                    with torch.no_grad():
+                        # Calculate keep ratio
+                        k_keep = module.k_keep
+                        block_size = module.block_size
+                        keep_ratio = k_keep / block_size
+
+                        if module.learn_ratio and hasattr(module, "keep_ratio"):
+                            # V18: Learned ratio pruning
+                            learned_ratio = module.keep_ratio.cpu().item()
+                            learned_ratios.append(learned_ratio)
+
+                            # Track gradient norm if available
+                            if module.keep_ratio.grad is not None:
+                                grad_norm = module.keep_ratio.grad.norm().cpu().item()
+                                ratio_grads.append(grad_norm)
+                        else:
+                            # V17: Fixed ratio pruning
+                            fixed_ratios.append(keep_ratio)
+
+            metrics = {}
+
+            # Fixed ratio stats (V17)
+            if fixed_ratios:
+                keep_ratio = np.mean(fixed_ratios)
+                metrics.update(
+                    {
+                        "kv_keep_ratio": keep_ratio,
+                        "kv_memory_reduction_pct": (1.0 - keep_ratio) * 100,
+                    }
+                )
+
+            # Learned ratio stats (V18)
+            if learned_ratios:
+                learned_ratio = np.mean(learned_ratios)
+                metrics.update(
+                    {
+                        "kv_learned_ratio": learned_ratio,
+                        "kv_learned_memory_reduction_pct": (1.0 - learned_ratio) * 100,
+                    }
+                )
+
+                if ratio_grads:
+                    metrics["kv_ratio_grad_norm"] = np.mean(ratio_grads)
+
+            return metrics
+
         except Exception as e:
             pass
 
