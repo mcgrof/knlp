@@ -22,7 +22,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 # Add parent directory to path
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+parent_dir = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT, GPTConfig
@@ -81,42 +83,51 @@ class BaseGPT2Trainer:
 
         # Training state
         self.iter_num = 0
-        self.best_val_loss = float('inf')
+        self.best_val_loss = float("inf")
+        self.best_perplexity = float("inf")
         self.training_start_time = None
 
         # Metrics
         self.metrics = {
-            'train_losses': [],
-            'val_losses': [],
-            'train_perplexities': [],
-            'val_perplexities': [],
-            'learning_rates': [],
-            'timestamps': [],
-            'iterations': [],
+            "train_losses": [],
+            "val_losses": [],
+            "train_perplexities": [],
+            "val_perplexities": [],
+            "learning_rates": [],
+            "timestamps": [],
+            "iterations": [],
         }
 
     def setup_device(self):
         """Setup device (CPU/CUDA) and dtype."""
         self.device = self.args.device
-        self.dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
+        self.dtype = (
+            "bfloat16"
+            if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            else "float16"
+        )
 
         # Set up precision context
         self.ptdtype = {
-            'float32': torch.float32,
-            'bfloat16': torch.bfloat16,
-            'float16': torch.float16
+            "float32": torch.float32,
+            "bfloat16": torch.bfloat16,
+            "float16": torch.float16,
         }[self.dtype]
-        self.ctx = nullcontext() if self.device == 'cpu' else torch.amp.autocast(device_type=self.device, dtype=self.ptdtype)
+        self.ctx = (
+            nullcontext()
+            if self.device == "cpu"
+            else torch.amp.autocast(device_type=self.device, dtype=self.ptdtype)
+        )
 
     def setup_ddp(self):
         """Setup Distributed Data Parallel if applicable."""
-        self.ddp = int(os.environ.get('RANK', -1)) != -1
+        self.ddp = int(os.environ.get("RANK", -1)) != -1
         if self.ddp:
-            init_process_group(backend='nccl')
-            self.ddp_rank = int(os.environ['RANK'])
-            self.ddp_local_rank = int(os.environ['LOCAL_RANK'])
-            self.ddp_world_size = int(os.environ['WORLD_SIZE'])
-            self.device = f'cuda:{self.ddp_local_rank}'
+            init_process_group(backend="nccl")
+            self.ddp_rank = int(os.environ["RANK"])
+            self.ddp_local_rank = int(os.environ["LOCAL_RANK"])
+            self.ddp_world_size = int(os.environ["WORLD_SIZE"])
+            self.device = f"cuda:{self.ddp_local_rank}"
             torch.cuda.set_device(self.device)
             self.master_process = self.ddp_rank == 0
             self.seed_offset = self.ddp_rank
@@ -133,15 +144,16 @@ class BaseGPT2Trainer:
 
     def setup_trackers(self):
         """Setup experiment tracking (trackio, wandb)."""
-        if not hasattr(self.args, 'tracker') or self.args.tracker == 'none':
+        if not hasattr(self.args, "tracker") or self.args.tracker == "none":
             return
 
         # Parse comma-separated trackers
-        tracker_names = [t.strip() for t in self.args.tracker.split(',')]
+        tracker_names = [t.strip() for t in self.args.tracker.split(",")]
 
         # Auto-generate project name if not provided
-        if not hasattr(self.args, 'tracker_project') or not self.args.tracker_project:
+        if not hasattr(self.args, "tracker_project") or not self.args.tracker_project:
             import hashlib
+
             cwd = os.getcwd()
             dir_name = os.path.basename(cwd)
             path_hash = hashlib.md5(cwd.encode()).hexdigest()[:8]
@@ -149,33 +161,45 @@ class BaseGPT2Trainer:
             if self.master_process:
                 print(f"Auto-generated project name: {self.args.tracker_project}")
 
-        if 'trackio' in tracker_names:
+        if "trackio" in tracker_names:
             try:
                 import trackio
-                run_name = getattr(self.args, 'tracker_run_name', None) or \
-                          f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+                run_name = (
+                    getattr(self.args, "tracker_run_name", None)
+                    or f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
                 trackio.init(
                     project=self.args.tracker_project,
                     config=vars(self.args),
                     name=run_name,
                 )
-                self.trackers.add('trackio')
-                print(f"Initialized Trackio tracking for project: {self.args.tracker_project}")
+                self.trackers.add("trackio")
+                print(
+                    f"Initialized Trackio tracking for project: {self.args.tracker_project}"
+                )
             except ImportError:
-                print("Warning: trackio not installed. Install with: pip install trackio")
+                print(
+                    "Warning: trackio not installed. Install with: pip install trackio"
+                )
 
-        if 'wandb' in tracker_names:
+        if "wandb" in tracker_names:
             try:
                 import wandb
-                run_name = getattr(self.args, 'tracker_run_name', None) or \
-                          f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+                run_name = (
+                    getattr(self.args, "tracker_run_name", None)
+                    or f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
                 wandb.init(
                     project=self.args.tracker_project,
                     config=vars(self.args),
                     name=run_name,
                 )
-                self.trackers.add('wandb')
-                print(f"Initialized WandB tracking for project: {self.args.tracker_project}")
+                self.trackers.add("wandb")
+                print(
+                    f"Initialized WandB tracking for project: {self.args.tracker_project}"
+                )
             except ImportError:
                 print("Warning: wandb not installed. Install with: pip install wandb")
 
@@ -202,11 +226,16 @@ class BaseGPT2Trainer:
 
         # Create batch
         x = torch.stack(
-            [torch.from_numpy((data[i : i + self.args.block_size]).astype(np.int64)) for i in ix]
+            [
+                torch.from_numpy((data[i : i + self.args.block_size]).astype(np.int64))
+                for i in ix
+            ]
         )
         y = torch.stack(
             [
-                torch.from_numpy((data[i + 1 : i + 1 + self.args.block_size]).astype(np.int64))
+                torch.from_numpy(
+                    (data[i + 1 : i + 1 + self.args.block_size]).astype(np.int64)
+                )
                 for i in ix
             ]
         )
@@ -237,7 +266,9 @@ class BaseGPT2Trainer:
         # Cosine decay
         if it > self.args.max_iters:
             return self.args.min_lr
-        decay_ratio = (it - self.args.warmup_steps) / (self.args.max_iters - self.args.warmup_steps)
+        decay_ratio = (it - self.args.warmup_steps) / (
+            self.args.max_iters - self.args.warmup_steps
+        )
         assert 0 <= decay_ratio <= 1
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return self.args.min_lr + coeff * (self.args.learning_rate - self.args.min_lr)
@@ -252,7 +283,7 @@ class BaseGPT2Trainer:
         """
         out = {}
         self.model.eval()
-        for split in ['train', 'val']:
+        for split in ["train", "val"]:
             losses = torch.zeros(self.args.eval_samples)
             for k in range(self.args.eval_samples):
                 X, Y = self.get_batch(split)
@@ -271,14 +302,15 @@ class BaseGPT2Trainer:
             checkpoint_path: Path to save checkpoint
         """
         checkpoint = {
-            'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'iter_num': self.iter_num,
-            'best_val_loss': self.best_val_loss,
-            'config': self.args,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "iter_num": self.iter_num,
+            "best_val_loss": self.best_val_loss,
+            "best_perplexity": self.best_perplexity,
+            "config": self.args,
         }
         if self.scaler is not None:
-            checkpoint['scaler'] = self.scaler.state_dict()
+            checkpoint["scaler"] = self.scaler.state_dict()
 
         torch.save(checkpoint, checkpoint_path)
 
@@ -290,12 +322,15 @@ class BaseGPT2Trainer:
             checkpoint_path: Path to checkpoint
         """
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        self.iter_num = checkpoint['iter_num']
-        self.best_val_loss = checkpoint['best_val_loss']
-        if 'scaler' in checkpoint and self.scaler is not None:
-            self.scaler.load_state_dict(checkpoint['scaler'])
+        self.model.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        self.iter_num = checkpoint["iter_num"]
+        self.best_val_loss = checkpoint["best_val_loss"]
+        self.best_perplexity = checkpoint.get(
+            "best_perplexity", float("inf")
+        )  # Backward compatibility
+        if "scaler" in checkpoint and self.scaler is not None:
+            self.scaler.load_state_dict(checkpoint["scaler"])
 
     # Abstract methods to be implemented by subclasses
 
@@ -327,7 +362,7 @@ class BaseGPT2Trainer:
         Returns:
             True if checkpoint should be saved
         """
-        if not hasattr(self.args, 'checkpoint_interval'):
+        if not hasattr(self.args, "checkpoint_interval"):
             return False
         return self.iter_num % self.args.checkpoint_interval == 0
 
@@ -343,27 +378,65 @@ class BaseGPT2Trainer:
         """
         if self.ddp:
             # Check if find_unused_parameters should be enabled
-            find_unused = getattr(self.args, 'ddp_find_unused_params', True)
-            model = DDP(model, device_ids=[self.ddp_local_rank], find_unused_parameters=find_unused)
+            find_unused = getattr(self.args, "ddp_find_unused_params", True)
+            model = DDP(
+                model,
+                device_ids=[self.ddp_local_rank],
+                find_unused_parameters=find_unused,
+            )
         return model
 
     def setup_mixed_precision(self):
         """Setup mixed precision training scaler."""
         if self.device == "cuda":
-            enabled = (self.dtype == 'float16')  # Only for FP16, not BF16
+            enabled = self.dtype == "float16"  # Only for FP16, not BF16
             self.scaler = torch.amp.GradScaler("cuda", enabled=enabled)
         else:
             # CPU doesn't support GradScaler
             class DummyScaler:
                 def scale(self, loss):
                     return loss
+
                 def unscale_(self, optimizer):
                     pass
+
                 def step(self, optimizer):
                     optimizer.step()
+
                 def update(self):
                     pass
+
             self.scaler = DummyScaler()
+
+    def get_gpu_memory_stats(self) -> Dict[str, float]:
+        """
+        Get GPU memory stats for all available GPUs.
+
+        Returns:
+            Dictionary with memory stats for each GPU and total across all GPUs.
+        """
+        if not torch.cuda.is_available():
+            return {}
+
+        stats = {}
+        total_allocated = 0
+        total_reserved = 0
+
+        for gpu_id in range(torch.cuda.device_count()):
+            allocated = torch.cuda.memory_allocated(gpu_id) / (1024**3)  # GB
+            reserved = torch.cuda.memory_reserved(gpu_id) / (1024**3)  # GB
+
+            stats[f"gpu{gpu_id}/memory_allocated_gb"] = allocated
+            stats[f"gpu{gpu_id}/memory_reserved_gb"] = reserved
+
+            total_allocated += allocated
+            total_reserved += reserved
+
+        # Add total across all GPUs
+        stats["gpu_total/memory_allocated_gb"] = total_allocated
+        stats["gpu_total/memory_reserved_gb"] = total_reserved
+
+        return stats
 
     def log_metrics(self, metrics_dict: Dict[str, float]):
         """
@@ -376,20 +449,26 @@ class BaseGPT2Trainer:
             return
 
         # Add iteration number
-        metrics_dict['iteration'] = self.iter_num
+        metrics_dict["iteration"] = self.iter_num
+
+        # Add GPU memory stats
+        gpu_stats = self.get_gpu_memory_stats()
+        metrics_dict.update(gpu_stats)
 
         # Log to trackio
-        if 'trackio' in self.trackers:
+        if "trackio" in self.trackers:
             try:
                 import trackio
+
                 trackio.log(metrics_dict)
             except Exception as e:
                 print(f"Warning: Failed to log to trackio: {e}")
 
         # Log to wandb
-        if 'wandb' in self.trackers:
+        if "wandb" in self.trackers:
             try:
                 import wandb
+
                 wandb.log(metrics_dict, step=self.iter_num)
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
