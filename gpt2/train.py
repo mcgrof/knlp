@@ -18,10 +18,19 @@ Usage:
 import os
 import sys
 import argparse
+import warnings
 
 # Add parent to path
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
+
+# Suppress known PyTorch warnings that are informational
+warnings.filterwarnings("ignore", message=".*TF32.*", category=UserWarning)
+warnings.filterwarnings(
+    "ignore", message=".*duplicate parameters.*", category=UserWarning
+)
+warnings.filterwarnings("ignore", message=".*PYTORCH_HIP_ALLOC_CONF.*")
+warnings.filterwarnings("ignore", message=".*destroy_process_group.*")
 
 # Import config first (needed for env setup)
 try:
