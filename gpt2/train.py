@@ -85,9 +85,7 @@ def create_argument_parser():
         choices=["shakespeare", "finewebedu", "openwebtext"],
         help="Dataset",
     )
-    parser.add_argument(
-        "--data-dir", type=str, default="./data", help="Data directory"
-    )
+    parser.add_argument("--data-dir", type=str, default="./data", help="Data directory")
 
     # Training
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
@@ -201,6 +199,11 @@ def create_argument_parser():
     # System
     parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
     parser.add_argument("--compile", action="store_true", help="Use torch.compile()")
+    parser.add_argument(
+        "--flash-attention",
+        action="store_true",
+        help="Enable Flash Attention (backward compatibility, ignored)",
+    )
 
     # Tracking
     parser.add_argument(
