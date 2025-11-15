@@ -744,6 +744,25 @@ def _kth_threshold_sampling(
     return threshold
 
 
+# Compiled helper for bitter9 (FP16 + fast rsqrt with kernel fusion)
+@torch.compile(mode="reduce-overhead", fullgraph=True)
+def _compute_bitter9_importance_compiled(
+    w: torch.Tensor, v: torch.Tensor
+) -> torch.Tensor:
+    """Compute importance using FP16 + Doom-style fast rsqrt with torch.compile.
+
+    This provides additional speedup over bitter8 through kernel fusion.
+    The double rsqrt and FP16 conversions are fused into optimized CUDA kernels.
+    """
+    w_fp16 = w.to(torch.float16)
+    v_fp16 = v.to(torch.float16)
+    v_abs = torch.abs(v_fp16) + 1e-8
+    # Fast 4th root: rsqrt(rsqrt(x)) = x^0.25
+    fourth_root = torch.rsqrt(torch.rsqrt(v_abs))
+    importance = torch.abs(w_fp16) * fourth_root
+    return importance.float()
+
+
 @torch.no_grad()
 def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
     """Update AdamWPrune pruning masks based on Adam states.
@@ -922,27 +941,27 @@ def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
                 importance = torch.abs(w)
 
         elif variant == "bitter8":
-            # Bias-corrected gradient magnitude
-            if "exp_avg" in state and "step" in state:
-                m = state["exp_avg"]
-                step_t = state["step"]
-                beta1 = adamprune_state.get("beta1", 0.9)
-                bias_correction = 1.0 - (beta1**step_t)
-                m_hat = m / (bias_correction + 1e-8)
-                grad_importance = torch.sqrt(torch.abs(m_hat) + 1e-8)
-                importance = torch.abs(w) * grad_importance
+            # FP16 + Fast inverse sqrt (Doom hack): |w| * rsqrt(rsqrt(|v|+eps))
+            # Uses FP16 for 2x memory bandwidth reduction
+            # Uses double rsqrt for fast 4th root: rsqrt(rsqrt(x)) = x^0.25
+            if "exp_avg_sq" in state:
+                v = state["exp_avg_sq"]
+                w_fp16 = w.to(torch.float16)
+                v_fp16 = v.to(torch.float16)
+                v_abs = torch.abs(v_fp16) + 1e-8
+                # Fast 4th root using Doom-style double inverse sqrt
+                fourth_root = torch.rsqrt(torch.rsqrt(v_abs))
+                importance = torch.abs(w_fp16) * fourth_root
+                importance = importance.float()  # back to fp32 for threshold
             else:
                 importance = torch.abs(w)
 
         elif variant == "bitter9":
-            # Hybrid: magnitude + gradient + movement
-            if "exp_avg" in state and "exp_avg_sq" in state:
-                m = state["exp_avg"]
+            # bitter8 + torch.compile optimization
+            # Uses compiled helper for kernel fusion and graph optimization
+            if "exp_avg_sq" in state:
                 v = state["exp_avg_sq"]
-                magnitude_score = torch.abs(w)
-                gradient_score = torch.sqrt(torch.abs(m) + 1e-8)
-                movement_score = -(w.sign() * m) / (torch.sqrt(v) + 1e-8)
-                importance = magnitude_score * gradient_score - 0.1 * movement_score
+                importance = _compute_bitter9_importance_compiled(w, v)
             else:
                 importance = torch.abs(w)
 
