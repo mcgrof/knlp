@@ -221,6 +221,8 @@ for module, importance in importance_cache.items():
 
 Measured using `scripts/compare_old_vs_new_pruning.py` (implements both versions side-by-side):
 
+![Double-Pass Elimination Speedup](images/bitter7_double_pass_speedup.png)
+
 ### 12.58M Parameters (dim=1024, layers=12)
 ```
 OLD (double-pass):  118.425 ms per pruning update
