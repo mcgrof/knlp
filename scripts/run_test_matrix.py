@@ -1037,23 +1037,9 @@ def run_single_test(
 
     # Add AdamWPrune tuning parameters if present
     if optimizer == "adamwprune":
-        if "ADAMWPRUNE_BASE_OPTIMIZER_NAME" in config:
-            cmd.extend(
-                [
-                    "--adamwprune-base-optimizer-name",
-                    config["ADAMWPRUNE_BASE_OPTIMIZER_NAME"],
-                ]
-            )
-        if "ADAMWPRUNE_BETA1" in config:
-            cmd.extend(["--adamwprune-beta1", config["ADAMWPRUNE_BETA1"]])
-        if "ADAMWPRUNE_BETA2" in config:
-            cmd.extend(["--adamwprune-beta2", config["ADAMWPRUNE_BETA2"]])
-        if "ADAMWPRUNE_WEIGHT_DECAY" in config:
-            cmd.extend(["--adamwprune-weight-decay", config["ADAMWPRUNE_WEIGHT_DECAY"]])
-        if "ADAMWPRUNE_AMSGRAD" in config:
-            amsgrad_val = "true" if config["ADAMWPRUNE_AMSGRAD"] == "y" else "false"
-            cmd.extend(["--adamwprune-amsgrad", amsgrad_val])
-        # Add variant parameter if specified
+        # Note: AdamWPrune parameters (base_optimizer_name, beta1, beta2, weight_decay, amsgrad)
+        # are configured through Kconfig and accessed via config.py, not command-line arguments.
+        # Only the variant parameter is passed as a command-line argument.
         if variant:
             cmd.extend(["--adamwprune-variant", variant])
 
