@@ -627,6 +627,21 @@ class RATrainer(BaseGPT2Trainer):
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
 
+            # Save final model checkpoint (unique per ablation step)
+            if getattr(self.args, "save_checkpoint", False):
+                import os
+
+                # Create output directory if it doesn't exist
+                output_dir = getattr(self.args, "output_dir", ".")
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Save with step-specific name to avoid overwriting
+                final_path = os.path.join(
+                    output_dir, f"final_model_step{self.ablation_step}.pt"
+                )
+                self.save_checkpoint(final_path)
+                print(f"Saved final model: {final_path}")
+
             # Generate tier hints if configured
             self._generate_tier_hints()
 
