@@ -149,6 +149,12 @@ def create_argument_parser():
     parser.add_argument(
         "--pruning-warmup", type=int, default=1000, help="Pruning warmup steps"
     )
+    parser.add_argument(
+        "--adamwprune-ramp-end-step",
+        type=int,
+        default=3000,
+        help="Iteration at which AdamWPrune reaches target sparsity (default: 3000, matching magnitude pruning)",
+    )
 
     # SPAM optimizer config
     parser.add_argument("--spam-theta", type=float, default=50.0, help="SPAM theta")
