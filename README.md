@@ -510,6 +510,18 @@ make
 
 ## Installation
 
+### System Requirements
+
+For systems using `torch.compile()` (enabled via `CONFIG_COMPILE_MODEL=y`), Python development headers are required for Triton compilation:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install python3-dev
+
+# RHEL/CentOS/Fedora
+sudo yum install python3-devel
+```
+
 ### Core Dependencies
 ```bash
 pip install torch torchvision numpy matplotlib
@@ -642,7 +654,7 @@ See LICENSE for details.
 - Fourth root = maximum conservatism
 - Best for: Finding parameters with long-term low activity
 
-**bitter8 (RATIO Structure-Aware)**: `structural_weight * |w| * sqrt(|exp_avg| + eps)`  
+**bitter8 (RATIO Structure-Aware)**: `structural_weight * |w| * sqrt(|exp_avg| + eps)`
 - Attention params weighted 2.5× (scarce, 1/2.5 of capacity)
 - MLP params weighted 1.0× (abundant, 2.5/2.5)
 - Coupling params weighted 3.0× (critical bidirectional flow)
