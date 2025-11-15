@@ -164,6 +164,75 @@ class RATrainer(BaseGPT2Trainer):
             args.ra_v5_R = 4
             args.ra_v5_use_self_restart = True
             args.mlp_expansion_ratio = 6.0
+        elif step == "V1":
+            # R-MLP basic (R_ff=64) + fixed KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 64
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            # KV pruning config
+            args.kv_cache_prune = True
+            args.kv_prune_k = 391  # Golden ratio: 391/1024 ≈ 0.382
+            args.kv_prune_recency = 64
+        elif step == "V2":
+            # R-MLP medium (R_ff=256) + fixed KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 256
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            # KV pruning config
+            args.kv_cache_prune = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+        elif step == "V3":
+            # R-MLP large (R_ff=512) + fixed KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 512
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            # KV pruning config
+            args.kv_cache_prune = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+        elif step == "V4":
+            # R-MLP golden (R_ff=1152) + learned KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152  # Golden ratio split of expansion
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = False
+            # KV pruning with learned ratio
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382  # Start at golden ratio
+            args.kv_prune_recency = 64
+        elif step == "V5":
+            # R-MLP golden + mixer + learned KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_use_mixer = True  # Enable mixer for enhanced expressivity
+            args.rmlp_use_gates = False
+            # KV pruning with learned ratio
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
+        elif step == "V6":
+            # R-MLP golden + per-token gates + learned KV pruning
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_use_mixer = False
+            args.rmlp_use_gates = True  # Enable per-token gating
+            # KV pruning with learned ratio
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
         elif step == "V16":
             # RA (R=4) with per-head gates + variance-guided activation
             args.use_ra_v5 = True
