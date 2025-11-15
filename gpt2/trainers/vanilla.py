@@ -111,7 +111,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.args, "pruning_warmup", 1000
             )
             self.args.adamwprune_ramp_end_epoch = min(8, self.args.num_epochs - 1)
-            self.args.adamwprune_ramp_end_step = self.args.max_iters
+            self.args.adamwprune_ramp_end_step = getattr(
+                self.args, "adamwprune_ramp_end_step", 3000
+            )
 
             # Handle bitter variants
             variant = getattr(self.args, "adamwprune_variant", None)
