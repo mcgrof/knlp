@@ -144,7 +144,16 @@ kconfig-help:
 .PHONY: generate-config
 generate-config: $(CONFIG_FILE)
 	@echo "Generating Python configuration from $(CONFIG_FILE)..."
-	@python scripts/kconfig2py.py $(CONFIG_FILE) > config.py
+	@# Create temporary config with BASELINE if specified
+	@if [ -n "$(BASELINE)" ]; then \
+		cp $(CONFIG_FILE) .config.tmp; \
+		echo 'CONFIG_BASELINE_RUN_ID="$(BASELINE)"' >> .config.tmp; \
+		python scripts/kconfig2py.py .config.tmp > config.py; \
+		rm .config.tmp; \
+		echo "  Added BASELINE: $(BASELINE)"; \
+	else \
+		python scripts/kconfig2py.py $(CONFIG_FILE) > config.py; \
+	fi
 	@echo "Configuration saved to config.py"
 
 # Ensure config exists before building
