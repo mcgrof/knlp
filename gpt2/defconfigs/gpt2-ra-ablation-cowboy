@@ -102,11 +102,11 @@ CONFIG_RA_MLA_USE_ROPE=n
 CONFIG_RA_V5_PER_HEAD_GATES=y
 
 # Enable ablation study mode with Unified RA + R-MLP steps
-# Cowboy mode: Tests all major variants with geometric initialization
+# Cowboy mode: Tests reciprocal mechanisms with geometric initialization
 # V0: Baseline (no RA/R-MLP)
 # V16: RA only (R=4, per-head gates)
-# V17: R-MLP only (R_ff=64)
-# V18: RA + R-MLP combined (full reciprocal architecture)
+# V17: R-MLP (R_ff=64) + KV pruning (fixed k=391)
+# V18: R-MLP (R_ff=1152, golden ratio) + KV pruning (learned ratio)
 CONFIG_RA_MLA_ABLATION_MODE=y
 CONFIG_RA_MLA_ABLATION_STEPS="V0,V16,V17,V18"
 
