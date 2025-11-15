@@ -12,6 +12,7 @@ from pathlib import Path
 import tiktoken
 from datasets import load_dataset
 
+
 def download_shakespeare():
     """Download and prepare Shakespeare dataset."""
     data_dir = Path("gpt2/data/shakespeare")
@@ -24,14 +25,14 @@ def download_shakespeare():
     if not input_file.exists():
         print(f"Downloading Shakespeare dataset from {url}...")
         response = requests.get(url)
-        with open(input_file, 'w') as f:
+        with open(input_file, "w") as f:
             f.write(response.text)
         print(f"Downloaded to {input_file}")
     else:
         print(f"Shakespeare dataset already exists at {input_file}")
 
     # Read the text
-    with open(input_file, 'r') as f:
+    with open(input_file, "r") as f:
         text = f.read()
 
     # Tokenize using GPT-2 tokenizer
@@ -56,6 +57,7 @@ def download_shakespeare():
     print(f"Saved {len(val_data):,} validation tokens to {val_file}")
     print("Dataset preparation complete!")
 
+
 def download_finewebedu():
     """Download and prepare FineWebEdu dataset."""
     data_dir = Path("gpt2/data/finewebedu")
@@ -72,7 +74,9 @@ def download_finewebedu():
     print("Downloading FineWebEdu dataset (this may take a while)...")
     # Load a subset of FineWebEdu for reasonable training time
     # Using 'sample-10BT' subset which is ~10B tokens
-    dataset = load_dataset("HuggingFaceFW/fineweb-edu", "sample-10BT", split="train", streaming=True)
+    dataset = load_dataset(
+        "HuggingFaceFW/fineweb-edu", "sample-10BT", split="train", streaming=True
+    )
 
     print("Tokenizing FineWebEdu dataset...")
     enc = tiktoken.get_encoding("gpt2")
@@ -85,7 +89,7 @@ def download_finewebedu():
     for example in dataset:
         if token_count >= max_tokens:
             break
-        text = example['text']
+        text = example["text"]
         tokens = enc.encode(text, allowed_special={"<|endoftext|>"})
         all_tokens.extend(tokens)
         token_count += len(tokens)
@@ -107,6 +111,10 @@ def download_finewebedu():
     print(f"Saved {len(train_data):,} training tokens to {train_file}")
     print(f"Saved {len(val_data):,} validation tokens to {val_file}")
     print("FineWebEdu dataset preparation complete!")
+
+    # Explicitly cleanup dataset to avoid threading issues during shutdown
+    del dataset
+
 
 def download_openwebtext():
     """Download and prepare OpenWebText dataset."""
@@ -136,7 +144,7 @@ def download_openwebtext():
     for example in dataset:
         if token_count >= max_tokens:
             break
-        text = example['text']
+        text = example["text"]
         tokens = enc.encode(text, allowed_special={"<|endoftext|>"})
         all_tokens.extend(tokens)
         token_count += len(tokens)
@@ -159,16 +167,21 @@ def download_openwebtext():
     print(f"Saved {len(val_data):,} validation tokens to {val_file}")
     print("OpenWebText dataset preparation complete!")
 
+    # Explicitly cleanup dataset to avoid threading issues during shutdown
+    del dataset
+
+
 def main():
     """Main function."""
     import argparse
+
     parser = argparse.ArgumentParser(description="Prepare datasets for GPT-2 training")
     parser.add_argument(
         "--dataset",
         type=str,
         default="shakespeare",
         choices=["shakespeare", "finewebedu", "openwebtext"],
-        help="Dataset to prepare"
+        help="Dataset to prepare",
     )
 
     args = parser.parse_args()
@@ -182,6 +195,7 @@ def main():
     else:
         print(f"Unknown dataset: {args.dataset}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
