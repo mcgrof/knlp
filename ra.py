@@ -98,15 +98,25 @@ class ReciprocalAttention(nn.Module):
         # Learnable gates (baked into weights at init time)
         # Per-head gates (opt-in for large models): [n_head] shape
         # Per-layer gates (default for small models): scalar shape
-        # Initialize to near-identity: w_std high, w_rec low
+        # Initialize using geometric ratio from dimensional capacity:
+        #   w_std = D_std / D, w_rec = R / D
+        # This respects the natural capacity of each pathway and sums to 1.0
+        # For D=64, R=4: w_std=0.9375, w_rec=0.0625 (not magic 0.9/0.1)
+        w_std_init = float(self.D_std) / float(self.head_dim)
+        w_rec_init = float(R) / float(self.head_dim)
+
         if per_head_gates:
             # Separate gate pair for each head
-            self.register_parameter("w_std", nn.Parameter(torch.ones(n_head) * 0.9))
-            self.register_parameter("w_rec", nn.Parameter(torch.ones(n_head) * 0.1))
+            self.register_parameter(
+                "w_std", nn.Parameter(torch.ones(n_head) * w_std_init)
+            )
+            self.register_parameter(
+                "w_rec", nn.Parameter(torch.ones(n_head) * w_rec_init)
+            )
         else:
             # Single scalar gate pair shared across all heads in layer
-            self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
-            self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))
+            self.register_parameter("w_std", nn.Parameter(torch.tensor(w_std_init)))
+            self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
         # Self-restart mechanism (optional): out = (1-α)*SDPA + α*V
         # Provides identity residual path for stability
@@ -524,9 +534,16 @@ class ReciprocalMLP(nn.Module):
 
         # Gates analogous to RA (w_std, w_rec)
         # Always per-layer (scalar) since MLP has no head dimension
-        # Initialize near-identity: w_std high, w_rec low
-        self.register_parameter("w_std", nn.Parameter(torch.tensor(0.9)))
-        self.register_parameter("w_rec", nn.Parameter(torch.tensor(0.1)))
+        # Initialize using geometric ratio from dimensional capacity:
+        #   w_std = D_ff_std / D_ff, w_rec = R_ff / D_ff
+        # This respects the natural capacity of each pathway and sums to 1.0
+        # For D_ff=3072, R_ff=64: w_std=0.9792, w_rec=0.0208 (not magic 0.9/0.1)
+        D_ff = self.D_ff_std + self.R_ff
+        w_std_init = float(self.D_ff_std) / float(D_ff)
+        w_rec_init = float(self.R_ff) / float(D_ff)
+
+        self.register_parameter("w_std", nn.Parameter(torch.tensor(w_std_init)))
+        self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
         # Track if gates are frozen for delayed activation
         self._gates_frozen = False
