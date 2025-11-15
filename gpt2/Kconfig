@@ -393,21 +393,22 @@ config GPT2_ADAMWPRUNE_VARIANT_BITTER7
 	  Expected: ~45-47 perplexity.
 
 config GPT2_ADAMWPRUNE_VARIANT_BITTER8
-	bool "Enable bitter8 variant (bias-corrected)"
+	bool "Enable bitter8 variant (FP16 + fast rsqrt)"
 	default n
 	help
-	  Applies Adam's bias correction before scoring.
-	  Removes early-training bias from moments.
-	  Should improve early training stability.
-	  Expected: ~42-43 perplexity.
+	  Doom-style optimization: FP16 + fast inverse sqrt.
+	  Uses double rsqrt for 4th root: rsqrt(rsqrt(x)) = x^0.25
+	  Benefits: 2x memory bandwidth reduction from FP16.
+	  Expected: Same quality as bitter7, 30-50% faster.
 
 config GPT2_ADAMWPRUNE_VARIANT_BITTER9
-	bool "Enable bitter9 variant (hybrid signals)"
+	bool "Enable bitter9 variant (bitter8 + torch.compile)"
 	default n
 	help
-	  Hybrid: combines magnitude, gradient, and movement signals.
-	  Most complex variant, tests if multiple signals help.
-	  Expected: ~43-45 perplexity.
+	  bitter8 with torch.compile for kernel fusion.
+	  Combines FP16, fast rsqrt, and graph optimization.
+	  Additional 20-40% speedup from compiled kernels.
+	  Expected: Same quality as bitter7/8, maximum speed.
 
 config GPT2_ADAMWPRUNE_DEFAULT_VARIANT
 	string "Default AdamWPrune variant"
