@@ -101,10 +101,11 @@ CONFIG_RA_MLA_USE_ROPE=n
 
 # Enable ablation study mode with R-MLP steps
 # Skipping RA (V16) as it showed 12% degradation
-# V0: Baseline reference from W&B
+# Skipping V0 - using baseline reference from W&B instead
 # V1-V6: Various R-MLP + KV pruning configurations
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V2,V3,V4,V5,V6"
+CONFIG_RA_MLA_ABLATION_STEPS="V1,V2,V3,V4,V5,V6"
+CONFIG_RA_MLA_ABLATION_BASELINE=y
 
 # Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
