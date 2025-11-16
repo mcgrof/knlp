@@ -267,11 +267,16 @@ algorithm matters more than optimization.*
 
 ### Results Table
 
-| Variant | torch.compile | Final PPL | vs Baseline | Iterations | Status |
-|---------|---------------|-----------|-------------|------------|--------|
-| **Movement (baseline)** | **YES** | **44.15** | - | 5,000 | Reference |
-| **bitter8** | **NO** | **40.94** | **-7.3%** | 2,500 | ✅ Tested |
-| **bitter7** | **YES** | **37.28** | **-15.6%** | 7,000 | ✅ Best |
+| Variant | compile | PPL | vs Base | Iters | GPU Mem (avg) | Status |
+|---------|---------|-----|---------|-------|---------------|--------|
+| **Movement** | **YES** | **44.15** | - | 5,000 | 33306 MiB | Baseline |
+| **bitter8** | **NO** | **40.94** | **-7.3%** | 2,500 | N/A | ✅ Tested |
+| **bitter7** | **YES** | **37.28** | **-15.6%** | 7,000 | 44168 MiB | ✅ Best |
+
+![GPU Memory Comparison](../adamwprune_gpu_memory_avg.png)
+*GPU memory consumption comparison: bitter7 uses 32.6% more memory
+(44168 vs 33306 MiB) but achieves 15.6% better perplexity. bitter8
+memory data unavailable (test matrix runs don't log system metrics).*
 
 ### Key Findings
 
@@ -288,7 +293,13 @@ algorithm matters more than optimization.*
    37.28 PPL - combining state-based algorithm with compilation
    optimization.
 
-4. **Incomplete Run Analysis**: bitter8 stopped at 2500 iterations
+4. **Memory Trade-off**: bitter7 uses 32.6% more GPU memory than
+   baseline (44168 vs 33306 MiB average, ~10.9 GB more) to achieve
+   15.6% better perplexity. The increased memory is likely due to
+   extended training duration (7K vs 5K iterations) and Adam state
+   accumulation.
+
+5. **Incomplete Run Analysis**: bitter8 stopped at 2500 iterations
    but already beat baseline WITH compile. Projected completion
    would achieve ~39.6 PPL, still significantly better than
    baseline.
