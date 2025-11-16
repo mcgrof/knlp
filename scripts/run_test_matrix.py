@@ -2060,11 +2060,14 @@ def main():
         print("\nDry run - would execute:")
         for i, combo in enumerate(combinations, 1):
             variant_part = f"_{combo['variant']}" if combo.get("variant") else ""
-            ablation_step = combo.get("ra_mla_ablation_step")
+            vanilla_ablation_step = combo.get("vanilla_ablation_step")
+            ra_ablation_step = combo.get("ra_mla_ablation_step")
 
             if combo["pruning"] == "none":
-                if ablation_step is not None:
-                    test_id = f"{combo['model']}_{combo['optimizer']}_ramla_step{ablation_step}"
+                if vanilla_ablation_step is not None:
+                    test_id = f"{combo['model']}_{combo['optimizer']}_vanilla_{vanilla_ablation_step}"
+                elif ra_ablation_step is not None:
+                    test_id = f"{combo['model']}_{combo['optimizer']}_ramla_step{ra_ablation_step}"
                 else:
                     test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}"
             else:
