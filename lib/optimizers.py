@@ -756,7 +756,7 @@ def _compute_bitter9_importance_compiled(
     """
     w_fp16 = w.to(torch.float16)
     v_fp16 = v.to(torch.float16)
-    v_abs = torch.abs(v_fp16) + 1e-8
+    v_abs = torch.abs(v_fp16) + 1e-5  # FP16-safe epsilon
     # Fast 4th root: rsqrt(rsqrt(x)) = x^0.25
     fourth_root = torch.rsqrt(torch.rsqrt(v_abs))
     importance = torch.abs(w_fp16) * fourth_root
@@ -915,7 +915,7 @@ def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
                     w = module.weight.data
                     w_fp16 = w.to(torch.float16)
                     v_fp16 = v.to(torch.float16)
-                    v_abs = torch.abs(v_fp16) + 1e-8
+                    v_abs = torch.abs(v_fp16) + 1e-5  # FP16-safe epsilon
                     # Fast 4th root using Doom-style double inverse sqrt
                     fourth_root = torch.rsqrt(torch.rsqrt(v_abs))
                     importance = torch.abs(w_fp16) * fourth_root
@@ -1054,7 +1054,7 @@ def update_adamprune_masks(optimizer, adamprune_state, train_loader, step):
                                 w = module.weight.data
                                 w_fp16 = w.to(torch.float16)
                                 v_fp16 = v.to(torch.float16)
-                                v_abs = torch.abs(v_fp16) + 1e-8
+                                v_abs = torch.abs(v_fp16) + 1e-5  # FP16-safe epsilon
                                 fourth_root = torch.rsqrt(torch.rsqrt(v_abs))
                                 importance = torch.abs(w_fp16) * fourth_root
                                 importance = importance.float()
