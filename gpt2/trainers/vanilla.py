@@ -9,7 +9,7 @@ import os
 import sys
 import time
 import math
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 import numpy as np
@@ -35,9 +35,15 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
     - Optimizer setup (AdamW, AdamWSPAM, AdamWPrune)
     - Standard training loop
     - Pruning evaluation (when using AdamWPrune)
+    - Vanilla ablation support (KV tying, etc.)
     """
 
-    def __init__(self, args, config):
+    def __init__(self, args, config, ablation_step: Optional[str] = None):
+        # Configure ablation step if provided
+        self.ablation_step = ablation_step or getattr(args, "vanilla_step", "V0")
+        if ablation_step:
+            self._configure_step(args, self.ablation_step)
+
         super().__init__(args, config)
 
         # Initialize model
@@ -65,6 +71,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             baseline_run_id = getattr(config, "BASELINE_RUN_ID", None)
             if baseline_run_id and baseline_run_id.strip():
                 self.baseline_metrics = self._fetch_baseline_metrics(baseline_run_id)
+
+    def _configure_step(self, args, step: str):
+        """Configure args based on vanilla ablation step."""
+        if step == "V0":
+            # Baseline GPT-2 (no modifications)
+            args.kv_tying = False
+        elif step == "V1":
+            # GPT-2 with KV tying
+            args.kv_tying = True
+        else:
+            if self.master_process:
+                print(
+                    f"Warning: Unknown vanilla ablation step {step}, using baseline V0"
+                )
+            args.kv_tying = False
 
     def create_model(self):
         """Create standard GPT-2 model."""
