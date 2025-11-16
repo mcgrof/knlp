@@ -85,13 +85,19 @@ def create_argument_parser():
     parser.add_argument("--block-size", type=int, default=1024, help="Context length")
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout rate")
     parser.add_argument("--bias", action="store_true", default=True, help="Use bias")
+    parser.add_argument(
+        "--kv-tying",
+        action="store_true",
+        default=False,
+        help="Enable KV tying (K = V in attention)",
+    )
 
     # Dataset
     parser.add_argument(
         "--dataset",
         type=str,
         default="finewebedu",
-        choices=["shakespeare", "finewebedu", "openwebtext"],
+        choices=["shakespeare", "finewebedu", "openwebtext", "tinystories"],
         help="Dataset",
     )
     parser.add_argument("--data-dir", type=str, default="./data", help="Data directory")
