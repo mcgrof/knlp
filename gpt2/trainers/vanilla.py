@@ -303,7 +303,6 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     metrics_to_log = {
                         "val_loss": losses["val"],
                         "val_perplexity": val_ppl,
-                        "best_perplexity": self.best_perplexity,
                     }
 
                     # Add baseline metrics if available
