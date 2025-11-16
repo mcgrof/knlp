@@ -423,6 +423,70 @@ class BaseGPT2Trainer:
 
             self.scaler = DummyScaler()
 
+    def _collect_aggregate_gpu_metrics(self):
+        """
+        Collect aggregate GPU metrics (averaged across all visible GPUs).
+
+        Returns:
+            Dictionary with aggregate metrics or empty dict if unavailable
+        """
+        try:
+            import pynvml
+
+            pynvml.nvmlInit()
+            device_count = pynvml.nvmlDeviceGetCount()
+
+            # Collect metrics from all GPUs
+            memory_utils = []
+            compute_utils = []
+            memory_used = []
+            memory_total = []
+
+            for i in range(device_count):
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+
+                    # Utilization rates (returns utilization object with gpu and memory fields)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    compute_utils.append(util.gpu)
+                    memory_utils.append(util.memory)
+
+                    # Memory info
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    memory_used.append(mem_info.used / (1024**3))  # GB
+                    memory_total.append(mem_info.total / (1024**3))  # GB
+
+                except pynvml.NVMLError:
+                    continue
+
+            pynvml.nvmlShutdown()
+
+            # Compute aggregates
+            agg_metrics = {}
+            if compute_utils:
+                agg_metrics["gpu/compute_util_avg"] = sum(compute_utils) / len(
+                    compute_utils
+                )
+            if memory_utils:
+                agg_metrics["gpu/memory_util_avg"] = sum(memory_utils) / len(
+                    memory_utils
+                )
+            if memory_used:
+                agg_metrics["gpu/memory_used_avg_gb"] = sum(memory_used) / len(
+                    memory_used
+                )
+                agg_metrics["gpu/memory_used_total_gb"] = sum(memory_used)
+            if memory_total:
+                agg_metrics["gpu/memory_total_gb"] = memory_total[
+                    0
+                ]  # Same for all GPUs
+
+            return agg_metrics
+
+        except (ImportError, Exception):
+            # pynvml not available or error occurred
+            return {}
+
     def log_metrics(self, metrics_dict: Dict[str, float]):
         """
         Log metrics to configured trackers.
@@ -435,6 +499,10 @@ class BaseGPT2Trainer:
 
         # Add iteration number
         metrics_dict["iteration"] = self.iter_num
+
+        # Add aggregate GPU metrics
+        gpu_metrics = self._collect_aggregate_gpu_metrics()
+        metrics_dict.update(gpu_metrics)
 
         # Sanitize metrics: convert tensors to Python scalars
         sanitized_metrics = {}
