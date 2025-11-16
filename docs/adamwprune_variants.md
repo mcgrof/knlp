@@ -262,15 +262,15 @@ comparison:
 Tested on GPT-2 124M, FineWebEdu dataset, 50% target sparsity:
 
 ![Fair Comparison](../adamwprune_fair_comparison.png)
-*Figure 1: State-based pruning outperforms magnitude baseline with
-consistent hyperparameters. bitter8 WITH compile (blue) achieves
-40.94 PPL, beating baseline WITH compile (red, 44.15 PPL). bitter7
-WITH compile (green) achieves 37.28 PPL.*
+*Figure 1: State-based pruning outperforms magnitude baseline. All
+runs WITH torch.compile using identical hyperparameters (batch 128,
+grad_acc 2, lr 0.0006). bitter8 (blue) achieves 40.94 PPL, bitter7
+(green) achieves 37.28 PPL vs baseline 44.15 PPL (red).*
 
 ![Final Results](../adamwprune_final_comparison.png)
-*Figure 2: Final performance comparison showing state-based
-pruning variants (bitter7, bitter8) significantly outperform
-magnitude baseline. All runs use identical hyperparameters.*
+*Figure 2: Final performance bar chart. All runs WITH torch.compile,
+identical hyperparameters. State-based pruning (bitter7: -15.6%,
+bitter8: -7.3%) significantly outperforms magnitude baseline.*
 
 ### Results Table
 
