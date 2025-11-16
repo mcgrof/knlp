@@ -144,13 +144,35 @@ kconfig-help:
 .PHONY: generate-config
 generate-config: $(CONFIG_FILE)
 	@echo "Generating Python configuration from $(CONFIG_FILE)..."
-	@# Create temporary config with BASELINE if specified
-	@if [ -n "$(BASELINE)" ]; then \
+	@# Create temporary config with overrides if specified
+	@NEED_TMP=0; \
+	if [ -n "$(BASELINE)" ] || [ -n "$(MODELS)" ]; then \
+		NEED_TMP=1; \
 		cp $(CONFIG_FILE) .config.tmp; \
+	fi; \
+	if [ -n "$(BASELINE)" ]; then \
 		echo 'CONFIG_BASELINE_RUN_ID="$(BASELINE)"' >> .config.tmp; \
+		echo "  Added BASELINE: $(BASELINE)"; \
+	fi; \
+	if [ -n "$(MODELS)" ]; then \
+		echo "  Using models directory: $(MODELS)"; \
+		if [ -d "$(MODELS)" ] && ls "$(MODELS)"/*.pt >/dev/null 2>&1; then \
+			if ls "$(MODELS)"/final_masks.pt >/dev/null 2>&1; then \
+				echo "  Detected analysis results, enabling FROM_RUNS mode"; \
+				echo "CONFIG_KNLP_MECHINT_KV_FROM_RUNS=y" >> .config.tmp; \
+				echo 'CONFIG_KNLP_MECHINT_KV_RUN_DIR="$(MODELS)"' >> .config.tmp; \
+			else \
+				echo "  Detected checkpoints, updating checkpoint pattern"; \
+				echo 'CONFIG_KNLP_MECHINT_KV_CHECKPOINT="$(MODELS)/final_model_step*.pt"' >> .config.tmp; \
+			fi; \
+		else \
+			echo "  Setting checkpoint path to $(MODELS)"; \
+			echo 'CONFIG_KNLP_MECHINT_KV_CHECKPOINT="$(MODELS)"' >> .config.tmp; \
+		fi; \
+	fi; \
+	if [ "$$NEED_TMP" = "1" ]; then \
 		python scripts/kconfig2py.py .config.tmp > config.py; \
 		rm .config.tmp; \
-		echo "  Added BASELINE: $(BASELINE)"; \
 	else \
 		python scripts/kconfig2py.py $(CONFIG_FILE) > config.py; \
 	fi
