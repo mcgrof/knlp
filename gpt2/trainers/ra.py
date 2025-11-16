@@ -248,6 +248,24 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
+        elif step == "V7":
+            # R-MLP baseline + gate-informed adaptive KV pruning
+            # Tests if R-MLP gates can modulate pruning aggressiveness
+            # Key: w_rec × α indicates attention confidence
+            # High confidence → R-MLP compensates well → prune more
+            # Low confidence → no compensation → prune less
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.use_gate_informed_pruning = True  # NEW: adaptive pruning
+            args.rmlp_R_ff = 1152  # Same as V1 for comparison
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Gate-informed KV pruning
+            args.kv_cache_prune = True
+            args.kv_prune_learned = False  # Not learned, computed from gates
+            args.kv_prune_init_ratio = 0.382  # Base ratio (will be modulated)
+            args.kv_prune_recency = 64
+            args.kv_prune_gate_beta = 1.0  # Modulation strength
         elif step == "V16":
             # RA (R=4) with per-head gates + variance-guided activation
             args.use_ra_v5 = True
@@ -333,6 +351,30 @@ class RATrainer(BaseGPT2Trainer):
                 dropout=self.args.dropout,
                 use_self_restart=getattr(self.args, "ra_v5_use_self_restart", False),
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
+            )
+        elif getattr(self.args, "use_gate_informed_pruning", False):
+            # R-MLP + gate-informed adaptive KV pruning
+            from ra_patch import patch_gpt2_with_gate_informed_kv_pruning
+
+            if self.master_process:
+                print(
+                    f"Patching with gate-informed KV pruning + R-MLP (R_ff={self.args.rmlp_R_ff})"
+                )
+            k_keep = int(
+                self.args.block_size * getattr(self.args, "kv_prune_init_ratio", 0.382)
+            )
+            model = patch_gpt2_with_gate_informed_kv_pruning(
+                model,
+                k_keep=k_keep,
+                recency=getattr(self.args, "kv_prune_recency", 64),
+                dropout=self.args.dropout,
+                prune_mode="v_only",
+                beta=getattr(self.args, "kv_prune_gate_beta", 1.0),
+                mlp_expansion=self.args.mlp_expansion_ratio,
+                R_ff=getattr(self.args, "rmlp_R_ff", 1152),
+                mlp_dropout=self.args.dropout,
+                attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
+                tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
             )
         elif getattr(self.args, "use_rmlp", False):
             # R-MLP only (with attention injection)
@@ -772,17 +814,36 @@ class RATrainer(BaseGPT2Trainer):
         """
         Analyze KV cache pruning statistics.
 
-        Returns metrics for both fixed ratio (V17) and learned ratio (V18) pruning.
+        Returns metrics for fixed, learned, and gate-informed adaptive pruning.
         """
         try:
-            from ra import PrunedKVAttention
+            from ra import PrunedKVAttention, GateInformedKVAttention
 
             fixed_ratios = []
             learned_ratios = []
             ratio_grads = []
+            adaptive_ratios = []
+            attention_confidences = []
 
             for name, module in self.raw_model.named_modules():
-                if isinstance(module, PrunedKVAttention):
+                if isinstance(module, GateInformedKVAttention):
+                    # V7: Gate-informed adaptive pruning
+                    with torch.no_grad():
+                        if hasattr(module, "_last_keep_ratio"):
+                            adaptive_ratio = module._last_keep_ratio.cpu().item()
+                            adaptive_ratios.append(adaptive_ratio)
+
+                        # Track attention confidence (w_rec * α)
+                        if module._mlp_gate_ref is not None:
+                            if hasattr(module._mlp_gate_ref, "w_rec") and hasattr(
+                                module._mlp_gate_ref, "attn_scale"
+                            ):
+                                confidence = (
+                                    module._mlp_gate_ref.w_rec.cpu().item()
+                                    * module._mlp_gate_ref.attn_scale.cpu().item()
+                                )
+                                attention_confidences.append(confidence)
+                elif isinstance(module, PrunedKVAttention):
                     with torch.no_grad():
                         # Calculate keep ratio
                         k_keep = module.k_keep
@@ -803,6 +864,30 @@ class RATrainer(BaseGPT2Trainer):
                             fixed_ratios.append(keep_ratio)
 
             metrics = {}
+
+            # Gate-informed adaptive pruning stats (V7)
+            if adaptive_ratios:
+                adaptive_ratio = np.mean(adaptive_ratios)
+                metrics.update(
+                    {
+                        "kv_adaptive_ratio_mean": adaptive_ratio,
+                        "kv_adaptive_ratio_std": np.std(adaptive_ratios),
+                        "kv_adaptive_memory_reduction_pct": (1.0 - adaptive_ratio)
+                        * 100,
+                    }
+                )
+
+                if attention_confidences:
+                    metrics.update(
+                        {
+                            "kv_attention_confidence_mean": np.mean(
+                                attention_confidences
+                            ),
+                            "kv_attention_confidence_std": np.std(
+                                attention_confidences
+                            ),
+                        }
+                    )
 
             # Fixed ratio stats (V17)
             if fixed_ratios:

@@ -30,6 +30,12 @@
 #     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
 # V6: R-MLP large (R_ff=1920, 62.5%, inverse golden)
 #     Geometric init: w_std=0.375, w_rec=0.625, α=1.0
+# V7: R-MLP baseline + gate-informed adaptive KV pruning
+#     Tests feedback loop: R-MLP gates modulate pruning ratio
+#     High w_rec×α (confidence) → prune more (R-MLP compensates)
+#     Low w_rec×α (no compensation) → prune less (preserve quality)
+#     Same R_ff=1152 as V1 for direct comparison
+#     Geometric init: w_std=0.625, w_rec=0.375, α=1.0
 #
 # Alpha initialization rationale (α=1.0 for all steps):
 # Empirical measurement shows ||attn|| / ||x|| ≈ 0.05 (5%), meaning
@@ -126,7 +132,7 @@ CONFIG_RA_MLA_USE_ROPE=n
 # Skipping RA (V16) as it showed 12% degradation
 # V1-V6: Various R-MLP + attention injection + KV pruning configurations
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V1,V2,V3,V4,V5,V6"
+CONFIG_RA_MLA_ABLATION_STEPS="V1,V2,V3,V4,V5,V6,V7"
 
 # Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
