@@ -1,0 +1,99 @@
+# GPT-2 Mechanistic Interpretability: KV Feature-Circuit Analysis
+# Post-training analysis to discover sparse circuits via binary channel masking
+# Requires a trained checkpoint from prior GPT-2 run
+# Example: Use checkpoint from gpt2-vanilla-baseline or gpt2-kv-tying-w7900-ablation
+
+# Model Configuration
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Model Settings (should match checkpoint architecture)
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_BLOCK_SIZE=1024
+
+# Device Configuration
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_NUM_WORKERS=8
+CONFIG_PIN_MEMORY=y
+
+# Mechanistic Interpretability - ENABLED
+CONFIG_KNLP_MECHINT=y
+
+# Run post-training KV feature-circuit analysis
+CONFIG_KNLP_MECHINT_KV_POSTTRAIN=y
+
+# Checkpoint to analyze (update this path to your trained model)
+CONFIG_KNLP_MECHINT_KV_CHECKPOINT="checkpoints/gpt2_baseline_final.pt"
+
+# Analysis runs to compare (leave empty for single checkpoint)
+CONFIG_KNLP_MECHINT_KV_RUN_DIR=""
+
+# KV Circuit Analysis Parameters
+# Target: prune 95% of K/V channels while maintaining performance
+CONFIG_KNLP_MECHINT_KV_TARGET_SPARSITY="0.95"
+
+# Optimization steps for mask learning (500 = ~5 minutes)
+CONFIG_KNLP_MECHINT_KV_STEPS=500
+
+# Learning rate for mask optimization (higher = faster convergence)
+CONFIG_KNLP_MECHINT_KV_LR="0.01"
+
+# Target metric to preserve (loss, perplexity, accuracy)
+CONFIG_KNLP_MECHINT_KV_TARGET_METRIC="loss"
+
+# Temperature annealing schedule: "type:start:end"
+# linear: smooth linear annealing
+# exponential: faster initial relaxation
+# cosine: smooth cosine schedule
+# Format: "linear:1.0:0.1" means start at temp=1.0, end at temp=0.1
+CONFIG_KNLP_MECHINT_KV_TEMP_SCHEDULE="linear:1.0:0.1"
+
+# Sparsity schedule: how aggressively to increase sparsity
+# cubic: gentle start, aggressive end (recommended)
+# linear: constant rate
+# exponential: aggressive start, gentle end
+CONFIG_KNLP_MECHINT_KV_SPARSITY_SCHEDULE="cubic"
+
+# L1 regularization on mask logits (encourages sparsity)
+CONFIG_KNLP_MECHINT_KV_L1_LAMBDA="0.001"
+
+# Use hard binary masks (recommended for circuit discovery)
+CONFIG_KNLP_MECHINT_KV_HARD_MASKS=y
+
+# Output directory for analysis results
+CONFIG_KNLP_MECHINT_OUTPUT_DIR="mechint_analysis_kv"
+
+# Visualization Options
+CONFIG_KNLP_MECHINT_VISUALIZE_HEATMAPS=y
+CONFIG_KNLP_MECHINT_VISUALIZE_CURVES=y
+CONFIG_KNLP_MECHINT_VISUALIZE_FAITHFULNESS=y
+CONFIG_KNLP_MECHINT_VISUALIZE_WANDB=y
+CONFIG_KNLP_MECHINT_SAVE_MASKS=y
+
+# W&B Integration for interactive visualization
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="gpt2-mechint-kv-circuits"
+
+# Batch size for analysis (smaller than training for memory efficiency)
+CONFIG_BATCH_SIZE=8
+
+# Mixed precision for faster analysis
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Performance optimizations
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Disable training-specific features (not needed for analysis)
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_ENABLE_RA_MLA=n
+CONFIG_GPT2_COMPILE=n
+CONFIG_SAVE_CHECKPOINT=n
