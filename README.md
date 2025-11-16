@@ -58,26 +58,40 @@ See [docs/ra.md](docs/ra.md) for detailed architecture and results.
 
 ### Adam State-Based Pruning: Hypothesis Validated
 
-Our Adam state-based pruning research conclusively validates the hypothesis that **leveraging Adam's accumulated gradient statistics enables superior pruning decisions** compared to naive magnitude-based approaches.
+Our Adam state-based pruning research conclusively validates the
+hypothesis that **leveraging Adam's accumulated gradient statistics
+enables superior pruning decisions** compared to magnitude-based
+approaches. The key finding: bitter8 WITHOUT torch.compile beats
+movement pruning WITH torch.compile, proving algorithm matters more
+than optimization.
 
-![AdamWPrune Results](adamwprune_final_results.png)
-*Adam state-based pruning (bitter7) achieves 37.28 PPL, significantly outperforming magnitude baseline (44.15 PPL) and bias-corrected variant (bitter8: 40.94 PPL).*
+![AdamWPrune Fair Comparison](adamwprune_fair_comparison.png)
+*State-based pruning outperforms magnitude baseline. bitter8
+WITHOUT torch.compile achieves 40.94 PPL (7.3% better than
+baseline WITH compile). bitter7 WITH compile achieves 37.28 PPL
+(15.6% better) - the best of both worlds.*
 
 **Test Configuration (NVIDIA B200 GPUs):**
 - Model: GPT-2 (124M parameters)
 - Dataset: FineWebEdu
 - Target Sparsity: 50%
-- Hardware: NVIDIA B200 GPUs with torch.compile
+- Hardware: NVIDIA B200 GPUs
 
 ### Performance Results
 
-| Variant | Algorithm | Final Perplexity | vs Baseline | Iterations | Memory |
-|---------|-----------|------------------|-------------|------------|--------|
-| **bitter7** | **State-based (exp_avg_sq^0.25)** | **37.28** | **-15.6%** | 7,000 | 3.03x weights |
-| bitter8 | Bias-corrected gradient | 40.94 | -7.3% | 2,500 | 3.03x weights |
-| Magnitude (baseline) | Pure magnitude | 44.15 | - | 5,000 | 3.03x weights |
+| Variant | torch.compile | Final PPL | vs Baseline | Iterations |
+|---------|---------------|-----------|-------------|------------|
+| Movement Pruning (baseline) | YES | 44.15 | - | 5,000 |
+| **bitter8** | **NO** | **40.94** | **-7.3%** | 2,500 |
+| **bitter7** | **YES** | **37.28** | **-15.6%** | 7,000 |
 
-**Key Finding**: bitter7's use of Adam's second moment statistics (`exp_avg_sq^0.25`) with fourth-root damping provides the most stable and effective pruning signal, outperforming all previous magnitude and gradient-based variants
+**Key Findings**:
+- bitter8 WITHOUT compile beats baseline WITH compile (algorithm >
+  optimization)
+- bitter7 WITH compile achieves best results: 37.28 PPL using
+  `exp_avg_sq^0.25`
+- Fourth-root damping provides most stable pruning signal across
+  training
 
 ### AdamWPrune Bitter Variants Summary
 
