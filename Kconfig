@@ -175,9 +175,9 @@ config SAVE_CHECKPOINT
 	  Save model checkpoints during training.
 
 config CHECKPOINT_INTERVAL
-	int "Checkpoint save interval (epochs)"
-	default 1
-	range 1 100
+	int "Checkpoint save interval (iterations)"
+	default 1000
+	range 1 9999999
 	depends on SAVE_CHECKPOINT
 	help
 	  Save checkpoints every N epochs. Default is 1.
@@ -192,7 +192,6 @@ comment "CLI: make defconfig TRACKER=wandb,trackio (or both, none, wandb, tracki
 # CLI override detection
 config TRACKER_SET_BY_CLI
 	bool
-	output yaml
 	default $(shell, scripts/check-cli-set-var.sh TRACKER)
 
 config TRACKER_CLI_VALUE
