@@ -348,6 +348,97 @@ When implementing gating based on attention statistics:
 - Tensor dimensions should be multiples of 64 for optimal tensor core utilization
 - Disable metrics logging for attention mechanisms to prevent OOM during entropy computation
 
+## WandB Helper Scripts
+
+When analyzing experiment results or comparing GPU performance across
+runs, use the W&B query scripts in the scripts/ directory. These
+require the micromamba environment.
+
+### Environment Setup
+
+Before running any W&B query scripts:
+
+```bash
+source ~/bin/wl700-ml  # Activates w7900-ml micromamba environment
+```
+
+This provides wandb, pandas, and other dependencies needed for
+querying experiment data.
+
+### Available Scripts
+
+**scripts/inspect_wandb_keys.py**: Discover available metrics in a run
+
+Usage for inspecting what data is available:
+```bash
+python scripts/inspect_wandb_keys.py \
+  --entity mcgrof-citizen \
+  --project gpt2-bitter9-compiled-b200x4 \
+  --run-name gpt2_adamwprune_bitter9_state_50
+```
+
+**scripts/query_wandb_gpu.py**: Query GPU metrics from training history
+
+Usage for checking GPU memory and compute utilization:
+```bash
+python scripts/query_wandb_gpu.py \
+  --entity mcgrof-citizen \
+  --project gpt2-bitter9-compiled-b200x4 \
+  --run-name gpt2_adamwprune_bitter9_state_50
+```
+
+**scripts/query_wandb_gpu_full.py**: Query detailed GPU metrics from
+system events
+
+Usage for detailed system metrics including power and temperature:
+```bash
+python scripts/query_wandb_gpu_full.py \
+  --entity mcgrof-citizen \
+  --project gpt2-bitter9-compiled-b200x4 \
+  --run-name gpt2_adamwprune_bitter9_state_50
+```
+
+### Comparing Runs
+
+To compare GPU performance across multiple runs (baseline vs
+optimizations), write a custom Python script using the W&B API.
+See docs/tracker.md for detailed examples.
+
+Pattern for comparing runs:
+```python
+import wandb
+
+api = wandb.Api()
+project = "mcgrof-citizen/gpt2-bitter9-compiled-b200x4"
+
+run_names = ["baseline", "bitter8", "bitter9"]
+
+for name in run_names:
+    runs = api.runs(project, filters={"config.run_name": name})
+    if runs:
+        run = runs[0]
+        history = run.history(
+            keys=["gpu/memory_util_avg", "gpu/compute_util_avg"],
+            samples=1000
+        )
+        if not history.empty:
+            print(f"{name}:")
+            print(f"  Memory: {history['gpu/memory_util_avg'].mean():.2f}%")
+            print(f"  Compute: {history['gpu/compute_util_avg'].mean():.2f}%")
+```
+
+### Key Metrics to Check
+
+When analyzing GPU performance issues:
+
+- `gpu/memory_util_avg`: Memory bandwidth utilization (%)
+- `gpu/compute_util_avg`: Compute utilization (%)
+- `gpu/memory_used_avg_gb`: Average memory per GPU (GB)
+
+Low memory utilization (<20%) indicates memory bandwidth bottleneck.
+Low compute utilization (<50%) indicates compute bottleneck.
+Compare optimization runs to baseline to verify improvements.
+
 ## Documentation
 - Keep changes well-documented in commit messages
 - Explain technical rationale for optimizations
