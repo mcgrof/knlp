@@ -61,7 +61,10 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         # Attention (simplified - skip actual attention computation)
-        x = x + self.attn_proj(self.attn_qkv(self.ln_1(x)))
+        # Just use first n_embd slice to avoid shape issues
+        qkv = self.attn_qkv(self.ln_1(x))
+        attn_out = self.attn_proj(qkv[..., : qkv.size(-1) // 3])
+        x = x + attn_out
         # MLP
         x = x + self.mlp_proj(torch.relu(self.mlp_fc(self.ln_2(x))))
         return x
@@ -315,11 +318,15 @@ def main():
     time_overhead_pct = (time_overhead / time_baseline) * 100
 
     mem_overhead = mem_adamprune - mem_baseline
-    mem_overhead_pct = (mem_overhead / mem_baseline) * 100
+    if mem_baseline > 0:
+        mem_overhead_pct = (mem_overhead / mem_baseline) * 100
+        mem_str = f"  Memory: +{mem_overhead:.2f} MB ({mem_overhead_pct:+.1f}%)"
+    else:
+        mem_str = f"  Memory: N/A (CPU mode)"
 
     print(f"\nGradient masking overhead:")
     print(f"  Time: +{time_overhead:.2f} ms ({time_overhead_pct:+.1f}%)")
-    print(f"  Memory: +{mem_overhead:.2f} MB ({mem_overhead_pct:+.1f}%)")
+    print(mem_str)
     print(f"\nPer-module overhead:")
     print(f"  Time per module: {time_overhead / len(modules):.3f} ms")
     print(f"  Modules masked: {len(modules)}")
