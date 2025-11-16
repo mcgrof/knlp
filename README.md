@@ -79,17 +79,23 @@ baseline WITH compile). bitter7 WITH compile achieves 37.28 PPL
 
 ### Performance Results
 
-| Variant | torch.compile | Final PPL | vs Baseline | Iterations |
-|---------|---------------|-----------|-------------|------------|
-| Movement Pruning (baseline) | YES | 44.15 | - | 5,000 |
-| **bitter8** | **NO** | **40.94** | **-7.3%** | 2,500 |
-| **bitter7** | **YES** | **37.28** | **-15.6%** | 7,000 |
+| Variant | compile | PPL | vs Base | GPU Mem (avg) | Trade-off |
+|---------|---------|-----|---------|---------------|-----------|
+| Movement Pruning | YES | 44.15 | - | 33306 MiB | Baseline |
+| **bitter8** | **NO** | **40.94** | **-7.3%** | N/A | Algorithm wins |
+| **bitter7** | **YES** | **37.28** | **-15.6%** | **44168 MiB** | **+32.6% mem** |
+
+![GPU Memory Comparison](adamwprune_gpu_memory_avg.png)
+*GPU memory consumption: bitter7 uses 32.6% more memory (44168 vs
+33306 MiB average) but achieves 15.6% better perplexity.*
 
 **Key Findings**:
 - bitter8 WITHOUT compile beats baseline WITH compile (algorithm >
   optimization)
-- bitter7 WITH compile achieves best results: 37.28 PPL using
+- bitter7 WITH compile achieves best perplexity (37.28) using
   `exp_avg_sq^0.25`
+- **Memory trade-off**: bitter7 uses +32.6% GPU memory (~10.9 GB
+  more) for superior results
 - Fourth-root damping provides most stable pruning signal across
   training
 
