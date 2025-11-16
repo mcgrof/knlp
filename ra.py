@@ -455,45 +455,47 @@ class ReciprocalAttention(nn.Module):
 # ---------------------------------------------------------------------
 class ReciprocalMLP(nn.Module):
     """
-    Reciprocal MLP (R-MLP)
+    Reciprocal MLP (R-MLP) with Attention Injection
 
-    Mirrors RA's folded layout concept but for MLP expansion dimension.
+    Key innovation: The low-rank pathway receives attention context via
+    cheap vector addition (no extra GEMMs), making the MLP attention-aware.
 
-    Key principle: Split expansion dim D_ff = D_ff_std + R_ff and use separate
-    up-projections to create [h_std | h_low], then down-project the concatenated
-    features. This creates reciprocity in the MLP feature space analogous to
-    RA's Q/K reciprocity.
+    Standard pathway: h_std = GELU(up_std(x))
+    Reciprocal pathway: h_low = GELU(up_low(x + α*attn))
 
-    FLOPs match baseline MLP since total expansion dimension is unchanged.
-
-    Architecture:
+    Total compute: IDENTICAL to baseline MLP
     - up_std: D → D_ff_std
     - up_low: D → R_ff
-    - activation on both paths
-    - optional mixer: 1x1 linear on h_low before concat
-    - optional per-token gates (discoverability) on h_low
-    - concatenate: [w_std * h_std | w_rec * h_low]
+    - Total: D → (D_ff_std + R_ff) = D → D_ff (same as baseline)
+
+    Architecture:
+    - Standard branch: Pure MLP view of input
+    - Reciprocal branch: Attention-enriched view (x + α*attn)
+    - Optional mixer: 1x1 linear on h_low for enhanced expressivity
+    - Geometric gating: [w_std * h_std | w_rec * h_low]
     - down: (D_ff_std + R_ff) → D
+
+    The reciprocal branch learns from attention-enriched representations,
+    allowing MLP to compensate for aggressive KV cache pruning without
+    adding any GEMMs.
 
     Args:
         n_embd: Model embedding dimension
         expansion: MLP expansion ratio (typically 4)
-        R_ff: Low-rank reciprocal dimension (e.g., 64)
+        R_ff: Low-rank reciprocal dimension (e.g., 1152 for golden ratio)
         dropout: Dropout probability
-        use_mixer: Add 1x1 linear mixer on h_low
-        use_gates: Add learned per-token gates on h_low
-        tie_up_low: Tie up_low weight to transpose of up_std subset
+        attn_scale_init: Initial value for α (attention mixing scale)
+        tie_to_attn_proj: Explicitly tie up_low weights to attention c_proj
     """
 
     def __init__(
         self,
         n_embd=768,
         expansion=4,
-        R_ff=64,
+        R_ff=1152,
         dropout=0.0,
-        use_mixer=False,
-        use_gates=False,
-        tie_up_low=False,
+        attn_scale_init=1.0,
+        tie_to_attn_proj=False,
     ):
         super().__init__()
         self.n_embd = n_embd
@@ -508,31 +510,30 @@ class ReciprocalMLP(nn.Module):
         self.R_ff = int(R_ff)
         self.D_ff_std = int(D_ff - R_ff)
         self.dropout = dropout
-        self.use_mixer = use_mixer
-        self.use_gates = use_gates
-        self.tie_up_low = tie_up_low
+        self.tie_to_attn_proj = tie_to_attn_proj
+
+        # Learnable attention mixing scale (α in: x + α*attn)
+        # Initialized to 1.0 for full attention signal by default
+        self.register_parameter(
+            "attn_scale", nn.Parameter(torch.tensor(attn_scale_init))
+        )
 
         # Up projections: split into std and low branches
         # Same total parameters as single large up projection
         self.up_std = nn.Linear(n_embd, self.D_ff_std, bias=False)
 
-        if not tie_up_low:
+        if not tie_to_attn_proj:
             self.up_low = nn.Linear(n_embd, R_ff, bias=False)
         else:
-            # Tied: up_low uses transposed subset of up_std
-            # This enforces structural reciprocity
+            # Stronger tying: up_low will be tied to attention projection
+            # This requires access to attention module, set during patching
             self.register_parameter("up_low", None)
+            self._attn_proj_ref = None  # Will be set by patch function
 
         # Down projection: takes concatenated [D_ff_std + R_ff] features
         self.down = nn.Linear(self.D_ff_std + R_ff, n_embd, bias=False)
 
-        # Optional mixer: 1x1 linear on h_low for enhanced expressivity
-        if use_mixer:
-            self.mixer = nn.Linear(R_ff, R_ff, bias=False)
-        else:
-            self.mixer = None
-
-        # Gates analogous to RA (w_std, w_rec)
+        # Learned geometric gates (w_std, w_rec)
         # Always per-layer (scalar) since MLP has no head dimension
         # Initialize using geometric ratio from dimensional capacity:
         #   w_std = D_ff_std / D_ff, w_rec = R_ff / D_ff
@@ -548,13 +549,6 @@ class ReciprocalMLP(nn.Module):
         # Track if gates are frozen for delayed activation
         self._gates_frozen = False
 
-        # Optional per-token learnable gates (discoverability)
-        if use_gates:
-            # Single learnable parameter broadcast to all positions
-            self.register_parameter("gate_alpha", nn.Parameter(torch.tensor(0.1)))
-        else:
-            self.gate_alpha = None
-
         # Activation (GELU for GPT-2 compatibility)
         self.act = nn.GELU()
 
@@ -567,16 +561,16 @@ class ReciprocalMLP(nn.Module):
             if self.up_low is not None:
                 nn.init.xavier_uniform_(self.up_low.weight)
             nn.init.xavier_uniform_(self.down.weight)
-            if self.mixer is not None:
-                nn.init.xavier_uniform_(self.mixer.weight)
         self._weights_initialized = True
 
-    def forward(self, x):
+    def forward(self, x, attn=None):
         """
-        Forward pass with reciprocal MLP folding.
+        Forward pass with attention injection and reciprocal folding.
 
         Args:
-            x: [B, T, C] input tensor
+            x: [B, T, C] layer-normalized input tensor
+            attn: [B, T, C] attention output (before residual add)
+                  If None, behaves like standard split-MLP
 
         Returns:
             y: [B, T, C] output tensor
@@ -584,31 +578,39 @@ class ReciprocalMLP(nn.Module):
         if not self._weights_initialized:
             self._initialize_weights()
 
-        # Up projections
+        # Standard pathway: pure MLP view of input
         h_std = self.up_std(x)  # [B, T, D_ff_std]
 
-        if self.tie_up_low:
-            # Tied mode: use transposed subset of up_std
-            # Take first R_ff rows of up_std.weight transposed
-            with torch.no_grad() if not self.training else contextlib.suppress():
-                h_low = F.linear(x, self.up_std.weight[: self.R_ff, :].t())
+        # Reciprocal pathway: attention-enriched view
+        if attn is None:
+            # Fallback: no attention injection (behaves like split-MLP)
+            mixed = x
         else:
-            h_low = self.up_low(x)  # [B, T, R_ff]
+            # Critical: inject attention via cheap vector add (no GEMM!)
+            # The low branch sees: x + α*attn (both [B,T,C])
+            mixed = x + self.attn_scale * attn
 
-        # Apply activation
+        # Compute h_low from attention-enriched input
+        if self.tie_to_attn_proj:
+            # Explicit weight tying to attention c_proj
+            # Reuse first R_ff rows of c_proj.weight
+            if self._attn_proj_ref is not None:
+                h_low = F.linear(mixed, self._attn_proj_ref.weight[: self.R_ff, :])
+            else:
+                # Fallback if ref not set (shouldn't happen)
+                h_low = torch.zeros(
+                    mixed.size(0), mixed.size(1), self.R_ff, device=mixed.device
+                )
+        else:
+            # Independent up_low weights
+            h_low = self.up_low(mixed)  # [B, T, R_ff]
+
+        # Apply activation to both pathways
         h_std = self.act(h_std)
         h_low = self.act(h_low)
 
-        # Optional mixer on h_low
-        if self.mixer is not None:
-            h_low = self.mixer(h_low)
-
-        # Optional per-token gates (discoverability)
-        if self.gate_alpha is not None:
-            # gate_alpha scales the reciprocal contribution per position
-            h_low = h_low * self.gate_alpha
-
         # Reciprocal fold: concatenate [w_std * h_std | w_rec * h_low]
+        # Learned geometric gating: weights initialized to dimensional ratios
         h_fold = torch.cat([self.w_std * h_std, self.w_rec * h_low], dim=-1)
 
         # Down projection
@@ -626,11 +628,8 @@ class ReciprocalMLP(nn.Module):
             stats = {
                 "w_std": self.w_std.item(),
                 "w_rec": self.w_rec.item(),
+                "attn_scale": self.attn_scale.item(),  # α for attention injection
             }
-
-            if self.gate_alpha is not None:
-                stats["gate_alpha"] = self.gate_alpha.item()
-
             return stats
 
     def freeze_reciprocal_gates(self):
@@ -873,6 +872,58 @@ class PrunedKVAttention(nn.Module):
             stats["kv_keep_k"] = self.k_keep
         stats["kv_recency"] = self.recency
         return stats
+
+
+# ==============================================================================
+# Block Wrapper for Attention-Aware MLP
+# ==============================================================================
+
+
+class AttentionAwareMLP_Block(nn.Module):
+    """
+    Transformer block wrapper that passes attention output to MLP.
+
+    Standard Block:
+        x = x + attn(ln1(x))
+        x = x + mlp(ln2(x))
+
+    Attention-Aware Block:
+        attn_out = attn(ln1(x))
+        x = x + attn_out
+        x = x + mlp(ln2(x), attn=attn_out)  # MLP receives attention!
+
+    This enables R-MLP to inject attention context into the reciprocal pathway
+    without any architectural changes to the model structure.
+    """
+
+    def __init__(self, original_block):
+        super().__init__()
+        # Preserve all attributes from original block
+        self.ln_1 = original_block.ln_1
+        self.attn = original_block.attn
+        self.ln_2 = original_block.ln_2
+        self.mlp = original_block.mlp
+
+    def forward(self, x):
+        # Attention sub-block
+        attn_out = self.attn(self.ln_1(x))
+        x = x + attn_out
+
+        # MLP sub-block with attention injection
+        mlp_in = self.ln_2(x)
+
+        # Check if MLP supports attention parameter
+        if (
+            hasattr(self.mlp, "forward")
+            and "attn" in self.mlp.forward.__code__.co_varnames
+        ):
+            # R-MLP: pass attention output
+            x = x + self.mlp(mlp_in, attn=attn_out)
+        else:
+            # Standard MLP: no attention parameter
+            x = x + self.mlp(mlp_in)
+
+        return x
 
 
 # ==============================================================================
