@@ -39,8 +39,12 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        # if kv_tying is enabled, only create Q and V (K = V)
-        qkv_dim = 2 * config.n_embd if config.kv_tying else 3 * config.n_embd
+        # if kv_tying or k_eq_vt is enabled, only create Q and V
+        qkv_dim = (
+            2 * config.n_embd
+            if (config.kv_tying or config.k_eq_vt)
+            else 3 * config.n_embd
+        )
         self.c_attn = nn.Linear(config.n_embd, qkv_dim, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
@@ -51,6 +55,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         self.kv_tying = config.kv_tying
+        self.k_eq_vt = config.k_eq_vt
         # flash attention support (PyTorch >= 2.0)
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash:
@@ -81,6 +86,16 @@ class CausalSelfAttention(nn.Module):
                 1, 2
             )  # (B, nh, T, hs)
             k = v  # tie K to V
+        elif self.k_eq_vt:
+            # when k_eq_vt is enabled, only compute Q and V, then set K = V.T
+            q, v = self.c_attn(x).split(self.n_embd, dim=2)
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            k = v.transpose(-2, -1)  # K = V.T: (B, nh, hs, T)
         else:
             # standard attention with separate Q, K, V
             q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
@@ -168,6 +183,7 @@ class GPTConfig:
     dropout: float = 0.0  # dropout rate
     bias: bool = True  # use bias in Linear and LayerNorm
     kv_tying: bool = False  # tie key and value projections (K = V)
+    k_eq_vt: bool = False  # set key to transpose of value (K = V.T)
 
     # Model size presets
     @classmethod
