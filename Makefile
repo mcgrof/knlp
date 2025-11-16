@@ -168,6 +168,9 @@ prepare-gpt2-datasets:
 	elif [ "$(CONFIG_GPT2_DATASET_OPENWEBTEXT)" = "y" ]; then \
 		echo "Downloading OpenWebText dataset (this may take a while)..."; \
 		python3 gpt2/prepare_data.py --dataset openwebtext; \
+	elif [ "$(CONFIG_GPT2_DATASET_TINYSTORIES)" = "y" ]; then \
+		echo "Downloading TinyStories dataset (requires datasets package)..."; \
+		python3 gpt2/prepare_data.py --dataset tinystories; \
 	fi
 
 # Validate architecture with dry-run mode (RATIO ablation)
