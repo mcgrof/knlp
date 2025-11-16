@@ -25,16 +25,15 @@ This methodology enables rapid iteration on transformer architectures through re
 
 ## Key Results
 
-### Memory Efficiency Across Models
+### Cross-Model Validation
 
-| Model | Parameters | Dataset | Sparsity | GPU Memory | Accuracy/Perplexity | Efficiency |
-|-------|------------|---------|----------|------------|---------------------|------------|
-| **GPT-2** | **124M** | **FineWebEdu** | **50%** | **25311 MiB** | **49.99 ppl** | **8.2% GPU memory savings** |
-| ResNet-50 | 25.6M | CIFAR-100 | 50% | 12602.5 MiB | 74.56% | 6.06/100MiB |
-| ResNet-18 | 11.2M | CIFAR-10 | 70% | 1489.2 MiB | 90.66% | 6.09/100MiB |
-| LeNet-5 | 61.7K | MNIST | 70% | 434.5 MiB* | 98.9% | 22.74/100MiB |
+| Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |
+|-------|------------|---------|----------|---------------------|-------|
+| ResNet-50 | 25.6M | CIFAR-100 | 50% | 74.56% | AdamWPrune tested |
+| ResNet-18 | 11.2M | CIFAR-10 | 70% | 90.66% | AdamWPrune tested |
+| LeNet-5 | 61.7K | MNIST | 70% | 98.9% | AdamWPrune tested |
 
-*CUDA/PyTorch baseline overhead (~450 MiB) dominates for small models
+See GPT-2 results below for detailed B200 performance analysis
 
 ## GPT-2 Transformer Results (124M Parameters)
 
@@ -61,15 +60,15 @@ See [docs/ra.md](docs/ra.md) for detailed architecture and results.
 Our Adam state-based pruning research conclusively validates the
 hypothesis that **leveraging Adam's accumulated gradient statistics
 enables superior pruning decisions** compared to magnitude-based
-approaches. The key finding: bitter8 WITHOUT torch.compile beats
-movement pruning WITH torch.compile, proving algorithm matters more
-than optimization.
+approaches. State-based variants (bitter7, bitter8) significantly
+outperform magnitude pruning baseline when tested with identical
+hyperparameters on NVIDIA B200 GPUs.
 
-![AdamWPrune Fair Comparison](adamwprune_fair_comparison.png)
-*State-based pruning outperforms magnitude baseline. bitter8
-WITHOUT torch.compile achieves 40.94 PPL (7.3% better than
-baseline WITH compile). bitter7 WITH compile achieves 37.28 PPL
-(15.6% better) - the best of both worlds.*
+![AdamWPrune Comparison](adamwprune_fair_comparison.png)
+*State-based pruning outperforms magnitude baseline with identical
+hyperparameters. All runs WITH torch.compile on B200: bitter8
+achieves 40.94 PPL (7.3% better), bitter7 achieves 37.28 PPL
+(15.6% better) than movement pruning baseline (44.15 PPL).*
 
 **Test Configuration (NVIDIA B200 GPUs):**
 - Model: GPT-2 (124M parameters)
@@ -98,20 +97,21 @@ winner zone (green) - 13% better PPL using 58% less memory than
 baseline. torch.compile adds +217% memory to bitter7!*
 
 **Key Findings**:
-- **Algorithm > Optimization**: bitter8 WITH compile (40.94 PPL)
-  beats baseline WITH compile (44.15 PPL), proving state-based
-  pruning algorithm is the key improvement
+- **Algorithm Superiority**: State-based pruning (bitter8: 40.94
+  PPL, bitter7: 37.28 PPL) significantly outperforms magnitude
+  baseline (44.15 PPL) when tested WITH torch.compile and
+  identical hyperparameters
 - **Memory Efficiency Winner**: bitter7 WITHOUT compile achieves
   38.41 PPL using only 13945 MiB (58% less memory than baseline
-  while delivering 13% better perplexity)
+  WITH compile while delivering 13% better perplexity)
 - **torch.compile Memory Cost**: Adds +217% memory to bitter7
   (13945 → 44168 MiB) for only 3.0% additional PPL improvement
   (38.41 → 37.28)
 - **Best Perplexity**: bitter7 WITH compile achieves 37.28 PPL
   (15.6% better than baseline) using `exp_avg_sq^0.25`
 - **Deployment Recommendation**: Use bitter7 WITHOUT compile for
-  memory-constrained deployments; enable compile only if memory
-  budget allows
+  memory-constrained deployments (58% less memory, 13% better
+  PPL); enable compile for best perplexity if memory allows
 
 ### AdamWPrune Bitter Variants Summary
 
