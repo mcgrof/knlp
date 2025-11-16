@@ -875,6 +875,145 @@ class PrunedKVAttention(nn.Module):
 
 
 # ==============================================================================
+# Gate-Informed KV Pruning
+# ==============================================================================
+
+
+class GateInformedKVAttention(PrunedKVAttention):
+    """
+    KV pruning with adaptive ratio based on R-MLP gate signals.
+
+    Key insight: R-MLP gates (w_rec, α) indicate how well the reciprocal
+    pathway compensates for attention quality. High w_rec means R-MLP is
+    successfully using attention through the reciprocal pathway, so it can
+    handle more aggressive pruning.
+
+    Relationship:
+        attention_confidence = w_rec * α
+        High confidence → R-MLP compensates well → prune MORE aggressively
+        Low confidence → no compensation → prune LESS aggressively
+
+    This creates a feedback loop where R-MLP learns to act as an attention
+    compression mechanism, and its gates tell us how much compression is safe.
+
+    Args:
+        beta: Modulation strength (how much gates affect pruning ratio)
+        All other args inherited from PrunedKVAttention
+    """
+
+    def __init__(
+        self,
+        n_embd=768,
+        n_head=12,
+        block_size=1024,
+        k_keep=391,
+        recency=64,
+        dropout=0.1,
+        prune_mode="v_only",
+        beta=1.0,
+        **kwargs,
+    ):
+        super().__init__(
+            n_embd=n_embd,
+            n_head=n_head,
+            block_size=block_size,
+            k_keep=k_keep,
+            recency=recency,
+            learn_ratio=False,  # We compute ratio from gates, not learn it
+            dropout=dropout,
+            prune_mode=prune_mode,
+            **kwargs,
+        )
+
+        self.beta = beta  # Modulation strength
+        self.base_keep_ratio = k_keep / block_size  # Fixed base ratio
+        self._mlp_gate_ref = None  # Will be set to R-MLP instance
+
+        # Track adaptive ratio for logging
+        self.register_buffer("_last_keep_ratio", torch.tensor(self.base_keep_ratio))
+
+    def set_mlp_reference(self, mlp):
+        """Link to R-MLP in same block to read gates."""
+        self._mlp_gate_ref = mlp
+
+    def _compute_adaptive_keep_ratio(self):
+        """
+        Compute keep_ratio based on R-MLP gate signals.
+
+        Returns:
+            keep_ratio: Float in [0.1, 0.9]
+        """
+        if self._mlp_gate_ref is None:
+            # Fallback: no R-MLP reference, use base ratio
+            return self.base_keep_ratio
+
+        # Check if MLP has the gate attributes (is it ReciprocalMLP?)
+        if not (
+            hasattr(self._mlp_gate_ref, "w_rec")
+            and hasattr(self._mlp_gate_ref, "attn_scale")
+        ):
+            # Standard MLP, no gates available
+            return self.base_keep_ratio
+
+        with torch.no_grad():
+            # Read R-MLP's learned attention confidence
+            w_rec = self._mlp_gate_ref.w_rec.item()
+            alpha = self._mlp_gate_ref.attn_scale.item()
+
+            # Attention confidence: how well R-MLP uses attention
+            attention_confidence = w_rec * alpha
+
+            # Inverse relationship: high confidence → prune more
+            # keep_ratio = base / (1 + beta * confidence)
+            keep_ratio = self.base_keep_ratio / (1.0 + self.beta * attention_confidence)
+
+            # Clamp to reasonable range
+            keep_ratio = max(0.1, min(0.9, keep_ratio))
+
+            return keep_ratio
+
+    def forward(self, x):
+        """
+        Forward pass with adaptive KV pruning based on R-MLP gates.
+
+        For v_only and kv_scores_reuse modes, we need to update the pruner's
+        keep_ratio before calling parent forward.
+        """
+        # Compute adaptive ratio from R-MLP gates
+        adaptive_ratio = self._compute_adaptive_keep_ratio()
+
+        # Update pruner's keep_ratio if using new pruning modes
+        if self.prune_mode in ["v_only", "kv_scores_reuse"]:
+            # Update the pruner's config
+            self.pruner.cfg.keep_ratio = adaptive_ratio
+        else:
+            # Legacy mode: update k_keep directly
+            B, T, C = x.size()
+            self.k_keep = max(64, int(T * adaptive_ratio))
+
+        # Store for logging
+        self._last_keep_ratio.copy_(torch.tensor(adaptive_ratio))
+
+        # Call parent forward with updated ratio
+        return super().forward(x)
+
+    def get_pruning_stats(self):
+        """Return KV cache pruning statistics including adaptive ratio."""
+        stats = super().get_pruning_stats()
+        stats["kv_adaptive_keep_ratio"] = self._last_keep_ratio.item()
+
+        # Add gate signals if available
+        if self._mlp_gate_ref is not None and hasattr(self._mlp_gate_ref, "w_rec"):
+            with torch.no_grad():
+                stats["kv_attention_confidence"] = (
+                    self._mlp_gate_ref.w_rec.item()
+                    * self._mlp_gate_ref.attn_scale.item()
+                )
+
+        return stats
+
+
+# ==============================================================================
 # Block Wrapper for Attention-Aware MLP
 # ==============================================================================
 

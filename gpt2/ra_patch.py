@@ -338,3 +338,114 @@ def patch_gpt2_with_kv_pruning(
     print(f"Successfully patched {num_layers} layers with KV-pruned attention")
 
     return model
+
+
+def patch_gpt2_with_gate_informed_kv_pruning(
+    model,
+    k_keep=391,
+    recency=64,
+    dropout=0.1,
+    prune_mode="v_only",
+    beta=1.0,
+    mlp_expansion=4,
+    R_ff=1152,
+    mlp_dropout=0.0,
+    attn_scale_init=1.0,
+    tie_to_attn_proj=False,
+):
+    """
+    Replace attention and MLP with gate-informed KV pruning + R-MLP.
+
+    This creates a feedback loop:
+    - R-MLP learns to compensate for attention via reciprocal pathway
+    - R-MLP gates (w_rec, α) indicate attention confidence
+    - KV pruning reads gates and modulates pruning aggressiveness
+    - High confidence → prune more, low confidence → prune less
+
+    Args:
+        model: GPT-2 model to patch
+        k_keep: Base number of tokens to keep (before modulation)
+        recency: Number of recent tokens to always keep
+        dropout: Attention dropout probability
+        prune_mode: "v_only", "kv_scores_reuse", or "legacy"
+        beta: Gate modulation strength (higher = stronger effect)
+        mlp_expansion: MLP expansion ratio (default 4)
+        R_ff: Reciprocal rank for MLP (default 1152)
+        mlp_dropout: MLP dropout probability
+        attn_scale_init: Initial attention mixing scale α
+        tie_to_attn_proj: Tie up_low weights to attention c_proj
+
+    Returns:
+        Patched model
+    """
+    from ra import GateInformedKVAttention, ReciprocalMLP, AttentionAwareMLP_Block
+
+    n_embd = model.config.n_embd
+    n_head = model.config.n_head
+    block_size = model.config.block_size
+
+    print(f"Patching GPT-2 with gate-informed KV pruning + R-MLP (beta={beta})...")
+    print(f"  - Base k_keep={k_keep}, recency={recency}, mode={prune_mode}")
+    print(f"  - R-MLP: R_ff={R_ff}, expansion={mlp_expansion}")
+    print(f"  - Adaptive pruning based on w_rec × α (attention confidence)")
+
+    # Iterate through all transformer blocks
+    for i, block in enumerate(model.transformer.h):
+        # 1. Replace attention with gate-informed KV pruning
+        gate_attn = GateInformedKVAttention(
+            n_embd=n_embd,
+            n_head=n_head,
+            block_size=block_size,
+            k_keep=k_keep,
+            recency=recency,
+            dropout=dropout,
+            prune_mode=prune_mode,
+            beta=beta,
+        )
+
+        # Move to same device
+        device = next(block.attn.parameters()).device
+        gate_attn = gate_attn.to(device)
+
+        # Replace attention
+        block.attn = gate_attn
+
+        # 2. Replace MLP with R-MLP
+        reciprocal_mlp = ReciprocalMLP(
+            n_embd=n_embd,
+            expansion=mlp_expansion,
+            R_ff=R_ff,
+            dropout=mlp_dropout,
+            attn_scale_init=attn_scale_init,
+            tie_to_attn_proj=tie_to_attn_proj,
+        )
+
+        reciprocal_mlp = reciprocal_mlp.to(device)
+
+        # Set up weight tying if requested
+        if tie_to_attn_proj:
+            reciprocal_mlp._attn_proj_ref = gate_attn.c_proj
+
+        # Replace MLP
+        block.mlp = reciprocal_mlp
+
+        # 3. Link attention to MLP for gate reading
+        gate_attn.set_mlp_reference(reciprocal_mlp)
+
+        print(f"  Layer {i}: Gate-informed KV pruning + R-MLP (linked)")
+
+    # 4. Wrap all blocks to enable attention injection
+    print("Wrapping blocks to enable attention injection...")
+    for i in range(len(model.transformer.h)):
+        original_block = model.transformer.h[i]
+        wrapped_block = AttentionAwareMLP_Block(original_block)
+
+        device = next(original_block.parameters()).device
+        wrapped_block = wrapped_block.to(device)
+
+        model.transformer.h[i] = wrapped_block
+
+    num_layers = len(model.transformer.h)
+    print(f"Successfully patched {num_layers} layers with gate-informed pruning")
+
+    return model
