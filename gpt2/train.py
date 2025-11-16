@@ -282,8 +282,11 @@ def main():
 
     # Load config if available
     if config is not None:
-        # Config overrides could go here
-        pass
+        # Load checkpoint configuration from config.py
+        if not hasattr(args, "save_checkpoint"):
+            args.save_checkpoint = config.get("SAVE_CHECKPOINT") in ("y", True)
+        if not hasattr(args, "checkpoint_interval"):
+            args.checkpoint_interval = int(config.get("CHECKPOINT_INTERVAL", 1000))
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
