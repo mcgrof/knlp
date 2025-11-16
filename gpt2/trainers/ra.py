@@ -21,7 +21,11 @@ parent_dir = os.path.dirname(
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT, GPTConfig
-from gpt2.ra_patch import patch_gpt2_with_ra_v5, patch_gpt2_with_unified_ra_and_rmlp
+from gpt2.ra_patch import (
+    patch_gpt2_with_ra_v5,
+    patch_gpt2_with_rmlp,
+    patch_gpt2_with_unified_ra_and_rmlp,
+)
 from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
 
@@ -165,70 +169,79 @@ class RATrainer(BaseGPT2Trainer):
             args.ra_v5_use_self_restart = True
             args.mlp_expansion_ratio = 6.0
         elif step == "V1":
-            # R-MLP basic (R_ff=64) + fixed KV pruning
+            # R-MLP baseline: golden ratio (R_ff=1152, 37.5%)
+            # Geometric init: w_std=0.625, w_rec=0.375, α=1.0
             args.use_ra_v5 = False
             args.use_rmlp = True
-            args.rmlp_R_ff = 64
-            args.rmlp_use_mixer = False
-            args.rmlp_use_gates = False
-            # KV pruning config
-            args.kv_cache_prune = True
-            args.kv_prune_k = 391  # Golden ratio: 391/1024 ≈ 0.382
-            args.kv_prune_recency = 64
-        elif step == "V2":
-            # R-MLP medium (R_ff=256) + fixed KV pruning
-            args.use_ra_v5 = False
-            args.use_rmlp = True
-            args.rmlp_R_ff = 256
-            args.rmlp_use_mixer = False
-            args.rmlp_use_gates = False
-            # KV pruning config
-            args.kv_cache_prune = True
-            args.kv_prune_k = 391
-            args.kv_prune_recency = 64
-        elif step == "V3":
-            # R-MLP large (R_ff=512) + fixed KV pruning
-            args.use_ra_v5 = False
-            args.use_rmlp = True
-            args.rmlp_R_ff = 512
-            args.rmlp_use_mixer = False
-            args.rmlp_use_gates = False
-            # KV pruning config
-            args.kv_cache_prune = True
-            args.kv_prune_k = 391
-            args.kv_prune_recency = 64
-        elif step == "V4":
-            # R-MLP golden (R_ff=1152) + learned KV pruning
-            args.use_ra_v5 = False
-            args.use_rmlp = True
-            args.rmlp_R_ff = 1152  # Golden ratio split of expansion
-            args.rmlp_use_mixer = False
-            args.rmlp_use_gates = False
-            # KV pruning with learned ratio
+            args.rmlp_R_ff = 1152  # Golden ratio: 1152/(1920+1152)
+            args.rmlp_attn_scale_init = 1.0  # Symmetric with x
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning (full cowboy)
             args.kv_cache_prune = True
             args.kv_prune_learned = True
-            args.kv_prune_init_ratio = 0.382  # Start at golden ratio
+            args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
-        elif step == "V5":
-            # R-MLP golden + mixer + learned KV pruning
+        elif step == "V2":
+            # R-MLP golden + explicit weight tying (up_low ↔ attn.c_proj)
+            # Tests if parameter sharing between attention and MLP helps
             args.use_ra_v5 = False
             args.use_rmlp = True
             args.rmlp_R_ff = 1152
-            args.rmlp_use_mixer = True  # Enable mixer for enhanced expressivity
-            args.rmlp_use_gates = False
-            # KV pruning with learned ratio
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = True  # Weight tying enabled
+            # Learned KV pruning
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
+        elif step == "V3":
+            # R-MLP small: R_ff=256 (8.3%)
+            # Geometric init: w_std=0.917, w_rec=0.083
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 256  # Small reciprocal pathway
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
+        elif step == "V4":
+            # R-MLP medium: R_ff=512 (16.7%)
+            # Geometric init: w_std=0.833, w_rec=0.167
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 512
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
+        elif step == "V5":
+            # R-MLP medium-large: R_ff=768 (25%)
+            # Geometric init: w_std=0.750, w_rec=0.250
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 768
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning
             args.kv_cache_prune = True
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
         elif step == "V6":
-            # R-MLP golden + per-token gates + learned KV pruning
+            # R-MLP large: R_ff=1920 (62.5%, inverse golden)
+            # Geometric init: w_std=0.375, w_rec=0.625
             args.use_ra_v5 = False
             args.use_rmlp = True
-            args.rmlp_R_ff = 1152
-            args.rmlp_use_mixer = False
-            args.rmlp_use_gates = True  # Enable per-token gating
-            # KV pruning with learned ratio
+            args.rmlp_R_ff = 1920  # Reciprocal larger than standard
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning
             args.kv_cache_prune = True
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
@@ -302,10 +315,10 @@ class RATrainer(BaseGPT2Trainer):
                 attn_dropout=self.args.dropout,
                 use_self_restart=getattr(self.args, "ra_v5_use_self_restart", False),
                 mlp_expansion=self.args.mlp_expansion_ratio,
-                R_ff=getattr(self.args, "rmlp_R_ff", 64),
+                R_ff=getattr(self.args, "rmlp_R_ff", 1152),
                 mlp_dropout=self.args.dropout,
-                use_mixer=getattr(self.args, "rmlp_use_mixer", False),
-                use_gates=getattr(self.args, "rmlp_use_gates", False),
+                attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
+                tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
             )
         elif getattr(self.args, "use_ra_v5", False):
@@ -318,6 +331,18 @@ class RATrainer(BaseGPT2Trainer):
                 dropout=self.args.dropout,
                 use_self_restart=getattr(self.args, "ra_v5_use_self_restart", False),
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
+            )
+        elif getattr(self.args, "use_rmlp", False):
+            # R-MLP only (with attention injection)
+            if self.master_process:
+                print(f"Patching with R-MLP (R_ff={self.args.rmlp_R_ff})")
+            model = patch_gpt2_with_rmlp(
+                model,
+                expansion=self.args.mlp_expansion_ratio,
+                R_ff=getattr(self.args, "rmlp_R_ff", 1152),
+                dropout=self.args.dropout,
+                attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
+                tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
             )
 
         # Compile if requested (must be before DDP)
@@ -524,7 +549,8 @@ class RATrainer(BaseGPT2Trainer):
                             )
                             print(
                                 f"  R-MLP gates: w_std={rmlp_gate_stats.get('w_std_mean', 0):.3f}, "
-                                f"w_rec={rmlp_gate_stats.get('w_rec_mean', 0):.3f}"
+                                f"w_rec={rmlp_gate_stats.get('w_rec_mean', 0):.3f}, "
+                                f"α={rmlp_gate_stats.get('attn_scale_mean', 0):.3f}"
                             )
 
                     # Analyze KV pruning stats if enabled
@@ -687,12 +713,13 @@ class RATrainer(BaseGPT2Trainer):
         return {}
 
     def _analyze_rmlp_gates(self) -> Dict[str, float]:
-        """Analyze R-MLP gate values."""
+        """Analyze R-MLP gate values (w_std, w_rec, attn_scale)."""
         try:
             from ra import ReciprocalMLP
 
             w_std_list = []
             w_rec_list = []
+            attn_scale_list = []
             count = 0
 
             for name, module in self.raw_model.named_modules():
@@ -701,20 +728,25 @@ class RATrainer(BaseGPT2Trainer):
                     with torch.no_grad():
                         w_std = module.w_std.cpu()
                         w_rec = module.w_rec.cpu()
+                        attn_scale = module.attn_scale.cpu()
 
                         if w_std.dim() == 0:
                             w_std_list.append(w_std.item())
                             w_rec_list.append(w_rec.item())
+                            attn_scale_list.append(attn_scale.item())
                         else:
                             w_std_list.extend(w_std.tolist())
                             w_rec_list.extend(w_rec.tolist())
+                            attn_scale_list.extend(attn_scale.tolist())
 
             if w_std_list:
                 return {
                     "w_std_mean": np.mean(w_std_list),
                     "w_rec_mean": np.mean(w_rec_list),
+                    "attn_scale_mean": np.mean(attn_scale_list),
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
+                    "attn_scale_std": np.std(attn_scale_list),
                     "module_count": float(count),
                 }
         except Exception as e:

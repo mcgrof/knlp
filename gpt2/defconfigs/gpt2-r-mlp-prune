@@ -1,24 +1,42 @@
-# R-MLP + KV Pruning Configuration (W7900 Optimized)
+# R-MLP + Attention Injection + KV Pruning (W7900 Optimized)
 #
-# Focus: Reciprocal MLP with KV cache pruning for memory efficiency
+# Focus: Attention-aware Reciprocal MLP with KV cache pruning
 # Hardware: AMD Radeon Pro W7900 (48GB VRAM)
+#
+# Key innovation: R-MLP receives attention context via cheap vector add
+#   Standard pathway: h_std = GELU(up_std(x))
+#   Reciprocal pathway: h_low = GELU(up_low(x + α*attn))
+#   NO extra GEMMs - same compute as baseline!
 #
 # Based on cowboy experiment findings:
 # - RA alone degrades performance (12% worse than baseline)
 # - R-MLP alone is nearly equivalent to baseline (0.26% worse)
 # - R-MLP + KV pruning provides memory benefits with minimal quality loss
 #
-# This config skips RA entirely and focuses on R-MLP mechanisms with
-# various KV pruning strategies to reduce memory pressure.
+# Ablation steps (full cowboy: learned gates + learned KV pruning from step 0):
+# V1: R-MLP baseline (R_ff=1152, 37.5%)
+#     Geometric init: w_std=0.625, w_rec=0.375, α=1.0
+# V2: V1 + weight tying (up_low ↔ attn.c_proj)
+#     Tests explicit parameter sharing between attention and MLP
+# V3: R-MLP small (R_ff=256, 8.3%)
+#     Geometric init: w_std=0.917, w_rec=0.083, α=1.0
+# V4: R-MLP medium (R_ff=512, 16.7%)
+#     Geometric init: w_std=0.833, w_rec=0.167, α=1.0
+# V5: R-MLP medium-large (R_ff=768, 25%)
+#     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
+# V6: R-MLP large (R_ff=1920, 62.5%, inverse golden)
+#     Geometric init: w_std=0.375, w_rec=0.625, α=1.0
 #
-# Ablation steps:
-# V0: Baseline (from W&B reference, not re-run)
-# V1: R-MLP basic (R_ff=64) + fixed KV pruning
-# V2: R-MLP medium (R_ff=256) + fixed KV pruning
-# V3: R-MLP large (R_ff=512) + fixed KV pruning
-# V4: R-MLP golden (R_ff=1152) + learned KV pruning
-# V5: R-MLP golden + mixer + learned KV pruning
-# V6: R-MLP golden + gates + learned KV pruning
+# Alpha initialization rationale (α=1.0 for all steps):
+# Empirical measurement shows ||attn|| / ||x|| ≈ 0.05 (5%), meaning
+# attention signal is naturally ~5% of residual stream magnitude.
+# Setting α=1.0 injects full attention at its natural scale, which
+# is already low relative to x. This provides clean signal for
+# reciprocal pathway to learn from without overwhelming the standard
+# pathway. All steps track w_std, w_rec, and α evolution to evaluate
+# learning dynamics and validate initialization choice.
+#
+# Baseline: Use BASELINE=mcgrof-citizen/gpt2-kv-pruning/6dvbpfuh from W&B
 #
 # Training time: 2 hours per step (can override with GPT2_MAX_TIME=)
 #
@@ -100,11 +118,11 @@ CONFIG_RA_MLA_CACHE_Q_WINDOW=y
 CONFIG_RA_MLA_USE_ROPE=n
 
 # Enable ablation study mode with R-MLP steps
+# Skipping V0 (baseline already available from W&B)
 # Skipping RA (V16) as it showed 12% degradation
-# V0: Baseline GPT-2 (will save checkpoint for inference testing)
-# V1-V6: Various R-MLP + KV pruning configurations
+# V1-V6: Various R-MLP + attention injection + KV pruning configurations
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V2,V3,V4,V5,V6"
+CONFIG_RA_MLA_ABLATION_STEPS="V1,V2,V3,V4,V5,V6"
 
 # Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
