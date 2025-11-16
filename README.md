@@ -28,12 +28,13 @@ This methodology enables rapid iteration on transformer architectures through re
 | Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |
 |-------|------------|---------|----------|---------------------|-------|
 | GPT-2 | 124M | FineWebEdu | 50% | **37.28 PPL** | **bitter7 (15.6% better)** |
-| ResNet-50 | 25.6M | CIFAR-100 | 50% | 74.56% | AdamWPrune tested |
-| ResNet-18 | 11.2M | CIFAR-10 | 70% | 90.66% | AdamWPrune tested |
-| LeNet-5 | 61.7K | MNIST | 70% | 98.9% | AdamWPrune tested |
+| ResNet-50 | 25.6M | CIFAR-100 | 50% | 74.56% | bitter0 (original hybrid) |
+| ResNet-18 | 11.2M | CIFAR-10 | 70% | 90.66% | bitter0 (original hybrid) |
+| LeNet-5 | 61.7K | MNIST | 70% | 98.9% | bitter0 (original hybrid) |
 
-GPT-2 bitter7 achieves 37.28 PPL (15.6% better than 44.15 PPL
-baseline) using state-based pruning. See detailed analysis below.
+bitter0 (original hybrid momentum-stability) achieved excellent results
+on CNNs. bitter7 (variance-based) emerged from transformer R&D and is
+expected to improve CNN results further. See evolution story below.
 
 ## GPT-2 Transformer Results (124M Parameters)
 
@@ -159,11 +160,27 @@ noise, ensuring only parameters with consistently low activity are pruned.
 0.999^1000 ≈ 0.37   # 37% weight from 1000 steps ago!
 ```
 
-**Next Steps**: Validate bitter7 on LeNet-5 and ResNet to extend beyond GPT-2 NLP domain
+**Evolution of Adam State-Based Pruning**:
 
-**Documentation**: See [docs/adamwprune_variants.md](docs/adamwprune_variants.md) for complete variant descriptions and ablation study results.
+The development of bitter variants followed a systematic R&D progression:
 
-**Bitter Variants**: Multiple pruning importance metrics were evaluated. bitter7 (variance-based: `|w| × v^0.25` where v is Adam's exp_avg_sq) showed most promise and is the focus of ongoing work.
+1. **bitter0 (Original Hybrid)**: Started with hybrid momentum-stability
+   pruning `|w| * |exp_avg| * |w|/sqrt(exp_avg_sq)` - the default
+   algorithm for AdamWPrune
+2. **LeNet-5/ResNet Validation**: bitter0 showed incredible results on
+   CNNs (98.9% MNIST, 90.66% CIFAR-10, 74.56% CIFAR-100)
+3. **Transformer Challenge**: When applied to GPT-2 transformers,
+   bitter0 underperformed movement pruning (51.51 PPL, worst variant)
+4. **Bitter Variants R&D**: Developed bitter1-9 to find better
+   approaches for transformers (see
+   [docs/adamwprune_variants.md](docs/adamwprune_variants.md))
+5. **bitter7 Winner**: Variance-based pruning `|w| * (exp_avg_sq^0.25)`
+   achieved 37.28 PPL (15.6% better than baseline) on GPT-2
+
+**Next Steps**: Since bitter7 outperforms bitter0 on transformers, we
+expect bitter7 will achieve even better results on LeNet-5/ResNet than
+the already-excellent bitter0 baseline. This hypothesis needs testing
+to validate bitter7 as the universal best variant across architectures.
 
 ## ResNet CNN Results
 
