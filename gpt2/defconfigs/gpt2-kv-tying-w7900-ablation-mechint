@@ -1,6 +1,8 @@
-# GPT-2 KV Tying Mechanistic Interpretability Analysis on AMD Radeon Pro W7900
-# Post-training analysis of models from gpt2-kv-tying-w7900-ablation
-# Discovers sparse KV circuits via binary channel masking
+# GPT-2 KV Tying Training + Mechanistic Interpretability on W7900
+# By default: Trains V0 (baseline), V1 (K=V), V2 (K=V.T) then analyzes
+# Each test runs for 30 minutes (1800s), saves final models
+# Then runs mechint KV circuit analysis on all trained models
+# Override with MODEL=path to skip training and analyze existing models
 # Optimized for AMD Radeon Pro W7900 (48GB VRAM)
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -15,11 +17,29 @@ CONFIG_GPT2_MODEL_NAME="gpt2"
 CONFIG_GPT2_DATASET_SHAKESPEARE=y
 CONFIG_GPT2_DATASET_NAME="shakespeare"
 
-# Model Architecture (must match training)
+# Model Architecture
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_WEIGHT_TYING=y
+
+# Vanilla Ablation Mode - ENABLED for training
+# V0: Baseline GPT-2 (no KV tying)
+# V1: GPT-2 with KV tying (K = V)
+# V2: GPT-2 with K = V.T (key equals transpose of value)
+CONFIG_GPT2_VANILLA_ABLATION_MODE=y
+CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
+
+# Training Configuration
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+CONFIG_GPT2_MAX_ITERS=10000
+CONFIG_GPT2_MAX_TIME=1800
+CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
 
 # Performance Optimizations - W7900 / ROCm optimized
 CONFIG_GPT2_FLASH_ATTENTION=n
@@ -28,16 +48,20 @@ CONFIG_GPT2_CUDNN_BENCHMARK=y
 CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
-# Batch size - smaller for analysis (memory efficiency)
-CONFIG_BATCH_SIZE=8
-CONFIG_NUM_WORKERS=8
+# Batch size - optimized for W7900 (48GB VRAM) during training
+# Analysis phase uses smaller batch automatically
+CONFIG_BATCH_SIZE=40
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
 CONFIG_DEVICE="cuda"
 CONFIG_DATA_DIR="./gpt2/data"
 CONFIG_PIN_MEMORY=y
 CONFIG_PERSISTENT_WORKERS=y
-CONFIG_PREFETCH_FACTOR=2
+CONFIG_PREFETCH_FACTOR=4
 
-# Optimizer - Not used for analysis but required by config
+# Optimizer - AdamW
 CONFIG_OPTIMIZER_MODE_SINGLE=y
 CONFIG_OPTIMIZER_SELECT_ADAMW=y
 CONFIG_OPTIMIZER="adamw"
@@ -105,8 +129,11 @@ CONFIG_COMPILE_MODEL=n
 CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 
-# Checkpointing - Not used for analysis
-CONFIG_SAVE_CHECKPOINT=n
+# Checkpointing - ENABLED for training phase
+# Saves final models for V0, V1, V2 for mechint analysis
+# No periodic checkpoints (interval set very high)
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=999999
 
 # Memory Optimizations - ROCm specific
 CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
