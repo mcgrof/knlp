@@ -639,7 +639,6 @@ class RATrainer(BaseGPT2Trainer):
                         {
                             "val_loss": losses["val"],
                             "val_perplexity": val_ppl,
-                            "best_perplexity": self.best_perplexity,
                         }
                     )
 
