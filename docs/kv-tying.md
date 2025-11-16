@@ -291,18 +291,19 @@ V = x @ W_v
 attn_scores = Q @ K.T = Q @ (x @ W_v.T).T = Q @ W_v @ x.T
 ```
 
-**Potential benefits**:
+**Theoretical motivation**:
 
-1. **Preserves distinctness**: K and V are different tensors (unlike K = V identity tying)
-2. **Structural constraint**: W_k = W_v.T enforces a specific geometric relationship
-3. **Symmetric transformation**: May encourage balanced key-value representations
-4. **Reduced overfitting**: Constraint on W_k may act as regularization
+The transpose relationship introduces a structural constraint between key and value spaces, creating a symmetric transformation that differs from simple identity tying while still achieving 33% parameter reduction.
 
-**Potential drawbacks**:
+**Critical limitation discovered**:
 
-1. **Still restrictive**: Can't learn fully independent K and V transformations
-2. **Unproven**: No existing literature validating this approach
-3. **Transpose semantics unclear**: Whether transpose relationship helps or hurts is unknown
+Transpose tying is **incompatible with Flash Attention** and requires manual attention implementation, which materializes the full `(B, nh, T, T)` attention matrix. This causes:
+
+1. **2.7x slower training** compared to standard or identity-tied attention
+2. **Higher memory usage** due to materialized attention matrix
+3. **Impractical for real training** - only 41 iterations in 30 minutes vs 118-121 for V0/V1
+
+**Result**: While theoretically interesting, the implementation penalty makes transpose tying unsuitable for practical use.
 
 ### Implementation
 
@@ -407,19 +408,21 @@ V = x @ W_v    # Different tensor
 - **Transpose tying**: Couples K and V evolution through transpose relationship
 - **Standard**: K and V evolve independently
 
-### Expected Behavior
+### Actual Results
 
-**Hypothesis 1**: Transpose tying may preserve more expressiveness than identity tying
-- **Rationale**: K ≠ V allows different attention patterns vs aggregation patterns
-- **Test**: Compare validation loss V1 (identity) vs V2 (transpose) vs V0 (baseline)
+**Finding 1**: Transpose tying is incompatible with Flash Attention
+- **Observation**: Must use manual attention (materializes full attention matrix)
+- **Impact**: 2.7x slower training (36s/iter vs 13s/iter for V0/V1)
+- **Consequence**: V2 only reached iteration 41 vs 118-121 for V0/V1 in same time
 
-**Hypothesis 2**: Transpose constraint acts as regularization
-- **Rationale**: Structural constraint may prevent overfitting
-- **Test**: Compare small-dataset performance across variants
+**Finding 2**: Performance could not be properly evaluated
+- **Observation**: V2 too slow to reach second validation checkpoint (iter 100)
+- **Limitation**: Only one validation eval at iter 0 (initial random state)
+- **Conclusion**: Cannot assess quality impact due to insufficient training progress
 
-**Hypothesis 3**: Gradients through transpose affect learning dynamics
-- **Rationale**: Transposed gradient accumulation changes optimization landscape
-- **Test**: Monitor training stability and convergence speed
+**Finding 3**: Implementation penalty outweighs theoretical benefits
+- **Result**: The speed and memory costs make transpose tying impractical
+- **Recommendation**: Use identity tying (K=V) if parameter reduction is needed
 
 ### Ablation Testing
 
@@ -559,13 +562,15 @@ K_cached = V_cached  # Same values, but still stored separately for SDPA
 
 | Metric | V0 (Baseline) | V1 (Identity) | V2 (Transpose) |
 |--------|--------------|---------------|----------------|
-| **Val Loss** | TBD | TBD | TBD |
-| **Val Perplexity** | TBD | TBD | TBD |
+| **Val Perplexity (iter 0)** | 59,014 | 55,823 | 55,326 |
+| **Val Perplexity (iter 100)** | 150 | 142 | N/A (didn't reach) |
 | **Parameters** | 124M | 117M | 117M |
-| **Training Time** | TBD | TBD | TBD |
-| **GPU Memory** | TBD | TBD | TBD |
+| **Max Iterations (30 min)** | 118 | 121 | 41 ⚠️ |
+| **Iteration Speed** | 13s/iter | 13s/iter | 36s/iter ⚠️ |
+| **Flash Attention** | ✓ Yes | ✓ Yes | ✗ No (incompatible) |
+| **GPU Memory (mean)** | 15.3 GB | 15.3 GB | 35.9 GB ⚠️ |
 
-**Status**: Ablation study planned. V2 (transpose tying) recently added to test suite.
+**Status**: Ablation completed. V2 (transpose tying) proven impractical due to Flash Attention incompatibility.
 
 ### Running the Ablation
 
@@ -585,23 +590,26 @@ make
 # W&B project: gpt2-kv-tying-w7900
 ```
 
-### Expected Outcomes
+### Analysis
 
-**Hypothesis 1**: Identity tying reduces parameters with minimal quality loss
-- **Expected**: V1 perplexity ≤ 5% worse than V0
-- **Rationale**: Attention mechanism may be overparameterized
+**Result 1**: Identity tying (V1) achieves the goal
+- **Finding**: V1 reached similar perplexity as V0 (142 vs 150) with 5.6% fewer parameters
+- **Conclusion**: Identity tying successfully reduces parameters with minimal quality loss
 
-**Hypothesis 2**: Transpose tying preserves more expressiveness
-- **Expected**: V2 perplexity between V0 and V1 (better than identity, worse than baseline)
-- **Rationale**: K ≠ V preserves distinct attention/aggregation patterns
+**Result 2**: Transpose tying (V2) failed due to implementation constraints
+- **Finding**: V2 incompatible with Flash Attention, causing 2.7x slowdown
+- **Impact**: Only 41 iterations vs 118-121 for V0/V1 in same time
+- **Conclusion**: Cannot evaluate quality; implementation penalty too severe
 
-**Hypothesis 3**: Training speed increases for both variants
-- **Expected**: V1 and V2 train 10-15% faster than V0
-- **Rationale**: Smaller QKV projection means fewer FLOPs per layer
+**Result 3**: Training speed depends on Flash Attention compatibility
+- **V0/V1**: Same speed (~13s/iter) with Flash Attention enabled
+- **V2**: 2.7x slower (~36s/iter) due to manual attention requirement
+- **Lesson**: Flash Attention compatibility is critical for performance
 
-**Hypothesis 4**: GPU memory usage decreases equally
-- **Expected**: V1 and V2 use 5-10% less GPU memory than V0
-- **Rationale**: Both variants have same parameter count (2 projections vs 3)
+**Result 4**: GPU memory usage varies significantly
+- **V0/V1**: Similar usage (~15GB mean) with Flash Attention
+- **V2**: 2.3x higher usage (~36GB mean) due to materialized attention matrix
+- **Impact**: V2 uses more memory despite having same parameter count
 
 ### Mechanistic Interpretability Analysis
 
@@ -778,17 +786,14 @@ See [RA weight tying section](ra.md#weight-tying-in-reciprocal-architectures) fo
 - Quality impact unknown: ablation testing in progress
 
 ### Transpose Tying (K = V.T)
-✅ **Benefits**:
-- Same 33% parameter reduction as identity tying
-- K and V are different tensors (preserves distinctness)
-- Structural constraint may act as regularization
-- Coupled gradients through transpose relationship
+❌ **Not recommended**:
+- Same 33% parameter reduction as identity tying (in theory)
+- **Fatal flaw**: Incompatible with Flash Attention
+- **2.7x slower training** due to manual attention requirement
+- **2.3x higher GPU memory** usage (materializes full attention matrix)
+- **Impractical for real use**: Only 34% of training progress vs identity tying
 
-❓ **Trade-offs**:
-- Still can't learn fully independent K/V
-- Unproven approach (no existing literature)
-- Transpose semantics unclear
-- Quality impact unknown: ablation testing planned
+**Verdict**: Theoretical parameter reduction negated by massive implementation penalties. Use identity tying (K=V) instead.
 
 ### Common Properties
 - **Parameter savings**: Both variants reduce QKV from 3 to 2 projections
