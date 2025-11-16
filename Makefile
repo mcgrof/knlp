@@ -235,6 +235,13 @@ train: check-config generate-config prepare-datasets
 	else \
 		GPT2_MAX_ITERS=$(MAX_ITERS) YES=$(YES) python3 scripts/run_test_matrix.py --config .config; \
 	fi
+	@if [ "$(CONFIG_KNLP_MECHINT)" = "y" ]; then \
+		echo ""; \
+		echo "============================================================"; \
+		echo "Training complete, running mechint analysis..."; \
+		echo "============================================================"; \
+		$(MAKE) mechint; \
+	fi
 
 # RA+MLA training targets
 .PHONY: train-ra-mla train-ra-mla-baseline train-ra-mla-full train-ra-mla-ablation
@@ -306,6 +313,13 @@ test-matrix: check-config prepare-datasets
 		GPT2_MAX_ITERS=$(MAX_ITERS) YES=$(YES) python3 scripts/run_test_matrix.py --config .config; \
 	fi
 	@$(MAKE) summary
+	@if [ "$(CONFIG_KNLP_MECHINT)" = "y" ]; then \
+		echo ""; \
+		echo "============================================================"; \
+		echo "Test matrix complete, running mechint analysis..."; \
+		echo "============================================================"; \
+		$(MAKE) mechint; \
+	fi
 
 # Estimate completion time for running test matrix
 estimate:
