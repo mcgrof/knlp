@@ -54,6 +54,7 @@ config GPT2_MODEL_NAME
 # Dataset selection
 choice
 	prompt "Training Dataset"
+	default GPT2_DATASET_TINYSTORIES if GPT2_KV_TYING
 	default GPT2_DATASET_SHAKESPEARE
 	help
 	  Select the dataset to use for training GPT-2.
@@ -79,6 +80,15 @@ config GPT2_DATASET_OPENWEBTEXT
 	  Large-scale web scrape dataset.
 	  Requires significant storage and preprocessing.
 
+config GPT2_DATASET_TINYSTORIES
+	bool "TinyStories"
+	help
+	  TinyStories dataset - synthetic stories for small models.
+	  High-quality GPT-3.5/GPT-4 generated stories with simple
+	  vocabulary suitable for smaller language models.
+	  See: https://github.com/Activated-AI/tinystories-quickstart
+	  Compact dataset good for ablation studies and testing.
+
 config GPT2_DATASET_CUSTOM
 	bool "Custom dataset"
 	help
@@ -92,6 +102,7 @@ config GPT2_DATASET_NAME
 	default "shakespeare" if GPT2_DATASET_SHAKESPEARE
 	default "finewebedu" if GPT2_DATASET_FINEWEBEDU
 	default "openwebtext" if GPT2_DATASET_OPENWEBTEXT
+	default "tinystories" if GPT2_DATASET_TINYSTORIES
 	default "custom" if GPT2_DATASET_CUSTOM
 
 config GPT2_CUSTOM_DATASET_PATH
@@ -268,6 +279,16 @@ config GPT2_WEIGHT_TYING
 	help
 	  Share weights between input embedding and output projection.
 	  Standard practice for GPT models.
+
+config GPT2_KV_TYING
+	bool "Use key-value tying in attention"
+	default n
+	help
+	  Tie key and value projections in attention (K = V).
+	  Instead of creating separate linear transformations for K and V,
+	  only create V and use it for both K and V.
+	  This reduces parameters in attention layers by ~33%.
+	  Attention computation proceeds normally after tying.
 
 config GPT2_DROPOUT
 	string "Dropout rate"
