@@ -10,7 +10,6 @@ import numpy as np
 import requests
 from pathlib import Path
 import tiktoken
-from datasets import load_dataset
 
 
 def download_shakespeare():
@@ -60,6 +59,8 @@ def download_shakespeare():
 
 def download_finewebedu():
     """Download and prepare FineWebEdu dataset."""
+    from datasets import load_dataset
+
     data_dir = Path("gpt2/data/finewebedu")
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -118,6 +119,8 @@ def download_finewebedu():
 
 def download_openwebtext():
     """Download and prepare OpenWebText dataset."""
+    from datasets import load_dataset
+
     data_dir = Path("gpt2/data/openwebtext")
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +176,8 @@ def download_openwebtext():
 
 def download_tinystories():
     """Download and prepare TinyStories dataset."""
+    from datasets import load_dataset
+
     data_dir = Path("gpt2/data/tinystories")
     data_dir.mkdir(parents=True, exist_ok=True)
 

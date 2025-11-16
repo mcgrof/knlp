@@ -11,9 +11,11 @@ CONFIG_MODEL="gpt2"
 CONFIG_GPT2_MODEL_124M=y
 CONFIG_GPT2_MODEL_NAME="gpt2"
 
-# Dataset - TinyStories (compact for ablation studies)
-CONFIG_GPT2_DATASET_TINYSTORIES=y
-CONFIG_GPT2_DATASET_NAME="tinystories"
+# Dataset - Shakespeare (compact and readily available)
+# Note: TinyStories requires 'datasets' package: pip install datasets
+# Using Shakespeare for immediate testing
+CONFIG_GPT2_DATASET_SHAKESPEARE=y
+CONFIG_GPT2_DATASET_NAME="shakespeare"
 
 # Model Architecture
 CONFIG_GPT2_BLOCK_SIZE=1024
