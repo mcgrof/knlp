@@ -282,6 +282,23 @@ def main():
 
     # Load config if available
     if config is not None:
+        # Apply hyperparameter auto-detection if enabled
+        from gpt2.hyperparams import apply_hyperparams
+
+        apply_hyperparams(config, verbose=True)
+
+        # Update args from config (after auto-detection)
+        # Only override if using default arg values (not explicitly set by user)
+        parser = create_argument_parser()
+        defaults = parser.parse_args([])  # Get defaults
+
+        if args.batch_size == defaults.batch_size:
+            args.batch_size = int(config.get("BATCH_SIZE", args.batch_size))
+        if args.gradient_accumulation == defaults.gradient_accumulation:
+            args.gradient_accumulation = int(
+                config.get("GPT2_GRADIENT_ACCUMULATION", args.gradient_accumulation)
+            )
+
         # Load checkpoint configuration from config.py
         if not hasattr(args, "save_checkpoint"):
             args.save_checkpoint = config.get("SAVE_CHECKPOINT") in ("y", True)

@@ -125,10 +125,15 @@ config GPT2_GRADIENT_ACCUMULATION
 	int "Gradient accumulation steps"
 	default 1
 	range 1 128
+	depends on HYPER_PARAM_MANUAL
 	help
 	  Number of gradient accumulation steps.
 	  Effective batch size = batch_size * gradient_accumulation_steps.
 	  Use higher values to simulate larger batch sizes on limited GPU memory.
+
+	  NOTE: Only used in MANUAL hyperparameter mode. In AUTO mode,
+	  gradient accumulation is automatically determined based on GPU
+	  characteristics to achieve the target effective batch size.
 
 config GPT2_EVAL_INTERVAL
 	int "Evaluation interval (steps)"
