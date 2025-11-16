@@ -14,15 +14,19 @@
 # - R-MLP + KV pruning provides memory benefits with minimal quality loss
 #
 # Ablation steps (full cowboy: learned gates + learned KV pruning from step 0):
-# V1: R-MLP baseline (R_ff=1152, 37.5%)
+# V1: R-MLP baseline (R_ff=1152, 37.5%, golden ratio)
 #     Geometric init: w_std=0.625, w_rec=0.375, α=1.0
-# V2: V1 + weight tying (up_low ↔ attn.c_proj)
-#     Tests explicit parameter sharing between attention and MLP
+# V2: R-MLP medium-large (R_ff=768, 25%) + weight tying
+#     Tests explicit parameter sharing (up_low ↔ attn.c_proj)
+#     R_ff=768 is max for weight tying (n_embd constraint)
+#     Direct A/B test with V5 (same R_ff, different tying)
+#     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
 # V3: R-MLP small (R_ff=256, 8.3%)
 #     Geometric init: w_std=0.917, w_rec=0.083, α=1.0
 # V4: R-MLP medium (R_ff=512, 16.7%)
 #     Geometric init: w_std=0.833, w_rec=0.167, α=1.0
 # V5: R-MLP medium-large (R_ff=768, 25%)
+#     Same dimensions as V2, but NO weight tying
 #     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
 # V6: R-MLP large (R_ff=1920, 62.5%, inverse golden)
 #     Geometric init: w_std=0.375, w_rec=0.625, α=1.0

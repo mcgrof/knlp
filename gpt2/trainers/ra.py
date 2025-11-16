@@ -182,11 +182,13 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
         elif step == "V2":
-            # R-MLP golden + explicit weight tying (up_low ↔ attn.c_proj)
-            # Tests if parameter sharing between attention and MLP helps
+            # R-MLP medium-large + explicit weight tying (up_low ↔ attn.c_proj)
+            # Direct A/B test with V5: same R_ff, but WITH weight tying
+            # R_ff=768 is max for weight tying (n_embd constraint)
+            # Geometric init: w_std=0.750, w_rec=0.250
             args.use_ra_v5 = False
             args.use_rmlp = True
-            args.rmlp_R_ff = 1152
+            args.rmlp_R_ff = 768  # Max for weight tying (same as V5 for comparison)
             args.rmlp_attn_scale_init = 1.0
             args.rmlp_tie_to_attn_proj = True  # Weight tying enabled
             # Learned KV pruning
