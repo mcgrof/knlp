@@ -382,13 +382,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if hasattr(self.args, "json_output") and self.args.json_output:
                 self.save_metrics_json(self.args.json_output)
 
-            # Save final model
+            # Save final model (step-specific for ablation runs)
             if getattr(self.args, "save_checkpoint", False):
-                final_path = os.path.join(
-                    getattr(self.args, "output_dir", "."), "final_model.pt"
-                )
+                output_dir = getattr(self.args, "output_dir", ".")
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Save with step-specific name for ablation runs
+                if self.ablation_step:
+                    final_path = os.path.join(
+                        output_dir, f"final_model_step{self.ablation_step}.pt"
+                    )
+                else:
+                    final_path = os.path.join(output_dir, "final_model.pt")
+
                 self.save_checkpoint(final_path)
-                print(f"Saved final model")
+                print(f"Saved final model: {final_path}")
 
     def _apply_adamprune_masking(self):
         """Apply AdamWPrune gradient masking."""
