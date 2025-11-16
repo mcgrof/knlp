@@ -1,6 +1,7 @@
 # GPT-2 KV Tying Ablation Study on AMD Radeon Pro W7900
-# Runs V0 (baseline) and V1 (KV tying) sequentially
-# Saves checkpoints for both models for introspection
+# Runs V0 (baseline), V1 (K=V), V2 (K=V.T) sequentially
+# Each test runs for 30 minutes (1800s)
+# Saves final models only for all 3 variants
 # Optimized for AMD Radeon Pro W7900 (48GB VRAM)
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -27,14 +28,15 @@ CONFIG_GPT2_WEIGHT_TYING=y
 
 # Vanilla Ablation Mode - ENABLED
 # V0: Baseline GPT-2 (no KV tying)
-# V1: GPT-2 with KV tying
+# V1: GPT-2 with KV tying (K = V)
+# V2: GPT-2 with K = V.T (key equals transpose of value)
 CONFIG_GPT2_VANILLA_ABLATION_MODE=y
-CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1"
+CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
 
 # Training Configuration
 CONFIG_GPT2_GRADIENT_ACCUMULATION=8
 CONFIG_GPT2_MAX_ITERS=10000
-CONFIG_GPT2_MAX_TIME=0
+CONFIG_GPT2_MAX_TIME=1800
 CONFIG_GPT2_EVAL_INTERVAL=100
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
@@ -87,9 +89,10 @@ CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 
 # Checkpointing - ENABLED for model introspection
-# Saves final models for V0 and V1 for later analysis
+# Saves final models for V0, V1, V2 for later analysis
+# No periodic checkpoints (interval set very high)
 CONFIG_SAVE_CHECKPOINT=y
-CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_CHECKPOINT_INTERVAL=999999
 
 # Memory Optimizations - ROCm specific
 CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
