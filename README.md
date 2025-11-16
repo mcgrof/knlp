@@ -75,16 +75,22 @@ baseline WITH compile). bitter7 WITH compile achieves 37.28 PPL
 - Model: GPT-2 (124M parameters)
 - Dataset: FineWebEdu
 - Target Sparsity: 50%
-- Hardware: NVIDIA B200 GPUs
+- Hardware: NVIDIA B200 GPUs (4x)
+- **Batch Size:** 128, Gradient Accumulation: 2 (eff. batch 256)
+- **Learning Rate:** 0.0006, Weight Decay: 0.1
+- **Consistent hyperparameters across ALL runs for fair comparison**
 
 ### Performance Results
 
-| Variant | compile | PPL | vs Base | GPU Mem | Efficiency |
-|---------|---------|-----|---------|---------|------------|
+| Variant | compile | PPL | vs Base | GPU Mem | Status |
+|---------|---------|-----|---------|---------|--------|
 | Movement Pruning | YES | 44.15 | - | 33306 MiB | Baseline |
-| **bitter8** | **NO** | **40.94** | **-7.3%** | N/A | - |
+| bitter8 | YES | 40.94 | -7.3% | N/A* | W&B |
 | **bitter7** | **NO** | **38.41** | **-13.0%** | **13945 MiB** | **WINNER** |
 | **bitter7** | **YES** | **37.28** | **-15.6%** | 44168 MiB | Best PPL |
+
+*bitter8 WITH compile has no GPU memory data; bitter8 WITHOUT
+compile was run with different hyperparameters (not comparable)
 
 ![Complete Comparison](adamwprune_complete_comparison.png)
 *Perplexity vs GPU Memory: bitter7 WITHOUT compile lands in the
@@ -92,16 +98,20 @@ winner zone (green) - 13% better PPL using 58% less memory than
 baseline. torch.compile adds +217% memory to bitter7!*
 
 **Key Findings**:
-- **Algorithm >> Optimization**: State-based pruning is the key,
-  not torch.compile
+- **Algorithm > Optimization**: bitter8 WITH compile (40.94 PPL)
+  beats baseline WITH compile (44.15 PPL), proving state-based
+  pruning algorithm is the key improvement
 - **Memory Efficiency Winner**: bitter7 WITHOUT compile achieves
-  38.41 PPL using only 13945 MiB (58% less than baseline!)
+  38.41 PPL using only 13945 MiB (58% less memory than baseline
+  while delivering 13% better perplexity)
 - **torch.compile Memory Cost**: Adds +217% memory to bitter7
-  (13945 → 44168 MiB)
+  (13945 → 44168 MiB) for only 3.0% additional PPL improvement
+  (38.41 → 37.28)
 - **Best Perplexity**: bitter7 WITH compile achieves 37.28 PPL
-  (15.6% better) using `exp_avg_sq^0.25`
-- **Deployment Choice**: Use bitter7 WITHOUT compile for
-  memory-constrained deployments
+  (15.6% better than baseline) using `exp_avg_sq^0.25`
+- **Deployment Recommendation**: Use bitter7 WITHOUT compile for
+  memory-constrained deployments; enable compile only if memory
+  budget allows
 
 ### AdamWPrune Bitter Variants Summary
 
