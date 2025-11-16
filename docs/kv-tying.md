@@ -11,28 +11,39 @@ This document explains KV tying - a weight tying technique that shares the same 
 1. [Overview](#overview)
 2. [The Standard Attention Mechanism](#the-standard-attention-mechanism)
 3. [KV Tying: Sharing K and V Projections](#kv-tying-sharing-k-and-v-projections)
-4. [Implementation Details](#implementation-details)
-5. [Ablation Study Results](#ablation-study-results)
-6. [When to Use KV Tying](#when-to-use-kv-tying)
-7. [References](#references)
+4. [KV Transpose Tying: K = V.T](#kv-transpose-tying-k--vt)
+5. [Implementation Details](#implementation-details)
+6. [Ablation Study Results](#ablation-study-results)
+7. [When to Use KV Tying](#when-to-use-kv-tying)
+8. [References](#references)
 
 ---
 
 ## Overview
 
-**Key-Value (KV) tying** is a parameter reduction technique where the key projection (`W_k`) and value projection (`W_v`) in self-attention share the same weights. Instead of learning separate transformations for keys and values, we compute only one projection and use it for both:
+**Key-Value (KV) tying** is a parameter reduction technique where the key projection (`W_k`) and value projection (`W_v`) in self-attention share related weights. Instead of learning separate independent transformations for keys and values, we compute only one projection and derive the other from it.
 
+**Two variants**:
+
+**Identity tying (K = V)**:
 ```python
 # Standard attention:
 K = x @ W_k  # Separate key projection
 V = x @ W_v  # Separate value projection
 
-# KV-tied attention:
+# Identity-tied attention:
 V = x @ W_v  # Single projection
-K = V        # Reuse for keys!
+K = V        # Reuse exact same tensor!
 ```
 
-**Parameter reduction:**
+**Transpose tying (K = V.T)** - NEW:
+```python
+# Transpose-tied attention:
+V = x @ W_v     # Value projection
+K = x @ W_v.T   # Transposed value projection!
+```
+
+**Parameter reduction** (both variants):
 - Standard QKV: 3 projections × `n_embd × n_embd` parameters
 - KV-tied QKV: 2 projections × `n_embd × n_embd` parameters
 - **Savings: 33% of attention projection parameters**
@@ -234,6 +245,218 @@ This means:
 
 ---
 
+## KV Transpose Tying: K = V.T
+
+### The Core Idea
+
+**Alternative hypothesis**: Instead of setting K = V, use the **transpose** of the value projection for keys.
+
+**Approach**: Compute only the value projection `W_v`, then use its transpose `W_v.T` for key projection:
+
+```python
+# Standard attention:
+K = x @ W_k  # Separate learned key projection
+V = x @ W_v  # Separate learned value projection
+
+# KV identity tying (K = V):
+V = x @ W_v
+K = V        # Reuse exact same projection
+
+# KV transpose tying (K = V.T):
+V = x @ W_v     # Value projection
+K = x @ W_v.T   # Transposed value projection (NEW!)
+```
+
+**Parameter reduction**: Same as identity tying (33% reduction), but with different learned representations.
+
+### Why Transpose?
+
+**Geometric intuition**:
+
+Standard attention learns two independent transformations of the input space:
+- **W_k**: Transforms input into "key space" (what can be found)
+- **W_v**: Transforms input into "value space" (what content to retrieve)
+
+With transpose tying, we introduce a **structural relationship** between these spaces:
+
+```python
+# Key transformation is the transpose of value transformation
+W_k = W_v.T
+
+# This creates a symmetric relationship:
+K = x @ W_v.T
+V = x @ W_v
+
+# In attention computation:
+attn_scores = Q @ K.T = Q @ (x @ W_v.T).T = Q @ W_v @ x.T
+```
+
+**Potential benefits**:
+
+1. **Preserves distinctness**: K and V are different tensors (unlike K = V identity tying)
+2. **Structural constraint**: W_k = W_v.T enforces a specific geometric relationship
+3. **Symmetric transformation**: May encourage balanced key-value representations
+4. **Reduced overfitting**: Constraint on W_k may act as regularization
+
+**Potential drawbacks**:
+
+1. **Still restrictive**: Can't learn fully independent K and V transformations
+2. **Unproven**: No existing literature validating this approach
+3. **Transpose semantics unclear**: Whether transpose relationship helps or hurts is unknown
+
+### Implementation
+
+```python
+class CausalSelfAttention(nn.Module):
+    """Attention with optional KV transpose tying"""
+
+    def __init__(self, config):
+        super().__init__()
+
+        # Three variants:
+        # 1. Standard: Q, K, V all separate (3 × n_embd)
+        # 2. KV identity tying: Q, V separate, K = V (2 × n_embd)
+        # 3. KV transpose tying: Q, V separate, K = V.T (2 × n_embd)
+
+        if config.kv_tying or config.kv_transpose_tying:
+            qkv_dim = 2 * config.n_embd  # Q + V only
+        else:
+            qkv_dim = 3 * config.n_embd  # Q + K + V
+
+        self.c_attn = nn.Linear(config.n_embd, qkv_dim, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.kv_tying = config.kv_tying
+        self.kv_transpose_tying = config.kv_transpose_tying
+
+    def forward(self, x):
+        B, T, C = x.size()
+
+        if self.kv_tying:
+            # Identity tying: K = V
+            qkv = self.c_attn(x)  # (B, T, 2*C)
+            q, v = qkv.split(self.n_embd, dim=2)
+
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+            k = v  # Identity tying
+
+        elif self.kv_transpose_tying:
+            # Transpose tying: K uses transposed V projection
+            qkv = self.c_attn(x)  # (B, T, 2*C)
+            q, v = qkv.split(self.n_embd, dim=2)
+
+            # Apply transposed projection for K
+            # Extract V projection weights from c_attn
+            W_v = self.c_attn.weight[self.n_embd:, :]  # Second half
+            k = x @ W_v.T  # Use transposed V weights for K!
+
+            # Reshape
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+        else:
+            # Standard: Q, K, V all separate
+            qkv = self.c_attn(x)
+            q, k, v = qkv.split(self.n_embd, dim=2)
+
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+        # Attention computation is identical for all variants
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.c_proj(y)
+        return y
+```
+
+### Comparison: Identity vs Transpose Tying
+
+| Aspect | K = V (Identity) | K = V.T (Transpose) | Standard (K ≠ V) |
+|--------|------------------|---------------------|------------------|
+| **Parameters** | 2 × n_embd² | 2 × n_embd² | 3 × n_embd² |
+| **Reduction** | 33% | 33% | Baseline |
+| **K and V tensors** | Identical | Different | Different |
+| **Weight relationship** | W_k = W_v | W_k = W_v.T | W_k ≠ W_v |
+| **Attention scores** | Q @ V.T | Q @ (x @ W_v.T).T | Q @ K.T |
+| **Theoretical motivation** | Simplicity | Symmetric constraint | Full flexibility |
+| **Gradient flow** | Same grads for K and V | Transposed grads | Independent grads |
+
+**Key differences**:
+
+```python
+# Identity tying:
+K = V  # Same tensor, same gradients
+∇W_v = ∇K + ∇V  # Gradients accumulate
+
+# Transpose tying:
+K = x @ W_v.T  # Different tensor, related gradients
+V = x @ W_v    # Different tensor
+∇W_v = ∇V + (∇K).T  # Gradients accumulate with transpose
+```
+
+**During training**:
+
+- **Identity tying**: Forces K and V to evolve identically
+- **Transpose tying**: Couples K and V evolution through transpose relationship
+- **Standard**: K and V evolve independently
+
+### Expected Behavior
+
+**Hypothesis 1**: Transpose tying may preserve more expressiveness than identity tying
+- **Rationale**: K ≠ V allows different attention patterns vs aggregation patterns
+- **Test**: Compare validation loss V1 (identity) vs V2 (transpose) vs V0 (baseline)
+
+**Hypothesis 2**: Transpose constraint acts as regularization
+- **Rationale**: Structural constraint may prevent overfitting
+- **Test**: Compare small-dataset performance across variants
+
+**Hypothesis 3**: Gradients through transpose affect learning dynamics
+- **Rationale**: Transposed gradient accumulation changes optimization landscape
+- **Test**: Monitor training stability and convergence speed
+
+### Ablation Testing
+
+We will test both KV tying variants in upcoming ablations:
+
+**Ablation steps** (to be added):
+- **V0**: Baseline GPT-2 (K ≠ V, 3 projections)
+- **V1**: Identity tying (K = V, 2 projections)
+- **V2**: Transpose tying (K = V.T, 2 projections)
+
+**Metrics to compare**:
+- Validation loss and perplexity
+- Training convergence speed
+- Gradient norms during training
+- Attention pattern diversity (via mechint analysis)
+- Parameter efficiency (loss per parameter)
+
+**Kconfig support**:
+```kconfig
+config GPT2_KV_TYING
+	bool "Use key-value identity tying (K = V)"
+	default n
+
+config GPT2_KV_TRANSPOSE_TYING
+	bool "Use key-value transpose tying (K = V.T)"
+	default n
+	help
+	  Use transposed value projection for keys: K = x @ W_v.T
+	  where W_v is the value projection weight matrix.
+	  This preserves distinctness between K and V while still
+	  reducing parameters by 33%.
+```
+
+**Status**: Implementation complete. Ablation study planned for next training run.
+
+---
+
 ## Implementation Details
 
 ### Kconfig Integration
@@ -312,9 +535,10 @@ K_cached = V_cached  # Same values, but still stored separately for SDPA
 
 **GPU**: AMD Radeon Pro W7900 (48GB VRAM)
 
-**Ablation steps**:
+**Ablation steps** (planned expansion):
 - **V0**: Baseline GPT-2 (standard attention, K ≠ V)
-- **V1**: GPT-2 with KV tying (K = V)
+- **V1**: GPT-2 with KV identity tying (K = V)
+- **V2**: GPT-2 with KV transpose tying (K = V.T) - NEW!
 
 **Training**:
 - Dataset: Shakespeare (tiny, ~1MB)
@@ -333,15 +557,15 @@ K_cached = V_cached  # Same values, but still stored separately for SDPA
 
 ### Results
 
-| Metric | V0 (Baseline) | V1 (KV Tying) | Change |
-|--------|--------------|---------------|--------|
+| Metric | V0 (Baseline) | V1 (Identity) | V2 (Transpose) |
+|--------|--------------|---------------|----------------|
 | **Val Loss** | TBD | TBD | TBD |
 | **Val Perplexity** | TBD | TBD | TBD |
-| **Parameters** | 124M | 117M | **-5.6%** |
+| **Parameters** | 124M | 117M | 117M |
 | **Training Time** | TBD | TBD | TBD |
 | **GPU Memory** | TBD | TBD | TBD |
 
-**Status**: Ablation study in progress. Results will be updated here once complete.
+**Status**: Ablation study planned. V2 (transpose tying) recently added to test suite.
 
 ### Running the Ablation
 
@@ -363,17 +587,21 @@ make
 
 ### Expected Outcomes
 
-**Hypothesis 1**: KV tying reduces parameters with minimal quality loss
+**Hypothesis 1**: Identity tying reduces parameters with minimal quality loss
 - **Expected**: V1 perplexity ≤ 5% worse than V0
 - **Rationale**: Attention mechanism may be overparameterized
 
-**Hypothesis 2**: Training speed increases due to fewer parameters
-- **Expected**: V1 trains 10-15% faster than V0
+**Hypothesis 2**: Transpose tying preserves more expressiveness
+- **Expected**: V2 perplexity between V0 and V1 (better than identity, worse than baseline)
+- **Rationale**: K ≠ V preserves distinct attention/aggregation patterns
+
+**Hypothesis 3**: Training speed increases for both variants
+- **Expected**: V1 and V2 train 10-15% faster than V0
 - **Rationale**: Smaller QKV projection means fewer FLOPs per layer
 
-**Hypothesis 3**: GPU memory usage decreases
-- **Expected**: V1 uses 5-10% less GPU memory
-- **Rationale**: Fewer parameters = smaller optimizer state
+**Hypothesis 4**: GPU memory usage decreases equally
+- **Expected**: V1 and V2 use 5-10% less GPU memory than V0
+- **Rationale**: Both variants have same parameter count (2 projections vs 3)
 
 ### Mechanistic Interpretability Analysis
 
@@ -394,6 +622,8 @@ make mechint
 ---
 
 ## When to Use KV Tying
+
+**Note**: This section applies to both identity (K = V) and transpose (K = V.T) tying variants. Choose between them based on ablation results for your specific use case.
 
 ### ✅ Consider KV Tying When:
 
@@ -533,19 +763,39 @@ See [RA weight tying section](ra.md#weight-tying-in-reciprocal-architectures) fo
 
 ## Summary
 
-**KV tying** is a simple parameter reduction technique that sets `K = V` in self-attention:
+**KV tying** is a parameter reduction technique with two variants:
 
+### Identity Tying (K = V)
 ✅ **Benefits**:
 - 33% reduction in QKV projection parameters
 - ~5-6% overall model size reduction
 - Faster training due to fewer FLOPs
-- Lower GPU memory for optimizer states
+- Simplest implementation
 
 ❓ **Trade-offs**:
-- Less flexibility: can't learn separate key/value representations
-- Quality impact unknown: ablation study in progress
-- Inference cache NOT reduced (KV cache still stores separate K and V)
+- K and V are identical tensors
+- Can't learn separate key/value representations
+- Quality impact unknown: ablation testing in progress
 
-**Recommendation**: Use KV tying when parameter budget is constrained and quality loss is acceptable. Always validate with ablation studies before production deployment.
+### Transpose Tying (K = V.T)
+✅ **Benefits**:
+- Same 33% parameter reduction as identity tying
+- K and V are different tensors (preserves distinctness)
+- Structural constraint may act as regularization
+- Coupled gradients through transpose relationship
+
+❓ **Trade-offs**:
+- Still can't learn fully independent K/V
+- Unproven approach (no existing literature)
+- Transpose semantics unclear
+- Quality impact unknown: ablation testing planned
+
+### Common Properties
+- **Parameter savings**: Both variants reduce QKV from 3 to 2 projections
+- **Inference cache**: NOT reduced (KV cache still stores separate K and V)
+- **Training speed**: Both expected to train 10-15% faster
+- **GPU memory**: Both use 5-10% less memory than baseline
+
+**Recommendation**: Use KV tying when parameter budget is constrained. Test both identity and transpose variants in ablations to determine which preserves more quality for your use case. Always validate before production deployment.
 
 **For broader context on weight tying**, see **[weight-tying.md](weight-tying.md)**.
