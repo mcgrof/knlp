@@ -438,5 +438,24 @@ config GPT2_ADAMWPRUNE_DEFAULT_VARIANT
 	  Default variant to use when not specified in command line.
 	  Options: bitter0 (original), bitter1 (magnitude), bitter2 (scale-aware).
 
+# Vanilla GPT-2 Ablation Studies
+config GPT2_VANILLA_ABLATION_MODE
+	bool "Enable vanilla GPT-2 ablation study mode"
+	default n
+	help
+	  Run ablation study for vanilla GPT-2 architectural variants.
+	  Tests different configurations like KV tying on/off.
+	  When enabled, runs multiple training jobs sequentially.
+
+config GPT2_VANILLA_ABLATION_STEPS
+	string "Vanilla ablation steps to run (comma-separated)"
+	default "V0,V1"
+	depends on GPT2_VANILLA_ABLATION_MODE
+	help
+	  Comma-separated list of vanilla ablation steps to run.
+	  V0: Baseline GPT-2 (no modifications)
+	  V1: GPT-2 with KV tying enabled
+	  Example: "V0,V1"
+
 endmenu
 
