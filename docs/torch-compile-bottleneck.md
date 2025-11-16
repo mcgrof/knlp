@@ -7,6 +7,10 @@ GPU profiling revealed that `torch.compile()` was responsible for the
 bitter8, bitter9). Disabling torch.compile() reduces memory pressure by
 **79.7%** and improves compute utilization by **16%**.
 
+![Before/After Comparison](../torch_compile_before_after.png)
+
+*Dramatic improvement in GPU utilization after disabling torch.compile()*
+
 ## The Investigation
 
 ### Initial Hypothesis (Wrong)
@@ -34,6 +38,10 @@ revealed the actual bottleneck.
 
 ### Memory Utilization
 
+![Grouped Comparison](../torch_compile_grouped.png)
+
+*All runs showing torch.compile() impact on GPU utilization*
+
 | Configuration | torch.compile() | Memory Util | Compute Util |
 |---------------|----------------|-------------|--------------|
 | **Baseline (magnitude)** | ✗ Disabled | **4.33%** | **71.44%** |
@@ -54,6 +62,11 @@ revealed the actual bottleneck.
 - Memory difference: Only **0.42%** (4.75% vs 4.33%)
 - Confirms bitter variants are NOT inherently memory-hungry
 - The state-based pruning algorithm itself is efficient
+
+![Bitter8 vs Baseline](../bitter8_vs_baseline.png)
+
+*Bitter8 state-based pruning adds only 0.42% memory overhead vs
+magnitude pruning when torch.compile() is disabled*
 
 ## Root Cause Analysis
 
@@ -109,6 +122,11 @@ compute.
 baseline!
 
 ## Performance Comparison
+
+![Comparison Chart](../torch_compile_comparison.png)
+
+*Side-by-side comparison showing dramatic improvement without
+torch.compile()*
 
 ### Before Fix (All with torch.compile())
 
