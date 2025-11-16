@@ -315,6 +315,7 @@ class RATrainer(BaseGPT2Trainer):
         config.block_size = self.args.block_size
         config.dropout = self.args.dropout
         config.bias = getattr(self.args, "bias", True)
+        config.kv_tying = getattr(self.args, "kv_tying", False)
 
         # Create base model
         model = GPT(config)
