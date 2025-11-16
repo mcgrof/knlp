@@ -27,11 +27,13 @@ This methodology enables rapid iteration on transformer architectures through re
 
 | Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |
 |-------|------------|---------|----------|---------------------|-------|
+| GPT-2 | 124M | FineWebEdu | 50% | **37.28 PPL** | **bitter7 (15.6% better)** |
 | ResNet-50 | 25.6M | CIFAR-100 | 50% | 74.56% | AdamWPrune tested |
 | ResNet-18 | 11.2M | CIFAR-10 | 70% | 90.66% | AdamWPrune tested |
 | LeNet-5 | 61.7K | MNIST | 70% | 98.9% | AdamWPrune tested |
 
-See GPT-2 results below for detailed B200 performance analysis
+GPT-2 bitter7 achieves 37.28 PPL (15.6% better than 44.15 PPL
+baseline) using state-based pruning. See detailed analysis below.
 
 ## GPT-2 Transformer Results (124M Parameters)
 
