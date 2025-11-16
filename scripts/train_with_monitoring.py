@@ -254,7 +254,7 @@ def run_training_with_monitoring(
 
             result = subprocess.run(
                 cmd,
-                cwd=model_dir,
+                cwd=parent_dir,
                 capture_output=False,  # Allow real-time output
                 text=True,
                 env=env,
