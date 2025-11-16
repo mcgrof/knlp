@@ -79,25 +79,29 @@ baseline WITH compile). bitter7 WITH compile achieves 37.28 PPL
 
 ### Performance Results
 
-| Variant | compile | PPL | vs Base | GPU Mem (avg) | Trade-off |
-|---------|---------|-----|---------|---------------|-----------|
+| Variant | compile | PPL | vs Base | GPU Mem | Efficiency |
+|---------|---------|-----|---------|---------|------------|
 | Movement Pruning | YES | 44.15 | - | 33306 MiB | Baseline |
-| **bitter8** | **NO** | **40.94** | **-7.3%** | N/A | Algorithm wins |
-| **bitter7** | **YES** | **37.28** | **-15.6%** | **44168 MiB** | **+32.6% mem** |
+| **bitter8** | **NO** | **40.94** | **-7.3%** | N/A | - |
+| **bitter7** | **NO** | **38.41** | **-13.0%** | **13945 MiB** | **WINNER** |
+| **bitter7** | **YES** | **37.28** | **-15.6%** | 44168 MiB | Best PPL |
 
-![GPU Memory Comparison](adamwprune_gpu_memory_avg.png)
-*GPU memory consumption: bitter7 uses 32.6% more memory (44168 vs
-33306 MiB average) but achieves 15.6% better perplexity.*
+![Complete Comparison](adamwprune_complete_comparison.png)
+*Perplexity vs GPU Memory: bitter7 WITHOUT compile lands in the
+winner zone (green) - 13% better PPL using 58% less memory than
+baseline. torch.compile adds +217% memory to bitter7!*
 
 **Key Findings**:
-- bitter8 WITHOUT compile beats baseline WITH compile (algorithm >
-  optimization)
-- bitter7 WITH compile achieves best perplexity (37.28) using
-  `exp_avg_sq^0.25`
-- **Memory trade-off**: bitter7 uses +32.6% GPU memory (~10.9 GB
-  more) for superior results
-- Fourth-root damping provides most stable pruning signal across
-  training
+- **Algorithm >> Optimization**: State-based pruning is the key,
+  not torch.compile
+- **Memory Efficiency Winner**: bitter7 WITHOUT compile achieves
+  38.41 PPL using only 13945 MiB (58% less than baseline!)
+- **torch.compile Memory Cost**: Adds +217% memory to bitter7
+  (13945 → 44168 MiB)
+- **Best Perplexity**: bitter7 WITH compile achieves 37.28 PPL
+  (15.6% better) using `exp_avg_sq^0.25`
+- **Deployment Choice**: Use bitter7 WITHOUT compile for
+  memory-constrained deployments
 
 ### AdamWPrune Bitter Variants Summary
 

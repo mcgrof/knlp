@@ -39,3 +39,5 @@ kconfiglib
 tqdm
 pyyaml
 requests
+
+kconfiglib
