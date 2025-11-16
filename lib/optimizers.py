@@ -745,7 +745,7 @@ def _kth_threshold_sampling(
 
 
 # Compiled helper for bitter9 (FP16 + fast rsqrt with kernel fusion)
-@torch.compile(mode="reduce-overhead", fullgraph=True)
+@torch.compile(mode="default")
 def _compute_bitter9_importance_compiled(
     w: torch.Tensor, v: torch.Tensor
 ) -> torch.Tensor:
@@ -753,6 +753,7 @@ def _compute_bitter9_importance_compiled(
 
     This provides additional speedup over bitter8 through kernel fusion.
     The double rsqrt and FP16 conversions are fused into optimized CUDA kernels.
+    Uses default compile mode to avoid CUDA graph memory pool issues.
     """
     w_fp16 = w.to(torch.float16)
     v_fp16 = v.to(torch.float16)
