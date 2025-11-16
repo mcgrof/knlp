@@ -4,9 +4,7 @@
 
 A collaborative transformer architecture research project applying kernel development methodologies - Kconfig-driven configuration, defconfig presets, Makefile-based builds, and rigorous testing - to ML experimentation and reproducibility.
 
-> **🚀 Reciprocal Attention (RA)**: Bidirectional attention mechanism with zero extra FLOPs or memory using single-SDPA-call folded architecture. Ongoing R&D on GPT-2 124M.
-
-> **📦 R-MLP + KV Pruning**: Current research focuses on attention-aware Reciprocal MLP with gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
+> **🚀 RA + R-MLP + KV Pruning**: Current research blends Reciprocal Attention (bidirectional attention with zero extra FLOPs using single-SDPA-call folded architecture) with attention-aware Reciprocal MLP and gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
 
 > **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating the hypothesis that Adam's gradient statistics enable superior pruning decisions. Tested on NVIDIA B200 GPUs with torch.compile.
 
