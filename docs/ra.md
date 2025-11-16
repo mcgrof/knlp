@@ -28,6 +28,66 @@ This document explains the architecture, geometric principles, and empirical dis
 
 Both use **learned gates** (w_std, w_rec) to balance standard vs reciprocal contributions.
 
+---
+
+## Current Research: R-MLP + Gate-Informed KV Pruning
+
+**Status:** Ablation study in progress (V1-V7)
+
+### R-MLP Architecture
+
+R-MLP receives attention context via **cheap vector add** (no extra GEMMs):
+
+```python
+# Standard pathway: Pure MLP view
+h_std = GELU(up_std(x))  # D → D_ff_std
+
+# Reciprocal pathway: Attention-enriched view
+mixed = x + α * attn_out  # Inject attention (α is learnable)
+h_rec = GELU(up_low(mixed))  # D → R_ff
+
+# Geometric folding with learned gates
+out = down([w_std*h_std | w_rec*h_rec])  # Concatenate and project
+```
+
+**Zero GEMM overhead:** Total compute = D → (D_ff_std + R_ff) = D → D_ff (same as baseline)
+
+### Ablation Study (V1-V7)
+
+Testing R-MLP with different configurations and gate-informed adaptive KV pruning:
+
+| Step | R_ff | Ratio | Description |
+|------|------|-------|-------------|
+| V1 | 1152 | 37.5% | Baseline (golden ratio) |
+| V2 | 768 | 25% | Weight tying (up_low ↔ attn.c_proj) |
+| V3 | 256 | 8.3% | Small reciprocal pathway |
+| V4 | 512 | 16.7% | Medium reciprocal pathway |
+| V5 | 768 | 25% | Same as V2, no tying (A/B test) |
+| V6 | 1920 | 62.5% | Large (inverse golden) |
+| V7 | 1152 | 37.5% | **Gate-informed adaptive KV pruning** |
+
+**V7 Innovation:** KV pruning ratio modulated by R-MLP gates:
+```python
+attention_confidence = w_rec × α  # How well R-MLP uses attention
+keep_ratio = base_ratio / (1 + β × confidence)
+
+# High confidence → prune more (R-MLP compensates)
+# Low confidence → prune less (preserve quality)
+```
+
+Creates feedback loop where R-MLP acts as learned attention compression mechanism.
+
+### Key Metrics Tracked
+
+- **w_std, w_rec, α**: Gate evolution (logged to W&B)
+- **Adaptive KV ratio**: Per-layer pruning aggressiveness (V7)
+- **Attention confidence**: w_rec × α signal strength
+- **Memory reduction**: Actual KV cache savings
+
+**Alpha initialization:** α=1.0 for all steps based on geometric analysis showing ||attn|| / ||x|| ≈ 0.05 (attention is naturally 5% of residual stream).
+
+---
+
 ### Key Innovation: Geometric Initialization
 
 Instead of arbitrary gate values (0.9/0.1), we initialize gates to match the **dimensional capacity** of each pathway:

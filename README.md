@@ -4,11 +4,9 @@ A Linux kernel hacker's journey into ML.
 
 **Transformer architecture research from a kernel developer's perspective**
 
-> **🎯 Latest: Reciprocal MLP Breakthrough (Nov 2025)**: R-MLP achieves **12% validation loss improvement** (3.75 → 3.32) over baseline GPT-2 by learning to use bidirectional information flow between attention and MLP layers. Reciprocal weights learned positive values (mean=+0.13), demonstrating the model discovered attention signals enhance MLP computation.
-
 > **🚀 Reciprocal Attention (RA)**: Production-ready bidirectional attention mechanism achieves **2.17% speedup** over baseline with zero extra FLOPs or memory. Single-SDPA-call folded architecture validated on GPT-2 124M.
 
-> **📦 KVSplice Compression**: Geometric KV cache compression using Spline→PCA learns data-specific manifold transformations. Targets 90% memory reduction (391 tokens × 16 dims) while maintaining quality. See [docs/ra.md](docs/ra.md) for technical details.
+> **📦 R-MLP + KV Pruning**: Current research focuses on attention-aware Reciprocal MLP with gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
 
 > **⚡ Legacy Pruning Results**: AdamWPrune achieves 20% training speedup and 8.2% GPU memory reduction on GPT-2, plus 74.56% accuracy on ResNet-50 at 50% sparsity.
 
@@ -29,24 +27,18 @@ knlp explores efficient transformer architectures through reciprocal mechanisms,
 
 ## GPT-2 Transformer Results (124M Parameters)
 
-### Latest: Reciprocal Architecture Results (Nov 2025)
+### Current Research: R-MLP + Gate-Informed KV Pruning
 
-**R-MLP (Reciprocal MLP) achieves 12% improvement over baseline**
-by learning bidirectional information flow between attention and
-MLP layers.
+Exploring attention-aware MLP with adaptive KV cache pruning based
+on learned gate signals. R-MLP injects attention via cheap vector
+add (x + α×attn), and gates (w_rec, α) modulate KV pruning ratio.
 
-| Architecture | Val Loss | Improvement | Key Innovation |
-|--------------|----------|-------------|----------------|
-| Baseline GPT-2 | 3.75 | - | Standard transformer |
-| RA only (V16) | 3.38 | 10% | Folded reciprocal attention |
-| RA + frozen R-MLP (V17) | 3.38 | 10% | No reciprocal learning |
-| **RA + R-MLP (V18)** | **3.32** | **12%** | **Learned reciprocal weights (+0.13 mean)** |
+**Ablation study (V1-V7)** tests:
+- Different R_ff dimensions (256 to 1920)
+- Weight tying between attention and MLP
+- Gate-informed adaptive pruning (V7)
 
-**Key finding**: R-MLP learned **positive** reciprocal weights,
-proving the model discovered attention information from previous
-layers enhances MLP computation. See
-[docs/ra.md](docs/ra.md#kvsplice-geometric-kv-cache-compression)
-for architecture details.
+See [docs/ra.md](docs/ra.md) for detailed architecture and results.
 
 **Training**: 2 hours per step, ~2065 iterations, 4× NVIDIA A10G
 (24GB). Minimal overhead (~4ms/iter). Production-ready stability.
@@ -350,7 +342,6 @@ Industry best practices recommend saving model checkpoints at peak accuracy, not
 - **[ResNet-50 Results](docs/resnet50.md)**: ImageNet-scale demonstration of superior memory efficiency
 - **[GPT-2 Results](docs/gpt2.md)**: Transformer validation confirming bitter lesson with 20% speedup
 - **[Key Test Results Archive](https://github.com/mcgrof/knlp-key-results)**: Complete test matrix results with all graphs and metrics
-  - [R-MLP Validation (Nov 2025)](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20251111_170325/FINDINGS.md): **12% improvement** over baseline GPT-2, reciprocal weights learned positive
   - [ResNet-50 AdamWSpam Base Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250913_200218/ANALYSIS.md): **74.56% at 50% sparsity** - state-of-the-art
   - [ResNet-50 CIFAR-100 Extended Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250908_190856/summary_report.txt): 74.54% at 50% sparsity with AdamW base
   - [ResNet-50 CIFAR-100 Initial Results](https://github.com/mcgrof/knlp-key-results/tree/master/key_results/test_matrix_results_20250908_121537/summary_report.txt): 72.38% at 70% sparsity with lowest GPU memory
