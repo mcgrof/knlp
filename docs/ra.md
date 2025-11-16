@@ -4,6 +4,8 @@
 
 This document explains the architecture, geometric principles, and empirical discoveries that led to the current RA and R-MLP designs.
 
+**Related documentation**: For weight tying concepts, see **[Weight Tying](weight-tying.md)** and **[KV Tying](kv-tying.md)**.
+
 ---
 
 ## Table of Contents
@@ -69,6 +71,7 @@ Testing R-MLP with different configurations to answer key questions:
 - V2: up_low shares weights with attn.c_proj (explicit coupling)
 - V5: up_low has independent weights (no coupling)
 - Same R_ff=768, direct A/B test
+- For weight tying concepts, see **[Weight Tying Documentation](weight-tying.md)**
 
 **Q4: Can R-MLP gates guide KV pruning?** (V7)
 - Use learned gates (w_rec × α) to modulate pruning aggressiveness
@@ -483,6 +486,11 @@ GPT2_MAX_TIME=600 make
 ---
 
 ## References
+
+### Related Documentation
+
+- **[Weight Tying](weight-tying.md)**: General weight tying concepts and parameter sharing
+- **[KV Tying](kv-tying.md)**: Key-value projection tying in attention layers
 
 ### Related Work
 
