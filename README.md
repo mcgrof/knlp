@@ -110,10 +110,6 @@ See consolidated defconfigs in `gpt2/defconfigs/`:
 All runs use torch.compile and identical hyperparameters for fair
 comparison (batch 128, grad_acc 8, lr 0.0006, effective batch 1024).
 
-![Fair Comparison](adamwprune_fair_comparison.png)
-*State-based pruning outperforms magnitude baseline. All runs WITH
-torch.compile using identical hyperparameters.*
-
 **Key Findings**:
 - **State-Based Pruning Superior**: bitter7 and bitter8 both
   outperform magnitude pruning baseline using Adam optimizer state
