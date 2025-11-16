@@ -200,11 +200,12 @@ def download_tinystories():
 
     # Process all stories
     all_tokens = []
+    eot_token = enc.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
     for i, example in enumerate(dataset):
         text = example["text"]
         tokens = enc.encode(text, allowed_special={"<|endoftext|>"})
         # Add end of text token between stories
-        tokens.append(enc.encode("<|endoftext|>")[0])
+        tokens.append(eot_token)
         all_tokens.extend(tokens)
 
         if (i + 1) % 100000 == 0:
