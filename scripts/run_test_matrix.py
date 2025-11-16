@@ -724,6 +724,23 @@ def get_test_matrix(config):
         ra_mla_ablation_steps if ra_mla_ablation_steps else None
     )
 
+    # Check for Vanilla GPT-2 ablation mode (KV tying, etc.)
+    vanilla_ablation_steps = []
+    vanilla_ablation_mode = config.get("GPT2_VANILLA_ABLATION_MODE")
+    if vanilla_ablation_mode == "y" or vanilla_ablation_mode is True:
+        # Parse the ablation steps string (e.g., "V0,V1")
+        ablation_steps_str = config.get("GPT2_VANILLA_ABLATION_STEPS", "")
+        if isinstance(ablation_steps_str, str):
+            ablation_steps_str = ablation_steps_str.strip('"')
+        if ablation_steps_str:
+            vanilla_ablation_steps = [
+                s.strip() for s in str(ablation_steps_str).split(",")
+            ]
+
+    matrix["vanilla_ablation_steps"] = (
+        vanilla_ablation_steps if vanilla_ablation_steps else None
+    )
+
     # Get sparsity levels from individual TEST_SPARSITY_* configs
     matrix["sparsity_levels"] = []
 
@@ -772,6 +789,9 @@ def generate_combinations(matrix):
     # Get RA_MLA ablation steps
     ra_mla_ablation_steps = matrix.get("ra_mla_ablation_steps", None)
 
+    # Get Vanilla GPT-2 ablation steps
+    vanilla_ablation_steps = matrix.get("vanilla_ablation_steps", None)
+
     for model, optimizer, pruning in itertools.product(
         matrix["models"], matrix["optimizers"], matrix["pruning_methods"]
     ):
@@ -783,8 +803,27 @@ def generate_combinations(matrix):
 
         # For no pruning, sparsity is always 0
         if pruning == "none":
+            # Check if we should generate Vanilla GPT-2 ablation steps
+            if vanilla_ablation_steps and model == "gpt2":
+                # Generate one combination for each vanilla ablation step (V0, V1, etc.)
+                for ablation_step in vanilla_ablation_steps:
+                    combo = {
+                        "model": model,
+                        "optimizer": optimizer,
+                        "pruning": pruning,
+                        "sparsity": "0.0",
+                        "vanilla_ablation_step": ablation_step,
+                    }
+                    # Include AdamWPrune variant if applicable
+                    if optimizer == "adamwprune":
+                        for variant in adamwprune_variants:
+                            combo_with_variant = combo.copy()
+                            combo_with_variant["variant"] = variant
+                            combinations.append(combo_with_variant)
+                    else:
+                        combinations.append(combo)
             # Check if we should generate RA_MLA ablation steps
-            if ra_mla_ablation_steps and model == "gpt2":
+            elif ra_mla_ablation_steps and model == "gpt2":
                 # Generate one combination for each ablation step
                 for ablation_step in ra_mla_ablation_steps:
                     combo = {
@@ -870,6 +909,7 @@ def run_single_test(
     sparsity = combination.get("sparsity", "0.0")
     variant = combination.get("variant", None)
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
+    vanilla_ablation_step = combination.get("vanilla_ablation_step", None)
 
     # Check if we should skip V0 baseline and use a reference run instead
     # Check environment first, then config (same pattern as GPT2_MAX_TIME)
@@ -891,7 +931,14 @@ def run_single_test(
 
     # Create test identifier including sparsity level, variant, and ablation step if applicable
     if pruning == "none":
-        if ra_mla_ablation_step:
+        if vanilla_ablation_step:
+            # Include vanilla ablation step in test ID (e.g., gpt2_adamw_vanilla_V0, gpt2_adamw_vanilla_V1)
+            test_id = f"{model}_{optimizer}_vanilla_{vanilla_ablation_step}"
+            if variant:
+                test_id = (
+                    f"{model}_{optimizer}_{variant}_vanilla_{vanilla_ablation_step}"
+                )
+        elif ra_mla_ablation_step:
             # Include RA_MLA ablation step in test ID (e.g., gpt2_adamwspam_ramla_step2)
             test_id = f"{model}_{optimizer}_ramla_step{ra_mla_ablation_step}"
             if variant:
@@ -922,6 +969,8 @@ def run_single_test(
         print(f"Optimizer: {optimizer}")
         if variant:
             print(f"Variant: {variant}")
+        if vanilla_ablation_step:
+            print(f"Vanilla Ablation Step: {vanilla_ablation_step}")
         if ra_mla_ablation_step:
             print(f"RA_MLA Ablation Step: {ra_mla_ablation_step}")
         print(f"Pruning: {pruning}")
@@ -1042,6 +1091,12 @@ def run_single_test(
         # Only the variant parameter is passed as a command-line argument.
         if variant:
             cmd.extend(["--adamwprune-variant", variant])
+
+    # Add vanilla ablation step parameter if specified
+    if vanilla_ablation_step:
+        cmd.extend(["--architecture", "vanilla"])
+        cmd.append("--ablation-mode")
+        cmd.extend(["--ablation-steps", vanilla_ablation_step])
 
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
