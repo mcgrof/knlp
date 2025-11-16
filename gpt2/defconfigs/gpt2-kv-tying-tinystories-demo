@@ -1,6 +1,6 @@
-# GPT-2 KV Tying Demo with TinyStories Dataset
-# Trains V0 (baseline), V1 (K=V), V2 (K=V.T) on TinyStories
-# Shorter 10-minute runs for quick demonstration
+# GPT-2 Baseline Demo with TinyStories Dataset
+# Simple baseline GPT-2 training on TinyStories (no ablations)
+# 10-minute run for quick demonstration
 # Uses TinyStories dataset (~2.1M stories, richer than Shakespeare)
 # Requires: pip install datasets
 # Optimized for AMD Radeon Pro W7900 (48GB VRAM)
@@ -23,12 +23,10 @@ CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_WEIGHT_TYING=y
 
-# Vanilla Ablation Mode - ENABLED for training
-# V0: Baseline GPT-2 (no KV tying)
-# V1: GPT-2 with KV tying (K = V)
-# V2: GPT-2 with K = V.T (key equals transpose of value)
-CONFIG_GPT2_VANILLA_ABLATION_MODE=y
-CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
+# Vanilla Ablation Mode - DISABLED (baseline only)
+# Just train standard GPT-2 baseline on TinyStories
+# CONFIG_GPT2_VANILLA_ABLATION_MODE is not set
+# CONFIG_GPT2_VANILLA_ABLATION_STEPS is not set
 
 # Training Configuration - Short demo runs (10 minutes each)
 # Increased gradient accumulation to maintain effective batch size
