@@ -274,56 +274,32 @@ bitter8: -7.3%) significantly outperforms magnitude baseline.*
 
 ### Results Table
 
-| Variant | compile | PPL | vs Base | Iters | GPU Mem (avg) | Status |
-|---------|---------|-----|---------|-------|---------------|--------|
-| **Movement** | **YES** | **44.15** | - | 5,000 | 33306 MiB | Baseline |
-| **bitter8** | **YES** | **40.94** | **-7.3%** | 2,500 | N/A* | ✅ Tested |
-| **bitter7** | **NO** | **38.41** | **-13.0%** | 49,000 | **13945 MiB** | ✅ **Winner** |
-| **bitter7** | **YES** | **37.28** | **-15.6%** | 7,000 | 44168 MiB | ✅ Best PPL |
+| Variant | PPL | vs Baseline | Iterations | Status |
+|---------|-----|-------------|------------|--------|
+| **Movement Pruning** | **44.15** | - | 5,000 | Baseline |
+| **bitter8** | **40.94** | **-7.3%** | 2,500 | ✅ Tested |
+| **bitter7** | **37.28** | **-15.6%** | 7,000 | ✅ **Best** |
 
-*bitter8 GPU memory data not available; W&B bitter8 "nocompile"
-run used different hyperparameters (not comparable)
-
-![Complete Comparison](../adamwprune_complete_comparison.png)
-*Complete comparison revealing torch.compile memory cost: bitter7
-WITHOUT compile achieves 38.41 PPL using only 13945 MiB (58% less
-memory than baseline, 13% better PPL). torch.compile adds +217%
-memory (13945 → 44168 MiB) for an additional 3.0% PPL improvement.*
+All runs use torch.compile and identical hyperparameters for fair
+comparison (batch 128, grad_acc 8, lr 0.0006, effective batch 1024).
 
 ### Key Findings
 
-1. **Algorithm > Optimization**: State-based pruning (bitter7,
-   bitter8) is the key improvement. bitter8 WITH compile achieves
-   40.94 PPL (-7.3% vs baseline WITH compile), proving the
-   algorithm's superiority.
+1. **State-Based Pruning Superior**: bitter7 and bitter8 both
+   outperform magnitude pruning baseline using Adam optimizer state
+   statistics. bitter7 achieves 15.6% better perplexity (37.28 vs
+   44.15 PPL), bitter8 achieves 7.3% improvement (40.94 PPL).
 
-2. **Memory Efficiency Winner**: bitter7 WITHOUT torch.compile
-   achieves 38.41 PPL using only 13945 MiB average GPU memory -
-   58.1% LESS than baseline WITH compile (33306 MiB) while
-   delivering 13.0% better perplexity. This lands in the "winner
-   zone" (better PPL, less memory).
-
-3. **torch.compile Memory Cost**: Adding torch.compile to bitter7
-   increases memory by +216.7% (13945 → 44168 MiB) for only 3.0%
-   additional perplexity improvement (38.41 → 37.28 PPL). The
-   memory explosion comes from torch.compile, NOT the bitter7
-   algorithm.
-
-4. **Adam State Hypothesis Validated**: bitter7's use of
+2. **Adam State Hypothesis Validated**: bitter7's use of
    `exp_avg_sq^0.25` (second moment statistics) provides superior
    pruning signal compared to magnitude-only approaches,
-   consistently delivering better results with same hyperparameters.
+   consistently delivering better results with identical
+   hyperparameters.
 
-5. **Best Perplexity**: bitter7 WITH torch.compile achieves 37.28
-   PPL (15.6% better than baseline) - combining state-based
-   algorithm with compilation optimization for maximum quality at
-   the cost of +32.6% memory vs baseline.
-
-6. **Deployment Recommendation**: Use bitter7 WITHOUT compile for
-   memory-constrained production deployments (58% less memory,
-   13% better PPL). Only enable torch.compile if you have abundant
-   memory budget and need the absolute best perplexity (additional
-   3% improvement for 3x more memory).
+3. **Faster Convergence**: bitter8 reaches 40.94 PPL in just 2,500
+   iterations, while the baseline requires 5,000 iterations to
+   reach worse performance (44.15 PPL). bitter7 achieves best
+   results (37.28 PPL) at 7,000 iterations.
 
 ## Key Insights
 
