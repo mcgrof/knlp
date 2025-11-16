@@ -4,7 +4,7 @@ A Linux kernel hacker's journey into ML.
 
 **Transformer architecture research from a kernel developer's perspective**
 
-> **🚀 Reciprocal Attention (RA)**: Production-ready bidirectional attention mechanism achieves **2.17% speedup** over baseline with zero extra FLOPs or memory. Single-SDPA-call folded architecture validated on GPT-2 124M.
+> **🚀 Reciprocal Attention (RA)**: Bidirectional attention mechanism with zero extra FLOPs or memory using single-SDPA-call folded architecture. Ongoing R&D on GPT-2 124M.
 
 > **📦 R-MLP + KV Pruning**: Current research focuses on attention-aware Reciprocal MLP with gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
 
