@@ -181,10 +181,13 @@ class BaseGPT2Trainer:
                     getattr(self.args, "tracker_run_name", None)
                     or f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 )
+
+                # Use resume='allow' to reuse existing run if present, avoiding duplicate warnings
                 trackio.init(
                     project=self.args.tracker_project,
                     config=vars(self.args),
                     name=run_name,
+                    resume="allow",
                 )
                 self.trackers.add("trackio")
                 print(
