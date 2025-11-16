@@ -1,0 +1,215 @@
+# SPDX-License-Identifier: MIT
+# Mechanistic Interpretability and Analysis Configuration
+
+menu "Mechanistic Interpretability Options"
+
+config KNLP_MECHINT
+	bool "Enable mechanistic interpretability tooling"
+	default n
+	help
+	  Enable optional tools used to run mechanistic interpretability passes,
+	  such as sparse KV feature-circuit analysis, binary masking over K/V
+	  channels, and ablation workflows. These options operate on trained
+	  model checkpoints or existing run directories.
+
+	  When enabled, you can run post-training analysis to identify sparse
+	  circuits that drive specific behaviors or metrics. This follows the
+	  approach from "Scaling Sparse Feature Circuit Finding" where binary
+	  masks are optimized over KV channels while keeping model weights frozen.
+
+	  These tools are intended for analysis runs, not production training.
+
+if KNLP_MECHINT
+
+choice
+	prompt "KV Feature-Circuit Analysis Mode"
+	default KNLP_MECHINT_KV_POSTTRAIN
+	help
+	  Choose how sparse KV feature-circuit analysis should be performed:
+
+	    1. Post-training ablation:
+	         Runs a fresh KV feature-mask optimization pass on a trained
+	         checkpoint, freezing core model weights and optimizing only the
+	         KV channel mask.
+
+	    2. Existing run directory:
+	         Instead of running the analysis, point this workflow to an
+	         existing directory of saved mechanistic interpretability runs.
+
+config KNLP_MECHINT_KV_POSTTRAIN
+	bool "Run post-training KV feature-mask ablation"
+	help
+	  Run a post-training mechanistic interpretability pass that optimizes
+	  a learnable binary mask over attention K/V channels. This identifies
+	  sparse feature circuits that drive a chosen metric or behavior.
+
+	  The analysis works by:
+	  1. Loading a trained checkpoint
+	  2. Freezing all model weights
+	  3. Injecting learnable KV feature masks into attention layers
+	  4. Optimizing masks to maintain target metric while maximizing sparsity
+	  5. Saving circuit visualizations and importance scores
+
+	  This follows the continuous sparsification approach from the Gemma 9B
+	  sparse circuit paper, using straight-through estimators for binary
+	  masks while allowing gradient flow for optimization.
+
+config KNLP_MECHINT_KV_FROM_RUNS
+	bool "Use existing mechanistic analysis run directory"
+	help
+	  Use a preexisting directory containing saved KV feature-mask runs,
+	  circuit logs, or ablation traces instead of launching a new analysis.
+
+	  This is useful for:
+	  - Visualizing previously completed analyses
+	  - Comparing circuits across multiple checkpoints
+	  - Generating figures without rerunning expensive optimization
+
+endchoice
+
+config KNLP_MECHINT_KV_RUN_DIR
+	string "Path to existing mechanistic analysis run directory"
+	depends on KNLP_MECHINT_KV_FROM_RUNS
+	default ""
+	help
+	  Path to a directory containing existing mechanistic interpretability
+	  analysis outputs. These may include learned masks, ablation logs, or
+	  per-layer feature-importance visualizations. Used when not performing
+	  a new post-training analysis.
+
+	  Example: /path/to/mechint_runs/gpt2_circuit_analysis_20240315
+
+config KNLP_MECHINT_KV_CHECKPOINT
+	string "Path to checkpoint for post-training analysis"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default ""
+	help
+	  Path to the trained model checkpoint (.pt file) to analyze. The
+	  checkpoint should contain model state_dict with attention layers.
+
+	  If empty, will attempt to use the best checkpoint from the most
+	  recent training run.
+
+config KNLP_MECHINT_KV_TARGET_METRIC
+	string "Metric to optimize during KV channel mask learning"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default "loss"
+	help
+	  The metric the KV feature-mask optimizer should attempt to minimize or
+	  maximize during post-training analysis.
+
+	  Options:
+	  - "loss": Minimize validation loss (standard)
+	  - "accuracy": Maximize accuracy (for classification tasks)
+	  - "perplexity": Minimize perplexity
+	  - "logit_diff": Maximize logit difference for specific behaviors
+	  - "kl_div": Minimize KL divergence from original model outputs
+
+	  The optimizer will find the sparsest KV channel mask that maintains
+	  this metric close to the original model's performance.
+
+config KNLP_MECHINT_KV_TARGET_SPARSITY
+	string "Target sparsity for KV feature mask"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default "0.95"
+	help
+	  Target fraction of KV channels to prune during circuit discovery.
+	  Higher values find sparser circuits but may sacrifice faithfulness.
+
+	  Examples:
+	  - 0.90: Keep 10% of channels (aggressive sparsity)
+	  - 0.95: Keep 5% of channels (very sparse, similar to Gemma 9B paper)
+	  - 0.80: Keep 20% of channels (more conservative)
+
+	  The continuous sparsification schedule will gradually increase
+	  sparsity toward this target while monitoring metric degradation.
+
+config KNLP_MECHINT_KV_STEPS
+	int "Steps for KV mask optimization"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default 500
+	help
+	  Number of optimization steps used to fit the sparse mask over attention
+	  K/V channels during the post-training analysis phase.
+
+	  Typical values:
+	  - 500: Quick analysis (5-10 minutes on single GPU)
+	  - 1000: Standard analysis (10-20 minutes)
+	  - 2000: Thorough analysis for publication-quality circuits
+
+config KNLP_MECHINT_KV_LR
+	string "Learning rate for mask optimization"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default "0.01"
+	help
+	  Learning rate for optimizing the KV feature mask logits. Higher
+	  values converge faster but may be less stable.
+
+	  Recommended:
+	  - 0.01: Standard for most models
+	  - 0.001: More stable for sensitive metrics
+	  - 0.1: Faster convergence for simple tasks
+
+config KNLP_MECHINT_KV_TEMP_SCHEDULE
+	string "Temperature schedule for mask relaxation"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default "linear:1.0:0.1"
+	help
+	  Temperature schedule for the sigmoid relaxation of binary masks.
+	  Format: <schedule>:<start_temp>:<end_temp>
+
+	  Options:
+	  - linear:1.0:0.1 - Linear decay from 1.0 to 0.1 (standard)
+	  - constant:0.5 - Fixed temperature (simpler)
+	  - exp:1.0:0.01 - Exponential decay (sharper transition)
+
+	  Lower temperatures make masks more binary (sharper), while higher
+	  temperatures keep them soft (more gradient flow during optimization).
+
+config KNLP_MECHINT_VISUALIZE_WANDB
+	bool "Enable W&B visualization for mechanistic analysis"
+	depends on KNLP_MECHINT
+	default y
+	help
+	  Log mechanistic interpretability results to Weights & Biases for
+	  interactive visualization and comparison.
+
+	  Logged artifacts include:
+	  - Per-layer KV channel importance heatmaps
+	  - Sparsity vs faithfulness curves
+	  - Circuit topology graphs
+	  - Attention pattern changes with/without pruning
+	  - Layer-wise feature importance rankings
+
+	  Visualizations are saved under the mechint/ namespace in W&B.
+
+config KNLP_MECHINT_SAVE_MASKS
+	bool "Save learned KV masks to disk"
+	depends on KNLP_MECHINT_KV_POSTTRAIN
+	default y
+	help
+	  Save the optimized KV feature masks to disk for later analysis or
+	  deployment. Masks are saved as .pt files containing the binary mask
+	  for each layer.
+
+	  Saved masks can be used to:
+	  - Deploy sparse models with reduced KV cache memory
+	  - Compare circuits across different checkpoints
+	  - Visualize feature importance distributions
+
+config KNLP_MECHINT_OUTPUT_DIR
+	string "Output directory for mechanistic analysis results"
+	depends on KNLP_MECHINT
+	default "mechint_analysis"
+	help
+	  Directory where mechanistic interpretability analysis results are
+	  saved. This includes:
+	  - Learned KV masks (.pt files)
+	  - Importance score logs (.json)
+	  - Visualization plots (.png)
+	  - Circuit topology diagrams (.svg)
+	  - Analysis summary reports (.md)
+
+endif # KNLP_MECHINT
+
+endmenu

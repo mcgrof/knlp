@@ -457,5 +457,7 @@ config GPT2_VANILLA_ABLATION_STEPS
 	  V1: GPT-2 with KV tying enabled
 	  Example: "V0,V1"
 
+source "gpt2/Kconfig.mechint"
+
 endmenu
 
