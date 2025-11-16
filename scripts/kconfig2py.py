@@ -164,6 +164,12 @@ def generate_python_config(config):
                     lines.append(f"    {key} = {repr(value)}")
             lines.append("    ")
 
+    # Add get() method for dictionary-like interface
+    lines.append("    def get(self, key, default=None):")
+    lines.append('        """Get configuration value by key (dictionary-like interface)."""')
+    lines.append("        return getattr(self, key, default)")
+    lines.append("")
+
     # Add convenience properties
     lines.append("    @property")
     lines.append("    def is_pruning_enabled(self):")
