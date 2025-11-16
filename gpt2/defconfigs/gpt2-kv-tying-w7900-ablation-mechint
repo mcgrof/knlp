@@ -31,7 +31,9 @@ CONFIG_GPT2_VANILLA_ABLATION_MODE=y
 CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
 
 # Training Configuration
-CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+# Increased gradient accumulation to maintain effective batch size
+# effective_batch_size = 20 * 16 = 320 (same as before: 40 * 8)
+CONFIG_GPT2_GRADIENT_ACCUMULATION=16
 CONFIG_GPT2_MAX_ITERS=10000
 CONFIG_GPT2_MAX_TIME=1800
 CONFIG_GPT2_EVAL_INTERVAL=100
@@ -48,9 +50,10 @@ CONFIG_GPT2_CUDNN_BENCHMARK=y
 CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
-# Batch size - optimized for W7900 (48GB VRAM) during training
+# Batch size - reduced for K=V.T (V2) memory requirements
+# V2 uses manual attention (materializes full attn matrix)
 # Analysis phase uses smaller batch automatically
-CONFIG_BATCH_SIZE=40
+CONFIG_BATCH_SIZE=20
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
