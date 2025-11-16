@@ -731,6 +731,25 @@ class RATrainer(BaseGPT2Trainer):
             if hasattr(self.args, "json_output") and self.args.json_output:
                 self.save_metrics_json(self.args.json_output)
 
+            # Finish experiment tracking gracefully before exit
+            if "trackio" in self.trackers:
+                try:
+                    import trackio
+
+                    trackio.finish()
+                    print("Trackio tracking finished")
+                except Exception as e:
+                    print(f"Warning: Failed to finish trackio: {e}")
+
+            if "wandb" in self.trackers:
+                try:
+                    import wandb
+
+                    wandb.finish()
+                    print("W&B tracking finished")
+                except Exception as e:
+                    print(f"Warning: Failed to finish wandb: {e}")
+
     def _analyze_ra_gates(self) -> Dict[str, float]:
         """Analyze RA gate values."""
         try:

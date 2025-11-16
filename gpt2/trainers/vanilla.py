@@ -421,6 +421,25 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.save_checkpoint(final_path)
                 print(f"Saved final model: {final_path}")
 
+            # Finish experiment tracking gracefully before exit
+            if "trackio" in self.trackers:
+                try:
+                    import trackio
+
+                    trackio.finish()
+                    print("Trackio tracking finished")
+                except Exception as e:
+                    print(f"Warning: Failed to finish trackio: {e}")
+
+            if "wandb" in self.trackers:
+                try:
+                    import wandb
+
+                    wandb.finish()
+                    print("W&B tracking finished")
+                except Exception as e:
+                    print(f"Warning: Failed to finish wandb: {e}")
+
     def _apply_adamprune_masking(self):
         """Apply AdamWPrune gradient masking."""
         if self.adamwprune_state is None:
