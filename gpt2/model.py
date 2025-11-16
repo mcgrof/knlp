@@ -39,7 +39,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        # if kv_tying is enabled, only create Q and V (K = V)
+        qkv_dim = 2 * config.n_embd if config.kv_tying else 3 * config.n_embd
+        self.c_attn = nn.Linear(config.n_embd, qkv_dim, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
@@ -48,6 +50,7 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+        self.kv_tying = config.kv_tying
         # flash attention support (PyTorch >= 2.0)
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
         if not self.flash:
@@ -68,16 +71,28 @@ class CausalSelfAttention(nn.Module):
         )  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
+        if self.kv_tying:
+            # when kv_tying is enabled, only compute Q and V, then set K = V
+            q, v = self.c_attn(x).split(self.n_embd, dim=2)
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            k = v  # tie K to V
+        else:
+            # standard attention with separate Q, K, V
+            q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+            k = k.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+                1, 2
+            )  # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -152,6 +167,7 @@ class GPTConfig:
     n_embd: int = 768  # embedding dimension
     dropout: float = 0.0  # dropout rate
     bias: bool = True  # use bias in Linear and LayerNorm
+    kv_tying: bool = False  # tie key and value projections (K = V)
 
     # Model size presets
     @classmethod
