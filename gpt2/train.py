@@ -65,13 +65,19 @@ def create_argument_parser():
         "--ablation-steps",
         type=str,
         default="V0,V1,V3",
-        help="Comma-separated ablation steps (e.g., 'V0,V1,V3,V7,V9')",
+        help="Comma-separated ablation steps (e.g., 'V0,V1' for vanilla, 'V0,V1,V3,V7,V9' for RA)",
     )
     parser.add_argument(
         "--ra-step",
         type=str,
         default="V1",
         help="Single RA ablation step to run (when not in ablation mode)",
+    )
+    parser.add_argument(
+        "--vanilla-step",
+        type=str,
+        default="V0",
+        help="Single vanilla ablation step to run (when not in ablation mode)",
     )
 
     # Model configuration
@@ -285,13 +291,34 @@ def main():
     # Dispatch to appropriate trainer
     if args.ablation_mode:
         # Ablation study mode
-        from gpt2.trainers import AblationCoordinator, RATrainer
+        if args.architecture == "vanilla":
+            # Vanilla ablation mode (KV tying, etc.)
+            from gpt2.trainers import VanillaGPT2Trainer
 
-        steps = [s.strip() for s in args.ablation_steps.split(",")]
-        print(f"Running ablation study with {len(steps)} steps: {steps}")
+            steps = [s.strip() for s in args.ablation_steps.split(",")]
+            print(f"Running vanilla ablation study with {len(steps)} steps: {steps}")
 
-        coordinator = AblationCoordinator(args, config, steps)
-        coordinator.run()
+            for step in steps:
+                print(f"\n{'=' * 80}")
+                print(f"Running ablation step: {step}")
+                print(f"{'=' * 80}\n")
+
+                trainer = VanillaGPT2Trainer(args, config, ablation_step=step)
+                if args.dry_run:
+                    trainer.run_dry_run()
+                else:
+                    trainer.train()
+
+                print(f"\nCompleted ablation step: {step}")
+        else:
+            # RA ablation mode
+            from gpt2.trainers import AblationCoordinator, RATrainer
+
+            steps = [s.strip() for s in args.ablation_steps.split(",")]
+            print(f"Running RA ablation study with {len(steps)} steps: {steps}")
+
+            coordinator = AblationCoordinator(args, config, steps)
+            coordinator.run()
 
     elif args.architecture == "unified-ra":
         # Single RA run
