@@ -70,25 +70,33 @@ endchoice
 config KNLP_MECHINT_KV_RUN_DIR
 	string "Path to existing mechanistic analysis run directory"
 	depends on KNLP_MECHINT_KV_FROM_RUNS
-	default ""
+	default "mechint_analysis_kv"
 	help
 	  Path to a directory containing existing mechanistic interpretability
 	  analysis outputs. These may include learned masks, ablation logs, or
 	  per-layer feature-importance visualizations. Used when not performing
 	  a new post-training analysis.
 
+	  Default: mechint_analysis_kv (the default output directory from
+	  a previous KNLP_MECHINT_KV_POSTTRAIN run)
+
 	  Example: /path/to/mechint_runs/gpt2_circuit_analysis_20240315
 
 config KNLP_MECHINT_KV_CHECKPOINT
-	string "Path to checkpoint for post-training analysis"
+	string "Path to checkpoint(s) for post-training analysis"
 	depends on KNLP_MECHINT_KV_POSTTRAIN
-	default ""
+	default "./output/final_model_step*.pt"
 	help
-	  Path to the trained model checkpoint (.pt file) to analyze. The
-	  checkpoint should contain model state_dict with attention layers.
+	  Path to trained model checkpoint(s) (.pt file) to analyze. Supports:
+	  - Single checkpoint: ./output/final_model.pt
+	  - Glob pattern: ./output/final_model_step*.pt (analyzes all matching)
+	  - Directory: ./output (analyzes all .pt files in directory)
 
-	  If empty, will attempt to use the best checkpoint from the most
-	  recent training run.
+	  For ablation runs, use glob pattern to analyze all steps:
+	    ./output/final_model_step*.pt
+	  This will discover and analyze stepV0, stepV1, etc. automatically.
+
+	  Each checkpoint should contain model state_dict with attention layers.
 
 config KNLP_MECHINT_KV_TARGET_METRIC
 	string "Metric to optimize during KV channel mask learning"
