@@ -173,6 +173,28 @@ prepare-gpt2-datasets:
 		python3 gpt2/prepare_data.py --dataset tinystories; \
 	fi
 
+# Run mechanistic interpretability analysis on trained models
+.PHONY: mechint
+mechint: check-config generate-config
+	@if [ "$(CONFIG_KNLP_MECHINT)" = "y" ]; then \
+		echo "Running mechanistic interpretability analysis..."; \
+		if [ -n "$(MODELS)" ]; then \
+			echo "Analyzing models from: $(MODELS)"; \
+			python3 scripts/run_mechint_analysis.py --checkpoint $(MODELS)/*.pt --dataset $(CONFIG_GPT2_DATASET_NAME); \
+		else \
+			echo "Analyzing models from: $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT)"; \
+			for model in $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT); do \
+				if [ -f "$$model" ]; then \
+					echo "  Analyzing $$model..."; \
+					python3 scripts/run_mechint_analysis.py --checkpoint "$$model" --dataset $(CONFIG_GPT2_DATASET_NAME); \
+				fi; \
+			done; \
+		fi; \
+	else \
+		echo "Mechanistic interpretability not enabled in config."; \
+		echo "Enable with: CONFIG_KNLP_MECHINT=y"; \
+	fi
+
 # Validate architecture with dry-run mode (RATIO ablation)
 # Quick check to catch configuration/architecture errors before GPU training
 .PHONY: check
