@@ -92,36 +92,35 @@ def patch_gpt2_with_ra_v5(
 def patch_gpt2_with_rmlp(
     model,
     expansion=4,
-    R_ff=64,
+    R_ff=1152,
     dropout=0.0,
-    use_mixer=False,
-    use_gates=False,
-    tie_up_low=False,
+    attn_scale_init=1.0,
+    tie_to_attn_proj=False,
 ):
     """
-    Replace all MLP modules in GPT-2 with Reciprocal MLP.
+    Replace all MLP modules in GPT-2 with Reciprocal MLP and wrap blocks
+    to enable attention injection.
 
     Args:
         model: GPT-2 model to patch
         expansion: MLP expansion ratio (default 4)
-        R_ff: Reciprocal rank for MLP (default 64)
+        R_ff: Reciprocal rank for MLP (default 1152, golden ratio)
         dropout: Dropout probability
-        use_mixer: Add 1x1 mixer on h_low
-        use_gates: Add per-token learned gates
-        tie_up_low: Tie up_low to transposed subset of up_std
+        attn_scale_init: Initial attention mixing scale α
+        tie_to_attn_proj: Tie up_low weights to attention c_proj
 
     Returns:
         Patched model
     """
+    from ra import AttentionAwareMLP_Block
+
     n_embd = model.config.n_embd
 
     print(f"Patching GPT-2 with R-MLP (R_ff={R_ff}, expansion={expansion})...")
-    if use_mixer:
-        print("  - Mixer enabled (1x1 linear on h_low)")
-    if use_gates:
-        print("  - Per-token gates enabled (discoverability)")
-    if tie_up_low:
-        print("  - Weight tying enabled (up_low tied to up_std^T)")
+    if tie_to_attn_proj:
+        print("  - Strong weight tying enabled (up_low ↔ attn.c_proj)")
+    print(f"  - Attention injection enabled (α_init={attn_scale_init})")
+    print(f"  - Learned geometric gates: w_std, w_rec")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
@@ -134,22 +133,38 @@ def patch_gpt2_with_rmlp(
             expansion=expansion,
             R_ff=R_ff,
             dropout=dropout,
-            use_mixer=use_mixer,
-            use_gates=use_gates,
-            tie_up_low=tie_up_low,
+            attn_scale_init=attn_scale_init,
+            tie_to_attn_proj=tie_to_attn_proj,
         )
 
         # Move to same device as original module
         device = next(original_mlp.parameters()).device
         reciprocal_mlp = reciprocal_mlp.to(device)
 
+        # Set up weight tying reference if requested
+        if tie_to_attn_proj:
+            # Link to attention output projection
+            reciprocal_mlp._attn_proj_ref = block.attn.c_proj
+
         # Replace the MLP module
         block.mlp = reciprocal_mlp
 
         print(f"  Layer {i}: Standard MLP → R-MLP")
 
+    # Wrap all blocks to enable attention-aware MLP forward
+    print("Wrapping blocks to enable attention injection...")
+    for i in range(len(model.transformer.h)):
+        original_block = model.transformer.h[i]
+        wrapped_block = AttentionAwareMLP_Block(original_block)
+
+        # Move to same device
+        device = next(original_block.parameters()).device
+        wrapped_block = wrapped_block.to(device)
+
+        model.transformer.h[i] = wrapped_block
+
     num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with R-MLP")
+    print(f"Successfully patched {num_layers} layers with R-MLP + attention injection")
 
     return model
 
@@ -160,11 +175,10 @@ def patch_gpt2_with_unified_ra_and_rmlp(
     attn_dropout=0.1,
     use_self_restart=False,
     mlp_expansion=4,
-    R_ff=64,
+    R_ff=1152,
     mlp_dropout=0.0,
-    use_mixer=False,
-    use_gates=False,
-    tie_up_low=False,
+    attn_scale_init=1.0,
+    tie_to_attn_proj=False,
     per_head_gates=False,
 ):
     """
@@ -176,11 +190,10 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         attn_dropout: Attention dropout probability
         use_self_restart: Enable self-restart for attention
         mlp_expansion: MLP expansion ratio (default 4)
-        R_ff: Reciprocal rank for MLP (default 64)
+        R_ff: Reciprocal rank for MLP (default 1152, golden ratio)
         mlp_dropout: MLP dropout probability
-        use_mixer: Add 1x1 mixer on h_low
-        use_gates: Add per-token learned gates
-        tie_up_low: Tie up_low to transposed subset of up_std
+        attn_scale_init: Initial attention mixing scale α
+        tie_to_attn_proj: Tie up_low weights to attention c_proj
         per_head_gates: Use per-head gates for RA (default False=per-layer)
 
     Returns:
@@ -195,15 +208,14 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         per_head_gates=per_head_gates,
     )
 
-    # Then patch MLP with R-MLP
+    # Then patch MLP with R-MLP (includes attention injection)
     model = patch_gpt2_with_rmlp(
         model,
         expansion=mlp_expansion,
         R_ff=R_ff,
         dropout=mlp_dropout,
-        use_mixer=use_mixer,
-        use_gates=use_gates,
-        tie_up_low=tie_up_low,
+        attn_scale_init=attn_scale_init,
+        tie_to_attn_proj=tie_to_attn_proj,
     )
 
     return model
@@ -253,15 +265,11 @@ def analyze_rmlp_gates(model):
     """
     w_std_values = []
     w_rec_values = []
-    gate_alpha_values = []
 
     for block in model.transformer.h:
         if hasattr(block.mlp, "w_std") and hasattr(block.mlp, "w_rec"):
             w_std_values.append(block.mlp.w_std.detach().cpu().item())
             w_rec_values.append(block.mlp.w_rec.detach().cpu().item())
-
-            if hasattr(block.mlp, "gate_alpha") and block.mlp.gate_alpha is not None:
-                gate_alpha_values.append(block.mlp.gate_alpha.detach().cpu().item())
 
     if not w_std_values:
         return None
@@ -271,7 +279,7 @@ def analyze_rmlp_gates(model):
     w_std_tensor = t.tensor(w_std_values)
     w_rec_tensor = t.tensor(w_rec_values)
 
-    stats = {
+    return {
         "w_std_mean": w_std_tensor.mean().item(),
         "w_std_min": w_std_tensor.min().item(),
         "w_std_max": w_std_tensor.max().item(),
@@ -281,19 +289,6 @@ def analyze_rmlp_gates(model):
         "w_rec_max": w_rec_tensor.max().item(),
         "w_rec_std": w_rec_tensor.std().item(),
     }
-
-    if gate_alpha_values:
-        gate_alpha_tensor = t.tensor(gate_alpha_values)
-        stats.update(
-            {
-                "gate_alpha_mean": gate_alpha_tensor.mean().item(),
-                "gate_alpha_min": gate_alpha_tensor.min().item(),
-                "gate_alpha_max": gate_alpha_tensor.max().item(),
-                "gate_alpha_std": gate_alpha_tensor.std().item(),
-            }
-        )
-
-    return stats
 
 
 def patch_gpt2_with_kv_pruning(
