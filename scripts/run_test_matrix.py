@@ -1011,6 +1011,10 @@ def run_single_test(
     if model == "gpt2" and "GPT2_DATASET_NAME" in config:
         cmd.extend(["--dataset", config["GPT2_DATASET_NAME"]])
 
+    # Add data directory for GPT-2
+    if model == "gpt2" and "DATA_DIR" in config:
+        cmd.extend(["--data-dir", config["DATA_DIR"]])
+
     # Add batch size for GPT-2 (CNN models get it from config.py)
     if model == "gpt2" and "BATCH_SIZE" in config:
         cmd.extend(["--batch-size", config["BATCH_SIZE"]])
