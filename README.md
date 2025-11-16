@@ -129,7 +129,35 @@ The "bitter" naming follows Rich Sutton's Bitter Lesson. See [docs/adamwprune_va
 **Tested Variants**:
 - **bitter7** (RECOMMENDED): State-based pruning using `|w| * (exp_avg_sq^0.25)` - achieves 37.28 PPL
 - **bitter8**: Bias-corrected gradient-magnitude using `|w| * sqrt(|m_hat|)` - achieves 40.94 PPL
+  - **m_hat** = bias-corrected momentum `exp_avg / (1 - beta1^t)` from Adam
+  - Accounts for initialization bias in early training steps
+  - Faster convergence (40.94 PPL at 2,500 iters vs baseline 44.15 at 5,000)
 - **bitter0-6**: Historical variants (magnitude, gradient-based, movement-based) - see docs
+
+**Why bitter7 Outperforms bitter8**: Beta2 (variance) vs Beta1 (momentum)
+
+<img src="docs/images/gradient_ema_comparison.png" width="600" alt="Gradient EMA Comparison">
+
+The choice of **beta2=0.999 (variance)** over **beta1=0.9 (momentum)** is
+crucial for stable pruning decisions:
+
+- **Raw gradients** (gray): Extremely noisy, unusable for pruning
+- **Beta1=0.9 (momentum)**: Tracks ~10 recent steps, still oscillates
+- **Beta2=0.999 (variance)**: Smoothest signal, accumulates over ~1000 steps
+
+Since pruning is **irreversible**, bitter7's use of long-term variance
+statistics (`exp_avg_sq^0.25`) provides more stable importance scores
+than bitter8's bias-corrected momentum. The fourth root further dampens
+noise, ensuring only parameters with consistently low activity are pruned.
+
+**Mathematical intuition**:
+```python
+# Momentum (beta1=0.9): tracks ~10 steps
+0.9^10 ≈ 0.35   # 35% weight from 10 steps ago
+
+# Variance (beta2=0.999): tracks ~1000 steps
+0.999^1000 ≈ 0.37   # 37% weight from 1000 steps ago!
+```
 
 **Next Steps**: Validate bitter7 on LeNet-5 and ResNet to extend beyond GPT-2 NLP domain
 
