@@ -1,8 +1,8 @@
-# knlp: Kernel Developer ❤️ Machine Learning
+# knlp: Kernel-Style Machine Learning
 
-A Linux kernel hacker's journey into ML.
+**Machine learning research using Linux kernel development workflows**
 
-**Transformer architecture research from a kernel developer's perspective**
+A collaborative transformer architecture research project applying kernel development methodologies - Kconfig-driven configuration, defconfig presets, Makefile-based builds, and rigorous testing - to ML experimentation and reproducibility.
 
 > **🚀 Reciprocal Attention (RA)**: Bidirectional attention mechanism with zero extra FLOPs or memory using single-SDPA-call folded architecture. Ongoing R&D on GPT-2 124M.
 
@@ -10,7 +10,18 @@ A Linux kernel hacker's journey into ML.
 
 > **⚡ Legacy Pruning Results**: AdamWPrune achieves 20% training speedup and 8.2% GPU memory reduction on GPT-2, plus 74.56% accuracy on ResNet-50 at 50% sparsity.
 
-knlp explores efficient transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization - bringing kernel development rigor to ML research.
+## Development Philosophy
+
+knlp applies **Linux kernel development practices** to machine learning research:
+
+- **Kconfig-based configuration**: Hierarchical menus for experiment management (like `make menuconfig`)
+- **Defconfig presets**: Reproducible configurations for different hardware and research goals
+- **Makefile-driven builds**: Consistent build and test workflows across models
+- **Documented decisions**: Every architectural choice explained in `docs/`
+- **Collaborative contributions**: Community-driven ideas and ablation studies
+- **Rigorous validation**: Automated test matrices before merging experiments
+
+This methodology enables rapid iteration on transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization while maintaining reproducibility and rigor.
 
 ## Key Results
 
@@ -398,14 +409,17 @@ Our GPT-2 experiments validate Rich Sutton's Bitter Lesson in neural network pru
 - Production models requiring absolute best perplexity
 - Small models where memory isn't a constraint
 
-## R&D Projects
+## Research Areas
 
-This project has evolved into a research platform for rapid prototyping and validation of training optimization ideas:
+knlp serves as a collaborative platform for ML architecture research:
 
-- **[AdamWPrune](docs/adding_state_pruning.md)**: Proven state-based pruning (documented above)
-- **[Reciprocal Attention (RA) and CoGA](docs/ra.md)**: Experimental attention mechanism R&D - see dedicated documentation
+- **[AdamWPrune](docs/adding_state_pruning.md)**: State-based pruning using optimizer dynamics
+- **[Reciprocal Attention (RA)](docs/ra.md)**: Bidirectional attention with geometric initialization
+- **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
+- **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
+- **[Mechanistic Interpretability](docs/mechint.md)**: Post-training circuit analysis
 
-The modular infrastructure enables fast iteration on new optimization techniques with automated testing and validation.
+The kernel-inspired infrastructure enables rapid prototyping, automated validation, and reproducible experiments across contributors.
 
 ## Pruning Method Insights
 
@@ -429,39 +443,68 @@ Movement pruning, introduced by Sanh et al. (2020) in "Movement Pruning: Adaptiv
 **Practical implications for GPT-2 comparisons:**
 Given that movement pruning is optimized for fine-tuning scenarios, our GPT-2 training-from-scratch experiments focus primarily on comparing **magnitude pruning vs. AdamWPrune's state-based pruning**, which are both designed for training from random initialization.
 
-## Features
+## Kernel-Inspired Features
 
-- **Multi-Model Support**: Extensible architecture supporting LeNet-5, ResNet-18, ResNet-50, and GPT-2
-- **GPU Optimization**: Optimized for modern GPUs with detailed monitoring
-- **Vendor-Agnostic GPU Monitoring**: Uses [gputop.py](https://github.com/mcgrof/gputop) for consistent memory tracking across NVIDIA/AMD/Intel GPUs
-- **TrackIO Integration**: Visualize training metrics with [TrackIO](https://github.com/mcgrof/trackio/tree/20250921-trackio-view) for beautiful GPU utilization graphs
-- **Multiple Pruning Methods**:
-  - **Magnitude pruning**: Conservative, suitable for training from scratch
-  - **Movement pruning**: Best for fine-tuning pre-trained models
-  - **State-based pruning (AdamWPrune)**: Novel approach using optimizer states
-- **Kconfig System**: Linux kernel-style configuration for experiment management
-- **Test Matrix**: Automated testing across optimizer and pruning combinations
-- **Comprehensive Visualization**: Memory timeline, efficiency analysis, and trade-off plots
+### Configuration Management (Kconfig)
+- **Hierarchical menus**: `make menuconfig` for interactive configuration
+- **Defconfig presets**: Hardware-specific configurations (W7900, A10G, A100)
+- **Dependency tracking**: Automatic validation of configuration combinations
+- **Documentation integration**: Help text links to detailed docs
 
-## Quick Start
+### Build System (Makefile)
+- **Unified interface**: `make defconfig-<name>; make` for all experiments
+- **Parallel execution**: Multi-GPU training with DDP support
+- **CLI overrides**: `MODELS=path`, `BASELINE=run_id`, `TIME=3600`
+- **Reproducible builds**: Deterministic configuration → experiment mapping
 
-### Configure with Experiment Tracking
+### Testing Infrastructure
+- **Test matrices**: Automated cross-product testing (optimizer × pruning × sparsity)
+- **Dry-run validation**: Catch architecture bugs before GPU training
+- **Continuation support**: Resume interrupted experiments (`make continue`)
+- **Result archiving**: Automated preservation of key results
+
+### Multi-Model Support
+- **Extensible architecture**: LeNet-5, ResNet-18, ResNet-50, GPT-2
+- **Vendor-agnostic monitoring**: [gputop.py](https://github.com/mcgrof/gputop) for NVIDIA/AMD/Intel
+- **TrackIO integration**: [TrackIO](https://github.com/mcgrof/trackio/tree/20250921-trackio-view) for GPU utilization visualization
+- **Multiple pruning methods**: Magnitude, movement, state-based (AdamWPrune)
+
+## Quick Start (Kernel-Style Workflow)
+
+### Step 1: Choose a Defconfig
 
 ```bash
-# Basic configuration (no tracking)
-make defconfig DEFCONFIG=gpt2-finewebedu-a10gx4
+# List available defconfigs
+make list-defconfigs
 
-# Enable local tracking with Trackio
-make defconfig DEFCONFIG=gpt2-finewebedu-a10gx4 TRACKER=trackio
+# Load a defconfig (kernel-style: make defconfig-<name>)
+make defconfig-gpt2-kv-tying-w7900-ablation
 
-# Enable cloud tracking with WandB (requires wandb login)
-make defconfig DEFCONFIG=gpt2-finewebedu-a10gx4 TRACKER=wandb
+# Or use interactive menu (kernel-style: make menuconfig)
+make menuconfig
+```
 
-# Enable both for comparison
-make defconfig DEFCONFIG=gpt2-finewebedu-a10gx4 TRACKER=wandb,trackio
+### Step 2: Run Experiment
 
-# Run training
-make
+```bash
+# Standard workflow
+make  # Runs training or test matrix based on config
+
+# With CLI overrides (like kernel KBUILD_*)
+make TRACKER=wandb  # Enable W&B tracking
+make TIME=3600      # Override max training time
+make MODELS=./checkpoints  # Use custom checkpoint dir
+```
+
+### Step 3: Analyze Results
+
+```bash
+# Generate visualizations
+make update-graphs
+
+# Run mechanistic interpretability analysis
+make defconfig-gpt2-kv-tying-w7900-ablation-mechint MODELS=./output
+make mechint
 ```
 
 **Auto-generated project names**: `{model}-{5char-checksum}` (e.g., `gpt2-a3f2c`, `resnet50-7b9d1`)
@@ -612,25 +655,67 @@ Based on ["Movement Pruning: Adaptive Sparsity by Fine-Tuning"](https://arxiv.or
 - AdamW: Ilya Loshchilov, Frank Hutter (2019). ["Decoupled Weight Decay Regularization" PDF](https://arxiv.org/abs/1711.05101) & ["Audio summary"](https://open.spotify.com/episode/0s5ywoHyIS1dTTT2cLxPpV?si=h335wbgGQ0m94FsBtX-SxQ)
 - Adafactor: Noam Shazeer, Mitchell Stern (2018). ["Adafactor: Adaptive Learning Rates with Sublinear Memory Cost" PDF](https://arxiv.org/abs/1804.04235) & ["Audio summary"](https://open.spotify.com/episode/46DNk6Mkfk4r6xikZPzYT1?si=UUkAQyQEQai-rQypL_lqgA)
 
+## Contributing
+
+knlp welcomes contributions following Linux kernel development practices:
+
+### Proposing Ideas
+1. **Open an issue** with your research idea or architectural proposal
+2. **Provide motivation**: Why this approach might work better
+3. **Reference prior work**: Links to papers or existing implementations
+4. **Suggest ablation**: How to test your hypothesis
+
+### Submitting Code
+1. **Create defconfig**: Add `defconfigs/<model>-<your-feature>`
+2. **Document thoroughly**: Add or update `docs/<feature>.md`
+3. **Run dry-run**: `make check` to validate architecture
+4. **Test ablation**: Run comparison vs baseline
+5. **Submit PR**: With results, graphs, and documentation
+
+### Code Style
+- **Python**: Follow existing style (black formatter)
+- **Kconfig**: Use kernel-style help text
+- **Commit messages**: Terse, technical, with "Generated-by" tags
+- **Documentation**: See `docs/*.md` for style examples
+
+### Current Contributors
+Ideas, architectures, and validation from:
+- Luis Chamberlain (maintainer)
+- Community contributors (ablation suggestions, architectural ideas)
+
 ## Citation
 
 If you use this work, please cite:
 
 ```bibtex
 @misc{knlp2025,
-  title        = {knlp: Kernel Developer Loves Machine Learning - Transformer Architecture Research},
-  author       = {Luis Chamberlain},
+  title        = {knlp: Kernel-Style Machine Learning - Transformer Architecture Research},
+  author       = {Luis Chamberlain and contributors},
   year         = {2025},
   howpublished = {\url{https://github.com/mcgrof/knlp}},
-  note         = {Reciprocal mechanisms, geometric compression, and state-based optimization}
+  note         = {Collaborative ML research using Linux kernel development workflows}
 }
 ```
 
 ## License
 
-All AdamWPrune code except scripts/kconfig is MIT licensed. The scripts/kconfig directory is GPLv2. The project as a whole is GPLv2. AI models generated by this project can be licensed as you choose.
+This project applies Linux kernel licensing practices:
+
+- **Code**: MIT license (except `scripts/kconfig` which is GPLv2 from Linux kernel)
+- **Overall project**: GPLv2 (kernel-style)
+- **Models**: AI models generated by this project can be licensed as you choose
+- **Documentation**: CC-BY-SA 4.0 (collaborative, share-alike)
 
 See LICENSE for details.
+
+## Acknowledgments
+
+This project draws inspiration from:
+- **Linux kernel development**: Kconfig, defconfigs, Makefile patterns, rigorous testing
+- **Andrej Karpathy's nanoGPT**: Clean implementation style, educational focus
+- **Community contributors**: Ablation study ideas, architectural suggestions, validation testing
+
+The kernel-style workflow enables collaborative ML research with the rigor and reproducibility of systems programming.
 
 ## RATIO: Hardware-Aware Golden Ratio Architecture
 
