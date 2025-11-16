@@ -52,19 +52,37 @@ out = down([w_std*h_std | w_rec*h_rec])  # Concatenate and project
 
 **Zero GEMM overhead:** Total compute = D → (D_ff_std + R_ff) = D → D_ff (same as baseline)
 
-### Ablation Study (V1-V7)
+### Ablation Study (V1-V7): Research Goals
 
-Testing R-MLP with different configurations and gate-informed adaptive KV pruning:
+Testing R-MLP with different configurations to answer key questions:
 
-| Step | R_ff | Ratio | Description |
-|------|------|-------|-------------|
-| V1 | 1152 | 37.5% | Baseline (golden ratio) |
-| V2 | 768 | 25% | Weight tying (up_low ↔ attn.c_proj) |
-| V3 | 256 | 8.3% | Small reciprocal pathway |
-| V4 | 512 | 16.7% | Medium reciprocal pathway |
-| V5 | 768 | 25% | Same as V2, no tying (A/B test) |
-| V6 | 1920 | 62.5% | Large (inverse golden) |
-| V7 | 1152 | 37.5% | **Gate-informed adaptive KV pruning** |
+**Q1: Does attention injection help?** (All steps)
+- Original R-MLP (cowboy) was just split MLP, nearly equivalent to baseline
+- Now testing: Does adding `x + α*attn` to reciprocal pathway improve quality?
+- Track α evolution: If it learns toward zero, attention injection doesn't help
+
+**Q2: What's the optimal reciprocal pathway size?** (V1, V3-V6)
+- Sweep R_ff from 8.3% to 62.5% of total MLP dimension
+- Find sweet spot between capacity and efficiency
+
+**Q3: Does weight tying between attention and MLP help?** (V2 vs V5)
+- V2: up_low shares weights with attn.c_proj (explicit coupling)
+- V5: up_low has independent weights (no coupling)
+- Same R_ff=768, direct A/B test
+
+**Q4: Can R-MLP gates guide KV pruning?** (V7)
+- Use learned gates (w_rec × α) to modulate pruning aggressiveness
+- Test if R-MLP can act as attention compression mechanism
+
+| Step | R_ff | Ratio | Configuration | Research Question |
+|------|------|-------|---------------|-------------------|
+| V1 | 1152 | 37.5% | Baseline (golden ratio) | Q1, Q2: Baseline performance |
+| V2 | 768 | 25% | Weight tying enabled | Q3: Does tying help? |
+| V3 | 256 | 8.3% | Small reciprocal | Q2: Is small enough? |
+| V4 | 512 | 16.7% | Medium reciprocal | Q2: Sweet spot? |
+| V5 | 768 | 25% | No tying (A/B vs V2) | Q3: Independent better? |
+| V6 | 1920 | 62.5% | Large (inverse golden) | Q2: Does large help? |
+| V7 | 1152 | 37.5% | Gate-informed pruning | Q4: Adaptive compression? |
 
 **V7 Innovation:** KV pruning ratio modulated by R-MLP gates:
 ```python
