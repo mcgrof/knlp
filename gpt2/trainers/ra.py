@@ -652,6 +652,18 @@ class RATrainer(BaseGPT2Trainer):
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
 
+            # Log final best perplexity as summary
+            if self.best_perplexity < float("inf"):
+                print(
+                    f"Best validation perplexity achieved: {self.best_perplexity:.2f}"
+                )
+                self.log_metrics(
+                    {
+                        "final/best_val_perplexity": self.best_perplexity,
+                        "final/best_val_loss": self.best_val_loss,
+                    }
+                )
+
             # Save final model checkpoint (unique per ablation step)
             if getattr(self.args, "save_checkpoint", False):
                 import os

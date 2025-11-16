@@ -344,6 +344,18 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
             )
 
+            # Log final best perplexity as summary
+            if self.best_perplexity < float("inf"):
+                print(
+                    f"Best validation perplexity achieved: {self.best_perplexity:.2f}"
+                )
+                self.log_metrics(
+                    {
+                        "final/best_val_perplexity": self.best_perplexity,
+                        "final/best_val_loss": self.best_val_loss,
+                    }
+                )
+
             # Save metrics to JSON if requested
             if hasattr(self.args, "json_output") and self.args.json_output:
                 self.save_metrics_json(self.args.json_output)
