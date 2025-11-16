@@ -5,10 +5,65 @@ mainmenu "AdamWPrune v1.0.0 - Neural Network Training Configuration"
 
 menu "General Configuration"
 
+choice
+	prompt "Hyperparameter configuration mode"
+	default HYPER_PARAM_AUTO
+	help
+	  Choose how batch size and gradient accumulation are determined.
+
+	  AUTO: Automatically detect GPU type, memory, and count to select
+	        optimal batch size and gradient accumulation. Recommended
+	        for portable configs that work across different hardware.
+
+	  MANUAL: Manually specify batch size and gradient accumulation.
+	          Use when you need explicit control over hyperparameters.
+
+config HYPER_PARAM_AUTO
+	bool "Auto-detect hyperparameters based on GPU"
+	help
+	  Automatically detect GPU type (B200, W7900, A10G, etc.), GPU
+	  memory, GPU count, and torch.compile() status to select optimal
+	  batch size and gradient accumulation steps.
+
+	  The system maintains a constant effective batch size (default 1024)
+	  by adjusting batch_size and gradient_accumulation based on:
+	  - GPU memory (larger GPU = larger batch)
+	  - GPU count (more GPUs = distribute across devices)
+	  - torch.compile status (compile = larger batches fit)
+
+	  This eliminates the need for GPU-specific defconfigs and prevents
+	  accidentally using wrong hyperparameters for your hardware.
+
+config HYPER_PARAM_MANUAL
+	bool "Manually specify hyperparameters"
+	help
+	  Manually configure batch size and gradient accumulation.
+	  Use this when you need explicit control over training hyperparameters.
+
+endchoice
+
+config TARGET_EFFECTIVE_BATCH
+	int "Target effective batch size (AUTO mode)"
+	default 1024
+	range 64 8192
+	depends on HYPER_PARAM_AUTO
+	help
+	  Target effective batch size for AUTO hyperparameter mode.
+	  Effective batch = batch_size × gradient_accumulation × num_gpus
+
+	  The system automatically adjusts batch_size and gradient_accumulation
+	  to achieve this target while maximizing GPU utilization.
+
+	  Common values:
+	    - 256: Small models, limited memory
+	    - 1024: GPT-2 124M (default)
+	    - 2048: Larger models with abundant memory
+
 config BATCH_SIZE
 	int "Batch size for training"
 	default 512
 	range 1 2048
+	depends on HYPER_PARAM_MANUAL
 	help
 	  Batch size for training. Larger batch sizes can speed up training
 	  but require more GPU memory. Default is 512.
