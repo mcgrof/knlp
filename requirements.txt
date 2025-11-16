@@ -32,6 +32,9 @@ isort
 flake8
 pytest
 
+# Configuration Management
+kconfiglib
+
 # Utilities
 tqdm
 pyyaml
