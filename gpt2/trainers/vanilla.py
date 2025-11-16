@@ -333,12 +333,19 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
                     self.log_metrics(metrics_to_log)
 
-                    # Save best model
+                    # Save best model (step-specific for ablation runs)
                     if losses["val"] < self.best_val_loss:
                         if getattr(self.args, "save_checkpoint", False):
-                            checkpoint_path = os.path.join(
-                                getattr(self.args, "output_dir", "."), "best_model.pt"
-                            )
+                            output_dir = getattr(self.args, "output_dir", ".")
+                            if self.ablation_step:
+                                checkpoint_path = os.path.join(
+                                    output_dir,
+                                    f"best_model_step{self.ablation_step}.pt",
+                                )
+                            else:
+                                checkpoint_path = os.path.join(
+                                    output_dir, "best_model.pt"
+                                )
                             self.save_checkpoint(checkpoint_path)
                             print(
                                 f"Saved best model (val_loss={self.best_val_loss:.4f})"
@@ -378,9 +385,17 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     }
                 )
 
-            # Save metrics to JSON if requested
+            # Save metrics to JSON if requested (step-specific for ablation runs)
             if hasattr(self.args, "json_output") and self.args.json_output:
-                self.save_metrics_json(self.args.json_output)
+                json_path = self.args.json_output
+                if self.ablation_step and not json_path.endswith(
+                    f"_{self.ablation_step}.json"
+                ):
+                    # Insert step suffix before .json extension
+                    json_path = json_path.replace(
+                        ".json", f"_step{self.ablation_step}.json"
+                    )
+                self.save_metrics_json(json_path)
 
             # Save final model (step-specific for ablation runs)
             if getattr(self.args, "save_checkpoint", False):
