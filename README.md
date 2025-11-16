@@ -68,14 +68,34 @@ hyperparameters. All runs WITH torch.compile on B200: bitter8
 achieves 40.94 PPL (7.3% better), bitter7 achieves 37.28 PPL
 (15.6% better) than movement pruning baseline (44.15 PPL).*
 
-**Test Configuration (NVIDIA B200 GPUs):**
+**Test Configuration:**
 - Model: GPT-2 (124M parameters)
 - Dataset: FineWebEdu
 - Target Sparsity: 50%
-- Hardware: NVIDIA B200 GPUs (4x)
-- **Batch Size:** 128, Gradient Accumulation: 2 (eff. batch 256)
 - **Learning Rate:** 0.0006, Weight Decay: 0.1
-- **Consistent hyperparameters across ALL runs for fair comparison**
+- **Hyperparameters:** AUTO mode (adapts to available hardware)
+
+### Hyperparameter Auto-Detection
+
+knlp now features **CONFIG_HYPER_PARAM_AUTO** which eliminates
+GPU-specific defconfigs and prevents hyperparameter mismatches.
+The system automatically detects GPU type, memory, count, and
+torch.compile status to select optimal batch size and gradient
+accumulation while maintaining constant effective batch size.
+
+Heuristics table includes B200 (batch=128), W7900 (batch=32),
+A10G (batch=8), and generic GPU configurations. The same defconfig
+works across all hardware without modification.
+
+Example:
+- **B200 (4x, 192GB)**: batch=128, grad_acc=8, eff_batch=1024
+- **W7900 (48GB)**: batch=32, grad_acc=32, eff_batch=1024
+- **A10G (24GB)**: batch=8, grad_acc=128, eff_batch=1024
+
+See consolidated defconfigs in `gpt2/defconfigs/`:
+- `gpt2-finewebedu-bitter7` (hardware-agnostic)
+- `gpt2-finewebedu-bitter8` (hardware-agnostic)
+- `gpt2-finewebedu-spam-vs-bitter7` (hardware-agnostic)
 
 ### Performance Results
 
