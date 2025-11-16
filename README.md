@@ -1,8 +1,8 @@
 # knlp: Kernel-Style Machine Learning
 
-**Machine learning research using Linux kernel development workflows**
+**Rapid prototyping and automation for open source ML R&D**
 
-A collaborative transformer architecture research project applying kernel development methodologies - Kconfig-driven configuration, defconfig presets, Makefile-based builds, and rigorous testing - to ML experimentation and reproducibility.
+Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
 > **🚀 RA + R-MLP + KV Pruning**: Current research blends Reciprocal Attention (bidirectional attention with zero extra FLOPs using single-SDPA-call folded architecture) with attention-aware Reciprocal MLP and gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
 
