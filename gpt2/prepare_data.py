@@ -171,6 +171,56 @@ def download_openwebtext():
     del dataset
 
 
+def download_tinystories():
+    """Download and prepare TinyStories dataset."""
+    data_dir = Path("gpt2/data/tinystories")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    train_file = data_dir / "train.bin"
+    val_file = data_dir / "val.bin"
+
+    # Check if already processed
+    if train_file.exists() and val_file.exists():
+        print(f"TinyStories dataset already exists at {data_dir}")
+        return
+
+    print("Downloading TinyStories dataset...")
+    # Load TinyStories dataset from HuggingFace
+    # Using the full dataset which is compact (~2.1M stories)
+    dataset = load_dataset("roneneldan/TinyStories", split="train")
+
+    print(f"Loaded {len(dataset):,} stories")
+    print("Tokenizing TinyStories dataset...")
+    enc = tiktoken.get_encoding("gpt2")
+
+    # Process all stories
+    all_tokens = []
+    for i, example in enumerate(dataset):
+        text = example["text"]
+        tokens = enc.encode(text, allowed_special={"<|endoftext|>"})
+        # Add end of text token between stories
+        tokens.append(enc.encode("<|endoftext|>")[0])
+        all_tokens.extend(tokens)
+
+        if (i + 1) % 100000 == 0:
+            print(f"Processed {i+1:,} stories, {len(all_tokens):,} tokens...")
+
+    print(f"Total tokens collected: {len(all_tokens):,}")
+
+    # Split into train and val (95/5 split - larger train set for small dataset)
+    split_idx = int(len(all_tokens) * 0.95)
+    train_data = np.array(all_tokens[:split_idx], dtype=np.uint16)
+    val_data = np.array(all_tokens[split_idx:], dtype=np.uint16)
+
+    # Save as binary files
+    train_data.tofile(train_file)
+    val_data.tofile(val_file)
+
+    print(f"Saved {len(train_data):,} training tokens to {train_file}")
+    print(f"Saved {len(val_data):,} validation tokens to {val_file}")
+    print("TinyStories dataset preparation complete!")
+
+
 def main():
     """Main function."""
     import argparse
@@ -180,7 +230,7 @@ def main():
         "--dataset",
         type=str,
         default="shakespeare",
-        choices=["shakespeare", "finewebedu", "openwebtext"],
+        choices=["shakespeare", "finewebedu", "openwebtext", "tinystories"],
         help="Dataset to prepare",
     )
 
@@ -192,6 +242,8 @@ def main():
         download_finewebedu()
     elif args.dataset == "openwebtext":
         download_openwebtext()
+    elif args.dataset == "tinystories":
+        download_tinystories()
     else:
         print(f"Unknown dataset: {args.dataset}")
         sys.exit(1)
