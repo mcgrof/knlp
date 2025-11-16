@@ -1,6 +1,7 @@
 # GPT-2 KV Tying Training + Mechanistic Interpretability on W7900
 # By default: Trains V0 (baseline), V1 (K=V), V2 (K=V.T) then analyzes
-# Each test runs for 30 minutes (1800s), saves final models
+# Each test runs for 60 minutes (3600s), saves final models
+# V2 is 2.7x slower (manual attn), so needs longer time + more frequent evals
 # Then runs mechint KV circuit analysis on all trained models
 # Override with MODEL=path to skip training and analyze existing models
 # Optimized for AMD Radeon Pro W7900 (48GB VRAM)
@@ -33,10 +34,11 @@ CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
 # Training Configuration
 # Increased gradient accumulation to maintain effective batch size
 # effective_batch_size = 20 * 16 = 320 (same as before: 40 * 8)
+# V2 (K=V.T) is 2.7x slower, so doubled time and reduced eval interval
 CONFIG_GPT2_GRADIENT_ACCUMULATION=16
 CONFIG_GPT2_MAX_ITERS=10000
-CONFIG_GPT2_MAX_TIME=1800
-CONFIG_GPT2_EVAL_INTERVAL=100
+CONFIG_GPT2_MAX_TIME=3600
+CONFIG_GPT2_EVAL_INTERVAL=25
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
 CONFIG_GPT2_WARMUP_STEPS=200
