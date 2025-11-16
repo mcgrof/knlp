@@ -540,6 +540,10 @@ make wandb-test
 make trackio-test
 ```
 
+For detailed tracker documentation including WandB API helper scripts
+for querying GPU metrics and comparing runs, see
+[docs/tracker.md](docs/tracker.md).
+
 ## Model-Specific Configurations
 
 ### ResNet-18 Presets
