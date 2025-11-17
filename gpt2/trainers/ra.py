@@ -354,6 +354,10 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_v_only = True
             args.kv_prune_k = 391
             args.kv_prune_recency = 64
+            # Override batch size: KV pruning computes full [B,H,T,T] attention
+            # matrices which use more memory than standard SDPA
+            args.batch_size = 32
+            args.gradient_accumulation = 32  # Maintain effective=1024
         elif step == "C1":
             # V-only pruning + light compression (64 → 32 dims)
             args.use_ra_v5 = False
@@ -364,6 +368,9 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_recency = 64
             args.kvsplice_enable = True
             args.kvsplice_k = 32
+            # Override batch size: KV pruning computes full [B,H,T,T] attention
+            args.batch_size = 32
+            args.gradient_accumulation = 32  # Maintain effective=1024
         elif step == "C2":
             # V-only pruning + medium compression (64 → 16 dims)
             args.use_ra_v5 = False
@@ -374,6 +381,9 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_recency = 64
             args.kvsplice_enable = True
             args.kvsplice_k = 16
+            # Override batch size: KV pruning computes full [B,H,T,T] attention
+            args.batch_size = 32
+            args.gradient_accumulation = 32  # Maintain effective=1024
         elif step == "C3":
             # V-only pruning + heavy compression (64 → 8 dims)
             args.use_ra_v5 = False
@@ -384,6 +394,9 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_recency = 64
             args.kvsplice_enable = True
             args.kvsplice_k = 8
+            # Override batch size: KV pruning computes full [B,H,T,T] attention
+            args.batch_size = 32
+            args.gradient_accumulation = 32  # Maintain effective=1024
         else:
             if hasattr(self, "master_process") and self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
