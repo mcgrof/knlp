@@ -96,14 +96,20 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     scale = model_cfg["scale_factor"]
     compile_on = getattr(config, "COMPILE_MODEL", "y") in ("y", True)
 
-    # CPU fallback
+    # CPU fallback - CPUs have much more RAM than GPUs (32-256GB typical)
+    # Use model scale factor: larger models need smaller batches
     if not gpu_info["has_gpu"]:
+        # Base CPU batch size (for GPT-2 baseline)
+        cpu_base_batch = 16
+        # Scale by model factor (LeNet-5 gets 64, ResNet-18 gets 32, etc.)
+        cpu_batch = int(cpu_base_batch * scale)
+        cpu_grad_acc = max(1, target_eff // cpu_batch)
         return {
-            "batch_size": 4,
-            "gradient_accumulation": target_eff // 4,
-            "effective_batch": target_eff,
+            "batch_size": cpu_batch,
+            "gradient_accumulation": cpu_grad_acc,
+            "effective_batch": cpu_batch * cpu_grad_acc,
             "gpu_info": gpu_info,
-            "rationale": "CPU mode: small batch (4), high grad_acc to reach target",
+            "rationale": f"CPU mode: batch={cpu_batch} (base={cpu_base_batch} × {scale}x scale), grad_acc={cpu_grad_acc}",
             "grad_acc_attr": model_cfg["grad_acc_attr"],
         }
 
