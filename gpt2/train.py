@@ -300,9 +300,14 @@ def main():
             )
 
         # Load checkpoint configuration from config.py
-        if not hasattr(args, "save_checkpoint"):
+        # Override argparse defaults with config values (argparse always creates the attr with store_true)
+        if (
+            not args.save_checkpoint
+        ):  # Only override if not explicitly set via --save-checkpoint flag
             args.save_checkpoint = config.get("SAVE_CHECKPOINT") in ("y", True)
-        if not hasattr(args, "checkpoint_interval"):
+        if (
+            args.checkpoint_interval == defaults.checkpoint_interval
+        ):  # Only override if using default
             args.checkpoint_interval = int(config.get("CHECKPOINT_INTERVAL", 1000))
 
     # Create output directory
