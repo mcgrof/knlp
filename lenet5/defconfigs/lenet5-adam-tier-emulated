@@ -40,8 +40,14 @@ CONFIG_ADAMW_WEIGHT_DECAY="0.0001"
 CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
+# Hyperparameter auto-detection (see docs/hyperparameter-auto-detection.md)
+# Auto-detects CPU and selects appropriate batch size
+# LeNet-5 uses 4x scale factor for larger batches when memory permits
+CONFIG_HYPER_PARAM_AUTO=y
+CONFIG_TARGET_EFFECTIVE_BATCH=512
+CONFIG_COMPILE_AUTO=y
+
 # Training configuration - CPU optimized
-CONFIG_BATCH_SIZE=128
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="0.001"
 CONFIG_NUM_WORKERS=4
@@ -65,9 +71,9 @@ CONFIG_TIERING_HBM_THRESHOLD="0.3"
 CONFIG_TIERING_CPU_THRESHOLD="0.5"
 CONFIG_TIERING_INFERENCE_BENCHMARK=n
 
-# Experiment Tracking
+# Experiment Tracking (W&B and Trackio)
 CONFIG_ENABLE_TRACKIO=y
-CONFIG_ENABLE_WANDB=n
+CONFIG_ENABLE_WANDB=y
 CONFIG_TRACKER_PROJECT="lenet5-tiering"
 
 # Logging
