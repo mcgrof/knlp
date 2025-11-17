@@ -310,9 +310,9 @@ class KVCircuitAnalyzer:
         def masked_forward(x, *args, **kwargs):
             # Pass mask to attention forward with current temperature
             # The mask will be applied inside the attention module
-            kwargs['mechint_kv_mask'] = mask
+            kwargs["mechint_kv_mask"] = mask
             # Get current temperature from analyzer
-            if hasattr(analyzer, '_current_temperature'):
+            if hasattr(analyzer, "_current_temperature"):
                 mask.cfg.temperature = analyzer._current_temperature
             return original_forward(x, *args, **kwargs)
 
@@ -325,11 +325,12 @@ class KVCircuitAnalyzer:
         Evaluate model with current masks.
 
         Returns:
-            Dictionary with metrics: loss, perplexity, sparsity, etc.
+            Dictionary with metrics: loss, perplexity, sparsity, bits_per_byte, etc.
         """
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        total_tokens = 0
 
         for batch_idx, (x, y) in enumerate(dataloader):
             if batch_idx >= self.config.eval_batches:
@@ -340,10 +341,18 @@ class KVCircuitAnalyzer:
             # Forward pass (with masks applied)
             logits, loss = self.model(x, y)
             total_loss += loss.item()
+            total_tokens += y.numel()  # Count tokens for BPB calculation
             num_batches += 1
 
         avg_loss = total_loss / max(num_batches, 1)
         perplexity = math.exp(min(avg_loss, 20))
+
+        # Compute bits-per-byte (BPB)
+        # Assume GPT-2 tokenizer compression: ~4.8 bytes/token
+        # BPB = log2(perplexity) = log(perplexity) / log(2)
+        bytes_per_token = 4.8
+        bits_per_token = avg_loss / math.log(2)  # Convert nats to bits
+        bits_per_byte = bits_per_token / bytes_per_token
 
         # Compute overall sparsity
         total_pruned = 0
@@ -358,6 +367,7 @@ class KVCircuitAnalyzer:
         return {
             "loss": avg_loss,
             "perplexity": perplexity,
+            "bits_per_byte": bits_per_byte,
             "sparsity": sparsity,
             "num_batches": num_batches,
         }
