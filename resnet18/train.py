@@ -23,6 +23,7 @@ import torchvision.transforms as transforms
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model import create_model
+from lib.experiment_tracker import ExperimentTracker
 
 # Import pruning methods and optimizers from parent
 from lib.magnitude_pruning import MagnitudePruning
@@ -515,6 +516,26 @@ def main():
             print(f"GPU monitoring not available: {e}")
             gpu_monitor = None
 
+    # Initialize experiment trackers (W&B and/or Trackio)
+    tracker_config = {
+        "optimizer": args.optimizer,
+        "pruning_method": args.pruning_method,
+        "target_sparsity": args.target_sparsity,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "epochs": args.epochs,
+        "model": "resnet18",
+        "dataset": "cifar10",
+    }
+
+    tracker = ExperimentTracker(
+        tracker_list=args.tracker,
+        project=args.tracker_project,
+        run_name=args.tracker_run_name,
+        config=tracker_config,
+        resume="allow",
+    )
+
     # Create model
     model = create_model(num_classes=10).to(device)
 
@@ -654,6 +675,20 @@ def main():
             f"Time: {epoch_time:.2f}s"
         )
 
+        # Log to experiment trackers
+        tracker.log(
+            {
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                "train_accuracy": train_acc,
+                "test_loss": test_loss,
+                "test_accuracy": test_acc,
+                "sparsity": sparsity,
+                "learning_rate": current_lr,
+                "epoch_time": epoch_time,
+            }
+        )
+
     # Training complete
     total_time = time.time() - start_time
 
@@ -791,6 +826,9 @@ def main():
 
         except Exception as e:
             print(f"Warning: Inference test failed: {e}")
+
+    # Finish experiment tracking
+    tracker.finish()
 
 
 if __name__ == "__main__":
