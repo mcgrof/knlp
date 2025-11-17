@@ -219,14 +219,15 @@ elif args.pruning_method == "state":
     pass
 
 # Define relevant variables for the ML task (read from config or use defaults)
-batch_size = config.get("BATCH_SIZE", 512) if config else 512
+# Note: Config values are strings from Kconfig, need type conversion
+batch_size = int(config.get("BATCH_SIZE", 512)) if config else 512
 num_classes = 10
-learning_rate = config.get("LEARNING_RATE", 0.001) if config else 0.001
-num_epochs = config.get("NUM_EPOCHS", 10) if config else 10
-num_workers = config.get("NUM_WORKERS", 16) if config else 16
+learning_rate = float(config.get("LEARNING_RATE", 0.001)) if config else 0.001
+num_epochs = int(config.get("NUM_EPOCHS", 10)) if config else 10
+num_workers = int(config.get("NUM_WORKERS", 16)) if config else 16
 
 # Time-based training (0 = no limit, train for NUM_EPOCHS)
-max_time = getattr(config, "LENET5_MAX_TIME", 0) if config else 0
+max_time = int(getattr(config, "LENET5_MAX_TIME", 0)) if config else 0
 if max_time > 0:
     print(f"Time-based training enabled: max {max_time}s ({max_time/60:.1f} minutes)")
 else:
