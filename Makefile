@@ -244,6 +244,18 @@ check: FORCE
 	fi; \
 	echo "============================================================"
 
+# Test PyTorch torch.compile() functionality
+.PHONY: test-pytorch-compile
+test-pytorch-compile:
+	@echo "Testing torch.compile() with ResNet18 + FP16..."
+	@python3 tests/test_torch_compile.py
+
+# Test PyTorch Flash Attention functionality
+.PHONY: test-pytorch-flash-attention
+test-pytorch-flash-attention:
+	@echo "Testing Flash Attention with FP16..."
+	@python3 tests/test_flash_attention.py
+
 # Train with current configuration (using test matrix framework for consistency)
 # Automatically detects and uses multiple GPUs with DDP when available
 train: check-config generate-config prepare-datasets
@@ -679,6 +691,10 @@ help:
 	@echo "Setup targets:"
 	@echo "  deps              - Install Python dependencies from requirements.txt"
 	@echo ""
+	@echo "PyTorch validation targets:"
+	@echo "  test-pytorch-compile        - Test torch.compile() with ResNet18 + FP16"
+	@echo "  test-pytorch-flash-attention - Test Flash Attention with FP16"
+	@echo ""
 	@echo "Cleaning targets:"
 	@echo "  clean             - Clean build artifacts only (keeps config & datasets)"
 	@echo "  mrproper          - Clean everything except datasets (removes config)"
@@ -740,6 +756,7 @@ help:
 .PHONY: all memory-comparison update-graphs analyze-gpu clean mrproper data-clean help \
         train test-matrix test-matrix-yaml test-matrix-dry-run test-rerun summary \
         test-all-optimizers test-all-pruning test-everything deps \
+        test-pytorch-compile test-pytorch-flash-attention \
         parallel parallel-4 parallel-8 parallel-16 parallel-rerun continue estimate
 
 # Dependencies installation target
