@@ -647,27 +647,18 @@ def get_test_matrix(config):
         matrix["pruning_methods"].append("state")
 
     # Check for AdamWPrune variants (bitter0-9)
+    # Support all model types: GPT2, LENET5, RESNET18, RESNET50
     adamwprune_variants = []
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER0") == "y":
-        adamwprune_variants.append("bitter0")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER1") == "y":
-        adamwprune_variants.append("bitter1")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER2") == "y":
-        adamwprune_variants.append("bitter2")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER3") == "y":
-        adamwprune_variants.append("bitter3")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER4") == "y":
-        adamwprune_variants.append("bitter4")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER5") == "y":
-        adamwprune_variants.append("bitter5")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER6") == "y":
-        adamwprune_variants.append("bitter6")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER7") == "y":
-        adamwprune_variants.append("bitter7")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER8") == "y":
-        adamwprune_variants.append("bitter8")
-    if config.get("GPT2_ADAMWPRUNE_VARIANT_BITTER9") == "y":
-        adamwprune_variants.append("bitter9")
+    model_prefixes = ["GPT2", "LENET5", "RESNET18", "RESNET50"]
+
+    for variant_num in range(10):
+        variant_name = f"bitter{variant_num}"
+        for prefix in model_prefixes:
+            config_key = f"{prefix}_ADAMWPRUNE_VARIANT_BITTER{variant_num}"
+            if config.get(config_key) == "y":
+                if variant_name not in adamwprune_variants:
+                    adamwprune_variants.append(variant_name)
+                break  # Found it for this variant, no need to check other prefixes
 
     # Store variants in matrix for later use
     matrix["adamwprune_variants"] = (
