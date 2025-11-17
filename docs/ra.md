@@ -66,24 +66,19 @@ self.skip_rec = nn.Parameter(torch.tensor(-3.0))  # rec DISABLED (sigmoid≈0.05
 self.skip_std_attn = nn.Parameter(torch.tensor(2.0))        # std enabled
 self.skip_lowrank_attn = nn.Parameter(torch.tensor(-3.0))   # lowrank DISABLED
 
-# Forward with conditional computation
-use_std = torch.sigmoid(self.skip_std) > 0.5
-use_rec = torch.sigmoid(self.skip_rec) > 0.5
+# Forward with soft gating (gradient flow maintained)
+gate_std = torch.sigmoid(self.skip_std)  # 0 to 1
+gate_rec = torch.sigmoid(self.skip_rec)  # 0 to 1
 
-if use_std:
-    h_std = GELU(up_std(x))  # Compute only if needed
-else:
-    h_std = torch.zeros(..., requires_grad=False)  # NO BACKWARD GRAPH!
+# Always compute (for gradient flow during training)
+h_std = GELU(up_std(x))
+h_rec = GELU(up_rec(x))
 
-if use_rec:
-    h_rec = GELU(up_rec(x))  # Compute only if needed
-else:
-    h_rec = torch.zeros(..., requires_grad=False)  # NO BACKWARD GRAPH!
-
-out = down([w_std*h_std | w_rec*h_rec])  # Same shape, but sparse
+# Soft gate modulation (gradient flows even when gate ≈ 0.05)
+out = down([w_std*gate_std*h_std | w_rec*gate_rec*h_rec])
 ```
 
-**Critical:** `requires_grad=False` means PyTorch won't build backward graph for skipped pathways. Saves both forward and backward GEMMs.
+**Critical:** Soft gating (multiply by sigmoid value 0-1) instead of hard skipping ensures gradients always flow. Even when gate=-3.0 (sigmoid≈0.05), model computes pathway but weighted near-zero, allowing learning whether increasing gate would help. Binary decisions (`use_std = gate > 0.5`) used only for logging, not forward pass.
 
 ### GEMM and Backprop Cost Analysis
 
@@ -102,27 +97,31 @@ Backward pass (automatic differentiation):
 
 **Total per layer: 7 GEMMs** (3 forward + 4 backward)
 
-**Skip std pathway:** Save 3 GEMMs (1 forward + 2 backward) - **BIGGER GEMM!**
-**Skip rec pathway:** Save 3 GEMMs (1 forward + 2 backward)
-**Skip both:** Save 6 GEMMs, keep only down projection
+**Soft gating trade-off (training):**
+- Always computes all GEMMs (no compute savings during training)
+- But gradients flow even when gate ≈ 0, enabling learning
+- Near-zero gate weights → near-zero contribution → minimal quality impact
+- Model learns which pathways help, adjusts gates accordingly
 
-**12-layer GPT-2 with 50% sparsity:**
-- Total R-MLP GEMMs: 12 × 7 = 84
-- With 6 layers skipping something: Save ~36 GEMMs per training step
-- MLP is ~40% of total training time
-- **Expected speedup: 20-30% faster training** → more steps in 2-hour budget
+**Future optimization (inference):**
+After training, can convert learned soft gates to hard binary for inference:
+- If `gate < threshold` (e.g., 0.1): hard skip → save 3 GEMMs
+- If `gate > threshold`: compute normally
+- Potential 20-30% inference speedup if gates learned sparse patterns
 
-### Memory Savings Enable Larger Batches
+### Memory Considerations
 
-Skipped pathways don't store activations for backward pass:
+**Training (soft gating):**
+- All pathways computed → full activation storage required
+- No memory savings during training (activations needed for backward pass)
+- Trade-off accepted to enable gradient-based learning of gate values
 
-Per layer saved (if skip both up projections):
+**Inference (potential hard skipping):**
+Per layer saved if hard-skip both up projections:
 - `h_std`: [B, T, D_ff_std] = [8, 1024, 1920] ≈ 60MB
 - `h_rec`: [B, T, R_ff] = [8, 1024, 1152] ≈ 36MB
-- `mixed`: [B, T, D] = [8, 1024, 768] ≈ 24MB
-- **Total: ~120MB per layer**
-
-6 layers with sparsity: **~720MB saved** → increase batch 8→10 (25% bigger) → better gradient estimates → faster convergence
+- **Total: ~96MB per layer**
+- With 6 sparse layers: ~576MB saved → larger batch sizes possible
 
 ### Why This Solves RA Degradation
 
