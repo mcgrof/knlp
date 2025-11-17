@@ -153,7 +153,11 @@ def analyze_accuracy_details(metrics_file):
             test_accs = []
             for epoch in epochs:
                 # Look for various possible field names
-                acc = epoch.get("test_accuracy") or epoch.get("accuracy") or epoch.get("val_accuracy")
+                acc = (
+                    epoch.get("test_accuracy")
+                    or epoch.get("accuracy")
+                    or epoch.get("val_accuracy")
+                )
                 if acc is not None:
                     test_accs.append(acc)
 
@@ -255,7 +259,11 @@ def update_all_results(results_dir):
             model = parts[0]
             optimizer = parts[1]
             pruning = parts[2]
-            sparsity = int(parts[3]) / 100.0
+            # Handle "none" sparsity (no pruning)
+            if parts[3] == "none":
+                sparsity = 0.0
+            else:
+                sparsity = int(parts[3]) / 100.0
         else:
             continue
 
