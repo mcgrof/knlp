@@ -72,7 +72,7 @@ class CausalSelfAttention(nn.Module):
                 ),
             )
 
-    def forward(self, x):
+    def forward(self, x, mechint_kv_mask=None):
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
@@ -111,6 +111,10 @@ class CausalSelfAttention(nn.Module):
             v = v.view(B, T, self.n_head, C // self.n_head).transpose(
                 1, 2
             )  # (B, nh, T, hs)
+
+        # Apply mechint KV masks if provided (for circuit discovery)
+        if mechint_kv_mask is not None:
+            k, v, _ = mechint_kv_mask(k, v)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash and not self.k_eq_vt:
