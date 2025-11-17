@@ -1,0 +1,105 @@
+# ResNet-50 Test Matrix: Magnitude vs State-Based (bitter0) vs bitter7
+# Run with: make defconfig-resnet50-baseline-vs-bitter7 && make
+#
+# Runs 3 tests:
+#   1. AdamW + magnitude pruning @ 70% (baseline)
+#   2. AdamWPrune + state pruning (bitter0) @ 70% (original algorithm)
+#   3. AdamWPrune + state pruning (bitter7) @ 70% (variance-based)
+#
+# Pure time-based training - what people care about is wall-clock performance
+# All tests get identical 7200s (2 hour) compute budget:
+# - Training stops at 7200s regardless of epochs/iterations
+# - 70% sparsity
+# - batch_size=128
+# - lr=0.001
+# - Graphs show results by step for fair comparison
+#
+# Expected results:
+# - Magnitude baseline: ~70-72% accuracy (from previous experiments)
+# - bitter0: ~72-73% accuracy (from previous experiments)
+# - bitter7: >= 72-73% accuracy (expected improvement)
+
+# Model configuration
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_RESNET50=y
+CONFIG_RESNET50_DATASET_CIFAR100=y
+CONFIG_RESNET50_NUM_CLASSES=100
+
+# Enable test matrix mode for 3-way comparison
+CONFIG_TEST_MATRIX_MODE=y
+
+# Optimizers: AdamW and AdamWPrune
+CONFIG_OPTIMIZER_MODE_MULTIPLE=y
+CONFIG_OPTIMIZER_ENABLE_ADAMW=y
+CONFIG_OPTIMIZER_ENABLE_ADAMWPRUNE=y
+CONFIG_TEST_OPTIMIZER_ENABLED_ADAMW=y
+CONFIG_TEST_OPTIMIZER_ENABLED_ADAMWPRUNE=y
+# Disable other optimizers
+CONFIG_OPTIMIZER_ENABLE_SGD=n
+CONFIG_OPTIMIZER_ENABLE_ADAM=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWADV=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWSPAM=n
+
+# AdamW settings (for baseline)
+CONFIG_ADAMW_WEIGHT_DECAY="0.01"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+
+# AdamWPrune settings
+CONFIG_ADAMWPRUNE_BASE_ADAMWSPAM=y
+CONFIG_ADAMWPRUNE_ENABLE_PRUNING=y
+CONFIG_ADAMWPRUNE_BETA1="0.9"
+CONFIG_ADAMWPRUNE_BETA2="0.999"
+CONFIG_ADAMWPRUNE_WEIGHT_DECAY="0.01"
+CONFIG_ADAMWPRUNE_AMSGRAD=n
+CONFIG_ADAMWPRUNE_WARMUP_STEPS=100
+CONFIG_ADAMWPRUNE_FREQUENCY=50
+
+# bitter variants: Enable bitter0 and bitter7
+CONFIG_RESNET50_ADAMWPRUNE_VARIANT_BITTER0=y
+CONFIG_RESNET50_ADAMWPRUNE_VARIANT_BITTER7=y
+CONFIG_RESNET50_ADAMWPRUNE_DEFAULT_VARIANT="bitter0"
+
+# Pruning: Test magnitude and state at 70%
+CONFIG_PRUNING_MODE_MULTIPLE=y
+CONFIG_PRUNING_ENABLE_MAGNITUDE=y
+CONFIG_PRUNING_ENABLE_STATE=y
+CONFIG_PRUNING_ENABLED_MAGNITUDE=y
+CONFIG_PRUNING_ENABLED_STATE=y
+CONFIG_TEST_PRUNING_MAGNITUDE=y
+CONFIG_TEST_PRUNING_METHODS="magnitude"
+
+# Sparsity: Only 70% for this comparison
+CONFIG_TARGET_SPARSITY="0.7"
+CONFIG_SPARSITY_ENABLE_50=n
+CONFIG_SPARSITY_ENABLE_70=y
+CONFIG_SPARSITY_ENABLE_90=n
+CONFIG_SPARSITY_ENABLE_95=n
+CONFIG_SPARSITY_ENABLE_99=n
+CONFIG_TEST_SPARSITY_70=y
+
+# Training configuration
+CONFIG_BATCH_SIZE=128
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=16
+
+# Pure time-based training: 7200s (2 hours)
+# Epochs set absurdly high - time is the ONLY stopping criterion
+# Graphs show results by step for apples-to-apples comparison
+CONFIG_NUM_EPOCHS=1000
+CONFIG_RESNET50_MAX_TIME=7200
+
+# Performance features
+CONFIG_MIXED_PRECISION=y
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+
+# Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="resnet50-baseline-vs-bitter7"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_PRUNING_LOG_SPARSITY=y
+CONFIG_VERBOSE=y
