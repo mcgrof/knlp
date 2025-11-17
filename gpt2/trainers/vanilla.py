@@ -375,11 +375,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             total_time = time.time() - self.training_start_time
             print(f"\nTraining complete! Total time: {total_time/60:.2f} minutes")
 
-            # Final evaluation
-            final_losses = self.estimate_loss()
-            print(
-                f"Final: train {final_losses['train']:.4f}, val {final_losses['val']:.4f}"
-            )
+            # Skip final evaluation (estimate_loss() can hang after training ends)
+            # Final metrics are already logged from the last evaluation during training
 
             # Log final best perplexity as summary
             if self.best_perplexity < float("inf"):
@@ -406,7 +403,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.save_metrics_json(json_path)
 
             # Save final model (step-specific for ablation runs)
-            if getattr(self.args, "save_checkpoint", False):
+            save_checkpoint_val = getattr(self.args, "save_checkpoint", False)
+            if save_checkpoint_val:
                 output_dir = getattr(self.args, "output_dir", ".")
                 os.makedirs(output_dir, exist_ok=True)
 

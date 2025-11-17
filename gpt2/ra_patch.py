@@ -27,7 +27,7 @@ sys.path.insert(0, parent_dir)
 
 import torch
 import torch.nn as nn
-from ra import ReciprocalAttention, ReciprocalMLP
+from scripts.prototypes.ra import ReciprocalAttention, ReciprocalMLP
 
 
 def patch_gpt2_with_ra_v5(
