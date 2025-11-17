@@ -1185,10 +1185,15 @@ def run_single_test(
         env["PYTORCH_NO_HIP_MEMORY_CACHING"] = "1"
 
         # MIOpen configuration for gfx1100 (W7900) stability
-        # Use immediate mode (1) instead of kernel compilation to avoid
+        # Disable kernel compilation and use only pre-built kernels to avoid
         # HIPRTC compilation errors with ROCm version mismatches
         env["MIOPEN_FIND_MODE"] = "1"  # 1=immediate, 2=normal, 3=fast
         env["MIOPEN_DEBUG_DISABLE_FIND_DB"] = "1"  # Disable find database
+        env["MIOPEN_FIND_ENFORCE"] = "SEARCH_DB_UPDATE"  # Only use database
+        env["MIOPEN_DEBUG_CONV_IMPLICIT_GEMM"] = "0"  # Disable implicit GEMM
+        env["MIOPEN_DEBUG_CONV_WINOGRAD"] = "0"  # Disable Winograd
+        env["MIOPEN_DEBUG_CONV_DIRECT"] = "0"  # Disable direct convolutions
+        env["MIOPEN_DEBUG_CONV_FFT"] = "0"  # Disable FFT convolutions
 
         # Run with real-time output to console AND capture to file
         with open(log_file, "w") as f_log:
