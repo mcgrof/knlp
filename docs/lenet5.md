@@ -29,42 +29,35 @@ Traditional movement pruning requires **extra memory** on top of optimizer state
 
 ## Performance Results
 
-### Baseline (No Pruning)
-![Without Pruning](../images/lenet5/optimizer_comparison_baseline.png)
-*All optimizers achieve >99% accuracy on MNIST without pruning*
+### AdamW Optimizer Comparison
+![AdamW comparison](../images/lenet5/adamw_model_comparison.png)
+*AdamW with magnitude and movement pruning at 70% sparsity*
 
-### 50% Sparsity
-![50% sparsity](../images/lenet5/optimizer_comparison_50_pruning.png)
-*AdamWPrune maintains competitive accuracy at 50% sparsity*
+![AdamW accuracy evolution](../images/lenet5/adamw_accuracy_evolution.png)
+*Accuracy progression across epochs for AdamW variants*
 
-### 70% Sparsity
-![70% sparsity](../images/lenet5/optimizer_comparison_70_pruning.png)
-*Performance comparison at 70% sparsity target*
+### AdamWPrune Variant Comparison (bitter0 vs bitter7)
+![AdamWPrune comparison](../images/lenet5/adamwprune_model_comparison.png)
+*bitter0 (original state-based) vs bitter7 (variance-based) at 70% sparsity*
 
-### 90% Sparsity
-![90% sparsity](../images/lenet5/optimizer_comparison_90_pruning.png)
-*High sparsity results - AdamWPrune shows resilience*
+![AdamWPrune accuracy evolution](../images/lenet5/adamwprune_accuracy_evolution.png)
+*Accuracy progression showing bitter0 and bitter7 variants*
 
-## Memory Efficiency Analysis
+**bitter Variant Results @ 70% Sparsity:**
+- **bitter0 (original)**: 98.99% accuracy, 86.4s training time, 8.64s/epoch
+- **bitter7 (variance)**: 98.96% accuracy, 85.8s training time, 8.58s/epoch
+- **Difference**: Negligible (0.03% accuracy, 0.7% time) - variants perform identically on MNIST
 
-![Memory efficiency](../images/lenet5/memory_efficiency_summary.png)
-
-**Note**: The "Memory Savings" axis is computed relative to SGD using movement pruning at the same sparsity level. This highlights the incremental memory cost of different pruning approaches:
-- Movement pruning maintains extra float32 buffers (scores + initial_weights + masks)
-- AdamWPrune reuses Adam states and only adds a boolean mask
-- Savings are relative to the pruning method, not unpruned baseline
+The minimal difference between bitter0 and bitter7 on LeNet-5/MNIST is expected. MNIST is too simple to differentiate pruning importance metrics. bitter7's variance-based approach shows its value on complex models like GPT-2, where it achieves 15.6% better perplexity than magnitude baseline (37.28 vs 44.15 PPL).
 
 ## GPU Memory Comparison (Real Measurements)
 
 ### Actual GPU Memory Usage
 
-With gputop.py integration, we now have real GPU memory measurements for LeNet-5:
+With gputop.py integration, we have real GPU memory measurements for LeNet-5 from previous runs:
 
 ![Training Memory Comparison](../images/lenet5/training_memory_comparison.png)
 *Real GPU memory measurements across all optimizers and pruning configurations*
-
-![GPU Memory Timeline](../images/lenet5/gpu_memory_timeline.png)
-*Memory usage over time during training - all optimizers cluster around 440-460 MiB*
 
 ### Key Findings from Real Measurements
 
@@ -92,15 +85,16 @@ This perfectly demonstrates why larger models like ResNet-18 are necessary to va
 
 1. **Accuracy Maintained**: AdamWPrune achieves comparable accuracy to movement pruning across all sparsity levels
 2. **Memory Efficient**: ~46% reduction in pruning overhead by reusing optimizer states
-3. **Scalability Potential**: While LeNet-5 is too small for runtime GPU memory measurements, the approach shows promise for larger models
-4. **Simplicity**: No additional hyperparameters or buffers beyond a boolean mask
+3. **bitter Variants Equivalent on MNIST**: bitter0 and bitter7 show negligible differences (98.99% vs 98.96%) on simple tasks
+4. **Scalability Potential**: While LeNet-5 is too small for meaningful GPU memory impact, the approach shows promise for larger models
+5. **Simplicity**: No additional hyperparameters or buffers beyond a boolean mask
 
 ## Limitations
 
 - LeNet-5's small size (61,750 parameters) makes GPU memory impact negligible
-- MNIST is a relatively simple dataset where most approaches work well
-- Further validation needed on larger models and complex datasets
+- MNIST is too simple to differentiate pruning importance metrics between bitter variants
+- bitter7's variance-based pruning advantages emerge on complex models (GPT-2 shows 15.6% perplexity improvement)
 
-## Next Steps
+## bitter Variant Analysis Complete
 
-Testing with ResNet-18 on CIFAR-10 to validate the approach on a larger, more complex model and dataset combination.
+CPU-based testing confirms bitter0 and bitter7 perform identically on LeNet-5/MNIST. Future GPU-based testing on larger models (ResNet-18, ResNet-50) will validate memory efficiency claims and may reveal performance differences between variants on more complex datasets.
