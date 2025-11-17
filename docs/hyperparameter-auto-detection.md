@@ -53,6 +53,19 @@ Based on **free** GPU memory (with 80% safety margin):
 
 These are then multiplied by the model's scale factor.
 
+## CPU Mode
+
+When no GPU is available, the system uses CPU-optimized batch sizes:
+
+**Base CPU batch size:** 16 (for GPT-2 baseline)
+**Scaled by model factor:**
+- GPT-2: 16 × 1.0 = 16
+- ResNet-50: 16 × 1.5 = 24
+- ResNet-18: 16 × 2.0 = 32
+- LeNet-5: 16 × 4.0 = 64
+
+CPUs typically have much more RAM than GPU VRAM (32-256GB vs 16-80GB), so larger batch sizes are feasible. The model scale factor ensures tiny models like LeNet-5 can use appropriately large batches on CPU.
+
 ### Example: ResNet-18 on H100 (70GB Free)
 
 1. H100 has ~70GB free memory → usable = 70 × 0.8 = 56GB
