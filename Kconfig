@@ -179,6 +179,42 @@ config JSON_OUTPUT
 
 endmenu
 
+menu "Tokenization Test Matrix"
+	depends on TEST_MATRIX_MODE
+
+config TEST_TOKENIZER_BASELINE
+	bool "Test baseline (no tokenization)"
+	default n
+	help
+	  Include baseline test without tokenization in test matrix.
+	  Uses full-dimensional images as input.
+
+config TEST_TOKENIZER_PCA
+	bool "Test PCA tokenization"
+	default n
+	help
+	  Include PCA tokenization test in test matrix.
+	  Uses spatial tiering by variance explained.
+
+config TEST_TOKENIZER_SPLINE_PCA
+	bool "Test Spline-PCA tokenization"
+	default n
+	help
+	  Include Spline-PCA tokenization test in test matrix.
+	  Uses spatial + temporal tiering with trajectory tracking.
+
+config TEST_TOKENIZER_METHODS
+	string "Tokenization methods to test (comma-separated)"
+	default ""
+	help
+	  Comma-separated list of tokenization methods to test.
+	  Example: "none,pca,spline-pca"
+
+	  This is the preferred way to specify tokenizer test matrix.
+	  Individual flags (TEST_TOKENIZER_BASELINE, etc.) also work.
+
+endmenu
+
 source "Kconfig.models"
 source "Kconfig.optimizers"
 source "Kconfig.pruning"

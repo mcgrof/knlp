@@ -168,34 +168,6 @@ config RESNET50_TOKENIZER_SAVE_PATH
 
 endmenu
 
-menu "Tokenization Test Matrix"
-
-config TEST_TOKENIZER_BASELINE_RESNET50
-	bool "Test baseline (no tokenization)"
-	default n
-	depends on TEST_MATRIX_MODE && MODEL_RESNET50
-	help
-	  Include baseline test without tokenization in test matrix.
-	  Uses full 3072-dimensional CIFAR-100 images as input.
-
-config TEST_TOKENIZER_PCA_RESNET50
-	bool "Test PCA tokenization"
-	default n
-	depends on TEST_MATRIX_MODE && MODEL_RESNET50
-	help
-	  Include PCA tokenization test in test matrix.
-	  Uses spatial tiering by variance (3072→256 dimensions).
-
-config TEST_TOKENIZER_SPLINE_PCA_RESNET50
-	bool "Test Spline-PCA tokenization"
-	default n
-	depends on TEST_MATRIX_MODE && MODEL_RESNET50
-	help
-	  Include Spline-PCA tokenization test in test matrix.
-	  Uses spatial + temporal tiering with trajectory tracking.
-
-endmenu
-
 config RESNET50_PRUNING_START_EPOCH
 	int "Pruning start epoch"
 	default 10
