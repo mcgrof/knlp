@@ -199,7 +199,7 @@ config = None
 try:
     import config as cfg
 
-    config = cfg.Config if hasattr(cfg, "Config") else cfg
+    config = cfg.config if hasattr(cfg, "config") else cfg
     logger_msg = "Loaded configuration from config.py (Kconfig-generated)"
 
     # Apply hyperparameter auto-detection if enabled
