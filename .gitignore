@@ -14,8 +14,14 @@ results/
 
 # Model checkpoints - exclude all model files
 *.pth
+*.pt
 *.patch
 data/
+
+# Large checkpoint directories
+checkpoints_ra_mla/
+gpt2/checkpoints_ra_mla/
+gpt2/gpt2/
 
 # Training metrics and test results
 training_metrics.json

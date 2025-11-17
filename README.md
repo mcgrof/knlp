@@ -65,7 +65,7 @@ approaches. State-based variants (bitter7, bitter8) significantly
 outperform magnitude pruning baseline when tested with identical
 hyperparameters on NVIDIA B200 GPUs.
 
-![AdamWPrune Comparison](adamwprune_fair_comparison.png)
+![AdamWPrune Comparison](images/adamwprune_fair_comparison.png)
 *State-based pruning outperforms magnitude baseline with identical
 hyperparameters. All runs WITH torch.compile on B200: bitter8
 achieves 40.94 PPL (7.3% better), bitter7 achieves 37.28 PPL
