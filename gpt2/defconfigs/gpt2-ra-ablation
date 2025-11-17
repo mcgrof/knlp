@@ -89,10 +89,10 @@ CONFIG_RA_MLA_USE_ROPE=n
 CONFIG_RA_V5_PER_HEAD_GATES=y
 
 # Enable ablation study mode with RA skip gates
-# R0: Baseline (standard GPT-2)
-# R1: RA with learned skip gates (R=4, geometric init)
+# R0: Baseline (standard GPT-2) - already completed
+# R1: RA with learned skip gates (R=4, aggressive init)
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="R0,R1"
+CONFIG_RA_MLA_ABLATION_STEPS="R1"
 
 # Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
@@ -115,20 +115,29 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra_skip"
 # Standard SDPA attention, standard MLP (3072)
 # Purpose: Same-hardware baseline for RA comparison
 #
-# R1: RA with Learned Skip Gates
-# ===============================
+# R1: RA with Aggressive Skip Gate Initialization
+# =================================================
 # Architecture: Reciprocal Attention (R=4, low-rank)
-# Skip gates: skip_std_attn, skip_lowrank_attn (init 2.0, enabled)
-# Geometric init: w_std=0.9375 (60/64), w_rec=0.0625 (4/64)
-# Purpose: Test if skip gates solve RA degradation (was 12% worse)
+# Skip gates (ASYMMETRIC initialization):
+#   skip_std_attn: init 2.0 (sigmoid≈0.88, ENABLED - proven to work)
+#   skip_lowrank_attn: init -3.0 (sigmoid≈0.05, DISABLED - must prove value)
+# Geometric pathway weights: w_std=0.9375 (60/64), w_rec=0.0625 (4/64)
+# Purpose: Test if aggressive init prevents RA degradation
 #
-# Skip gates enable model to:
-# - Disable std attention where low-rank suffices (early layers?)
-# - Disable low-rank where full-rank needed (late layers?)
-# - Mix adaptively per layer (learned, not designed)
+# Rationale for asymmetric initialization:
+# - Previous R1 (symmetric init 2.0) degraded 32% vs baseline (49 vs 37 ppl)
+# - Standard GPT-2 architecture proven to work, start enabled
+# - Reciprocal pathway experimental, start disabled
+# - Gradients push reciprocal gates positive only if they reduce loss
+# - If reciprocal provides no benefit, stays disabled (zero cost)
 #
-# Expected: RA with skip gates BEATS baseline by eliminating
-# forced computation of unhelpful pathways.
+# Expected training dynamics:
+# - Early (0-1000 iters): Trains as standard GPT-2
+# - Mid (1000-3000): Gradients learn which layers benefit from reciprocal
+# - Late (3000+): Sparse pathway usage emerges per layer
+#
+# Expected: RA matches or beats baseline by preventing forced use of
+# harmful pathways. Reciprocal activates only where beneficial.
 #
 # Key metrics tracked:
 # - skip_std_attn, skip_lowrank_attn: Logits for each pathway
@@ -136,9 +145,9 @@ CONFIG_OUTPUT_DIR="test_matrix_results_ra_skip"
 # - w_std, w_rec: Pathway weights (geometric init)
 # - Perplexity: Final quality vs baseline
 #
-# Training time: 2 hours per step (4 hours total for R0+R1)
+# Training time: 2 hours (R0 baseline already completed)
 #
 # Usage:
 # make defconfig-gpt2-ra-ablation && make
-# Quick test: GPT2_MAX_TIME=600 make (10 minutes/step)
+# Quick test: GPT2_MAX_TIME=600 make (10 minutes)
 # Dry-run: make check (~10 seconds)
