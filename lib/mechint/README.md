@@ -2,12 +2,63 @@
 
 Post-training analysis tools for discovering sparse feature circuits in transformer models via KV channel masking.
 
-## Quick Start
+## Quick Start - Analyze Your Models
 
-### Clone and Setup
+Got a directory of trained GPT-2 models? Run this:
 
 ```bash
-git clone <your-repo-url>
+# 1. Clone repo
+git clone https://github.com/mcgrof/knlp.git
+cd knlp
+
+# 2. Install dependencies
+pip install torch numpy matplotlib wandb
+
+# 3. Run analysis on your models
+python3 scripts/run_mechint_analysis.py \
+  --checkpoint /path/to/your/model.pt \
+  --dataset finewebedu \
+  --steps 500 \
+  --target-sparsity 0.95
+```
+
+**That's it!** Results will be in `mechint_analysis_finewebedu_<model_name>/` with:
+- KV channel importance heatmaps
+- Sparsity optimization curves
+- Circuit analysis report
+- Automatic W&B logging
+
+### Compare Multiple Variants
+
+If you have baseline vs modified models:
+
+```bash
+# Analyze both
+python3 scripts/run_mechint_analysis.py --checkpoint baseline.pt --dataset finewebedu
+python3 scripts/run_mechint_analysis.py --checkpoint modified.pt --dataset finewebedu
+
+# Compare them (V0 as baseline)
+python3 scripts/compare_mechint_variants.py \
+  --v0 mechint_analysis_finewebedu_baseline \
+  --v1 mechint_analysis_finewebedu_modified \
+  --output comparison_results
+```
+
+You'll get automated findings like:
+```
+KEY FINDINGS
+• V1 has WORSE loss degradation: -18.59% vs -19.31%
+• Early layers (0-3): V1 is -2.5% less sparse
+• Late layers (8-11): V1 is +4.9% more sparse
+• Biggest differences: h.6: +8.6%, h.5: +8.3%
+```
+
+## Detailed Setup
+
+### Clone and Install
+
+```bash
+git clone https://github.com/mcgrof/knlp.git
 cd knlp
 pip install torch numpy matplotlib wandb
 ```
