@@ -219,6 +219,16 @@ def calculate_sparsity(model):
 
 def main(args):
     """Main training loop."""
+    # Apply hyperparameter auto-detection if enabled
+    try:
+        import config as cfg
+
+        from lib.hyperparams import apply_hyperparams
+
+        apply_hyperparams(cfg, verbose=True, model_type="resnet50")
+    except ImportError:
+        pass  # No config.py, use args only
+
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():

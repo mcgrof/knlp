@@ -193,6 +193,11 @@ try:
 
     config = cfg.Config if hasattr(cfg, "Config") else cfg
     logger_msg = "Loaded configuration from config.py (Kconfig-generated)"
+
+    # Apply hyperparameter auto-detection if enabled
+    from lib.hyperparams import apply_hyperparams
+
+    apply_hyperparams(config, verbose=True, model_type="lenet5")
 except ImportError:
     logger_msg = "No config.py found, using command-line arguments only"
 
