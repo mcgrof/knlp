@@ -318,6 +318,10 @@ def patch_gpt2_with_kv_pruning(
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
+        # Get device from original attention module
+        original_attn = block.attn
+        device = next(original_attn.parameters()).device
+
         # Replace the attention module
         pruned_attn = PrunedKVAttention(
             n_embd=n_embd,
@@ -328,6 +332,9 @@ def patch_gpt2_with_kv_pruning(
             learn_ratio=learn_ratio,
             dropout=dropout,
         )
+
+        # Move to same device as original module
+        pruned_attn = pruned_attn.to(device)
 
         # Replace the attention module
         block.attn = pruned_attn
