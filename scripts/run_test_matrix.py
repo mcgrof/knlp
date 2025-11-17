@@ -638,9 +638,12 @@ def get_test_matrix(config):
 
     matrix["pruning_methods"] = pruning_methods
 
-    # Parse tokenizer methods for LeNet-5
+    # Parse tokenizer methods for models that support tokenization
     tokenizer_methods = []
-    if "lenet5" in matrix["models"]:
+    model_supports_tokenizer = any(
+        m in matrix["models"] for m in ["lenet5", "resnet50"]
+    )
+    if model_supports_tokenizer:
         # Check if tokenizer testing is enabled via TEST_TOKENIZER_METHODS config
         if "TEST_TOKENIZER_METHODS" in config and config["TEST_TOKENIZER_METHODS"]:
             tokenizer_methods = [
@@ -653,14 +656,24 @@ def get_test_matrix(config):
                 tokenizer_methods.append("pca")
             if config.get("TEST_TOKENIZER_SPLINE_PCA") == "y":
                 tokenizer_methods.append("spline-pca")
-        # If no test config, use single tokenizer mode
-        elif config.get("LENET5_ENABLE_TOKENIZER") == "y":
-            method = config.get("LENET5_TOKENIZER_METHOD", "none").strip('"')
-            tokenizer_methods = [method] if method else ["none"]
+        # If no test config, use single tokenizer mode (check model-specific config)
         else:
-            tokenizer_methods = ["none"]
+            # Try model-specific tokenizer method
+            method = None
+            if (
+                "lenet5" in matrix["models"]
+                and config.get("LENET5_ENABLE_TOKENIZER") == "y"
+            ):
+                method = config.get("LENET5_TOKENIZER_METHOD", "none").strip('"')
+            elif (
+                "resnet50" in matrix["models"]
+                and config.get("RESNET50_ENABLE_TOKENIZER") == "y"
+            ):
+                method = config.get("RESNET50_TOKENIZER_METHOD", "none").strip('"')
 
-    # Default to none for non-lenet5 models
+            tokenizer_methods = [method] if method else ["none"]
+
+    # Default to none for models without tokenizer support
     if not tokenizer_methods:
         tokenizer_methods = ["none"]
 
@@ -1160,8 +1173,12 @@ def run_single_test(
         # No pruning case
         cmd.extend(["--pruning-method", "none"])
 
-    # Add tokenizer method for LeNet-5
-    if model == "lenet5" and tokenizer_method and tokenizer_method != "none":
+    # Add tokenizer method for models that support it
+    if (
+        model in ["lenet5", "resnet50"]
+        and tokenizer_method
+        and tokenizer_method != "none"
+    ):
         cmd.extend(["--tokenizer-method", tokenizer_method])
 
     # Add SPAM configuration if applicable
