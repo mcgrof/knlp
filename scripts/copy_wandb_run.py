@@ -3,12 +3,21 @@
 """
 Copy a wandb run from one project to another.
 
-Usage:
+Manual usage:
     python3 scripts/copy_wandb_run.py \
         --source entity/project/run_id \
         --dest-project my-project \
         --dest-entity my-entity \
         --new-name new_run_name
+
+Automatic usage with test matrix (recommended):
+    make defconfig-gpt2-r-mlp-prune
+    make BASELINE=mcgrof/old-project/abc123
+
+    This automatically:
+    1. Copies baseline run to current project
+    2. Skips baseline step (M0, V0, L0, etc.) in test matrix
+    3. Runs only non-baseline steps (M1, M2, M3, etc.)
 
 This is useful for:
 - Copying baseline runs to comparison projects
