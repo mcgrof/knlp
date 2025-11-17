@@ -18,7 +18,8 @@ def get_gpu_info():
         dict: GPU info with keys:
             - gpu_name: str (e.g., "NVIDIA B200")
             - gpu_count: int (number of GPUs)
-            - gpu_mem_gb: float (memory per GPU in GB)
+            - gpu_mem_gb: float (total memory per GPU in GB)
+            - gpu_free_gb: float (free memory per GPU in GB)
             - has_gpu: bool (True if CUDA available)
     """
     if not torch.cuda.is_available():
@@ -26,14 +27,19 @@ def get_gpu_info():
             "gpu_name": "CPU",
             "gpu_count": 0,
             "gpu_mem_gb": 0.0,
+            "gpu_free_gb": 0.0,
             "has_gpu": False,
         }
 
     gpu = torch.cuda.get_device_properties(0)
+    # Get free memory (accounts for other processes using GPU)
+    free_mem, total_mem = torch.cuda.mem_get_info(0)
+
     return {
         "gpu_name": gpu.name,
         "gpu_count": torch.cuda.device_count(),
-        "gpu_mem_gb": gpu.total_memory / 1e9,
+        "gpu_mem_gb": total_mem / 1e9,
+        "gpu_free_gb": free_mem / 1e9,
         "has_gpu": True,
     }
 
@@ -69,40 +75,44 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
 
     gpu_name = gpu_info["gpu_name"]
     gpu_mem_gb = gpu_info["gpu_mem_gb"]
+    gpu_free_gb = gpu_info["gpu_free_gb"]
     gpu_count = gpu_info["gpu_count"]
 
+    # Use FREE memory for heuristics to account for other GPU processes
+    # Conservative: use 80% of free memory as safety margin
+    usable_mem_gb = gpu_free_gb * 0.8
+
     # Heuristic table for batch size selection
-    # Format: (gpu_pattern, min_mem_gb) -> (batch_with_compile, batch_without_compile)
+    # Format: (gpu_pattern, min_free_mem_gb) -> (batch_with_compile, batch_without_compile)
+    # CRITICAL: These are based on AVAILABLE memory, not total memory
     # Note: torch.compile() optimizes memory, so compile=ON allows larger batches
     heuristics = [
-        # NVIDIA B200 (192GB)
-        (("B200", "B100"), 160, (256, 128)),
-        # NVIDIA H100 (80GB)
-        (("H100",), 64, (192, 64)),
-        # AMD W7900 (48GB), NVIDIA A100 (40-80GB)
-        (("W7900", "A100"), 40, (64, 32)),
-        # NVIDIA A10G (24GB), NVIDIA L40 (48GB)
-        (("A10G", "L40", "L4"), 20, (16, 8)),
-        # Generic high memory (32GB+)
-        (None, 32, (48, 24)),
-        # Generic medium memory (16GB+)
+        # Very high free memory (128GB+)
+        (None, 128, (256, 128)),
+        # High free memory (64GB+)
+        (None, 64, (128, 64)),
+        # Good free memory (32GB+) - W7900/A100 if mostly free
+        (None, 32, (32, 16)),
+        # Medium free memory (16GB+) - A10G or W7900 with other processes
         (None, 16, (16, 8)),
-        # Generic low memory (8GB+)
+        # Low free memory (8GB+)
         (None, 8, (8, 4)),
-        # Fallback for very low memory
-        (None, 0, (4, 2)),
+        # Very low free memory (4GB+)
+        (None, 4, (4, 2)),
+        # Fallback for minimal memory
+        (None, 0, (2, 1)),
     ]
 
-    # Find matching heuristic
+    # Find matching heuristic based on USABLE memory
     batch_size = None
-    for patterns, min_mem, (batch_compile, batch_no_compile) in heuristics:
+    for patterns, min_free, (batch_compile, batch_no_compile) in heuristics:
         # Check GPU name pattern match
         if patterns is not None:
             if not any(pattern in gpu_name for pattern in patterns):
                 continue
 
-        # Check memory requirement
-        if gpu_mem_gb >= min_mem:
+        # Check FREE memory requirement (with safety margin)
+        if usable_mem_gb >= min_free:
             batch_size = batch_compile if compile_on else batch_no_compile
             break
 
@@ -119,7 +129,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
     effective_batch = batch_size * gradient_accumulation * gpu_count
 
     rationale = (
-        f"GPU: {gpu_name} ({gpu_mem_gb:.1f}GB) × {gpu_count}, "
+        f"GPU: {gpu_name} ({gpu_mem_gb:.1f}GB total, {gpu_free_gb:.1f}GB free) × {gpu_count}, "
         f"compile={'ON' if compile_on else 'OFF'} → "
         f"batch={batch_size}, grad_acc={gradient_accumulation} "
         f"(effective={effective_batch}, target={target_eff})"
