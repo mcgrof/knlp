@@ -375,11 +375,23 @@ config BASELINE_RUN_ID
 	default ""
 	depends on ENABLE_WANDB || ENABLE_TRACKIO
 	help
-	  Reference a previous baseline run instead of re-running V0.
+	  Reference a previous baseline run instead of re-running baseline step.
+
 	  Format: entity/project/run_id (for W&B)
-	  When set, ablation studies skip V0 and fetch baseline metrics
-	  from the specified run for comparison.
-	  CLI: make BASELINE=entity/project/run_id
+
+	  When set, ablation studies skip baseline steps (V0, M0, L0, S0, R0, C0)
+	  and copy the specified run to the current project for comparison.
+
+	  Workflow:
+	    make defconfig-gpt2-r-mlp-prune
+	    make BASELINE=mcgrof/old-project/abc123
+
+	  This automatically:
+	    1. Copies the baseline run to current project
+	    2. Filters baseline step from test matrix
+	    3. Runs only non-baseline steps (M1, M2, M3, etc.)
+
+	  Useful for comparing experiments without re-running expensive baselines.
 
 config TRACKIO_PORT
 	int "Port for Trackio dashboard"
