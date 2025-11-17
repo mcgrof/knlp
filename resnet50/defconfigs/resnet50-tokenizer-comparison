@@ -1,0 +1,101 @@
+# ResNet-50 Tokenizer Comparison (No Pruning)
+# Run with: make defconfig-resnet50-tokenizer-comparison && make
+#
+# Tests tokenization methods without pruning to measure:
+#   1. GPU memory consumption (PCA vs baseline)
+#   2. Training speed (overhead of PCA fitting + transformation)
+#   3. Model accuracy (effect of 12x dimensionality reduction)
+#
+# Tokenizers tested:
+#   - Baseline: Full 3072-dim CIFAR-100 images
+#   - PCA: 256 components (~12x compression)
+#   - Spline-PCA: 256 components + trajectory tracking
+#
+# All tests use:
+#   - CIFAR-100 dataset (100 classes, 32×32×3 images)
+#   - AdamW optimizer (no pruning)
+#   - 10 epochs for quick comparison
+#   - Batch size 128
+
+# Enable ResNet-50 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_RESNET50=y
+CONFIG_MODEL="resnet50"
+
+# Test matrix mode
+CONFIG_TEST_MATRIX_MODE=y
+CONFIG_OUTPUT_DIR="test_matrix_results_resnet50_tokenizer"
+
+# Tokenizer methods (3 variants)
+CONFIG_RESNET50_ENABLE_TOKENIZER=y
+CONFIG_RESNET50_PCA_COMPONENTS=256
+# CONFIG_RESNET50_PCA_WHITEN is not set
+CONFIG_RESNET50_SPLINE_CONTROL_POINTS=8
+CONFIG_RESNET50_TOKENIZER_SAVE_PATH="resnet50_tokenizer.pkl"
+
+# Use generic tokenizer test flags
+CONFIG_TEST_TOKENIZER_BASELINE=y
+CONFIG_TEST_TOKENIZER_PCA=y
+CONFIG_TEST_TOKENIZER_SPLINE_PCA=y
+CONFIG_TEST_TOKENIZER_METHODS="none,pca,spline-pca"
+
+# No pruning - just tokenizer comparison
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# Single optimizer - AdamW only
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+
+# AdamW configuration
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+CONFIG_ADAMW_EPSILON="1e-8"
+CONFIG_ADAMW_WEIGHT_DECAY="0.0001"
+
+# Dataset configuration
+CONFIG_RESNET50_DATASET="cifar100"
+CONFIG_RESNET50_DATA_DIR="./data"
+
+# Training configuration - quick 10-epoch test
+CONFIG_NUM_EPOCHS=10
+CONFIG_RESNET50_EPOCHS=10
+CONFIG_RESNET50_BATCH_SIZE=128
+CONFIG_BATCH_SIZE=128
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_RESNET50_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=4
+CONFIG_RESNET50_NUM_WORKERS=4
+
+# Hardware configuration
+CONFIG_DEVICE="cuda"
+
+# GPU-specific optimizations
+CONFIG_COMPILE_MODEL=y
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+
+# GPU monitoring - track memory consumption
+CONFIG_RESNET50_MONITOR_GPU=y
+CONFIG_GPU_MONITOR=y
+CONFIG_GPU_MONITOR_INTERVAL=10
+
+# Experiment tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="resnet50-tokenizer-comparison"
+
+# Logging
+CONFIG_RESNET50_SAVE_MODEL=y
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_VERBOSE=y
+CONFIG_RESNET50_LOG_INTERVAL=10
+
+# Expected outcomes:
+# 1. PCA should reduce GPU memory (smaller input representation)
+# 2. PCA fitting adds one-time overhead (~10-30s for 50K images)
+# 3. PCA may reduce accuracy slightly due to information loss
+# 4. Spline-PCA adds minimal overhead over PCA (trajectory tracking)
