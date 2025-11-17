@@ -66,6 +66,7 @@ def load_config_from_kconfig():
 
         use_wandb = getattr(config, "KNLP_MECHINT_VISUALIZE_WANDB", True)
         save_masks = getattr(config, "KNLP_MECHINT_SAVE_MASKS", True)
+        tracker_project = getattr(config, "TRACKER_PROJECT", "mechint-analysis")
 
         return {
             "config": cfg,
@@ -73,6 +74,7 @@ def load_config_from_kconfig():
             "run_dir": run_dir,
             "use_wandb": use_wandb,
             "save_masks": save_masks,
+            "tracker_project": tracker_project,
         }
 
     except ImportError:
@@ -226,11 +228,13 @@ def main():
         config = kconfig_data["config"]
         checkpoint_path = args.checkpoint or kconfig_data["checkpoint"]
         use_wandb = not args.no_wandb and kconfig_data["use_wandb"]
+        tracker_project = kconfig_data["tracker_project"]
     else:
         # Use defaults if no Kconfig
         config = AnalysisConfig()
         checkpoint_path = args.checkpoint
         use_wandb = not args.no_wandb
+        tracker_project = "mechint-analysis"
 
     # Apply command-line overrides
     if args.output_dir:
@@ -298,12 +302,12 @@ def main():
 
     # Log to W&B if enabled
     if use_wandb:
-        print("\nLogging to W&B...")
+        print(f"\nLogging to W&B project: {tracker_project}...")
         log_circuit_to_wandb(
             masks_dict,
             results["history"],
             config,
-            project_name="mechint-analysis",
+            project_name=tracker_project,
         )
 
     print("\n" + "=" * 80)
