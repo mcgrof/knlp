@@ -435,16 +435,26 @@ def main():
     if args.optimizer == "adamwprune":
         # Base configuration
         args.adamwprune_base_optimizer_name = adamwprune_base_optimizer_name_default
-        args.adamwprune_enable_pruning = adamwprune_enable_pruning_default
 
-        # Check if AdamWPrune pruning is explicitly disabled
-        if not adamwprune_enable_pruning_default or args.pruning_method == "none":
+        # AdamWPrune's built-in pruning is controlled by --target-sparsity, not --pruning-method
+        # --pruning-method controls EXTERNAL pruning wrappers
+        if args.target_sparsity > 0:
+            # Enable built-in pruning with command-line or config target sparsity
+            args.adamwprune_enable_pruning = True
+            args.adamwprune_pruning_method = (
+                "state"  # AdamWPrune uses state-based pruning
+            )
+            args.adamwprune_target_sparsity = args.target_sparsity
+        elif adamwprune_enable_pruning_default:
+            # No command-line sparsity, use config defaults
+            args.adamwprune_enable_pruning = True
+            args.adamwprune_pruning_method = adamwprune_pruning_method_default
+            args.adamwprune_target_sparsity = float(adamwprune_target_sparsity_default)
+        else:
+            # Pruning disabled in config and no command-line sparsity
             args.adamwprune_enable_pruning = False
             args.adamwprune_pruning_method = "none"
             args.adamwprune_target_sparsity = 0.0
-        else:
-            args.adamwprune_pruning_method = adamwprune_pruning_method_default
-            args.adamwprune_target_sparsity = float(adamwprune_target_sparsity_default)
     else:
         # For other optimizers, set defaults (won't be used)
         args.adamwprune_base_optimizer_name = "adamw"
