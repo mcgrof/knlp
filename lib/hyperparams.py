@@ -6,6 +6,8 @@ This module automatically selects optimal batch size and gradient accumulation
 based on detected GPU type, memory, count, and torch.compile status. This
 eliminates the need for GPU-specific defconfigs and prevents accidentally
 using wrong hyperparameters for available hardware.
+
+Supports different model types with appropriate memory scaling factors.
 """
 
 import torch
@@ -44,12 +46,13 @@ def get_gpu_info():
     }
 
 
-def auto_detect_hyperparams(config, target_effective_batch=None):
+def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt2"):
     """Automatically detect optimal hyperparameters based on GPU.
 
     Args:
         config: Config object with COMPILE_MODEL attribute
-        target_effective_batch: Target effective batch size (default: 1024)
+        target_effective_batch: Target effective batch size (default varies by model)
+        model_type: Model type for memory scaling ("gpt2", "resnet18", "resnet50", "lenet5")
 
     Returns:
         dict: Hyperparameters with keys:
@@ -60,7 +63,37 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
             - rationale: str (explanation of choices)
     """
     gpu_info = get_gpu_info()
-    target_eff = target_effective_batch or 1024
+
+    # Model-specific defaults and memory scaling
+    # GPT-2: Large memory footprint per sample (activations, attention matrices)
+    # ResNet: Medium memory footprint (image batches, conv activations)
+    # LeNet: Small memory footprint (tiny model, small images)
+    model_configs = {
+        "gpt2": {
+            "default_target": 1024,
+            "scale_factor": 1.0,  # Baseline
+            "grad_acc_attr": "GPT2_GRADIENT_ACCUMULATION",
+        },
+        "resnet18": {
+            "default_target": 512,
+            "scale_factor": 2.0,  # ResNet uses ~half memory per sample vs GPT-2
+            "grad_acc_attr": "GRADIENT_ACCUMULATION",
+        },
+        "resnet50": {
+            "default_target": 256,
+            "scale_factor": 1.5,  # ResNet-50 larger than ResNet-18 but smaller than GPT-2
+            "grad_acc_attr": "GRADIENT_ACCUMULATION",
+        },
+        "lenet5": {
+            "default_target": 512,
+            "scale_factor": 4.0,  # LeNet very small, can fit huge batches
+            "grad_acc_attr": "GRADIENT_ACCUMULATION",
+        },
+    }
+
+    model_cfg = model_configs.get(model_type.lower(), model_configs["gpt2"])
+    target_eff = target_effective_batch or model_cfg["default_target"]
+    scale = model_cfg["scale_factor"]
     compile_on = getattr(config, "COMPILE_MODEL", "y") in ("y", True)
 
     # CPU fallback
@@ -71,6 +104,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
             "effective_batch": target_eff,
             "gpu_info": gpu_info,
             "rationale": "CPU mode: small batch (4), high grad_acc to reach target",
+            "grad_acc_attr": model_cfg["grad_acc_attr"],
         }
 
     gpu_name = gpu_info["gpu_name"]
@@ -82,11 +116,12 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
     # Conservative: use 80% of free memory as safety margin
     usable_mem_gb = gpu_free_gb * 0.8
 
-    # Heuristic table for batch size selection
+    # Heuristic table for batch size selection (for GPT-2 baseline)
     # Format: (gpu_pattern, min_free_mem_gb) -> (batch_with_compile, batch_without_compile)
     # CRITICAL: These are based on AVAILABLE memory, not total memory
     # Note: torch.compile() optimizes memory, so compile=ON allows larger batches
-    heuristics = [
+    # These will be scaled by model_type scale_factor
+    base_heuristics = [
         # Very high free memory (128GB+)
         (None, 128, (256, 128)),
         # High free memory (64GB+)
@@ -101,6 +136,12 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
         (None, 4, (4, 2)),
         # Fallback for minimal memory
         (None, 0, (2, 1)),
+    ]
+
+    # Scale batch sizes based on model type
+    heuristics = [
+        (patterns, min_free, (int(bc * scale), int(bnc * scale)))
+        for patterns, min_free, (bc, bnc) in base_heuristics
     ]
 
     # Find matching heuristic based on USABLE memory
@@ -118,7 +159,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
 
     # Fallback (shouldn't happen with table above)
     if batch_size is None:
-        batch_size = 4 if compile_on else 8
+        batch_size = int(4 * scale) if compile_on else int(8 * scale)
 
     # Compute gradient accumulation to hit target effective batch
     # effective_batch = batch_size × gradient_accumulation × gpu_count
@@ -130,7 +171,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
 
     rationale = (
         f"GPU: {gpu_name} ({gpu_mem_gb:.1f}GB total, {gpu_free_gb:.1f}GB free) × {gpu_count}, "
-        f"compile={'ON' if compile_on else 'OFF'} → "
+        f"model={model_type}, compile={'ON' if compile_on else 'OFF'} → "
         f"batch={batch_size}, grad_acc={gradient_accumulation} "
         f"(effective={effective_batch}, target={target_eff})"
     )
@@ -141,6 +182,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
         "effective_batch": effective_batch,
         "gpu_info": gpu_info,
         "rationale": rationale,
+        "grad_acc_attr": model_cfg["grad_acc_attr"],
     }
 
 
@@ -183,7 +225,7 @@ def auto_detect_compile(config, verbose=True):
     return True
 
 
-def apply_hyperparams(config, verbose=True):
+def apply_hyperparams(config, verbose=True, model_type="gpt2"):
     """Apply hyperparameters to config based on AUTO/MANUAL mode.
 
     If AUTO mode: Detect and set batch_size and gradient_accumulation
@@ -192,6 +234,7 @@ def apply_hyperparams(config, verbose=True):
     Args:
         config: Config object to modify in-place
         verbose: If True, print hyperparameter selection rationale
+        model_type: Model type for memory scaling ("gpt2", "resnet18", "resnet50", "lenet5")
 
     Returns:
         dict: Hyperparameter info (only in AUTO mode, None otherwise)
@@ -202,19 +245,35 @@ def apply_hyperparams(config, verbose=True):
     if not hyper_auto:
         if verbose:
             batch = getattr(config, "BATCH_SIZE", "?")
-            grad_acc = getattr(config, "GPT2_GRADIENT_ACCUMULATION", "?")
+            # Try model-specific grad_acc attribute first, fall back to generic
+            grad_acc_attrs = [
+                "GPT2_GRADIENT_ACCUMULATION",
+                "GRADIENT_ACCUMULATION",
+            ]
+            grad_acc = "?"
+            for attr in grad_acc_attrs:
+                grad_acc = getattr(config, attr, None)
+                if grad_acc is not None:
+                    break
+            if grad_acc is None:
+                grad_acc = "?"
             print(f"Hyperparams: MANUAL mode (batch={batch}, grad_acc={grad_acc})")
+        return None
     else:
         # AUTO mode: detect and apply
-        target_eff = getattr(config, "TARGET_EFFECTIVE_BATCH", 1024)
+        target_eff = getattr(config, "TARGET_EFFECTIVE_BATCH", None)
         if isinstance(target_eff, str):
             target_eff = int(target_eff)
 
-        params = auto_detect_hyperparams(config, target_effective_batch=target_eff)
+        params = auto_detect_hyperparams(
+            config, target_effective_batch=target_eff, model_type=model_type
+        )
 
         # Apply to config
         config.BATCH_SIZE = params["batch_size"]
-        config.GPT2_GRADIENT_ACCUMULATION = params["gradient_accumulation"]
+
+        # Set gradient accumulation using model-specific attribute
+        setattr(config, params["grad_acc_attr"], params["gradient_accumulation"])
 
         if verbose:
             print(f"Hyperparams: AUTO mode - {params['rationale']}")
