@@ -13,29 +13,22 @@
 # - R-MLP alone is nearly equivalent to baseline (0.26% worse)
 # - R-MLP + KV pruning provides memory benefits with minimal quality loss
 #
-# Ablation steps (full cowboy: learned gates + learned KV pruning from step 0):
-# V1: R-MLP baseline (R_ff=1152, 37.5%, golden ratio)
+# Ablation steps with learned skip gates:
+# M0: Baseline GPT-2
+#     Standard SDPA attention, standard MLP (3072)
+#     Purpose: Same-hardware baseline for all comparisons
+# M1: R-MLP with skip gates (R_ff=1152, golden ratio 37.5%)
+#     Skip gates: skip_std, skip_rec (init 2.0, enabled)
 #     Geometric init: w_std=0.625, w_rec=0.375, α=1.0
-# V2: R-MLP medium-large (R_ff=768, 25%) + weight tying
-#     Tests explicit parameter sharing (up_low ↔ attn.c_proj)
-#     R_ff=768 is max for weight tying (n_embd constraint)
-#     Direct A/B test with V5 (same R_ff, different tying)
-#     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
-# V3: R-MLP small (R_ff=256, 8.3%)
-#     Geometric init: w_std=0.917, w_rec=0.083, α=1.0
-# V4: R-MLP medium (R_ff=512, 16.7%)
-#     Geometric init: w_std=0.833, w_rec=0.167, α=1.0
-# V5: R-MLP medium-large (R_ff=768, 25%)
-#     Same dimensions as V2, but NO weight tying
-#     Geometric init: w_std=0.750, w_rec=0.250, α=1.0
-# V6: R-MLP large (R_ff=1920, 62.5%, inverse golden)
-#     Geometric init: w_std=0.375, w_rec=0.625, α=1.0
-# V7: R-MLP baseline + gate-informed adaptive KV pruning
-#     Tests feedback loop: R-MLP gates modulate pruning ratio
-#     High w_rec×α (confidence) → prune more (R-MLP compensates)
-#     Low w_rec×α (no compensation) → prune less (preserve quality)
-#     Same R_ff=1152 as V1 for direct comparison
-#     Geometric init: w_std=0.625, w_rec=0.375, α=1.0
+#     Attention injection: mixed = x + α*attn_out
+#     Purpose: Test R-MLP with learned pathway sparsity
+# M2: RA + R-MLP (both with skip gates)
+#     RA: R=4, skip_std_attn, skip_lowrank_attn
+#     R-MLP: R_ff=1152, skip_std, skip_rec
+#     Purpose: Test full reciprocal architecture with learned sparsity
+# M3: RA + R-MLP + KV pruning (all with skip gates)
+#     Same as M2 + learned KV cache pruning (init keep_ratio=0.382)
+#     Purpose: Test memory reduction with reciprocal mechanisms
 #
 # Alpha initialization rationale (α=1.0 for all steps):
 # Empirical measurement shows ||attn|| / ||x|| ≈ 0.05 (5%), meaning
@@ -46,11 +39,9 @@
 # pathway. All steps track w_std, w_rec, and α evolution to evaluate
 # learning dynamics and validate initialization choice.
 #
-# Baseline: Use BASELINE=mcgrof-citizen/gpt2-kv-pruning/6dvbpfuh from W&B
-#
 # Training time: 2 hours per step (can override with GPT2_MAX_TIME=)
 #
-# To run: make defconfig-gpt2-r-mlp-prune && make BASELINE=mcgrof-citizen/gpt2-kv-pruning/6dvbpfuh
+# To run: make defconfig-gpt2-r-mlp-prune && make
 
 # Enable GPT-2 model
 CONFIG_MODEL_MODE_SINGLE=y
@@ -127,12 +118,13 @@ CONFIG_RA_MLA_LOG_METRICS=n
 CONFIG_RA_MLA_CACHE_Q_WINDOW=y
 CONFIG_RA_MLA_USE_ROPE=n
 
-# Enable ablation study mode with R-MLP steps
-# Skipping V0 (baseline already available from W&B)
-# Skipping RA (V16) as it showed 12% degradation
-# V1-V6: Various R-MLP + attention injection + KV pruning configurations
+# Enable ablation study mode with R-MLP + skip gates
+# M0: Baseline (standard GPT-2)
+# M1: R-MLP with learned skip gates
+# M2: RA + R-MLP (both with skip gates)
+# M3: RA + R-MLP + KV pruning (all with skip gates)
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V1,V2,V3,V4,V5,V6,V7"
+CONFIG_RA_MLA_ABLATION_STEPS="M0,M1,M2,M3"
 
 # Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
