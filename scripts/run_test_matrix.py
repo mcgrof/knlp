@@ -1013,12 +1013,12 @@ def run_single_test(
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
         elif variant:
-            if tokenizer_method and tokenizer_method != "none":
+            if tokenizer_method:
                 test_id = f"{model}_{optimizer}_{variant}_{pruning}_{tokenizer_method}"
             else:
                 test_id = f"{model}_{optimizer}_{variant}_{pruning}"
         else:
-            if tokenizer_method and tokenizer_method != "none":
+            if tokenizer_method:
                 test_id = f"{model}_{optimizer}_{pruning}_{tokenizer_method}"
             else:
                 test_id = f"{model}_{optimizer}_{pruning}"
@@ -1026,12 +1026,14 @@ def run_single_test(
         # Include sparsity in the test ID (e.g., sgd_movement_90)
         sparsity_pct = int(float(sparsity) * 100)
         if variant:
-            if tokenizer_method and tokenizer_method != "none":
+            if tokenizer_method:
+                # Always include tokenizer method for LeNet5 with tokenizers
                 test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}_{tokenizer_method}"
             else:
                 test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}"
         else:
-            if tokenizer_method and tokenizer_method != "none":
+            if tokenizer_method:
+                # Always include tokenizer method for LeNet5 with tokenizers
                 test_id = (
                     f"{model}_{optimizer}_{pruning}_{sparsity_pct}_{tokenizer_method}"
                 )
@@ -2351,17 +2353,19 @@ def main():
             variant_part = f"_{combo['variant']}" if combo.get("variant") else ""
             vanilla_ablation_step = combo.get("vanilla_ablation_step")
             ra_ablation_step = combo.get("ra_mla_ablation_step")
+            tokenizer_method = combo.get("tokenizer_method", "none")
+            tokenizer_part = f"_{tokenizer_method}" if tokenizer_method else ""
 
             if combo["pruning"] == "none":
                 if vanilla_ablation_step is not None:
-                    test_id = f"{combo['model']}_{combo['optimizer']}_vanilla_{vanilla_ablation_step}"
+                    test_id = f"{combo['model']}_{combo['optimizer']}_vanilla_{vanilla_ablation_step}{tokenizer_part}"
                 elif ra_ablation_step is not None:
-                    test_id = f"{combo['model']}_{combo['optimizer']}_ramla_step{ra_ablation_step}"
+                    test_id = f"{combo['model']}_{combo['optimizer']}_ramla_step{ra_ablation_step}{tokenizer_part}"
                 else:
-                    test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}"
+                    test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}{tokenizer_part}"
             else:
                 sparsity_pct = int(float(combo.get("sparsity", "0")) * 100)
-                test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}_{sparsity_pct}"
+                test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}_{sparsity_pct}{tokenizer_part}"
             print(f"  {i}. {test_id}")
         return
 
