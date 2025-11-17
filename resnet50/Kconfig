@@ -93,36 +93,27 @@ config RESNET50_MAX_TIME
 	  Time-based training enables fair "compute budget" comparisons
 	  across different methods with varying iteration speeds.
 
-menu "AdamWPrune Variants (Bitter)"
+menu "AdamWPrune Variants"
 
 config RESNET50_ADAMWPRUNE_VARIANT_BITTER0
-	bool "Enable bitter0 variant (original hybrid)"
+	bool "Enable bitter0 variant (original state-based)"
 	default y
 	help
-	  Original hybrid approach combining momentum magnitude
-	  with stability criterion.
+	  Original state-based pruning algorithm using Adam optimizer
+	  states. This is the baseline state pruning method.
 
 config RESNET50_ADAMWPRUNE_VARIANT_BITTER7
 	bool "Enable bitter7 variant (variance-based)"
 	default n
 	help
-	  Conservative variance-based pruning using second moment.
-	  Achieves 15.6% better perplexity than magnitude baseline
-	  on GPT-2 transformers (37.28 vs 44.15 PPL).
-
-config RESNET50_ADAMWPRUNE_VARIANT_BITTER8
-	bool "Enable bitter8 variant (bias-corrected + fast rsqrt)"
-	default n
-	help
-	  Bias-corrected gradient-magnitude with GPU optimization.
-	  Uses FP16 precision and fast inverse sqrt for 30-50% faster
-	  pruning with 2x less memory bandwidth.
+	  Variance-based pruning using Adam second moment (exp_avg_sq).
+	  Achieves 15.6% better perplexity than magnitude baseline on
+	  GPT-2 transformers (37.28 vs 44.15 PPL).
 
 config RESNET50_ADAMWPRUNE_DEFAULT_VARIANT
 	string "Default AdamWPrune variant"
 	default "bitter0" if RESNET50_ADAMWPRUNE_VARIANT_BITTER0
 	default "bitter7" if RESNET50_ADAMWPRUNE_VARIANT_BITTER7
-	default "bitter8" if RESNET50_ADAMWPRUNE_VARIANT_BITTER8
 
 endmenu
 

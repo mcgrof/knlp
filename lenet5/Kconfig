@@ -123,49 +123,27 @@ config LENET5_TOKENIZER_SAVE_PATH
 
 endmenu
 
-menu "AdamWPrune Variants (Bitter)"
+menu "AdamWPrune Variants"
 
 config LENET5_ADAMWPRUNE_VARIANT_BITTER0
-	bool "Enable bitter0 variant (original hybrid)"
+	bool "Enable bitter0 variant (original state-based)"
 	default y
 	help
-	  Original hybrid approach combining momentum magnitude
-	  with stability criterion. Formula:
-	  |w| * |exp_avg| * |w| / sqrt(exp_avg_sq)
+	  Original state-based pruning algorithm using Adam optimizer
+	  states. This is the baseline state pruning method.
 
 config LENET5_ADAMWPRUNE_VARIANT_BITTER7
 	bool "Enable bitter7 variant (variance-based)"
 	default n
 	help
-	  Conservative variance-based pruning using second moment.
-	  Formula: |w| * (exp_avg_sq^0.25)
-
-	  Beta2=0.999 tracks ~1000 steps of variance accumulation,
-	  providing better signal than momentum-based methods.
-
-	  Achieves 15.6% better perplexity than magnitude baseline
-	  on GPT-2 transformers (37.28 vs 44.15 PPL).
-
-config LENET5_ADAMWPRUNE_VARIANT_BITTER8
-	bool "Enable bitter8 variant (bias-corrected + fast rsqrt)"
-	default n
-	help
-	  Bias-corrected gradient-magnitude with GPU optimization.
-	  Formula: |w| * sqrt(|m_hat|) where m_hat uses bias correction
-
-	  Uses FP16 precision and fast inverse sqrt (rsqrt) for
-	  30-50% faster pruning with 2x less memory bandwidth.
+	  Variance-based pruning using Adam second moment (exp_avg_sq).
+	  Achieves 15.6% better perplexity than magnitude baseline on
+	  GPT-2 transformers (37.28 vs 44.15 PPL).
 
 config LENET5_ADAMWPRUNE_DEFAULT_VARIANT
 	string "Default AdamWPrune variant"
 	default "bitter0" if LENET5_ADAMWPRUNE_VARIANT_BITTER0
 	default "bitter7" if LENET5_ADAMWPRUNE_VARIANT_BITTER7
-	default "bitter8" if LENET5_ADAMWPRUNE_VARIANT_BITTER8
-	help
-	  Default variant to use when AdamWPrune optimizer is selected.
-	  bitter0: Original hybrid (works well on CNNs)
-	  bitter7: Variance-based (best for transformers, expected to improve CNNs)
-	  bitter8: Optimized bitter7 with FP16 and fast rsqrt
 
 endmenu
 
