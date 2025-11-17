@@ -28,6 +28,7 @@ from lib.optimizers import (
     apply_adamprune_masking,
     update_adamprune_masks,
 )
+from lenet5.model import LeNet5, LeNet5WithPCA, LeNet5WithSplinePCA
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="LeNet-5 training with optional pruning")
@@ -183,6 +184,13 @@ parser.add_argument(
     type=str,
     default=None,
     help="Run name for experiment tracking (default: auto-generated)",
+)
+parser.add_argument(
+    "--tokenizer-method",
+    type=str,
+    default="none",
+    choices=["none", "pca", "spline-pca"],
+    help="Tokenization method: none (baseline), pca (spatial tiering), spline-pca (temporal tiering)",
 )
 args = parser.parse_args()
 
@@ -414,41 +422,55 @@ test_loader = torch.utils.data.DataLoader(
 )
 
 
-# Defining the convolutional neural network
-class LeNet5(nn.Module):
-    def __init__(self, num_classes):
-        super(LeNet5, self).__init__()
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(1, 6, kernel_size=5, stride=1, padding=0),
-            nn.BatchNorm2d(6),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(6, 16, kernel_size=5, stride=1, padding=0),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
-        self.fc = nn.Linear(400, 120)
-        self.relu = nn.ReLU()
-        self.fc1 = nn.Linear(120, 84)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Linear(84, num_classes)
+# Select model based on tokenization method
+logger.info(f"Using tokenization method: {args.tokenizer_method}")
 
-    def forward(self, x):
-        out = self.layer1(x)
-        out = self.layer2(out)
-        out = out.reshape(out.size(0), -1)
-        out = self.fc(out)
-        out = self.relu(out)
-        out = self.fc1(out)
-        out = self.relu1(out)
-        out = self.fc2(out)
-        return out
+if args.tokenizer_method == "pca":
+    # PCA tokenization: spatial tiering by variance
+    n_components = config.get("LENET5_PCA_COMPONENTS", 64)
+    whiten = config.get("LENET5_PCA_WHITEN", False)
+    logger.info(f"PCA tokenization: {n_components} components, whiten={whiten}")
+    model = LeNet5WithPCA(
+        num_classes=num_classes, n_components=n_components, whiten=whiten
+    ).to(device)
 
+    # Fit PCA on training data
+    logger.info("Fitting PCA tokenizer on training data...")
+    train_images = []
+    for images, _ in train_loader:
+        train_images.append(images.cpu().numpy())
+    train_images = np.concatenate(train_images, axis=0)
+    model.fit_pca(train_images)
+    logger.info(f"PCA fitted on {len(train_images)} training images")
 
-model = LeNet5(num_classes).to(device)
+elif args.tokenizer_method == "spline-pca":
+    # Spline-PCA tokenization: spatial + temporal tiering
+    n_components = config.get("LENET5_PCA_COMPONENTS", 64)
+    n_control_points = config.get("LENET5_SPLINE_CONTROL_POINTS", 8)
+    whiten = config.get("LENET5_PCA_WHITEN", False)
+    logger.info(
+        f"Spline-PCA tokenization: {n_components} components, {n_control_points} control points, whiten={whiten}"
+    )
+    model = LeNet5WithSplinePCA(
+        num_classes=num_classes,
+        n_components=n_components,
+        n_control_points=n_control_points,
+        whiten=whiten,
+    ).to(device)
+
+    # Fit PCA on training data
+    logger.info("Fitting PCA tokenizer on training data...")
+    train_images = []
+    for images, _ in train_loader:
+        train_images.append(images.cpu().numpy())
+    train_images = np.concatenate(train_images, axis=0)
+    model.fit_pca(train_images)
+    logger.info(f"PCA fitted on {len(train_images)} training images")
+
+else:
+    # Baseline: no tokenization
+    logger.info("Baseline mode: no tokenization")
+    model = LeNet5(num_classes=num_classes).to(device)
 
 # Compile the model for faster execution (PyTorch 2.0+)
 if torch.__version__ >= "2.0.0" and device.type == "cuda":
