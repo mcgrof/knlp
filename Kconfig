@@ -309,7 +309,7 @@ config ENABLE_WANDB
 
 config TRACKER_PROJECT
 	string "Project name for experiment tracking"
-	default $(shell, scripts/generate-project-name.sh $(MODEL) tracking)
+	default "$(shell, scripts/generate-project-name.sh $(MODEL) tracking)"
 	depends on ENABLE_TRACKIO || ENABLE_WANDB
 	help
 	  Project name to organize experiments in the tracking system.
