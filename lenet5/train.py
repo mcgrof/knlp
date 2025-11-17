@@ -305,8 +305,18 @@ if args.tracker:
     if "trackio" in tracker_list:
         try:
             import trackio
-            # Trackio doesn't use start_run, just log directly
-            trackio_run = True  # Flag to indicate trackio is active
+            trackio.init(project=args.tracker_project)
+            trackio_run = trackio.start_run(name=run_name)
+            trackio.log_params({
+                "model": "lenet5",
+                "optimizer": args.optimizer,
+                "pruning_method": args.pruning_method,
+                "target_sparsity": target_sparsity,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "num_epochs": num_epochs,
+                "adamwprune_variant": args.adamwprune_variant if args.optimizer == "adamwprune" else None,
+            })
             trackers_enabled.append("trackio")
             logger.info(f"Initialized Trackio tracking for project: {args.tracker_project}")
         except ImportError:
@@ -675,8 +685,13 @@ for epoch in range(num_epochs):
                 "train/sparsity": epoch_metrics.get("sparsity", 0),
             })
         if trackio_run is not None:
-            # Trackio auto-logs, no explicit log_metrics call needed
-            pass
+            trackio.log_metrics({
+                "epoch": epoch + 1,
+                "loss": epoch_metrics["avg_loss"],
+                "accuracy": accuracy,
+                "epoch_time": epoch_time,
+                "sparsity": epoch_metrics.get("sparsity", 0),
+            })
 
         # Step the learning rate scheduler if using AdamWAdv
         if scheduler is not None:
