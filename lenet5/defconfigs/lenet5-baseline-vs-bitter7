@@ -84,8 +84,8 @@ CONFIG_LEARNING_RATE="0.001"
 CONFIG_NUM_WORKERS=16
 
 # Time-based training: 240s (4 minutes)
-# Based on last run: ~107s max for 10 epochs, ~128s for 12 epochs
-# 2x that = ~256s, rounded to 240s for clean value
+# Set epochs high so time limit stops training, not epoch count
+CONFIG_NUM_EPOCHS=100
 CONFIG_LENET5_MAX_TIME=240
 
 # Performance features
