@@ -254,17 +254,28 @@ def update_all_results(results_dir):
             continue
 
         # Parse test name
+        # Patterns:
+        #   model_optimizer_pruning_sparsity (e.g., lenet5_adamw_magnitude_70)
+        #   model_optimizer_none (e.g., lenet5_adamw_none)
+        #   model_optimizer_variant_pruning_sparsity (e.g., lenet5_adamwprune_bitter0_state_70)
+        #   model_optimizer_variant_none (e.g., lenet5_adamwprune_bitter0_none)
         parts = test_dir.split("_")
-        if len(parts) >= 4:
-            model = parts[0]
-            optimizer = parts[1]
-            pruning = parts[2]
-            # Handle "none" sparsity (no pruning)
-            if parts[3] == "none":
-                sparsity = 0.0
-            else:
-                sparsity = int(parts[3]) / 100.0
+        if len(parts) < 3:
+            continue
+
+        model = parts[0]
+        optimizer = parts[1]
+
+        # Handle sparsity and pruning method
+        last_part = parts[-1]
+        if last_part == "none":
+            sparsity = 0.0
+            pruning = "none"
+        elif last_part.isdigit():
+            sparsity = int(last_part) / 100.0
+            pruning = parts[-2]  # Second to last is pruning method
         else:
+            # Unknown pattern, skip
             continue
 
         # Load and analyze metrics
@@ -318,12 +329,19 @@ def regenerate_summary(results_dir, output_file="summary_report.txt"):
     accuracy_details = {}
 
     for result in all_results:
-        # Construct test ID
+        # Use test_id from result (preserves full directory name including variant)
+        test_name = result.get("test_id")
+        if not test_name:
+            # Fallback to constructing test ID if not present
+            model = result.get("model", "unknown")
+            optimizer = result.get("optimizer", "unknown")
+            pruning = result.get("pruning_method", "none")
+            sparsity = int(result.get("target_sparsity", 0) * 100)
+            test_name = f"{model}_{optimizer}_{pruning}_{sparsity}"
+
         model = result.get("model", "unknown")
         optimizer = result.get("optimizer", "unknown")
         pruning = result.get("pruning_method", "none")
-        sparsity = int(result.get("target_sparsity", 0) * 100)
-        test_name = f"{model}_{optimizer}_{pruning}_{sparsity}"
 
         # Get detailed accuracy analysis
         metrics_file = os.path.join(results_dir, test_name, "training_metrics.json")
