@@ -83,7 +83,7 @@ CONFIG_ENABLE_RA_MLA=n
 
 # Enable ablation study mode with V-pruning + KVSplice compression
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V19,C1,C2,C3"
+CONFIG_RA_MLA_ABLATION_STEPS="V0,V19,C1,C2,C3"
 
 # Disable test matrix mode - ablation mode runs its own test sequence
 CONFIG_TEST_MATRIX_MODE=n
