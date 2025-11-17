@@ -9,7 +9,7 @@
 # All tests use identical hyperparameters for fair comparison:
 # - 70% sparsity
 # - batch_size=512
-# - 10 epochs
+# - 12 epochs
 # - lr=0.001
 #
 # Expected results:
@@ -79,7 +79,7 @@ CONFIG_TEST_SPARSITY_70=y
 
 # Training configuration
 CONFIG_BATCH_SIZE=512
-CONFIG_NUM_EPOCHS=10
+CONFIG_NUM_EPOCHS=12
 CONFIG_LEARNING_RATE="0.001"
 CONFIG_NUM_WORKERS=16
 
