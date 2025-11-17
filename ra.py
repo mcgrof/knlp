@@ -119,11 +119,12 @@ class ReciprocalAttention(nn.Module):
             self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
         # Learned skip gates: binary decisions for conditional computation
-        # Init to 2.0 → sigmoid(2.0) ≈ 0.88 (enabled by default)
-        # Model learns to set these to high (use pathway) or low (skip pathway)
+        # skip_std_attn: Init 2.0 → sigmoid(2.0) ≈ 0.88 (standard attention enabled, proven to work)
+        # skip_lowrank_attn: Init -3.0 → sigmoid(-3.0) ≈ 0.05 (reciprocal disabled, must prove value)
+        # Model learns to enable reciprocal if beneficial, disable if harmful
         # Skipping a pathway eliminates its attention GEMMs from forward + backward
         self.register_parameter("skip_std_attn", nn.Parameter(torch.tensor(2.0)))
-        self.register_parameter("skip_lowrank_attn", nn.Parameter(torch.tensor(2.0)))
+        self.register_parameter("skip_lowrank_attn", nn.Parameter(torch.tensor(-3.0)))
 
         # Self-restart mechanism (optional): out = (1-α)*SDPA + α*V
         # Provides identity residual path for stability
@@ -572,11 +573,12 @@ class ReciprocalMLP(nn.Module):
         self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
         # Learned skip gates: binary decisions for conditional computation
-        # Init to 2.0 → sigmoid(2.0) ≈ 0.88 (enabled by default)
-        # Model learns to set these to high (use pathway) or low (skip pathway)
+        # skip_std: Init 2.0 → sigmoid(2.0) ≈ 0.88 (standard MLP enabled, proven to work)
+        # skip_rec: Init -3.0 → sigmoid(-3.0) ≈ 0.05 (reciprocal disabled, must prove value)
+        # Model learns to enable reciprocal if beneficial, disable if harmful
         # Skipping a pathway eliminates its GEMMs from forward + backward pass
         self.register_parameter("skip_std", nn.Parameter(torch.tensor(2.0)))
-        self.register_parameter("skip_rec", nn.Parameter(torch.tensor(2.0)))
+        self.register_parameter("skip_rec", nn.Parameter(torch.tensor(-3.0)))
 
         # Track if gates are frozen for delayed activation
         self._gates_frozen = False
