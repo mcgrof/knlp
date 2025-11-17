@@ -78,9 +78,10 @@ CONFIG_SPARSITY_ENABLE_95=n
 CONFIG_SPARSITY_ENABLE_99=n
 CONFIG_TEST_SPARSITY_70=y
 
-# Hyperparameter auto-detection
+# Hyperparameter auto-detection (see docs/hyperparameter-auto-detection.md)
 # Automatically selects batch_size based on GPU memory (H100 vs W7900 vs CPU)
 # Maintains constant effective batch size via gradient accumulation
+# ResNet-18 uses 2x scale factor, so gets 2x larger batches than GPT-2
 CONFIG_HYPER_PARAM_AUTO=y
 CONFIG_TARGET_EFFECTIVE_BATCH=512
 CONFIG_COMPILE_AUTO=y

@@ -5,6 +5,15 @@ mainmenu "AdamWPrune v1.0.0 - Neural Network Training Configuration"
 
 menu "General Configuration"
 
+comment "Hyperparameter Auto-Detection"
+	help
+	  The AUTO hyperparameter system automatically selects optimal batch_size
+	  and gradient_accumulation based on your GPU hardware (type, memory, count)
+	  and torch.compile() status. This makes defconfigs portable across different
+	  hardware without manual tuning.
+
+	  See docs/hyperparameter-auto-detection.md for details.
+
 choice
 	prompt "Hyperparameter configuration mode"
 	default HYPER_PARAM_AUTO
@@ -52,12 +61,28 @@ config TARGET_EFFECTIVE_BATCH
 	  Effective batch = batch_size × gradient_accumulation × num_gpus
 
 	  The system automatically adjusts batch_size and gradient_accumulation
-	  to achieve this target while maximizing GPU utilization.
+	  to achieve this target while maximizing GPU utilization. The actual
+	  batch_size is determined by GPU memory (H100 gets larger batches than
+	  A10G), and gradient_accumulation compensates to maintain this target.
+
+	  Model-specific memory scaling factors account for different memory
+	  requirements per sample, allowing smaller models to use proportionally
+	  larger batches when GPU memory permits:
+	    - GPT-2: 1.0x (baseline, large memory per sample)
+	    - ResNet-50: 1.5x (medium memory, can use larger batches)
+	    - ResNet-18: 2.0x (smaller memory, 2x larger batches)
+	    - LeNet-5: 4.0x (tiny memory, 4x larger batches)
 
 	  Common values:
-	    - 256: Small models, limited memory
-	    - 1024: GPT-2 124M (default)
+	    - 256: ResNet-50, memory-constrained GPUs
+	    - 512: ResNet-18, LeNet-5 (default for CNNs)
+	    - 1024: GPT-2 124M (default for transformers)
 	    - 2048: Larger models with abundant memory
+
+	  Example: On H100 (80GB) with ResNet-18 and target=512:
+	    - batch_size auto-selected as 256 (2x GPT-2's 128)
+	    - gradient_accumulation=2 (to reach 512 effective)
+	    - Result: 512 effective batch, optimal GPU utilization
 
 config BATCH_SIZE
 	int "Batch size for training"
