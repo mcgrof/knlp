@@ -1,0 +1,1 @@
+{"val_loss":5.1778459548950195,"_runtime":3828.213608044,"train_loss":3.16660483032465,"_wandb":{"runtime":3828},"val_perplexity":177.30048612444062,"sparsity":0,"final/best_val_loss":4.8682050704956055,"iteration":201,"_step":201,"learning_rate":0.0006,"final/best_val_perplexity":130.0872098442692,"train_perplexity":23.726790968880454,"_timestamp":1.7633273162799802e+09}

@@ -1,0 +1,98 @@
+{
+  "os": "Linux-6.16.8+deb14-amd64-x86_64-with-glibc2.41",
+  "python": "CPython 3.12.11",
+  "startedAt": "2025-11-16T09:22:04.137077Z",
+  "args": [
+    "--optimizer",
+    "adamw",
+    "--dataset",
+    "shakespeare",
+    "--data-dir",
+    "./gpt2/data",
+    "--batch-size",
+    "40",
+    "--block-size",
+    "1024",
+    "--gradient-accumulation",
+    "8",
+    "--warmup-steps",
+    "200",
+    "--eval-interval",
+    "100",
+    "--eval-samples",
+    "200",
+    "--max-iters",
+    "10000",
+    "--max-time",
+    "1800",
+    "--decay-lr",
+    "--min-lr",
+    "6e-5",
+    "--learning-rate",
+    "6e-4",
+    "--pruning-method",
+    "none",
+    "--architecture",
+    "vanilla",
+    "--ablation-mode",
+    "--ablation-steps",
+    "V0",
+    "--json-output",
+    "/data/knlp/test_matrix_results_20251116_012156/gpt2_adamw_vanilla_V0/training_metrics.json",
+    "--tracker",
+    "wandb,trackio",
+    "--tracker-project",
+    "gpt2-mechint-kv-w7900",
+    "--tracker-run-name",
+    "gpt2_adamw_vanilla_V0"
+  ],
+  "program": "/data/knlp/gpt2/train.py",
+  "codePath": "gpt2/train.py",
+  "codePathLocal": "gpt2/train.py",
+  "git": {
+    "remote": "https://github.com/mcgrof/knlp.git",
+    "commit": "94e7c62ade611795e25df1dfd363e623f36ab177"
+  },
+  "email": "mcgrof@gmail.com",
+  "root": "/data/knlp",
+  "host": "prune",
+  "executable": "/home/mcgrof/envs/w7900-ml/bin/python3",
+  "cpu_count": 16,
+  "cpu_count_logical": 32,
+  "gpu": "AMD Radeon Graphics",
+  "gpu_count": 2,
+  "disk": {
+    "/": {
+      "total": "999511388160",
+      "used": "191923884032"
+    }
+  },
+  "memory": {
+    "total": "98659766272"
+  },
+  "gpu_amd": [
+    {
+      "id": "1",
+      "uniqueId": "0x0",
+      "vbiosVersion": "102-RAPHAEL-008",
+      "performanceLevel": "auto",
+      "series": "AMD Radeon Graphics",
+      "model": "0x13c0",
+      "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+      "sku": "RAPHAEL",
+      "sclkRange": "600Mhz - 2200Mhz"
+    },
+    {
+      "id": "0",
+      "uniqueId": "0xb0e5d4295c432bb4",
+      "vbiosVersion": "113-D7070100-100",
+      "performanceLevel": "auto",
+      "maxPower": "241.0",
+      "series": "AMD Radeon Pro W7900",
+      "model": "0x7448",
+      "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+      "sku": "D7070100"
+    }
+  ],
+  "writerId": "v59n1wsu7caxi4duxo0domxn75g4323k"
+}
