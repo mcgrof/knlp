@@ -1,24 +1,27 @@
-# LeNet-5 with Adam State-Based Tiering (Emulated Mode)
+# LeNet-5 with Emulated Hierarchical Memory Tiering
+# Run with: make defconfig-lenet5-adam-tier-emulated && make DEVICE=cpu
 #
 # Tests hierarchical memory tiering on LeNet-5 using emulated delays.
 # Runs on CPU to avoid GPU contention and because CPU memory hierarchy
 # (RAM vs SSD) shows bigger tiering impact than GPU (HBM vs RAM).
 #
-# Purpose: Validate tiering infrastructure on simple model before
-# adding PCA/spline tokenizer complexity. Establishes baseline for
-# understanding which layers are "hot" vs "cold".
+# Purpose: Validate tiering infrastructure and measure impact on
+# training time and accuracy. Emulated mode adds artificial delays
+# to simulate memory tier access costs without actually moving data.
 #
 # After training, generates tier_hints.json based on Adam optimizer
 # states. Early conv layers expected to be hot (feature extraction),
 # later FC layers may be cold (stable features).
 #
-# Usage:
+# To compare against baseline (no tiering), first run:
+#   make defconfig-lenet5-adam-baseline && make DEVICE=cpu
+#
+# Then run this config and compare results in W&B:
 #   make defconfig-lenet5-adam-tier-emulated && make DEVICE=cpu
-#   python3 scripts/benchmark_tiered_inference.py \
-#     --model lenet5 \
-#     --tier-hints tier_hints_lenet5.json \
-#     --mode emulated \
-#     --baseline
+#
+# Expected results:
+# - Accuracy: ~99.2% (similar to baseline)
+# - Training time: ~50-60 min (slight overhead from emulated delays)
 
 # Enable LeNet-5 model
 CONFIG_MODEL_MODE_SINGLE=y
@@ -83,7 +86,7 @@ CONFIG_VERBOSE=y
 
 # Test execution (single training run)
 CONFIG_TEST_MATRIX_MODE=n
-CONFIG_OUTPUT_DIR="test_matrix_results_lenet5_tier_emulated"
+CONFIG_OUTPUT_DIR="lenet5_tier_emulated"
 
 # Expected results:
 # - Training time: ~50 minutes on modern CPU (10 epochs)

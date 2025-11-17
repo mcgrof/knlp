@@ -1,0 +1,74 @@
+# LeNet-5 Baseline (No Tiering)
+# Run with: make defconfig-lenet5-adam-baseline && make DEVICE=cpu
+#
+# This is the baseline reference for tiering experiments. Trains
+# LeNet-5 with AdamW optimizer on CPU with no hierarchical memory
+# tiering enabled.
+#
+# Use this as comparison against lenet5-adam-tier-emulated to
+# measure the impact of memory tiering on training time and accuracy.
+#
+# Expected results:
+# - Accuracy: ~99.2% on MNIST (10 epochs)
+# - Training time: ~50 minutes on modern CPU
+# - Model size: ~60K parameters (~240KB)
+#
+# Compare against:
+# - lenet5-adam-tier-emulated: Same setup but with emulated tiering
+
+# Enable LeNet-5 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_LENET5=y
+CONFIG_MODEL_LENET5=y
+CONFIG_MODEL="lenet5"
+CONFIG_LENET5_DATASET_MNIST=y
+
+# Use AdamW optimizer (needed for Adam state analysis)
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+CONFIG_ADAMW_EPSILON="1e-8"
+CONFIG_ADAMW_WEIGHT_DECAY="0.0001"
+
+# No pruning for baseline
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# Hyperparameter auto-detection (see docs/hyperparameter-auto-detection.md)
+# Auto-detects CPU and selects appropriate batch size
+# LeNet-5 uses 4x scale factor for larger batches when memory permits
+CONFIG_HYPER_PARAM_AUTO=y
+CONFIG_TARGET_EFFECTIVE_BATCH=512
+CONFIG_COMPILE_AUTO=y
+
+# Training configuration - CPU optimized
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=4
+CONFIG_DEVICE="cpu"
+
+# Disable GPU-specific features for CPU training
+CONFIG_COMPILE_MODEL=n
+CONFIG_MIXED_PRECISION=n
+CONFIG_GPU_WARMUP=n
+CONFIG_PIN_MEMORY=n
+CONFIG_PERSISTENT_WORKERS=y
+
+# No Hierarchical Memory Tiering (baseline)
+CONFIG_ENABLE_HIERARCHICAL_TIERING=n
+
+# Experiment Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="lenet5-tiering"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_VERBOSE=y
+
+# Test execution (single training run)
+CONFIG_TEST_MATRIX_MODE=n
+CONFIG_OUTPUT_DIR="lenet5_baseline"
