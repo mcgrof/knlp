@@ -43,6 +43,9 @@
 #
 # To run: make defconfig-gpt2-r-mlp-prune && make
 
+# Hyperparameter mode: manual (don't auto-tune for GPU)
+CONFIG_HYPER_PARAM_MANUAL=y
+
 # Enable GPT-2 model
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -68,6 +71,7 @@ CONFIG_GPT2_MIN_LR="6e-5"
 CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_FLASH_ATTENTION=n
 CONFIG_GPT2_COMPILE=n
+CONFIG_COMPILE_MANUAL=y
 # CONFIG_COMPILE_MODEL is not set
 CONFIG_GPT2_WEIGHT_TYING=y
 CONFIG_GPT2_BIAS=y
