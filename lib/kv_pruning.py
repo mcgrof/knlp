@@ -178,6 +178,10 @@ class VOnlyPruner(nn.Module):
         idx_T = idx.unsqueeze(-2).expand(B, H, T, k_keep)  # [B,H,T,k]
         attn_pruned = torch.gather(attn, dim=-1, index=idx_T)  # [B,H,T,k]
 
+        # Renormalize attention weights after pruning to sum to 1
+        # Without this, pruned weights don't form a valid distribution
+        attn_pruned = attn_pruned / (attn_pruned.sum(dim=-1, keepdim=True) + 1e-10)
+
         # Gather V for selected positions
         idx_D = idx.unsqueeze(-1).expand(B, H, k_keep, v.size(-1))  # [B,H,k,D]
         V_keep = torch.gather(v, dim=2, index=idx_D)  # [B,H,k,D]
