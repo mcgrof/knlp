@@ -46,11 +46,18 @@ CONFIG_GPT2_CUDNN_BENCHMARK=y
 CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
-# Hyperparameter auto-detection (batch size and grad_acc)
-CONFIG_HYPER_PARAM_AUTO=y
-CONFIG_TARGET_EFFECTIVE_BATCH=1024
+# Hyperparameter mode: MANUAL for KV compression tests
+# Per-step overrides in trainers/ra.py _configure_step():
+#   V0: batch=64, grad_acc=16 (torch.compile warmup overhead)
+#   V19/C1/C2/C3: batch=32, grad_acc=32 (KV pruning full [B,H,T,T] matrices)
+# These overrides are necessary due to memory constraints from:
+#   - torch.compile tracing overhead during first iteration
+#   - Full attention matrix computation before pruning
+CONFIG_HYPER_PARAM_MANUAL=y
 
-# Training parameters - Auto-detected per GPU
+# Training parameters - Manually configured (see per-step overrides above)
+CONFIG_BATCH_SIZE=128
+CONFIG_GPT2_GRADIENT_ACCUMULATION=8
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
