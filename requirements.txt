@@ -25,6 +25,7 @@ seaborn
 plotly
 rich
 psutil
+pynvml  # GPU monitoring for W&B (NVIDIA GPUs)
 
 # Development & Quality
 black
