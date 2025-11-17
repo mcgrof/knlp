@@ -1617,6 +1617,119 @@ def generate_sweep_analysis(output_dir, results):
     print(f"Analysis report saved to: {report_file}")
 
 
+def copy_baseline_run_if_needed(config, verbose=True):
+    """
+    Copy baseline run from another project if BASELINE_RUN_ID is set.
+
+    Args:
+        config: Configuration dictionary
+        verbose: Print progress messages
+
+    Returns:
+        New run ID in current project, or None if no baseline to copy
+    """
+    import subprocess
+
+    # Check for baseline run ID
+    baseline_run_id = (
+        os.environ.get("CONFIG_BASELINE_RUN_ID") or config.get("BASELINE_RUN_ID", "")
+    ).strip('"')
+
+    if not baseline_run_id:
+        return None
+
+    # Check if wandb is enabled
+    if not config.get("ENABLE_WANDB"):
+        if verbose:
+            print(
+                "Warning: BASELINE_RUN_ID set but ENABLE_WANDB is disabled. Skipping baseline copy."
+            )
+        return None
+
+    # Parse run path: entity/project/run_id
+    parts = baseline_run_id.split("/")
+    if len(parts) != 3:
+        if verbose:
+            print(f"Warning: Invalid BASELINE_RUN_ID format: {baseline_run_id}")
+            print(f"Expected: entity/project/run_id")
+            print(f"Skipping baseline copy.")
+        return None
+
+    src_entity, src_project, src_run_id = parts
+
+    # Get current project name from config
+    current_project = config.get("TRACKER_PROJECT", config.get("WANDB_PROJECT", ""))
+    if not current_project:
+        if verbose:
+            print(
+                "Warning: No TRACKER_PROJECT or WANDB_PROJECT configured. Cannot copy baseline."
+            )
+        return None
+
+    # Get current entity (default to source entity if not specified)
+    current_entity = config.get("WANDB_ENTITY", src_entity)
+
+    # Check if source and destination are the same
+    if (
+        src_entity == current_entity
+        and src_project == current_project
+        and src_run_id == src_run_id
+    ):
+        if verbose:
+            print(f"Baseline run is already in current project: {baseline_run_id}")
+        return src_run_id
+
+    if verbose:
+        print(f"\n{'='*60}")
+        print("BASELINE RUN COPY")
+        print(f"{'='*60}")
+        print(f"Source: {baseline_run_id}")
+        print(f"Destination: {current_entity}/{current_project}")
+
+    # Call copy_wandb_run.py script
+    copy_cmd = [
+        "python3",
+        "scripts/copy_wandb_run.py",
+        "--source",
+        baseline_run_id,
+        "--dest-project",
+        current_project,
+        "--dest-entity",
+        current_entity,
+    ]
+
+    if verbose:
+        print(f"Copying baseline run...")
+    else:
+        copy_cmd.append("--quiet")
+
+    try:
+        result = subprocess.run(
+            copy_cmd, check=True, capture_output=True, text=True, timeout=600
+        )
+
+        # Get new run ID from output (last line)
+        new_run_id = result.stdout.strip().split("\n")[-1]
+
+        if verbose:
+            print(f"✓ Baseline run copied successfully")
+            print(f"New run ID: {new_run_id}")
+            print(f"{'='*60}\n")
+
+        return new_run_id
+
+    except subprocess.CalledProcessError as e:
+        if verbose:
+            print(f"Error copying baseline run: {e}")
+            print(f"stdout: {e.stdout}")
+            print(f"stderr: {e.stderr}")
+        return None
+    except Exception as e:
+        if verbose:
+            print(f"Error copying baseline run: {e}")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run test matrix for AdamWPrune training"
@@ -2106,6 +2219,9 @@ def main():
         else:
             config = parse_kconfig(args.config)
             config_source = args.config
+
+        # Copy baseline run if BASELINE_RUN_ID is set
+        copy_baseline_run_if_needed(config, verbose=True)
 
         # Get test matrix
         matrix = get_test_matrix(config)
