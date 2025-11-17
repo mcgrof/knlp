@@ -2061,6 +2061,37 @@ def main():
         matrix = get_test_matrix(config)
         all_combinations = generate_combinations(matrix)
 
+        # Filter out baseline step if BASELINE_RUN_ID is set (same as normal mode)
+        baseline_run_id = (
+            os.environ.get("CONFIG_BASELINE_RUN_ID")
+            or config.get("BASELINE_RUN_ID", "")
+        ).strip('"')
+
+        if baseline_run_id:
+            # Filter out baseline combinations
+            filtered_combinations = []
+            for combo in all_combinations:
+                ra_step = combo.get("ra_mla_ablation_step")
+                vanilla_step = combo.get("vanilla_ablation_step")
+
+                # Check if this is a baseline step
+                is_baseline = False
+                if ra_step:
+                    is_baseline = ra_step == "0" or (
+                        len(ra_step) == 2 and ra_step[0].isalpha() and ra_step[1] == "0"
+                    )
+                elif vanilla_step:
+                    is_baseline = vanilla_step == "0" or (
+                        len(vanilla_step) == 2
+                        and vanilla_step[0].isalpha()
+                        and vanilla_step[1] == "0"
+                    )
+
+                if not is_baseline:
+                    filtered_combinations.append(combo)
+
+            all_combinations = filtered_combinations
+
         # Determine which tests need to be run
         complete_test_ids = set(complete_runs)
         tests_to_run = []
@@ -2270,6 +2301,48 @@ def main():
 
         # Generate combinations
         combinations = generate_combinations(matrix)
+
+        # Filter out baseline step if BASELINE_RUN_ID is set
+        baseline_run_id = (
+            os.environ.get("CONFIG_BASELINE_RUN_ID")
+            or config.get("BASELINE_RUN_ID", "")
+        ).strip('"')
+
+        if baseline_run_id:
+            # Filter out baseline combinations (X0 where X is single letter, or "0")
+            filtered_combinations = []
+            skipped_baseline = None
+
+            for combo in combinations:
+                ra_step = combo.get("ra_mla_ablation_step")
+                vanilla_step = combo.get("vanilla_ablation_step")
+
+                # Check if this is a baseline step
+                is_baseline = False
+                if ra_step:
+                    is_baseline = ra_step == "0" or (
+                        len(ra_step) == 2 and ra_step[0].isalpha() and ra_step[1] == "0"
+                    )
+                    if is_baseline:
+                        skipped_baseline = ra_step
+                elif vanilla_step:
+                    is_baseline = vanilla_step == "0" or (
+                        len(vanilla_step) == 2
+                        and vanilla_step[0].isalpha()
+                        and vanilla_step[1] == "0"
+                    )
+                    if is_baseline:
+                        skipped_baseline = vanilla_step
+
+                if not is_baseline:
+                    filtered_combinations.append(combo)
+
+            if skipped_baseline:
+                print(f"\nSkipping {skipped_baseline} baseline - using reference run:")
+                print(f"  {baseline_run_id}")
+
+            combinations = filtered_combinations
+
         print(f"\nTotal test combinations: {len(combinations)}")
 
     if args.dry_run:
