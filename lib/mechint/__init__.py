@@ -14,6 +14,7 @@ and related mechanistic interpretability research.
 """
 
 from .kv_circuit import (
+    AnalysisConfig,
     KVFeatureMask,
     KVCircuitAnalyzer,
     SparsitySchedule,
@@ -23,9 +24,11 @@ from .visualize import (
     visualize_kv_masks,
     plot_sparsity_curves,
     log_circuit_to_wandb,
+    create_circuit_summary_report,
 )
 
 __all__ = [
+    "AnalysisConfig",
     "KVFeatureMask",
     "KVCircuitAnalyzer",
     "SparsitySchedule",
@@ -33,4 +36,5 @@ __all__ = [
     "visualize_kv_masks",
     "plot_sparsity_curves",
     "log_circuit_to_wandb",
+    "create_circuit_summary_report",
 ]
