@@ -383,8 +383,11 @@ config BASELINE_RUN_ID
 	  and copy the specified run to the current project for comparison.
 
 	  Workflow:
-	    make defconfig-gpt2-r-mlp-prune
+	    make defconfig-gpt2-r-mlp-prune BASELINE=mcgrof/old-project/abc123
 	    make BASELINE=mcgrof/old-project/abc123
+
+	  Note: BASELINE must be specified on both commands to ensure config.py
+	  is regenerated with the baseline reference before execution.
 
 	  This automatically:
 	    1. Copies the baseline run to current project
