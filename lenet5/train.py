@@ -218,12 +218,12 @@ elif args.pruning_method == "state":
     # State pruning is built into AdamWPrune, no external import needed
     pass
 
-# Define relevant variables for the ML task
-batch_size = 512
+# Define relevant variables for the ML task (read from config or use defaults)
+batch_size = config.get("BATCH_SIZE", 512) if config else 512
 num_classes = 10
-learning_rate = 0.001
-num_epochs = 10
-num_workers = 16  # Use multiple workers for data loading
+learning_rate = config.get("LEARNING_RATE", 0.001) if config else 0.001
+num_epochs = config.get("NUM_EPOCHS", 10) if config else 10
+num_workers = config.get("NUM_WORKERS", 16) if config else 16
 
 # Time-based training (0 = no limit, train for NUM_EPOCHS)
 max_time = getattr(config, "LENET5_MAX_TIME", 0) if config else 0
