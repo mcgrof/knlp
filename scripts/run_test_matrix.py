@@ -881,17 +881,22 @@ def generate_combinations(matrix):
                         combinations.append(combo)
             # For AdamWPrune without RA_MLA ablation, generate combinations for each variant
             elif optimizer == "adamwprune":
+                # AdamWPrune has built-in state pruning, so even with pruning=="none"
+                # (no external pruning), we should test different sparsity levels
+                # for the built-in pruning
                 for variant in adamwprune_variants:
-                    combinations.append(
-                        {
-                            "model": model,
-                            "optimizer": optimizer,
-                            "pruning": pruning,
-                            "sparsity": "0.0",
-                            "variant": variant,
-                            "tokenizer_method": tokenizer_method,
-                        }
-                    )
+                    # Test built-in pruning at each sparsity level
+                    for sparsity in sparsity_levels:
+                        combinations.append(
+                            {
+                                "model": model,
+                                "optimizer": optimizer,
+                                "pruning": pruning,
+                                "sparsity": sparsity,
+                                "variant": variant,
+                                "tokenizer_method": tokenizer_method,
+                            }
+                        )
             else:
                 combinations.append(
                     {
@@ -1025,6 +1030,14 @@ def run_single_test(
             # Tokenizer method for ablation (if applicable)
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
+        elif optimizer == "adamwprune" and float(sparsity) > 0.0:
+            # AdamWPrune with no external pruning but with built-in state pruning
+            # Include sparsity in name to distinguish different sparsity levels
+            sparsity_pct = int(float(sparsity) * 100)
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}_{tokenizer_method}"
+            else:
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}"
         elif variant:
             if tokenizer_method:
                 test_id = f"{model}_{optimizer}_{variant}_{pruning}_{tokenizer_method}"
@@ -1158,6 +1171,13 @@ def run_single_test(
     if optimizer == "adamwprune" and pruning == "state":
         # For AdamWPrune with state pruning, pass "state" as the method
         cmd.extend(["--pruning-method", "state"])
+        cmd.extend(["--target-sparsity", sparsity])
+        if "PRUNING_WARMUP" in config:
+            cmd.extend(["--pruning-warmup", config["PRUNING_WARMUP"]])
+    elif optimizer == "adamwprune" and pruning == "none":
+        # AdamWPrune with no external pruning - uses built-in state pruning
+        cmd.extend(["--pruning-method", "none"])
+        # Still pass target sparsity for built-in pruning
         cmd.extend(["--target-sparsity", sparsity])
         if "PRUNING_WARMUP" in config:
             cmd.extend(["--pruning-warmup", config["PRUNING_WARMUP"]])
@@ -2378,6 +2398,13 @@ def main():
                     test_id = f"{combo['model']}_{combo['optimizer']}_vanilla_{vanilla_ablation_step}{tokenizer_part}"
                 elif ra_ablation_step is not None:
                     test_id = f"{combo['model']}_{combo['optimizer']}_ramla_step{ra_ablation_step}{tokenizer_part}"
+                elif (
+                    combo["optimizer"] == "adamwprune"
+                    and float(combo.get("sparsity", "0")) > 0.0
+                ):
+                    # AdamWPrune with built-in state pruning - include sparsity in name
+                    sparsity_pct = int(float(combo.get("sparsity", "0")) * 100)
+                    test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}_{sparsity_pct}"
                 else:
                     test_id = f"{combo['model']}_{combo['optimizer']}{variant_part}_{combo['pruning']}{tokenizer_part}"
             else:
