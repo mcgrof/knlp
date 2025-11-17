@@ -324,7 +324,7 @@ train-ra-mla-ablation:
 	@echo "Or manually: python gpt2/train_ra_mla.py --latent-dim 64 --ra-alpha 0.5 --tracker trackio,wandb"
 
 # Test matrix targets
-test-matrix: check-config prepare-datasets
+test-matrix: check-config generate-config prepare-datasets
 	@echo "Running test matrix with configuration from .config..."
 	@if [ -n "$(MAX_ITERS)" ]; then \
 		echo "Setting MAX_ITERS to $(MAX_ITERS) for GPT-2 testing..."; \

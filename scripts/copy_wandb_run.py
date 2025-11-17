@@ -11,8 +11,10 @@ Manual usage:
         --new-name new_run_name
 
 Automatic usage with test matrix (recommended):
-    make defconfig-gpt2-r-mlp-prune
+    make defconfig-gpt2-r-mlp-prune BASELINE=mcgrof/old-project/abc123
     make BASELINE=mcgrof/old-project/abc123
+
+    Note: BASELINE must be on both commands to regenerate config.py
 
     This automatically:
     1. Copies baseline run to current project
