@@ -1,0 +1,66 @@
+# LeNet-5 bitter7: State-Based Pruning at 70% sparsity
+# This tests bitter7 variant against magnitude pruning baseline
+#
+# Uses AdamWPrune with bitter7 variant (variance-based importance)
+# at 70% sparsity to match baseline configuration.
+#
+# bitter7 formula: |w| * (exp_avg_sq^0.25)
+# - Beta2=0.999 tracks ~1000 steps of variance accumulation
+# - Achieved 15.6% better PPL on GPT-2 transformers
+# - Expected to improve CNN results beyond bitter0's 98.9%
+#
+# Expected results: >= 98.9% accuracy (better than magnitude baseline)
+
+# Model configuration
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_LENET5=y
+CONFIG_LENET5_DATASET_MNIST=y
+CONFIG_LENET5_NUM_CLASSES=10
+
+# Optimizer: AdamWPrune with bitter7 variant
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMWPRUNE=y
+CONFIG_ADAMWPRUNE_BASE_ADAMWSPAM=y
+CONFIG_ADAMWPRUNE_ENABLE_PRUNING=y
+CONFIG_ADAMWPRUNE_BETA1="0.9"
+CONFIG_ADAMWPRUNE_BETA2="0.999"
+CONFIG_ADAMWPRUNE_WEIGHT_DECAY="0.01"
+CONFIG_ADAMWPRUNE_AMSGRAD=n
+
+# bitter7 variant selection
+CONFIG_LENET5_ADAMWPRUNE_VARIANT_BITTER0=n
+CONFIG_LENET5_ADAMWPRUNE_VARIANT_BITTER7=y
+CONFIG_LENET5_ADAMWPRUNE_VARIANT_BITTER8=n
+CONFIG_LENET5_ADAMWPRUNE_DEFAULT_VARIANT="bitter7"
+
+# Pruning: State-based (built into AdamWPrune) at 70% sparsity
+CONFIG_PRUNING_MODE_SINGLE=y
+CONFIG_PRUNING_SELECT_STATE=y
+CONFIG_PRUNING_METHOD="state"
+CONFIG_TARGET_SPARSITY="0.7"
+CONFIG_ADAMWPRUNE_TARGET_SPARSITY="0.7"
+CONFIG_ADAMWPRUNE_WARMUP_STEPS=100
+CONFIG_ADAMWPRUNE_FREQUENCY=50
+
+# Learning rate (matching baseline)
+CONFIG_LEARNING_RATE="0.001"
+
+# Training configuration (matching baseline)
+CONFIG_BATCH_SIZE=512
+CONFIG_NUM_EPOCHS=10
+CONFIG_NUM_WORKERS=16
+
+# Performance features
+CONFIG_MIXED_PRECISION=y
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+
+# Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="lenet5-baseline-vs-bitter7"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_PRUNING_LOG_SPARSITY=y
+CONFIG_VERBOSE=y

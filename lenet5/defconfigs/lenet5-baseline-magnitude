@@ -1,0 +1,49 @@
+# LeNet-5 Baseline: Magnitude Pruning at 70% sparsity
+# This is the baseline configuration for comparison against bitter7
+#
+# Uses standard magnitude pruning (|w| importance) with AdamW optimizer
+# at 70% sparsity - the default sparsity that achieved 98.9% accuracy.
+#
+# Expected results: ~98.9% accuracy on MNIST (from previous runs)
+
+# Model configuration
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_LENET5=y
+CONFIG_LENET5_DATASET_MNIST=y
+CONFIG_LENET5_NUM_CLASSES=10
+
+# Optimizer: AdamW (standard baseline)
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_ADAMW_WEIGHT_DECAY="0.01"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+
+# Pruning: Magnitude at 70% sparsity
+CONFIG_PRUNING_MODE_SINGLE=y
+CONFIG_PRUNING_SELECT_MAGNITUDE=y
+CONFIG_PRUNING_METHOD="magnitude"
+CONFIG_TARGET_SPARSITY="0.7"
+CONFIG_PRUNING_WARMUP=100
+CONFIG_PRUNING_FREQUENCY=50
+
+# Training configuration
+CONFIG_BATCH_SIZE=512
+CONFIG_NUM_EPOCHS=10
+CONFIG_NUM_WORKERS=16
+
+# Performance features
+CONFIG_MIXED_PRECISION=y
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+
+# Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="lenet5-baseline-vs-bitter7"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_PRUNING_LOG_SPARSITY=y
+CONFIG_VERBOSE=y
