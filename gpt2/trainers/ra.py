@@ -105,10 +105,8 @@ class RATrainer(BaseGPT2Trainer):
 
         if step == "V0":
             # Baseline GPT-2
-            # Override batch size: torch.compile uses extra memory during
-            # first iteration for tracing/compilation
-            args.batch_size = 64
-            args.gradient_accumulation = 16  # Maintain effective=1024
+            # Use defconfig batch settings for consistency with V19+ steps
+            pass
         elif step == "V1":
             # RA (R=4)
             args.use_ra_v5 = True
