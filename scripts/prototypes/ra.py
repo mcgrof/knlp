@@ -118,6 +118,15 @@ class ReciprocalAttention(nn.Module):
             self.register_parameter("w_std", nn.Parameter(torch.tensor(w_std_init)))
             self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
+        # Learned skip gates: conditional computation for training efficiency
+        # Initialize to 2.0 (sigmoid ≈ 0.88, enabled by default)
+        # When sigmoid(skip) > 0.5, compute pathway; else skip (zero with no grad)
+        # For attention, we have two pathways:
+        # - skip_std_attn: Controls standard attention pathway
+        # - skip_lowrank_attn: Controls low-rank reciprocal pathway
+        self.register_parameter("skip_std_attn", nn.Parameter(torch.tensor(2.0)))
+        self.register_parameter("skip_lowrank_attn", nn.Parameter(torch.tensor(2.0)))
+
         # Self-restart mechanism (optional): out = (1-α)*SDPA + α*V
         # Provides identity residual path for stability
         if use_self_restart:
@@ -334,6 +343,16 @@ class ReciprocalAttention(nn.Module):
         if not self._weights_initialized:
             self._initialize_fused_weights()
 
+        # Compute skip gate decisions
+        use_std = torch.sigmoid(self.skip_std_attn) > 0.5
+        use_lowrank = torch.sigmoid(self.skip_lowrank_attn) > 0.5
+
+        # Early exit: if both pathways disabled, return zeros (fallback to residual only)
+        if not use_std and not use_lowrank:
+            return torch.zeros(
+                B, T, C, device=x.device, dtype=x.dtype, requires_grad=False
+            )
+
         # Single fused GEMM: x @ W → [Qf | Kf | V]
         fused = self.c_attn(x)  # [B, T, 3*n_embd]
 
@@ -345,55 +364,82 @@ class ReciprocalAttention(nn.Module):
         Kf = kf_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         V = v_flat.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
 
-        # === OPTIMIZATION: Fused gate scaling ===
-        # Original: split Q/K into std/low, scale separately, cat back (4 splits + 4 scales + 2 cats)
-        # Optimized: Create scale tensor once, single element-wise multiply (2-2.8x speedup)
-        # Benchmark: 0.133ms → 0.059ms @ T=1024, savings scale with sequence length
+        # Conditional pathway selection based on skip gates
+        if use_std and use_lowrank:
+            # Both pathways active: use full folded layout
+            # Apply gate scaling
+            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))  # [H] or scalar
+            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))  # [H] or scalar
 
-        # Compute gate scalings (with gradient tracking!)
-        g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))  # [H] or scalar
-        g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))  # [H] or scalar
+            # Build scale tensor [g_std, ..., g_std, g_rec, ..., g_rec]
+            if self.per_head_gates:
+                scale = torch.ones(
+                    1, self.n_head, 1, self.head_dim, device=Qf.device, dtype=Qf.dtype
+                )
+                scale[:, :, :, : self.D_std] = g_std.view(1, -1, 1, 1)
+                scale[:, :, :, self.D_std :] = g_rec.view(1, -1, 1, 1)
+            else:
+                scale = torch.ones(
+                    1, 1, 1, self.head_dim, device=Qf.device, dtype=Qf.dtype
+                )
+                scale[:, :, :, : self.D_std] = g_std
+                scale[:, :, :, self.D_std :] = g_rec
 
-        # Build scale tensor [g_std, ..., g_std, g_rec, ..., g_rec]
-        # Shape: [1, H, 1, D] for per-head gates, [1, 1, 1, D] for scalar gates
-        if self.per_head_gates:
-            # Per-head gates: [H] → [1, H, 1, D]
-            scale = torch.ones(
-                1, self.n_head, 1, self.head_dim, device=Qf.device, dtype=Qf.dtype
-            )
-            # Fill standard part (first D_std dimensions)
-            scale[:, :, :, : self.D_std] = g_std.view(1, -1, 1, 1)
-            # Fill reciprocal part (last R dimensions)
-            scale[:, :, :, self.D_std :] = g_rec.view(1, -1, 1, 1)
-        else:
-            # Scalar gates: broadcast to all heads
-            scale = torch.ones(1, 1, 1, self.head_dim, device=Qf.device, dtype=Qf.dtype)
-            scale[:, :, :, : self.D_std] = g_std
-            scale[:, :, :, self.D_std :] = g_rec
+            Q = Qf * scale
+            K = Kf * scale
 
-        # Single multiply (NO splits, NO cats!)
-        Qf = Qf * scale
-        Kf = Kf * scale
+        elif use_std and not use_lowrank:
+            # Only standard pathway: use first D_std dimensions
+            # Zero out low-rank part to skip computation
+            Q = Qf[:, :, :, : self.D_std]  # [B, H, T, D_std]
+            K = Kf[:, :, :, : self.D_std]
+            V = V[:, :, :, : self.D_std]  # Also truncate V to match dimensions
 
-        # Single SDPA call (RA-only path)
-        # PyTorch will auto-select Flash Attention for FP16 causal attention
+            # Apply only std gate scaling
+            g_std = torch.sqrt(torch.clamp(self.w_std, min=1e-8))
+            if self.per_head_gates:
+                Q = Q * g_std.view(1, -1, 1, 1)
+                K = K * g_std.view(1, -1, 1, 1)
+            else:
+                Q = Q * g_std
+                K = K * g_std
+
+        elif not use_std and use_lowrank:
+            # Only low-rank pathway: use last R dimensions
+            Q = Qf[:, :, :, self.D_std :]  # [B, H, T, R]
+            K = Kf[:, :, :, self.D_std :]
+            V = V[:, :, :, self.D_std :]  # Also truncate V to match dimensions
+
+            # Apply only rec gate scaling
+            g_rec = torch.sqrt(torch.clamp(self.w_rec, min=1e-8))
+            if self.per_head_gates:
+                Q = Q * g_rec.view(1, -1, 1, 1)
+                K = K * g_rec.view(1, -1, 1, 1)
+            else:
+                Q = Q * g_rec
+                K = K * g_rec
+
+        # SDPA call with appropriately sized Q, K, V
         out = F.scaled_dot_product_attention(
-            Qf,
-            Kf,
+            Q,
+            K,
             V,
             is_causal=True,
             dropout_p=self.dropout if self.training else 0.0,
         )
 
         # Self-restart mixing (optional): out = (1-α)*attention + α*V
-        # Provides identity residual path for training stability
         if self.use_self_restart and self.rwr_alpha is not None:
-            # Clamp α to [0, 0.5] to prevent excessive identity mixing
-            alpha = torch.clamp(self.rwr_alpha, 0.0, 0.5).view(
-                1, -1, 1, 1
-            )  # [1, H, 1, 1]
-            # Mix: (1-α)*attention_output + α*V (restart to self)
+            alpha = torch.clamp(self.rwr_alpha, 0.0, 0.5).view(1, -1, 1, 1)
             out = (1.0 - alpha) * out + alpha * V
+
+        # Pad output back to full head_dim if we used partial dimensions
+        if not (use_std and use_lowrank):
+            # Need to pad back to head_dim before projection
+            out_dim = out.size(-1)
+            if out_dim < self.head_dim:
+                pad_size = self.head_dim - out_dim
+                out = F.pad(out, (0, pad_size), value=0.0)
 
         # Reshape back - keep final .contiguous() for reshape
         out = self.c_proj(out.transpose(1, 2).reshape(B, T, C))
@@ -412,6 +458,14 @@ class ReciprocalAttention(nn.Module):
                 "w_rec_min": self.w_rec.min().item(),
                 "w_rec_max": self.w_rec.max().item(),
                 "w_rec_std": self.w_rec.std().item(),
+                "skip_std_attn": self.skip_std_attn.item(),
+                "skip_lowrank_attn": self.skip_lowrank_attn.item(),
+                "skip_std_attn_active": (
+                    torch.sigmoid(self.skip_std_attn) > 0.5
+                ).item(),
+                "skip_lowrank_attn_active": (
+                    torch.sigmoid(self.skip_lowrank_attn) > 0.5
+                ).item(),
             }
 
             # Add self-restart statistics if enabled
@@ -546,6 +600,12 @@ class ReciprocalMLP(nn.Module):
         self.register_parameter("w_std", nn.Parameter(torch.tensor(w_std_init)))
         self.register_parameter("w_rec", nn.Parameter(torch.tensor(w_rec_init)))
 
+        # Learned skip gates: conditional computation for training efficiency
+        # Initialize to 2.0 (sigmoid ≈ 0.88, enabled by default)
+        # When sigmoid(skip) > 0.5, compute pathway; else skip (zero with no grad)
+        self.register_parameter("skip_std", nn.Parameter(torch.tensor(2.0)))
+        self.register_parameter("skip_rec", nn.Parameter(torch.tensor(2.0)))
+
         # Track if gates are frozen for delayed activation
         self._gates_frozen = False
 
@@ -565,7 +625,11 @@ class ReciprocalMLP(nn.Module):
 
     def forward(self, x, attn=None):
         """
-        Forward pass with attention injection and reciprocal folding.
+        Forward pass with skip gates and attention injection.
+
+        Skip gates enable conditional computation: pathways with
+        sigmoid(skip) > 0.5 are computed, others are zero (no gradient).
+        This eliminates wasteful GEMMs when a pathway contributes nothing.
 
         Args:
             x: [B, T, C] layer-normalized input tensor
@@ -578,36 +642,54 @@ class ReciprocalMLP(nn.Module):
         if not self._weights_initialized:
             self._initialize_weights()
 
-        # Standard pathway: pure MLP view of input
-        h_std = self.up_std(x)  # [B, T, D_ff_std]
+        B, T, C = x.size()
 
-        # Reciprocal pathway: attention-enriched view
-        if attn is None:
-            # Fallback: no attention injection (behaves like split-MLP)
-            mixed = x
+        # Compute skip gate decisions
+        use_std = torch.sigmoid(self.skip_std) > 0.5
+        use_rec = torch.sigmoid(self.skip_rec) > 0.5
+
+        # Conditional standard pathway computation
+        if use_std:
+            h_std = self.up_std(x)  # [B, T, D_ff_std]
+            h_std = self.act(h_std)
         else:
-            # Critical: inject attention via cheap vector add (no GEMM!)
-            # The low branch sees: x + α*attn (both [B,T,C])
-            mixed = x + self.attn_scale * attn
+            # Skip pathway: zero tensor with NO gradient graph
+            # Saves 3 GEMMs (1 forward + 2 backward)
+            h_std = torch.zeros(
+                B, T, self.D_ff_std, device=x.device, dtype=x.dtype, requires_grad=False
+            )
 
-        # Compute h_low from attention-enriched input
-        if self.tie_to_attn_proj:
-            # Explicit weight tying to attention c_proj
-            # Reuse first R_ff rows of c_proj.weight
-            if self._attn_proj_ref is not None:
-                h_low = F.linear(mixed, self._attn_proj_ref.weight[: self.R_ff, :])
+        # Conditional reciprocal pathway computation
+        if use_rec:
+            # Reciprocal pathway: attention-enriched view
+            if attn is None:
+                # Fallback: no attention injection (behaves like split-MLP)
+                mixed = x
             else:
-                # Fallback if ref not set (shouldn't happen)
-                h_low = torch.zeros(
-                    mixed.size(0), mixed.size(1), self.R_ff, device=mixed.device
-                )
-        else:
-            # Independent up_low weights
-            h_low = self.up_low(mixed)  # [B, T, R_ff]
+                # Critical: inject attention via cheap vector add (no GEMM!)
+                # The low branch sees: x + α*attn (both [B,T,C])
+                mixed = x + self.attn_scale * attn
 
-        # Apply activation to both pathways
-        h_std = self.act(h_std)
-        h_low = self.act(h_low)
+            # Compute h_low from attention-enriched input
+            if self.tie_to_attn_proj:
+                # Explicit weight tying to attention c_proj
+                # Reuse first R_ff rows of c_proj.weight
+                if self._attn_proj_ref is not None:
+                    h_low = F.linear(mixed, self._attn_proj_ref.weight[: self.R_ff, :])
+                else:
+                    # Fallback if ref not set (shouldn't happen)
+                    h_low = torch.zeros(B, T, self.R_ff, device=x.device, dtype=x.dtype)
+            else:
+                # Independent up_low weights
+                h_low = self.up_low(mixed)  # [B, T, R_ff]
+
+            h_low = self.act(h_low)
+        else:
+            # Skip pathway: zero tensor with NO gradient graph
+            # Saves 3 GEMMs (1 forward + 2 backward)
+            h_low = torch.zeros(
+                B, T, self.R_ff, device=x.device, dtype=x.dtype, requires_grad=False
+            )
 
         # Reciprocal fold: concatenate [w_std * h_std | w_rec * h_low]
         # Learned geometric gating: weights initialized to dimensional ratios
@@ -629,6 +711,10 @@ class ReciprocalMLP(nn.Module):
                 "w_std": self.w_std.item(),
                 "w_rec": self.w_rec.item(),
                 "attn_scale": self.attn_scale.item(),  # α for attention injection
+                "skip_std": self.skip_std.item(),
+                "skip_rec": self.skip_rec.item(),
+                "skip_std_active": (torch.sigmoid(self.skip_std) > 0.5).item(),
+                "skip_rec_active": (torch.sigmoid(self.skip_rec) > 0.5).item(),
             }
             return stats
 
