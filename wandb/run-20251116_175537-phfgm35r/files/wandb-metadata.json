@@ -1,0 +1,94 @@
+{
+  "os": "Linux-6.16.8+deb14-amd64-x86_64-with-glibc2.41",
+  "python": "CPython 3.12.11",
+  "startedAt": "2025-11-17T01:55:37.033251Z",
+  "args": [
+    "--optimizer",
+    "adamw",
+    "--dataset",
+    "tinystories",
+    "--data-dir",
+    "./gpt2/data",
+    "--block-size",
+    "1024",
+    "--warmup-steps",
+    "200",
+    "--eval-interval",
+    "25",
+    "--eval-samples",
+    "200",
+    "--max-iters",
+    "10000",
+    "--max-time",
+    "3600",
+    "--decay-lr",
+    "--min-lr",
+    "6e-5",
+    "--learning-rate",
+    "6e-4",
+    "--pruning-method",
+    "none",
+    "--architecture",
+    "vanilla",
+    "--ablation-mode",
+    "--ablation-steps",
+    "V1",
+    "--json-output",
+    "/data/knlp/test_matrix_results_20251116_175515/gpt2_adamw_vanilla_V1/training_metrics.json",
+    "--tracker",
+    "wandb,trackio",
+    "--tracker-project",
+    "gpt2-mechint-kv-tinystories",
+    "--tracker-run-name",
+    "gpt2_adamw_vanilla_V1"
+  ],
+  "program": "/data/knlp/gpt2/train.py",
+  "codePath": "gpt2/train.py",
+  "codePathLocal": "gpt2/train.py",
+  "git": {
+    "remote": "https://github.com/mcgrof/knlp.git",
+    "commit": "f31acd4f885f25340582f6be208f42a39fc0b70e"
+  },
+  "email": "mcgrof@gmail.com",
+  "root": "/data/knlp",
+  "host": "prune",
+  "executable": "/home/mcgrof/envs/w7900-ml/bin/python3",
+  "cpu_count": 16,
+  "cpu_count_logical": 32,
+  "gpu": "AMD Radeon Pro W7900",
+  "gpu_count": 2,
+  "disk": {
+    "/": {
+      "total": "999511388160",
+      "used": "194884755456"
+    }
+  },
+  "memory": {
+    "total": "98659766272"
+  },
+  "gpu_amd": [
+    {
+      "id": "0",
+      "uniqueId": "0xb0e5d4295c432bb4",
+      "vbiosVersion": "113-D7070100-100",
+      "performanceLevel": "auto",
+      "maxPower": "241.0",
+      "series": "AMD Radeon Pro W7900",
+      "model": "0x7448",
+      "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+      "sku": "D7070100"
+    },
+    {
+      "id": "1",
+      "uniqueId": "0x0",
+      "vbiosVersion": "102-RAPHAEL-008",
+      "performanceLevel": "auto",
+      "series": "AMD Radeon Graphics",
+      "model": "0x13c0",
+      "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+      "sku": "RAPHAEL",
+      "sclkRange": "600Mhz - 2200Mhz"
+    }
+  ],
+  "writerId": "znr0dwfcbia8krktvepqdd7k0rmn5h0g"
+}
