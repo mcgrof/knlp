@@ -73,3 +73,48 @@ config RESNET18_USE_COSINE_SCHEDULE
 	help
 	  Use cosine annealing for learning rate scheduling.
 	  Recommended for ResNet training on CIFAR.
+
+config RESNET18_MAX_TIME
+	int "Maximum training time in seconds (0 = no limit)"
+	default 0
+	help
+	  Maximum wall-clock training time in seconds. Training stops
+	  when this time limit is reached, regardless of epochs completed.
+
+	  Set to 0 for no time limit (train for RESNET18_EPOCHS).
+
+	  Time-based training enables fair "compute budget" comparisons
+	  across different methods with varying iteration speeds.
+
+menu "AdamWPrune Variants (Bitter)"
+
+config RESNET18_ADAMWPRUNE_VARIANT_BITTER0
+	bool "Enable bitter0 variant (original hybrid)"
+	default y
+	help
+	  Original hybrid approach combining momentum magnitude
+	  with stability criterion.
+
+config RESNET18_ADAMWPRUNE_VARIANT_BITTER7
+	bool "Enable bitter7 variant (variance-based)"
+	default n
+	help
+	  Conservative variance-based pruning using second moment.
+	  Achieves 15.6% better perplexity than magnitude baseline
+	  on GPT-2 transformers (37.28 vs 44.15 PPL).
+
+config RESNET18_ADAMWPRUNE_VARIANT_BITTER8
+	bool "Enable bitter8 variant (bias-corrected + fast rsqrt)"
+	default n
+	help
+	  Bias-corrected gradient-magnitude with GPU optimization.
+	  Uses FP16 precision and fast inverse sqrt for 30-50% faster
+	  pruning with 2x less memory bandwidth.
+
+config RESNET18_ADAMWPRUNE_DEFAULT_VARIANT
+	string "Default AdamWPrune variant"
+	default "bitter0" if RESNET18_ADAMWPRUNE_VARIANT_BITTER0
+	default "bitter7" if RESNET18_ADAMWPRUNE_VARIANT_BITTER7
+	default "bitter8" if RESNET18_ADAMWPRUNE_VARIANT_BITTER8
+
+endmenu
