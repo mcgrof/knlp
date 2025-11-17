@@ -1,6 +1,9 @@
 # Top-level Makefile for AdamWPrune experiments
 # SPDX-License-Identifier: MIT
 
+# Use bash for all shell commands (needed for glob expansion)
+SHELL := /bin/bash
+
 # Default target MUST be first - declare it before any includes
 .DEFAULT_GOAL := all
 
@@ -182,13 +185,22 @@ mechint: check-config generate-config
 			echo "Analyzing models from: $(MODELS)"; \
 			python3 scripts/run_mechint_analysis.py --checkpoint $(MODELS)/*.pt --dataset $(CONFIG_GPT2_DATASET_NAME); \
 		else \
-			echo "Analyzing models from: $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT)"; \
-			for model in $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT); do \
+			PATTERN=$$(echo $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT) | tr -d '"'); \
+			echo "Analyzing models from: $$PATTERN"; \
+			found=0; \
+			for model in $$PATTERN; do \
 				if [ -f "$$model" ]; then \
+					found=1; \
 					echo "  Analyzing $$model..."; \
 					python3 scripts/run_mechint_analysis.py --checkpoint "$$model" --dataset $(CONFIG_GPT2_DATASET_NAME); \
 				fi; \
 			done; \
+			if [ $$found -eq 0 ]; then \
+				echo "ERROR: No models found matching pattern: $(CONFIG_KNLP_MECHINT_KV_CHECKPOINT)"; \
+				echo "Available models:"; \
+				ls -lh ./output/*.pt 2>/dev/null || echo "  (none)"; \
+				exit 1; \
+			fi; \
 		fi; \
 	else \
 		echo "Mechanistic interpretability not enabled in config."; \
