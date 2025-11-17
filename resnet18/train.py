@@ -142,7 +142,12 @@ def create_resnet_optimizer(
 
     # Call shared create_optimizer - returns (optimizer, scheduler, gradient_clip_norm, spam_state, adamprune_state)
     optimizer_tuple = create_optimizer(
-        model, optimizer_name, scaled_lr, args=mock_args, num_epochs=num_epochs, model_type="resnet"
+        model,
+        optimizer_name,
+        scaled_lr,
+        args=mock_args,
+        num_epochs=num_epochs,
+        model_type="resnet",
     )
 
     if isinstance(optimizer_tuple, tuple) and len(optimizer_tuple) >= 5:
@@ -349,25 +354,25 @@ def main():
     parser.add_argument(
         "--adamwprune-beta1",
         type=float,
-        default=None,
+        default=0.9,
         help="Beta1 coefficient for AdamWPrune (default: 0.9)",
     )
     parser.add_argument(
         "--adamwprune-beta2",
         type=float,
-        default=None,
+        default=0.999,
         help="Beta2 coefficient for AdamWPrune (default: 0.999)",
     )
     parser.add_argument(
         "--adamwprune-weight-decay",
         type=float,
-        default=None,
+        default=0.01,
         help="Weight decay for AdamWPrune (default: 0.01)",
     )
     parser.add_argument(
         "--adamwprune-amsgrad",
         type=lambda x: x.lower() in ["true", "1", "yes"],
-        default=None,
+        default=True,
         help="Enable AMSGrad for AdamWPrune (default: True)",
     )
 
@@ -384,8 +389,30 @@ def main():
         "--batch-size", type=int, default=BATCH_SIZE, help="Batch size for training"
     )
     parser.add_argument("--lr", type=float, default=LEARNING_RATE, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=None,
-                        help="Weight decay (AdamW/SGD). If None, choose a sane default.")
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help="Weight decay (AdamW/SGD). If None, choose a sane default.",
+    )
+    parser.add_argument(
+        "--tracker",
+        type=str,
+        default="",
+        help="Comma-separated list of trackers: wandb,trackio (default: none)",
+    )
+    parser.add_argument(
+        "--tracker-project",
+        type=str,
+        default="resnet18-training",
+        help="Project name for experiment tracking",
+    )
+    parser.add_argument(
+        "--tracker-run-name",
+        type=str,
+        default=None,
+        help="Run name for experiment tracking (default: auto-generated)",
+    )
 
     args = parser.parse_args()
 
