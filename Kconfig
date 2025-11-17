@@ -5,14 +5,7 @@ mainmenu "AdamWPrune v1.0.0 - Neural Network Training Configuration"
 
 menu "General Configuration"
 
-comment "Hyperparameter Auto-Detection"
-	help
-	  The AUTO hyperparameter system automatically selects optimal batch_size
-	  and gradient_accumulation based on your GPU hardware (type, memory, count)
-	  and torch.compile() status. This makes defconfigs portable across different
-	  hardware without manual tuning.
-
-	  See docs/hyperparameter-auto-detection.md for details.
+comment "Hyperparameter Auto-Detection - See docs/hyperparameter-auto-detection.md"
 
 choice
 	prompt "Hyperparameter configuration mode"
