@@ -133,6 +133,45 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
     }
 
 
+def auto_detect_compile(config, verbose=True):
+    """Automatically detect whether to enable torch.compile() based on GPU.
+
+    Args:
+        config: Config object with COMPILE_AUTO attribute
+        verbose: If True, print compile detection rationale
+
+    Returns:
+        bool: True if compile should be enabled, False otherwise
+    """
+    gpu_info = get_gpu_info()
+
+    if not gpu_info["has_gpu"]:
+        if verbose:
+            print("Compile: Disabled (CPU mode)")
+        return False
+
+    gpu_name = gpu_info["gpu_name"]
+
+    # Blacklist: GPUs with known torch.compile issues
+    blacklist = [
+        "W7900",  # AMD: ROCm torch.compile crashes/OOMs
+        "MI210",  # AMD: ROCm torch.compile instability
+    ]
+
+    for pattern in blacklist:
+        if pattern in gpu_name:
+            if verbose:
+                print(
+                    f"Compile: Disabled (GPU '{gpu_name}' has known torch.compile issues)"
+                )
+            return False
+
+    # Default: Enable for NVIDIA and other AMD GPUs
+    if verbose:
+        print(f"Compile: Enabled (GPU '{gpu_name}' has good torch.compile support)")
+    return True
+
+
 def apply_hyperparams(config, verbose=True):
     """Apply hyperparameters to config based on AUTO/MANUAL mode.
 
@@ -146,7 +185,7 @@ def apply_hyperparams(config, verbose=True):
     Returns:
         dict: Hyperparameter info (only in AUTO mode, None otherwise)
     """
-    # Check if AUTO mode is enabled
+    # Check if AUTO mode is enabled for hyperparams
     hyper_auto = getattr(config, "HYPER_PARAM_AUTO", "y") in ("y", True)
 
     if not hyper_auto:
@@ -154,20 +193,31 @@ def apply_hyperparams(config, verbose=True):
             batch = getattr(config, "BATCH_SIZE", "?")
             grad_acc = getattr(config, "GPT2_GRADIENT_ACCUMULATION", "?")
             print(f"Hyperparams: MANUAL mode (batch={batch}, grad_acc={grad_acc})")
-        return None
+    else:
+        # AUTO mode: detect and apply
+        target_eff = getattr(config, "TARGET_EFFECTIVE_BATCH", 1024)
+        if isinstance(target_eff, str):
+            target_eff = int(target_eff)
 
-    # AUTO mode: detect and apply
-    target_eff = getattr(config, "TARGET_EFFECTIVE_BATCH", 1024)
-    if isinstance(target_eff, str):
-        target_eff = int(target_eff)
+        params = auto_detect_hyperparams(config, target_effective_batch=target_eff)
 
-    params = auto_detect_hyperparams(config, target_effective_batch=target_eff)
+        # Apply to config
+        config.BATCH_SIZE = params["batch_size"]
+        config.GPT2_GRADIENT_ACCUMULATION = params["gradient_accumulation"]
 
-    # Apply to config
-    config.BATCH_SIZE = params["batch_size"]
-    config.GPT2_GRADIENT_ACCUMULATION = params["gradient_accumulation"]
+        if verbose:
+            print(f"Hyperparams: AUTO mode - {params['rationale']}")
 
-    if verbose:
-        print(f"Hyperparams: AUTO mode - {params['rationale']}")
+    # Check if AUTO mode is enabled for compile
+    compile_auto = getattr(config, "COMPILE_AUTO", "y") in ("y", True)
 
-    return params
+    if compile_auto:
+        # AUTO mode: detect and apply
+        should_compile = auto_detect_compile(config, verbose=verbose)
+        config.COMPILE_MODEL = "y" if should_compile else "n"
+    else:
+        if verbose:
+            compile_status = getattr(config, "COMPILE_MODEL", "?")
+            print(f"Compile: MANUAL mode (compile={compile_status})")
+
+    return params if hyper_auto else None
