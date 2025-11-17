@@ -39,7 +39,9 @@ CONFIG_GPT2_DECAY_LR=y
 CONFIG_GPT2_MIN_LR="6e-5"
 CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_FLASH_ATTENTION=n
-CONFIG_GPT2_COMPILE=y
+CONFIG_GPT2_COMPILE=n
+CONFIG_COMPILE_MANUAL=y
+# CONFIG_COMPILE_MODEL is not set
 CONFIG_GPT2_WEIGHT_TYING=y
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_CUDNN_BENCHMARK=y
@@ -48,11 +50,10 @@ CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
 # Hyperparameter mode: MANUAL for KV compression tests
 # Per-step overrides in trainers/ra.py _configure_step():
-#   V0: batch=64, grad_acc=16 (torch.compile warmup overhead)
+#   V0: batch=64, grad_acc=16 (conservative for baseline stability)
 #   V19/C1/C2/C3: batch=32, grad_acc=32 (KV pruning full [B,H,T,T] matrices)
-# These overrides are necessary due to memory constraints from:
-#   - torch.compile tracing overhead during first iteration
-#   - Full attention matrix computation before pruning
+# V19+ overrides necessary because KV pruning computes full attention matrices
+# before pruning, unlike standard SDPA which uses memory-efficient kernels.
 CONFIG_HYPER_PARAM_MANUAL=y
 
 # Training parameters - Manually configured (see per-step overrides above)
@@ -102,7 +103,6 @@ CONFIG_ENABLE_WANDB=n
 CONFIG_TRACKER_PROJECT="gpt2-kv-compression"
 
 # Advanced options
-CONFIG_COMPILE_MODEL=y
 CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 CONFIG_SAVE_CHECKPOINT=y
