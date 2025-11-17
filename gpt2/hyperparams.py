@@ -73,23 +73,24 @@ def auto_detect_hyperparams(config, target_effective_batch=None):
 
     # Heuristic table for batch size selection
     # Format: (gpu_pattern, min_mem_gb) -> (batch_with_compile, batch_without_compile)
+    # Note: torch.compile() optimizes memory, so compile=ON allows larger batches
     heuristics = [
         # NVIDIA B200 (192GB)
-        (("B200", "B100"), 160, (128, 256)),
+        (("B200", "B100"), 160, (256, 128)),
         # NVIDIA H100 (80GB)
-        (("H100",), 64, (96, 192)),
+        (("H100",), 64, (192, 64)),
         # AMD W7900 (48GB), NVIDIA A100 (40-80GB)
-        (("W7900", "A100"), 40, (32, 64)),
+        (("W7900", "A100"), 40, (64, 32)),
         # NVIDIA A10G (24GB), NVIDIA L40 (48GB)
-        (("A10G", "L40", "L4"), 20, (8, 16)),
+        (("A10G", "L40", "L4"), 20, (16, 8)),
         # Generic high memory (32GB+)
-        (None, 32, (24, 48)),
+        (None, 32, (48, 24)),
         # Generic medium memory (16GB+)
-        (None, 16, (8, 16)),
+        (None, 16, (16, 8)),
         # Generic low memory (8GB+)
-        (None, 8, (4, 8)),
+        (None, 8, (8, 4)),
         # Fallback for very low memory
-        (None, 0, (2, 4)),
+        (None, 0, (4, 2)),
     ]
 
     # Find matching heuristic
