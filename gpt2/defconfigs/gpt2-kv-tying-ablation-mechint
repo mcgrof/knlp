@@ -51,10 +51,8 @@ CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
 # Hyperparameters - auto-detected based on GPU
-# Conservative target effective batch to avoid OOM
-# Batch size and gradient accumulation set automatically
+# Batch size and gradient accumulation set automatically based on FREE GPU memory
 CONFIG_HYPER_PARAM_AUTO=y
-CONFIG_TARGET_EFFECTIVE_BATCH=512
 
 # Basic training parameters (overridden by auto-detection)
 CONFIG_BATCH_SIZE=20
