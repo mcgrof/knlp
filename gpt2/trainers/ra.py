@@ -301,6 +301,50 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_recency = 64
             # Variance-guided activation (uses aggressive defaults: activates within 10 min)
             args.use_variance_guided = True
+        elif step == "R0":
+            # Baseline GPT-2 for RA ablation
+            pass
+        elif step == "R1":
+            # RA with learned skip gates (R=4, geometric init)
+            args.use_ra_v5 = True
+            args.ra_v5_R = 4
+            args.ra_v5_per_head_gates = True  # Use per-head for quality
+            args.ra_v5_use_self_restart = False
+            # Skip gates are built into RA now (always present)
+        elif step == "M0":
+            # Baseline GPT-2 for R-MLP ablation
+            pass
+        elif step == "M1":
+            # R-MLP with learned skip gates (R_ff=1152, golden ratio)
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Skip gates are built into R-MLP now (always present)
+        elif step == "M2":
+            # RA + R-MLP (both with learned skip gates)
+            args.use_ra_v5 = True
+            args.ra_v5_R = 4
+            args.ra_v5_per_head_gates = True
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+        elif step == "M3":
+            # RA + R-MLP + KV pruning (all with skip gates)
+            args.use_ra_v5 = True
+            args.ra_v5_R = 4
+            args.ra_v5_per_head_gates = True
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            # Learned KV pruning
+            args.kv_cache_prune = True
+            args.kv_prune_learned = True
+            args.kv_prune_init_ratio = 0.382
+            args.kv_prune_recency = 64
         else:
             if self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")

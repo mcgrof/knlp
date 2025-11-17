@@ -32,80 +32,167 @@ Both use **learned gates** (w_std, w_rec) to balance standard vs reciprocal cont
 
 ---
 
-## Current Research: R-MLP + Gate-Informed KV Pruning
+## Learned Skip Gates: Sparse Pathways for Training Efficiency
 
-**Status:** Ablation study in progress (V1-V7)
+**Key Innovation:** Independent learned skip gates for both RA and R-MLP pathways enable the model to discover which computations matter per layer, providing massive training speedup through actual GEMM elimination (not just scaling).
 
-### R-MLP Architecture
+### The Problem with Forced Computation
+
+Original RA/R-MLP forced both pathways to always compute:
+
+```python
+# WASTEFUL: Always compute both, even if one contributes nothing
+h_std = GELU(up_std(x))          # Always pays GEMM cost
+h_rec = GELU(up_rec(x))          # Always pays GEMM cost
+out = w_std*h_std + w_rec*h_rec  # If w_rec→0, wasted compute!
+```
+
+**Problems:**
+- If w_rec learns toward 0, still paying for up_rec GEMM
+- If w_std learns toward 0, still paying for up_std GEMM (BIGGER!)
+- Backward pass compounds waste: 2 GEMMs per pathway (weight grad + input grad)
+- RA degraded 12% likely because forced to use both when one was harmful
+
+### Learned Skip Gates Architecture
+
+Each pathway gets independent binary gate:
+
+```python
+# ReciprocalMLP
+self.skip_std = nn.Parameter(torch.tensor(2.0))  # init enabled (sigmoid≈0.88)
+self.skip_rec = nn.Parameter(torch.tensor(2.0))
+
+# ReciprocalAttention
+self.skip_std_attn = nn.Parameter(torch.tensor(2.0))
+self.skip_lowrank_attn = nn.Parameter(torch.tensor(2.0))
+
+# Forward with conditional computation
+use_std = torch.sigmoid(self.skip_std) > 0.5
+use_rec = torch.sigmoid(self.skip_rec) > 0.5
+
+if use_std:
+    h_std = GELU(up_std(x))  # Compute only if needed
+else:
+    h_std = torch.zeros(..., requires_grad=False)  # NO BACKWARD GRAPH!
+
+if use_rec:
+    h_rec = GELU(up_rec(x))  # Compute only if needed
+else:
+    h_rec = torch.zeros(..., requires_grad=False)  # NO BACKWARD GRAPH!
+
+out = down([w_std*h_std | w_rec*h_rec])  # Same shape, but sparse
+```
+
+**Critical:** `requires_grad=False` means PyTorch won't build backward graph for skipped pathways. Saves both forward and backward GEMMs.
+
+### GEMM and Backprop Cost Analysis
+
+**Per-layer R-MLP cost (golden ratio: R_ff=1152, D_ff_std=1920):**
+
+Forward pass:
+- `up_std`: D → D_ff_std (768 → 1920)
+- `up_rec`: D → R_ff (768 → 1152)
+- `down`: D_ff → D (3072 → 768)
+
+Backward pass (automatic differentiation):
+- `∂up_std.weight`: mixed.T @ h_std_grad  [D, B×T] @ [B×T, D_ff_std]
+- `∂mixed`: h_std_grad @ up_std.weight.T  [B×T, D_ff_std] @ [D_ff_std, D]
+- `∂up_rec.weight`: mixed.T @ h_rec_grad  [D, B×T] @ [B×T, R_ff]
+- `∂mixed`: h_rec_grad @ up_rec.weight.T  [B×T, R_ff] @ [R_ff, D]
+
+**Total per layer: 7 GEMMs** (3 forward + 4 backward)
+
+**Skip std pathway:** Save 3 GEMMs (1 forward + 2 backward) - **BIGGER GEMM!**
+**Skip rec pathway:** Save 3 GEMMs (1 forward + 2 backward)
+**Skip both:** Save 6 GEMMs, keep only down projection
+
+**12-layer GPT-2 with 50% sparsity:**
+- Total R-MLP GEMMs: 12 × 7 = 84
+- With 6 layers skipping something: Save ~36 GEMMs per training step
+- MLP is ~40% of total training time
+- **Expected speedup: 20-30% faster training** → more steps in 2-hour budget
+
+### Memory Savings Enable Larger Batches
+
+Skipped pathways don't store activations for backward pass:
+
+Per layer saved (if skip both up projections):
+- `h_std`: [B, T, D_ff_std] = [8, 1024, 1920] ≈ 60MB
+- `h_rec`: [B, T, R_ff] = [8, 1024, 1152] ≈ 36MB
+- `mixed`: [B, T, D] = [8, 1024, 768] ≈ 24MB
+- **Total: ~120MB per layer**
+
+6 layers with sparsity: **~720MB saved** → increase batch 8→10 (25% bigger) → better gradient estimates → faster convergence
+
+### Why This Solves RA Degradation
+
+**Hypothesis:** RA degraded 12% not because low-rank attention is bad, but because we forced both pathways when only one was needed per layer.
+
+With skip gates, model can:
+- Use standard attention where full rank matters (early layers)
+- Use low-rank where compression works (middle layers)
+- Mix adaptively per layer (learned, not designed)
+- **Skip harmful pathway instead of adding noise**
+
+Expected behavior: RA with skip gates beats baseline by eliminating forced computation of unhelpful pathways.
+
+### R-MLP Architecture with Skip Gates
 
 R-MLP receives attention context via **cheap vector add** (no extra GEMMs):
 
 ```python
-# Standard pathway: Pure MLP view
-h_std = GELU(up_std(x))  # D → D_ff_std
+# Conditional standard pathway
+if use_std:
+    h_std = GELU(up_std(x))  # D → D_ff_std
+else:
+    h_std = zeros (no gradients!)
 
-# Reciprocal pathway: Attention-enriched view
-mixed = x + α * attn_out  # Inject attention (α is learnable)
-h_rec = GELU(up_low(mixed))  # D → R_ff
+# Conditional reciprocal pathway (attention-enriched)
+if use_rec:
+    mixed = x + α * attn_out  # Inject attention (α learnable)
+    h_rec = GELU(up_rec(mixed))  # D → R_ff
+else:
+    h_rec = zeros (no gradients!)
 
 # Geometric folding with learned gates
 out = down([w_std*h_std | w_rec*h_rec])  # Concatenate and project
 ```
 
-**Zero GEMM overhead:** Total compute = D → (D_ff_std + R_ff) = D → D_ff (same as baseline)
+**Zero GEMM overhead baseline:** Total compute when both active = D → D_ff (same as baseline)
+**Sparse advantage:** Can skip larger std pathway (60% of capacity) if rec alone suffices!
 
-### Ablation Study (V1-V7): Research Goals
+### Ablation Studies
 
-Testing R-MLP with different configurations to answer key questions:
+**gpt2-ra-ablation:** Test RA with skip gates
+- R0: Baseline (standard GPT-2)
+- R1: RA with learned skip gates (R=4, geometric init)
 
-**Q1: Does attention injection help?** (All steps)
-- Original R-MLP (cowboy) was just split MLP, nearly equivalent to baseline
-- Now testing: Does adding `x + α*attn` to reciprocal pathway improve quality?
-- Track α evolution: If it learns toward zero, attention injection doesn't help
+**gpt2-r-mlp-prune:** Test R-MLP with skip gates and KV pruning
+- M0: Baseline (standard GPT-2)
+- M1: R-MLP with learned skip gates (R_ff=1152, golden ratio)
+- M2: RA + R-MLP (both with skip gates)
+- M3: RA + R-MLP + KV pruning (all with skip gates)
 
-**Q2: What's the optimal reciprocal pathway size?** (V1, V3-V6)
-- Sweep R_ff from 8.3% to 62.5% of total MLP dimension
-- Find sweet spot between capacity and efficiency
-
-**Q3: Does weight tying between attention and MLP help?** (V2 vs V5)
-- V2: up_low shares weights with attn.c_proj (explicit coupling)
-- V5: up_low has independent weights (no coupling)
-- Same R_ff=768, direct A/B test
-- For weight tying concepts, see **[Weight Tying Documentation](weight-tying.md)**
-
-**Q4: Can R-MLP gates guide KV pruning?** (V7)
-- Use learned gates (w_rec × α) to modulate pruning aggressiveness
-- Test if R-MLP can act as attention compression mechanism
-
-| Step | R_ff | Ratio | Configuration | Research Question |
-|------|------|-------|---------------|-------------------|
-| V1 | 1152 | 37.5% | Baseline (golden ratio) | Q1, Q2: Baseline performance |
-| V2 | 768 | 25% | Weight tying enabled | Q3: Does tying help? |
-| V3 | 256 | 8.3% | Small reciprocal | Q2: Is small enough? |
-| V4 | 512 | 16.7% | Medium reciprocal | Q2: Sweet spot? |
-| V5 | 768 | 25% | No tying (A/B vs V2) | Q3: Independent better? |
-| V6 | 1920 | 62.5% | Large (inverse golden) | Q2: Does large help? |
-| V7 | 1152 | 37.5% | Gate-informed pruning | Q4: Adaptive compression? |
-
-**V7 Innovation:** KV pruning ratio modulated by R-MLP gates:
-```python
-attention_confidence = w_rec × α  # How well R-MLP uses attention
-keep_ratio = base_ratio / (1 + β × confidence)
-
-# High confidence → prune more (R-MLP compensates)
-# Low confidence → prune less (preserve quality)
-```
-
-Creates feedback loop where R-MLP acts as learned attention compression mechanism.
+**Learned ratios from prior experiments:**
+- RA: R=4 (low-rank), geometric init w_std=0.9375, w_rec=0.0625
+- R-MLP: R_ff=1152 (golden ratio 37.5%), geometric init w_std=0.625, w_rec=0.375
+- Skip gates: init to 2.0 (sigmoid≈0.88, enabled by default)
 
 ### Key Metrics Tracked
 
-- **w_std, w_rec, α**: Gate evolution (logged to W&B)
-- **Adaptive KV ratio**: Per-layer pruning aggressiveness (V7)
-- **Attention confidence**: w_rec × α signal strength
-- **Memory reduction**: Actual KV cache savings
+Per-layer skip gate decisions:
+- `skip_std_attn`, `skip_lowrank_attn` (RA pathways)
+- `skip_std_mlp`, `skip_rec_mlp` (R-MLP pathways)
+- `compute_ratio`: Actual compute used vs baseline (measures sparsity)
 
-**Alpha initialization:** α=1.0 for all steps based on geometric analysis showing ||attn|| / ||x|| ≈ 0.05 (attention is naturally 5% of residual stream).
+Gate evolution:
+- `w_std`, `w_rec`, `α`: Learned pathway weights and attention injection
+- Expected: Some layers learn to skip std, others skip rec, model discovers optimal sparsity
+
+Training efficiency:
+- Steps/second improvement from GEMM elimination
+- Memory usage reduction from skipped activations
+- Final perplexity at fixed wall-clock time (2 hours)
 
 ---
 
@@ -433,58 +520,6 @@ w_rec = 8 / 64        = 0.125  # Doubled from 0.0625
 
 ---
 
-## Cowboy Mode
-
-**Defconfig**: `gpt2-ra-ablation-cowboy`
-
-### What is Cowboy Mode?
-
-"Cowboy mode" means **training with geometric initialization and NO coupling warmup delays**:
-
-- ✅ RA enabled from step 0
-- ✅ R-MLP enabled from step 0
-- ❌ No variance-guided activation
-- ❌ No coupling warmup
-- ❌ No artificial delays
-
-**Rationale**: With proper geometric initialization, reciprocal pathways are naturally scaled to their dimensional capacity, so they don't disrupt early training.
-
-### Running Cowboy Mode
-
-```bash
-# Load the cowboy defconfig
-make defconfig-gpt2-ra-ablation-cowboy
-
-# Run with default 2-hour training
-make
-
-# Or override time (e.g., 10-minute test)
-GPT2_MAX_TIME=600 make
-```
-
-### What to Expect
-
-**Hypothesis**: Geometric init should enable stable training without warmup.
-
-**Steps tested:**
-- V0: Baseline (no RA/R-MLP)
-- V16: RA only
-- V17: R-MLP only
-- V18: RA + R-MLP combined
-
-**Success criteria:**
-- No training instability (loss should decrease smoothly)
-- Gates evolve smoothly (no sharp dips/spikes)
-- Competitive or better perplexity vs baseline
-
-**Metrics to watch:**
-- `ra_gates/w_std_mean`, `ra_gates/w_rec_mean` (should start at 0.9375, 0.0625)
-- `rmlp_gates/w_std_mean`, `rmlp_gates/w_rec_mean` (should start at 0.9792, 0.0208)
-- `train_loss`, `val_loss` (should decrease smoothly from step 0)
-- `val_perplexity` (final quality metric)
-
----
-
 ## References
 
 ### Related Documentation
@@ -516,9 +551,10 @@ GPT2_MAX_TIME=600 make
 
 ### Code
 
-- `ra.py`: Implementation of ReciprocalAttention and ReciprocalMLP
+- `ra.py`: Implementation of ReciprocalAttention and ReciprocalMLP with learned skip gates
 - `gpt2/trainers/ra.py`: Training harness with gate logging
-- `gpt2/defconfigs/gpt2-ra-ablation-cowboy`: Cowboy mode configuration
+- `gpt2/defconfigs/gpt2-ra-ablation`: RA skip gate ablation (R0, R1)
+- `gpt2/defconfigs/gpt2-r-mlp-prune`: R-MLP + KV pruning ablation (M0-M3)
 - `scripts/generate_ra_diagrams.py`: Visualization code for this document
 
 ---
