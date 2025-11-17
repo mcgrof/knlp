@@ -276,8 +276,9 @@ class KVCircuitAnalyzer:
 
     def _is_attention_layer(self, name: str, module: nn.Module) -> bool:
         """Check if module is an attention layer."""
-        # Look for attention in name or check if it has typical attention attributes
-        return "attn" in name.lower() and hasattr(module, "forward")
+        # Only match the CausalSelfAttention module itself, not submodules
+        # Check for class name to avoid matching c_attn (Linear) or attn_dropout (Dropout)
+        return module.__class__.__name__ == "CausalSelfAttention"
 
     def _get_attention_dims(self, module: nn.Module) -> Tuple[int, int]:
         """Extract n_heads and head_dim from attention module."""
