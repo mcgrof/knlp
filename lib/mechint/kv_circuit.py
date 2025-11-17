@@ -303,21 +303,17 @@ class KVCircuitAnalyzer:
         # Store original forward
         original_forward = module.forward
 
-        def masked_forward(*args, **kwargs):
-            # Call original forward
-            output = original_forward(*args, **kwargs)
+        # Store reference to self for temperature access
+        analyzer = self
 
-            # NOTE: This is a simplified hook. In practice, you'd need to
-            # intercept K/V before attention computation and apply the mask.
-            # The exact implementation depends on your attention module structure.
-            #
-            # For GPT-2, you'd hook into the attention computation like:
-            # k, v, _ = mask(k, v, temperature=self.current_temp)
-            #
-            # This is left as a placeholder since it requires knowledge of
-            # the specific attention implementation.
-
-            return output
+        def masked_forward(x, *args, **kwargs):
+            # Pass mask to attention forward with current temperature
+            # The mask will be applied inside the attention module
+            kwargs['mechint_kv_mask'] = mask
+            # Get current temperature from analyzer
+            if hasattr(analyzer, '_current_temperature'):
+                mask.cfg.temperature = analyzer._current_temperature
+            return original_forward(x, *args, **kwargs)
 
         # Replace forward method
         module.forward = masked_forward
@@ -382,13 +378,15 @@ class KVCircuitAnalyzer:
         temperature = self.temp_schedule.get_temperature(step)
         target_sparsity = self.sparsity_schedule.get_sparsity(step)
 
+        # Store temperature for mask hooks to access
+        self._current_temperature = temperature
+
         # Sample batch
         batch_iter = iter(dataloader)
         x, y = next(batch_iter)
         x, y = x.to(self.device), y.to(self.device)
 
-        # Forward pass with current masks
-        # NOTE: You'd need to pass temperature to masks during forward
+        # Forward pass with current masks (temperature passed via hooks)
         logits, loss = self.model(x, y)
 
         # Sparsity regularization: L1 on mask probabilities
