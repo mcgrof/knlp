@@ -92,8 +92,10 @@ CONFIG_TEST_SPARSITY_70=n
 CONFIG_TEST_SPARSITY_90=n
 
 # Training Parameters - Auto-detected per GPU
+# Time-based training: 4 hours per test for fair "compute budget" comparison
+# NO MAX_ITERS - pure time-based training for fair comparison
 CONFIG_NUM_EPOCHS=10
-CONFIG_GPT2_MAX_ITERS=10000
+CONFIG_GPT2_MAX_TIME=14400
 CONFIG_GPT2_EVAL_INTERVAL=500
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
