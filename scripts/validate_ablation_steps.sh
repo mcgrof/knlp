@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validate all RATIO ablation steps with dry-run mode
+# Validate RA ablation steps with dry-run mode
 # Catches architecture errors without GPU time
 #
 # Usage: ./scripts/validate_ablation_steps.sh
@@ -7,22 +7,26 @@
 set -e
 
 echo "============================================================"
-echo "RATIO Ablation Steps Validation"
+echo "RA Ablation Steps Validation"
 echo "============================================================"
-echo "Testing all 19 ablation steps (0-18) with dry-run mode"
+echo "Testing R0, R1 ablation steps with dry-run mode"
 echo "This validates architecture without using GPU"
 echo "============================================================"
 echo
 
 FAILED_STEPS=()
 PASSED_STEPS=()
+TOTAL=0
 
-for step in {0..18}; do
+# Test R0 and R1 steps
+for step in R0 R1; do
+    TOTAL=$((TOTAL + 1))
     echo -n "Step $step: "
 
     if python3 gpt2/train.py \
         --architecture unified-ra \
-        --ra-step V$step \
+        --ablation-mode \
+        --ra-step $step \
         --optimizer adamwspam \
         --dataset finewebedu \
         --dry-run \
@@ -39,8 +43,8 @@ echo
 echo "============================================================"
 echo "Validation Summary"
 echo "============================================================"
-echo "Passed: ${#PASSED_STEPS[@]}/19 steps"
-echo "Failed: ${#FAILED_STEPS[@]}/19 steps"
+echo "Passed: ${#PASSED_STEPS[@]}/$TOTAL steps"
+echo "Failed: ${#FAILED_STEPS[@]}/$TOTAL steps"
 
 if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
     echo
@@ -48,7 +52,7 @@ if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
     echo
     echo "Run with --dry-run to see detailed errors:"
     for step in "${FAILED_STEPS[@]}"; do
-        echo "  python3 gpt2/train.py --architecture unified-ra --ra-step V$step --optimizer adamwspam --dataset finewebedu --dry-run"
+        echo "  python3 gpt2/train.py --architecture unified-ra --ablation-mode --ra-step $step --optimizer adamwspam --dataset finewebedu --dry-run"
     done
     exit 1
 else

@@ -226,7 +226,7 @@ check: FORCE
 	@echo "Running dry-run architecture validation"
 	@echo "============================================================"
 	@START_TIME=$$(date +%s); \
-	$(MAKE) defconfig-gpt2-ratio-ablation DRY_RUN=1 > /dev/null 2>&1 || exit 1; \
+	$(MAKE) defconfig-gpt2-ra-ablation DRY_RUN=1 > /dev/null 2>&1 || exit 1; \
 	./scripts/validate_ablation_steps.sh; \
 	RESULT=$$?; \
 	END_TIME=$$(date +%s); \
@@ -235,7 +235,7 @@ check: FORCE
 	echo "============================================================"; \
 	if [ $$RESULT -eq 0 ]; then \
 		echo "✓ Architecture validation completed in $${DURATION}s"; \
-		echo "  All 19 RATIO ablation steps validated successfully"; \
+		echo "  All RA ablation steps validated successfully"; \
 		echo "  Ready for GPU training"; \
 	else \
 		echo "✗ Architecture validation failed after $${DURATION}s"; \
