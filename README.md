@@ -502,12 +502,14 @@ make MODELS=./checkpoints  # Use custom checkpoint dir
 When running ablation studies, skip expensive baseline re-runs by referencing a previous baseline:
 
 ```bash
-# Load ablation defconfig
-make defconfig-gpt2-r-mlp-prune
+# Load ablation defconfig with baseline reference
+make defconfig-gpt2-r-mlp-prune BASELINE=mcgrof/old-project/abc123
 
 # Run with baseline reference (skips M0, runs M1-M3)
 make BASELINE=mcgrof/old-project/abc123
 ```
+
+**Note:** BASELINE must be specified on both commands to ensure `config.py` is regenerated with the baseline reference.
 
 **What happens:**
 1. Baseline run automatically copied to current project
