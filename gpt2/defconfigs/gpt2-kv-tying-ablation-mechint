@@ -1,0 +1,151 @@
+# GPT-2 KV Tying Training + Mechanistic Interpretability
+# By default: Trains V0 (baseline), V1 (K=V), V2 (K=V.T) then analyzes
+# Each test runs for 60 minutes (3600s), saves final models
+# V2 is 2.7x slower (manual attn), so needs longer time + more frequent evals
+# Then runs mechint KV circuit analysis on all trained models
+# Override with MODEL=path to skip training and analyze existing models
+# Uses TinyStories dataset (~2.1M stories, richer than Shakespeare)
+# GPU-agnostic: uses auto hyperparameter detection
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GPT2=y
+CONFIG_MODEL_GPT2=y
+CONFIG_MODEL="gpt2"
+
+# GPT-2 Configuration (must match training configuration)
+CONFIG_GPT2_MODEL_124M=y
+CONFIG_GPT2_MODEL_NAME="gpt2"
+
+# Dataset - TinyStories (richer than Shakespeare)
+CONFIG_GPT2_DATASET_TINYSTORIES=y
+CONFIG_GPT2_DATASET_NAME="tinystories"
+
+# Model Architecture
+CONFIG_GPT2_BLOCK_SIZE=1024
+CONFIG_GPT2_DROPOUT="0.1"
+CONFIG_GPT2_BIAS=y
+CONFIG_GPT2_WEIGHT_TYING=y
+
+# Vanilla Ablation Mode - ENABLED for training
+# V0: Baseline GPT-2 (no KV tying)
+# V1: GPT-2 with KV tying (K = V)
+# V2: GPT-2 with K = V.T (key equals transpose of value)
+CONFIG_GPT2_VANILLA_ABLATION_MODE=y
+CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
+
+# Training Configuration
+# V2 (K=V.T) is 2.7x slower, so doubled time and reduced eval interval
+CONFIG_GPT2_MAX_ITERS=10000
+CONFIG_GPT2_MAX_TIME=3600
+CONFIG_GPT2_EVAL_INTERVAL=25
+CONFIG_GPT2_EVAL_SAMPLES=200
+CONFIG_GPT2_LOG_INTERVAL=10
+CONFIG_GPT2_WARMUP_STEPS=200
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+
+# Performance Optimizations - GPU auto-detected
+CONFIG_COMPILE_AUTO=y
+CONFIG_GPT2_FLASH_ATTENTION=n
+CONFIG_GPT2_CUDNN_BENCHMARK=y
+CONFIG_GPT2_TF32_ALLOWED=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+
+# Hyperparameters - auto-detected based on GPU
+# Conservative target effective batch to avoid OOM
+# Batch size and gradient accumulation set automatically
+CONFIG_HYPER_PARAM_AUTO=y
+CONFIG_TARGET_EFFECTIVE_BATCH=512
+
+# Basic training parameters (overridden by auto-detection)
+CONFIG_BATCH_SIZE=20
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_WEIGHT_DECAY="0.1"
+CONFIG_NUM_WORKERS=16
+CONFIG_DEVICE="cuda"
+CONFIG_DATA_DIR="./gpt2/data"
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+CONFIG_PREFETCH_FACTOR=4
+
+# Optimizer - AdamW
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+
+# Pruning - Disabled
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# Mechanistic Interpretability - ENABLED
+CONFIG_KNLP_MECHINT=y
+
+# Run post-training KV feature-circuit analysis
+# Override with MODELS= to use visualization-only mode
+CONFIG_KNLP_MECHINT_KV_POSTTRAIN=y
+
+# Checkpoint pattern to analyze (glob pattern for ablation runs)
+# Analyzes all ablation steps: stepV0, stepV1, stepV2
+# Override with MODELS=foo to analyze checkpoints from foo/ directory
+CONFIG_KNLP_MECHINT_KV_CHECKPOINT="./output/final_model_step*.pt"
+
+# KV Circuit Analysis Parameters
+# Target: prune 95% of K/V channels while maintaining performance
+CONFIG_KNLP_MECHINT_KV_TARGET_SPARSITY="0.95"
+
+# Optimization steps for mask learning
+CONFIG_KNLP_MECHINT_KV_STEPS=500
+
+# Learning rate for mask optimization
+CONFIG_KNLP_MECHINT_KV_LR="0.01"
+
+# Target metric to preserve during pruning
+CONFIG_KNLP_MECHINT_KV_TARGET_METRIC="loss"
+
+# Temperature annealing: smooth binary mask convergence
+CONFIG_KNLP_MECHINT_KV_TEMP_SCHEDULE="linear:1.0:0.1"
+
+# Sparsity schedule: gradual increase (cubic recommended)
+CONFIG_KNLP_MECHINT_KV_SPARSITY_SCHEDULE="cubic"
+
+# L1 regularization on mask logits
+CONFIG_KNLP_MECHINT_KV_L1_LAMBDA="0.001"
+
+# Use hard binary masks for discrete circuit discovery
+CONFIG_KNLP_MECHINT_KV_HARD_MASKS=y
+
+# Output directory for analysis results
+CONFIG_KNLP_MECHINT_OUTPUT_DIR="mechint_analysis_kv_tinystories"
+
+# Visualization Options
+CONFIG_KNLP_MECHINT_VISUALIZE_HEATMAPS=y
+CONFIG_KNLP_MECHINT_VISUALIZE_CURVES=y
+CONFIG_KNLP_MECHINT_VISUALIZE_FAITHFULNESS=y
+CONFIG_KNLP_MECHINT_VISUALIZE_WANDB=y
+CONFIG_KNLP_MECHINT_SAVE_MASKS=y
+
+# W&B Integration
+CONFIG_ENABLE_TRACKIO=n
+CONFIG_ENABLE_WANDB=y
+CONFIG_WANDB_PROJECT="gpt2-mechint-kv-tinystories"
+CONFIG_WANDB_ENTITY=""
+CONFIG_TRACKER_PROJECT="gpt2-mechint-kv-tinystories"
+
+# Advanced options
+CONFIG_MIXED_PRECISION=y
+CONFIG_GPU_WARMUP=y
+
+# Checkpointing - ENABLED for training phase
+# Saves final models for V0, V1, V2 for mechint analysis
+# No periodic checkpoints (interval set very high)
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=999999
+
+# Memory Optimizations
+CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+# Debugging
+CONFIG_DEBUG=n
+CONFIG_VERBOSE=y
+CONFIG_LOG_LEVEL="INFO"
+CONFIG_DRY_RUN=n
