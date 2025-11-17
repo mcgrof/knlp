@@ -1,17 +1,13 @@
-# RA + R-MLP: Complete Ablation Study
-# Tests Reciprocal Attention (V0-V2) and Reciprocal MLP (V3-V6)
+# RA with Learned Skip Gates Ablation
+# Tests Reciprocal Attention with conditional computation
 #
-# Hardware: 4× NVIDIA A10G (24GB each) with DDP
-# Research: Does reciprocal folding improve quality at matched speed?
+# Hardware: AMD Radeon Pro W7900 (48GB) or 4× NVIDIA A10G (24GB)
+# Research: Do learned skip gates solve RA degradation problem?
+#
+# Hypothesis: RA degraded 12% because forced to use both pathways.
+# Skip gates let model disable unhelpful pathway per layer.
 #
 # To run: make defconfig-gpt2-ra-ablation && make
-#
-# Training modes:
-# 1. Time-based (recommended): Set CONFIG_GPT2_MAX_TIME for fixed duration
-#    - 2 hours:  CONFIG_GPT2_MAX_TIME=7200
-#    - 8 hours:  CONFIG_GPT2_MAX_TIME=28800
-#    - Override: GPT2_MAX_TIME=7200 make
-# 2. Iteration-based: Set CONFIG_GPT2_MAX_ITERS (traditional)
 
 # Enable GPT-2 model
 CONFIG_MODEL_MODE_SINGLE=y
@@ -26,11 +22,7 @@ CONFIG_GPT2_DATASET_FINEWEBEDU=y
 CONFIG_GPT2_DATASET="finewebedu"
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_GRADIENT_ACCUMULATION=8
-# Time-based training (2 hours per step for quality convergence)
-# For quick test, use: GPT2_MAX_TIME=600 make (10 minutes)
 CONFIG_GPT2_MAX_TIME=7200
-# Iteration-based alternative (uncomment to use instead of time-based)
-# CONFIG_GPT2_MAX_ITERS=10400
 CONFIG_GPT2_EVAL_INTERVAL=100
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
@@ -39,14 +31,14 @@ CONFIG_GPT2_DECAY_LR=y
 CONFIG_GPT2_MIN_LR="6e-5"
 CONFIG_GPT2_DROPOUT="0.1"
 CONFIG_GPT2_FLASH_ATTENTION=n
-CONFIG_GPT2_COMPILE=y
+CONFIG_GPT2_COMPILE=n
 CONFIG_GPT2_WEIGHT_TYING=y
 CONFIG_GPT2_BIAS=y
 CONFIG_GPT2_CUDNN_BENCHMARK=y
 CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
-# Training parameters - GPU-optimized for A10G 24GB
+# Training parameters
 CONFIG_BATCH_SIZE=8
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
@@ -76,7 +68,7 @@ CONFIG_SPAM_WARMUP_STEPS=1000
 CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
-# RA+MLA Configuration - Disabled (Unified RA uses different mechanism)
+# RA+MLA Configuration
 CONFIG_ENABLE_RA_MLA=y
 CONFIG_RA_MLA_LATENT_DIM=128
 CONFIG_RA_MLA_RA_WINDOW=64
@@ -88,124 +80,60 @@ CONFIG_RA_MLA_LOG_METRICS=n
 CONFIG_RA_MLA_CACHE_Q_WINDOW=y
 CONFIG_RA_MLA_USE_ROPE=n
 
-# Unified RA gate configuration
-# Using per-head gates: separate w_std/w_rec for each attention head
-# Testing showed per-layer gates are 1.6% faster but 26-45% worse quality
-# Per-head gates preserve representational capacity for GPT-2's head diversity
+# RA gate configuration (per-head gates for quality)
 CONFIG_RA_V5_PER_HEAD_GATES=y
 
-# Enable ablation study mode with Unified RA + R-MLP steps
-# Focus on most promising configurations based on 5-minute test results
+# Enable ablation study mode with RA skip gates
+# R0: Baseline (standard GPT-2)
+# R1: RA with learned skip gates (R=4, geometric init)
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="V0,V1,V3,V7,V9,V16"
+CONFIG_RA_MLA_ABLATION_STEPS="R0,R1"
 
-# Disable test matrix mode - ablation mode runs its own test sequence
-CONFIG_TEST_MATRIX_MODE=n
-
-# Experiment Tracking
+# Experiment tracking
 CONFIG_ENABLE_TRACKIO=y
-CONFIG_ENABLE_WANDB=n
-CONFIG_TRACKER_PROJECT="gpt2-ra"
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="gpt2-ra-skip"
 
-# Advanced options
-CONFIG_COMPILE_MODEL=y
-CONFIG_MIXED_PRECISION=y
-CONFIG_GPU_WARMUP=y
+# Logging
 CONFIG_SAVE_CHECKPOINT=y
 CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_VERBOSE=y
 
-# Memory Optimizations
-CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
-
-# Test execution
-CONFIG_TEST_PARALLEL_JOBS=1
-CONFIG_OUTPUT_DIR="test_matrix_results_ra"
+# Test matrix
+CONFIG_TEST_MATRIX_MODE=y
+CONFIG_OUTPUT_DIR="test_matrix_results_ra_skip"
 
 # Ablation step details:
 #
-# RECIPROCAL ATTENTION (RA) - Steps V0-V2
-# ========================================
-# - Step V0: Baseline GPT-2 (standard SDPA)
-#   Speed: 1.33ms (eager), ~1.15ms (compiled)
-#   Architecture: Standard Q,K,V projection + SDPA
+# R0: Baseline GPT-2
+# =================
+# Standard SDPA attention, standard MLP (3072)
+# Purpose: Same-hardware baseline for RA comparison
 #
-# - Step V1: Unified RA (R=4, folded layout)
-#   Speed: 1.33ms eager (MATCHES baseline!), ~1.15ms compiled
-#   Architecture: Folded [Qf|Kf] emission, learned gates (w_std, w_rec)
-#   Key: Split head dim D = D_std + R, fold reciprocal in single SDPA
+# R1: RA with Learned Skip Gates
+# ===============================
+# Architecture: Reciprocal Attention (R=4, low-rank)
+# Skip gates: skip_std_attn, skip_lowrank_attn (init 2.0, enabled)
+# Geometric init: w_std=0.9375 (60/64), w_rec=0.0625 (4/64)
+# Purpose: Test if skip gates solve RA degradation (was 12% worse)
 #
-# - Step V2: Unified RA + Self-Restart
-#   Architecture: V1 + identity path: out = (1-α)·attn + α·V
-#   Purpose: Test if self-restart stabilizes training
+# Skip gates enable model to:
+# - Disable std attention where low-rank suffices (early layers?)
+# - Disable low-rank where full-rank needed (late layers?)
+# - Mix adaptively per layer (learned, not designed)
 #
-# RECIPROCAL MLP (R-MLP) - Steps V3-V6
-# ======================================
-# All build on Unified RA (V1) as attention foundation
+# Expected: RA with skip gates BEATS baseline by eliminating
+# forced computation of unhelpful pathways.
 #
-# - Step V3: Unified RA + R-MLP (basic, R_ff=64)
-#   Architecture: Folded MLP [h_std|h_low], gates (w_std, w_rec)
-#   Key: Split expansion D_ff = D_ff_std + R_ff, FLOPs match baseline
+# Key metrics tracked:
+# - skip_std_attn, skip_lowrank_attn: Logits for each pathway
+# - use_std_attn, use_lowrank_attn: Binary decisions (sigmoid > 0.5)
+# - w_std, w_rec: Pathway weights (geometric init)
+# - Perplexity: Final quality vs baseline
 #
-# - Step V4: V3 + 1x1 mixer on h_low
-#   Purpose: Test if mixer enhances low-rank features
-#
-# - Step V5: V3 + per-token gates (discoverability)
-#   Purpose: Test adaptive scaling of reciprocal features
-#
-# - Step V6: V3 + mixer + gates (all mechanisms)
-#   Purpose: Test composition of R-MLP features
-#
-# RA PARAMETER SENSITIVITY - Steps V7-V10
-# ========================================
-# Test Unified RA with different hyperparameters
-#
-# - Step V7: Unified RA with R=8 (higher reciprocal rank)
-#   Purpose: Test if doubling reciprocal capacity improves quality
-#
-# - Step V8: Unified RA with R=8 + Self-Restart
-#   Purpose: Test high reciprocal rank with stabilization
-#
-# - Step V9: Unified RA with R=2 (minimal reciprocal rank)
-#   Purpose: Test if minimal reciprocal capacity is sufficient
-#
-# - Step V10: Unified RA (R=4) + Self-Restart + 6x MLP expansion
-#   Purpose: Test if wider MLP (6x vs 4x) compensates for RA
-#
-# - Step V11: R-MLP basic with delayed activation (75 steps)
-#   Architecture: R-MLP (R_ff=64) delayed start at step 75
-#   Purpose: Simple R-MLP baseline with warmup
-#
-# - Step V12: Unified RA (R=4) with delayed activation (75 steps)
-#   Architecture: Baseline GPT-2 for first 75 steps, then Unified RA
-#   Purpose: Test if early training w_rec drop indicates RA hurts warmup
-#   Based on: ra-mean.png observation (w_rec drops before step 75)
-#
-# - Step V13: R-MLP golden ratio with delayed activation (75 steps)
-#   Architecture: Baseline MLP for first 75 steps, then R-MLP (R_ff=1152)
-#   Purpose: Test if golden ratio R-MLP benefits from delayed start
-#
-# - Step V14: V11 + KV cache pruning (golden ratio)
-#   Architecture: R-MLP basic delayed + KV pruning (k=391, 38.2% kept)
-#   Purpose: Test KV cache reduction via top-k + recency pruning
-#
-# - Step V15: V13 + KV cache pruning (learned ratio)
-#   Architecture: R-MLP golden delayed + learned KV pruning ratio
-#   Purpose: Learn optimal KV pruning vs fixed golden ratio
-#
-# - Step V16: Unified RA + R-MLP with weight tying
-#   Architecture: V3 (basic R-MLP) but with tie_up_low=True
-#   Purpose: Test if tying up_low to transposed up_std subset reduces
-#            parameters (~49K/layer saved) without quality loss
-#   Params saved: 64 × 768 × 12 layers ≈ 590K parameters
+# Training time: 2 hours per step (4 hours total for R0+R1)
 #
 # Usage:
-# 1. Full ablation (2 hours/step, 22 hours total):
-#    make defconfig-gpt2-ra-ablation && make
-#
-# 2. Quick sanity check (60 seconds/step):
-#    make defconfig-gpt2-ra-ablation
-#    GPT2_MAX_TIME=60 make
-#
-# 3. Dry-run validation (CPU, ~60 seconds total):
-#    make defconfig-gpt2-ra-ablation
-#    make check
+# make defconfig-gpt2-ra-ablation && make
+# Quick test: GPT2_MAX_TIME=600 make (10 minutes/step)
+# Dry-run: make check (~10 seconds)
