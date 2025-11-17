@@ -1184,6 +1184,12 @@ def run_single_test(
         # See: https://pytorch.org/docs/stable/notes/hip.html
         env["PYTORCH_NO_HIP_MEMORY_CACHING"] = "1"
 
+        # MIOpen configuration for gfx1100 (W7900) stability
+        # Use immediate mode (1) instead of kernel compilation to avoid
+        # HIPRTC compilation errors with ROCm version mismatches
+        env["MIOPEN_FIND_MODE"] = "1"  # 1=immediate, 2=normal, 3=fast
+        env["MIOPEN_DEBUG_DISABLE_FIND_DB"] = "1"  # Disable find database
+
         # Run with real-time output to console AND capture to file
         with open(log_file, "w") as f_log:
             # Use Popen for real-time output
