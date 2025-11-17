@@ -27,7 +27,9 @@ CONFIG_MODEL_SELECT_GPT2=y
 CONFIG_MODEL="gpt2"
 CONFIG_TEST_MODELS="gpt2"
 CONFIG_GPT2_MODEL_SIZE="124M"
-CONFIG_COMPILE_MODEL=y
+
+# Auto-detect torch.compile (enabled for NVIDIA, disabled for AMD W7900)
+CONFIG_COMPILE_AUTO=y
 
 # Single test mode (bitter8 only)
 CONFIG_TEST_MATRIX_MODE=n

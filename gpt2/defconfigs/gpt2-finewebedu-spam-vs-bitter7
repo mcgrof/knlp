@@ -24,8 +24,9 @@ CONFIG_MODEL_SELECT_GPT2=y
 CONFIG_MODEL="gpt2"
 CONFIG_TEST_MODELS="gpt2"
 CONFIG_GPT2_MODEL_SIZE="124M"
-# Enable model compilation for maximum performance
-CONFIG_COMPILE_MODEL=y
+
+# Auto-detect torch.compile (enabled for NVIDIA, disabled for AMD W7900)
+CONFIG_COMPILE_AUTO=y
 
 # Enable test matrix mode for 2-test comparison
 CONFIG_TEST_MATRIX_MODE=y
