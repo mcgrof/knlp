@@ -1,7 +1,8 @@
 # GPT-2 KV Tying Training + Mechanistic Interpretability
 # By default: Trains V0 (baseline), V1 (K=V), V2 (K=V.T) then analyzes
 # Each test runs for 60 minutes (3600s), saves final models
-# V2 is 2.7x slower (manual attn), so needs longer time + more frequent evals
+# V2 is 2.7x slower (manual attn), uses ~3x more memory than V0/V1
+# V2 may OOM on some GPUs - reduce CONFIG_GPT2_BLOCK_SIZE to 512 if needed
 # Then runs mechint KV circuit analysis on all trained models
 # Override with MODEL=path to skip training and analyze existing models
 # Uses TinyStories dataset (~2.1M stories, richer than Shakespeare)
@@ -29,11 +30,13 @@ CONFIG_GPT2_WEIGHT_TYING=y
 # V0: Baseline GPT-2 (no KV tying)
 # V1: GPT-2 with KV tying (K = V)
 # V2: GPT-2 with K = V.T (key equals transpose of value)
+#     Note: V2 uses manual attention and requires ~3x more memory
+#     May OOM with batch_size > 16 on 48GB GPUs
 CONFIG_GPT2_VANILLA_ABLATION_MODE=y
 CONFIG_GPT2_VANILLA_ABLATION_STEPS="V0,V1,V2"
 
 # Training Configuration
-# V2 (K=V.T) is 2.7x slower, so doubled time and reduced eval interval
+# V2 (K=V.T) uses manual attention: 2.7x slower, 3x more memory
 CONFIG_GPT2_MAX_ITERS=10000
 CONFIG_GPT2_MAX_TIME=3600
 CONFIG_GPT2_EVAL_INTERVAL=25
