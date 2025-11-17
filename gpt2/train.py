@@ -283,9 +283,9 @@ def main():
     # Load config if available
     if config is not None:
         # Apply hyperparameter auto-detection if enabled
-        from gpt2.hyperparams import apply_hyperparams
+        from lib.hyperparams import apply_hyperparams
 
-        apply_hyperparams(config, verbose=True)
+        apply_hyperparams(config, verbose=True, model_type="gpt2")
 
         # Update args from config (after auto-detection)
         # Only override if using default arg values (not explicitly set by user)

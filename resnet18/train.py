@@ -257,6 +257,11 @@ def main():
     try:
         import config as cfg
 
+        # Apply hyperparameter auto-detection if enabled
+        from lib.hyperparams import apply_hyperparams
+
+        apply_hyperparams(cfg, verbose=True, model_type="resnet18")
+
         pruning_method_default = getattr(cfg, "PRUNING_METHOD", "none")
         target_sparsity_default = getattr(cfg, "TARGET_SPARSITY", 0.9)
         pruning_warmup_default = getattr(cfg, "PRUNING_WARMUP", 500)
