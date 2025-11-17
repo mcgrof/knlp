@@ -357,8 +357,12 @@ def log_circuit_to_wandb(
             }
         )
 
-    table = wandb.Table(dataframe=wandb.Table(data=layer_data))
-    wandb.log({"mechint/layer_summary": table})
+    # Create table with column names from dict keys
+    if layer_data:
+        columns = list(layer_data[0].keys())
+        rows = [[row[col] for col in columns] for row in layer_data]
+        table = wandb.Table(columns=columns, data=rows)
+        wandb.log({"mechint/layer_summary": table})
 
     # Log masks as artifacts
     artifact = wandb.Artifact("kv_masks", type="model")
