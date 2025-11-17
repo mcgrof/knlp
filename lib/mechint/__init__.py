@@ -25,6 +25,7 @@ from .visualize import (
     plot_sparsity_curves,
     log_circuit_to_wandb,
     create_circuit_summary_report,
+    compare_variants,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "plot_sparsity_curves",
     "log_circuit_to_wandb",
     "create_circuit_summary_report",
+    "compare_variants",
 ]
