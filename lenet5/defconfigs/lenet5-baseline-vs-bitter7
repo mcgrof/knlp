@@ -6,12 +6,13 @@
 #   2. AdamWPrune + state pruning (bitter0) @ 70% (original algorithm)
 #   3. AdamWPrune + state pruning (bitter7) @ 70% (variance-based)
 #
-# All tests use identical hyperparameters for fair "compute budget" comparison:
-# - Time-based training: 240s (4 minutes)
+# Pure time-based training - what people care about is wall-clock performance
+# All tests get identical 240s (4 minute) compute budget:
+# - Training stops at 240s regardless of epochs/iterations
 # - 70% sparsity
 # - batch_size=512
 # - lr=0.001
-# - Graphs use step count for apples-to-apples comparison
+# - Graphs show results by step for fair comparison
 #
 # Expected results:
 # - Magnitude baseline: ~95-96% accuracy
@@ -83,9 +84,10 @@ CONFIG_BATCH_SIZE=512
 CONFIG_LEARNING_RATE="0.001"
 CONFIG_NUM_WORKERS=16
 
-# Time-based training: 240s (4 minutes)
-# Set epochs high so time limit stops training, not epoch count
-CONFIG_NUM_EPOCHS=100
+# Pure time-based training: 240s (4 minutes)
+# Epochs set absurdly high - time is the ONLY stopping criterion
+# Graphs show results by step for apples-to-apples comparison
+CONFIG_NUM_EPOCHS=1000
 CONFIG_LENET5_MAX_TIME=240
 
 # Performance features
