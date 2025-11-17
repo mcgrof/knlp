@@ -1,7 +1,7 @@
-# R-MLP + Attention Injection + KV Pruning (W7900 Optimized)
+# R-MLP + Attention Injection + KV Pruning (Auto-Tuned)
 #
 # Focus: Attention-aware Reciprocal MLP with KV cache pruning
-# Hardware: AMD Radeon Pro W7900 (48GB VRAM)
+# Hardware: Auto-detects GPU capabilities for optimal batch size
 #
 # Key innovation: R-MLP receives attention context via cheap vector add
 #   Standard pathway: h_std = GELU(up_std(x))
@@ -43,8 +43,8 @@
 #
 # To run: make defconfig-gpt2-r-mlp-prune && make
 
-# Hyperparameter mode: manual (don't auto-tune for GPU)
-CONFIG_HYPER_PARAM_MANUAL=y
+# Hyperparameter mode: auto-detect for GPU
+CONFIG_HYPER_PARAM_AUTO=y
 
 # Enable GPT-2 model
 CONFIG_MODEL_MODE_SINGLE=y
@@ -79,8 +79,7 @@ CONFIG_GPT2_CUDNN_BENCHMARK=y
 CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
-# Training parameters - GPU-optimized for W7900 48GB
-CONFIG_BATCH_SIZE=8
+# Training parameters - auto-detect optimal batch size for GPU
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
