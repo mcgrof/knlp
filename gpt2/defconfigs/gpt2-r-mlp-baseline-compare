@@ -7,10 +7,10 @@
 # hyperparameters instead of AUTO mode. Both M0 and M1 will use
 # identical batch sizes, gradient accumulation, and effective batch.
 #
-# Optimized for H100 80GB:
-# batch_size=128, gradient_accumulation=8 → effective batch=1024
-# This provides 2× better GPU utilization vs batch_size=64 while
-# maintaining identical effective batch size for fair comparison.
+# Optimized for H100 80GB with torch.compile:
+# batch_size=64, gradient_accumulation=16 → effective batch=1024
+# torch.compile requires smaller per-GPU batch due to graph tracing overhead.
+# Both M0 and M1 use identical batch settings for fair comparison.
 #
 # Ablation steps:
 # M0: Baseline GPT-2
@@ -40,7 +40,7 @@ CONFIG_GPT2_MODEL_NAME="gpt2"
 CONFIG_GPT2_DATASET_FINEWEBEDU=y
 CONFIG_GPT2_DATASET="finewebedu"
 CONFIG_GPT2_BLOCK_SIZE=1024
-CONFIG_GPT2_GRADIENT_ACCUMULATION=8
+CONFIG_GPT2_GRADIENT_ACCUMULATION=16
 CONFIG_GPT2_MAX_TIME=7200
 CONFIG_GPT2_EVAL_INTERVAL=100
 CONFIG_GPT2_EVAL_SAMPLES=200
@@ -60,7 +60,7 @@ CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
 # Training parameters - FIXED for fair comparison (optimized for H100)
-CONFIG_BATCH_SIZE=128
+CONFIG_BATCH_SIZE=64
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
