@@ -669,6 +669,210 @@ def compare_variants(
         f.write("".join(report))
     print(f"Saved comparison report to {delta_report_path}")
 
+    # 5. Create summary visualizations
+    # Overall metrics comparison
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Loss degradation comparison
+    loss_degs = []
+    for variant_name in variant_names:
+        loss_deg = variants_data[variant_name]["metrics"].get("loss_degradation", 0)
+        loss_degs.append(loss_deg)
+
+    colors = ["#3498db" if i == 0 else "#e74c3c" for i in range(len(variant_names))]
+    ax1.bar(variant_names, loss_degs, color=colors, alpha=0.8)
+    ax1.set_ylabel("Loss Degradation (%)", fontsize=12, fontweight="bold")
+    ax1.set_title("Loss Degradation Comparison", fontsize=13, fontweight="bold")
+    ax1.axhline(0, color="black", linestyle="--", linewidth=1, alpha=0.3)
+    ax1.grid(axis="y", alpha=0.3)
+
+    # Sparsity achieved comparison
+    sparsity_achieved = []
+    for variant_name in variant_names:
+        sparsity = variants_data[variant_name]["metrics"].get("sparsity_achieved", 0)
+        sparsity_achieved.append(sparsity)
+
+    ax2.bar(variant_names, sparsity_achieved, color=colors, alpha=0.8)
+    ax2.set_ylabel("Sparsity Achieved (%)", fontsize=12, fontweight="bold")
+    ax2.set_title("Sparsity Achieved Comparison", fontsize=13, fontweight="bold")
+    ax2.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    summary_path = os.path.join(output_dir, "overall_summary.png")
+    plt.savefig(summary_path, dpi=300, bbox_inches="tight")
+    print(f"Saved overall summary to {summary_path}")
+    plt.close()
+
+    # 6. Create delta heatmap (difference from V0 baseline)
+    if len(variant_names) >= 2:
+        baseline_name = variant_names[0]  # V0 is baseline
+        comparison_names = variant_names[1:]  # Compare all others to V0
+
+        # Build delta matrix: rows=layers, cols=variants (excluding baseline)
+        delta_matrix = []
+        for layer in layer_names:
+            baseline_sparsity = variants_data[baseline_name]["masks"][layer]["sparsity"]
+            row = []
+            for variant_name in comparison_names:
+                variant_sparsity = variants_data[variant_name]["masks"][layer][
+                    "sparsity"
+                ]
+                delta = variant_sparsity - baseline_sparsity
+                row.append(delta)
+            delta_matrix.append(row)
+
+        delta_matrix = np.array(delta_matrix)
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        im = ax.imshow(
+            delta_matrix, aspect="auto", cmap="RdBu_r", vmin=-0.15, vmax=0.15
+        )
+
+        ax.set_xticks(np.arange(len(comparison_names)))
+        ax.set_yticks(np.arange(len(layer_names)))
+        ax.set_xticklabels(comparison_names, fontsize=11)
+        ax.set_yticklabels([ln.split(".")[-1] for ln in layer_names], fontsize=10)
+
+        ax.set_xlabel("Variant", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Layer", fontsize=12, fontweight="bold")
+        ax.set_title(
+            f"Sparsity Delta from {baseline_name} (Baseline)",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        # Add text annotations
+        for i in range(len(layer_names)):
+            for j in range(len(comparison_names)):
+                text = ax.text(
+                    j,
+                    i,
+                    f"{delta_matrix[i, j]:+.1%}",
+                    ha="center",
+                    va="center",
+                    color="white" if abs(delta_matrix[i, j]) > 0.075 else "black",
+                    fontsize=9,
+                )
+
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label("Sparsity Delta", fontsize=11, fontweight="bold")
+
+        plt.tight_layout()
+        heatmap_path = os.path.join(output_dir, "delta_heatmap.png")
+        plt.savefig(heatmap_path, dpi=300, bbox_inches="tight")
+        print(f"Saved delta heatmap to {heatmap_path}")
+        plt.close()
+
+    # 7. Generate automated findings summary
+    findings = []
+    findings.append("KEY FINDINGS")
+    findings.append("=" * 60)
+    findings.append("")
+
+    # Overall metrics comparison
+    if len(variant_names) == 2:
+        v0_name, v1_name = variant_names
+        v0_loss = variants_data[v0_name]["metrics"].get("loss_degradation", 0)
+        v1_loss = variants_data[v1_name]["metrics"].get("loss_degradation", 0)
+        loss_diff = v1_loss - v0_loss
+
+        if abs(loss_diff) > 0.5:
+            if loss_diff > 0:
+                findings.append(
+                    f"• {v1_name} has WORSE loss degradation: "
+                    f"{v1_loss:+.2f}% vs {v0_loss:+.2f}%"
+                )
+            else:
+                findings.append(
+                    f"• {v1_name} has BETTER loss degradation: "
+                    f"{v1_loss:+.2f}% vs {v0_loss:+.2f}%"
+                )
+        else:
+            findings.append(
+                f"• Similar loss degradation: "
+                f"{v1_name}={v1_loss:+.2f}%, {v0_name}={v0_loss:+.2f}%"
+            )
+
+        findings.append("")
+
+        # Per-layer sparsity analysis
+        early_layers = layer_names[:4]
+        middle_layers = layer_names[4:8]
+        late_layers = layer_names[8:]
+
+        def avg_delta(layers):
+            deltas = []
+            for layer in layers:
+                v0_sp = variants_data[v0_name]["masks"][layer]["sparsity"]
+                v1_sp = variants_data[v1_name]["masks"][layer]["sparsity"]
+                deltas.append(v1_sp - v0_sp)
+            return np.mean(deltas)
+
+        early_delta = avg_delta(early_layers)
+        middle_delta = avg_delta(middle_layers)
+        late_delta = avg_delta(late_layers)
+
+        findings.append("Sparsity Pattern Differences:")
+        findings.append(
+            f"  Early layers (0-3):  {v1_name} is "
+            f"{early_delta:+.1%} {'more' if early_delta > 0 else 'less'} sparse"
+        )
+        findings.append(
+            f"  Middle layers (4-7): {v1_name} is "
+            f"{middle_delta:+.1%} {'more' if middle_delta > 0 else 'less'} sparse"
+        )
+        findings.append(
+            f"  Late layers (8-11):  {v1_name} is "
+            f"{late_delta:+.1%} {'more' if late_delta > 0 else 'less'} sparse"
+        )
+
+        findings.append("")
+
+        # Find most different layers
+        deltas_per_layer = []
+        for layer in layer_names:
+            v0_sp = variants_data[v0_name]["masks"][layer]["sparsity"]
+            v1_sp = variants_data[v1_name]["masks"][layer]["sparsity"]
+            deltas_per_layer.append((layer, v1_sp - v0_sp))
+
+        # Sort by absolute delta
+        deltas_per_layer.sort(key=lambda x: abs(x[1]), reverse=True)
+
+        findings.append("Biggest Differences:")
+        for layer, delta in deltas_per_layer[:3]:
+            layer_short = layer.split(".")[-2]  # e.g., "h.7"
+            findings.append(f"  {layer_short}: {delta:+.1%}")
+
+    findings.append("")
+    findings.append("=" * 60)
+
+    # Create text image from findings
+    fig, ax = plt.subplots(figsize=(12, 8))
+    ax.axis("off")
+
+    findings_text = "\n".join(findings)
+    ax.text(
+        0.05,
+        0.95,
+        findings_text,
+        transform=ax.transAxes,
+        fontsize=13,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.3),
+    )
+
+    findings_path = os.path.join(output_dir, "key_findings.png")
+    plt.savefig(findings_path, dpi=300, bbox_inches="tight")
+    print(f"Saved key findings to {findings_path}")
+    plt.close()
+
+    # Also save as text file
+    findings_txt_path = os.path.join(output_dir, "key_findings.txt")
+    with open(findings_txt_path, "w") as f:
+        f.write(findings_text)
+    print(f"Saved key findings text to {findings_txt_path}")
+
     # Log to W&B if enabled
     if use_wandb and WANDB_AVAILABLE:
         print(f"Logging comparison to W&B project: {project_name}")
@@ -680,13 +884,19 @@ def compare_variants(
         )
 
         # Log comparison images
-        wandb.log(
-            {
-                "comparison/sparsity": wandb.Image(sparsity_path),
-                "comparison/importance": wandb.Image(importance_path),
-                "comparison/channels": wandb.Image(channels_path),
-            }
-        )
+        log_dict = {
+            "comparison/sparsity": wandb.Image(sparsity_path),
+            "comparison/importance": wandb.Image(importance_path),
+            "comparison/channels": wandb.Image(channels_path),
+            "comparison/overall_summary": wandb.Image(summary_path),
+            "comparison/key_findings": wandb.Image(findings_path),
+        }
+
+        # Add heatmap if available
+        if len(variant_names) >= 2:
+            log_dict["comparison/delta_heatmap"] = wandb.Image(heatmap_path)
+
+        wandb.log(log_dict)
 
         # Create comparison table
         table_data = []

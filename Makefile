@@ -202,6 +202,17 @@ mechint: check-config generate-config
 				exit 1; \
 			fi; \
 		fi; \
+		echo ""; \
+		echo "Checking for variant comparison..."; \
+		OUTPUT_DIR=$$(grep CONFIG_KNLP_MECHINT_OUTPUT_DIR .config 2>/dev/null | cut -d'"' -f2 || echo "mechint_analysis"); \
+		V0_DIR=$$(ls -d $${OUTPUT_DIR}_*stepV0 2>/dev/null | head -1); \
+		V1_DIR=$$(ls -d $${OUTPUT_DIR}_*stepV1 2>/dev/null | head -1); \
+		if [ -n "$$V0_DIR" ] && [ -n "$$V1_DIR" ]; then \
+			echo "Found V0 and V1 analysis directories, running comparison..."; \
+			python3 scripts/compare_mechint_variants.py --v0 "$$V0_DIR" --v1 "$$V1_DIR" --output mechint_comparison; \
+		else \
+			echo "Variant comparison skipped (need both V0 and V1 directories)"; \
+		fi; \
 	else \
 		echo "Mechanistic interpretability not enabled in config."; \
 		echo "Enable with: CONFIG_KNLP_MECHINT=y"; \
