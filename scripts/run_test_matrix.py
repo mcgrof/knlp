@@ -2529,12 +2529,16 @@ def main():
                     )
                     test_desc = f"  - {variant_str}RATIO ablation step {ablation_step} - {step_desc}"
                 else:
-                    test_desc = f"  - {variant_str}{combo['pruning']} (no sparsity)"
+                    tokenizer_method = combo.get("tokenizer_method", "none")
+                    tokenizer_suffix = (
+                        f" [{tokenizer_method}]" if tokenizer_method else ""
+                    )
+                    test_desc = f"  - {variant_str}{combo['pruning']} (no sparsity){tokenizer_suffix}"
             else:
                 sparsity_pct = int(float(combo.get("sparsity", "0")) * 100)
-                test_desc = (
-                    f"  - {variant_str}{combo['pruning']} @ {sparsity_pct}% sparsity"
-                )
+                tokenizer_method = combo.get("tokenizer_method", "none")
+                tokenizer_suffix = f" [{tokenizer_method}]" if tokenizer_method else ""
+                test_desc = f"  - {variant_str}{combo['pruning']} @ {sparsity_pct}% sparsity{tokenizer_suffix}"
             tests_by_optimizer[opt].append(test_desc)
 
         for optimizer in sorted(tests_by_optimizer.keys()):
