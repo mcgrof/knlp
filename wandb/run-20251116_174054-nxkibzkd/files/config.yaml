@@ -1,0 +1,210 @@
+_wandb:
+    value:
+        cli_version: 0.22.2
+        e:
+            mf2pl4ngwlt3ob45mdyikie8vbirbt3c:
+                args:
+                    - --optimizer
+                    - adamw
+                    - --dataset
+                    - shakespeare
+                    - --data-dir
+                    - data
+                    - --block-size
+                    - "1024"
+                    - --flash-attention
+                    - --warmup-steps
+                    - "100"
+                    - --eval-interval
+                    - "100"
+                    - --eval-samples
+                    - "200"
+                    - --max-iters
+                    - "100"
+                    - --max-time
+                    - "60"
+                    - --decay-lr
+                    - --min-lr
+                    - "6e-5"
+                    - --learning-rate
+                    - "0.001"
+                    - --pruning-method
+                    - none
+                    - --architecture
+                    - vanilla
+                    - --ablation-mode
+                    - --ablation-steps
+                    - V0
+                    - --json-output
+                    - /data/knlp/test_matrix_results_20251116_174049/gpt2_adamw_vanilla_V0/training_metrics.json
+                    - --tracker
+                    - wandb,trackio
+                    - --tracker-project
+                    - knlp-f21d71ab
+                    - --tracker-run-name
+                    - gpt2_adamw_vanilla_V0
+                codePath: gpt2/train.py
+                codePathLocal: gpt2/train.py
+                cpu_count: 16
+                cpu_count_logical: 32
+                disk:
+                    /:
+                        total: "999511388160"
+                        used: "194916909056"
+                email: mcgrof@gmail.com
+                executable: /home/mcgrof/envs/w7900-ml/bin/python3
+                git:
+                    commit: 4e9fbc100e1f148a6d99140fb34432a23abc5e44
+                    remote: https://github.com/mcgrof/knlp.git
+                gpu: AMD Radeon Pro W7900
+                gpu_amd:
+                    - id: "0"
+                      maxPower: "241.0"
+                      model: "0x7448"
+                      performanceLevel: auto
+                      series: AMD Radeon Pro W7900
+                      sku: D7070100
+                      uniqueId: "0xb0e5d4295c432bb4"
+                      vbiosVersion: 113-D7070100-100
+                      vendor: Advanced Micro Devices, Inc. [AMD/ATI]
+                    - id: "1"
+                      model: "0x13c0"
+                      performanceLevel: auto
+                      sclkRange: 600Mhz - 2200Mhz
+                      series: AMD Radeon Graphics
+                      sku: RAPHAEL
+                      uniqueId: "0x0"
+                      vbiosVersion: 102-RAPHAEL-008
+                      vendor: Advanced Micro Devices, Inc. [AMD/ATI]
+                gpu_count: 2
+                host: prune
+                memory:
+                    total: "98659766272"
+                os: Linux-6.16.8+deb14-amd64-x86_64-with-glibc2.41
+                program: /data/knlp/gpt2/train.py
+                python: CPython 3.12.11
+                root: /data/knlp
+                startedAt: "2025-11-17T01:40:54.855123Z"
+                writerId: mf2pl4ngwlt3ob45mdyikie8vbirbt3c
+        m: []
+        python_version: 3.12.11
+        t:
+            "1":
+                - 1
+                - 49
+                - 105
+            "2":
+                - 1
+                - 49
+                - 105
+            "3":
+                - 2
+                - 13
+                - 16
+                - 61
+            "4": 3.12.11
+            "5": 0.22.2
+            "12": 0.22.2
+            "13": linux-x86_64
+ablation_mode:
+    value: true
+ablation_steps:
+    value: V0
+adamwprune_ramp_end_step:
+    value: 3000
+adamwprune_variant:
+    value: bitter0
+architecture:
+    value: vanilla
+batch_size:
+    value: 32
+bias:
+    value: true
+block_size:
+    value: 1024
+checkpoint_interval:
+    value: 999999
+compile:
+    value: false
+data_dir:
+    value: data
+dataset:
+    value: shakespeare
+ddp_find_unused_params:
+    value: false
+decay_lr:
+    value: true
+device:
+    value: cuda
+dropout:
+    value: 0.1
+dry_run:
+    value: false
+eval_interval:
+    value: 100
+eval_samples:
+    value: 200
+flash_attention:
+    value: true
+gradient_accumulation:
+    value: 16
+json_output:
+    value: /data/knlp/test_matrix_results_20251116_174049/gpt2_adamw_vanilla_V0/training_metrics.json
+k_eq_vt:
+    value: false
+kv_tying:
+    value: false
+learning_rate:
+    value: 0.001
+log_interval:
+    value: 10
+max_iters:
+    value: 100
+max_time:
+    value: 60
+min_lr:
+    value: 6e-05
+model_name:
+    value: gpt2
+num_epochs:
+    value: 10
+optimizer:
+    value: adamw
+output_dir:
+    value: ./output
+pruning_method:
+    value: none
+pruning_warmup:
+    value: 1000
+ra_step:
+    value: V1
+save_checkpoint:
+    value: true
+spam_enable_clip:
+    value: true
+spam_interval:
+    value: 1000
+spam_periodic_reset:
+    value: true
+spam_spike_threshold:
+    value: 2
+spam_theta:
+    value: 50
+spam_warmup:
+    value: true
+spam_warmup_steps:
+    value: 1000
+target_sparsity:
+    value: 0.5
+tracker:
+    value: wandb,trackio
+tracker_project:
+    value: knlp-f21d71ab
+tracker_run_name:
+    value: gpt2_adamw_vanilla_V0
+vanilla_step:
+    value: V0
+warmup_steps:
+    value: 100
+weight_decay:
+    value: 0.1
