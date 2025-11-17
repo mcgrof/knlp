@@ -941,20 +941,49 @@ def run_single_test(
     vanilla_ablation_step = combination.get("vanilla_ablation_step", None)
     tokenizer_method = combination.get("tokenizer_method", "none")
 
-    # Check if we should skip V0 baseline and use a reference run instead
+    # Check if we should skip baseline step and use a reference run instead
     # Check environment first, then config (same pattern as GPT2_MAX_TIME)
     baseline_run_id = (
         os.environ.get("CONFIG_BASELINE_RUN_ID") or config.get("BASELINE_RUN_ID", "")
     ).strip('"')
-    if baseline_run_id and ra_mla_ablation_step == "V0":
+
+    # Check if this is a baseline step (always "0" or letter+"0": V0, M0, L0, S0, R0, C0)
+    # NOT multi-digit endings like "10", "20", etc.
+    is_baseline_step = False
+    baseline_step_name = None
+    if ra_mla_ablation_step:
+        # Baseline if exactly "0" or matches pattern "X0" where X is single letter
+        is_baseline_step = ra_mla_ablation_step == "0" or (
+            len(ra_mla_ablation_step) == 2
+            and ra_mla_ablation_step[0].isalpha()
+            and ra_mla_ablation_step[1] == "0"
+        )
+        baseline_step_name = ra_mla_ablation_step
+    elif vanilla_ablation_step:
+        # Baseline if exactly "0" or matches pattern "X0" where X is single letter
+        is_baseline_step = vanilla_ablation_step == "0" or (
+            len(vanilla_ablation_step) == 2
+            and vanilla_ablation_step[0].isalpha()
+            and vanilla_ablation_step[1] == "0"
+        )
+        baseline_step_name = vanilla_ablation_step
+
+    if baseline_run_id and is_baseline_step:
         if not parallel_mode:
             print(f"\n{'='*60}")
-            print(f"Skipping V0 baseline - using reference run")
+            print(f"Skipping {baseline_step_name} baseline - using reference run")
             print(f"Baseline run: {baseline_run_id}")
             print(f"{'='*60}")
+
+        # Generate appropriate test_id based on ablation type
+        if vanilla_ablation_step:
+            test_id = f"{model}_{optimizer}_vanilla_{baseline_step_name}"
+        else:
+            test_id = f"{model}_{optimizer}_ramla_step{baseline_step_name}"
+
         return {
             "success": True,
-            "test_id": f"{model}_{optimizer}_ramla_stepV0",
+            "test_id": test_id,
             "skipped": True,
             "baseline_run_id": baseline_run_id,
         }
