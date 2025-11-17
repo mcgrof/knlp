@@ -105,7 +105,10 @@ class RATrainer(BaseGPT2Trainer):
 
         if step == "V0":
             # Baseline GPT-2
-            pass
+            # Override batch size: torch.compile uses extra memory during
+            # first iteration for tracing/compilation
+            args.batch_size = 64
+            args.gradient_accumulation = 16  # Maintain effective=1024
         elif step == "V1":
             # RA (R=4)
             args.use_ra_v5 = True
@@ -303,7 +306,10 @@ class RATrainer(BaseGPT2Trainer):
             args.use_variance_guided = True
         elif step == "R0":
             # Baseline GPT-2 for RA ablation
-            pass
+            # Override batch size: torch.compile uses extra memory during
+            # first iteration for tracing/compilation
+            args.batch_size = 64
+            args.gradient_accumulation = 16  # Maintain effective=1024
         elif step == "R1":
             # RA with learned skip gates (R=4, geometric init)
             args.use_ra_v5 = True
@@ -313,7 +319,10 @@ class RATrainer(BaseGPT2Trainer):
             # Skip gates are built into RA now (always present)
         elif step == "M0":
             # Baseline GPT-2 for R-MLP ablation
-            pass
+            # Override batch size: torch.compile uses extra memory during
+            # first iteration for tracing/compilation
+            args.batch_size = 64
+            args.gradient_accumulation = 16  # Maintain effective=1024
         elif step == "M1":
             # R-MLP with learned skip gates (R_ff=1152, golden ratio)
             args.use_ra_v5 = False
