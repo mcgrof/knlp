@@ -358,16 +358,20 @@ class ReciprocalAttention(nn.Module):
         # Optimized: Create scale tensor once, single element-wise multiply (2-2.8x speedup)
         # Benchmark: 0.133ms → 0.059ms @ T=1024, savings scale with sequence length
 
-        # Learned skip gates: modulate pathway weights
+        # Learned skip gates: soft gating with gradient flow
         # Note: RA uses fused projection, so can't do hard skipping without breaking fusion
-        # Instead, skip gates set pathway weight to 0 (soft skipping)
-        # This provides gradient signal about which pathways matter
-        use_std = torch.sigmoid(self.skip_std_attn) > 0.5
-        use_lowrank = torch.sigmoid(self.skip_lowrank_attn) > 0.5
+        # Use sigmoid directly as soft gate (0-1 range) to maintain gradient flow
+        # Even when gate ≈ 0.05, gradients can flow and model learns if pathway helps
+        gate_std = torch.sigmoid(self.skip_std_attn)  # 0 to 1
+        gate_lowrank = torch.sigmoid(self.skip_lowrank_attn)  # 0 to 1
 
-        # Compute gate scalings with skip modulation (with gradient tracking!)
-        w_std_gated = self.w_std if use_std else torch.zeros_like(self.w_std)
-        w_rec_gated = self.w_rec if use_lowrank else torch.zeros_like(self.w_rec)
+        # Binary decisions for logging (but not used in forward pass)
+        use_std = gate_std > 0.5
+        use_lowrank = gate_lowrank > 0.5
+
+        # Compute gate scalings with soft modulation (gradient always flows!)
+        w_std_gated = self.w_std * gate_std
+        w_rec_gated = self.w_rec * gate_lowrank
 
         g_std = torch.sqrt(torch.clamp(w_std_gated, min=1e-8))  # [H] or scalar
         g_rec = torch.sqrt(torch.clamp(w_rec_gated, min=1e-8))  # [H] or scalar
@@ -617,67 +621,52 @@ class ReciprocalMLP(nn.Module):
         if not self._weights_initialized:
             self._initialize_weights()
 
-        # Learned skip gate decisions (binary: compute or skip pathway)
-        use_std = torch.sigmoid(self.skip_std) > 0.5
-        use_rec = torch.sigmoid(self.skip_rec) > 0.5
+        # Learned skip gates: soft gating during training for gradient flow
+        # Use sigmoid directly as soft gate (0-1 range)
+        # When gate ≈ 0.05, pathway still computed but weighted near-zero
+        # Gradients flow → model learns if increasing gate would help
+        gate_std = torch.sigmoid(self.skip_std)  # 0 to 1
+        gate_rec = torch.sigmoid(self.skip_rec)  # 0 to 1
 
-        # Conditional standard pathway: pure MLP view of input
-        if use_std:
-            h_std = self.up_std(x)  # [B, T, D_ff_std] - GEMM computed
-            h_std = self.act(h_std)
-            h_std_contrib = self.w_std * h_std
+        # Binary decisions for logging only (not used in forward pass)
+        use_std = gate_std > 0.5
+        use_rec = gate_rec > 0.5
+
+        # Always compute standard pathway (soft-gated by gate_std)
+        h_std = self.up_std(x)  # [B, T, D_ff_std]
+        h_std = self.act(h_std)
+        h_std_contrib = self.w_std * gate_std * h_std  # Soft gate applied here
+
+        # Always compute reciprocal pathway (soft-gated by gate_rec)
+        # Prepare attention-enriched input
+        if attn is None:
+            # Fallback: no attention injection (behaves like split-MLP)
+            mixed = x
         else:
-            # Skip pathway: no GEMM, no backward graph!
-            h_std_contrib = torch.zeros(
-                x.size(0),
-                x.size(1),
-                self.D_ff_std,
-                device=x.device,
-                dtype=x.dtype,
-                requires_grad=False,
-            )
+            # Critical: inject attention via cheap vector add (no GEMM!)
+            # The low branch sees: x + α*attn (both [B,T,C])
+            mixed = x + self.attn_scale * attn
 
-        # Conditional reciprocal pathway: attention-enriched view
-        if use_rec:
-            # Prepare attention-enriched input
-            if attn is None:
-                # Fallback: no attention injection (behaves like split-MLP)
-                mixed = x
+        # Compute h_low from attention-enriched input
+        if self.tie_to_attn_proj:
+            # Explicit weight tying to attention c_proj
+            # Reuse first R_ff rows of c_proj.weight
+            if self._attn_proj_ref is not None:
+                h_low = F.linear(mixed, self._attn_proj_ref.weight[: self.R_ff, :])
             else:
-                # Critical: inject attention via cheap vector add (no GEMM!)
-                # The low branch sees: x + α*attn (both [B,T,C])
-                mixed = x + self.attn_scale * attn
-
-            # Compute h_low from attention-enriched input
-            if self.tie_to_attn_proj:
-                # Explicit weight tying to attention c_proj
-                # Reuse first R_ff rows of c_proj.weight
-                if self._attn_proj_ref is not None:
-                    h_low = F.linear(mixed, self._attn_proj_ref.weight[: self.R_ff, :])
-                else:
-                    # Fallback if ref not set (shouldn't happen)
-                    h_low = torch.zeros(
-                        mixed.size(0), mixed.size(1), self.R_ff, device=mixed.device
-                    )
-            else:
-                # Independent up_low weights - GEMM computed
-                h_low = self.up_low(mixed)  # [B, T, R_ff]
-
-            h_low = self.act(h_low)
-            h_low_contrib = self.w_rec * h_low
+                # Fallback if ref not set (shouldn't happen)
+                h_low = torch.zeros(
+                    mixed.size(0), mixed.size(1), self.R_ff, device=mixed.device
+                )
         else:
-            # Skip pathway: no GEMM, no backward graph!
-            h_low_contrib = torch.zeros(
-                x.size(0),
-                x.size(1),
-                self.R_ff,
-                device=x.device,
-                dtype=x.dtype,
-                requires_grad=False,
-            )
+            # Independent up_low weights - GEMM computed
+            h_low = self.up_low(mixed)  # [B, T, R_ff]
 
-        # Reciprocal fold: concatenate [w_std * h_std | w_rec * h_low]
-        # Shape is always same (D_ff_std + R_ff), but contributions may be zeros
+        h_low = self.act(h_low)
+        h_low_contrib = self.w_rec * gate_rec * h_low  # Soft gate applied here
+
+        # Reciprocal fold: concatenate [w_std * gate_std * h_std | w_rec * gate_rec * h_low]
+        # Shape is always same (D_ff_std + R_ff), soft gates modulate contribution strength
         h_fold = torch.cat([h_std_contrib, h_low_contrib], dim=-1)
 
         # Down projection (always runs, operates on possibly sparse input)
