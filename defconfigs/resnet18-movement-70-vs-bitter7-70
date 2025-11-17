@@ -1,0 +1,109 @@
+# ResNet-18: Movement Pruning vs AdamWPrune bitter7
+# Run with: make defconfig-resnet18-movement-70-vs-bitter7-70 && make
+#
+# Runs 3 tests (note: test 1 is auto-generated baseline, can be ignored):
+#   1. resnet18_adamw_none - AdamW without pruning (auto-generated)
+#   2. resnet18_adamw_movement_70 - AdamW + movement pruning @ 70%
+#   3. resnet18_adamwprune_bitter7_none_70 - bitter7 + built-in state pruning @ 70%
+#
+# Primary comparison is test 2 vs test 3: external movement pruning against
+# variance-based integrated pruning. Test 1 provides unpruned baseline.
+# Training: 1800s (30min) per test, ResNet-18 CIFAR-10.
+#
+# torch.compile + Flash Attention enabled for ROCm 7.x performance.
+
+# Model configuration
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_RESNET18=y
+CONFIG_RESNET18_DATASET_CIFAR10=y
+CONFIG_RESNET18_NUM_CLASSES=10
+
+# Enable test matrix mode for 2-way comparison
+CONFIG_TEST_MATRIX_MODE=y
+
+# Optimizers: AdamW and AdamWPrune
+CONFIG_OPTIMIZER_MODE_MULTIPLE=y
+CONFIG_OPTIMIZER_ENABLE_ADAMW=y
+CONFIG_OPTIMIZER_ENABLE_ADAMWPRUNE=y
+CONFIG_TEST_OPTIMIZER_ENABLED_ADAMW=y
+CONFIG_TEST_OPTIMIZER_ENABLED_ADAMWPRUNE=y
+# Disable other optimizers
+CONFIG_OPTIMIZER_ENABLE_SGD=n
+CONFIG_OPTIMIZER_ENABLE_ADAM=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWADV=n
+CONFIG_OPTIMIZER_ENABLE_ADAMWSPAM=n
+
+# AdamW settings (for baseline)
+CONFIG_ADAMW_WEIGHT_DECAY="0.01"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+
+# AdamWPrune settings
+CONFIG_ADAMWPRUNE_BASE_ADAMWSPAM=y
+CONFIG_ADAMWPRUNE_ENABLE_PRUNING=y
+CONFIG_ADAMWPRUNE_BETA1="0.9"
+CONFIG_ADAMWPRUNE_BETA2="0.999"
+CONFIG_ADAMWPRUNE_WEIGHT_DECAY="0.01"
+CONFIG_ADAMWPRUNE_AMSGRAD=n
+CONFIG_ADAMWPRUNE_WARMUP_STEPS=100
+CONFIG_ADAMWPRUNE_FREQUENCY=50
+
+# bitter variants: Enable only bitter7
+CONFIG_RESNET18_ADAMWPRUNE_VARIANT_BITTER0=n
+CONFIG_RESNET18_ADAMWPRUNE_VARIANT_BITTER7=y
+CONFIG_RESNET18_ADAMWPRUNE_DEFAULT_VARIANT="bitter7"
+
+# Pruning: movement for AdamW, none for AdamWPrune (built-in state pruning)
+CONFIG_PRUNING_MODE_MULTIPLE=y
+CONFIG_PRUNING_ENABLE_NONE=y
+CONFIG_PRUNING_ENABLE_MOVEMENT=y
+CONFIG_PRUNING_ENABLED_NONE=y
+CONFIG_PRUNING_ENABLED_MOVEMENT=y
+CONFIG_TEST_PRUNING_NONE=y
+CONFIG_TEST_PRUNING_MOVEMENT=y
+CONFIG_TEST_PRUNING_METHODS="none,movement"
+# Explicitly disable other pruning methods
+CONFIG_PRUNING_ENABLE_MAGNITUDE=n
+CONFIG_PRUNING_ENABLE_STATE=n
+CONFIG_PRUNING_ENABLED_MAGNITUDE=n
+CONFIG_PRUNING_ENABLED_STATE=n
+
+# Sparsity: Only 70% for this comparison
+CONFIG_TARGET_SPARSITY="0.7"
+CONFIG_SPARSITY_ENABLE_50=n
+CONFIG_SPARSITY_ENABLE_70=y
+CONFIG_SPARSITY_ENABLE_90=n
+CONFIG_SPARSITY_ENABLE_95=n
+CONFIG_SPARSITY_ENABLE_99=n
+CONFIG_TEST_SPARSITY_70=y
+
+# Hyperparameter auto-detection
+CONFIG_HYPER_PARAM_AUTO=y
+CONFIG_TARGET_EFFECTIVE_BATCH=512
+
+# torch.compile enabled for ROCm 7.x (no more version mismatch!)
+CONFIG_COMPILE_AUTO=y
+
+# Training configuration
+CONFIG_RESNET18_BASE_LR="0.1"
+CONFIG_RESNET18_USE_COSINE_SCHEDULE=y
+CONFIG_NUM_WORKERS=16
+
+# Time-based training: 1800s (30 minutes)
+CONFIG_NUM_EPOCHS=1000
+CONFIG_RESNET18_MAX_TIME=1800
+
+# Performance features (Flash Attention enabled via mixed precision)
+CONFIG_MIXED_PRECISION=y
+CONFIG_PIN_MEMORY=y
+CONFIG_PERSISTENT_WORKERS=y
+
+# Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="resnet18-movement-vs-bitter7"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_PRUNING_LOG_SPARSITY=y
+CONFIG_VERBOSE=y
