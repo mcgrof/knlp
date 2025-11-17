@@ -108,12 +108,26 @@ def load_model_and_data(checkpoint_path: str, dataset_name: str = "finewebedu"):
     # Load model (example for GPT-2)
     from gpt2.model import GPT, GPTConfig
 
-    # Try to infer config from checkpoint
-    # In practice, you'd want to save config in checkpoint or pass it explicitly
-    config = GPTConfig.from_name("gpt2")  # default
+    # Load config from checkpoint if available
+    if "config" in checkpoint:
+        saved_args = checkpoint["config"]
+        # Create GPTConfig from saved args
+        config = GPTConfig.from_name("gpt2")  # start with defaults
+        # Override with saved config
+        if hasattr(saved_args, "kv_tying"):
+            config.kv_tying = saved_args.kv_tying
+        if hasattr(saved_args, "block_size"):
+            config.block_size = saved_args.block_size
+        print(f"Loaded config from checkpoint: kv_tying={config.kv_tying}")
+    else:
+        config = GPTConfig.from_name("gpt2")  # default
+        print("No config in checkpoint, using default GPT-2 config")
+
     model = GPT(config)
     model.load_state_dict(state_dict, strict=False)
-    model.eval()
+    # Keep model in train mode for mechint optimization (need gradients)
+    # KV masks will be optimized while model params stay frozen
+    model.train()
 
     print(f"Loaded model: {model.get_num_params() / 1e6:.2f}M parameters")
 
