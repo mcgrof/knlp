@@ -155,7 +155,42 @@ parser.add_argument(
 )
 parser.add_argument("--weight-decay", type=float, default=None,
                     help="Weight decay (AdamW/SGD). If None, choose a sane default.")
+parser.add_argument(
+    "--adamwprune-variant",
+    type=str,
+    default="bitter0",
+    choices=["bitter0", "bitter1", "bitter2", "bitter3", "bitter4",
+             "bitter5", "bitter6", "bitter7", "bitter8", "bitter9"],
+    help="AdamWPrune variant to use (default: bitter0)",
+)
+parser.add_argument(
+    "--tracker",
+    type=str,
+    default="",
+    help="Comma-separated list of trackers: wandb,trackio (default: none)",
+)
+parser.add_argument(
+    "--tracker-project",
+    type=str,
+    default="lenet5-experiments",
+    help="Project name for experiment tracking (default: lenet5-experiments)",
+)
+parser.add_argument(
+    "--tracker-run-name",
+    type=str,
+    default=None,
+    help="Run name for experiment tracking (default: auto-generated)",
+)
 args = parser.parse_args()
+
+# Try to load config.py if it exists (from Kconfig)
+config = None
+try:
+    import config as cfg
+    config = cfg.Config if hasattr(cfg, 'Config') else cfg
+    logger_msg = "Loaded configuration from config.py (Kconfig-generated)"
+except ImportError:
+    logger_msg = "No config.py found, using command-line arguments only"
 
 # Conditionally import pruning module
 if args.pruning_method == "movement":
@@ -228,6 +263,72 @@ if device.type == "cuda":
 else:
     logger.info("Using CPU")
     training_metrics["device"] = {"type": "cpu"}
+
+# Initialize experiment trackers (W&B and/or Trackio)
+trackers_enabled = []
+wandb_run = None
+trackio_run = None
+
+if args.tracker:
+    tracker_list = [t.strip() for t in args.tracker.split(",")]
+
+    # Generate run name if not provided
+    run_name = args.tracker_run_name
+    if run_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"lenet5_{args.optimizer}_{args.pruning_method}_{timestamp}"
+
+    # Initialize W&B
+    if "wandb" in tracker_list:
+        try:
+            import wandb
+            wandb_run = wandb.init(
+                project=args.tracker_project,
+                name=run_name,
+                config={
+                    "model": "lenet5",
+                    "optimizer": args.optimizer,
+                    "pruning_method": args.pruning_method,
+                    "target_sparsity": target_sparsity,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "num_epochs": num_epochs,
+                    "adamwprune_variant": args.adamwprune_variant if args.optimizer == "adamwprune" else None,
+                },
+            )
+            trackers_enabled.append("wandb")
+            logger.info(f"Initialized WandB tracking for project: {args.tracker_project}")
+        except ImportError:
+            logger.warning("wandb not installed, skipping W&B tracking")
+
+    # Initialize Trackio
+    if "trackio" in tracker_list:
+        try:
+            import trackio
+            trackio.init(project=args.tracker_project)
+            trackio_run = trackio.start_run(name=run_name)
+            trackio.log_params({
+                "model": "lenet5",
+                "optimizer": args.optimizer,
+                "pruning_method": args.pruning_method,
+                "target_sparsity": target_sparsity,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "num_epochs": num_epochs,
+                "adamwprune_variant": args.adamwprune_variant if args.optimizer == "adamwprune" else None,
+            })
+            trackers_enabled.append("trackio")
+            logger.info(f"Initialized Trackio tracking for project: {args.tracker_project}")
+        except ImportError:
+            logger.warning("trackio not installed, skipping Trackio tracking")
+
+if trackers_enabled:
+    logger.info(f"Tracking enabled: {', '.join(trackers_enabled)}")
+    training_metrics["tracking"] = {
+        "enabled": trackers_enabled,
+        "project": args.tracker_project,
+        "run_name": run_name,
+    }
 
 # Loading the dataset and preprocessing
 train_dataset = torchvision.datasets.MNIST(
@@ -573,6 +674,24 @@ for epoch in range(num_epochs):
             else 0
         )
         training_metrics["epochs"].append(epoch_metrics)
+
+        # Log to trackers
+        if wandb_run is not None:
+            wandb.log({
+                "epoch": epoch + 1,
+                "train/loss": epoch_metrics["avg_loss"],
+                "test/accuracy": accuracy,
+                "train/epoch_time": epoch_time,
+                "train/sparsity": epoch_metrics.get("sparsity", 0),
+            })
+        if trackio_run is not None:
+            trackio.log_metrics({
+                "epoch": epoch + 1,
+                "loss": epoch_metrics["avg_loss"],
+                "accuracy": accuracy,
+                "epoch_time": epoch_time,
+                "sparsity": epoch_metrics.get("sparsity", 0),
+            })
 
         # Step the learning rate scheduler if using AdamWAdv
         if scheduler is not None:
