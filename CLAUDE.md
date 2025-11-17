@@ -487,6 +487,91 @@ Low memory utilization (<20%) indicates memory bandwidth bottleneck.
 Low compute utilization (<50%) indicates compute bottleneck.
 Compare optimization runs to baseline to verify improvements.
 
+## Publishing Results
+
+Before publishing experimental results in documentation, papers, or
+public communications, perform rigorous verification to ensure
+reproducibility and fairness.
+
+### Verification Checklist
+
+When publishing statistics or performance comparisons:
+
+1. **Use W&B API to verify hyperparameters**: Query all runs via
+   W&B API to confirm consistent hyperparameters across comparisons.
+   Verify batch size, gradient accumulation, learning rate, warmup
+   steps, and all optimizer-specific settings match exactly.
+
+2. **Verify git commit exists and is public**: Confirm the exact
+   git commit SHA used for training exists in the public repository.
+   Document the commit ID in published results so others can
+   reproduce experiments with identical code.
+
+3. **Perform apples-to-apples sanity checks**: Before claiming
+   performance differences, verify:
+   - Equal training time (CONFIG_GPT2_MAX_TIME) across all methods
+   - Same effective batch size (batch × grad_acc × num_gpus)
+   - Same hardware configuration (GPU type, count, memory)
+   - Same torch.compile status (all enabled or all disabled)
+   - Same dataset and preprocessing
+   - Same evaluation protocol (samples, intervals)
+
+4. **Check for confounding variables**: Verify no unintended
+   differences like:
+   - Different torch.compile status (one compiled, one not)
+   - Different batch sizes due to GPU-specific configs
+   - Different stopping conditions (time vs iterations)
+   - Different random seeds causing outlier results
+   - Different CUDA/PyTorch/GPU driver versions
+
+### W&B Verification Script Pattern
+
+Use this pattern to verify hyperparameter consistency:
+
+```python
+import wandb
+
+api = wandb.Api()
+project = "mcgrof-citizen/your-project"
+run_names = ["baseline", "method_a", "method_b"]
+
+configs = {}
+for name in run_names:
+    runs = api.runs(project, filters={"display_name": name})
+    if runs:
+        run = runs[0]
+        configs[name] = {
+            "batch_size": run.config.get("batch_size"),
+            "gradient_accumulation": run.config.get("gradient_accumulation"),
+            "learning_rate": run.config.get("learning_rate"),
+            "max_time": run.config.get("max_time"),
+            "compile": run.config.get("compile_model"),
+            "commit": run.config.get("git_commit"),
+        }
+
+# Verify all configs match on critical hyperparameters
+for key in ["batch_size", "gradient_accumulation", "learning_rate"]:
+    values = [c[key] for c in configs.values()]
+    if len(set(values)) > 1:
+        print(f"WARNING: {key} differs across runs: {configs}")
+```
+
+### Publication Requirements
+
+Published results MUST include:
+
+- Git commit SHA for exact code version
+- W&B project and run names for verification
+- Hardware specification (GPU model, count, memory)
+- Training time allocation per method
+- Effective batch size calculation
+- torch.compile status
+- Dataset and preprocessing details
+
+This enables independent verification and reproduction of published
+claims. Do not publish results without completing verification
+checklist.
+
 ## Documentation
 - Keep changes well-documented in commit messages
 - Explain technical rationale for optimizations
