@@ -524,8 +524,8 @@ class RATrainer(BaseGPT2Trainer):
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
             if self.master_process:
-                print("Compiling model with torch.compile()...")
-            model = torch.compile(model)
+                print("Compiling model with torch.compile(dynamic=True)...")
+            model = torch.compile(model, dynamic=True)
 
         # Wrap in DDP if needed
         model = self.wrap_model_ddp(model)
