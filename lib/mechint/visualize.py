@@ -409,11 +409,13 @@ def create_circuit_summary_report(
     report.append(f"### Initial (Unpruned)\n")
     report.append(f"- Loss: {initial_metrics['loss']:.4f}\n")
     report.append(f"- Perplexity: {initial_metrics['perplexity']:.2f}\n")
+    report.append(f"- Bits/Byte: {initial_metrics.get('bits_per_byte', 0):.3f}\n")
     report.append(f"- Sparsity: {initial_metrics['sparsity']:.1%}\n\n")
 
     report.append(f"### Final (Pruned)\n")
     report.append(f"- Loss: {final_metrics['loss']:.4f}\n")
     report.append(f"- Perplexity: {final_metrics['perplexity']:.2f}\n")
+    report.append(f"- Bits/Byte: {final_metrics.get('bits_per_byte', 0):.3f}\n")
     report.append(f"- Sparsity: {final_metrics['sparsity']:.1%}\n\n")
 
     # Degradation analysis
@@ -497,10 +499,13 @@ def compare_variants(
 
                 loss_match = re.search(r"Loss degradation: ([+-]?\d+\.\d+)%", content)
                 sparsity_match = re.search(r"Sparsity achieved: (\d+\.\d+)%", content)
+                bpb_match = re.search(r"Bits/Byte: (\d+\.\d+)", content)
                 if loss_match:
                     metrics["loss_degradation"] = float(loss_match.group(1))
                 if sparsity_match:
                     metrics["sparsity_achieved"] = float(sparsity_match.group(1))
+                if bpb_match:
+                    metrics["bits_per_byte"] = float(bpb_match.group(1))
 
         variants_data[variant_name] = {
             "masks": masks_dict,
@@ -630,15 +635,17 @@ def compare_variants(
     report.append(f"Variants: {', '.join(variant_names)}\n\n")
 
     report.append("## Overall Metrics\n\n")
-    report.append("| Variant | Loss Degradation | Sparsity Achieved |\n")
-    report.append("|---------|------------------|-------------------|\n")
+    report.append("| Variant | Loss Degradation | Sparsity Achieved | Bits/Byte |\n")
+    report.append("|---------|------------------|-------------------|------------|\n")
     for variant_name in variant_names:
         metrics = variants_data[variant_name]["metrics"]
         loss_deg = metrics.get("loss_degradation", "N/A")
         sparsity = metrics.get("sparsity_achieved", "N/A")
+        bpb = metrics.get("bits_per_byte", "N/A")
         loss_str = f"{loss_deg:+.2f}%" if isinstance(loss_deg, float) else loss_deg
         sparsity_str = f"{sparsity:.1f}%" if isinstance(sparsity, float) else sparsity
-        report.append(f"| {variant_name} | {loss_str} | {sparsity_str} |\n")
+        bpb_str = f"{bpb:.3f}" if isinstance(bpb, float) else bpb
+        report.append(f"| {variant_name} | {loss_str} | {sparsity_str} | {bpb_str} |\n")
 
     report.append("\n## Per-Layer Delta\n\n")
     report.append("| Layer | " + " | ".join([f"{v} Sparsity" for v in variant_names]))
