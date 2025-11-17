@@ -123,6 +123,45 @@ config LENET5_TOKENIZER_SAVE_PATH
 
 endmenu
 
+menu "Tokenization Test Matrix"
+
+config TEST_TOKENIZER_BASELINE
+	bool "Test baseline (no tokenization)"
+	default n
+	depends on TEST_MATRIX_MODE
+	help
+	  Include baseline test without tokenization in test matrix.
+	  Uses full 784-dimensional MNIST images as input.
+
+config TEST_TOKENIZER_PCA
+	bool "Test PCA tokenization"
+	default n
+	depends on TEST_MATRIX_MODE
+	help
+	  Include PCA tokenization test in test matrix.
+	  Uses spatial tiering by variance (784→64 dimensions).
+
+config TEST_TOKENIZER_SPLINE_PCA
+	bool "Test Spline-PCA tokenization"
+	default n
+	depends on TEST_MATRIX_MODE
+	help
+	  Include Spline-PCA tokenization test in test matrix.
+	  Uses spatial + temporal tiering with trajectory tracking.
+
+config TEST_TOKENIZER_METHODS
+	string "Tokenization methods to test (comma-separated)"
+	default ""
+	depends on TEST_MATRIX_MODE
+	help
+	  Comma-separated list of tokenization methods to test.
+	  Example: "none,pca,spline-pca"
+
+	  This is the preferred way to specify tokenizer test matrix.
+	  Individual flags (TEST_TOKENIZER_BASELINE, etc.) also work.
+
+endmenu
+
 menu "AdamWPrune Variants"
 
 config LENET5_ADAMWPRUNE_VARIANT_BITTER0
