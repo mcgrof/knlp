@@ -623,7 +623,11 @@ class RATrainer(BaseGPT2Trainer):
                             )
                             print(
                                 f"  RA gates: w_std={ra_gate_stats.get('w_std_mean', 0):.3f}, "
-                                f"w_rec={ra_gate_stats.get('w_rec_mean', 0):.3f}"
+                                f"w_rec={ra_gate_stats.get('w_rec_mean', 0):.3f}, "
+                                f"skip_std={ra_gate_stats.get('skip_std_attn_mean', 0):.2f}, "
+                                f"skip_rec={ra_gate_stats.get('skip_lowrank_attn_mean', 0):.2f}, "
+                                f"use_std={ra_gate_stats.get('use_std_attn_pct', 0):.0f}%, "
+                                f"use_rec={ra_gate_stats.get('use_lowrank_attn_pct', 0):.0f}%"
                             )
 
                     # Analyze R-MLP gates if enabled
@@ -639,7 +643,11 @@ class RATrainer(BaseGPT2Trainer):
                             print(
                                 f"  R-MLP gates: w_std={rmlp_gate_stats.get('w_std_mean', 0):.3f}, "
                                 f"w_rec={rmlp_gate_stats.get('w_rec_mean', 0):.3f}, "
-                                f"α={rmlp_gate_stats.get('attn_scale_mean', 0):.3f}"
+                                f"α={rmlp_gate_stats.get('attn_scale_mean', 0):.3f}, "
+                                f"skip_std={rmlp_gate_stats.get('skip_std_mean', 0):.2f}, "
+                                f"skip_rec={rmlp_gate_stats.get('skip_rec_mean', 0):.2f}, "
+                                f"use_std={rmlp_gate_stats.get('use_std_pct', 0):.0f}%, "
+                                f"use_rec={rmlp_gate_stats.get('use_rec_pct', 0):.0f}%"
                             )
 
                     # Analyze KV pruning stats if enabled
@@ -795,27 +803,30 @@ class RATrainer(BaseGPT2Trainer):
                     print(f"Warning: Failed to finish wandb: {e}")
 
     def _analyze_ra_gates(self) -> Dict[str, float]:
-        """Analyze RA gate values."""
+        """Analyze RA gate values including skip gates."""
         try:
             from ra import ReciprocalAttention
 
             w_std_list = []
             w_rec_list = []
+            skip_std_attn_list = []
+            skip_lowrank_attn_list = []
+            use_std_attn_list = []
+            use_lowrank_attn_list = []
             count = 0
 
             for name, module in self.raw_model.named_modules():
                 if isinstance(module, ReciprocalAttention):
                     count += 1
-                    with torch.no_grad():
-                        w_std = module.w_std.cpu()
-                        w_rec = module.w_rec.cpu()
+                    stats = module.get_gate_stats()
 
-                        if w_std.dim() == 0:
-                            w_std_list.append(w_std.item())
-                            w_rec_list.append(w_rec.item())
-                        else:
-                            w_std_list.extend(w_std.tolist())
-                            w_rec_list.extend(w_rec.tolist())
+                    if stats:
+                        w_std_list.append(stats["w_std_mean"])
+                        w_rec_list.append(stats["w_rec_mean"])
+                        skip_std_attn_list.append(stats["skip_std_attn"])
+                        skip_lowrank_attn_list.append(stats["skip_lowrank_attn"])
+                        use_std_attn_list.append(stats["use_std_attn"])
+                        use_lowrank_attn_list.append(stats["use_lowrank_attn"])
 
             if w_std_list:
                 return {
@@ -823,6 +834,10 @@ class RATrainer(BaseGPT2Trainer):
                     "w_rec_mean": np.mean(w_rec_list),
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
+                    "skip_std_attn_mean": np.mean(skip_std_attn_list),
+                    "skip_lowrank_attn_mean": np.mean(skip_lowrank_attn_list),
+                    "use_std_attn_pct": np.mean(use_std_attn_list) * 100,
+                    "use_lowrank_attn_pct": np.mean(use_lowrank_attn_list) * 100,
                     "module_count": float(count),
                 }
         except Exception as e:
@@ -832,31 +847,32 @@ class RATrainer(BaseGPT2Trainer):
         return {}
 
     def _analyze_rmlp_gates(self) -> Dict[str, float]:
-        """Analyze R-MLP gate values (w_std, w_rec, attn_scale)."""
+        """Analyze R-MLP gate values including skip gates."""
         try:
             from ra import ReciprocalMLP
 
             w_std_list = []
             w_rec_list = []
             attn_scale_list = []
+            skip_std_list = []
+            skip_rec_list = []
+            use_std_list = []
+            use_rec_list = []
             count = 0
 
             for name, module in self.raw_model.named_modules():
                 if isinstance(module, ReciprocalMLP):
                     count += 1
-                    with torch.no_grad():
-                        w_std = module.w_std.cpu()
-                        w_rec = module.w_rec.cpu()
-                        attn_scale = module.attn_scale.cpu()
+                    stats = module.get_gate_stats()
 
-                        if w_std.dim() == 0:
-                            w_std_list.append(w_std.item())
-                            w_rec_list.append(w_rec.item())
-                            attn_scale_list.append(attn_scale.item())
-                        else:
-                            w_std_list.extend(w_std.tolist())
-                            w_rec_list.extend(w_rec.tolist())
-                            attn_scale_list.extend(attn_scale.tolist())
+                    if stats:
+                        w_std_list.append(stats["w_std"])
+                        w_rec_list.append(stats["w_rec"])
+                        attn_scale_list.append(stats["attn_scale"])
+                        skip_std_list.append(stats["skip_std"])
+                        skip_rec_list.append(stats["skip_rec"])
+                        use_std_list.append(stats["use_std"])
+                        use_rec_list.append(stats["use_rec"])
 
             if w_std_list:
                 return {
@@ -866,6 +882,10 @@ class RATrainer(BaseGPT2Trainer):
                     "w_std_std": np.std(w_std_list),
                     "w_rec_std": np.std(w_rec_list),
                     "attn_scale_std": np.std(attn_scale_list),
+                    "skip_std_mean": np.mean(skip_std_list),
+                    "skip_rec_mean": np.mean(skip_rec_list),
+                    "use_std_pct": np.mean(use_std_list) * 100,
+                    "use_rec_pct": np.mean(use_rec_list) * 100,
                     "module_count": float(count),
                 }
         except Exception as e:
