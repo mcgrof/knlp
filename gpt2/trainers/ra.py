@@ -472,6 +472,32 @@ class RATrainer(BaseGPT2Trainer):
                 attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
                 tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
             )
+        elif getattr(self.args, "kv_cache_prune", False):
+            # Standalone KV pruning (V19) or with KVSplice compression (C1-C3)
+            from ra_patch import patch_gpt2_with_kv_pruning
+
+            k_keep = getattr(self.args, "kv_prune_k", 391)
+            recency = getattr(self.args, "kv_prune_recency", 64)
+            learn_ratio = getattr(self.args, "kv_prune_learned", False)
+
+            if self.master_process:
+                if getattr(self.args, "kvsplice_enable", False):
+                    kvsplice_k = getattr(self.args, "kvsplice_k", 32)
+                    print(
+                        f"Patching with KV pruning (k={k_keep}) + KVSplice compression ({config.n_embd // config.n_head}→{kvsplice_k} dims)"
+                    )
+                else:
+                    print(
+                        f"Patching with V-only KV pruning (k={k_keep}, recency={recency})"
+                    )
+
+            model = patch_gpt2_with_kv_pruning(
+                model,
+                k_keep=k_keep,
+                recency=recency,
+                learn_ratio=learn_ratio,
+                dropout=self.args.dropout,
+            )
 
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
