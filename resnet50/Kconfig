@@ -66,6 +66,136 @@ config RESNET50_MONITOR_GPU
 	help
 	  Enable GPU memory and utilization monitoring during training.
 
+menu "Image Tokenization (Experimental)"
+
+config RESNET50_ENABLE_TOKENIZER
+	bool "Enable PCA-based image tokenization"
+	default n
+	help
+	  Enable PCA-based tokenization for image inputs. Compresses
+	  images into principal component space before feeding to model.
+
+	  Benefits:
+	  - Dimensionality reduction (3072→256 for CIFAR-100)
+	  - Natural tiering hierarchy (by variance explained)
+	  - Potential regularization effect
+
+	  Requires fitting PCA on training data before use.
+
+choice
+	prompt "Tokenizer type"
+	default RESNET50_TOKENIZER_PCA
+	depends on RESNET50_ENABLE_TOKENIZER
+	help
+	  Choose tokenization strategy.
+
+config RESNET50_TOKENIZER_PCA
+	bool "PCA tokenizer"
+	help
+	  Simple PCA-based tokenization. Projects images into
+	  principal component space and tiers by variance explained.
+
+	  Fast, simple, effective for image classification.
+
+config RESNET50_TOKENIZER_SPLINE_PCA
+	bool "Spline-PCA tokenizer"
+	help
+	  Advanced tokenization with spline trajectory compression.
+	  Tracks how PCA components evolve during training and fits
+	  cubic splines to trajectories.
+
+	  Enables:
+	  - Temporal tiering (by component update frequency)
+	  - Trajectory compression (splines vs full history)
+	  - Online learning (update control points)
+
+	  Slower but more sophisticated than basic PCA.
+
+endchoice
+
+config RESNET50_TOKENIZER_METHOD
+	string
+	default "none" if !RESNET50_ENABLE_TOKENIZER
+	default "pca" if RESNET50_TOKENIZER_PCA
+	default "spline-pca" if RESNET50_TOKENIZER_SPLINE_PCA
+
+config RESNET50_PCA_COMPONENTS
+	int "Number of PCA components"
+	default 256
+	range 32 3072
+	depends on RESNET50_ENABLE_TOKENIZER
+	help
+	  Number of principal components to keep. For CIFAR-100 (3072 dims):
+	  - 128 components: High compression, ~12x reduction
+	  - 256 components: Medium compression, ~12x reduction
+	  - 512 components: Low compression, ~6x reduction
+
+	  Lower values = more compression but potential quality loss.
+	  Higher values = less compression but better quality.
+
+config RESNET50_PCA_WHITEN
+	bool "Enable PCA whitening"
+	default n
+	depends on RESNET50_ENABLE_TOKENIZER
+	help
+	  Normalize PCA components by their variance. Makes all
+	  components have unit variance, which can help with
+	  optimization but removes natural importance hierarchy.
+
+	  Usually not needed for tiering (we want variance hierarchy).
+
+config RESNET50_SPLINE_CONTROL_POINTS
+	int "Number of spline control points"
+	default 8
+	range 4 32
+	depends on RESNET50_TOKENIZER_SPLINE_PCA
+	help
+	  Number of control points for cubic spline fitting of
+	  component trajectories. More points = better fit but
+	  less compression.
+
+	  For typical training:
+	  - 4 points: High compression, smooth approximation
+	  - 8 points: Balanced (recommended)
+	  - 16 points: Low compression, detailed trajectory
+
+config RESNET50_TOKENIZER_SAVE_PATH
+	string "Tokenizer save path"
+	default "resnet50_tokenizer.pkl"
+	depends on RESNET50_ENABLE_TOKENIZER
+	help
+	  Path to save fitted tokenizer for later use.
+
+endmenu
+
+menu "Tokenization Test Matrix"
+
+config TEST_TOKENIZER_BASELINE_RESNET50
+	bool "Test baseline (no tokenization)"
+	default n
+	depends on TEST_MATRIX_MODE && MODEL_RESNET50
+	help
+	  Include baseline test without tokenization in test matrix.
+	  Uses full 3072-dimensional CIFAR-100 images as input.
+
+config TEST_TOKENIZER_PCA_RESNET50
+	bool "Test PCA tokenization"
+	default n
+	depends on TEST_MATRIX_MODE && MODEL_RESNET50
+	help
+	  Include PCA tokenization test in test matrix.
+	  Uses spatial tiering by variance (3072→256 dimensions).
+
+config TEST_TOKENIZER_SPLINE_PCA_RESNET50
+	bool "Test Spline-PCA tokenization"
+	default n
+	depends on TEST_MATRIX_MODE && MODEL_RESNET50
+	help
+	  Include Spline-PCA tokenization test in test matrix.
+	  Uses spatial + temporal tiering with trajectory tracking.
+
+endmenu
+
 config RESNET50_PRUNING_START_EPOCH
 	int "Pruning start epoch"
 	default 10

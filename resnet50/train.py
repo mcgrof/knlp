@@ -28,7 +28,8 @@ from lib.optimizers import (
 )
 from lib.movement_pruning import MovementPruning
 from lib.magnitude_pruning import MagnitudePruning
-from model import resnet50
+from resnet50.model import ResNet50, ResNet50WithPCA, ResNet50WithSplinePCA
+import numpy as np
 
 
 def get_data_loaders(args):
@@ -240,8 +241,62 @@ def main(args):
     # Create data loaders
     train_loader, test_loader, num_classes = get_data_loaders(args)
 
-    # Create model
-    model = resnet50(num_classes=num_classes).to(device)
+    # Load configuration for tokenizer settings
+    try:
+        import config as cfg
+    except ImportError:
+        cfg = None
+
+    # Create model with optional tokenization
+    print(f"Using tokenization method: {args.tokenizer_method}")
+
+    if args.tokenizer_method == "pca":
+        # PCA tokenization: spatial tiering by variance
+        n_components = cfg.get("RESNET50_PCA_COMPONENTS", 256) if cfg else 256
+        whiten = cfg.get("RESNET50_PCA_WHITEN", False) if cfg else False
+        print(f"PCA tokenization: {n_components} components, whiten={whiten}")
+        model = ResNet50WithPCA(
+            num_classes=num_classes, n_components=n_components, whiten=whiten
+        ).to(device)
+
+        # Fit PCA on training data
+        print("Fitting PCA tokenizer on training data...")
+        train_images = []
+        for images, _ in train_loader:
+            train_images.append(images.cpu().numpy())
+        train_images = np.concatenate(train_images, axis=0)
+        model.fit_pca(train_images)
+        print(f"PCA fitted on {len(train_images)} training images")
+
+    elif args.tokenizer_method == "spline-pca":
+        # Spline-PCA tokenization: spatial + temporal tiering
+        n_components = cfg.get("RESNET50_PCA_COMPONENTS", 256) if cfg else 256
+        n_control_points = cfg.get("RESNET50_SPLINE_CONTROL_POINTS", 8) if cfg else 8
+        whiten = cfg.get("RESNET50_PCA_WHITEN", False) if cfg else False
+        print(
+            f"Spline-PCA tokenization: {n_components} components, {n_control_points} control points, whiten={whiten}"
+        )
+        model = ResNet50WithSplinePCA(
+            num_classes=num_classes,
+            n_components=n_components,
+            n_control_points=n_control_points,
+            whiten=whiten,
+        ).to(device)
+
+        # Fit PCA on training data
+        print("Fitting PCA tokenizer on training data...")
+        train_images = []
+        for images, _ in train_loader:
+            train_images.append(images.cpu().numpy())
+        train_images = np.concatenate(train_images, axis=0)
+        model.fit_pca(train_images)
+        print(f"PCA fitted on {len(train_images)} training images")
+
+    else:
+        # Baseline: no tokenization
+        print("Baseline mode: no tokenization")
+        model = ResNet50(num_classes=num_classes).to(device)
+
     print(
         f"Model: ResNet-50 with {sum(p.numel() for p in model.parameters()):,} parameters"
     )
@@ -532,5 +587,24 @@ if __name__ == "__main__":
         help="Path to save training metrics in JSON format",
     )
 
+    # Tokenization
+    parser.add_argument(
+        "--tokenizer-method",
+        type=str,
+        default="none",
+        choices=["none", "pca", "spline-pca"],
+        help="Image tokenization method",
+    )
+
     args = parser.parse_args()
+
+    # Load tokenizer configuration from config.py if available
+    try:
+        import config as cfg
+
+        if hasattr(cfg, "RESNET50_TOKENIZER_METHOD"):
+            args.tokenizer_method = cfg.RESNET50_TOKENIZER_METHOD
+    except ImportError:
+        pass
+
     main(args)
