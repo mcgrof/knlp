@@ -48,16 +48,15 @@ CONFIG_GPT2_TF32_ALLOWED=y
 CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
 # Hyperparameter mode: MANUAL for KV compression tests
-# Per-step batch settings (torch.compile overhead):
-#   V0: batch=64, grad_acc=16 (baseline, effective=1024)
-#   V19/C1/C2/C3: batch=32, grad_acc=32 (KV pruning, effective=1024)
-# V19+ use smaller batch because KV pruning computes full [B,H,T,T]
-# attention matrices, unlike memory-efficient Flash Attention kernels.
+# All steps use identical batch settings for fair comparison:
+#   batch=32, grad_acc=32 (effective=1024)
+# Small batch required because KV pruning (V19+) computes full [B,H,T,T]
+# attention matrices. V0 matches this for apples-to-apples comparison.
 CONFIG_HYPER_PARAM_MANUAL=y
 
-# Training parameters - V0 baseline settings (V19+ override in code)
-CONFIG_BATCH_SIZE=64
-CONFIG_GPT2_GRADIENT_ACCUMULATION=16
+# Training parameters - Consistent across all steps (V0, V19, C1, C2, C3)
+CONFIG_BATCH_SIZE=32
+CONFIG_GPT2_GRADIENT_ACCUMULATION=32
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
