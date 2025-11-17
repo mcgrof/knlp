@@ -491,6 +491,7 @@ def get_test_matrix(config):
         "optimizers": [],
         "pruning_methods": [],
         "sparsity_levels": [],
+        "tokenizer_methods": [],
     }
 
     # Check if we should use test matrix framework
@@ -636,6 +637,34 @@ def get_test_matrix(config):
         pruning_methods = ["none"]
 
     matrix["pruning_methods"] = pruning_methods
+
+    # Parse tokenizer methods for LeNet-5
+    tokenizer_methods = []
+    if "lenet5" in matrix["models"]:
+        # Check if tokenizer testing is enabled via TEST_TOKENIZER_METHODS config
+        if "TEST_TOKENIZER_METHODS" in config and config["TEST_TOKENIZER_METHODS"]:
+            tokenizer_methods = [
+                t.strip() for t in config["TEST_TOKENIZER_METHODS"].split(",")
+            ]
+        # Otherwise check individual tokenizer flags
+        elif config.get("TEST_TOKENIZER_BASELINE") == "y":
+            tokenizer_methods.append("none")
+            if config.get("TEST_TOKENIZER_PCA") == "y":
+                tokenizer_methods.append("pca")
+            if config.get("TEST_TOKENIZER_SPLINE_PCA") == "y":
+                tokenizer_methods.append("spline-pca")
+        # If no test config, use single tokenizer mode
+        elif config.get("LENET5_ENABLE_TOKENIZER") == "y":
+            method = config.get("LENET5_TOKENIZER_METHOD", "none").strip('"')
+            tokenizer_methods = [method] if method else ["none"]
+        else:
+            tokenizer_methods = ["none"]
+
+    # Default to none for non-lenet5 models
+    if not tokenizer_methods:
+        tokenizer_methods = ["none"]
+
+    matrix["tokenizer_methods"] = tokenizer_methods
 
     # Special case: AdamWPrune uses state-based pruning only when its pruning is enabled
     adamwprune_pruning_enabled = getattr(config, "ADAMWPRUNE_ENABLE_PRUNING", False)
@@ -783,8 +812,11 @@ def generate_combinations(matrix):
     # Get Vanilla GPT-2 ablation steps
     vanilla_ablation_steps = matrix.get("vanilla_ablation_steps", None)
 
-    for model, optimizer, pruning in itertools.product(
-        matrix["models"], matrix["optimizers"], matrix["pruning_methods"]
+    for model, optimizer, pruning, tokenizer_method in itertools.product(
+        matrix["models"],
+        matrix["optimizers"],
+        matrix["pruning_methods"],
+        matrix["tokenizer_methods"],
     ):
         # Skip invalid combinations
         if optimizer == "adamwprune" and pruning not in ["none", "state"]:
@@ -804,6 +836,7 @@ def generate_combinations(matrix):
                         "pruning": pruning,
                         "sparsity": "0.0",
                         "vanilla_ablation_step": ablation_step,
+                        "tokenizer_method": tokenizer_method,
                     }
                     # Include AdamWPrune variant if applicable
                     if optimizer == "adamwprune":
@@ -823,6 +856,7 @@ def generate_combinations(matrix):
                         "pruning": pruning,
                         "sparsity": "0.0",
                         "ra_mla_ablation_step": ablation_step,
+                        "tokenizer_method": tokenizer_method,
                     }
                     # Include AdamWPrune variant if applicable
                     if optimizer == "adamwprune":
@@ -842,6 +876,7 @@ def generate_combinations(matrix):
                             "pruning": pruning,
                             "sparsity": "0.0",
                             "variant": variant,
+                            "tokenizer_method": tokenizer_method,
                         }
                     )
             else:
@@ -851,6 +886,7 @@ def generate_combinations(matrix):
                         "optimizer": optimizer,
                         "pruning": pruning,
                         "sparsity": "0.0",
+                        "tokenizer_method": tokenizer_method,
                     }
                 )
         else:
@@ -866,6 +902,7 @@ def generate_combinations(matrix):
                                 "pruning": pruning,
                                 "sparsity": sparsity,
                                 "variant": variant,
+                                "tokenizer_method": tokenizer_method,
                             }
                         )
                 else:
@@ -875,6 +912,7 @@ def generate_combinations(matrix):
                             "optimizer": optimizer,
                             "pruning": pruning,
                             "sparsity": sparsity,
+                            "tokenizer_method": tokenizer_method,
                         }
                     )
 
@@ -901,6 +939,7 @@ def run_single_test(
     variant = combination.get("variant", None)
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
     vanilla_ablation_step = combination.get("vanilla_ablation_step", None)
+    tokenizer_method = combination.get("tokenizer_method", "none")
 
     # Check if we should skip V0 baseline and use a reference run instead
     # Check environment first, then config (same pattern as GPT2_MAX_TIME)
@@ -1067,6 +1106,10 @@ def run_single_test(
     else:
         # No pruning case
         cmd.extend(["--pruning-method", "none"])
+
+    # Add tokenizer method for LeNet-5
+    if model == "lenet5" and tokenizer_method and tokenizer_method != "none":
+        cmd.extend(["--tokenizer-method", tokenizer_method])
 
     # Add SPAM configuration if applicable
     if optimizer in ["adamwspam", "adamwprune"]:
