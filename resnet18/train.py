@@ -375,6 +375,13 @@ def main():
         default=True,
         help="Enable AMSGrad for AdamWPrune (default: True)",
     )
+    parser.add_argument(
+        "--adamwprune-variant",
+        type=str,
+        default="bitter0",
+        choices=["bitter0", "bitter7"],
+        help="AdamWPrune variant: bitter0 (original) or bitter7 (variance-based)",
+    )
 
     parser.add_argument(
         "--json-output",

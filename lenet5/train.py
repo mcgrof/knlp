@@ -163,19 +163,8 @@ parser.add_argument(
     "--adamwprune-variant",
     type=str,
     default="bitter0",
-    choices=[
-        "bitter0",
-        "bitter1",
-        "bitter2",
-        "bitter3",
-        "bitter4",
-        "bitter5",
-        "bitter6",
-        "bitter7",
-        "bitter8",
-        "bitter9",
-    ],
-    help="AdamWPrune variant to use (default: bitter0)",
+    choices=["bitter0", "bitter7"],
+    help="AdamWPrune variant: bitter0 (original) or bitter7 (variance-based)",
 )
 parser.add_argument(
     "--tracker",
