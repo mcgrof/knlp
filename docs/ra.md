@@ -59,12 +59,12 @@ Each pathway gets independent binary gate:
 
 ```python
 # ReciprocalMLP
-self.skip_std = nn.Parameter(torch.tensor(2.0))  # init enabled (sigmoid≈0.88)
-self.skip_rec = nn.Parameter(torch.tensor(2.0))
+self.skip_std = nn.Parameter(torch.tensor(2.0))   # std enabled (sigmoid≈0.88)
+self.skip_rec = nn.Parameter(torch.tensor(-3.0))  # rec DISABLED (sigmoid≈0.05)
 
 # ReciprocalAttention
-self.skip_std_attn = nn.Parameter(torch.tensor(2.0))
-self.skip_lowrank_attn = nn.Parameter(torch.tensor(2.0))
+self.skip_std_attn = nn.Parameter(torch.tensor(2.0))        # std enabled
+self.skip_lowrank_attn = nn.Parameter(torch.tensor(-3.0))   # lowrank DISABLED
 
 # Forward with conditional computation
 use_std = torch.sigmoid(self.skip_std) > 0.5
@@ -136,6 +136,40 @@ With skip gates, model can:
 
 Expected behavior: RA with skip gates beats baseline by eliminating forced computation of unhelpful pathways.
 
+### Aggressive Initialization: Reciprocal Must Prove Value
+
+**Empirical observation:** Initial R1 training (symmetric init at 2.0) showed
+RA degraded perplexity vs baseline, confirming previous cowboy experiment
+findings. At iter 3200, R0 baseline was converging toward 37.15 perplexity
+while R1 was at 49.06 (32% worse).
+
+**Root cause:** Symmetric initialization (both pathways enabled) forces model
+to use reciprocal from start, even though it degrades quality. The model must
+fight against initialization to disable harmful pathways.
+
+**Solution: Asymmetric initialization**
+- Standard pathways (skip_std, skip_std_attn): Init 2.0 (enabled)
+- Reciprocal pathways (skip_rec, skip_lowrank_attn): Init -3.0 (DISABLED)
+
+**Rationale:**
+- Standard GPT-2 architecture is proven to work (37-40 perplexity range)
+- Reciprocal mechanisms are experimental and showed degradation
+- Start with proven architecture, let reciprocal prove value via gradient
+- If reciprocal improves loss, gradients push skip gates toward positive
+- If reciprocal harms loss, gates stay negative (pathway remains disabled)
+
+**Expected training dynamics:**
+1. **Early training (0-1000 iters):** Model trains as standard GPT-2, learns
+   basic patterns using proven architecture
+2. **Mid training (1000-3000 iters):** Gradients signal whether reciprocal
+   pathways reduce loss, gates learn to enable selectively
+3. **Late training (3000+ iters):** Stable configuration emerges, sparse
+   pathway usage per layer
+
+This aggressive initialization prevents reciprocal mechanisms from degrading
+perplexity. If they provide no benefit, they stay disabled (zero cost). If
+they help specific layers, they activate only where beneficial.
+
 ### R-MLP Architecture with Skip Gates
 
 R-MLP receives attention context via **cheap vector add** (no extra GEMMs):
@@ -176,7 +210,9 @@ out = down([w_std*h_std | w_rec*h_rec])  # Concatenate and project
 **Learned ratios from prior experiments:**
 - RA: R=4 (low-rank), geometric init w_std=0.9375, w_rec=0.0625
 - R-MLP: R_ff=1152 (golden ratio 37.5%), geometric init w_std=0.625, w_rec=0.375
-- Skip gates: init to 2.0 (sigmoid≈0.88, enabled by default)
+- Skip gates: **Asymmetric initialization**
+  - Standard pathways: init 2.0 (sigmoid≈0.88, enabled - proven architecture)
+  - Reciprocal pathways: init -3.0 (sigmoid≈0.05, DISABLED - must prove value)
 
 ### Key Metrics Tracked
 
