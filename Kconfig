@@ -168,13 +168,42 @@ source "Kconfig.ra_mla"
 
 menu "Advanced Options"
 
-config COMPILE_MODEL
-	bool "Enable torch.compile() for model optimization"
-	default y
+choice
+	prompt "Model compilation mode"
+	default COMPILE_AUTO
 	depends on DEVICE = "cuda"
 	help
+	  Choose how torch.compile() is enabled/disabled.
+
+	  AUTO: Automatically enable/disable based on GPU type and driver quality
+	  MANUAL: Manually control torch.compile() setting
+
+config COMPILE_AUTO
+	bool "Auto-detect compilation based on GPU"
+	help
+	  Automatically enable or disable torch.compile() based on GPU type:
+	  - NVIDIA GPUs: ENABLED (good torch.compile support)
+	  - AMD W7900: DISABLED (ROCm torch.compile issues)
+	  - Other AMD: ENABLED by default
+
+	  This prevents issues with GPU/driver combinations where torch.compile
+	  causes crashes, OOMs, or performance degradation.
+
+config COMPILE_MANUAL
+	bool "Manually control compilation"
+	help
+	  Manually specify whether to use torch.compile().
+	  Use this when you want explicit control.
+
+endchoice
+
+config COMPILE_MODEL
+	bool "Enable torch.compile() (MANUAL mode)"
+	default y
+	depends on COMPILE_MANUAL
+	help
 	  Enable PyTorch 2.0+ torch.compile() for faster execution.
-	  Only available when using CUDA device.
+	  Only used when COMPILE_MANUAL is selected.
 
 config MIXED_PRECISION
 	bool "Enable mixed precision training (AMP)"
