@@ -450,3 +450,276 @@ def create_circuit_summary_report(
 
     print(f"Saved analysis report to {filepath}")
     return filepath
+
+
+def compare_variants(
+    variant_dirs: Dict[str, str],
+    output_dir: str = ".",
+    project_name: str = "mechint-analysis",
+    use_wandb: bool = True,
+) -> None:
+    """
+    Compare multiple mechint analysis variants and create delta
+    visualizations.
+
+    Args:
+        variant_dirs: Dict mapping variant names to their output
+                     directories
+        output_dir: Directory to save comparison plots
+        project_name: W&B project name for logging
+        use_wandb: Whether to log to W&B
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("Warning: matplotlib not available, skipping comparison")
+        return
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Load masks and metrics from each variant
+    variants_data = {}
+    for variant_name, variant_dir in variant_dirs.items():
+        masks_path = os.path.join(variant_dir, "final_masks.pt")
+        report_path = os.path.join(variant_dir, "circuit_analysis_report.md")
+
+        if not os.path.exists(masks_path):
+            print(f"Warning: masks not found for {variant_name} at" f" {masks_path}")
+            continue
+
+        masks_dict = torch.load(masks_path)
+
+        # Extract metrics from report if available
+        metrics = {}
+        if os.path.exists(report_path):
+            with open(report_path, "r") as f:
+                content = f.read()
+                # Parse loss degradation and sparsity from report
+                import re
+
+                loss_match = re.search(r"Loss degradation: ([+-]?\d+\.\d+)%", content)
+                sparsity_match = re.search(r"Sparsity achieved: (\d+\.\d+)%", content)
+                if loss_match:
+                    metrics["loss_degradation"] = float(loss_match.group(1))
+                if sparsity_match:
+                    metrics["sparsity_achieved"] = float(sparsity_match.group(1))
+
+        variants_data[variant_name] = {
+            "masks": masks_dict,
+            "metrics": metrics,
+        }
+
+    if len(variants_data) < 2:
+        print(
+            "Warning: need at least 2 variants to compare, found"
+            f" {len(variants_data)}"
+        )
+        return
+
+    # Create comparison visualizations
+    variant_names = sorted(variants_data.keys())
+
+    # 1. Per-layer sparsity comparison
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    layer_names = sorted(variants_data[variant_names[0]]["masks"].keys())
+    x = np.arange(len(layer_names))
+    width = 0.8 / len(variant_names)
+
+    for i, variant_name in enumerate(variant_names):
+        sparsities = [
+            variants_data[variant_name]["masks"][layer]["sparsity"]
+            for layer in layer_names
+        ]
+        offset = (i - len(variant_names) / 2 + 0.5) * width
+        ax.bar(
+            x + offset,
+            sparsities,
+            width,
+            label=variant_name,
+            alpha=0.8,
+        )
+
+    ax.set_xlabel("Layer", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Sparsity", fontsize=12, fontweight="bold")
+    ax.set_title("Per-Layer Sparsity Comparison", fontsize=14, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [ln.split(".")[-1] for ln in layer_names], rotation=45, ha="right"
+    )
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+
+    sparsity_path = os.path.join(output_dir, "sparsity_comparison.png")
+    plt.savefig(sparsity_path, dpi=300, bbox_inches="tight")
+    print(f"Saved sparsity comparison to {sparsity_path}")
+    plt.close()
+
+    # 2. Per-layer mean importance comparison
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    for i, variant_name in enumerate(variant_names):
+        mean_importances = [
+            variants_data[variant_name]["masks"][layer]["importance"].mean().item()
+            for layer in layer_names
+        ]
+        offset = (i - len(variant_names) / 2 + 0.5) * width
+        ax.bar(
+            x + offset,
+            mean_importances,
+            width,
+            label=variant_name,
+            alpha=0.8,
+        )
+
+    ax.set_xlabel("Layer", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Mean Importance", fontsize=12, fontweight="bold")
+    ax.set_title(
+        "Per-Layer Mean Importance Comparison",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [ln.split(".")[-1] for ln in layer_names], rotation=45, ha="right"
+    )
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+
+    importance_path = os.path.join(output_dir, "importance_comparison.png")
+    plt.savefig(importance_path, dpi=300, bbox_inches="tight")
+    print(f"Saved importance comparison to {importance_path}")
+    plt.close()
+
+    # 3. Channels kept comparison
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    for i, variant_name in enumerate(variant_names):
+        channels_kept = [
+            (variants_data[variant_name]["masks"][layer]["importance"] > 0.5)
+            .sum()
+            .item()
+            for layer in layer_names
+        ]
+        offset = (i - len(variant_names) / 2 + 0.5) * width
+        ax.bar(x + offset, channels_kept, width, label=variant_name, alpha=0.8)
+
+    ax.set_xlabel("Layer", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Channels Kept (>0.5)", fontsize=12, fontweight="bold")
+    ax.set_title(
+        "Per-Layer Channels Kept Comparison",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [ln.split(".")[-1] for ln in layer_names], rotation=45, ha="right"
+    )
+    ax.legend()
+    ax.grid(axis="y", alpha=0.3)
+    plt.tight_layout()
+
+    channels_path = os.path.join(output_dir, "channels_comparison.png")
+    plt.savefig(channels_path, dpi=300, bbox_inches="tight")
+    print(f"Saved channels comparison to {channels_path}")
+    plt.close()
+
+    # 4. Create delta report
+    report = []
+    report.append("# Mechint Variant Comparison\n\n")
+    report.append(f"Variants: {', '.join(variant_names)}\n\n")
+
+    report.append("## Overall Metrics\n\n")
+    report.append("| Variant | Loss Degradation | Sparsity Achieved |\n")
+    report.append("|---------|------------------|-------------------|\n")
+    for variant_name in variant_names:
+        metrics = variants_data[variant_name]["metrics"]
+        loss_deg = metrics.get("loss_degradation", "N/A")
+        sparsity = metrics.get("sparsity_achieved", "N/A")
+        loss_str = f"{loss_deg:+.2f}%" if isinstance(loss_deg, float) else loss_deg
+        sparsity_str = f"{sparsity:.1f}%" if isinstance(sparsity, float) else sparsity
+        report.append(f"| {variant_name} | {loss_str} | {sparsity_str} |\n")
+
+    report.append("\n## Per-Layer Delta\n\n")
+    report.append("| Layer | " + " | ".join([f"{v} Sparsity" for v in variant_names]))
+    if len(variant_names) == 2:
+        report.append(" | Delta |")
+    report.append("\n")
+    report.append("|-------|" + "----------|" * len(variant_names))
+    if len(variant_names) == 2:
+        report.append("-------|")
+    report.append("\n")
+
+    for layer in layer_names:
+        row = [layer.split(".")[-1]]
+        sparsities = []
+        for variant_name in variant_names:
+            sparsity = variants_data[variant_name]["masks"][layer]["sparsity"]
+            sparsities.append(sparsity)
+            row.append(f"{sparsity:.1%}")
+
+        if len(variant_names) == 2:
+            delta = sparsities[1] - sparsities[0]
+            row.append(f"{delta:+.1%}")
+
+        report.append("| " + " | ".join(row) + " |\n")
+
+    delta_report_path = os.path.join(output_dir, "variant_comparison.md")
+    with open(delta_report_path, "w") as f:
+        f.write("".join(report))
+    print(f"Saved comparison report to {delta_report_path}")
+
+    # Log to W&B if enabled
+    if use_wandb and WANDB_AVAILABLE:
+        print(f"Logging comparison to W&B project: {project_name}")
+        run = wandb.init(
+            project=project_name,
+            name="variant_comparison",
+            tags=["comparison", "delta"],
+            reinit=True,
+        )
+
+        # Log comparison images
+        wandb.log(
+            {
+                "comparison/sparsity": wandb.Image(sparsity_path),
+                "comparison/importance": wandb.Image(importance_path),
+                "comparison/channels": wandb.Image(channels_path),
+            }
+        )
+
+        # Create comparison table
+        table_data = []
+        for layer in layer_names:
+            row = {"layer": layer.split(".")[-1]}
+            for variant_name in variant_names:
+                mask_data = variants_data[variant_name]["masks"][layer]
+                row[f"{variant_name}_sparsity"] = mask_data["sparsity"]
+                row[f"{variant_name}_importance"] = (
+                    mask_data["importance"].mean().item()
+                )
+                row[f"{variant_name}_channels_kept"] = (
+                    (mask_data["importance"] > 0.5).sum().item()
+                )
+
+            if len(variant_names) == 2:
+                v0, v1 = variant_names
+                row["sparsity_delta"] = (
+                    variants_data[v1]["masks"][layer]["sparsity"]
+                    - variants_data[v0]["masks"][layer]["sparsity"]
+                )
+                row["importance_delta"] = (
+                    variants_data[v1]["masks"][layer]["importance"].mean().item()
+                    - variants_data[v0]["masks"][layer]["importance"].mean().item()
+                )
+
+            table_data.append(row)
+
+        if table_data:
+            columns = list(table_data[0].keys())
+            rows = [[row[col] for col in columns] for row in table_data]
+            table = wandb.Table(columns=columns, data=rows)
+            wandb.log({"comparison/per_layer": table})
+
+        wandb.finish()
+        print("Comparison logged to W&B")
