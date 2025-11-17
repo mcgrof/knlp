@@ -248,6 +248,12 @@ def main():
         print("Please specify --checkpoint or set KNLP_MECHINT_KV_CHECKPOINT")
         sys.exit(1)
 
+    # Make output directory unique per checkpoint to avoid overwriting
+    # Extract variant name from checkpoint path (e.g., "stepV0", "stepV1")
+    checkpoint_name = os.path.basename(checkpoint_path).replace(".pt", "")
+    config.output_dir = f"{config.output_dir}_{checkpoint_name}"
+    print(f"Output directory: {config.output_dir}")
+
     # Load model and data
     model, train_loader, val_loader = load_model_and_data(checkpoint_path, args.dataset)
 
