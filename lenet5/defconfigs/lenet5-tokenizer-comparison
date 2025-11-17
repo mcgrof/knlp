@@ -58,13 +58,18 @@ CONFIG_GPU_WARMUP=n
 CONFIG_PIN_MEMORY=n
 CONFIG_PERSISTENT_WORKERS=y
 
-# Tokenization settings (script will override these per test)
+# Tokenization settings
 CONFIG_LENET5_ENABLE_TOKENIZER=y
-CONFIG_LENET5_TOKENIZER_METHOD="none"
 CONFIG_LENET5_PCA_COMPONENTS=64
 CONFIG_LENET5_PCA_WHITEN=n
 CONFIG_LENET5_SPLINE_CONTROL_POINTS=8
 CONFIG_LENET5_TOKENIZER_SAVE_PATH="lenet5_tokenizer.pkl"
+
+# Test matrix: baseline, pca, spline-pca
+CONFIG_TEST_TOKENIZER_BASELINE=y
+CONFIG_TEST_TOKENIZER_PCA=y
+CONFIG_TEST_TOKENIZER_SPLINE_PCA=y
+CONFIG_TEST_TOKENIZER_METHODS="none,pca,spline-pca"
 
 # Hierarchical Memory Tiering - Emulated Mode
 CONFIG_ENABLE_HIERARCHICAL_TIERING=y
@@ -87,6 +92,6 @@ CONFIG_SAVE_CHECKPOINT=y
 CONFIG_CHECKPOINT_INTERVAL=1000
 CONFIG_VERBOSE=y
 
-# Single test mode (script runs 3 variations)
-CONFIG_TEST_MATRIX_MODE=n
+# Test matrix mode - runs all 3 tokenizer variations
+CONFIG_TEST_MATRIX_MODE=y
 CONFIG_OUTPUT_DIR="test_matrix_results_lenet5_tokenizer"
