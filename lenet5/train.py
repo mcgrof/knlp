@@ -85,25 +85,25 @@ parser.add_argument(
 parser.add_argument(
     "--adamwprune-beta1",
     type=float,
-    default=None,
+    default=0.9,
     help="Beta1 coefficient for AdamWPrune (default: 0.9)",
 )
 parser.add_argument(
     "--adamwprune-beta2",
     type=float,
-    default=None,
+    default=0.999,
     help="Beta2 coefficient for AdamWPrune (default: 0.999)",
 )
 parser.add_argument(
     "--adamwprune-weight-decay",
     type=float,
-    default=None,
+    default=0.01,
     help="Weight decay for AdamWPrune (default: 0.01)",
 )
 parser.add_argument(
     "--adamwprune-amsgrad",
-    type=lambda x: x.lower() in ['true', '1', 'yes'],
-    default=None,
+    type=lambda x: x.lower() in ["true", "1", "yes"],
+    default=True,
     help="Enable AMSGrad for AdamWPrune (default: True)",
 )
 parser.add_argument(
@@ -153,14 +153,28 @@ parser.add_argument(
     default="training_metrics.json",
     help="json output file to use for stats, deafult is training_metrics.json",
 )
-parser.add_argument("--weight-decay", type=float, default=None,
-                    help="Weight decay (AdamW/SGD). If None, choose a sane default.")
+parser.add_argument(
+    "--weight-decay",
+    type=float,
+    default=None,
+    help="Weight decay (AdamW/SGD). If None, choose a sane default.",
+)
 parser.add_argument(
     "--adamwprune-variant",
     type=str,
     default="bitter0",
-    choices=["bitter0", "bitter1", "bitter2", "bitter3", "bitter4",
-             "bitter5", "bitter6", "bitter7", "bitter8", "bitter9"],
+    choices=[
+        "bitter0",
+        "bitter1",
+        "bitter2",
+        "bitter3",
+        "bitter4",
+        "bitter5",
+        "bitter6",
+        "bitter7",
+        "bitter8",
+        "bitter9",
+    ],
     help="AdamWPrune variant to use (default: bitter0)",
 )
 parser.add_argument(
@@ -187,7 +201,8 @@ args = parser.parse_args()
 config = None
 try:
     import config as cfg
-    config = cfg.Config if hasattr(cfg, 'Config') else cfg
+
+    config = cfg.Config if hasattr(cfg, "Config") else cfg
     logger_msg = "Loaded configuration from config.py (Kconfig-generated)"
 except ImportError:
     logger_msg = "No config.py found, using command-line arguments only"
@@ -282,6 +297,7 @@ if args.tracker:
     if "wandb" in tracker_list:
         try:
             import wandb
+
             wandb_run = wandb.init(
                 project=args.tracker_project,
                 name=run_name,
@@ -293,11 +309,17 @@ if args.tracker:
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                     "num_epochs": num_epochs,
-                    "adamwprune_variant": args.adamwprune_variant if args.optimizer == "adamwprune" else None,
+                    "adamwprune_variant": (
+                        args.adamwprune_variant
+                        if args.optimizer == "adamwprune"
+                        else None
+                    ),
                 },
             )
             trackers_enabled.append("wandb")
-            logger.info(f"Initialized WandB tracking for project: {args.tracker_project}")
+            logger.info(
+                f"Initialized WandB tracking for project: {args.tracker_project}"
+            )
         except ImportError:
             logger.warning("wandb not installed, skipping W&B tracking")
 
@@ -305,6 +327,7 @@ if args.tracker:
     if "trackio" in tracker_list:
         try:
             import trackio
+
             trackio.init(
                 project=args.tracker_project,
                 config={
@@ -315,14 +338,20 @@ if args.tracker:
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
                     "num_epochs": num_epochs,
-                    "adamwprune_variant": args.adamwprune_variant if args.optimizer == "adamwprune" else None,
+                    "adamwprune_variant": (
+                        args.adamwprune_variant
+                        if args.optimizer == "adamwprune"
+                        else None
+                    ),
                 },
                 name=run_name,
                 resume="allow",
             )
             trackio_run = True  # Flag to indicate trackio is active
             trackers_enabled.append("trackio")
-            logger.info(f"Initialized Trackio tracking for project: {args.tracker_project}")
+            logger.info(
+                f"Initialized Trackio tracking for project: {args.tracker_project}"
+            )
         except ImportError:
             logger.warning("trackio not installed, skipping Trackio tracking")
 
@@ -681,22 +710,27 @@ for epoch in range(num_epochs):
 
         # Log to trackers
         if wandb_run is not None:
-            wandb.log({
-                "epoch": epoch + 1,
-                "train/loss": epoch_metrics["avg_loss"],
-                "test/accuracy": accuracy,
-                "train/epoch_time": epoch_time,
-                "train/sparsity": epoch_metrics.get("sparsity", 0),
-            })
+            wandb.log(
+                {
+                    "epoch": epoch + 1,
+                    "train/loss": epoch_metrics["avg_loss"],
+                    "test/accuracy": accuracy,
+                    "train/epoch_time": epoch_time,
+                    "train/sparsity": epoch_metrics.get("sparsity", 0),
+                }
+            )
         if trackio_run is not None:
             import trackio
-            trackio.log({
-                "epoch": epoch + 1,
-                "loss": epoch_metrics["avg_loss"],
-                "accuracy": accuracy,
-                "epoch_time": epoch_time,
-                "sparsity": epoch_metrics.get("sparsity", 0),
-            })
+
+            trackio.log(
+                {
+                    "epoch": epoch + 1,
+                    "loss": epoch_metrics["avg_loss"],
+                    "accuracy": accuracy,
+                    "epoch_time": epoch_time,
+                    "sparsity": epoch_metrics.get("sparsity", 0),
+                }
+            )
 
         # Step the learning rate scheduler if using AdamWAdv
         if scheduler is not None:
