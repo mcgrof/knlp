@@ -345,8 +345,47 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
+        elif step == "V19":
+            # V-only pruning baseline (391 tokens, golden ratio)
+            # Keep K full, prune V to 38.2% for memory reduction
+            args.use_ra_v5 = False
+            args.use_rmlp = False
+            args.kv_cache_prune = True
+            args.kv_prune_v_only = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+        elif step == "C1":
+            # V-only pruning + light compression (64 → 32 dims)
+            args.use_ra_v5 = False
+            args.use_rmlp = False
+            args.kv_cache_prune = True
+            args.kv_prune_v_only = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+            args.kvsplice_enable = True
+            args.kvsplice_k = 32
+        elif step == "C2":
+            # V-only pruning + medium compression (64 → 16 dims)
+            args.use_ra_v5 = False
+            args.use_rmlp = False
+            args.kv_cache_prune = True
+            args.kv_prune_v_only = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+            args.kvsplice_enable = True
+            args.kvsplice_k = 16
+        elif step == "C3":
+            # V-only pruning + heavy compression (64 → 8 dims)
+            args.use_ra_v5 = False
+            args.use_rmlp = False
+            args.kv_cache_prune = True
+            args.kv_prune_v_only = True
+            args.kv_prune_k = 391
+            args.kv_prune_recency = 64
+            args.kvsplice_enable = True
+            args.kvsplice_k = 8
         else:
-            if self.master_process:
+            if hasattr(self, "master_process") and self.master_process:
                 print(f"Warning: Unknown ablation step {step}, using baseline V0")
 
     def create_model(self):
