@@ -143,9 +143,46 @@ python gpt2/train.py \
 Both trackers log the following metrics:
 - **Training Loss**: Loss at each logging interval
 - **Validation Loss**: Loss at each evaluation interval
+- **Validation Perplexity**: Perplexity at each evaluation interval
 - **Learning Rate**: Current learning rate
 - **Sparsity**: Current model sparsity (for pruning experiments)
 - **Final Metrics**: Best validation loss, total training time
+
+### Validation Points: What Actually Happens
+
+At each validation point (every `eval_interval` iterations), the training process:
+
+1. **Pauses Training**: Model switches to eval mode (disables dropout, etc.)
+
+2. **Runs Inference on Validation Data**:
+   - Processes `eval_samples` random batches from held-out validation set
+   - Default: 200 batches × 64 sequences × 1024 tokens = **13.1M validation tokens**
+   - No gradient computation (forward pass only)
+
+3. **Computes Validation Loss**:
+   - Averages loss across all 200 validation batches
+   - Example: `val_loss = 10.96`
+
+4. **Calculates Perplexity**:
+   ```python
+   val_perplexity = exp(min(val_loss, 20))
+   ```
+   - Perplexity = e^(average_validation_loss)
+   - Capped at e^20 to prevent overflow on very high losses
+   - Example: `exp(10.96) = 57550.31`
+
+5. **Logs to Trackers**:
+   - `val_loss` and `val_perplexity` sent to W&B and Trackio
+   - These are the data points you see in charts
+
+6. **Saves Best Checkpoint**:
+   - If current `val_loss` is best so far, saves model weights to disk
+
+7. **Resumes Training**: Model switches back to training mode
+
+**Important**: W&B requires **2+ data points** to render line charts. With only 1 validation
+point (initial evaluation at iter 0), metrics appear as bar charts. Configure
+`eval_interval` to ensure multiple validation points within training time budget.
 
 ## Testing Integration
 
