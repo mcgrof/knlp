@@ -223,6 +223,13 @@ learning_rate = 0.001
 num_epochs = 10
 num_workers = 16  # Use multiple workers for data loading
 
+# Time-based training (0 = no limit, train for NUM_EPOCHS)
+max_time = getattr(config, "LENET5_MAX_TIME", 0) if config else 0
+if max_time > 0:
+    print(f"Time-based training enabled: max {max_time}s ({max_time/60:.1f} minutes)")
+else:
+    print(f"Epoch-based training: {num_epochs} epochs")
+
 # Movement pruning hyperparameters (when enabled)
 enable_pruning = args.pruning_method != "none"
 initial_sparsity = 0.0  # Start with no pruning
@@ -738,9 +745,20 @@ for epoch in range(num_epochs):
             current_lr = scheduler.get_last_lr()[0]
             logger.info(f"Learning rate adjusted to: {current_lr:.6f}")
 
+    # Check if max training time reached
+    elapsed_time = time.time() - start_time
+    if max_time > 0 and elapsed_time >= max_time:
+        logger.info(
+            f"\nReached max training time of {max_time}s ({elapsed_time:.1f}s elapsed)"
+        )
+        logger.info(f"Completed {epoch + 1}/{num_epochs} epochs")
+        break
+
 total_time = time.time() - start_time
+epochs_completed = len(training_metrics["epochs"])
 logger.info(f"Training completed in {total_time:.2f} seconds")
-logger.info(f"Average time per epoch: {total_time/num_epochs:.2f} seconds")
+if epochs_completed > 0:
+    logger.info(f"Average time per epoch: {total_time/epochs_completed:.2f} seconds")
 
 # Log SPAM statistics if using SPAM optimizer
 if spam_state is not None:

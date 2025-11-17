@@ -168,3 +168,26 @@ config LENET5_ADAMWPRUNE_DEFAULT_VARIANT
 	  bitter8: Optimized bitter7 with FP16 and fast rsqrt
 
 endmenu
+
+menu "Training Parameters"
+
+config LENET5_MAX_TIME
+	int "Maximum training time in seconds (0 = no limit)"
+	default 0
+	help
+	  Maximum wall-clock training time in seconds. Training stops
+	  when this time limit is reached, regardless of epochs completed.
+
+	  Set to 0 for no time limit (train for NUM_EPOCHS).
+
+	  Time-based training enables fair "compute budget" comparisons
+	  across different methods with varying iteration speeds. Graphs
+	  use step counts for apples-to-apples comparison.
+
+	  Example values:
+	  - 120s (2 minutes): Quick CPU tests
+	  - 240s (4 minutes): Standard CPU tests (2x typical 10-epoch runtime)
+	  - 3600s (1 hour): Short GPU runs
+	  - 7200s (2 hours): Standard GPU runs
+
+endmenu
