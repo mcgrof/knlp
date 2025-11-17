@@ -963,29 +963,51 @@ def run_single_test(
     if pruning == "none":
         if vanilla_ablation_step:
             # Include vanilla ablation step in test ID (e.g., gpt2_adamw_vanilla_V0, gpt2_adamw_vanilla_V1)
-            test_id = f"{model}_{optimizer}_vanilla_{vanilla_ablation_step}"
             if variant:
                 test_id = (
                     f"{model}_{optimizer}_{variant}_vanilla_{vanilla_ablation_step}"
                 )
+            else:
+                test_id = f"{model}_{optimizer}_vanilla_{vanilla_ablation_step}"
+            # Tokenizer method for ablation (if applicable)
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{test_id}_{tokenizer_method}"
         elif ra_mla_ablation_step:
             # Include RA_MLA ablation step in test ID (e.g., gpt2_adamwspam_ramla_step2)
-            test_id = f"{model}_{optimizer}_ramla_step{ra_mla_ablation_step}"
             if variant:
                 test_id = (
                     f"{model}_{optimizer}_{variant}_ramla_step{ra_mla_ablation_step}"
                 )
+            else:
+                test_id = f"{model}_{optimizer}_ramla_step{ra_mla_ablation_step}"
+            # Tokenizer method for ablation (if applicable)
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{test_id}_{tokenizer_method}"
         elif variant:
-            test_id = f"{model}_{optimizer}_{variant}_{pruning}"
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}_{tokenizer_method}"
+            else:
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}"
         else:
-            test_id = f"{model}_{optimizer}_{pruning}"
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{model}_{optimizer}_{pruning}_{tokenizer_method}"
+            else:
+                test_id = f"{model}_{optimizer}_{pruning}"
     else:
         # Include sparsity in the test ID (e.g., sgd_movement_90)
         sparsity_pct = int(float(sparsity) * 100)
         if variant:
-            test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}"
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}_{tokenizer_method}"
+            else:
+                test_id = f"{model}_{optimizer}_{variant}_{pruning}_{sparsity_pct}"
         else:
-            test_id = f"{model}_{optimizer}_{pruning}_{sparsity_pct}"
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = (
+                    f"{model}_{optimizer}_{pruning}_{sparsity_pct}_{tokenizer_method}"
+                )
+            else:
+                test_id = f"{model}_{optimizer}_{pruning}_{sparsity_pct}"
     test_output_dir = os.path.join(output_dir, test_id)
     os.makedirs(test_output_dir, exist_ok=True)
 
