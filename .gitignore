@@ -69,5 +69,7 @@ Thumbs.db
 config.py
 include/
 
+# W&B tracking directories
+wandb/
 gpt2/wandb/
 gpt2/outputs/
