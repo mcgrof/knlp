@@ -941,6 +941,105 @@ class PrunedKVAttention(nn.Module):
         return stats
 
 
+class FlashPrunedKVAttention(nn.Module):
+    """
+    KV Pruning compatible with Flash Attention.
+
+    This implementation avoids materializing the full attention matrix by using a
+    cheap proxy score (L2 norm of K vectors) to determine importance. It prunes
+    K and V *before* the attention calculation, allowing the use of
+    `F.scaled_dot_product_attention`.
+
+    A manual causal mask is required because the pruned keys are not sequential.
+    """
+
+    def __init__(
+        self,
+        n_embd=768,
+        n_head=12,
+        block_size=1024,
+        k_keep=391,
+        recency=64,
+        dropout=0.1,
+        importance_metric="l2_norm",
+    ):
+        super().__init__()
+        assert n_embd % n_head == 0
+        self.n_embd = n_embd
+        self.n_head = n_head
+        self.head_dim = n_embd // n_head
+        self.block_size = block_size
+        self.k_keep = k_keep
+        self.recency = recency
+        self.dropout = dropout
+        self.importance_metric = importance_metric
+
+        self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=False)
+        self.c_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.resid_dropout = nn.Dropout(dropout)
+
+        if self.importance_metric == "l2_norm_scaled":
+            self.importance_scale = nn.Parameter(torch.ones(self.n_head))
+
+    def forward(self, x):
+        B, T, C = x.size()
+        k_keep = min(self.k_keep, T)
+
+        qkv = self.c_attn(x)
+        q, k, v = qkv.split(self.n_embd, dim=2)
+
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # 1. Calculate cheap importance scores
+        if self.importance_metric == "l2_norm":
+            importance = torch.linalg.vector_norm(k, dim=-1)  # [B, H, T]
+        elif self.importance_metric == "l2_norm_scaled":
+            importance = torch.linalg.vector_norm(k, dim=-1)
+            importance = importance * self.importance_scale.view(1, -1, 1)
+        else:
+            raise NotImplementedError(f"Unknown importance_metric: {self.importance_metric}")
+
+        # 2. Add recency bias
+        if self.recency > 0 and T > self.recency:
+            recent_mask = torch.zeros_like(importance, dtype=torch.bool)
+            recent_mask[:, :, -self.recency :] = True
+            # Give recent tokens a very high importance score
+            importance = importance.masked_fill(recent_mask, float("inf"))
+
+        # 3. Find top-k indices
+        _, top_indices = torch.topk(importance, k_keep, dim=-1) # [B, H, k_keep]
+        top_indices, _ = torch.sort(top_indices, dim=-1) # Sort for memory access pattern
+
+        # 4. Gather pruned K and V
+        idx_expanded = top_indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim)
+        k_pruned = torch.gather(k, 2, idx_expanded)
+        v_pruned = torch.gather(v, 2, idx_expanded)
+
+        # 5. Create manual causal mask
+        query_pos = torch.arange(T, device=x.device).view(1, 1, T, 1)
+        key_pos = top_indices.unsqueeze(2)  # [B, H, 1, k_keep]
+        
+        # The mask should be True for positions we want to *mask out*.
+        # SDPA mask format: True means "don't attend".
+        manual_causal_mask = query_pos < key_pos # [B, H, T, k_keep]
+
+        # Use Flash Attention
+        y = F.scaled_dot_product_attention(
+            q,
+            k_pruned,
+            v_pruned,
+            attn_mask=manual_causal_mask,
+            dropout_p=self.dropout if self.training else 0,
+            is_causal=False,
+        )
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
 # ==============================================================================
 # Gate-Informed KV Pruning
 # ==============================================================================
