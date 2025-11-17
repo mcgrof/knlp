@@ -1,0 +1,106 @@
+# LeNet-5 Tokenizer Comparison: Equal Compute Time Budget
+# Run with: make defconfig-lenet5-tokenizer-comparison-equal-time && make
+#
+# Runs 3 experiments with equal wall-clock training time (104s):
+#   1. Baseline: No tokenization (~10 epochs in 104s)
+#   2. PCA: Spatial tiering (~26 epochs in 104s)
+#   3. Spline-PCA: Spatial + temporal tiering (~25 epochs in 104s)
+#
+# Uses LENET5_MAX_TIME=104 to guarantee equal compute budget across
+# all variants regardless of per-epoch speed differences.
+#
+# This tests: "With equal compute budget, does simpler architecture +
+# more training beat complex architecture + less training?"
+#
+# Architecture differences:
+# - Baseline: Conv layers (2×Conv2d + 2×MaxPool) + 3×FC (10.4s/epoch)
+# - PCA/Spline-PCA: PCA projection + 3×FC, no conv (4.0-4.2s/epoch)
+#
+# Expected results (from lenet5-tokenizer-comparison):
+# - Baseline 10 epochs: 99.15% accuracy in 103.85s (10.4s/epoch)
+# - PCA 10 epochs: 98.01% accuracy in 39.80s (4.0s/epoch)
+# - Spline-PCA 10 epochs: 97.81% accuracy in 41.97s (4.2s/epoch)
+#
+# Equal-time hypothesis:
+# - PCA: Will ~2.6x more gradient steps close the 1.1% gap?
+# - Spline-PCA: Will more epochs help trajectory learning?
+#
+# All results go to W&B project "lenet5-tokenizer-comparison-equal-time".
+
+# Enable LeNet-5 model
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_LENET5=y
+CONFIG_MODEL_LENET5=y
+CONFIG_MODEL="lenet5"
+CONFIG_LENET5_DATASET_MNIST=y
+
+# Use AdamW optimizer
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAMW=y
+CONFIG_OPTIMIZER="adamw"
+CONFIG_ADAMW_BETA1="0.9"
+CONFIG_ADAMW_BETA2="0.999"
+CONFIG_ADAMW_EPSILON="1e-8"
+CONFIG_ADAMW_WEIGHT_DECAY="0.0001"
+
+# No pruning
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_PRUNING_METHOD="none"
+
+# Hyperparameter auto-detection
+CONFIG_HYPER_PARAM_AUTO=y
+CONFIG_TARGET_EFFECTIVE_BATCH=512
+CONFIG_COMPILE_AUTO=y
+
+# Training configuration - CPU optimized with time limit
+# Set high epoch count but limit by wall-clock time for fair comparison
+CONFIG_NUM_EPOCHS=100
+CONFIG_LENET5_MAX_TIME=104
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=4
+CONFIG_DEVICE="cpu"
+
+# Disable GPU-specific features for CPU training
+CONFIG_COMPILE_MODEL=n
+CONFIG_MIXED_PRECISION=n
+CONFIG_GPU_WARMUP=n
+CONFIG_PIN_MEMORY=n
+CONFIG_PERSISTENT_WORKERS=y
+
+# Tokenization settings
+CONFIG_LENET5_ENABLE_TOKENIZER=y
+CONFIG_LENET5_PCA_COMPONENTS=64
+CONFIG_LENET5_PCA_WHITEN=n
+CONFIG_LENET5_SPLINE_CONTROL_POINTS=8
+CONFIG_LENET5_TOKENIZER_SAVE_PATH="lenet5_tokenizer.pkl"
+
+# Test matrix: baseline, pca, spline-pca
+CONFIG_TEST_TOKENIZER_BASELINE=y
+CONFIG_TEST_TOKENIZER_PCA=y
+CONFIG_TEST_TOKENIZER_SPLINE_PCA=y
+CONFIG_TEST_TOKENIZER_METHODS="none,pca,spline-pca"
+
+# Hierarchical Memory Tiering - Emulated Mode
+CONFIG_ENABLE_HIERARCHICAL_TIERING=y
+CONFIG_TIERING_ADAM_STATE=y
+CONFIG_TIERING_EMULATED=y
+CONFIG_TIERING_GENERATE_JSON=y
+CONFIG_TIERING_JSON_OUTPUT="tier_hints_lenet5.json"
+# Conservative thresholds: 30% hot (L1/L2), 50% warm (RAM), 20% cold (SSD)
+CONFIG_TIERING_HBM_THRESHOLD="0.3"
+CONFIG_TIERING_CPU_THRESHOLD="0.5"
+CONFIG_TIERING_INFERENCE_BENCHMARK=n
+
+# Experiment Tracking (W&B and Trackio)
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="lenet5-tokenizer-comparison-equal-time"
+
+# Logging
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+CONFIG_VERBOSE=y
+
+# Test matrix mode - runs all 3 tokenizer variations
+CONFIG_TEST_MATRIX_MODE=y
+CONFIG_OUTPUT_DIR="test_matrix_results_lenet5_tokenizer_equal_time"
