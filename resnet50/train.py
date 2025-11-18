@@ -318,7 +318,7 @@ def main(args):
             else:
                 ptdtype = torch.float16
                 print("Using float16 for mixed precision.")
-            ctx = autocast(dtype=ptdtype)
+            ctx = autocast(device.type, dtype=ptdtype)
         else:
             print("Mixed precision disabled by config or not specified.")
     else:
