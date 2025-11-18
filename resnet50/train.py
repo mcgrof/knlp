@@ -241,10 +241,21 @@ def calculate_sparsity(model):
 def main(args):
     """Main training loop."""
     cfg = GENERATED_CONFIG
+    max_time = getattr(args, "max_time", 0)
 
-    # Apply hyperparameter auto-detection if enabled
+    # Apply hyperparameter auto-detection if enabled and load time budget
     if cfg is not None:
         apply_hyperparams(cfg, verbose=True, model_type="resnet50")
+        cfg_max_time = int(cfg.get("RESNET50_MAX_TIME", max_time) or 0)
+        if cfg_max_time > 0:
+            max_time = cfg_max_time
+
+    if max_time > 0:
+        print(
+            f"Time-based training enabled: max {max_time}s ({max_time/60:.1f} minutes)"
+        )
+    else:
+        print(f"Epoch-based training: {args.epochs} epochs")
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -441,8 +452,21 @@ def main(args):
 
     start_time = time.time()
     best_accuracy = 0
+    last_sparsity = 0.0
+    epochs_completed = 0
+    time_limit_reached = False
 
     for epoch in range(1, args.epochs + 1):
+        if max_time > 0:
+            elapsed = time.time() - start_time
+            if elapsed >= max_time:
+                print(
+                    f"\nReached max training time of {max_time}s "
+                    f"({elapsed:.1f}s elapsed) before epoch {epoch}"
+                )
+                time_limit_reached = True
+                break
+
         epoch_start = time.time()
         train_loss, train_acc = train(
             model,
@@ -459,7 +483,9 @@ def main(args):
         )
         test_loss, test_acc = test(model, device, test_loader, criterion, ctx)
         sparsity = calculate_sparsity(model)
+        last_sparsity = sparsity
         epoch_time = time.time() - epoch_start
+        epochs_completed = epoch
 
         metrics["train_loss"].append(train_loss)
         metrics["train_accuracy"].append(train_acc)
@@ -501,17 +527,38 @@ def main(args):
         if trackio_run:
             trackio.log(log_metrics)
 
+        if max_time > 0:
+            elapsed = time.time() - start_time
+            if elapsed >= max_time:
+                print(
+                    f"\nReached max training time of {max_time}s "
+                    f"({elapsed:.1f}s elapsed) after epoch {epoch}"
+                )
+                time_limit_reached = True
+                break
+
     total_time = time.time() - start_time
+    final_sparsity = last_sparsity
     print(f"\nTraining complete in {total_time:.1f}s")
     print(f"Best accuracy: {best_accuracy:.2f}%")
-    print(f"Final sparsity: {sparsity:.2%}")
+    print(f"Final sparsity: {final_sparsity:.2%}")
+    if time_limit_reached and max_time > 0:
+        print(
+            f"Stopped early after reaching max training time of {max_time}s "
+            f"({total_time:.1f}s elapsed, {epochs_completed} epoch(s) run)"
+        )
+    else:
+        print(f"Completed {epochs_completed} epoch(s)")
 
     if gpu_monitor:
         gpu_monitor.stop()
 
     metrics["total_time"] = total_time
     metrics["best_accuracy"] = best_accuracy
-    metrics["final_sparsity"] = sparsity
+    metrics["final_sparsity"] = final_sparsity
+    metrics["epochs_completed"] = epochs_completed
+    metrics["max_time_seconds"] = max_time
+    metrics["time_limit_reached"] = time_limit_reached
 
     with open(args.json_output, "w") as f:
         json.dump(metrics, f, indent=2)
@@ -671,13 +718,22 @@ if __name__ == "__main__":
         choices=["none", "pca", "spline-pca"],
         help="Image tokenization method",
     )
+    parser.add_argument(
+        "--max-time",
+        type=int,
+        default=0,
+        help="Maximum training time in seconds (0 = no limit)",
+    )
 
     args = parser.parse_args()
 
     # Load tokenizer configuration from config.py if available
-    if GENERATED_CONFIG is not None and hasattr(
-        GENERATED_CONFIG, "RESNET50_TOKENIZER_METHOD"
-    ):
-        args.tokenizer_method = GENERATED_CONFIG.RESNET50_TOKENIZER_METHOD
+    if GENERATED_CONFIG is not None:
+        if hasattr(GENERATED_CONFIG, "RESNET50_TOKENIZER_METHOD"):
+            args.tokenizer_method = GENERATED_CONFIG.RESNET50_TOKENIZER_METHOD
+        if hasattr(GENERATED_CONFIG, "RESNET50_MAX_TIME"):
+            cfg_time = int(getattr(GENERATED_CONFIG, "RESNET50_MAX_TIME", 0) or 0)
+            if cfg_time > 0:
+                args.max_time = cfg_time
 
     main(args)
