@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -16,6 +17,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from torch.cuda.amp import autocast, GradScaler
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,6 +131,8 @@ def train(
     pruning_method=None,
     adamprune_state=None,
     args=None,
+    scaler=None,
+    ctx=nullcontext(),
 ):
     """Train for one epoch."""
     model.train()
@@ -144,15 +148,24 @@ def train(
             pruning_method.apply_masks()
 
         optimizer.zero_grad()
-        output = model(data)
-        loss = criterion(output, target)
-        loss.backward()
+        with ctx:
+            output = model(data)
+            loss = criterion(output, target)
+        
+        if scaler:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
         # Apply AdamWPrune gradient masking before optimizer step
         if args and args.optimizer == "adamwprune" and adamprune_state:
             apply_adamprune_masking(optimizer, adamprune_state)
 
-        optimizer.step()
+        if scaler:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
 
         # Update AdamWPrune masks periodically (per batch)
         if args and args.optimizer == "adamwprune" and adamprune_state:
@@ -178,7 +191,7 @@ def train(
     return train_loss / len(train_loader), 100.0 * correct / total
 
 
-def test(model, device, test_loader, criterion):
+def test(model, device, test_loader, criterion, ctx=nullcontext()):
     """Evaluate the model."""
     model.eval()
     test_loss = 0
@@ -188,7 +201,8 @@ def test(model, device, test_loader, criterion):
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            output = model(data)
+            with ctx:
+                output = model(data)
             test_loss += criterion(output, target).item()
             _, predicted = output.max(1)
             total += target.size(0)
@@ -276,6 +290,27 @@ def main(args):
                 print(f"Initialized Trackio tracking for project: {args.tracker_project}")
             except ImportError:
                 print("trackio not installed, skipping Trackio tracking")
+
+    # Setup mixed precision
+    scaler = None
+    ctx = nullcontext()
+    if device.type == "cuda":
+        if config and config.get("MIXED_PRECISION") in ("y", True):
+            print("Mixed precision enabled.")
+            scaler = GradScaler()
+            # Determine dtype for autocast
+            if torch.cuda.is_bf16_supported():
+                ptdtype = torch.bfloat16
+                print("Using bfloat16 for mixed precision.")
+            else:
+                ptdtype = torch.float16
+                print("Using float16 for mixed precision.")
+            ctx = autocast(device_type=device.type, dtype=ptdtype)
+        else:
+            print("Mixed precision disabled by config or not specified.")
+    else:
+        print("Mixed precision not applicable for CPU training.")
+
 
     # Create data loaders
     train_loader, test_loader, num_classes = get_data_loaders(args)
@@ -396,8 +431,8 @@ def main(args):
 
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
-        train_loss, train_acc = train(model, device, train_loader, optimizer, criterion, epoch, pruning_method, adamprune_state, args)
-        test_loss, test_acc = test(model, device, test_loader, criterion)
+        train_loss, train_acc = train(model, device, train_loader, optimizer, criterion, epoch, pruning_method, adamprune_state, args, scaler, ctx)
+        test_loss, test_acc = test(model, device, test_loader, criterion, ctx)
         sparsity = calculate_sparsity(model)
         epoch_time = time.time() - epoch_start
 
