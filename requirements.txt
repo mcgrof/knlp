@@ -18,6 +18,7 @@ trackio>=0.1.0
 tokenizers
 tiktoken
 safetensors
+scikit-learn  # For incremental PCA in image tokenizers
 
 # Visualization & Monitoring
 matplotlib
