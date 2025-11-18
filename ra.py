@@ -641,42 +641,44 @@ class ReciprocalMLP(nn.Module):
             h_std = self.act(h_std)
             h_std_contrib = self.w_std * gate_std * h_std  # Soft gate applied here
         else:
-            h_std_contrib = torch.zeros(x.size(0), x.size(1), self.D_ff_std, device=x.device, dtype=x.dtype)
-
+            h_std_contrib = torch.zeros(
+                x.size(0), x.size(1), self.D_ff_std, device=x.device, dtype=x.dtype
+            )
 
         # Compute reciprocal pathway
         if use_rec:
-                    if attn is None:
-                        # Fallback: no attention injection (behaves like split-MLP)
-                        if self.up_low is not None:
-                            h_low = self.up_low(x)
-                        elif self._attn_proj_ref is not None:
-                            h_low = F.linear(x, self._attn_proj_ref.weight[: self.R_ff, :])
-                        else:
-                            h_low = torch.zeros(
-                                x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
-                            )
-                    else:
-                        # Compute h_low directly from x + α*attn without storing intermediate
-                        # PyTorch recomputes the addition during backward (automatic checkpointing)
-                        if self.up_low is not None:
-                            # Direct computation: up_low(x + α*attn)
-                            # PyTorch recomputes x + α*attn in backward pass
-                            h_low = self.up_low(x + self.attn_scale * attn)
-                        elif self._attn_proj_ref is not None:
-                            h_low = F.linear(
-                                x + self.attn_scale * attn,
-                                self._attn_proj_ref.weight[: self.R_ff, :],
-                            )
-                        else:
-                            h_low = torch.zeros(
-                                x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
-                            )
+            if attn is None:
+                # Fallback: no attention injection (behaves like split-MLP)
+                if self.up_low is not None:
+                    h_low = self.up_low(x)
+                elif self._attn_proj_ref is not None:
+                    h_low = F.linear(x, self._attn_proj_ref.weight[: self.R_ff, :])
+                else:
+                    h_low = torch.zeros(
+                        x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
+                    )
+            else:
+                # Compute h_low directly from x + α*attn without storing intermediate
+                # PyTorch recomputes the addition during backward (automatic checkpointing)
+                if self.up_low is not None:
+                    # Direct computation: up_low(x + α*attn)
+                    # PyTorch recomputes x + α*attn in backward pass
+                    h_low = self.up_low(x + self.attn_scale * attn)
+                elif self._attn_proj_ref is not None:
+                    h_low = F.linear(
+                        x + self.attn_scale * attn,
+                        self._attn_proj_ref.weight[: self.R_ff, :],
+                    )
+                else:
+                    h_low = torch.zeros(
+                        x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
+                    )
             h_low = self.act(h_low)
             h_low_contrib = self.w_rec * gate_rec * h_low  # Soft gate applied here
         else:
-            h_low_contrib = torch.zeros(x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype)
-
+            h_low_contrib = torch.zeros(
+                x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
+            )
 
         # Reciprocal fold: concatenate [w_std * gate_std * h_std | w_rec * gate_rec * h_low]
         # Shape is always same (D_ff_std + R_ff), soft gates modulate contribution strength
@@ -1005,7 +1007,9 @@ class FlashPrunedKVAttention(nn.Module):
             importance = torch.linalg.vector_norm(k, dim=-1)
             importance = importance * self.importance_scale.view(1, -1, 1)
         else:
-            raise NotImplementedError(f"Unknown importance_metric: {self.importance_metric}")
+            raise NotImplementedError(
+                f"Unknown importance_metric: {self.importance_metric}"
+            )
 
         # 2. Add recency bias
         if self.recency > 0 and T > self.recency:
@@ -1015,8 +1019,10 @@ class FlashPrunedKVAttention(nn.Module):
             importance = importance.masked_fill(recent_mask, float("inf"))
 
         # 3. Find top-k indices
-        _, top_indices = torch.topk(importance, k_keep, dim=-1) # [B, H, k_keep]
-        top_indices, _ = torch.sort(top_indices, dim=-1) # Sort for memory access pattern
+        _, top_indices = torch.topk(importance, k_keep, dim=-1)  # [B, H, k_keep]
+        top_indices, _ = torch.sort(
+            top_indices, dim=-1
+        )  # Sort for memory access pattern
 
         # 4. Gather pruned K and V
         idx_expanded = top_indices.unsqueeze(-1).expand(-1, -1, -1, self.head_dim)
@@ -1026,10 +1032,10 @@ class FlashPrunedKVAttention(nn.Module):
         # 5. Create manual causal mask
         query_pos = torch.arange(T, device=x.device).view(1, 1, T, 1)
         key_pos = top_indices.unsqueeze(2)  # [B, H, 1, k_keep]
-        
+
         # The mask should be True for positions we want to *mask out*.
         # SDPA mask format: True means "don't attend".
-        manual_causal_mask = query_pos < key_pos # [B, H, T, k_keep]
+        manual_causal_mask = query_pos < key_pos  # [B, H, T, k_keep]
 
         # Use Flash Attention
         y = F.scaled_dot_product_attention(
