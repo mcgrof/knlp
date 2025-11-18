@@ -526,6 +526,7 @@ class ReciprocalMLP(nn.Module):
         dropout=0.0,
         attn_scale_init=1.0,
         tie_to_attn_proj=False,
+        skip_rec_init=-3.0,
     ):
         super().__init__()
         self.n_embd = n_embd
@@ -580,7 +581,7 @@ class ReciprocalMLP(nn.Module):
         # Model learns to enable reciprocal if beneficial, disable if harmful
         # Skipping a pathway eliminates its GEMMs from forward + backward pass
         self.register_parameter("skip_std", nn.Parameter(torch.tensor(2.0)))
-        self.register_parameter("skip_rec", nn.Parameter(torch.tensor(-3.0)))
+        self.register_parameter("skip_rec", nn.Parameter(torch.tensor(skip_rec_init)))
 
         # Track if gates are frozen for delayed activation
         self._gates_frozen = False
