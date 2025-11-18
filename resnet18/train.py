@@ -134,6 +134,7 @@ def create_resnet_optimizer(
             # AdamWPrune-specific defaults
             self.adamwprune_base_optimizer_name = "adamw"
             self.adamwprune_enable_pruning = False
+            self.adamwprune_variant = "bitter0"
 
             # Override with provided kwargs
             for k, v in kwargs.items():
@@ -288,6 +289,12 @@ def main():
         adamwprune_ramp_end_epoch_default = getattr(
             cfg, "ADAMWPRUNE_RAMP_END_EPOCH", 75
         )
+        # Detect AdamWPrune variant from config
+        adamwprune_variant_default = "bitter0"
+        if getattr(cfg, "RESNET18_ADAMWPRUNE_VARIANT_BITTER7", False):
+            adamwprune_variant_default = "bitter7"
+        elif getattr(cfg, "RESNET18_ADAMWPRUNE_VARIANT_BITTER0", False):
+            adamwprune_variant_default = "bitter0"
     except ImportError:
         pruning_method_default = "none"
         target_sparsity_default = 0.9
@@ -304,6 +311,7 @@ def main():
         adamwprune_warmup_steps_default = 100
         adamwprune_frequency_default = 50
         adamwprune_ramp_end_epoch_default = 75
+        adamwprune_variant_default = "bitter0"
 
     parser = argparse.ArgumentParser(description="ResNet-18 training on CIFAR-10")
     parser.add_argument(
@@ -384,7 +392,7 @@ def main():
     parser.add_argument(
         "--adamwprune-variant",
         type=str,
-        default="bitter0",
+        default=adamwprune_variant_default,
         choices=["bitter0", "bitter7"],
         help="AdamWPrune variant: bitter0 (original) or bitter7 (variance-based)",
     )
@@ -569,11 +577,13 @@ def main():
         spam_warmup_steps=getattr(args, "spam_warmup_steps", 0),
         spam_enable_clip=getattr(args, "spam_enable_clip", False),
         # AdamWPrune-specific params
+        adamwprune_enable_pruning=args.adamwprune_enable_pruning,
         adamwprune_pruning_method=args.adamwprune_pruning_method,
         adamwprune_target_sparsity=args.adamwprune_target_sparsity,
         adamwprune_warmup_steps=args.adamwprune_warmup_steps,
         adamwprune_frequency=args.adamwprune_frequency,
         adamwprune_ramp_end_epoch=args.adamwprune_ramp_end_epoch,
+        adamwprune_variant=args.adamwprune_variant,
     )
 
     # Create learning rate scheduler
