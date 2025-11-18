@@ -339,14 +339,39 @@ def main(args):
             num_classes=num_classes, n_components=n_components, whiten=whiten
         ).to(device)
 
-        # Fit PCA on training data
-        print("Fitting PCA tokenizer on training data...")
-        train_images = []
-        for images, _ in train_loader:
-            train_images.append(images.cpu().numpy())
-        train_images = np.concatenate(train_images, axis=0)
-        model.fit_pca(train_images)
-        print(f"PCA fitted on {len(train_images)} training images")
+        # Fit PCA incrementally on training data (memory efficient)
+        print("Fitting PCA tokenizer on training data (incremental)...")
+
+        # Accumulate first few batches to have enough samples for first fit
+        # IncrementalPCA requires n_samples >= n_components for first batch
+        min_samples = n_components
+        first_batch_images = []
+        first_batch_size = 0
+        n_batches = 0
+
+        for batch_idx, (images, _) in enumerate(train_loader):
+            images_np = images.cpu().numpy()
+
+            if first_batch_size < min_samples:
+                # Accumulate until we have enough samples
+                first_batch_images.append(images_np)
+                first_batch_size += len(images_np)
+
+                if first_batch_size >= min_samples:
+                    # Fit on accumulated batches
+                    combined = np.concatenate(first_batch_images, axis=0)
+                    model.tokenizer.partial_fit(combined)
+                    print(f"  Initial fit on {first_batch_size} samples")
+                    first_batch_images = []  # Free memory
+            else:
+                # Continue with incremental fitting
+                model.tokenizer.partial_fit(images_np)
+
+            n_batches += 1
+            if batch_idx % 10 == 0 and batch_idx > 0:
+                print(f"  Processed {batch_idx + 1}/{len(train_loader)} batches")
+
+        print(f"PCA fitted incrementally on {n_batches} batches")
 
     elif args.tokenizer_method == "spline-pca":
         # Spline-PCA tokenization: spatial + temporal tiering
@@ -363,14 +388,39 @@ def main(args):
             whiten=whiten,
         ).to(device)
 
-        # Fit PCA on training data
-        print("Fitting PCA tokenizer on training data...")
-        train_images = []
-        for images, _ in train_loader:
-            train_images.append(images.cpu().numpy())
-        train_images = np.concatenate(train_images, axis=0)
-        model.fit_pca(train_images)
-        print(f"PCA fitted on {len(train_images)} training images")
+        # Fit PCA incrementally on training data (memory efficient)
+        print("Fitting PCA tokenizer on training data (incremental)...")
+
+        # Accumulate first few batches to have enough samples for first fit
+        # IncrementalPCA requires n_samples >= n_components for first batch
+        min_samples = n_components
+        first_batch_images = []
+        first_batch_size = 0
+        n_batches = 0
+
+        for batch_idx, (images, _) in enumerate(train_loader):
+            images_np = images.cpu().numpy()
+
+            if first_batch_size < min_samples:
+                # Accumulate until we have enough samples
+                first_batch_images.append(images_np)
+                first_batch_size += len(images_np)
+
+                if first_batch_size >= min_samples:
+                    # Fit on accumulated batches
+                    combined = np.concatenate(first_batch_images, axis=0)
+                    model.tokenizer.partial_fit(combined)
+                    print(f"  Initial fit on {first_batch_size} samples")
+                    first_batch_images = []  # Free memory
+            else:
+                # Continue with incremental fitting
+                model.tokenizer.partial_fit(images_np)
+
+            n_batches += 1
+            if batch_idx % 10 == 0 and batch_idx > 0:
+                print(f"  Processed {batch_idx + 1}/{len(train_loader)} batches")
+
+        print(f"PCA fitted incrementally on {n_batches} batches")
 
     else:
         # Baseline: no tokenization
