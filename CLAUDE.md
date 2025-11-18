@@ -30,6 +30,14 @@
 - **NO EXCEPTIONS**: This format is mandatory for ALL commits, no matter how small
 - **STYLE**: Be terse and to the point. NO shopping-list style bullet points. Write in paragraphs explaining the change, rationale, and technical details concisely. Avoid verbose enumeration unless absolutely necessary for clarity.
 
+## Cross-Agent Access
+
+Some automation looks for agent-specific instruction files (e.g., `CODEX.md`)
+instead of `CLAUDE.md`. To avoid future assistants missing these guidelines,
+ensure every agent entrypoint symlinks back to this document. For Codex runs,
+`CODEX.md` must always be a symlink to `CLAUDE.md`; add additional symlinks if
+new agent names are introduced.
+
 ### Development Workflow
 1. Make a single focused change
 2. Run `black` formatter on Python files
