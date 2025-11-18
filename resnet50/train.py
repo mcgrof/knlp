@@ -28,10 +28,16 @@ from lib.optimizers import (
     apply_adamprune_masking,
     update_adamprune_masks,
 )
+from lib.hyperparams import apply_hyperparams
 from lib.movement_pruning import MovementPruning
 from lib.magnitude_pruning import MagnitudePruning
 from resnet50.model import ResNet50, ResNet50WithPCA, ResNet50WithSplinePCA
 import numpy as np
+
+try:
+    from config import config as GENERATED_CONFIG
+except ImportError:
+    GENERATED_CONFIG = None
 
 
 def get_data_loaders(args):
@@ -151,7 +157,7 @@ def train(
         with ctx:
             output = model(data)
             loss = criterion(output, target)
-        
+
         if scaler:
             scaler.scale(loss).backward()
         else:
@@ -234,15 +240,11 @@ def calculate_sparsity(model):
 
 def main(args):
     """Main training loop."""
+    cfg = GENERATED_CONFIG
+
     # Apply hyperparameter auto-detection if enabled
-    try:
-        import config as cfg
-
-        from lib.hyperparams import apply_hyperparams
-
+    if cfg is not None:
         apply_hyperparams(cfg, verbose=True, model_type="resnet50")
-    except ImportError:
-        pass  # No config.py, use args only
 
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -267,10 +269,9 @@ def main(args):
         if "wandb" in tracker_list:
             try:
                 import wandb
+
                 wandb_run = wandb.init(
-                    project=args.tracker_project,
-                    name=run_name,
-                    config=vars(args)
+                    project=args.tracker_project, name=run_name, config=vars(args)
                 )
                 trackers_enabled.append("wandb")
                 print(f"Initialized WandB tracking for project: {args.tracker_project}")
@@ -280,14 +281,15 @@ def main(args):
         if "trackio" in tracker_list:
             try:
                 import trackio
+
                 trackio.init(
-                    project=args.tracker_project,
-                    name=run_name,
-                    config=vars(args)
+                    project=args.tracker_project, name=run_name, config=vars(args)
                 )
                 trackio_run = True
                 trackers_enabled.append("trackio")
-                print(f"Initialized Trackio tracking for project: {args.tracker_project}")
+                print(
+                    f"Initialized Trackio tracking for project: {args.tracker_project}"
+                )
             except ImportError:
                 print("trackio not installed, skipping Trackio tracking")
 
@@ -295,7 +297,7 @@ def main(args):
     scaler = None
     ctx = nullcontext()
     if device.type == "cuda":
-        if config and config.get("MIXED_PRECISION") in ("y", True):
+        if cfg and cfg.get("MIXED_PRECISION") in ("y", True):
             print("Mixed precision enabled.")
             scaler = GradScaler()
             # Determine dtype for autocast
@@ -311,15 +313,8 @@ def main(args):
     else:
         print("Mixed precision not applicable for CPU training.")
 
-
     # Create data loaders
     train_loader, test_loader, num_classes = get_data_loaders(args)
-
-    # Load configuration for tokenizer settings
-    try:
-        import config as cfg
-    except ImportError:
-        cfg = None
 
     # Create model with optional tokenization
     print(f"Using tokenization method: {args.tokenizer_method}")
@@ -395,7 +390,9 @@ def main(args):
     adamprune_state = None
     if isinstance(optimizer_tuple, tuple):
         if len(optimizer_tuple) == 5:
-            optimizer, scheduler, gradient_clip_norm, spam_state, adamprune_state = optimizer_tuple
+            optimizer, scheduler, gradient_clip_norm, spam_state, adamprune_state = (
+                optimizer_tuple
+            )
         else:
             optimizer = optimizer_tuple[0]
             adamprune_state = optimizer_tuple[-1] if len(optimizer_tuple) > 4 else None
@@ -412,9 +409,21 @@ def main(args):
         steps_per_epoch = len(train_loader)
         ramp_end_step = int(steps_per_epoch * args.pruning_end_epoch)
         if args.pruning_method == "movement":
-            pruning_method = MovementPruning(model, target_sparsity=args.target_sparsity, warmup_steps=args.pruning_warmup, pruning_frequency=50, ramp_end_step=ramp_end_step)
+            pruning_method = MovementPruning(
+                model,
+                target_sparsity=args.target_sparsity,
+                warmup_steps=args.pruning_warmup,
+                pruning_frequency=50,
+                ramp_end_step=ramp_end_step,
+            )
         elif args.pruning_method == "magnitude":
-            pruning_method = MagnitudePruning(model, target_sparsity=args.target_sparsity, warmup_steps=args.pruning_warmup, pruning_frequency=50, ramp_end_step=ramp_end_step)
+            pruning_method = MagnitudePruning(
+                model,
+                target_sparsity=args.target_sparsity,
+                warmup_steps=args.pruning_warmup,
+                pruning_frequency=50,
+                ramp_end_step=ramp_end_step,
+            )
 
     gpu_monitor = None
     if args.monitor_gpu:
@@ -422,8 +431,12 @@ def main(args):
         gpu_monitor.start()
 
     metrics = {
-        "train_loss": [], "train_accuracy": [], "test_loss": [],
-        "test_accuracy": [], "sparsity": [], "epoch_times": [],
+        "train_loss": [],
+        "train_accuracy": [],
+        "test_loss": [],
+        "test_accuracy": [],
+        "sparsity": [],
+        "epoch_times": [],
     }
 
     start_time = time.time()
@@ -431,7 +444,19 @@ def main(args):
 
     for epoch in range(1, args.epochs + 1):
         epoch_start = time.time()
-        train_loss, train_acc = train(model, device, train_loader, optimizer, criterion, epoch, pruning_method, adamprune_state, args, scaler, ctx)
+        train_loss, train_acc = train(
+            model,
+            device,
+            train_loader,
+            optimizer,
+            criterion,
+            epoch,
+            pruning_method,
+            adamprune_state,
+            args,
+            scaler,
+            ctx,
+        )
         test_loss, test_acc = test(model, device, test_loader, criterion, ctx)
         sparsity = calculate_sparsity(model)
         epoch_time = time.time() - epoch_start
@@ -446,9 +471,20 @@ def main(args):
         if test_acc > best_accuracy:
             best_accuracy = test_acc
             if args.save_model:
-                torch.save({"epoch": epoch, "model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "accuracy": test_acc, "sparsity": sparsity}, "best_model.pth")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "accuracy": test_acc,
+                        "sparsity": sparsity,
+                    },
+                    "best_model.pth",
+                )
 
-        print(f"Epoch {epoch}: Test Acc: {test_acc:.2f}%, Sparsity: {sparsity:.2%}, Time: {epoch_time:.1f}s")
+        print(
+            f"Epoch {epoch}: Test Acc: {test_acc:.2f}%, Sparsity: {sparsity:.2%}, Time: {epoch_time:.1f}s"
+        )
 
         # Log to trackers
         log_metrics = {
@@ -492,46 +528,140 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ResNet-50 Training")
 
     # Dataset
-    parser.add_argument("--dataset", type=str, default="cifar100", choices=["cifar100", "imagenet"], help="Dataset to use")
-    parser.add_argument("--data-dir", type=str, default="./data", help="Path to dataset")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="cifar100",
+        choices=["cifar100", "imagenet"],
+        help="Dataset to use",
+    )
+    parser.add_argument(
+        "--data-dir", type=str, default="./data", help="Path to dataset"
+    )
 
     # Training
-    parser.add_argument("--batch-size", type=int, default=128, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
+    parser.add_argument(
+        "--batch-size", type=int, default=128, help="Batch size for training"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=100, help="Number of epochs to train"
+    )
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=None, help="Weight decay (AdamW/SGD). If None, choose a sane default.")
-    parser.add_argument("--optimizer", type=str, default="adamwprune", help="Optimizer to use")
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=None,
+        help="Weight decay (AdamW/SGD). If None, choose a sane default.",
+    )
+    parser.add_argument(
+        "--optimizer", type=str, default="adamwprune", help="Optimizer to use"
+    )
 
     # Optimizer-specific arguments
-    parser.add_argument("--spam-theta", type=float, default=50.0, help="SPAM theta parameter")
-    parser.add_argument("--spam-interval", type=int, default=0, help="SPAM interval (0=disabled)")
-    parser.add_argument("--spam-warmup-steps", type=int, default=0, help="SPAM warmup steps")
-    parser.add_argument("--spam-enable-clip", action="store_true", help="Enable SPAM gradient clipping")
-    parser.add_argument("--adamwprune-beta1", type=float, default=0.9, help="AdamWPrune beta1")
-    parser.add_argument("--adamwprune-beta2", type=float, default=0.999, help="AdamWPrune beta2")
-    parser.add_argument("--adamwprune-weight-decay", type=float, default=0.01, help="AdamWPrune weight decay")
-    parser.add_argument("--adamwprune-amsgrad", type=str, default="true", help="AdamWPrune AMSGrad")
-    parser.add_argument("--adamwprune-base-optimizer-name", type=str, default="adamw", choices=["adam", "adamw", "adamwadv", "adamwspam"], help="Base optimizer for AdamWPrune (default: adamw)")
-    parser.add_argument("--adamwprune-variant", type=str, default="bitter0", choices=["bitter0", "bitter7"], help="AdamWPrune variant: bitter0 (original) or bitter7 (variance-based)")
+    parser.add_argument(
+        "--spam-theta", type=float, default=50.0, help="SPAM theta parameter"
+    )
+    parser.add_argument(
+        "--spam-interval", type=int, default=0, help="SPAM interval (0=disabled)"
+    )
+    parser.add_argument(
+        "--spam-warmup-steps", type=int, default=0, help="SPAM warmup steps"
+    )
+    parser.add_argument(
+        "--spam-enable-clip", action="store_true", help="Enable SPAM gradient clipping"
+    )
+    parser.add_argument(
+        "--adamwprune-beta1", type=float, default=0.9, help="AdamWPrune beta1"
+    )
+    parser.add_argument(
+        "--adamwprune-beta2", type=float, default=0.999, help="AdamWPrune beta2"
+    )
+    parser.add_argument(
+        "--adamwprune-weight-decay",
+        type=float,
+        default=0.01,
+        help="AdamWPrune weight decay",
+    )
+    parser.add_argument(
+        "--adamwprune-amsgrad", type=str, default="true", help="AdamWPrune AMSGrad"
+    )
+    parser.add_argument(
+        "--adamwprune-base-optimizer-name",
+        type=str,
+        default="adamw",
+        choices=["adam", "adamw", "adamwadv", "adamwspam"],
+        help="Base optimizer for AdamWPrune (default: adamw)",
+    )
+    parser.add_argument(
+        "--adamwprune-variant",
+        type=str,
+        default="bitter0",
+        choices=["bitter0", "bitter7"],
+        help="AdamWPrune variant: bitter0 (original) or bitter7 (variance-based)",
+    )
 
     # Pruning
-    parser.add_argument("--pruning-method", type=str, default="none", choices=["none", "magnitude", "movement", "state"], help="Pruning method")
-    parser.add_argument("--target-sparsity", type=float, default=0.7, help="Target sparsity level")
-    parser.add_argument("--pruning-warmup", type=int, default=100, help="Warmup steps before pruning starts")
-    parser.add_argument("--pruning-start-epoch", type=int, default=10, help="Epoch to start pruning")
-    parser.add_argument("--pruning-end-epoch", type=int, default=80, help="Epoch to end pruning")
+    parser.add_argument(
+        "--pruning-method",
+        type=str,
+        default="none",
+        choices=["none", "magnitude", "movement", "state"],
+        help="Pruning method",
+    )
+    parser.add_argument(
+        "--target-sparsity", type=float, default=0.7, help="Target sparsity level"
+    )
+    parser.add_argument(
+        "--pruning-warmup",
+        type=int,
+        default=100,
+        help="Warmup steps before pruning starts",
+    )
+    parser.add_argument(
+        "--pruning-start-epoch", type=int, default=10, help="Epoch to start pruning"
+    )
+    parser.add_argument(
+        "--pruning-end-epoch", type=int, default=80, help="Epoch to end pruning"
+    )
 
     # Other
-    parser.add_argument("--num-workers", type=int, default=4, help="Number of data loading workers")
-    parser.add_argument("--log-interval", type=int, default=10, help="How many batches to wait before logging")
+    parser.add_argument(
+        "--num-workers", type=int, default=4, help="Number of data loading workers"
+    )
+    parser.add_argument(
+        "--log-interval",
+        type=int,
+        default=10,
+        help="How many batches to wait before logging",
+    )
     parser.add_argument("--save-model", action="store_true", help="Save the best model")
     parser.add_argument("--monitor-gpu", action="store_true", help="Monitor GPU usage")
-    parser.add_argument("--json-output", type=str, default="training_metrics.json", help="Path to save training metrics in JSON format")
+    parser.add_argument(
+        "--json-output",
+        type=str,
+        default="training_metrics.json",
+        help="Path to save training metrics in JSON format",
+    )
 
     # Tracker arguments
-    parser.add_argument("--tracker", type=str, default="", help="Comma-separated list of trackers: wandb,trackio (default: none)")
-    parser.add_argument("--tracker-project", type=str, default="resnet50-experiments", help="Project name for experiment tracking")
-    parser.add_argument("--tracker-run-name", type=str, default=None, help="Run name for experiment tracking (default: auto-generated)")
+    parser.add_argument(
+        "--tracker",
+        type=str,
+        default="",
+        help="Comma-separated list of trackers: wandb,trackio (default: none)",
+    )
+    parser.add_argument(
+        "--tracker-project",
+        type=str,
+        default="resnet50-experiments",
+        help="Project name for experiment tracking",
+    )
+    parser.add_argument(
+        "--tracker-run-name",
+        type=str,
+        default=None,
+        help="Run name for experiment tracking (default: auto-generated)",
+    )
 
     # Tokenization
     parser.add_argument(
@@ -545,12 +675,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load tokenizer configuration from config.py if available
-    try:
-        import config as cfg
-
-        if hasattr(cfg, "RESNET50_TOKENIZER_METHOD"):
-            args.tokenizer_method = cfg.RESNET50_TOKENIZER_METHOD
-    except ImportError:
-        pass
+    if GENERATED_CONFIG is not None and hasattr(
+        GENERATED_CONFIG, "RESNET50_TOKENIZER_METHOD"
+    ):
+        args.tokenizer_method = GENERATED_CONFIG.RESNET50_TOKENIZER_METHOD
 
     main(args)
