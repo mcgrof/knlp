@@ -555,9 +555,7 @@ class ReciprocalMLP(nn.Module):
         if not tie_to_attn_proj:
             self.up_low = nn.Linear(n_embd, R_ff, bias=False)
         else:
-            # Stronger tying: up_low will be tied to attention projection
-            # This requires access to attention module, set during patching
-            self.register_parameter("up_low", None)
+            self.up_low = None
             self._attn_proj_ref = None  # Will be set by patch function
 
         # Down projection: takes concatenated [D_ff_std + R_ff] features
@@ -601,7 +599,7 @@ class ReciprocalMLP(nn.Module):
             nn.init.xavier_uniform_(self.down.weight)
         self._weights_initialized = True
 
-    def forward(self, x, attn=None):
+    def forward(self, x, attn=None, use_hard_skipping=False):
         """
         Forward pass with conditional computation via learned skip gates.
 
@@ -614,6 +612,7 @@ class ReciprocalMLP(nn.Module):
             x: [B, T, C] layer-normalized input tensor
             attn: [B, T, C] attention output (before residual add)
                   If None, behaves like standard split-MLP
+            use_hard_skipping: If True, use hard gates for inference to save memory.
 
         Returns:
             y: [B, T, C] output tensor
@@ -628,49 +627,55 @@ class ReciprocalMLP(nn.Module):
         gate_std = torch.sigmoid(self.skip_std)  # 0 to 1
         gate_rec = torch.sigmoid(self.skip_rec)  # 0 to 1
 
-        # Binary decisions for logging only (not used in forward pass)
-        use_std = gate_std > 0.5
-        use_rec = gate_rec > 0.5
-
-        # Always compute standard pathway (soft-gated by gate_std)
-        h_std = self.up_std(x)  # [B, T, D_ff_std]
-        h_std = self.act(h_std)
-        h_std_contrib = self.w_std * gate_std * h_std  # Soft gate applied here
-
-        # Always compute reciprocal pathway (soft-gated by gate_rec)
-        # Memory optimization: compute h_low directly without storing 'mixed' intermediate
-        # Saves 192 MB per layer (batch=128, seq=1024, d=768)
-        if attn is None:
-            # Fallback: no attention injection (behaves like split-MLP)
-            if self.tie_to_attn_proj:
-                if self._attn_proj_ref is not None:
-                    h_low = F.linear(x, self._attn_proj_ref.weight[: self.R_ff, :])
-                else:
-                    h_low = torch.zeros(
-                        x.size(0), x.size(1), self.R_ff, device=x.device
-                    )
-            else:
-                h_low = self.up_low(x)
+        if use_hard_skipping:
+            use_std = gate_std > 0.1
+            use_rec = gate_rec > 0.1
         else:
-            # Compute h_low directly from x + α*attn without storing intermediate
-            # PyTorch recomputes the addition during backward (automatic checkpointing)
-            if self.tie_to_attn_proj:
-                if self._attn_proj_ref is not None:
-                    h_low = F.linear(
-                        x + self.attn_scale * attn,
-                        self._attn_proj_ref.weight[: self.R_ff, :],
-                    )
-                else:
-                    h_low = torch.zeros(
-                        x.size(0), x.size(1), self.R_ff, device=x.device
-                    )
-            else:
-                # Direct computation: up_low(x + α*attn)
-                # PyTorch recomputes x + α*attn in backward pass
-                h_low = self.up_low(x + self.attn_scale * attn)
+            use_std = True
+            use_rec = True
 
-        h_low = self.act(h_low)
-        h_low_contrib = self.w_rec * gate_rec * h_low  # Soft gate applied here
+        # Compute standard pathway
+        if use_std:
+            h_std = self.up_std(x)  # [B, T, D_ff_std]
+            h_std = self.act(h_std)
+            h_std_contrib = self.w_std * gate_std * h_std  # Soft gate applied here
+        else:
+            h_std_contrib = torch.zeros(x.size(0), x.size(1), self.D_ff_std, device=x.device, dtype=x.dtype)
+
+
+        # Compute reciprocal pathway
+        if use_rec:
+                    if attn is None:
+                        # Fallback: no attention injection (behaves like split-MLP)
+                        if self.up_low is not None:
+                            h_low = self.up_low(x)
+                        elif self._attn_proj_ref is not None:
+                            h_low = F.linear(x, self._attn_proj_ref.weight[: self.R_ff, :])
+                        else:
+                            h_low = torch.zeros(
+                                x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
+                            )
+                    else:
+                        # Compute h_low directly from x + α*attn without storing intermediate
+                        # PyTorch recomputes the addition during backward (automatic checkpointing)
+                        if self.up_low is not None:
+                            # Direct computation: up_low(x + α*attn)
+                            # PyTorch recomputes x + α*attn in backward pass
+                            h_low = self.up_low(x + self.attn_scale * attn)
+                        elif self._attn_proj_ref is not None:
+                            h_low = F.linear(
+                                x + self.attn_scale * attn,
+                                self._attn_proj_ref.weight[: self.R_ff, :],
+                            )
+                        else:
+                            h_low = torch.zeros(
+                                x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype
+                            )
+            h_low = self.act(h_low)
+            h_low_contrib = self.w_rec * gate_rec * h_low  # Soft gate applied here
+        else:
+            h_low_contrib = torch.zeros(x.size(0), x.size(1), self.R_ff, device=x.device, dtype=x.dtype)
+
 
         # Reciprocal fold: concatenate [w_std * gate_std * h_std | w_rec * gate_rec * h_low]
         # Shape is always same (D_ff_std + R_ff), soft gates modulate contribution strength
