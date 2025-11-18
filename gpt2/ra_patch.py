@@ -96,6 +96,7 @@ def patch_gpt2_with_rmlp(
     dropout=0.0,
     attn_scale_init=1.0,
     tie_to_attn_proj=False,
+    skip_rec_init=-3.0,
 ):
     """
     Replace all MLP modules in GPT-2 with Reciprocal MLP and wrap blocks
@@ -108,6 +109,7 @@ def patch_gpt2_with_rmlp(
         dropout: Dropout probability
         attn_scale_init: Initial attention mixing scale α
         tie_to_attn_proj: Tie up_low weights to attention c_proj
+        skip_rec_init: Initial value for the reciprocal skip gate logit.
 
     Returns:
         Patched model
@@ -121,6 +123,7 @@ def patch_gpt2_with_rmlp(
         print("  - Strong weight tying enabled (up_low ↔ attn.c_proj)")
     print(f"  - Attention injection enabled (α_init={attn_scale_init})")
     print(f"  - Learned geometric gates: w_std, w_rec")
+    print(f"  - Reciprocal skip gate init: {skip_rec_init}")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
@@ -135,6 +138,7 @@ def patch_gpt2_with_rmlp(
             dropout=dropout,
             attn_scale_init=attn_scale_init,
             tie_to_attn_proj=tie_to_attn_proj,
+            skip_rec_init=skip_rec_init,
         )
 
         # Move to same device as original module
@@ -180,6 +184,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
     attn_scale_init=1.0,
     tie_to_attn_proj=False,
     per_head_gates=False,
+    skip_rec_init=-3.0,
 ):
     """
     Replace both attention and MLP modules in GPT-2 with RA + R-MLP.
@@ -195,6 +200,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         attn_scale_init: Initial attention mixing scale α
         tie_to_attn_proj: Tie up_low weights to attention c_proj
         per_head_gates: Use per-head gates for RA (default False=per-layer)
+        skip_rec_init: Initial value for the R-MLP reciprocal skip gate logit.
 
     Returns:
         Patched model
@@ -216,6 +222,7 @@ def patch_gpt2_with_unified_ra_and_rmlp(
         dropout=mlp_dropout,
         attn_scale_init=attn_scale_init,
         tie_to_attn_proj=tie_to_attn_proj,
+        skip_rec_init=skip_rec_init,
     )
 
     return model
