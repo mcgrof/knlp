@@ -182,9 +182,9 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
-        elif step == "V2":
+        elif step == "M4":
             # R-MLP medium-large + explicit weight tying (up_low ↔ attn.c_proj)
-            # Direct A/B test with V5: same R_ff, but WITH weight tying
+            # Direct A/B test with M1/M5: same R_ff, but WITH weight tying
             # R_ff=768 is max for weight tying (n_embd constraint)
             # Geometric init: w_std=0.750, w_rec=0.250
             args.use_ra_v5 = False
