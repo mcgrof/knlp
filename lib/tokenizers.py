@@ -18,6 +18,7 @@ import pickle
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.decomposition import IncrementalPCA
 
 
 class PCAImageTokenizer:
@@ -46,6 +47,7 @@ class PCAImageTokenizer:
         """
         self.n_components = n_components
         self.whiten = whiten
+        self._ipca = IncrementalPCA(n_components=n_components, whiten=whiten)
         self.mean_ = None
         self.components_ = None
         self.explained_variance_ = None
@@ -96,6 +98,41 @@ class PCAImageTokenizer:
             self.components_ /= np.sqrt(self.explained_variance_[:, np.newaxis])
 
         self.fitted = True
+        return self
+
+    def partial_fit(self, images: np.ndarray) -> "PCAImageTokenizer":
+        """
+        Incrementally fit PCA on a batch of images.
+
+        Use this for memory-efficient fitting on large datasets.
+        Call multiple times with different batches.
+
+        Args:
+            images: Batch of images, shape [N, H, W] or [N, C, H, W]
+
+        Returns:
+            self (for chaining)
+        """
+        # Flatten images to 2D
+        if images.ndim == 4:  # [N, C, H, W]
+            N, C, H, W = images.shape
+            flat_images = images.reshape(N, C * H * W)
+        elif images.ndim == 3:  # [N, H, W]
+            N, H, W = images.shape
+            flat_images = images.reshape(N, H * W)
+        else:
+            flat_images = images
+
+        # Fit incrementally using sklearn
+        self._ipca.partial_fit(flat_images)
+
+        # Update our attributes to match sklearn's state
+        self.mean_ = self._ipca.mean_
+        self.components_ = self._ipca.components_
+        self.explained_variance_ = self._ipca.explained_variance_
+        self.explained_variance_ratio_ = self._ipca.explained_variance_ratio_
+        self.fitted = True
+
         return self
 
     def transform(self, images: np.ndarray) -> np.ndarray:
