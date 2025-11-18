@@ -325,6 +325,7 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_R_ff = 1152
             args.rmlp_attn_scale_init = 1.0
             args.rmlp_tie_to_attn_proj = False
+            args.rmlp_skip_rec_init = -3.0
             # Skip gates are built into R-MLP now (always present)
         elif step == "M2":
             # RA + R-MLP (both with learned skip gates)
@@ -349,6 +350,14 @@ class RATrainer(BaseGPT2Trainer):
             args.kv_prune_learned = True
             args.kv_prune_init_ratio = 0.382
             args.kv_prune_recency = 64
+        elif step == "M5":
+            # R-MLP with learned skip gates and less conservative init
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            args.rmlp_skip_rec_init = -1.5
         elif step == "V19":
             # V-only pruning baseline (391 tokens, golden ratio)
             # Keep K full, prune V to 38.2% for memory reduction
@@ -441,6 +450,7 @@ class RATrainer(BaseGPT2Trainer):
                 attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
                 tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
                 per_head_gates=getattr(self.args, "ra_v5_per_head_gates", True),
+                skip_rec_init=getattr(self.args, "rmlp_skip_rec_init", -3.0),
             )
         elif getattr(self.args, "use_ra_v5", False):
             # RA only
@@ -488,6 +498,7 @@ class RATrainer(BaseGPT2Trainer):
                 dropout=self.args.dropout,
                 attn_scale_init=getattr(self.args, "rmlp_attn_scale_init", 1.0),
                 tie_to_attn_proj=getattr(self.args, "rmlp_tie_to_attn_proj", False),
+                skip_rec_init=getattr(self.args, "rmlp_skip_rec_init", -3.0),
             )
         elif getattr(self.args, "kv_cache_prune", False):
             # Standalone KV pruning (V19) or with KVSplice compression (C1-C3)
