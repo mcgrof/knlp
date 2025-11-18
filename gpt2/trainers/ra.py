@@ -358,6 +358,14 @@ class RATrainer(BaseGPT2Trainer):
             args.rmlp_attn_scale_init = 1.0
             args.rmlp_tie_to_attn_proj = False
             args.rmlp_skip_rec_init = -1.5
+        elif step == "M6":
+            # R-MLP with an aggressive skip gate init (faster reciprocal turn-on)
+            args.use_ra_v5 = False
+            args.use_rmlp = True
+            args.rmlp_R_ff = 1152
+            args.rmlp_attn_scale_init = 1.0
+            args.rmlp_tie_to_attn_proj = False
+            args.rmlp_skip_rec_init = -0.5
         elif step == "V19":
             # V-only pruning baseline (391 tokens, golden ratio)
             # Keep K full, prune V to 38.2% for memory reduction
