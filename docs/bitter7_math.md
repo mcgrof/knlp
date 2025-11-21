@@ -104,8 +104,8 @@ Bitter 7 offers a loss-conscious, variance-sensitive criterion that turns near-c
 
 [^2]: Uranik Berisha, Jens Mehnert, and Alexandru Paul Condurache. 2025. *Variance-Based Pruning for Accelerating and Compressing Trained Networks*. arXiv:2507.12988. https://arxiv.org/pdf/2507.12988
 
-[^3]: Victor Sanh, Thomas Wolf, and Alexander M. Rush. 2020. *Movement Pruning: Adaptive Sparsity by Fine-Tuning*. NeurIPS.
+[^3]: Victor Sanh, Thomas Wolf, and Alexander M. Rush. 2020. *Movement Pruning: Adaptive Sparsity by Fine-Tuning*. NeurIPS. https://arxiv.org/abs/2005.07683
 
-[^4]: Daniel Blalock, Jose Javier Gonzalez Ortiz, Jonathan Frankle, and John Guttag. 2020. *What Is the State of Neural Network Pruning?* arXiv:2003.03033.
+[^4]: Daniel Blalock, Jose Javier Gonzalez Ortiz, Jonathan Frankle, and John Guttag. 2020. *What Is the State of Neural Network Pruning?* arXiv:2003.03033. https://arxiv.org/abs/2003.03033
 
-[^5]: Trevor Gale, Erich Elsen, and Sara Hooker. 2019. *The State of Sparsity in Deep Neural Networks*. arXiv:1902.09574.
+[^5]: Trevor Gale, Erich Elsen, and Sara Hooker. 2019. *The State of Sparsity in Deep Neural Networks*. arXiv:1902.09574. https://arxiv.org/abs/1902.09574
