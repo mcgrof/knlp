@@ -82,6 +82,16 @@ End-to-end GPT-2 experiments (124M parameters on FineWebEdu) using four NVIDIA B
 
 ---
 
+## 6. Related Research and Contribution
+
+**ExCP (Li et al., 2024)** compresses checkpoints by shrinking weights and their momentum buffers jointly [^1](https://arxiv.org/pdf/2406.11257). The optimizer statistics guide how aggressively tensors are quantized, but the method does not prune neurons or channels, does not rely on activation variance, and performs no bias compensation. Bitter 7 instead treats Adam statistics as a way to measure long-term activity, removes whole structured units detected as low variance, and explicitly folds their mean contribution into downstream biases to maintain function.
+
+**Variance-Based Pruning (Berisha et al., 2025)** evaluates heuristics that rank units by activation variance inside CNNs [^2](https://arxiv.org/pdf/2507.12988). While this is philosophically close, the work focuses on unstructured pruning, omits bias injection, and stops at empirical heuristics rather than defining an end-to-end procedure for transformer-scale models. Bitter 7 builds on the same variance intuition but extends it with (1) calibration-aware structured pruning, (2) bias compensation for functional equivalence, and (3) LLM-scale evidence via the GPT-2 experiments referenced above.
+
+Taken together, these papers show optimizer-aware compression and variance-aware scoring are active research areas, yet neither introduces the specific combination that defines Bitter 7. The contribution here is the practical recipe—calibration pass, low-variance detection using Adam beta2 statistics, bias compensation, and structured pruning—validated on large transformer workloads.
+
+---
+
 ## Conclusion
 
 Bitter 7 offers a loss-conscious, variance-sensitive criterion that turns near-constant neurons into explicit bias updates, preserving the network's mean response even at high sparsity. Compared with movement and magnitude pruning it trades extra calibration data for stronger functional guarantees and structured pruning support. Practitioners can mix and match it with gradient-driven or purely magnitude-based heuristics depending on how much data, time, and interpretability they need during compression.
@@ -90,9 +100,9 @@ Bitter 7 offers a loss-conscious, variance-sensitive criterion that turns near-c
 
 ## References
 
-[^1]: Wenshuo Li, Xinghao Chen, Han Shu, Yehui Tang, and Yunhe Wang. 2024. *ExCP: Extreme LLM Checkpoint Compression via Weight-Momentum Joint Shrinking*. arXiv:2406.11257.
+[^1]: Wenshuo Li, Xinghao Chen, Han Shu, Yehui Tang, and Yunhe Wang. 2024. *ExCP: Extreme LLM Checkpoint Compression via Weight-Momentum Joint Shrinking*. arXiv:2406.11257. https://arxiv.org/pdf/2406.11257
 
-[^2]: Uranik Berisha, Jens Mehnert, and Alexandru Paul Condurache. 2025. *Variance-Based Pruning for Accelerating and Compressing Trained Networks*. arXiv:2507.12988.
+[^2]: Uranik Berisha, Jens Mehnert, and Alexandru Paul Condurache. 2025. *Variance-Based Pruning for Accelerating and Compressing Trained Networks*. arXiv:2507.12988. https://arxiv.org/pdf/2507.12988
 
 [^3]: Victor Sanh, Thomas Wolf, and Alexander M. Rush. 2020. *Movement Pruning: Adaptive Sparsity by Fine-Tuning*. NeurIPS.
 
