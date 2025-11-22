@@ -351,6 +351,10 @@ def main():
         if lm_eval_limit and int(lm_eval_limit) > 0:
             args.lm_eval_limit = int(lm_eval_limit)
 
+        # Load ablation configuration
+        if config.get("RA_ABLATION_STEPS"):
+            args.ablation_steps = config.get("RA_ABLATION_STEPS")
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 

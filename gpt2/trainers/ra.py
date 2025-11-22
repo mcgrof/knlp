@@ -262,23 +262,9 @@ class RATrainer(VanillaGPT2Trainer):
         self.ablation_step = ablation_step or getattr(args, "ra_step", "0")
         self._configure_step(args, self.ablation_step)
 
+        # Parent class (VanillaGPT2Trainer) handles model, optimizer, and mixed precision
+        # via polymorphism - self.create_model() resolves to RATrainer.create_model()
         super().__init__(args, config)
-
-        # Initialize model
-        self.model = self.create_model()
-        self.raw_model = self.model.module if self.ddp else self.model
-
-        # Initialize optimizer
-        (
-            self.optimizer,
-            self.scheduler,
-            self.gradient_clip_norm,
-            self.spam_state,
-            self.adamwprune_state,
-        ) = self.create_optimizer()
-
-        # Setup mixed precision
-        self.setup_mixed_precision()
 
         # Track phase transition
         self.transitioned = False
