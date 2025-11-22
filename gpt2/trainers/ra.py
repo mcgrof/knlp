@@ -615,12 +615,8 @@ class RATrainer(VanillaGPT2Trainer):
         with torch.no_grad():
             gen_input = gen[:, :-1]
             gen_target = gen[:, 1:]
-            logits, _ = model(gen_input)
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                gen_target.view(-1),
-                reduction="mean",
-            )
+            # Pass targets to get full sequence logits (not just last token)
+            logits, loss = model(gen_input, gen_target)
             self_ppl = math.exp(min(loss.item(), 20))
 
         print(f"Self-perplexity: {self_ppl:.2f}")
