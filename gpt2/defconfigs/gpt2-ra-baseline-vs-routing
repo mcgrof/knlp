@@ -87,6 +87,8 @@ CONFIG_RA_ABLATION_STEPS="0,1"
 CONFIG_INFERENCE_BENCHMARK=y
 CONFIG_RUN_LM_EVAL=y
 CONFIG_LM_EVAL_TASKS="hellaswag"
+# Limit samples for quick testing (0 = all)
+CONFIG_LM_EVAL_LIMIT=100
 
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
