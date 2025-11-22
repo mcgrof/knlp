@@ -349,18 +349,35 @@ class RAAttention(nn.Module):
         self,
         x: torch.Tensor,
         need_weights: bool = False,
+        compute_full: bool = True,
+        compute_ra: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
             x: [B, T, D] input
             need_weights: return attention probs for analysis
+            compute_full: whether to compute FULL head group output
+            compute_ra: whether to compute RA head group output
 
         Returns:
-            out_full: [B, T, D] output from FULL head group
-            out_ra:   [B, T, D] output from RA head group
+            out_full: [B, T, D] output from FULL head group (or None)
+            out_ra:   [B, T, D] output from RA head group (or None)
             attn_probs: [B, H, T, T] if need_weights else None
         """
         B, T, D = x.shape
+
+        # Determine which heads to compute
+        if compute_full and compute_ra:
+            head_slice = slice(0, self.n_heads)
+            n_compute = self.n_heads
+        elif compute_full:
+            head_slice = self.full_slice
+            n_compute = self.n_full
+        elif compute_ra:
+            head_slice = self.ra_slice
+            n_compute = self.n_ra
+        else:
+            raise ValueError("Must compute at least one head group")
 
         # QKV projection
         qkv = self.c_attn(x)
@@ -373,6 +390,12 @@ class RAAttention(nn.Module):
         q = to_heads(q)
         k = to_heads(k)
         v = to_heads(v)
+
+        # Select only needed heads for computation
+        if not (compute_full and compute_ra):
+            q = q[:, head_slice, :, :]
+            k = k[:, head_slice, :, :]
+            v = v[:, head_slice, :, :]
 
         # Use SDPA for efficient attention
         if need_weights:
@@ -397,16 +420,30 @@ class RAAttention(nn.Module):
             )
             attn_probs = None
 
-        # Split head groups
-        full_heads = out[:, self.full_slice, :, :]  # [B, n_full, T, head_dim]
-        ra_heads = out[:, self.ra_slice, :, :]  # [B, n_ra, T, head_dim]
+        # Process outputs based on what was computed
+        out_full = None
+        out_ra = None
 
-        # Merge and project
-        full_merged = full_heads.transpose(1, 2).contiguous().view(B, T, self.d_full)
-        ra_merged = ra_heads.transpose(1, 2).contiguous().view(B, T, self.d_ra)
+        if compute_full and compute_ra:
+            # Both computed - split head groups
+            full_heads = out[:, self.full_slice, :, :]
+            ra_heads = out[:, self.ra_slice, :, :]
 
-        out_full = self.c_proj_full(full_merged)
-        out_ra = self.c_proj_ra(ra_merged)
+            full_merged = (
+                full_heads.transpose(1, 2).contiguous().view(B, T, self.d_full)
+            )
+            ra_merged = ra_heads.transpose(1, 2).contiguous().view(B, T, self.d_ra)
+
+            out_full = self.c_proj_full(full_merged)
+            out_ra = self.c_proj_ra(ra_merged)
+        elif compute_full:
+            # Only FULL heads computed
+            full_merged = out.transpose(1, 2).contiguous().view(B, T, self.d_full)
+            out_full = self.c_proj_full(full_merged)
+        elif compute_ra:
+            # Only RA heads computed
+            ra_merged = out.transpose(1, 2).contiguous().view(B, T, self.d_ra)
+            out_ra = self.c_proj_ra(ra_merged)
 
         if need_weights:
             return out_full, out_ra, attn_probs
