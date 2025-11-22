@@ -1120,6 +1120,7 @@ def run_single_test(
     cmd.append("--")
 
     # Add configuration arguments that train.py actually accepts
+    cmd.extend(["--output-dir", test_output_dir])
     cmd.extend(["--optimizer", optimizer])
 
     # Add GPT2 dataset configuration if applicable
