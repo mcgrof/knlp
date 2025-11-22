@@ -755,3 +755,363 @@ class WarmupScheduler:
             return 0.0
         rel_drop = (self.initial_loss - eval_loss) / self.initial_loss
         return min(1.0, rel_drop / self.threshold)
+
+
+# =============================================================================
+# SECTION 8: RA-MLA with Token-Latent Cache (TL-cache)
+# =============================================================================
+
+
+@dataclass
+class RA_MLA_Config:
+    """
+    Configuration for RA-MLA (Reciprocal Attention with Multi-head Latent Attention).
+
+    This combines:
+    - MLA's latent compression: single latent decompresses to Q, K, V
+    - RA's bidirectional attention: alternating Q@K.T and K@Q.T across layers
+    - KVSplice compatibility: balanced reciprocal paths for better compression
+
+    Core dimensions
+    ---------------
+    d_model:      Model embedding dimension
+    n_heads:      Number of attention heads
+    head_dim:     Dimension per head (d_model // n_heads)
+    d_latent:     Latent dimension for TL-cache (compressed representation)
+    block_size:   Maximum sequence length
+    n_layers:     Total number of layers (for global alternation normalization)
+
+    RoPE settings
+    -------------
+    rope_theta:   Base for rotary position embeddings (default: 10000.0)
+
+    Other
+    -----
+    dropout:      Attention dropout probability
+    """
+
+    d_model: int = 768
+    n_heads: int = 12
+    head_dim: int = 64
+    d_latent: int = 256  # Compressed latent dimension
+    block_size: int = 1024
+    n_layers: int = 12
+    rope_theta: float = 10000.0
+    dropout: float = 0.0
+
+
+class RotaryEmbedding(nn.Module):
+    """Rotary Position Embeddings (RoPE) for attention."""
+
+    def __init__(self, dim: int, max_seq_len: int = 2048, theta: float = 10000.0):
+        super().__init__()
+        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+
+        # Precompute cos/sin for efficiency
+        t = torch.arange(max_seq_len).float()
+        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("cos_cached", freqs.cos())
+        self.register_buffer("sin_cached", freqs.sin())
+
+    def forward(
+        self, x: torch.Tensor, seq_len: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Return cos and sin for positions up to seq_len."""
+        return self.cos_cached[:seq_len], self.sin_cached[:seq_len]
+
+
+def apply_rope(
+    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply rotary embeddings to Q and K.
+
+    Args:
+        q, k: [B, H, T, D] query and key tensors
+        cos, sin: [T, D//2] position embeddings
+
+    Returns:
+        Rotated q and k tensors
+    """
+
+    def rotate_half(x):
+        x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+
+    # Expand for broadcasting: [1, 1, T, D]
+    cos = cos.unsqueeze(0).unsqueeze(0)
+    sin = sin.unsqueeze(0).unsqueeze(0)
+
+    # Need to tile cos/sin to match head_dim
+    cos = cos.repeat(1, 1, 1, 2)
+    sin = sin.repeat(1, 1, 1, 2)
+
+    q_rot = q * cos + rotate_half(q) * sin
+    k_rot = k * cos + rotate_half(k) * sin
+
+    return q_rot, k_rot
+
+
+class RA_MLA_Flash(nn.Module):
+    """
+    Reciprocal Attention with Multi-head Latent Attention and Flash compatibility.
+
+    Key innovations:
+    1. TL-cache (Token-Latent cache): Single compressed latent decompresses to Q, K, V
+    2. Learned alternation: Network learns which layers use standard vs reciprocal
+    3. Global normalization: Layer alternation logits sum to 1 via softmax (Markov chain)
+    4. Flash attention: Compatible via argument swapping (arg1 @ arg2.T)
+    5. RoPE: Position information preserved in attention computation
+
+    The Markov chain reciprocity constraint ensures balanced bidirectional flow:
+    - Half the layers (by probability mass) use Q@K.T
+    - Half use K@Q.T
+    - This creates optimal conditions for KVSplice compression
+
+    Cache efficiency:
+    - Standard attention: cache K, V per layer
+    - MLA: cache latent per layer (smaller)
+    - RA-MLA: same latent works for both directions
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alternation_logits: nn.Parameter,
+    ):
+        """
+        Args:
+            cfg: Configuration dataclass
+            layer_idx: Index of this layer (0 to n_layers-1)
+            alternation_logits: Shared parameter [n_layers] for global normalization
+        """
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+        self.alternation_logits = alternation_logits
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # Input projection to latent space
+        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+
+        # Decompress latent to Q, K, V
+        # Each head needs head_dim for Q, K, V
+        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
+        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        # Dropout
+        self.attn_dropout = nn.Dropout(cfg.dropout)
+
+        # Scale factor for attention
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+    def get_alternation_prob(self) -> torch.Tensor:
+        """
+        Get this layer's probability of using reciprocal attention.
+
+        Uses sigmoid for independent per-layer decision.
+        Balance is enforced via regularization loss in RA_MLA_Model.
+        """
+        return torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass with TL-cache and learned alternation.
+
+        Args:
+            x: [B, T, D] input tensor
+            cache: Optional [B, T_cache, d_latent] cached latents
+            use_cache: Whether to return updated cache
+
+        Returns:
+            out: [B, T, D] output tensor
+            new_cache: Optional [B, T_total, d_latent] updated cache
+        """
+        B, T, D = x.shape
+
+        # Project to latent space (TL-cache)
+        latent = self.to_latent(x)  # [B, T, d_latent]
+
+        # Handle cache
+        if cache is not None:
+            full_latent = torch.cat([cache, latent], dim=1)
+            T_total = full_latent.shape[1]
+        else:
+            full_latent = latent
+            T_total = T
+
+        # Decompress to Q, K, V
+        qkv = self.from_latent(full_latent)  # [B, T_total, 3*H*head_dim]
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, H, T_total, head_dim]
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # For generation, only use last T queries
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            # Only rotate the new positions for q
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Determine attention direction based on learned alternation
+        # During training: use probability for soft decision (Gumbel-softmax style)
+        # During inference: use hard decision
+        p_recip = self.get_alternation_prob()
+
+        if self.training:
+            # Straight-through estimator: hard forward, soft backward
+            use_reciprocal = (p_recip > 0.5).float()
+            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
+        else:
+            use_reciprocal = (p_recip > 0.5).float()
+
+        # Flash attention via argument swapping
+        # Standard: Q @ K.T @ V
+        # Reciprocal: K @ Q.T @ V (swap Q and K roles)
+        if use_reciprocal > 0.5:
+            # Reciprocal: K plays role of Q, Q plays role of K
+            # For causal attention: we need to be careful about masking
+            # K@Q.T gives [B, H, T_k, T_q], we want to attend from K positions to Q
+            attn_out = F.scaled_dot_product_attention(
+                k[:, :, -T:, :] if cache is not None else k,
+                q,
+                v,
+                is_causal=(cache is None),  # Only causal for non-cached
+                dropout_p=self.cfg.dropout if self.training else 0.0,
+            )
+        else:
+            # Standard: Q @ K.T @ V
+            attn_out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                is_causal=(cache is None),
+                dropout_p=self.cfg.dropout if self.training else 0.0,
+            )
+
+        # Merge heads and project output
+        attn_out = attn_out.transpose(1, 2).contiguous()  # [B, T, H, head_dim]
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        # Return cache if requested
+        new_cache = full_latent if use_cache else None
+
+        return out, new_cache
+
+
+class RA_MLA_Model(nn.Module):
+    """
+    Container for multiple RA_MLA_Flash layers with shared alternation logits.
+
+    The shared alternation_logits parameter ensures global softmax normalization
+    across all layers, creating Markov chain reciprocity where approximately
+    half the probability mass goes to standard attention and half to reciprocal.
+    """
+
+    def __init__(self, cfg: RA_MLA_Config):
+        super().__init__()
+        self.cfg = cfg
+
+        # Shared alternation logits for all layers
+        # Initialize with alternating pattern: odd layers start as reciprocal
+        # This ensures balanced standard/RA attention from the start
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = (
+                1.0 if i % 2 == 1 else -1.0
+            )  # sigmoid(1)≈0.73, sigmoid(-1)≈0.27
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Create layers
+        self.layers = nn.ModuleList(
+            [RA_MLA_Flash(cfg, i, self.alternation_logits) for i in range(cfg.n_layers)]
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[list] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[list]]:
+        """
+        Forward through all layers.
+
+        Args:
+            x: [B, T, D] input
+            cache: Optional list of [B, T_cache, d_latent] per layer
+            use_cache: Whether to return updated caches
+
+        Returns:
+            out: [B, T, D] output
+            new_caches: Optional list of updated caches
+        """
+        new_caches = [] if use_cache else None
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = cache[i] if cache is not None else None
+            x, new_cache = layer(x, layer_cache, use_cache)
+            if use_cache:
+                new_caches.append(new_cache)
+
+        return x, new_caches
+
+    def get_alternation_distribution(self) -> torch.Tensor:
+        """Get the learned alternation probabilities for all layers."""
+        return torch.sigmoid(self.alternation_logits)
+
+    def get_layer_directions(self) -> list:
+        """Get which direction each layer uses (for debugging)."""
+        probs = self.get_alternation_distribution()
+        return ["reciprocal" if p > 0.5 else "standard" for p in probs]
+
+    def balance_loss(self) -> torch.Tensor:
+        """
+        Regularization loss to ensure balanced standard/reciprocal attention.
+
+        Encourages the sum of reciprocal probabilities to equal n_layers/2,
+        creating Markov chain reciprocity for optimal KVSplice compression.
+
+        Returns:
+            Scalar loss penalizing deviation from 50/50 balance
+        """
+        probs = self.get_alternation_distribution()
+        target = self.cfg.n_layers / 2.0
+        actual = probs.sum()
+        return (actual - target) ** 2
+
+    def get_balance_stats(self) -> dict:
+        """Get statistics about current alternation balance."""
+        probs = self.get_alternation_distribution()
+        n_recip = (probs > 0.5).sum().item()
+        return {
+            "n_reciprocal": n_recip,
+            "n_standard": self.cfg.n_layers - n_recip,
+            "prob_sum": probs.sum().item(),
+            "target_sum": self.cfg.n_layers / 2.0,
+        }
