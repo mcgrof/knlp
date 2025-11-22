@@ -426,6 +426,67 @@ def benchmark_head_groups(
     return all_mean, ra_mean
 
 
+def benchmark_ra_head_frac(
+    device, batch_size=8, seq_len=1024, n_embd=768, n_heads=12, n_iters=100
+):
+    """Benchmark different ra_head_frac values to find optimal split."""
+    print(f"\n{'='*60}")
+    print("RA_HEAD_FRAC COMPARISON")
+    print(f"  batch={batch_size}, seq={seq_len}, d={n_embd}, heads={n_heads}")
+    print(f"  iterations={n_iters}")
+    print(f"{'='*60}")
+
+    fracs = [0.25, 0.33, 0.5]
+    results = {}
+
+    for frac in fracs:
+        n_ra = max(1, int(round(frac * n_heads)))
+        n_ra = min(n_ra, n_heads - 1)
+        n_full = n_heads - n_ra
+
+        ra_config = RAConfig(
+            d_model=n_embd,
+            n_heads=n_heads,
+            block_size=seq_len,
+            ra_head_frac=frac,
+        )
+
+        block = RABlock(ra_config, layer_idx=0).to(device).eval()
+        block.phase1 = False  # Enable routing
+
+        x = torch.randn(batch_size, seq_len, n_embd, device=device)
+        e_tok = torch.randn(batch_size, seq_len, n_embd, device=device)
+
+        # Warmup
+        for _ in range(5):
+            with torch.no_grad():
+                _ = block(x, e_tok=e_tok)
+
+        # Benchmark
+        times = []
+        for _ in range(n_iters):
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            start = time.perf_counter()
+            with torch.no_grad():
+                _ = block(x, e_tok=e_tok)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            times.append((time.perf_counter() - start) * 1000)
+
+        mean_time = sum(times) / len(times)
+        results[frac] = mean_time
+
+        print(f"\nra_head_frac={frac} ({n_full} FULL + {n_ra} RA):")
+        print(f"  Mean: {mean_time:.2f} ms")
+
+    # Summary
+    best_frac = min(results, key=results.get)
+    print(f"\nBest: ra_head_frac={best_frac} at {results[best_frac]:.2f} ms")
+
+    return results
+
+
 def benchmark_memory(device, batch_size=8, seq_len=1024, n_embd=768, n_heads=12):
     """Benchmark memory usage."""
     if not torch.cuda.is_available():
@@ -496,6 +557,10 @@ def main():
     )
 
     benchmark_head_groups(
+        device, args.batch_size, args.seq_len, args.n_embd, args.n_heads, args.n_iters
+    )
+
+    benchmark_ra_head_frac(
         device, args.batch_size, args.seq_len, args.n_embd, args.n_heads, args.n_iters
     )
 
