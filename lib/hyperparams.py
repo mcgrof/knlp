@@ -213,7 +213,6 @@ def auto_detect_compile(config, verbose=True):
 
     # Blacklist: GPUs with known torch.compile issues
     blacklist = [
-        "W7900",  # AMD: ROCm torch.compile crashes/OOMs
         "MI210",  # AMD: ROCm torch.compile instability
     ]
 
