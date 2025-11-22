@@ -310,8 +310,13 @@ class BaseGPT2Trainer:
                 X, Y = self.get_batch(split)
                 with self.ctx:
                     logits, loss = self.model(X, Y)
-                losses[k] = loss.item()
-            out[split] = losses.mean()
+                loss_val = loss.item()
+                if math.isnan(loss_val):
+                    print(f"Warning: NaN loss in {split} eval sample {k}")
+                    print(f"  X shape: {X.shape}, Y shape: {Y.shape}")
+                    print(f"  X range: [{X.min()}, {X.max()}]")
+                losses[k] = loss_val
+            out[split] = losses.mean().item()
         self.model.train()
         return out
 
