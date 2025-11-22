@@ -713,9 +713,12 @@ def get_test_matrix(config):
     # Check both RA_ABLATION_MODE (new) and RA_MLA_ABLATION_MODE (legacy)
     ablation_mode = config.get("RA_ABLATION_MODE") or config.get("RA_MLA_ABLATION_MODE")
     if ablation_mode == "y" or ablation_mode is True:
-        # First check for RA_ABLATION_STEPS (new), then RA_MLA_ABLATION_STEPS (legacy)
-        ablation_steps_str = config.get("RA_ABLATION_STEPS") or config.get(
-            "RA_MLA_ABLATION_STEPS", ""
+        # First check env var override, then config
+        # Allows: RA_ABLATION_STEPS=1 make  (to test just RA with routing)
+        ablation_steps_str = (
+            os.environ.get("RA_ABLATION_STEPS")
+            or config.get("RA_ABLATION_STEPS")
+            or config.get("RA_MLA_ABLATION_STEPS", "")
         )
         if isinstance(ablation_steps_str, str):
             ablation_steps_str = ablation_steps_str.strip('"')
@@ -1156,7 +1159,12 @@ def run_single_test(
         if max_iters:
             cmd.extend(["--max-iters", str(max_iters)])
         # Support MAX_TIME from environment or config (time-based training in seconds)
-        max_time = os.environ.get("GPT2_MAX_TIME") or config.get("GPT2_MAX_TIME")
+        # TIME is simpler alias for GPT2_MAX_TIME
+        max_time = (
+            os.environ.get("TIME")
+            or os.environ.get("GPT2_MAX_TIME")
+            or config.get("GPT2_MAX_TIME")
+        )
         if max_time and int(max_time) > 0:
             cmd.extend(["--max-time", str(max_time)])
         if config.get("GPT2_DECAY_LR") == "y":
@@ -1233,6 +1241,21 @@ def run_single_test(
     if ra_mla_ablation_step:
         cmd.extend(["--architecture", "unified-ra"])
         cmd.extend(["--ra-step", ra_mla_ablation_step])
+
+        # Check for skip RA warmup (env var or config)
+        skip_ra_warmup = os.environ.get("SKIP_RA_WARMUP") or config.get(
+            "SKIP_RA_WARMUP"
+        )
+        if skip_ra_warmup in ("1", "y", True):
+            cmd.append("--skip-ra-warmup")
+
+        # Check for lm-eval benchmarks
+        run_lm_eval = config.get("RUN_LM_EVAL")
+        if run_lm_eval in ("y", True):
+            cmd.append("--run-lm-eval")
+            lm_eval_tasks = config.get("LM_EVAL_TASKS", "hellaswag")
+            if lm_eval_tasks:
+                cmd.extend(["--lm-eval-tasks", str(lm_eval_tasks)])
 
     # Note: batch size is configured via config.py, not command line arguments
 
@@ -2510,10 +2533,10 @@ def main():
                     # Lens-gated architecture step descriptions (8 steps: L0-L7)
                     # SinkGD optimizer ablation step descriptions (4 steps: S0-S3)
                     # RWR attention ablation step descriptions (4 steps: R0-R3)
-                    # RA ablation step descriptions (2 steps: V0-V1)
+                    # RA ablation step descriptions
                     step_descriptions = {
-                        "0": "Baseline GPT-2 (ratio 1:2.0, standard attention)",
-                        "1": "Baseline + SPAM pruning 50%",
+                        "0": "Baseline GPT-2 (standard attention)",
+                        "1": "RA with 2-way routing (cheap vs expensive)",
                         "2": "Golden ratio 1:2.5 via MLP resize",
                         "3": "Step 2 + MLP gating 15%",
                         "4": "Step 3 + cross-token 10%",
