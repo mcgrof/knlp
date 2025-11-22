@@ -2529,14 +2529,14 @@ def main():
             ablation_step = combo.get("ra_mla_ablation_step")
             if combo["pruning"] == "none":
                 if ablation_step is not None:
-                    # Detailed RATIO ablation step descriptions (19 steps)
+                    # RA ablation step descriptions (2-way routing)
+                    # Legacy RATIO ablation step descriptions (steps 2-19)
                     # Lens-gated architecture step descriptions (8 steps: L0-L7)
                     # SinkGD optimizer ablation step descriptions (4 steps: S0-S3)
                     # RWR attention ablation step descriptions (4 steps: R0-R3)
-                    # RA ablation step descriptions
                     step_descriptions = {
-                        "0": "Baseline GPT-2 (standard attention)",
-                        "1": "RA with 2-way routing (cheap vs expensive)",
+                        "0": "Baseline (all FULL attention, no routing)",
+                        "1": "RA routing (router decides RA vs FULL per token)",
                         "2": "Golden ratio 1:2.5 via MLP resize",
                         "3": "Step 2 + MLP gating 15%",
                         "4": "Step 3 + cross-token 10%",
@@ -2597,7 +2597,7 @@ def main():
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
                     )
-                    test_desc = f"  - {variant_str}RATIO ablation step {ablation_step} - {step_desc}"
+                    test_desc = f"  - {variant_str}RA ablation step {ablation_step} - {step_desc}"
                 else:
                     tokenizer_method = combo.get("tokenizer_method", "none")
                     tokenizer_suffix = (
