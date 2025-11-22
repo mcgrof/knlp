@@ -34,8 +34,12 @@ class AblationCoordinator:
         self.steps = steps
         self.results = {}
 
-        # Step descriptions (V-series)
+        # Step descriptions (V-series and numeric for new RA router)
         self.step_descriptions = {
+            # New RA router steps
+            "0": "Baseline GPT-2 (standard attention)",
+            "1": "RA with 2-way routing (cheap vs expensive)",
+            # Legacy V-series
             "V0": "Baseline GPT-2 (standard SDPA)",
             "V1": "RA (R=4, folded layout)",
             "V2": "RA + Self-Restart",

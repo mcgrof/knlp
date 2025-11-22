@@ -707,13 +707,16 @@ def get_test_matrix(config):
         adamwprune_variants if adamwprune_variants else ["bitter0"]
     )
 
-    # Check for RA_MLA ablation mode
+    # Check for RA ablation mode (new 2-way router) or RA_MLA ablation mode (legacy)
     ra_mla_ablation_steps = []
     # Handle both string "y" (from .config) and boolean True (from config.py)
-    ablation_mode = config.get("RA_MLA_ABLATION_MODE")
+    # Check both RA_ABLATION_MODE (new) and RA_MLA_ABLATION_MODE (legacy)
+    ablation_mode = config.get("RA_ABLATION_MODE") or config.get("RA_MLA_ABLATION_MODE")
     if ablation_mode == "y" or ablation_mode is True:
-        # Parse the ablation steps string (e.g., "0,1,2,3,4,5")
-        ablation_steps_str = config.get("RA_MLA_ABLATION_STEPS", "")
+        # First check for RA_ABLATION_STEPS (new), then RA_MLA_ABLATION_STEPS (legacy)
+        ablation_steps_str = config.get("RA_ABLATION_STEPS") or config.get(
+            "RA_MLA_ABLATION_STEPS", ""
+        )
         if isinstance(ablation_steps_str, str):
             ablation_steps_str = ablation_steps_str.strip('"')
         if ablation_steps_str:
