@@ -74,11 +74,15 @@ def benchmark_attention(
         n_layer=12,
         n_head=n_heads,
         n_embd=n_embd,
+        bias=False,  # Match RAAttention which uses bias=False
     )
 
     # Create models
     ra_attn = RAAttention(ra_config).to(device).eval()
     baseline_attn = CausalSelfAttention(gpt_config).to(device).eval()
+
+    # Debug: check if flash attention is enabled
+    print(f"\nBaseline flash={baseline_attn.flash}, k_eq_vt={baseline_attn.k_eq_vt}")
 
     # Input tensor
     x = torch.randn(batch_size, seq_len, n_embd, device=device)
@@ -243,13 +247,13 @@ def benchmark_full_block(
 
     # Inputs
     x = torch.randn(batch_size, seq_len, n_embd, device=device)
-    tok_emb = torch.randn(batch_size, seq_len, n_embd, device=device)
+    e_tok = torch.randn(batch_size, seq_len, n_embd, device=device)
 
     # Warmup
     print("\nWarmup...")
     for _ in range(10):
         with torch.no_grad():
-            _ = block(x, tok_emb=tok_emb)
+            _ = block(x, e_tok=e_tok)
 
     # Phase 1 (no routing)
     block.phase1 = True
@@ -260,7 +264,7 @@ def benchmark_full_block(
             torch.cuda.synchronize()
         start = time.perf_counter()
         with torch.no_grad():
-            _ = block(x, tok_emb=tok_emb)
+            _ = block(x, e_tok=e_tok)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         phase1_times.append((time.perf_counter() - start) * 1000)
@@ -280,7 +284,7 @@ def benchmark_full_block(
             torch.cuda.synchronize()
         start = time.perf_counter()
         with torch.no_grad():
-            _ = block(x, tok_emb=tok_emb)
+            _ = block(x, e_tok=e_tok)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         phase2_times.append((time.perf_counter() - start) * 1000)
@@ -295,6 +299,131 @@ def benchmark_full_block(
     print(f"\nRouting overhead (phase2 vs phase1): {overhead:+.1f}%")
 
     return phase1_mean, phase2_mean
+
+
+def benchmark_head_groups(
+    device, batch_size=8, seq_len=1024, n_embd=768, n_heads=12, n_iters=100
+):
+    """Benchmark FULL-only vs RA-only attention to show potential savings."""
+    print(f"\n{'='*60}")
+    print("HEAD GROUP BENCHMARK (potential savings)")
+    print(f"  batch={batch_size}, seq={seq_len}, d={n_embd}, heads={n_heads}")
+    print(f"  iterations={n_iters}")
+    print(f"{'='*60}")
+
+    # With ra_head_frac=0.25, we have 9 FULL + 3 RA heads
+    ra_head_frac = 0.25
+    n_ra = max(1, int(round(ra_head_frac * n_heads)))
+    n_ra = min(n_ra, n_heads - 1)
+    n_full = n_heads - n_ra
+
+    print(f"\n  Head split: {n_full} FULL + {n_ra} RA = {n_heads} total")
+
+    # Create configs for different head counts
+    # Simulate "RA-only" by creating attention with only n_ra heads
+    ra_only_config = RAConfig(
+        d_model=n_embd,
+        n_heads=n_ra,  # Only RA heads
+        block_size=seq_len,
+        ra_head_frac=1.0,  # All heads are "RA"
+    )
+
+    # Simulate "FULL-only" with n_full heads
+    full_only_config = RAConfig(
+        d_model=n_embd,
+        n_heads=n_full,  # Only FULL heads
+        block_size=seq_len,
+        ra_head_frac=0.0,  # All heads are "FULL"
+    )
+
+    # Standard config with all heads
+    all_heads_config = RAConfig(
+        d_model=n_embd,
+        n_heads=n_heads,
+        block_size=seq_len,
+        ra_head_frac=0.0,
+    )
+
+    # Create attention modules
+    # Note: We need to adjust d_model to match head count for fair comparison
+    # Actually, let's just measure projection cost difference
+
+    # Measure full SDPA with different head counts
+    head_dim = n_embd // n_heads
+
+    # Create baseline config for comparison
+    gpt_config_all = GPTConfig(
+        block_size=seq_len,
+        vocab_size=50257,
+        n_layer=12,
+        n_head=n_heads,
+        n_embd=n_embd,
+        bias=False,
+    )
+
+    # RA-only config (3 heads, same head_dim)
+    # To keep head_dim constant, we need d_model = n_ra * head_dim
+    d_ra_model = n_ra * head_dim
+    gpt_config_ra = GPTConfig(
+        block_size=seq_len,
+        vocab_size=50257,
+        n_layer=12,
+        n_head=n_ra,
+        n_embd=d_ra_model,
+        bias=False,
+    )
+
+    # Create attention modules
+    attn_all = CausalSelfAttention(gpt_config_all).to(device).eval()
+    attn_ra = CausalSelfAttention(gpt_config_ra).to(device).eval()
+
+    # Input tensors
+    x_all = torch.randn(batch_size, seq_len, n_embd, device=device)
+    x_ra = torch.randn(batch_size, seq_len, d_ra_model, device=device)
+
+    # Warmup
+    print("\nWarmup...")
+    for _ in range(10):
+        with torch.no_grad():
+            _ = attn_all(x_all)
+            _ = attn_ra(x_ra)
+
+    # Benchmark all heads attention
+    print(f"\nAll heads attention ({n_heads} heads, d={n_embd}):")
+    all_times = []
+    for _ in range(n_iters):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        start = time.perf_counter()
+        with torch.no_grad():
+            _ = attn_all(x_all)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        all_times.append((time.perf_counter() - start) * 1000)
+
+    all_mean = sum(all_times) / len(all_times)
+    print(f"  Mean: {all_mean:.3f} ms")
+
+    # Benchmark RA-only attention
+    print(f"\nRA-only attention ({n_ra} heads, d={d_ra_model}):")
+    ra_times = []
+    for _ in range(n_iters):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        start = time.perf_counter()
+        with torch.no_grad():
+            _ = attn_ra(x_ra)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        ra_times.append((time.perf_counter() - start) * 1000)
+
+    ra_mean = sum(ra_times) / len(ra_times)
+    savings_ra = (1 - ra_mean / all_mean) * 100
+    print(f"  Mean: {ra_mean:.3f} ms ({savings_ra:+.1f}% vs all)")
+
+    print(f"\nPotential savings when router chooses RA-only: {savings_ra:.1f}%")
+
+    return all_mean, ra_mean
 
 
 def benchmark_memory(device, batch_size=8, seq_len=1024, n_embd=768, n_heads=12):
@@ -321,11 +450,11 @@ def benchmark_memory(device, batch_size=8, seq_len=1024, n_embd=768, n_heads=12)
     # Create block and inputs
     block = RABlock(ra_config, layer_idx=0).to(device)
     x = torch.randn(batch_size, seq_len, n_embd, device=device, requires_grad=True)
-    tok_emb = torch.randn(batch_size, seq_len, n_embd, device=device)
+    e_tok = torch.randn(batch_size, seq_len, n_embd, device=device)
 
     # Forward + backward
     block.phase1 = False
-    out = block(x, tok_emb=tok_emb)
+    out = block(x, e_tok=e_tok)
     loss = out.sum()
     loss.backward()
 
@@ -363,6 +492,10 @@ def main():
     benchmark_router(device, args.batch_size, args.seq_len, args.n_embd, args.n_iters)
 
     benchmark_full_block(
+        device, args.batch_size, args.seq_len, args.n_embd, args.n_heads, args.n_iters
+    )
+
+    benchmark_head_groups(
         device, args.batch_size, args.seq_len, args.n_embd, args.n_heads, args.n_iters
     )
 
