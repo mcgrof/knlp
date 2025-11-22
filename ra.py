@@ -379,21 +379,28 @@ class RAAttention(nn.Module):
         k = to_heads(k)
         v = to_heads(v)
 
-        # Attention scores
-        scale = 1.0 / math.sqrt(self.head_dim)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-
-        # Apply causal mask
-        mask = self.causal_mask[:T, :T]
-        scores = scores.masked_fill(mask, float("-inf"))
-
-        # Softmax and dropout
-        attn_probs = F.softmax(scores, dim=-1)
-        if self.dropout_p > 0 and self.training:
-            attn_probs = F.dropout(attn_probs, p=self.dropout_p)
-
-        # Value aggregation
-        out = torch.matmul(attn_probs, v)  # [B, H, T, head_dim]
+        # Use SDPA for efficient attention
+        if need_weights:
+            # Manual path for attention weights (debugging only)
+            scale = 1.0 / math.sqrt(self.head_dim)
+            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+            mask = self.causal_mask[:T, :T]
+            scores = scores.masked_fill(mask, float("-inf"))
+            attn_probs = F.softmax(scores, dim=-1)
+            if self.dropout_p > 0 and self.training:
+                attn_probs = F.dropout(attn_probs, p=self.dropout_p)
+            out = torch.matmul(attn_probs, v)
+        else:
+            # Fast SDPA path
+            out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=self.dropout_p if self.training else 0.0,
+                is_causal=True,
+            )
+            attn_probs = None
 
         # Split head groups
         full_heads = out[:, self.full_slice, :, :]  # [B, n_full, T, head_dim]
