@@ -303,13 +303,17 @@ class BaseGPT2Trainer:
             Dictionary with 'train' and 'val' losses
         """
         out = {}
-        self.model.eval()
+        # Unwrap compiled model for eval (torch.compile can have issues in eval mode)
+        model = self.model
+        if hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+        model.eval()
         for split in ["train", "val"]:
             losses = torch.zeros(self.args.eval_samples)
             for k in range(self.args.eval_samples):
                 X, Y = self.get_batch(split)
                 with self.ctx:
-                    logits, loss = self.model(X, Y)
+                    logits, loss = model(X, Y)
                 loss_val = loss.item()
                 if math.isnan(loss_val):
                     print(f"Warning: NaN loss in {split} eval sample {k}")
@@ -317,7 +321,7 @@ class BaseGPT2Trainer:
                     print(f"  X range: [{X.min()}, {X.max()}]")
                 losses[k] = loss_val
             out[split] = losses.mean().item()
-        self.model.train()
+        model.train()
         return out
 
     def save_checkpoint(self, checkpoint_path: str):
