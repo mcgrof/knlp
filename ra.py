@@ -154,7 +154,7 @@ class RAConfig:
     ra_head_frac: float = 0.25
     router_hidden: int = 16
     router_bias_full: float = -1.0
-    warmup_loss_drop: float = 0.15
+    warmup_loss_drop: float = 0.05
     tie_ra_proj: bool = True
     dropout: float = 0.0
 

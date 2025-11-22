@@ -290,7 +290,7 @@ class RATrainer(VanillaGPT2Trainer):
         args.ra_head_frac = getattr(args, "ra_head_frac", 0.25)
         args.router_hidden = getattr(args, "router_hidden", 16)
         args.router_bias_full = getattr(args, "router_bias_full", -1.0)
-        args.warmup_loss_drop = getattr(args, "warmup_loss_drop", 0.15)
+        args.warmup_loss_drop = getattr(args, "warmup_loss_drop", 0.05)
         args.compute_penalty_weight = getattr(args, "compute_penalty_weight", 0.01)
         args.skip_ra_warmup = getattr(args, "skip_ra_warmup", False)
 
@@ -641,6 +641,55 @@ class RATrainer(VanillaGPT2Trainer):
 
         # Log to trackers
         self.log_metrics(metrics)
+
+        # Generate and log text samples to W&B
+        if "wandb" in self.trackers:
+            try:
+                import wandb
+                import tiktoken
+
+                enc = tiktoken.get_encoding("gpt2")
+
+                prompts = [
+                    "The quick brown fox",
+                    "In the beginning",
+                    "Once upon a time",
+                    "The scientist discovered",
+                    "It was a dark and stormy",
+                    "The future of AI",
+                    "When I was young",
+                    "The most important thing",
+                    "Yesterday I learned",
+                    "The world needs more",
+                ]
+
+                samples = []
+                with torch.no_grad():
+                    for prompt in prompts:
+                        prompt_ids = torch.tensor(
+                            [enc.encode(prompt)], device=self.device
+                        )
+                        gen = prompt_ids.clone()
+
+                        # Generate 50 tokens
+                        for _ in range(50):
+                            if gen.size(1) >= model.config.block_size:
+                                break
+                            logits, _ = model(gen)
+                            probs = F.softmax(logits[:, -1, :] / 0.8, dim=-1)
+                            next_token = torch.multinomial(probs, 1)
+                            gen = torch.cat([gen, next_token], dim=1)
+
+                        output_text = enc.decode(gen[0].tolist())
+                        samples.append([prompt, output_text])
+
+                # Log as W&B table
+                table = wandb.Table(columns=["Prompt", "Generated Text"], data=samples)
+                wandb.log({"inference/text_samples": table})
+                print(f"Logged {len(samples)} text samples to W&B")
+
+            except Exception as e:
+                print(f"Warning: Failed to log text samples: {e}")
 
         model.train()
         return metrics
