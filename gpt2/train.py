@@ -74,6 +74,24 @@ def create_argument_parser():
         help="Single RA ablation step to run (when not in ablation mode)",
     )
     parser.add_argument(
+        "--skip-ra-warmup",
+        action="store_true",
+        default=False,
+        help="Skip RA phase warmup - enable routing from start (for quick testing)",
+    )
+    parser.add_argument(
+        "--run-lm-eval",
+        action="store_true",
+        default=False,
+        help="Run lm-eval benchmarks after training",
+    )
+    parser.add_argument(
+        "--lm-eval-tasks",
+        type=str,
+        default="hellaswag",
+        help="Comma-separated lm-eval tasks (hellaswag, lambada_openai, etc.)",
+    )
+    parser.add_argument(
         "--vanilla-step",
         type=str,
         default="V0",
@@ -214,7 +232,16 @@ def create_argument_parser():
 
     # Checkpointing
     parser.add_argument(
-        "--save-checkpoint", action="store_true", help="Save checkpoints"
+        "--save-checkpoint",
+        action="store_true",
+        default=True,
+        help="Save checkpoints (enabled by default)",
+    )
+    parser.add_argument(
+        "--no-save-checkpoint",
+        action="store_false",
+        dest="save_checkpoint",
+        help="Disable checkpoint saving",
     )
     parser.add_argument(
         "--checkpoint-interval", type=int, default=1000, help="Checkpoint interval"
@@ -300,15 +327,20 @@ def main():
             )
 
         # Load checkpoint configuration from config.py
-        # Override argparse defaults with config values (argparse always creates the attr with store_true)
-        if (
-            not args.save_checkpoint
-        ):  # Only override if not explicitly set via --save-checkpoint flag
-            args.save_checkpoint = config.get("SAVE_CHECKPOINT") in ("y", True)
+        # Config can disable saving even though default is True
+        config_save = config.get("SAVE_CHECKPOINT")
+        if config_save in ("n", False):
+            args.save_checkpoint = False
         if (
             args.checkpoint_interval == defaults.checkpoint_interval
         ):  # Only override if using default
             args.checkpoint_interval = int(config.get("CHECKPOINT_INTERVAL", 1000))
+
+        # Load lm-eval configuration
+        if config.get("RUN_LM_EVAL") in ("y", True):
+            args.run_lm_eval = True
+        if config.get("LM_EVAL_TASKS"):
+            args.lm_eval_tasks = config.get("LM_EVAL_TASKS")
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)

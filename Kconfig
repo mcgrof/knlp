@@ -444,6 +444,53 @@ endmenu
 
 menu "Reciprocal Attention (RA) + MLA (Experimental)"
 
+config ENABLE_RA
+	bool "Enable RA (2-way compute routing)"
+	default n
+	help
+	  Enable Reciprocal Attention with 2-way compute routing.
+	  Routes tokens between cheap (RA) and expensive (FULL) attention
+	  based on contextual hardness: |x - E(x)|.
+
+config RA_ABLATION_MODE
+	bool "Enable RA ablation study mode"
+	default n
+	help
+	  Run ablation study testing RA baseline vs routing.
+	  Step 0: Baseline (standard GPT-2)
+	  Step 1: RA with 2-way routing
+
+config RA_ABLATION_STEPS
+	string "RA ablation steps to run (comma-separated)"
+	default "0,1"
+	depends on RA_ABLATION_MODE
+	help
+	  Comma-separated list of ablation steps to run.
+	  0 = Baseline, 1 = RA with routing
+
+config INFERENCE_BENCHMARK
+	bool "Run inference benchmark after training"
+	default y
+	help
+	  Run inference benchmarks (TTFT, throughput, quality metrics)
+	  after training completes.
+
+config RUN_LM_EVAL
+	bool "Run lm-eval benchmarks"
+	default n
+	depends on INFERENCE_BENCHMARK
+	help
+	  Run EleutherAI lm-eval benchmarks (HellaSwag, etc.)
+	  Requires: pip install lm-eval
+
+config LM_EVAL_TASKS
+	string "lm-eval tasks to run (comma-separated)"
+	default "hellaswag"
+	depends on RUN_LM_EVAL
+	help
+	  Comma-separated list of lm-eval tasks.
+	  Common tasks: hellaswag, lambada_openai, arc_easy, piqa
+
 config ENABLE_RA_MLA
 	bool "Enable RA+MLA experimental features"
 	default n
@@ -469,7 +516,7 @@ config RA_MLA_ABLATION_STEPS
 config TEST_MATRIX_MODE
 	bool "Enable standard test matrix mode"
 	default y
-	depends on !RA_MLA_ABLATION_MODE
+	depends on !RA_ABLATION_MODE && !RA_MLA_ABLATION_MODE
 	help
 	  Run standard test matrix testing optimizer/pruning combinations.
 	  Cannot be used simultaneously with ablation mode.
