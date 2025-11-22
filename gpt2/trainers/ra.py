@@ -820,11 +820,8 @@ class RATrainer(VanillaGPT2Trainer):
             traceback.print_exc()
             return {}
 
-    def train(self):
-        """Override to run inference benchmark after training."""
-        # Run the actual training
-        super().train()
-
+    def on_train_end(self):
+        """Run inference benchmark before trackers finish."""
         # Run inference benchmark for all steps (baseline and routing)
         if not getattr(self.args, "dry_run", False):
             self.run_inference_benchmark()
