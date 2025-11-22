@@ -2594,6 +2594,18 @@ def main():
                         "C1": "V-pruning + light compression: k=391 tokens, 64→32 dims (81% memory reduction)",
                         "C2": "V-pruning + medium compression: k=391 tokens, 64→16 dims (90% memory reduction)",
                         "C3": "V-pruning + heavy compression: k=391 tokens, 64→8 dims (95% memory reduction)",
+                        # MLA architecture ablation step descriptions
+                        "MLA0": "MLA baseline: TL-cache latent compression (standard LR)",
+                        "MLA1": "MLA aggressive: TL-cache latent compression (high LR)",
+                        "RAMLA0": "RA+MLA: Reciprocal alternation + latent compression (standard LR)",
+                        "RAMLA1": "RA+MLA aggressive: Reciprocal alternation + latent compression (high LR)",
+                        "RAMLAKV0": "RA+MLA+KVSplice: Full stack with learned compression (standard LR)",
+                        "RAMLAKV1": "RA+MLA+KVSplice aggressive: Full stack with learned compression (high LR)",
+                        # Baseline step descriptions for LR ablation
+                        "B0": "Baseline GPT-2 (standard LR 6e-4)",
+                        "B1": "Baseline GPT-2 (aggressive LR 1.2e-3)",
+                        "RA0": "RA routing only (standard LR 6e-4)",
+                        "RA1": "RA routing only (aggressive LR 1.2e-3)",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
