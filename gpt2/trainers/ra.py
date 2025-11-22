@@ -792,12 +792,19 @@ class RATrainer(VanillaGPT2Trainer):
         # Create wrapper and run evaluation
         try:
             wrapper = RAModelWrapper(model, self.device, model.config, enc)
+
+            # Get limit from config (None = all samples)
+            limit = getattr(self.args, "lm_eval_limit", None)
+            if limit:
+                print(f"Running lm-eval with limit={limit} samples per task")
+
             results = evaluator.simple_evaluate(
                 model=wrapper,
                 tasks=tasks,
                 num_fewshot=0,
                 batch_size=1,
                 device=str(self.device),
+                limit=limit,
             )
 
             # Extract metrics
