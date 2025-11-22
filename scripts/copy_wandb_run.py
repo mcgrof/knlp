@@ -148,10 +148,45 @@ def copy_wandb_run(
     if verbose:
         print(f"Copying history ({len(history)} rows)...")
 
+    import math
+
     for index, row in history.iterrows():
-        # Filter out internal wandb columns that start with '_'
-        row_dict = {k: v for k, v in row.to_dict().items() if not k.startswith("_")}
-        new_run.log(row_dict)
+        # Filter out internal wandb columns and NaN values
+        row_dict = {}
+        for k, v in row.to_dict().items():
+            if k.startswith("_"):
+                continue
+            # Skip NaN values to avoid polluting graphs
+            if isinstance(v, float) and math.isnan(v):
+                continue
+            row_dict[k] = v
+        if row_dict:  # Only log if we have data
+            new_run.log(row_dict)
+
+    # Copy system metrics (GPU, memory, etc.)
+    if verbose:
+        print(f"Fetching system metrics...")
+    try:
+        system_history = src_run.history(stream="events", samples=10000)
+        if not system_history.empty:
+            if verbose:
+                print(f"  System metrics: {len(system_history)} rows")
+            for index, row in system_history.iterrows():
+                row_dict = {}
+                for k, v in row.to_dict().items():
+                    if k.startswith("_"):
+                        continue
+                    if isinstance(v, float) and math.isnan(v):
+                        continue
+                    row_dict[k] = v
+                if row_dict:
+                    new_run.log(row_dict)
+        else:
+            if verbose:
+                print(f"  No system metrics found")
+    except Exception as e:
+        if verbose:
+            print(f"  Warning: Failed to copy system metrics: {e}")
 
     # Update summary metrics
     if verbose:
