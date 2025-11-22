@@ -34,6 +34,7 @@ from ra import (
 )
 from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
+from .vanilla import VanillaGPT2Trainer
 
 
 class RATransformerBlock(nn.Module):
@@ -220,13 +221,16 @@ class RAGPT(nn.Module):
         return stats
 
 
-class RATrainer(BaseGPT2Trainer):
+class RATrainer(VanillaGPT2Trainer):
     """
     Trainer for RA with compute routing.
 
     Supports two steps:
       - Step 0: Baseline (standard GPT-2 with CausalSelfAttention)
       - Step 1: RA with routing (router decides compute tier)
+
+    Inherits from VanillaGPT2Trainer to get the training loop,
+    overrides train_step and adds router stats logging.
     """
 
     def __init__(self, args, config, ablation_step: Optional[str] = None):
@@ -433,3 +437,24 @@ class RATrainer(BaseGPT2Trainer):
             return "Baseline (standard GPT-2)"
         else:
             return f"RA with routing (ra_frac={self.args.ra_head_frac})"
+
+    def log_metrics(self, metrics_dict):
+        """Override to add router stats to logged metrics."""
+        # Add router stats if available
+        if hasattr(self.raw_model, "get_router_stats"):
+            router_stats = self.raw_model.get_router_stats()
+            if router_stats.get("p_ra", 0) > 0 or router_stats.get("p_full", 0) > 0:
+                metrics_dict.update(router_stats)
+
+        # Call parent's log_metrics
+        super().log_metrics(metrics_dict)
+
+    def estimate_loss(self):
+        """Override to call on_eval after evaluation for phase transition."""
+        losses = super().estimate_loss()
+
+        # Call on_eval for phase transition check
+        if self.master_process:
+            self.on_eval(losses["val"], {})
+
+        return losses
