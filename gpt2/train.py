@@ -51,8 +51,8 @@ def create_argument_parser():
         "--architecture",
         type=str,
         default="vanilla",
-        choices=["vanilla", "unified-ra"],
-        help="Training architecture (vanilla=standard GPT-2, unified-ra=V-series RA ablations)",
+        choices=["vanilla", "unified-ra", "ramla"],
+        help="Training architecture (vanilla=standard GPT-2, unified-ra=RA ablations, ramla=RA+MLA LR ablation)",
     )
 
     # Ablation mode
@@ -400,6 +400,26 @@ def main():
             trainer.run_dry_run()
         else:
             trainer.train()
+
+    elif args.architecture == "ramla":
+        # RAMLA LR ablation
+        from gpt2.trainers.ramla import RAMLATrainer, RAMLACoordinator
+
+        if args.ablation_mode:
+            steps = [s.strip() for s in args.ablation_steps.split(",")]
+            print(f"Running RAMLA ablation study with {len(steps)} steps: {steps}")
+
+            coordinator = RAMLACoordinator(args, config, steps)
+            coordinator.run()
+        else:
+            # Single step
+            step = getattr(args, "ra_step", "B0")
+            print(f"Running RAMLA trainer (step {step})")
+            trainer = RAMLATrainer(args, config, ablation_step=step)
+            if args.dry_run:
+                trainer.run_dry_run()
+            else:
+                trainer.train()
 
     else:  # vanilla
         # Standard GPT-2 training
