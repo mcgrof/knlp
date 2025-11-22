@@ -2,7 +2,7 @@
 RA Trainer
 
 Trainer for Reciprocal Attention with compute routing.
-Supports two modes: Baseline (no routing) vs RA (router enabled).
+Supports two modes: Baseline (standard GPT-2) vs RA (router enabled).
 
 The inductive bias: route compute based on |x - E(x)| to use cheap attention
 for easy tokens and full attention for hard tokens.
@@ -11,7 +11,7 @@ for easy tokens and full attention for hard tokens.
 import os
 import sys
 import math
-from typing import Optional
+from typing import Optional, Dict
 
 import torch
 import torch.nn as nn
@@ -23,26 +23,52 @@ parent_dir = os.path.dirname(
 )
 sys.path.insert(0, parent_dir)
 
-from gpt2.model import GPTConfig, LayerNorm, MLP
-from ra import RAConfig, RABlock, WarmupScheduler
+from gpt2.model import GPT, GPTConfig, Block, LayerNorm, MLP, CausalSelfAttention
+from ra import (
+    RAConfig,
+    RAAttention,
+    ContextShiftGate,
+    ContextRouter,
+    RoutedMixer,
+    WarmupScheduler,
+)
 from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
 
 
 class RATransformerBlock(nn.Module):
     """
-    Transformer block using RABlock for attention.
+    Transformer block with RA attention and routing.
 
-    Pre-norm architecture: LN -> Attn -> residual -> LN -> MLP -> residual
+    In phase 1 (warmup): Uses all heads combined, no routing overhead.
+    In phase 2 (routing): Routes between FULL and RA head groups.
     """
 
-    def __init__(self, gpt_config, ra_config, layer_idx, embedding_ref):
+    def __init__(self, gpt_config, ra_config, layer_idx):
         super().__init__()
+        self.layer_idx = layer_idx
+        self.ra_config = ra_config
+
+        # Pre-norm
         self.ln_1 = LayerNorm(gpt_config.n_embd, bias=gpt_config.bias)
-        self.attn = RABlock(ra_config, layer_idx=layer_idx)
         self.ln_2 = LayerNorm(gpt_config.n_embd, bias=gpt_config.bias)
+
+        # RA attention (no internal LN - we handle it)
+        self.attn = RAAttention(ra_config)
+
+        # MLP
         self.mlp = MLP(gpt_config)
-        self.embedding_ref = embedding_ref  # Reference to wte for routing
+
+        # Routing components
+        self.shift_gate = ContextShiftGate()
+        self.router = ContextRouter(ra_config)
+        self.mixer = RoutedMixer()
+
+        # Phase tracking
+        self.phase1 = True
+
+        # Router stats for logging
+        self.last_router_probs = None
 
     def forward(self, x, tok_emb=None):
         """
@@ -53,30 +79,39 @@ class RATransformerBlock(nn.Module):
         Returns:
             out: [B, T, D] output hidden state
         """
-        # Attention sublayer with RA
-        # Note: RABlock has its own LN, but we use pre-norm here
-        # Actually RABlock expects normalized input, so we apply ln_1
+        # Pre-norm for attention
         x_norm = self.ln_1(x)
 
-        # Get both head group outputs from RABlock's attention
-        out_full, out_ra, _ = self.attn.attn(x_norm)
-
-        # Route or combine based on phase
-        if self.attn.phase1:
-            # Warmup: combine with head ratio
-            alpha = self.attn.attn.n_ra / self.attn.attn.n_heads
+        if self.phase1:
+            # Phase 1: Use all heads combined, no routing
+            # Get both outputs but combine them simply
+            out_full, out_ra, _ = self.attn(x_norm)
+            # Weight by head count ratio
+            alpha = self.attn.n_ra / self.attn.n_heads
             attn_out = (1 - alpha) * out_full + alpha * out_ra
+            self.last_router_probs = None
         else:
-            # Phase 2: use router
+            # Phase 2: Route based on contextual hardness
             if tok_emb is None:
                 raise ValueError("tok_emb required for phase 2 routing")
-            shift = self.attn.shift_gate(x_norm, tok_emb)
-            probs = self.attn.router(x_norm, tok_emb, shift)
-            attn_out = self.attn.mixer(x_norm, out_ra, out_full, probs)
 
+            # Get both head group outputs
+            out_full, out_ra, _ = self.attn(x_norm)
+
+            # Compute routing probabilities
+            shift = self.shift_gate(x_norm, tok_emb)
+            probs = self.router(x_norm, tok_emb, shift)
+
+            # Mix according to router
+            attn_out = self.mixer(x_norm, out_ra, out_full, probs)
+
+            # Store for logging
+            self.last_router_probs = {
+                k: v.detach().mean().item() for k, v in probs.items()
+            }
+
+        # Residual + MLP
         x = x + attn_out
-
-        # MLP sublayer
         x = x + self.mlp(self.ln_2(x))
 
         return x
@@ -85,11 +120,10 @@ class RATransformerBlock(nn.Module):
 class RAGPT(nn.Module):
     """GPT with RA attention blocks."""
 
-    def __init__(self, gpt_config, ra_config, enable_routing=True):
+    def __init__(self, gpt_config, ra_config):
         super().__init__()
         self.config = gpt_config
         self.ra_config = ra_config
-        self.enable_routing = enable_routing
 
         self.transformer = nn.ModuleDict(
             dict(
@@ -98,23 +132,18 @@ class RAGPT(nn.Module):
                 drop=nn.Dropout(gpt_config.dropout),
                 h=nn.ModuleList(
                     [
-                        RATransformerBlock(
-                            gpt_config, ra_config, i, None
-                        )  # embedding_ref set after
+                        RATransformerBlock(gpt_config, ra_config, i)
                         for i in range(gpt_config.n_layer)
                     ]
                 ),
                 ln_f=LayerNorm(gpt_config.n_embd, bias=gpt_config.bias),
             )
         )
-        self.lm_head = nn.Linear(gpt_config.vocab_size, gpt_config.n_embd, bias=False)
+        # Fixed: correct dimensions
+        self.lm_head = nn.Linear(gpt_config.n_embd, gpt_config.vocab_size, bias=False)
 
         # Weight tying
         self.transformer.wte.weight = self.lm_head.weight
-
-        # Set embedding reference for all blocks
-        for block in self.transformer.h:
-            block.embedding_ref = self.transformer.wte
 
         # Init weights
         self.apply(self._init_weights)
@@ -169,7 +198,26 @@ class RAGPT(nn.Module):
     def set_phase(self, phase1):
         """Set phase for all RA blocks."""
         for block in self.transformer.h:
-            block.attn.set_phase(phase1)
+            block.phase1 = phase1
+
+    def get_router_stats(self) -> Dict[str, float]:
+        """Get average router probabilities across all layers."""
+        stats = {"p_none": 0.0, "p_ra": 0.0, "p_full": 0.0, "p_both": 0.0}
+        count = 0
+
+        for block in self.transformer.h:
+            if block.last_router_probs is not None:
+                for k in stats:
+                    key = k.replace("p_", "")
+                    if key in block.last_router_probs:
+                        stats[k] += block.last_router_probs[key]
+                count += 1
+
+        if count > 0:
+            for k in stats:
+                stats[k] /= count
+
+        return stats
 
 
 class RATrainer(BaseGPT2Trainer):
@@ -177,10 +225,8 @@ class RATrainer(BaseGPT2Trainer):
     Trainer for RA with compute routing.
 
     Supports two steps:
-      - Step 0: Baseline (all heads as FULL, no routing)
+      - Step 0: Baseline (standard GPT-2 with CausalSelfAttention)
       - Step 1: RA with routing (router decides compute tier)
-
-    Both use same code path through RABlock for fair comparison.
     """
 
     def __init__(self, args, config, ablation_step: Optional[str] = None):
@@ -217,11 +263,14 @@ class RATrainer(BaseGPT2Trainer):
         # Track phase transition
         self.transitioned = False
 
-        # Warmup scheduler
-        self.warmup_scheduler = WarmupScheduler(
-            threshold=args.warmup_loss_drop,
-            min_evals=2,
-        )
+        # Warmup scheduler (only for RA mode)
+        if self.args.enable_routing:
+            self.warmup_scheduler = WarmupScheduler(
+                threshold=args.warmup_loss_drop,
+                min_evals=2,
+            )
+        else:
+            self.warmup_scheduler = None
 
     def _configure_step(self, args, step: str):
         """Configure args based on ablation step."""
@@ -233,18 +282,20 @@ class RATrainer(BaseGPT2Trainer):
         args.compute_penalty_weight = getattr(args, "compute_penalty_weight", 0.01)
 
         if step == "0":
-            # Baseline: no routing
+            # Baseline: standard GPT-2
             args.enable_routing = False
-            print(f"Step {step}: Baseline (no routing)")
+            args.use_baseline = True
+            print(f"Step {step}: Baseline (standard GPT-2)")
         elif step == "1":
             # RA with routing
             args.enable_routing = True
+            args.use_baseline = False
             print(f"Step {step}: RA with routing")
         else:
             raise ValueError(f"Unknown step: {step}. Use '0' or '1'.")
 
     def create_model(self):
-        """Create GPT model with RA attention."""
+        """Create GPT model (baseline or RA)."""
         # GPT config
         gpt_config = GPTConfig(
             block_size=self.config.GPT2_BLOCK_SIZE,
@@ -254,33 +305,36 @@ class RATrainer(BaseGPT2Trainer):
             n_embd=self.config.GPT2_N_EMBD,
         )
 
-        # RA config
         args = self.args
-        ra_config = RAConfig(
-            d_model=gpt_config.n_embd,
-            n_heads=gpt_config.n_head,
-            block_size=gpt_config.block_size,
-            ra_head_frac=args.ra_head_frac,
-            router_hidden=args.router_hidden,
-            router_bias_full=args.router_bias_full,
-            warmup_loss_drop=args.warmup_loss_drop,
-        )
 
-        # Create model
-        model = RAGPT(gpt_config, ra_config, enable_routing=args.enable_routing)
+        if args.use_baseline:
+            # True baseline: standard GPT-2
+            model = GPT(gpt_config)
+            print("Created baseline GPT-2")
+        else:
+            # RA config
+            ra_config = RAConfig(
+                d_model=gpt_config.n_embd,
+                n_heads=gpt_config.n_head,
+                block_size=gpt_config.block_size,
+                ra_head_frac=args.ra_head_frac,
+                router_hidden=args.router_hidden,
+                router_bias_full=args.router_bias_full,
+                warmup_loss_drop=args.warmup_loss_drop,
+            )
 
-        # If baseline, keep in phase1 permanently
-        if not args.enable_routing:
+            model = RAGPT(gpt_config, ra_config)
+
+            # Start in phase 1 (warmup)
             model.set_phase(phase1=True)
 
-        # Log configuration
-        n_ra = max(1, int(round(args.ra_head_frac * gpt_config.n_head)))
-        n_ra = min(n_ra, gpt_config.n_head - 1)
-        n_full = gpt_config.n_head - n_ra
+            # Log configuration
+            n_ra = max(1, int(round(args.ra_head_frac * gpt_config.n_head)))
+            n_ra = min(n_ra, gpt_config.n_head - 1)
+            n_full = gpt_config.n_head - n_ra
 
-        mode = "RA with routing" if args.enable_routing else "Baseline (all FULL)"
-        print(f"Created RAGPT: {mode}")
-        print(f"  Heads: {n_full} FULL + {n_ra} RA = {gpt_config.n_head} total")
+            print(f"Created RAGPT with routing")
+            print(f"  Heads: {n_full} FULL + {n_ra} RA = {gpt_config.n_head} total")
 
         # Move to device
         model = model.to(self.device)
@@ -328,9 +382,15 @@ class RATrainer(BaseGPT2Trainer):
         if self.scheduler is not None:
             self.scheduler.step()
 
+        # Get router stats for logging
+        router_stats = {}
+        if hasattr(self.raw_model, "get_router_stats"):
+            router_stats = self.raw_model.get_router_stats()
+
         return {
             "loss": loss.item(),
             "lr": self.optimizer.param_groups[0]["lr"],
+            **router_stats,
         }
 
     def on_eval(self, eval_loss, eval_metrics):
@@ -370,6 +430,6 @@ class RATrainer(BaseGPT2Trainer):
     def get_step_description(self):
         """Get human-readable step description."""
         if self.ablation_step == "0":
-            return "Baseline (no routing)"
+            return "Baseline (standard GPT-2)"
         else:
             return f"RA with routing (ra_frac={self.args.ra_head_frac})"
