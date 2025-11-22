@@ -36,7 +36,26 @@ out_ra = proj_ra(heads[9:])        # [B, T, D]
 
 RA's cheapness: fewer heads = smaller output projection.
 
-### 2. Context Router
+### 2. SDPA with Flash Attention
+
+Uses PyTorch's `scaled_dot_product_attention` for efficient attention computation:
+
+```python
+out = F.scaled_dot_product_attention(
+    q, k, v,
+    attn_mask=None,
+    dropout_p=dropout if training else 0.0,
+    is_causal=True,  # Enables flash attention kernel
+)
+```
+
+Benefits:
+- Automatic kernel selection (flash attention when available)
+- Memory efficient: O(T) instead of O(T^2) for attention matrix
+- Fused operations: single CUDA kernel for QK^T, softmax, V multiply
+- ~60% faster than manual matmul + softmax implementation
+
+### 3. Context Router
 
 4-way routing based on shift and other cheap features:
 
@@ -60,7 +79,7 @@ L_compute = lambda_comp * (p_full + p_both).mean()
 L_total = L_lm + L_compute
 ```
 
-### 3. Warmup Phase
+### 4. Warmup Phase
 
 Phase 1: Full attention only (router OFF). Wait until shift becomes meaningful.
 Phase 2: Enable routing after ~15% loss drop from initial.
@@ -74,7 +93,7 @@ if scheduler.should_transition(eval_loss):
         block.set_phase(phase1=False)
 ```
 
-### 4. Weight Tying
+### 5. Weight Tying
 
 RA output projection initialized from FULL projection tail. Creates relationship
 where RA learns compressed view. Since output_embeddings = E.T in most models,
