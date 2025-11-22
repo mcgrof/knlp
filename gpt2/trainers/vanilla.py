@@ -422,6 +422,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.save_checkpoint(final_path)
                 print(f"Saved final model: {final_path}")
 
+            # Hook for subclasses to run code before trackers finish
+            self.on_train_end()
+
             # Finish experiment tracking gracefully before exit
             if "trackio" in self.trackers:
                 try:
@@ -440,6 +443,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     print("W&B tracking finished")
                 except Exception as e:
                     print(f"Warning: Failed to finish wandb: {e}")
+
+    def on_train_end(self):
+        """Hook for subclasses to run code before trackers finish."""
+        pass
 
     def _apply_adamprune_masking(self):
         """Apply AdamWPrune gradient masking."""
