@@ -96,24 +96,32 @@ class RATransformerBlock(nn.Module):
             if tok_emb is None:
                 raise ValueError("tok_emb required for phase 2 routing")
 
-            # Get both head group outputs
-            out_full, out_ra, _ = self.attn(x_norm)
-
-            # Compute routing probabilities
+            # Compute routing probabilities FIRST (before attention)
             shift = self.shift_gate(x_norm, tok_emb)
             probs = self.router(x_norm, tok_emb, shift)
 
-            # Mix according to router
-            attn_out = self.mixer(out_ra, out_full, probs)
+            # Hard routing: use batch-level decision for efficiency
+            # If >50% of tokens prefer RA, use RA for entire batch
+            p_ra = probs["ra"]
+            use_ra = (p_ra > 0.5).float().mean() > 0.5
 
-            # Store for logging (soft averages and hard counts)
-            p_ra = probs["ra"].detach()
+            if use_ra:
+                # Only compute RA heads (cheap path)
+                _, out_ra, _ = self.attn(x_norm, compute_full=False)
+                attn_out = out_ra
+            else:
+                # Only compute FULL heads (expensive path)
+                out_full, _, _ = self.attn(x_norm, compute_ra=False)
+                attn_out = out_full
+
+            # Store for logging
+            p_ra_detached = p_ra.detach()
             p_full = probs["full"].detach()
-            total_tokens = p_ra.numel()
-            ra_tokens = (p_ra > 0.5).sum().item()
+            total_tokens = p_ra_detached.numel()
+            ra_tokens = (p_ra_detached > 0.5).sum().item()
 
             self.last_router_probs = {
-                "ra": p_ra.mean().item(),
+                "ra": p_ra_detached.mean().item(),
                 "full": p_full.mean().item(),
                 "ra_token_pct": ra_tokens / total_tokens if total_tokens > 0 else 0.0,
                 "total_tokens": total_tokens,
