@@ -1,21 +1,15 @@
 """
 RA Patching for GPT-2
 
-Replaces standard attention with ReciprocalAttention (direct layout emission).
-Matches baseline speed (1.33ms) while providing architectural benefits:
-- Reciprocity: Q can attend to K's context and vice versa
-- Learned gates: Per-head w_std, w_rec control reciprocity usage
-- Zero overhead: Direct folded layout emission
+Replaces standard attention with RABlock (shared QKV with head groups + routing).
 
-The key principle: we match baseline speed by splitting the per-head
-dimension D into (D_std + R) and using a fused projection to emit
-a folded layout [Q_std | K_low] and [K_std | Q_low], so reciprocal
-attention is computed inside the same SDPA call without increasing
-FLOPs. RA becomes a reparameterization of attention, not an extra cost.
+The key principle: partition heads into FULL and RA groups, use a router based
+on |x - E(x)| to decide compute tier per token. Same code path for baseline
+(phase1=True) and RA-routed (phase1=False) ensures fair comparison.
 
 Usage:
-    from ra_patch import patch_gpt2_with_ra_v5
-    model = patch_gpt2_with_ra_v5(model, R=4, dropout=0.1)
+    from gpt2.ra_patch import patch_gpt2_with_ra
+    model, scheduler = patch_gpt2_with_ra(model, ra_head_frac=0.25)
 """
 
 import sys
@@ -27,439 +21,188 @@ sys.path.insert(0, parent_dir)
 
 import torch
 import torch.nn as nn
-from ra import ReciprocalAttention, ReciprocalMLP
+from ra import RAConfig, RABlock, WarmupScheduler
 
 
-def patch_gpt2_with_ra_v5(
-    model, R=4, dropout=0.1, use_self_restart=False, per_head_gates=False
-):
+class RATransformerBlock(nn.Module):
     """
-    Replace all attention modules in GPT-2 with RA.
+    Wrapper that replaces GPT-2 block's attention with RABlock.
 
-    Args:
-        model: GPT-2 model to patch
-        R: Reciprocal rank (default 4, validated optimal)
-        dropout: Dropout probability
-        use_self_restart: Enable self-restart mechanism (default False)
-        per_head_gates: Use per-head gates instead of per-layer (default False)
-
-    Returns:
-        Patched model
+    Preserves the original MLP and residual structure.
     """
-    n_head = model.config.n_head
-    n_embd = model.config.n_embd
-    block_size = model.config.block_size
 
-    restart_str = " + Self-Restart" if use_self_restart else ""
-    gate_str = "per-head" if per_head_gates else "per-layer"
-    print(f"Patching GPT-2 with RA (R={R}, {gate_str} gates){restart_str}...")
+    def __init__(self, original_block, ra_block, embedding_layer):
+        super().__init__()
+        self.ln_1 = original_block.ln_1
+        self.attn = ra_block
+        self.ln_2 = original_block.ln_2
+        self.mlp = original_block.mlp
+        self.embedding = embedding_layer
 
-    # Iterate through all transformer blocks
-    for i, block in enumerate(model.transformer.h):
-        # Replace the attention module with RA
-        original_attn = block.attn
+    def forward(self, x, input_ids=None):
+        """
+        Args:
+            x: [B, T, D] hidden state
+            input_ids: [B, T] token ids for embedding lookup
 
-        # Create RA module
-        unified_ra_attn = ReciprocalAttention(
-            n_embd=n_embd,
-            n_head=n_head,
-            block_size=block_size,
-            R=R,
-            dropout=dropout,
-            use_self_restart=use_self_restart,
-            per_head_gates=per_head_gates,
-        )
+        Returns:
+            out: [B, T, D] output hidden state
+        """
+        # Get embeddings for routing
+        e_tok = None
+        if input_ids is not None:
+            e_tok = self.embedding(input_ids)
 
-        # Move to same device as original module
-        device = next(original_attn.parameters()).device
-        unified_ra_attn = unified_ra_attn.to(device)
+        # Attention sublayer with RA routing
+        attn_out = self.attn(x, e_tok=e_tok)
+        x = x + attn_out
 
-        # Copy over any bias if it exists
-        if hasattr(original_attn, "bias") and hasattr(unified_ra_attn, "bias"):
-            unified_ra_attn.bias = original_attn.bias
+        # MLP sublayer (standard)
+        x = x + self.mlp(self.ln_2(x))
 
-        # Replace the attention module
-        block.attn = unified_ra_attn
-
-        print(f"  Layer {i}: Standard Attention → RA{restart_str}")
-
-    num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with RA{restart_str}")
-
-    return model
+        return x
 
 
-def patch_gpt2_with_rmlp(
+def patch_gpt2_with_ra(
     model,
-    expansion=4,
-    R_ff=1152,
+    ra_head_frac=0.25,
+    router_hidden=16,
+    router_bias_full=-1.0,
+    warmup_loss_drop=0.15,
+    tie_ra_proj=True,
     dropout=0.0,
-    attn_scale_init=1.0,
-    tie_to_attn_proj=False,
-    skip_rec_init=-3.0,
+    enable_routing=True,
 ):
     """
-    Replace all MLP modules in GPT-2 with Reciprocal MLP and wrap blocks
-    to enable attention injection.
+    Replace all attention modules in GPT-2 with RABlock.
 
     Args:
         model: GPT-2 model to patch
-        expansion: MLP expansion ratio (default 4)
-        R_ff: Reciprocal rank for MLP (default 1152, golden ratio)
-        dropout: Dropout probability
-        attn_scale_init: Initial attention mixing scale α
-        tie_to_attn_proj: Tie up_low weights to attention c_proj
-        skip_rec_init: Initial value for the reciprocal skip gate logit.
-
-    Returns:
-        Patched model
-    """
-    from ra import AttentionAwareMLP_Block
-
-    n_embd = model.config.n_embd
-
-    print(f"Patching GPT-2 with R-MLP (R_ff={R_ff}, expansion={expansion})...")
-    if tie_to_attn_proj:
-        print("  - Strong weight tying enabled (up_low ↔ attn.c_proj)")
-    print(f"  - Attention injection enabled (α_init={attn_scale_init})")
-    print(f"  - Learned geometric gates: w_std, w_rec")
-    print(f"  - Reciprocal skip gate init: {skip_rec_init}")
-
-    # Iterate through all transformer blocks
-    for i, block in enumerate(model.transformer.h):
-        # Replace the MLP module with Reciprocal MLP
-        original_mlp = block.mlp
-
-        # Create Reciprocal MLP module
-        reciprocal_mlp = ReciprocalMLP(
-            n_embd=n_embd,
-            expansion=expansion,
-            R_ff=R_ff,
-            dropout=dropout,
-            attn_scale_init=attn_scale_init,
-            tie_to_attn_proj=tie_to_attn_proj,
-            skip_rec_init=skip_rec_init,
-        )
-
-        # Move to same device as original module
-        device = next(original_mlp.parameters()).device
-        reciprocal_mlp = reciprocal_mlp.to(device)
-
-        # Set up weight tying reference if requested
-        if tie_to_attn_proj:
-            # Link to attention output projection
-            reciprocal_mlp._attn_proj_ref = block.attn.c_proj
-
-        # Replace the MLP module
-        block.mlp = reciprocal_mlp
-
-        print(f"  Layer {i}: Standard MLP → R-MLP")
-
-    # Wrap all blocks to enable attention-aware MLP forward
-    print("Wrapping blocks to enable attention injection...")
-    for i in range(len(model.transformer.h)):
-        original_block = model.transformer.h[i]
-        wrapped_block = AttentionAwareMLP_Block(original_block)
-
-        # Move to same device
-        device = next(original_block.parameters()).device
-        wrapped_block = wrapped_block.to(device)
-
-        model.transformer.h[i] = wrapped_block
-
-    num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with R-MLP + attention injection")
-
-    return model
-
-
-def patch_gpt2_with_unified_ra_and_rmlp(
-    model,
-    R=4,
-    attn_dropout=0.1,
-    use_self_restart=False,
-    mlp_expansion=4,
-    R_ff=1152,
-    mlp_dropout=0.0,
-    attn_scale_init=1.0,
-    tie_to_attn_proj=False,
-    per_head_gates=False,
-    skip_rec_init=-3.0,
-):
-    """
-    Replace both attention and MLP modules in GPT-2 with RA + R-MLP.
-
-    Args:
-        model: GPT-2 model to patch
-        R: Reciprocal rank for attention (default 4)
-        attn_dropout: Attention dropout probability
-        use_self_restart: Enable self-restart for attention
-        mlp_expansion: MLP expansion ratio (default 4)
-        R_ff: Reciprocal rank for MLP (default 1152, golden ratio)
-        mlp_dropout: MLP dropout probability
-        attn_scale_init: Initial attention mixing scale α
-        tie_to_attn_proj: Tie up_low weights to attention c_proj
-        per_head_gates: Use per-head gates for RA (default False=per-layer)
-        skip_rec_init: Initial value for the R-MLP reciprocal skip gate logit.
-
-    Returns:
-        Patched model
-    """
-    # First patch attention with RA
-    model = patch_gpt2_with_ra_v5(
-        model,
-        R=R,
-        dropout=attn_dropout,
-        use_self_restart=use_self_restart,
-        per_head_gates=per_head_gates,
-    )
-
-    # Then patch MLP with R-MLP (includes attention injection)
-    model = patch_gpt2_with_rmlp(
-        model,
-        expansion=mlp_expansion,
-        R_ff=R_ff,
-        dropout=mlp_dropout,
-        attn_scale_init=attn_scale_init,
-        tie_to_attn_proj=tie_to_attn_proj,
-        skip_rec_init=skip_rec_init,
-    )
-
-    return model
-
-
-def analyze_ra_v5_gates(model):
-    """
-    Analyze learned gate values across all RA layers.
-
-    Returns:
-        Dictionary with gate statistics
-    """
-    w_std_values = []
-    w_rec_values = []
-
-    for block in model.transformer.h:
-        if hasattr(block.attn, "w_std") and hasattr(block.attn, "w_rec"):
-            w_std_values.extend(block.attn.w_std.detach().cpu().tolist())
-            w_rec_values.extend(block.attn.w_rec.detach().cpu().tolist())
-
-    if not w_std_values:
-        return None
-
-    import torch as t
-
-    w_std_tensor = t.tensor(w_std_values)
-    w_rec_tensor = t.tensor(w_rec_values)
-
-    return {
-        "w_std_mean": w_std_tensor.mean().item(),
-        "w_std_min": w_std_tensor.min().item(),
-        "w_std_max": w_std_tensor.max().item(),
-        "w_std_std": w_std_tensor.std().item(),
-        "w_rec_mean": w_rec_tensor.mean().item(),
-        "w_rec_min": w_rec_tensor.min().item(),
-        "w_rec_max": w_rec_tensor.max().item(),
-        "w_rec_std": w_rec_tensor.std().item(),
-    }
-
-
-def analyze_rmlp_gates(model):
-    """
-    Analyze learned gate values across all R-MLP layers.
-
-    Returns:
-        Dictionary with gate statistics
-    """
-    w_std_values = []
-    w_rec_values = []
-
-    for block in model.transformer.h:
-        if hasattr(block.mlp, "w_std") and hasattr(block.mlp, "w_rec"):
-            w_std_values.append(block.mlp.w_std.detach().cpu().item())
-            w_rec_values.append(block.mlp.w_rec.detach().cpu().item())
-
-    if not w_std_values:
-        return None
-
-    import torch as t
-
-    w_std_tensor = t.tensor(w_std_values)
-    w_rec_tensor = t.tensor(w_rec_values)
-
-    return {
-        "w_std_mean": w_std_tensor.mean().item(),
-        "w_std_min": w_std_tensor.min().item(),
-        "w_std_max": w_std_tensor.max().item(),
-        "w_std_std": w_std_tensor.std().item(),
-        "w_rec_mean": w_rec_tensor.mean().item(),
-        "w_rec_min": w_rec_tensor.min().item(),
-        "w_rec_max": w_rec_tensor.max().item(),
-        "w_rec_std": w_rec_tensor.std().item(),
-    }
-
-
-def patch_gpt2_with_kv_pruning(
-    model, k_keep=391, recency=64, learn_ratio=False, dropout=0.1
-):
-    """
-    Replace all attention modules in GPT-2 with KV-pruned attention.
-
-    Args:
-        model: GPT-2 model to patch
-        k_keep: Number of tokens to keep (default: 391 for golden ratio)
-        recency: Number of recent tokens to always keep (default: 64)
-        learn_ratio: If True, learn optimal pruning ratio (default: False)
-        dropout: Dropout probability
-
-    Returns:
-        Patched model
-    """
-    from ra import PrunedKVAttention
-
-    n_head = model.config.n_head
-    n_embd = model.config.n_embd
-    block_size = model.config.block_size
-
-    ratio_str = "learned" if learn_ratio else f"k={k_keep}"
-    print(f"Patching GPT-2 with KV cache pruning ({ratio_str}, recency={recency})...")
-
-    # Iterate through all transformer blocks
-    for i, block in enumerate(model.transformer.h):
-        # Get device from original attention module
-        original_attn = block.attn
-        device = next(original_attn.parameters()).device
-
-        # Replace the attention module
-        pruned_attn = PrunedKVAttention(
-            n_embd=n_embd,
-            n_head=n_head,
-            block_size=block_size,
-            k_keep=k_keep,
-            recency=recency,
-            learn_ratio=learn_ratio,
-            dropout=dropout,
-        )
-
-        # Move to same device as original module
-        pruned_attn = pruned_attn.to(device)
-
-        # Replace the attention module
-        block.attn = pruned_attn
-
-        print(f"  Layer {i}: Standard Attention → KV-Pruned Attention")
-
-    num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with KV-pruned attention")
-
-    return model
-
-
-def patch_gpt2_with_gate_informed_kv_pruning(
-    model,
-    k_keep=391,
-    recency=64,
-    dropout=0.1,
-    prune_mode="v_only",
-    beta=1.0,
-    mlp_expansion=4,
-    R_ff=1152,
-    mlp_dropout=0.0,
-    attn_scale_init=1.0,
-    tie_to_attn_proj=False,
-):
-    """
-    Replace attention and MLP with gate-informed KV pruning + R-MLP.
-
-    This creates a feedback loop:
-    - R-MLP learns to compensate for attention via reciprocal pathway
-    - R-MLP gates (w_rec, α) indicate attention confidence
-    - KV pruning reads gates and modulates pruning aggressiveness
-    - High confidence → prune more, low confidence → prune less
-
-    Args:
-        model: GPT-2 model to patch
-        k_keep: Base number of tokens to keep (before modulation)
-        recency: Number of recent tokens to always keep
+        ra_head_frac: Fraction of heads for RA group (0 < frac < 1)
+        router_hidden: Router MLP hidden dimension
+        router_bias_full: Initial bias on FULL/BOTH logits (negative = discourage)
+        warmup_loss_drop: Relative loss drop to trigger phase 2
+        tie_ra_proj: Initialize RA projection from FULL projection
         dropout: Attention dropout probability
-        prune_mode: "v_only", "kv_scores_reuse", or "legacy"
-        beta: Gate modulation strength (higher = stronger effect)
-        mlp_expansion: MLP expansion ratio (default 4)
-        R_ff: Reciprocal rank for MLP (default 1152)
-        mlp_dropout: MLP dropout probability
-        attn_scale_init: Initial attention mixing scale α
-        tie_to_attn_proj: Tie up_low weights to attention c_proj
+        enable_routing: If False, keep all blocks in phase1 (baseline mode)
 
     Returns:
-        Patched model
+        (model, scheduler): Patched model and WarmupScheduler instance
     """
-    from ra import GateInformedKVAttention, ReciprocalMLP, AttentionAwareMLP_Block
-
-    n_embd = model.config.n_embd
     n_head = model.config.n_head
+    n_embd = model.config.n_embd
     block_size = model.config.block_size
 
-    print(f"Patching GPT-2 with gate-informed KV pruning + R-MLP (beta={beta})...")
-    print(f"  - Base k_keep={k_keep}, recency={recency}, mode={prune_mode}")
-    print(f"  - R-MLP: R_ff={R_ff}, expansion={mlp_expansion}")
-    print(f"  - Adaptive pruning based on w_rec × α (attention confidence)")
+    # Create config
+    cfg = RAConfig(
+        d_model=n_embd,
+        n_heads=n_head,
+        block_size=block_size,
+        ra_head_frac=ra_head_frac,
+        router_hidden=router_hidden,
+        router_bias_full=router_bias_full,
+        warmup_loss_drop=warmup_loss_drop,
+        tie_ra_proj=tie_ra_proj,
+        dropout=dropout,
+    )
+
+    # Get embedding layer
+    embedding_layer = model.transformer.wte
+
+    # Compute head group sizes for logging
+    n_ra = max(1, int(round(ra_head_frac * n_head)))
+    n_ra = min(n_ra, n_head - 1)
+    n_full = n_head - n_ra
+
+    mode_str = "RA with routing" if enable_routing else "Baseline (all FULL)"
+    print(f"Patching GPT-2 with {mode_str}...")
+    print(f"  Heads: {n_full} FULL + {n_ra} RA = {n_head} total")
+    print(f"  Router: hidden={router_hidden}, bias_full={router_bias_full}")
+    print(f"  Warmup: phase2 after {warmup_loss_drop*100:.0f}% loss drop")
 
     # Iterate through all transformer blocks
     for i, block in enumerate(model.transformer.h):
-        # 1. Replace attention with gate-informed KV pruning
-        gate_attn = GateInformedKVAttention(
-            n_embd=n_embd,
-            n_head=n_head,
-            block_size=block_size,
-            k_keep=k_keep,
-            recency=recency,
-            dropout=dropout,
-            prune_mode=prune_mode,
-            beta=beta,
-        )
+        # Create RABlock
+        ra_block = RABlock(cfg, layer_idx=i)
 
-        # Move to same device
+        # Move to same device as original
         device = next(block.attn.parameters()).device
-        gate_attn = gate_attn.to(device)
+        ra_block = ra_block.to(device)
 
-        # Replace attention
-        block.attn = gate_attn
+        # If baseline mode, keep in phase1 permanently
+        if not enable_routing:
+            ra_block.phase1 = True
 
-        # 2. Replace MLP with R-MLP
-        reciprocal_mlp = ReciprocalMLP(
-            n_embd=n_embd,
-            expansion=mlp_expansion,
-            R_ff=R_ff,
-            dropout=mlp_dropout,
-            attn_scale_init=attn_scale_init,
-            tie_to_attn_proj=tie_to_attn_proj,
-        )
+        # Wrap the block
+        wrapped = RATransformerBlock(block, ra_block, embedding_layer)
+        wrapped = wrapped.to(device)
 
-        reciprocal_mlp = reciprocal_mlp.to(device)
+        model.transformer.h[i] = wrapped
 
-        # Set up weight tying if requested
-        if tie_to_attn_proj:
-            reciprocal_mlp._attn_proj_ref = gate_attn.c_proj
-
-        # Replace MLP
-        block.mlp = reciprocal_mlp
-
-        # 3. Link attention to MLP for gate reading
-        gate_attn.set_mlp_reference(reciprocal_mlp)
-
-        print(f"  Layer {i}: Gate-informed KV pruning + R-MLP (linked)")
-
-    # 4. Wrap all blocks to enable attention injection
-    print("Wrapping blocks to enable attention injection...")
-    for i in range(len(model.transformer.h)):
-        original_block = model.transformer.h[i]
-        wrapped_block = AttentionAwareMLP_Block(original_block)
-
-        device = next(original_block.parameters()).device
-        wrapped_block = wrapped_block.to(device)
-
-        model.transformer.h[i] = wrapped_block
+        print(f"  Layer {i}: → RABlock (FULL={n_full}, RA={n_ra})")
 
     num_layers = len(model.transformer.h)
-    print(f"Successfully patched {num_layers} layers with gate-informed pruning")
+    print(f"Patched {num_layers} layers")
 
-    return model
+    # Create scheduler
+    scheduler = WarmupScheduler(
+        threshold=warmup_loss_drop,
+        min_evals=2,
+    )
+
+    return model, scheduler
+
+
+def set_ra_phase(model, phase1):
+    """
+    Set phase for all RABlocks in model.
+
+    Args:
+        model: Patched GPT-2 model
+        phase1: True for warmup (no routing), False for routing enabled
+    """
+    phase_str = "Phase 1 (warmup)" if phase1 else "Phase 2 (routing)"
+    print(f"Setting all layers to {phase_str}")
+
+    for block in model.transformer.h:
+        if hasattr(block, "attn") and hasattr(block.attn, "set_phase"):
+            block.attn.set_phase(phase1)
+
+
+def get_router_stats(model):
+    """
+    Get router distribution statistics from model.
+
+    Returns:
+        dict with mean probabilities for each compute tier
+    """
+    # This would require running a forward pass with tracking
+    # For now, return placeholder
+    return {
+        "p_none": 0.0,
+        "p_ra": 0.0,
+        "p_full": 0.0,
+        "p_both": 0.0,
+    }
+
+
+def compute_total_penalty(model, x, input_ids):
+    """
+    Compute total compute penalty across all layers.
+
+    Args:
+        model: Patched GPT-2 model
+        x: [B, T, D] hidden states
+        input_ids: [B, T] token ids
+
+    Returns:
+        penalty: Scalar tensor
+    """
+    e_tok = model.transformer.wte(input_ids)
+    total_penalty = torch.tensor(0.0, device=x.device)
+
+    for block in model.transformer.h:
+        if hasattr(block, "attn") and hasattr(block.attn, "compute_penalty"):
+            total_penalty = total_penalty + block.attn.compute_penalty(x, e_tok)
+
+    return total_penalty / len(model.transformer.h)
