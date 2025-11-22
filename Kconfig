@@ -491,6 +491,14 @@ config LM_EVAL_TASKS
 	  Comma-separated list of lm-eval tasks.
 	  Common tasks: hellaswag, lambada_openai, arc_easy, piqa
 
+config LM_EVAL_LIMIT
+	int "Limit samples per lm-eval task (0 = all)"
+	default 0
+	depends on RUN_LM_EVAL
+	help
+	  Limit the number of samples evaluated per task.
+	  Use for quick testing. 0 means evaluate all samples.
+
 config ENABLE_RA_MLA
 	bool "Enable RA+MLA experimental features"
 	default n

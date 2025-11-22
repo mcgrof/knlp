@@ -92,6 +92,12 @@ def create_argument_parser():
         help="Comma-separated lm-eval tasks (hellaswag, lambada_openai, etc.)",
     )
     parser.add_argument(
+        "--lm-eval-limit",
+        type=int,
+        default=None,
+        help="Limit number of samples per lm-eval task (None = all)",
+    )
+    parser.add_argument(
         "--vanilla-step",
         type=str,
         default="V0",
@@ -341,6 +347,9 @@ def main():
             args.run_lm_eval = True
         if config.get("LM_EVAL_TASKS"):
             args.lm_eval_tasks = config.get("LM_EVAL_TASKS")
+        lm_eval_limit = config.get("LM_EVAL_LIMIT")
+        if lm_eval_limit and int(lm_eval_limit) > 0:
+            args.lm_eval_limit = int(lm_eval_limit)
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
