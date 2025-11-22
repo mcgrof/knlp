@@ -188,3 +188,32 @@ Key metrics:
 - Average router distribution (p_none, p_ra, p_full, p_both)
 - Compute penalty over training
 - Loss curve smoothness at phase transition
+
+## TODO: Future Enhancements
+
+### Smooth Phase Transition
+Instead of hard switch at 15% loss drop, gradually blend in routing strength
+over N steps. Use linear interpolation: `alpha = min(1.0, steps_since_trigger / N)`.
+This prevents training instability at transition.
+
+### Router Feature Normalization
+Apply LayerNorm to router features before MLP. Currently raw norms and dots
+have different scales which may cause training issues.
+
+### Per-Layer Routing Thresholds
+Early layers may need more FULL attention (building representations), later
+layers can use more RA (compressing/retrieving). Learn per-layer bias terms
+or use fixed schedule based on layer depth.
+
+### Learned Temperature
+Add temperature parameter to router softmax that sharpens during training.
+Start with high temperature (soft routing), anneal to low (hard routing).
+`probs = softmax(logits / temperature)`
+
+### KV Cache Pruning Integration
+Use router confidence to inform KV pruning aggressiveness. High p_ra tokens
+are "easy" and can have more aggressive KV pruning. Connect to KVSpliceAttention.
+
+### Skip Computation Optimization
+In production, actually skip FULL head computation when p_ra is high (not just
+mix outputs). Requires dynamic computation graph or head-level masking.
