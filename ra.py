@@ -198,7 +198,7 @@ class ContextShiftGate(nn.Module):
 
 
 # =============================================================================
-# SECTION 3: Four-Way Router
+# SECTION 3: Two-Way Router
 # =============================================================================
 
 
@@ -206,18 +206,16 @@ class ContextRouter(nn.Module):
     """
     Route tokens to compute tiers based on contextual hardness.
 
-    Maps (x, e_tok, shift_norm) -> 4-way probabilities:
-      - p_none: Skip token-mixing (just residual)
-      - p_ra:   Use RA heads only (cheap)
-      - p_full: Use FULL heads only (expensive)
-      - p_both: Use both RA and FULL (clutch mode)
+    Maps (x, e_tok, shift_norm) -> 2-way probabilities:
+      - p_ra:   Use RA heads only (cheap, fewer heads)
+      - p_full: Use FULL heads only (expensive, more heads)
 
     Features are FLOP-cheap per-token reductions:
       - shift_norm = |x - E(x)|
       - ||x||, ||E(x)||, <x, E(x)>
 
-    The router MLP is tiny: features -> hidden -> 4 logits -> softmax.
-    Initial bias discourages FULL/BOTH to encourage cheap paths.
+    The router MLP is tiny: features -> hidden -> 2 logits -> softmax.
+    Initial bias discourages FULL to encourage cheap RA path.
     """
 
     def __init__(self, cfg: RAConfig):
@@ -227,18 +225,17 @@ class ContextRouter(nn.Module):
         # Feature dimensions: shift_norm + ||x|| + ||E|| + <x,E>
         feat_dim = 4
 
-        # Tiny router MLP
+        # Tiny router MLP: 2-way routing (RA vs FULL)
         self.mlp = nn.Sequential(
             nn.Linear(feat_dim, cfg.router_hidden),
             nn.GELU(),
-            nn.Linear(cfg.router_hidden, 4),
+            nn.Linear(cfg.router_hidden, 2),
         )
 
-        # Bias FULL and BOTH logits to discourage expensive compute initially
+        # Bias FULL logit to discourage expensive compute initially
         with torch.no_grad():
-            # Order: [NONE, RA, FULL, BOTH]
-            self.mlp[-1].bias.data[2] += cfg.router_bias_full
-            self.mlp[-1].bias.data[3] += cfg.router_bias_full
+            # Order: [RA, FULL]
+            self.mlp[-1].bias.data[1] += cfg.router_bias_full
 
     def forward(
         self,
@@ -253,7 +250,7 @@ class ContextRouter(nn.Module):
             shift_norm: [B, T] from ContextShiftGate
 
         Returns:
-            probs: dict with keys "none", "ra", "full", "both"
+            probs: dict with keys "ra", "full"
                    each value is [B, T, 1] probability tensor
         """
         # Build features
@@ -264,14 +261,12 @@ class ContextRouter(nn.Module):
         feats = torch.stack([shift_norm, norm_x, norm_e, dot], dim=-1)  # [B, T, 4]
 
         # Route
-        logits = self.mlp(feats)  # [B, T, 4]
+        logits = self.mlp(feats)  # [B, T, 2]
         probs = F.softmax(logits, dim=-1)
 
         return {
-            "none": probs[..., 0:1],
-            "ra": probs[..., 1:2],
-            "full": probs[..., 2:3],
-            "both": probs[..., 3:4],
+            "ra": probs[..., 0:1],
+            "full": probs[..., 1:2],
         }
 
 
@@ -427,7 +422,7 @@ class RoutedMixer(nn.Module):
     """
     Mix outputs from compute tiers according to router probabilities.
 
-    out = p_none * x + p_ra * out_ra + p_full * out_full + p_both * (out_ra + out_full)/2
+    out = p_ra * out_ra + p_full * out_full
 
     This is research-mode: both RA and FULL are computed. Future optimization
     can use router probabilities to skip head groups entirely.
@@ -435,14 +430,12 @@ class RoutedMixer(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
         out_ra: torch.Tensor,
         out_full: torch.Tensor,
         probs: Dict[str, torch.Tensor],
     ) -> torch.Tensor:
         """
         Args:
-            x:        [B, T, D] input (residual)
             out_ra:   [B, T, D] RA head group output
             out_full: [B, T, D] FULL head group output
             probs:    dict of [B, T, 1] probabilities
@@ -450,14 +443,7 @@ class RoutedMixer(nn.Module):
         Returns:
             out: [B, T, D] mixed output
         """
-        out_both = 0.5 * (out_ra + out_full)
-
-        return (
-            probs["none"] * x
-            + probs["ra"] * out_ra
-            + probs["full"] * out_full
-            + probs["both"] * out_both
-        )
+        return probs["ra"] * out_ra + probs["full"] * out_full
 
 
 # =============================================================================
@@ -531,7 +517,7 @@ class RABlock(nn.Module):
 
             shift = self.shift_gate(x_norm, e_tok)
             probs = self.router(x_norm, e_tok, shift)
-            out = self.mixer(x_norm, out_ra, out_full, probs)
+            out = self.mixer(out_ra, out_full, probs)
 
         return out
 
@@ -543,7 +529,7 @@ class RABlock(nn.Module):
         """
         Compute cost penalty for training loss.
 
-        Returns mean of (p_full + p_both) to discourage expensive paths.
+        Returns mean of p_full to discourage expensive path.
         Only meaningful in phase 2.
         """
         if self.phase1:
@@ -553,8 +539,7 @@ class RABlock(nn.Module):
         shift = self.shift_gate(x_norm, e_tok)
         probs = self.router(x_norm, e_tok, shift)
 
-        cost = probs["full"] + probs["both"]
-        return cost.mean()
+        return probs["full"].mean()
 
 
 # =============================================================================
