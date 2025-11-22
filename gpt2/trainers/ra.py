@@ -68,8 +68,8 @@ class RATransformerBlock(nn.Module):
         # Phase tracking
         self.phase1 = True
 
-        # Router stats for logging
-        self.last_router_probs = None
+        # Router stats for logging (tensors to avoid graph breaks)
+        self._last_router_tensors = None
 
     def forward(self, x, tok_emb=None):
         """
@@ -90,7 +90,7 @@ class RATransformerBlock(nn.Module):
             # Weight by head count ratio
             alpha = self.attn.n_ra / self.attn.n_heads
             attn_out = (1 - alpha) * out_full + alpha * out_ra
-            self.last_router_probs = None
+            self._last_router_tensors = None
         else:
             # Phase 2: Route based on contextual hardness
             if tok_emb is None:
@@ -114,16 +114,17 @@ class RATransformerBlock(nn.Module):
                 out_full, _, _ = self.attn(x_norm, compute_ra=False)
                 attn_out = out_full
 
-            # Store for logging
+            # Store tensors for logging (avoid .item() in compiled graph)
             p_ra_detached = p_ra.detach()
             p_full = probs["full"].detach()
             total_tokens = p_ra_detached.numel()
-            ra_tokens = (p_ra_detached > 0.5).sum().item()
+            ra_tokens = (p_ra_detached > 0.5).sum()
 
-            self.last_router_probs = {
-                "ra": p_ra_detached.mean().item(),
-                "full": p_full.mean().item(),
-                "ra_token_pct": ra_tokens / total_tokens if total_tokens > 0 else 0.0,
+            # Store tensors, not scalars - convert in get_router_stats()
+            self._last_router_tensors = {
+                "ra_mean": p_ra_detached.mean(),
+                "full_mean": p_full.mean(),
+                "ra_tokens": ra_tokens,
                 "total_tokens": total_tokens,
             }
 
@@ -225,16 +226,27 @@ class RAGPT(nn.Module):
         return n_params
 
     def get_router_stats(self) -> Dict[str, float]:
-        """Get average router stats across all layers."""
+        """Get average router stats across all layers.
+
+        Converts tensors to scalars here (outside compiled graph) to avoid
+        torch.compile graph breaks from .item() calls.
+        """
         stats = {"p_ra": 0.0, "p_full": 0.0, "ra_token_pct": 0.0}
         count = 0
 
         for block in self.transformer.h:
-            if block.last_router_probs is not None:
-                stats["p_ra"] += block.last_router_probs.get("ra", 0.0)
-                stats["p_full"] += block.last_router_probs.get("full", 0.0)
-                stats["ra_token_pct"] += block.last_router_probs.get(
-                    "ra_token_pct", 0.0
+            if block._last_router_tensors is not None:
+                tensors = block._last_router_tensors
+                # Convert tensors to scalars here (outside compiled graph)
+                ra_mean = tensors["ra_mean"].item()
+                full_mean = tensors["full_mean"].item()
+                ra_tokens = tensors["ra_tokens"].item()
+                total_tokens = tensors["total_tokens"]
+
+                stats["p_ra"] += ra_mean
+                stats["p_full"] += full_mean
+                stats["ra_token_pct"] += (
+                    ra_tokens / total_tokens if total_tokens > 0 else 0.0
                 )
                 count += 1
 
