@@ -1535,3 +1535,318 @@ class RA_MLA_KVSplice_Model(nn.Module):
             "compression_ratio": self.compression_ratio,
             "cache_reduction": f"{(1 - self.compression_ratio) * 100:.1f}%",
         }
+
+
+# =============================================================================
+# SECTION 11: Full GPT-2 Models with MLA Attention
+# =============================================================================
+
+
+class MLABlock(nn.Module):
+    """Transformer block with MLA attention + MLP."""
+
+    def __init__(self, cfg: RA_MLA_Config, layer_idx: int):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = MLA_Flash(cfg, layer_idx)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLP: 4x expansion
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        # Attention with residual
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        # MLP with residual
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class RAMLABlock(nn.Module):
+    """Transformer block with RA_MLA attention + MLP."""
+
+    def __init__(
+        self, cfg: RA_MLA_Config, layer_idx: int, alternation_logits: nn.Parameter
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = RA_MLA_Flash(cfg, layer_idx, alternation_logits)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLP: 4x expansion
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class RAMLAKVBlock(nn.Module):
+    """Transformer block with RA_MLA_KVSplice attention + MLP."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alternation_logits: nn.Parameter,
+        compression_ratio: float,
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = RA_MLA_KVSplice(
+            cfg, layer_idx, alternation_logits, compression_ratio
+        )
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLP: 4x expansion
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class MLAGPT(nn.Module):
+    """Full GPT-2 model with MLA attention."""
+
+    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
+        super().__init__()
+        self.cfg = cfg
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList([MLABlock(cfg, i) for i in range(cfg.n_layers)])
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # Embeddings
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        # Transformer blocks
+        for block in self.blocks:
+            x, _ = block(x)
+
+        # Output
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        # Loss
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+
+class RAMLAGPT(nn.Module):
+    """Full GPT-2 model with RA+MLA attention."""
+
+    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
+        super().__init__()
+        self.cfg = cfg
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Shared alternation logits
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [RAMLABlock(cfg, i, self.alternation_logits) for i in range(cfg.n_layers)]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_alternation_distribution(self):
+        return torch.sigmoid(self.alternation_logits)
+
+    def balance_loss(self):
+        probs = self.get_alternation_distribution()
+        target = self.cfg.n_layers / 2.0
+        return (probs.sum() - target) ** 2
+
+
+class RAMLAKV_GPT(nn.Module):
+    """Full GPT-2 model with RA+MLA+KVSplice attention."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Shared alternation logits
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [
+                RAMLAKVBlock(cfg, i, self.alternation_logits, compression_ratio)
+                for i in range(cfg.n_layers)
+            ]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_alternation_distribution(self):
+        return torch.sigmoid(self.alternation_logits)
+
+    def balance_loss(self):
+        probs = self.get_alternation_distribution()
+        target = self.cfg.n_layers / 2.0
+        return (probs.sum() - target) ** 2
+
+    def get_compression_stats(self):
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        return {
+            "d_latent": self.cfg.d_latent,
+            "d_compressed": d_compressed,
+            "compression_ratio": self.compression_ratio,
+            "cache_reduction": f"{(1 - self.compression_ratio) * 100:.1f}%",
+        }
