@@ -120,7 +120,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
     def _setup_mla_model(self):
         """Replace model with MLA/RAMLA/RAMLAKV variant."""
         import torch
-        from ra import RA_MLA_Config, MLA_Model, RA_MLA_Model, RA_MLA_KVSplice_Model
+        from ra import RA_MLA_Config, MLAGPT, RAMLAGPT, RAMLAKV_GPT
 
         arch = self.step_config["arch"]
 
@@ -137,27 +137,57 @@ class RAMLATrainer(VanillaGPT2Trainer):
             n_layers=12,
         )
 
-        # Create appropriate model
+        # Create appropriate full GPT model
         if arch == "mla":
-            mla_model = MLA_Model(cfg)
-            print(f"Created MLA model with d_latent={d_latent}")
+            self.model = MLAGPT(cfg)
+            print(f"Created MLAGPT with d_latent={d_latent}")
         elif arch == "ramla":
-            mla_model = RA_MLA_Model(cfg)
-            print(f"Created RA_MLA model with d_latent={d_latent}")
-            print(f"  Layer directions: {mla_model.get_layer_directions()}")
+            self.model = RAMLAGPT(cfg)
+            print(f"Created RAMLAGPT with d_latent={d_latent}")
+            print(
+                f"  Layer directions: {self.model.get_alternation_distribution()[:3].tolist()}..."
+            )
         elif arch == "ramlakv":
-            mla_model = RA_MLA_KVSplice_Model(cfg, compression_ratio)
-            print(f"Created RA_MLA_KVSplice model")
-            print(f"  Compression: {mla_model.get_compression_stats()}")
+            self.model = RAMLAKV_GPT(cfg, compression_ratio=compression_ratio)
+            print(f"Created RAMLAKV_GPT")
+            print(f"  Compression: {self.model.get_compression_stats()}")
 
-        # TODO: Need to integrate MLA models with full GPT-2 architecture
-        # For now, this is a placeholder - the MLA models are attention-only
-        # and need to be wrapped in a full transformer with embeddings, MLP, etc.
-        print(f"WARNING: MLA model integration not yet complete")
-        print(f"  MLA models are attention-only and need GPT-2 wrapper")
+        # Move to device
+        self.model = self.model.to(self.args.device)
 
-        # Store for later
-        self._mla_model = mla_model
+        # Store config for balance loss
+        self._mla_config = cfg
+
+        print(f"Number of parameters: {self.model.get_num_params()/1e6:.2f}M")
+
+        # Recreate optimizer with new model
+        self._setup_optimizer()
+
+    def _setup_optimizer(self):
+        """Setup optimizer for the MLA model."""
+        import torch
+
+        # Use AdamW with weight decay
+        param_dict = {
+            pn: p for pn, p in self.model.named_parameters() if p.requires_grad
+        }
+
+        # Separate weight decay and no-decay params
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+
+        optim_groups = [
+            {"params": decay_params, "weight_decay": self.args.weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+
+        self.optimizer = torch.optim.AdamW(
+            optim_groups,
+            lr=self.args.learning_rate,
+            betas=(0.9, 0.95),
+        )
+
+        print(f"Created optimizer with LR={self.args.learning_rate:.1e}")
 
     def train(self):
         """Run training."""
