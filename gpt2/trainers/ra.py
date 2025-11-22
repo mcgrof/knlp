@@ -10,11 +10,12 @@ for easy tokens and full attention for hard tokens.
 
 import os
 import sys
-import time
 import math
 from typing import Optional
 
 import torch
+import torch.nn as nn
+from torch.nn import functional as F
 
 # Add parent to path for imports
 parent_dir = os.path.dirname(
@@ -22,10 +23,153 @@ parent_dir = os.path.dirname(
 )
 sys.path.insert(0, parent_dir)
 
-from gpt2.model import GPT, GPTConfig
-from gpt2.ra_patch import patch_gpt2_with_ra, set_ra_phase
+from gpt2.model import GPTConfig, LayerNorm, MLP
+from ra import RAConfig, RABlock, WarmupScheduler
 from lib.optimizers import create_optimizer
 from .base import BaseGPT2Trainer
+
+
+class RATransformerBlock(nn.Module):
+    """
+    Transformer block using RABlock for attention.
+
+    Pre-norm architecture: LN -> Attn -> residual -> LN -> MLP -> residual
+    """
+
+    def __init__(self, gpt_config, ra_config, layer_idx, embedding_ref):
+        super().__init__()
+        self.ln_1 = LayerNorm(gpt_config.n_embd, bias=gpt_config.bias)
+        self.attn = RABlock(ra_config, layer_idx=layer_idx)
+        self.ln_2 = LayerNorm(gpt_config.n_embd, bias=gpt_config.bias)
+        self.mlp = MLP(gpt_config)
+        self.embedding_ref = embedding_ref  # Reference to wte for routing
+
+    def forward(self, x, tok_emb=None):
+        """
+        Args:
+            x: [B, T, D] hidden state
+            tok_emb: [B, T, D] token embeddings for routing
+
+        Returns:
+            out: [B, T, D] output hidden state
+        """
+        # Attention sublayer with RA
+        # Note: RABlock has its own LN, but we use pre-norm here
+        # Actually RABlock expects normalized input, so we apply ln_1
+        x_norm = self.ln_1(x)
+
+        # Get both head group outputs from RABlock's attention
+        out_full, out_ra, _ = self.attn.attn(x_norm)
+
+        # Route or combine based on phase
+        if self.attn.phase1:
+            # Warmup: combine with head ratio
+            alpha = self.attn.attn.n_ra / self.attn.attn.n_heads
+            attn_out = (1 - alpha) * out_full + alpha * out_ra
+        else:
+            # Phase 2: use router
+            if tok_emb is None:
+                raise ValueError("tok_emb required for phase 2 routing")
+            shift = self.attn.shift_gate(x_norm, tok_emb)
+            probs = self.attn.router(x_norm, tok_emb, shift)
+            attn_out = self.attn.mixer(x_norm, out_ra, out_full, probs)
+
+        x = x + attn_out
+
+        # MLP sublayer
+        x = x + self.mlp(self.ln_2(x))
+
+        return x
+
+
+class RAGPT(nn.Module):
+    """GPT with RA attention blocks."""
+
+    def __init__(self, gpt_config, ra_config, enable_routing=True):
+        super().__init__()
+        self.config = gpt_config
+        self.ra_config = ra_config
+        self.enable_routing = enable_routing
+
+        self.transformer = nn.ModuleDict(
+            dict(
+                wte=nn.Embedding(gpt_config.vocab_size, gpt_config.n_embd),
+                wpe=nn.Embedding(gpt_config.block_size, gpt_config.n_embd),
+                drop=nn.Dropout(gpt_config.dropout),
+                h=nn.ModuleList(
+                    [
+                        RATransformerBlock(
+                            gpt_config, ra_config, i, None
+                        )  # embedding_ref set after
+                        for i in range(gpt_config.n_layer)
+                    ]
+                ),
+                ln_f=LayerNorm(gpt_config.n_embd, bias=gpt_config.bias),
+            )
+        )
+        self.lm_head = nn.Linear(gpt_config.vocab_size, gpt_config.n_embd, bias=False)
+
+        # Weight tying
+        self.transformer.wte.weight = self.lm_head.weight
+
+        # Set embedding reference for all blocks
+        for block in self.transformer.h:
+            block.embedding_ref = self.transformer.wte
+
+        # Init weights
+        self.apply(self._init_weights)
+        for pn, p in self.named_parameters():
+            if pn.endswith("c_proj.weight") or pn.endswith("c_proj_full.weight"):
+                torch.nn.init.normal_(
+                    p, mean=0.0, std=0.02 / math.sqrt(2 * gpt_config.n_layer)
+                )
+
+        # Report parameters
+        n_params = sum(p.numel() for p in self.parameters())
+        n_params -= self.transformer.wpe.weight.numel()
+        print(f"Number of parameters: {n_params/1e6:.2f}M")
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.block_size
+
+        pos = torch.arange(0, t, dtype=torch.long, device=device)
+
+        # Embeddings
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # Forward through blocks
+        for block in self.transformer.h:
+            x = block(x, tok_emb=tok_emb)
+
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+        else:
+            logits = self.lm_head(x[:, [-1], :])
+            loss = None
+
+        return logits, loss
+
+    def set_phase(self, phase1):
+        """Set phase for all RA blocks."""
+        for block in self.transformer.h:
+            block.attn.set_phase(phase1)
 
 
 class RATrainer(BaseGPT2Trainer):
@@ -73,6 +217,12 @@ class RATrainer(BaseGPT2Trainer):
         # Track phase transition
         self.transitioned = False
 
+        # Warmup scheduler
+        self.warmup_scheduler = WarmupScheduler(
+            threshold=args.warmup_loss_drop,
+            min_evals=2,
+        )
+
     def _configure_step(self, args, step: str):
         """Configure args based on ablation step."""
         # RA configuration
@@ -94,8 +244,8 @@ class RATrainer(BaseGPT2Trainer):
             raise ValueError(f"Unknown step: {step}. Use '0' or '1'.")
 
     def create_model(self):
-        """Create and patch GPT-2 model with RA."""
-        # Create base model
+        """Create GPT model with RA attention."""
+        # GPT config
         gpt_config = GPTConfig(
             block_size=self.config.GPT2_BLOCK_SIZE,
             vocab_size=self.config.TOKENIZER_VOCAB_SIZE,
@@ -104,18 +254,33 @@ class RATrainer(BaseGPT2Trainer):
             n_embd=self.config.GPT2_N_EMBD,
         )
 
-        model = GPT(gpt_config)
-
-        # Patch with RA
+        # RA config
         args = self.args
-        model, self.warmup_scheduler = patch_gpt2_with_ra(
-            model,
+        ra_config = RAConfig(
+            d_model=gpt_config.n_embd,
+            n_heads=gpt_config.n_head,
+            block_size=gpt_config.block_size,
             ra_head_frac=args.ra_head_frac,
             router_hidden=args.router_hidden,
             router_bias_full=args.router_bias_full,
             warmup_loss_drop=args.warmup_loss_drop,
-            enable_routing=args.enable_routing,
         )
+
+        # Create model
+        model = RAGPT(gpt_config, ra_config, enable_routing=args.enable_routing)
+
+        # If baseline, keep in phase1 permanently
+        if not args.enable_routing:
+            model.set_phase(phase1=True)
+
+        # Log configuration
+        n_ra = max(1, int(round(args.ra_head_frac * gpt_config.n_head)))
+        n_ra = min(n_ra, gpt_config.n_head - 1)
+        n_full = gpt_config.n_head - n_ra
+
+        mode = "RA with routing" if args.enable_routing else "Baseline (all FULL)"
+        print(f"Created RAGPT: {mode}")
+        print(f"  Heads: {n_full} FULL + {n_ra} RA = {gpt_config.n_head} total")
 
         # Move to device
         model = model.to(self.device)
@@ -135,31 +300,14 @@ class RATrainer(BaseGPT2Trainer):
         return model
 
     def train_step(self, batch):
-        """
-        Execute one training step.
-
-        Returns:
-            dict with loss, lr, and other metrics
-        """
+        """Execute one training step."""
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
 
         # Forward pass
         with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-            # Need to pass input_ids for routing
-            # This requires modifying the forward to accept them
             logits, loss = self.raw_model(x, y)
-
-            # Add compute penalty if in phase 2
-            penalty = torch.tensor(0.0, device=self.device)
-            if self.args.enable_routing and not self.transitioned:
-                # Only compute penalty after transition
-                pass
-            elif self.args.enable_routing and self.transitioned:
-                # Compute penalty across layers
-                penalty = self._compute_penalty(x)
-                loss = loss + self.args.compute_penalty_weight * penalty
 
         # Backward pass
         self.scaler.scale(loss).backward()
@@ -182,15 +330,8 @@ class RATrainer(BaseGPT2Trainer):
 
         return {
             "loss": loss.item(),
-            "penalty": penalty.item() if isinstance(penalty, torch.Tensor) else penalty,
             "lr": self.optimizer.param_groups[0]["lr"],
         }
-
-    def _compute_penalty(self, x):
-        """Compute total compute penalty across layers."""
-        # This is a placeholder - actual implementation needs
-        # access to hidden states at each layer
-        return torch.tensor(0.0, device=self.device)
 
     def on_eval(self, eval_loss, eval_metrics):
         """
@@ -216,7 +357,7 @@ class RATrainer(BaseGPT2Trainer):
             print(f"  Relative drop: {rel_drop*100:.1f}%")
             print(f"{'='*60}\n")
 
-            set_ra_phase(self.raw_model, phase1=False)
+            self.raw_model.set_phase(phase1=False)
             self.transitioned = True
 
     def get_run_name(self):
