@@ -103,7 +103,7 @@ class RATransformerBlock(nn.Module):
             probs = self.router(x_norm, tok_emb, shift)
 
             # Mix according to router
-            attn_out = self.mixer(x_norm, out_ra, out_full, probs)
+            attn_out = self.mixer(out_ra, out_full, probs)
 
             # Store for logging
             self.last_router_probs = {
@@ -202,7 +202,7 @@ class RAGPT(nn.Module):
 
     def get_router_stats(self) -> Dict[str, float]:
         """Get average router probabilities across all layers."""
-        stats = {"p_none": 0.0, "p_ra": 0.0, "p_full": 0.0, "p_both": 0.0}
+        stats = {"p_ra": 0.0, "p_full": 0.0}
         count = 0
 
         for block in self.transformer.h:

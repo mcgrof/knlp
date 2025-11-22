@@ -169,7 +169,7 @@ def benchmark_router(device, batch_size=8, seq_len=1024, n_embd=768, n_iters=100
         with torch.no_grad():
             shift = shift_gate(x, tok_emb)
             probs = router(x, tok_emb, shift)
-            _ = mixer(x, out_ra, out_full, probs)
+            _ = mixer(out_ra, out_full, probs)
 
     # Benchmark shift computation
     print("\nContextShiftGate (|x - E(x)|):")
@@ -211,7 +211,7 @@ def benchmark_router(device, batch_size=8, seq_len=1024, n_embd=768, n_iters=100
             torch.cuda.synchronize()
         start = time.perf_counter()
         with torch.no_grad():
-            _ = mixer(x, out_ra, out_full, probs)
+            _ = mixer(out_ra, out_full, probs)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         mixer_times.append((time.perf_counter() - start) * 1000)
