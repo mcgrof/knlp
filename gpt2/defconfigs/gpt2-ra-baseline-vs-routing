@@ -83,9 +83,10 @@ CONFIG_RA_COMPUTE_PENALTY_WEIGHT="0.01"
 CONFIG_RA_ABLATION_MODE=y
 CONFIG_RA_ABLATION_STEPS="0,1"
 
-# Step descriptions for logging
-# Step 0: Baseline (no routing)
-# Step 1: RA with routing
+# Inference benchmarks
+CONFIG_INFERENCE_BENCHMARK=y
+CONFIG_RUN_LM_EVAL=y
+CONFIG_LM_EVAL_TASKS="hellaswag"
 
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y

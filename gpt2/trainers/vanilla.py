@@ -200,6 +200,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             print(
                 f"Effective batch size: {self.args.batch_size * self.args.gradient_accumulation}"
             )
+            save_enabled = getattr(self.args, "save_checkpoint", False)
+            output_dir = getattr(self.args, "output_dir", ".")
+            print(f"Save checkpoint: {save_enabled}, Output: {output_dir}")
             print("-" * 50)
 
         # Training setup
