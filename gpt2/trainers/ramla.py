@@ -19,7 +19,7 @@ parent_dir = os.path.dirname(
 sys.path.insert(0, parent_dir)
 
 from typing import Optional, Dict
-from gpt2.trainers.base import VanillaGPT2Trainer
+from gpt2.trainers.vanilla import VanillaGPT2Trainer
 from gpt2.trainers.ra import RATrainer
 
 
