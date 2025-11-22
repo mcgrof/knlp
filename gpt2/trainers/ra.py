@@ -825,6 +825,6 @@ class RATrainer(VanillaGPT2Trainer):
         # Run the actual training
         super().train()
 
-        # Run inference benchmark if routing is enabled
-        if self.args.enable_routing and not getattr(self.args, "dry_run", False):
+        # Run inference benchmark for all steps (baseline and routing)
+        if not getattr(self.args, "dry_run", False):
             self.run_inference_benchmark()
