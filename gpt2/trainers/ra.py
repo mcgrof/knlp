@@ -106,9 +106,17 @@ class RATransformerBlock(nn.Module):
             # Mix according to router
             attn_out = self.mixer(out_ra, out_full, probs)
 
-            # Store for logging
+            # Store for logging (soft averages and hard counts)
+            p_ra = probs["ra"].detach()
+            p_full = probs["full"].detach()
+            total_tokens = p_ra.numel()
+            ra_tokens = (p_ra > 0.5).sum().item()
+
             self.last_router_probs = {
-                k: v.detach().mean().item() for k, v in probs.items()
+                "ra": p_ra.mean().item(),
+                "full": p_full.mean().item(),
+                "ra_token_pct": ra_tokens / total_tokens if total_tokens > 0 else 0.0,
+                "total_tokens": total_tokens,
             }
 
         # Residual + MLP
@@ -201,17 +209,25 @@ class RAGPT(nn.Module):
         for block in self.transformer.h:
             block.phase1 = phase1
 
+    def get_num_params(self, non_embedding=True):
+        """Return number of parameters (excluding position embeddings by default)."""
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
     def get_router_stats(self) -> Dict[str, float]:
-        """Get average router probabilities across all layers."""
-        stats = {"p_ra": 0.0, "p_full": 0.0}
+        """Get average router stats across all layers."""
+        stats = {"p_ra": 0.0, "p_full": 0.0, "ra_token_pct": 0.0}
         count = 0
 
         for block in self.transformer.h:
             if block.last_router_probs is not None:
-                for k in stats:
-                    key = k.replace("p_", "")
-                    if key in block.last_router_probs:
-                        stats[k] += block.last_router_probs[key]
+                stats["p_ra"] += block.last_router_probs.get("ra", 0.0)
+                stats["p_full"] += block.last_router_probs.get("full", 0.0)
+                stats["ra_token_pct"] += block.last_router_probs.get(
+                    "ra_token_pct", 0.0
+                )
                 count += 1
 
         if count > 0:
@@ -273,6 +289,12 @@ class RATrainer(VanillaGPT2Trainer):
                 threshold=args.warmup_loss_drop,
                 min_evals=2,
             )
+
+            # Skip RA warmup if requested - enable routing immediately
+            if args.skip_ra_warmup:
+                self.raw_model.set_phase(phase1=False)
+                self.transitioned = True
+                print("Skipping RA warmup - routing enabled from start")
         else:
             self.warmup_scheduler = None
 
@@ -284,6 +306,7 @@ class RATrainer(VanillaGPT2Trainer):
         args.router_bias_full = getattr(args, "router_bias_full", -1.0)
         args.warmup_loss_drop = getattr(args, "warmup_loss_drop", 0.15)
         args.compute_penalty_weight = getattr(args, "compute_penalty_weight", 0.01)
+        args.skip_ra_warmup = getattr(args, "skip_ra_warmup", False)
 
         if step == "0":
             # Baseline: standard GPT-2
@@ -300,14 +323,11 @@ class RATrainer(VanillaGPT2Trainer):
 
     def create_model(self):
         """Create GPT model (baseline or RA)."""
-        # GPT config
-        gpt_config = GPTConfig(
-            block_size=self.config.GPT2_BLOCK_SIZE,
-            vocab_size=self.config.TOKENIZER_VOCAB_SIZE,
-            n_layer=self.config.GPT2_N_LAYER,
-            n_head=self.config.GPT2_N_HEAD,
-            n_embd=self.config.GPT2_N_EMBD,
-        )
+        # Get config from model name (gpt2, gpt2-medium, etc.)
+        gpt_config = GPTConfig.from_name(self.args.model_name)
+        # Override block_size if specified
+        if hasattr(self.config, "GPT2_BLOCK_SIZE"):
+            gpt_config.block_size = self.config.GPT2_BLOCK_SIZE
 
         args = self.args
 
@@ -440,11 +460,15 @@ class RATrainer(VanillaGPT2Trainer):
 
     def log_metrics(self, metrics_dict):
         """Override to add router stats to logged metrics."""
+        # Get the actual model (handle torch.compile wrapper)
+        model = self.raw_model
+        if hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+
         # Add router stats if available
-        if hasattr(self.raw_model, "get_router_stats"):
-            router_stats = self.raw_model.get_router_stats()
-            if router_stats.get("p_ra", 0) > 0 or router_stats.get("p_full", 0) > 0:
-                metrics_dict.update(router_stats)
+        if hasattr(model, "get_router_stats"):
+            router_stats = model.get_router_stats()
+            metrics_dict.update(router_stats)
 
         # Call parent's log_metrics
         super().log_metrics(metrics_dict)
@@ -458,3 +482,353 @@ class RATrainer(VanillaGPT2Trainer):
             self.on_eval(losses["val"], {})
 
         return losses
+
+    def run_inference_benchmark(self, num_tokens=100, num_runs=5):
+        """
+        Run inference benchmarks after training.
+
+        Measures:
+        - TTFT (Time To First Token)
+        - KV cache size reduction estimate
+        - Throughput (tokens/sec)
+        """
+        import time
+
+        if not self.master_process:
+            return {}
+
+        print("\n" + "=" * 60)
+        print("INFERENCE BENCHMARK")
+        print("=" * 60)
+
+        # Get the actual model
+        model = self.raw_model
+        if hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+
+        model.eval()
+
+        # Use a sample prompt
+        prompt_text = "The quick brown fox jumps over the lazy"
+        # Simple tokenization (space-split for demo, real would use tokenizer)
+        prompt_ids = torch.randint(
+            0, model.config.vocab_size, (1, 8), device=self.device
+        )
+
+        ttft_times = []
+        total_times = []
+        ra_token_pcts = []
+
+        with torch.no_grad():
+            for run in range(num_runs):
+                generated = prompt_ids.clone()
+
+                # Measure TTFT (time to first token)
+                torch.cuda.synchronize()
+                t0 = time.perf_counter()
+
+                # Generate first token
+                logits, _ = model(generated)
+                next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                generated = torch.cat([generated, next_token], dim=1)
+
+                torch.cuda.synchronize()
+                ttft = time.perf_counter() - t0
+                ttft_times.append(ttft)
+
+                # Generate remaining tokens
+                for _ in range(num_tokens - 1):
+                    logits, _ = model(generated)
+                    next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+                    generated = torch.cat([generated, next_token], dim=1)
+
+                torch.cuda.synchronize()
+                total_time = time.perf_counter() - t0
+                total_times.append(total_time)
+
+                # Get router stats for KV cache estimation
+                if hasattr(model, "get_router_stats"):
+                    stats = model.get_router_stats()
+                    ra_token_pcts.append(stats.get("ra_token_pct", 0.0))
+
+        # Compute metrics
+        avg_ttft = sum(ttft_times) / len(ttft_times) * 1000  # ms
+        avg_total = sum(total_times) / len(total_times)
+        throughput = num_tokens / avg_total
+
+        # KV cache reduction estimate
+        # RA tokens use 3 heads instead of 12, so KV cache is 3/12 = 25% for those
+        avg_ra_pct = sum(ra_token_pcts) / len(ra_token_pcts) if ra_token_pcts else 0.0
+        # Weighted average: ra_pct * 0.25 + (1 - ra_pct) * 1.0
+        kv_cache_ratio = avg_ra_pct * 0.25 + (1 - avg_ra_pct) * 1.0
+        kv_cache_reduction = (1 - kv_cache_ratio) * 100
+
+        print(f"TTFT: {avg_ttft:.2f} ms")
+        print(f"Throughput: {throughput:.1f} tokens/sec")
+        print(f"RA token %: {avg_ra_pct*100:.1f}%")
+        print(f"KV cache reduction: {kv_cache_reduction:.1f}%")
+
+        # Qualitative metrics
+        print("\n--- Generation Quality ---")
+
+        # Generate longer sample for quality analysis
+        sample_ids = torch.randint(
+            0, model.config.vocab_size, (1, 8), device=self.device
+        )
+        generated_tokens = []
+
+        with torch.no_grad():
+            gen = sample_ids.clone()
+            for _ in range(200):
+                logits, _ = model(gen)
+                # Sample with temperature for diversity
+                probs = F.softmax(logits[:, -1, :] / 0.8, dim=-1)
+                next_token = torch.multinomial(probs, 1)
+                gen = torch.cat([gen, next_token], dim=1)
+                generated_tokens.append(next_token.item())
+
+        # Compute repetition metrics
+        def calc_distinct_n(tokens, n):
+            if len(tokens) < n:
+                return 1.0
+            ngrams = [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
+            return len(set(ngrams)) / len(ngrams) if ngrams else 1.0
+
+        distinct_1 = calc_distinct_n(generated_tokens, 1)
+        distinct_2 = calc_distinct_n(generated_tokens, 2)
+        distinct_3 = calc_distinct_n(generated_tokens, 3)
+
+        # Repetition rate (how many tokens are same as previous)
+        repetitions = sum(
+            1
+            for i in range(1, len(generated_tokens))
+            if generated_tokens[i] == generated_tokens[i - 1]
+        )
+        rep_rate = repetitions / len(generated_tokens) if generated_tokens else 0
+
+        print(f"Distinct-1: {distinct_1:.3f} (unique unigrams)")
+        print(f"Distinct-2: {distinct_2:.3f} (unique bigrams)")
+        print(f"Distinct-3: {distinct_3:.3f} (unique trigrams)")
+        print(f"Repetition rate: {rep_rate:.3f} (consecutive repeats)")
+
+        # Self-perplexity: model's perplexity on its own generation
+        with torch.no_grad():
+            gen_input = gen[:, :-1]
+            gen_target = gen[:, 1:]
+            logits, _ = model(gen_input)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                gen_target.view(-1),
+                reduction="mean",
+            )
+            self_ppl = math.exp(min(loss.item(), 20))
+
+        print(f"Self-perplexity: {self_ppl:.2f}")
+
+        # Run lm-eval benchmarks if enabled
+        lm_eval_results = {}
+        if getattr(self.args, "run_lm_eval", False):
+            lm_eval_results = self._run_lm_eval(model, generated_tokens)
+
+        # Quality assessment
+        if distinct_2 < 0.3:
+            quality = "Poor (high repetition)"
+        elif distinct_2 < 0.5:
+            quality = "Fair"
+        elif distinct_2 < 0.7:
+            quality = "Good"
+        else:
+            quality = "Excellent (high diversity)"
+
+        print(f"Quality: {quality}")
+        print("=" * 60 + "\n")
+
+        metrics = {
+            "inference/ttft_ms": avg_ttft,
+            "inference/throughput_tps": throughput,
+            "inference/ra_token_pct": avg_ra_pct,
+            "inference/kv_cache_reduction_pct": kv_cache_reduction,
+            "inference/distinct_1": distinct_1,
+            "inference/distinct_2": distinct_2,
+            "inference/distinct_3": distinct_3,
+            "inference/rep_rate": rep_rate,
+            "inference/self_ppl": self_ppl,
+        }
+        # Add lm-eval results
+        metrics.update(lm_eval_results)
+
+        # Log to trackers
+        self.log_metrics(metrics)
+
+        model.train()
+        return metrics
+
+    def _run_lm_eval(self, model, generated_tokens):
+        """Run lm-eval benchmarks on the model."""
+        try:
+            from lm_eval import evaluator
+            from lm_eval.api.model import LM
+            from lm_eval.api.instance import Instance
+            import numpy as np
+            import tiktoken
+        except ImportError as e:
+            print(f"(Install dependencies: pip install lm-eval tiktoken) - {e}")
+            return {}
+
+        print("\n--- lm-eval Benchmarks ---")
+
+        # Get tasks from args
+        tasks = getattr(self.args, "lm_eval_tasks", "hellaswag").split(",")
+        tasks = [t.strip() for t in tasks]
+
+        # Load GPT-2 tokenizer
+        enc = tiktoken.get_encoding("gpt2")
+
+        # Create a wrapper for our model
+        class RAModelWrapper(LM):
+            def __init__(wrapper_self, model, device, config, tokenizer):
+                super().__init__()
+                wrapper_self._model = model
+                wrapper_self._device = device
+                wrapper_self._config = config
+                wrapper_self._tokenizer = tokenizer
+                wrapper_self.batch_size_per_gpu = 1
+
+            @property
+            def eot_token_id(wrapper_self):
+                return wrapper_self._tokenizer.eot_token
+
+            @property
+            def max_length(wrapper_self):
+                return wrapper_self._config.block_size
+
+            @property
+            def max_gen_toks(wrapper_self):
+                return 256
+
+            @property
+            def batch_size(wrapper_self):
+                return 1
+
+            @property
+            def device(wrapper_self):
+                return wrapper_self._device
+
+            def tok_encode(wrapper_self, string, **kwargs):
+                return wrapper_self._tokenizer.encode(
+                    string, allowed_special={"<|endoftext|>"}
+                )
+
+            def tok_decode(wrapper_self, tokens, **kwargs):
+                return wrapper_self._tokenizer.decode(tokens)
+
+            def _loglikelihood_tokens(wrapper_self, requests, disable_tqdm=False):
+                results = []
+                for context, continuation in requests:
+                    ctx_tensor = torch.tensor([context], device=wrapper_self._device)
+                    with torch.no_grad():
+                        logits, _ = wrapper_self._model(ctx_tensor)
+                    # Compute log likelihood of continuation
+                    log_probs = F.log_softmax(
+                        logits[0, -len(continuation) - 1 : -1], dim=-1
+                    )
+                    ll = sum(
+                        log_probs[i, continuation[i]].item()
+                        for i in range(min(len(continuation), log_probs.size(0)))
+                    )
+                    results.append((ll, True))
+                return results
+
+            def loglikelihood(wrapper_self, requests):
+                new_reqs = []
+                for req in requests:
+                    context = wrapper_self.tok_encode(req.args[0])
+                    continuation = wrapper_self.tok_encode(req.args[1])
+                    new_reqs.append((context, continuation))
+                return wrapper_self._loglikelihood_tokens(new_reqs)
+
+            def loglikelihood_rolling(wrapper_self, requests):
+                results = []
+                for req in requests:
+                    tokens = wrapper_self.tok_encode(req.args[0])
+                    if len(tokens) < 2:
+                        results.append((0.0, True))
+                        continue
+                    ctx = tokens[:-1]
+                    cont = tokens[1:]
+                    ll, _ = wrapper_self._loglikelihood_tokens([(ctx, cont)])[0]
+                    results.append((ll, True))
+                return results
+
+            def generate_until(wrapper_self, requests):
+                results = []
+                for req in requests:
+                    context = wrapper_self.tok_encode(req.args[0])
+                    gen_kwargs = req.args[1]
+                    max_gen = gen_kwargs.get("max_gen_toks", 100)
+
+                    ctx_tensor = torch.tensor(
+                        [context[-wrapper_self.max_length :]],
+                        device=wrapper_self._device,
+                    )
+                    generated = []
+
+                    with torch.no_grad():
+                        for _ in range(max_gen):
+                            logits, _ = wrapper_self._model(ctx_tensor)
+                            next_token = logits[0, -1].argmax().item()
+                            generated.append(next_token)
+                            ctx_tensor = torch.cat(
+                                [
+                                    ctx_tensor,
+                                    torch.tensor(
+                                        [[next_token]], device=wrapper_self._device
+                                    ),
+                                ],
+                                dim=1,
+                            )
+                            if ctx_tensor.size(1) > wrapper_self.max_length:
+                                ctx_tensor = ctx_tensor[:, -wrapper_self.max_length :]
+
+                    results.append(wrapper_self.tok_decode(generated))
+                return results
+
+        # Create wrapper and run evaluation
+        try:
+            wrapper = RAModelWrapper(model, self.device, model.config, enc)
+            results = evaluator.simple_evaluate(
+                model=wrapper,
+                tasks=tasks,
+                num_fewshot=0,
+                batch_size=1,
+                device=str(self.device),
+            )
+
+            # Extract metrics
+            lm_eval_metrics = {}
+            for task_name, task_results in results.get("results", {}).items():
+                for metric_name, value in task_results.items():
+                    if isinstance(value, (int, float)) and not metric_name.endswith(
+                        "_stderr"
+                    ):
+                        key = f"lm_eval/{task_name}_{metric_name}"
+                        lm_eval_metrics[key] = value
+                        print(f"{task_name}/{metric_name}: {value:.4f}")
+
+            return lm_eval_metrics
+
+        except Exception as e:
+            print(f"lm-eval failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {}
+
+    def train(self):
+        """Override to run inference benchmark after training."""
+        # Run the actual training
+        super().train()
+
+        # Run inference benchmark if routing is enabled
+        if self.args.enable_routing and not getattr(self.args, "dry_run", False):
+            self.run_inference_benchmark()

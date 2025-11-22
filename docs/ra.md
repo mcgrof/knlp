@@ -174,6 +174,20 @@ class RAConfig:
     dropout: float = 0.0
 ```
 
+### Quick Testing
+
+To skip the RA warmup phase and enable routing from the start:
+
+```bash
+# CLI flag
+python gpt2/train.py --architecture unified-ra --ra-step 1 --skip-ra-warmup
+
+# Environment variable (for test matrix)
+SKIP_RA_WARMUP=1 make
+```
+
+This is useful for quick validation that routing works correctly.
+
 ## Training Schedule
 
 1. **Phase 1** (steps 0 to trigger): Full attention only
