@@ -1249,3 +1249,289 @@ class MLA_Model(nn.Module):
                 new_caches.append(new_cache)
 
         return x, new_caches
+
+
+# =============================================================================
+# SECTION 10: RA-MLA with Learned KVSplice
+# =============================================================================
+
+
+class LearnedKVSplice(nn.Module):
+    """
+    Differentiable KVSplice for end-to-end training.
+
+    Unlike post-hoc KVSplice which fits on calibration data after training,
+    this version is fully differentiable and learns compression during training.
+
+    Combines:
+    - Learned monotonic transform (simplified spline via scale/shift)
+    - Learned low-rank projection (differentiable PCA)
+    """
+
+    def __init__(self, d_in: int, d_compressed: int):
+        super().__init__()
+        self.d_in = d_in
+        self.d_compressed = d_compressed
+
+        # Learned monotonic transform (per-dimension scale/shift)
+        self.transform_scale = nn.Parameter(torch.ones(d_in))
+        self.transform_shift = nn.Parameter(torch.zeros(d_in))
+
+        # Learned low-rank projection (differentiable PCA)
+        self.compress = nn.Linear(d_in, d_compressed, bias=False)
+        self.expand = nn.Linear(d_compressed, d_in, bias=False)
+
+        # Initialize compress/expand as approximate inverse
+        nn.init.orthogonal_(self.compress.weight)
+        with torch.no_grad():
+            self.expand.weight.copy_(self.compress.weight.T)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Compress and decompress through learned KVSplice.
+
+        This creates a bottleneck that forces the model to learn
+        compressible representations.
+        """
+        # Apply learned monotonic transform
+        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
+
+        # Compress through low-rank bottleneck
+        compressed = self.compress(x_transformed)
+
+        # Decompress
+        decompressed = self.expand(compressed)
+
+        # Inverse transform
+        out = (decompressed - self.transform_shift) / (
+            F.softplus(self.transform_scale) + 1e-6
+        )
+
+        return out
+
+    def compress_only(self, x: torch.Tensor) -> torch.Tensor:
+        """Compress for caching (no decompression)."""
+        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
+        return self.compress(x_transformed)
+
+    def decompress_only(self, compressed: torch.Tensor) -> torch.Tensor:
+        """Decompress from cache."""
+        decompressed = self.expand(compressed)
+        return (decompressed - self.transform_shift) / (
+            F.softplus(self.transform_scale) + 1e-6
+        )
+
+
+class RA_MLA_KVSplice(nn.Module):
+    """
+    RA-MLA with learned KVSplice compression.
+
+    Extends RA_MLA_Flash with end-to-end learned compression that mirrors
+    the geometry transformation + PCA approach of KVSplice, but is fully
+    differentiable for training.
+
+    The model learns to produce latents that compress well through the
+    spline+PCA bottleneck, rather than hoping post-hoc compression works.
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alternation_logits: nn.Parameter,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+        self.alternation_logits = alternation_logits
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # Learned KVSplice compression
+        d_compressed = int(cfg.d_latent * compression_ratio)
+        self.kvsplice = LearnedKVSplice(cfg.d_latent, d_compressed)
+        self.d_compressed = d_compressed
+
+        # Input projection to latent space
+        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+
+        # Decompress latent to Q, K, V
+        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
+        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+    def get_alternation_prob(self) -> torch.Tensor:
+        """Get this layer's probability of using reciprocal attention."""
+        return torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass with learned KVSplice compression.
+
+        Cache stores compressed latents (d_compressed instead of d_latent).
+        """
+        B, T, D = x.shape
+
+        # Project to latent space
+        latent = self.to_latent(x)  # [B, T, d_latent]
+
+        # Apply KVSplice bottleneck (learn compressible representations)
+        latent = self.kvsplice(latent)
+
+        # Handle cache (stored in compressed form)
+        if cache is not None:
+            # Decompress cached latents
+            cache_decompressed = self.kvsplice.decompress_only(cache)
+            full_latent = torch.cat([cache_decompressed, latent], dim=1)
+            T_total = full_latent.shape[1]
+        else:
+            full_latent = latent
+            T_total = T
+
+        # Decompress to Q, K, V
+        qkv = self.from_latent(full_latent)
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Determine attention direction
+        p_recip = self.get_alternation_prob()
+
+        if self.training:
+            use_reciprocal = (p_recip > 0.5).float()
+            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
+        else:
+            use_reciprocal = (p_recip > 0.5).float()
+
+        # Flash attention
+        if use_reciprocal > 0.5:
+            attn_out = F.scaled_dot_product_attention(
+                k[:, :, -T:, :] if cache is not None else k,
+                q,
+                v,
+                is_causal=(cache is None),
+                dropout_p=self.cfg.dropout if self.training else 0.0,
+            )
+        else:
+            attn_out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                is_causal=(cache is None),
+                dropout_p=self.cfg.dropout if self.training else 0.0,
+            )
+
+        # Merge heads and project
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        # Store compressed cache
+        if use_cache:
+            new_cache = self.kvsplice.compress_only(full_latent)
+        else:
+            new_cache = None
+
+        return out, new_cache
+
+
+class RA_MLA_KVSplice_Model(nn.Module):
+    """
+    Container for RA_MLA_KVSplice layers with learned compression.
+
+    Ablation step 3: measures benefit of end-to-end learned KVSplice
+    over base RA_MLA architecture.
+
+    The balanced alternation + learned compression creates optimal
+    conditions for inference-time cache efficiency.
+    """
+
+    def __init__(self, cfg: RA_MLA_Config, compression_ratio: float = 0.5):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+
+        # Shared alternation logits
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Create layers
+        self.layers = nn.ModuleList(
+            [
+                RA_MLA_KVSplice(cfg, i, self.alternation_logits, compression_ratio)
+                for i in range(cfg.n_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[list] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[list]]:
+        """Forward through all layers."""
+        new_caches = [] if use_cache else None
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = cache[i] if cache is not None else None
+            x, new_cache = layer(x, layer_cache, use_cache)
+            if use_cache:
+                new_caches.append(new_cache)
+
+        return x, new_caches
+
+    def get_alternation_distribution(self) -> torch.Tensor:
+        """Get the learned alternation probabilities for all layers."""
+        return torch.sigmoid(self.alternation_logits)
+
+    def get_layer_directions(self) -> list:
+        """Get which direction each layer uses."""
+        probs = self.get_alternation_distribution()
+        return ["reciprocal" if p > 0.5 else "standard" for p in probs]
+
+    def balance_loss(self) -> torch.Tensor:
+        """Regularization loss for balanced alternation."""
+        probs = self.get_alternation_distribution()
+        target = self.cfg.n_layers / 2.0
+        return (probs.sum() - target) ** 2
+
+    def get_compression_stats(self) -> dict:
+        """Get compression statistics."""
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        return {
+            "d_latent": self.cfg.d_latent,
+            "d_compressed": d_compressed,
+            "compression_ratio": self.compression_ratio,
+            "cache_reduction": f"{(1 - self.compression_ratio) * 100:.1f}%",
+        }
