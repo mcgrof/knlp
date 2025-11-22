@@ -202,6 +202,12 @@ class BaseGPT2Trainer:
             try:
                 import wandb
 
+                # Import weave to suppress wandb warning about LLM tracing
+                try:
+                    import weave
+                except ImportError:
+                    pass
+
                 run_name = (
                     getattr(self.args, "tracker_run_name", None)
                     or f"gpt2_{self.args.optimizer}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
