@@ -164,8 +164,13 @@ def copy_wandb_run(
             new_run.log(row_dict)
 
     # Copy system metrics (GPU, memory, etc.)
+    # NOTE: W&B's System panel is populated by their internal agent during
+    # training. There is no public API to write to it directly. System metrics
+    # copied here will appear in Charts panel, not System panel. This is a
+    # W&B limitation - the data is preserved but in a different location.
     if verbose:
         print(f"Fetching system metrics...")
+        print(f"  Note: System metrics will appear in Charts (W&B API limitation)")
     try:
         system_history = src_run.history(stream="events", samples=10000)
         if not system_history.empty:
