@@ -57,25 +57,25 @@ Benefits:
 
 ### 3. Context Router
 
-4-way routing based on shift and other cheap features:
+2-way routing based on shift and other cheap features:
 
 ```python
 shift = |x - E(x)|                 # [B, T]
 features = [shift, ||x||, ||E||, <x,E>]
-probs = softmax(mlp(features))     # [B, T, 4]
-# probs: p_none, p_ra, p_full, p_both
+probs = softmax(mlp(features))     # [B, T, 2]
+# probs: p_ra, p_full
 ```
 
 Output mixed according to router:
 
 ```python
-out = p_none * x + p_ra * out_ra + p_full * out_full + p_both * (ra+full)/2
+out = p_ra * out_ra + p_full * out_full
 ```
 
-Compute penalty discourages expensive paths:
+Compute penalty discourages expensive path:
 
 ```python
-L_compute = lambda_comp * (p_full + p_both).mean()
+L_compute = lambda_comp * p_full.mean()
 L_total = L_lm + L_compute
 ```
 
@@ -112,11 +112,10 @@ RA and E span related subspaces.
 - Gap = how much context bent the token
 - Cheap: just subtraction and norm
 
-**Why 4-way routing?**
-- NONE: Skip token-mixing (just residual)
-- RA: Cheap attention with fewer heads
-- FULL: Standard attention for hard tokens
-- BOTH: "Clutch mode" when both help
+**Why 2-way routing?**
+- RA: Cheap attention with fewer heads (e.g., 3 heads)
+- FULL: Full attention with more heads (e.g., 9 heads)
+- Simpler than 4-way: NONE rarely useful, BOTH loses information by averaging
 
 ## KVSplice Compatibility
 
@@ -204,7 +203,7 @@ Baseline keeps phase1=True throughout; RA transitions to phase2.
 
 Key metrics:
 - Final eval loss/perplexity
-- Average router distribution (p_none, p_ra, p_full, p_both)
+- Average router distribution (p_ra, p_full)
 - Compute penalty over training
 - Loss curve smoothness at phase transition
 
