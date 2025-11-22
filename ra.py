@@ -1115,3 +1115,137 @@ class RA_MLA_Model(nn.Module):
             "prob_sum": probs.sum().item(),
             "target_sum": self.cfg.n_layers / 2.0,
         }
+
+
+# =============================================================================
+# SECTION 9: MLA Baseline (without Reciprocal Alternation)
+# =============================================================================
+
+
+class MLA_Flash(nn.Module):
+    """
+    Multi-head Latent Attention baseline (no reciprocal alternation).
+
+    This is a simpler version of RA_MLA_Flash that always uses standard
+    Q@K.T attention. Used for ablation testing to measure the impact of:
+    - MLA alone (latent compression)
+    - vs RA_MLA (compression + bidirectional flow)
+
+    Features:
+    - TL-cache: Single latent decompresses to Q, K, V
+    - Flash attention compatible via SDPA
+    - RoPE support
+    """
+
+    def __init__(self, cfg: RA_MLA_Config, layer_idx: int):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # Input projection to latent space
+        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+
+        # Decompress latent to Q, K, V
+        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
+        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Forward pass with TL-cache, always using standard attention."""
+        B, T, D = x.shape
+
+        # Project to latent space
+        latent = self.to_latent(x)
+
+        # Handle cache
+        if cache is not None:
+            full_latent = torch.cat([cache, latent], dim=1)
+            T_total = full_latent.shape[1]
+        else:
+            full_latent = latent
+            T_total = T
+
+        # Decompress to Q, K, V
+        qkv = self.from_latent(full_latent)
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Standard attention: Q @ K.T @ V
+        attn_out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            is_causal=(cache is None),
+            dropout_p=self.cfg.dropout if self.training else 0.0,
+        )
+
+        # Merge heads and project
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        new_cache = full_latent if use_cache else None
+        return out, new_cache
+
+
+class MLA_Model(nn.Module):
+    """
+    Container for MLA_Flash layers (baseline without reciprocal alternation).
+
+    Use for ablation testing:
+    - GPT-2 baseline vs MLA: measures latent compression benefit
+    - MLA vs RA_MLA: measures reciprocal alternation benefit
+    """
+
+    def __init__(self, cfg: RA_MLA_Config):
+        super().__init__()
+        self.cfg = cfg
+        self.layers = nn.ModuleList([MLA_Flash(cfg, i) for i in range(cfg.n_layers)])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[list] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[list]]:
+        """Forward through all layers."""
+        new_caches = [] if use_cache else None
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = cache[i] if cache is not None else None
+            x, new_cache = layer(x, layer_cache, use_cache)
+            if use_cache:
+                new_caches.append(new_cache)
+
+        return x, new_caches
