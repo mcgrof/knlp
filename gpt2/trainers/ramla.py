@@ -250,6 +250,37 @@ class RAMLATrainer(VanillaGPT2Trainer):
 
             return result
 
+    @torch.no_grad()
+    def estimate_loss(self):
+        """Override to log Fisher metrics at each evaluation."""
+        # Call base class evaluation
+        losses = super().estimate_loss()
+
+        # Log Fisher metrics during training (not just at the end)
+        # This tracks curvature evolution: early=bumpy, mid=peaks, late=flat
+        if hasattr(self.model, "compute_fisher_metrics"):
+            try:
+                batch_size = 4
+                seq_len = 128
+                device = next(self.model.parameters()).device
+                x = torch.randint(0, 50257, (batch_size, seq_len), device=device)
+
+                metrics = self.model.compute_fisher_metrics(x, n_samples=64, topk=8)
+
+                if metrics:
+                    step = getattr(self, "iter_num", None)
+                    if "wandb" in self.trackers:
+                        try:
+                            import wandb
+
+                            wandb.log(metrics, step=step)
+                        except Exception:
+                            pass
+            except Exception:
+                pass  # Don't interrupt training for metric failures
+
+        return losses
+
     def _setup_kvsplice_logging(self):
         """Set up KVSplice metrics logging callback."""
         # Store original log_interval for periodic logging
