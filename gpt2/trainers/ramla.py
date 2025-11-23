@@ -116,7 +116,14 @@ class RAMLATrainer(VanillaGPT2Trainer):
             self.config = config
             self.trackers = self._ra_trainer.trackers
 
-        elif self.step_config["arch"] in ["mla", "ramla", "ramlakv", "sba", "sba_ss", "sba_kv"]:
+        elif self.step_config["arch"] in [
+            "mla",
+            "ramla",
+            "ramlakv",
+            "sba",
+            "sba_ss",
+            "sba_kv",
+        ]:
             # MLA-based architectures (including SBA variants)
             super().__init__(args, config)
             # Replace model with MLA/SBA variant
@@ -162,15 +169,21 @@ class RAMLATrainer(VanillaGPT2Trainer):
         elif arch == "sba":
             self.model = SBAGPT(cfg, kv_mode="separate")
             print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=separate")
-            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
+            print(
+                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
+            )
         elif arch == "sba_ss":
             self.model = SBAGPT(cfg, kv_mode="shared_skew")
             print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=shared_skew")
-            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
+            print(
+                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
+            )
         elif arch == "sba_kv":
             self.model = SBAGPT(cfg, kv_mode="k_eq_v")
             print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=k_eq_v")
-            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
+            print(
+                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
+            )
 
         # Move to device
         self.model = self.model.to(self.args.device)
@@ -228,6 +241,9 @@ class RAMLATrainer(VanillaGPT2Trainer):
             elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
                 self._log_sba_metrics()
 
+            # Log Fisher metrics for all architectures that support it
+            self._log_fisher_metrics()
+
             # Run lm-eval if requested
             if getattr(self.args, "run_lm_eval", False):
                 self._run_lm_eval()
@@ -248,11 +264,19 @@ class RAMLATrainer(VanillaGPT2Trainer):
 
         # Print summary
         print("\n--- KVSplice Compression Metrics ---")
-        print(f"  Compression ratio: {metrics.get('kvsplice/compression_ratio', 'N/A')}")
-        print(f"  Memory reduction: {metrics.get('kvsplice/memory_reduction_pct', 'N/A'):.1f}%")
+        print(
+            f"  Compression ratio: {metrics.get('kvsplice/compression_ratio', 'N/A')}"
+        )
+        print(
+            f"  Memory reduction: {metrics.get('kvsplice/memory_reduction_pct', 'N/A'):.1f}%"
+        )
         if "kvsplice/avg_reconstruction_error" in metrics:
-            print(f"  Avg reconstruction error: {metrics['kvsplice/avg_reconstruction_error']:.6f}")
-        print(f"  Reciprocal layers: {metrics.get('kvsplice/reciprocal_layers', 'N/A')}")
+            print(
+                f"  Avg reconstruction error: {metrics['kvsplice/avg_reconstruction_error']:.6f}"
+            )
+        print(
+            f"  Reciprocal layers: {metrics.get('kvsplice/reciprocal_layers', 'N/A')}"
+        )
         print(f"  Standard layers: {metrics.get('kvsplice/standard_layers', 'N/A')}")
 
         # Log to trackers
@@ -272,8 +296,12 @@ class RAMLATrainer(VanillaGPT2Trainer):
         print("\n--- SBA Attention Metrics ---")
         print(f"  Alpha mean: {metrics.get('sba/alpha_mean', 'N/A'):.3f}")
         print(f"  Alpha std: {metrics.get('sba/alpha_std', 'N/A'):.3f}")
-        print(f"  Forward-dominant layers: {metrics.get('sba/forward_dominant_layers', 'N/A')}")
-        print(f"  Reverse-dominant layers: {metrics.get('sba/reverse_dominant_layers', 'N/A')}")
+        print(
+            f"  Forward-dominant layers: {metrics.get('sba/forward_dominant_layers', 'N/A')}"
+        )
+        print(
+            f"  Reverse-dominant layers: {metrics.get('sba/reverse_dominant_layers', 'N/A')}"
+        )
         print(f"  Mixed layers: {metrics.get('sba/mixed_layers', 'N/A')}")
 
         # Log to trackers
@@ -281,9 +309,6 @@ class RAMLATrainer(VanillaGPT2Trainer):
             for tracker in self.trackers:
                 if hasattr(tracker, "log"):
                     tracker.log(metrics)
-
-        # Also log Fisher metrics if model supports it
-        self._log_fisher_metrics()
 
     def _log_fisher_metrics(self):
         """
@@ -485,9 +510,9 @@ class RAMLATrainer(VanillaGPT2Trainer):
                         print(f"{task_name}/{metric_name}: {value:.4f}")
 
             # Log to trackers if available
-            if hasattr(self, 'trackers') and self.trackers:
+            if hasattr(self, "trackers") and self.trackers:
                 for tracker in self.trackers:
-                    if hasattr(tracker, 'log'):
+                    if hasattr(tracker, "log"):
                         tracker.log(lm_eval_metrics)
 
             return lm_eval_metrics
@@ -495,6 +520,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
         except Exception as e:
             print(f"lm-eval failed: {e}")
             import traceback
+
             traceback.print_exc()
             return {}
 
