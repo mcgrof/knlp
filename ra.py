@@ -1568,6 +1568,235 @@ class RA_MLA_KVSplice_Model(nn.Module):
 
 
 # =============================================================================
+# SECTION 10.5: SBA (Symmetric Bidirectional Attention)
+# =============================================================================
+
+
+class SBA_Flash(nn.Module):
+    """
+    Symmetric Bidirectional Attention (SBA) / B-EOT Attention.
+
+    Computes BOTH forward (Q→K) and reverse (K→Q) attention in each layer,
+    mixing outputs with a learned per-layer alpha:
+
+        attn_out = α * attn_fwd + (1-α) * attn_rev
+
+    This implements dual entropic optimal transport (B-EOT), providing:
+    - Dual advantage gradients from both directions
+    - Averaged Fisher Information: F = αF_fwd + (1-α)F_rev
+    - Smoother optimization landscape
+    - Better KVSplice compression due to symmetric geometry
+
+    Mathematical basis: "Scaled Dot-Product Attention as One-Sided Entropic
+    Optimal Transport" (August 2025) shows attention solves EOT. SBA solves
+    a convex combination of two EOT problems simultaneously.
+
+    Implementation uses single matmul + two softmaxes (row-wise and column-wise)
+    for ~1.5× compute cost instead of 2×.
+
+    TODO: Triton kernel fusion for optimal performance (see math-shit/triton.jit)
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alpha_init: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # TL-cache: single latent decompresses to Q, K, V
+        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
+        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        # Learned mixing parameter alpha ∈ (0, 1)
+        alpha_init_clamped = max(1e-3, min(1 - 1e-3, alpha_init))
+        alpha_logit = math.log(alpha_init_clamped / (1 - alpha_init_clamped))
+        self.alpha_logit = nn.Parameter(torch.tensor(alpha_logit))
+
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+        # Track metrics
+        self._last_alpha = None
+
+    def get_alpha(self) -> torch.Tensor:
+        """Get this layer's mixing parameter."""
+        return torch.sigmoid(self.alpha_logit)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass with symmetric bidirectional attention.
+
+        Uses single matmul for scores, then row-wise and column-wise softmax.
+        """
+        B, T, D = x.shape
+
+        # Project to latent space (TL-cache)
+        latent = self.to_latent(x)  # [B, T, d_latent]
+
+        # Handle cache
+        if cache is not None:
+            full_latent = torch.cat([cache, latent], dim=1)
+            T_total = full_latent.shape[1]
+        else:
+            full_latent = latent
+            T_total = T
+
+        # Decompress to Q, K, V
+        qkv = self.from_latent(full_latent)
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, H, T, D]
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Get mixing parameter
+        alpha = self.get_alpha()
+        self._last_alpha = alpha.item()
+
+        # Compute scores once: Q @ K.T -> [B, H, T_q, T_k]
+        T_q = q.shape[2]
+        T_k = k.shape[2]
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, T_q, T_k]
+
+        # Apply causal mask for forward direction
+        if cache is None:
+            # Create causal mask
+            causal_mask = torch.triu(
+                torch.ones(T_q, T_k, dtype=torch.bool, device=x.device), diagonal=1
+            )
+            scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+        else:
+            scores_masked = scores
+
+        # Forward attention: row-wise softmax (Q→K)
+        attn_fwd = F.softmax(scores_masked, dim=-1)  # [B, H, T_q, T_k]
+
+        # Reverse attention: column-wise softmax (K→Q)
+        # For reverse, we don't apply causal mask (complementary geometry)
+        attn_rev = F.softmax(scores, dim=-2)  # softmax over T_q dimension
+
+        # Apply dropout
+        if self.training and self.cfg.dropout > 0:
+            attn_fwd = F.dropout(attn_fwd, p=self.cfg.dropout, training=True)
+            attn_rev = F.dropout(attn_rev, p=self.cfg.dropout, training=True)
+
+        # Mix attention patterns
+        attn_mixed = alpha * attn_fwd + (1 - alpha) * attn_rev
+
+        # Apply attention to values
+        attn_out = torch.matmul(attn_mixed, v)  # [B, H, T_q, D]
+
+        # Merge heads and project output
+        attn_out = attn_out.transpose(1, 2).contiguous()  # [B, T, H, head_dim]
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        # Return cache if requested
+        new_cache = full_latent if use_cache else None
+
+        return out, new_cache
+
+
+class SBA_Model(nn.Module):
+    """
+    Container for multiple SBA_Flash layers.
+
+    Provides aggregate metrics for monitoring alpha distribution across layers.
+    """
+
+    def __init__(self, cfg: RA_MLA_Config, alpha_init: float = 0.5):
+        super().__init__()
+        self.cfg = cfg
+
+        # Create layers with per-layer alpha
+        self.layers = nn.ModuleList(
+            [SBA_Flash(cfg, i, alpha_init) for i in range(cfg.n_layers)]
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[list] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[list]]:
+        """Forward through all SBA layers."""
+        new_caches = [] if use_cache else None
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = cache[i] if cache is not None else None
+            x, new_cache = layer(x, layer_cache, use_cache)
+            if use_cache:
+                new_caches.append(new_cache)
+
+        return x, new_caches
+
+    def get_alpha_distribution(self) -> torch.Tensor:
+        """Get alpha values for all layers."""
+        return torch.tensor([layer.get_alpha().item() for layer in self.layers])
+
+    def get_layer_types(self) -> list:
+        """Classify layers as forward-dominant, reverse-dominant, or mixed."""
+        alphas = self.get_alpha_distribution()
+        types = []
+        for a in alphas:
+            if a > 0.7:
+                types.append("forward")
+            elif a < 0.3:
+                types.append("reverse")
+            else:
+                types.append("mixed")
+        return types
+
+    def get_sba_metrics(self) -> dict:
+        """Get SBA metrics for W&B logging."""
+        alphas = self.get_alpha_distribution()
+        metrics = {
+            "sba/alpha_mean": alphas.mean().item(),
+            "sba/alpha_std": alphas.std().item(),
+            "sba/alpha_min": alphas.min().item(),
+            "sba/alpha_max": alphas.max().item(),
+            "sba/forward_dominant_layers": (alphas > 0.7).sum().item(),
+            "sba/reverse_dominant_layers": (alphas < 0.3).sum().item(),
+            "sba/mixed_layers": ((alphas >= 0.3) & (alphas <= 0.7)).sum().item(),
+        }
+        # Per-layer alphas
+        for i, a in enumerate(alphas):
+            metrics[f"sba/alpha_layer_{i}"] = a.item()
+        return metrics
+
+
+# =============================================================================
 # SECTION 11: Full GPT-2 Models with MLA Attention
 # =============================================================================
 
@@ -1920,4 +2149,108 @@ class RAMLAKV_GPT(nn.Module):
         metrics["kvsplice/standard_layers"] = (probs <= 0.5).sum().item()
         metrics["kvsplice/alternation_balance"] = probs.sum().item() / self.cfg.n_layers
 
+        return metrics
+
+
+class SBABlock(nn.Module):
+    """Transformer block with SBA attention + MLP."""
+
+    def __init__(self, cfg: RA_MLA_Config, layer_idx: int, alpha_init: float = 0.5):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = SBA_Flash(cfg, layer_idx, alpha_init)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLP: 4x expansion
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class SBAGPT(nn.Module):
+    """Full GPT-2 model with SBA (Symmetric Bidirectional Attention)."""
+
+    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257, alpha_init: float = 0.5):
+        super().__init__()
+        self.cfg = cfg
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [SBABlock(cfg, i, alpha_init) for i in range(cfg.n_layers)]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_alpha_distribution(self) -> torch.Tensor:
+        """Get alpha values for all layers."""
+        return torch.tensor([block.attn.get_alpha().item() for block in self.blocks])
+
+    def get_sba_metrics(self) -> dict:
+        """Get SBA metrics for W&B logging."""
+        alphas = self.get_alpha_distribution()
+        metrics = {
+            "sba/alpha_mean": alphas.mean().item(),
+            "sba/alpha_std": alphas.std().item(),
+            "sba/alpha_min": alphas.min().item(),
+            "sba/alpha_max": alphas.max().item(),
+            "sba/forward_dominant_layers": (alphas > 0.7).sum().item(),
+            "sba/reverse_dominant_layers": (alphas < 0.3).sum().item(),
+            "sba/mixed_layers": ((alphas >= 0.3) & (alphas <= 0.7)).sum().item(),
+        }
+        # Per-layer alphas
+        for i, a in enumerate(alphas):
+            metrics[f"sba/alpha_layer_{i}"] = a.item()
         return metrics
