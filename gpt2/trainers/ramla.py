@@ -280,10 +280,22 @@ class RAMLATrainer(VanillaGPT2Trainer):
         print(f"  Standard layers: {metrics.get('kvsplice/standard_layers', 'N/A')}")
 
         # Log to trackers
-        if hasattr(self, "trackers") and self.trackers:
-            for tracker in self.trackers:
-                if hasattr(tracker, "log"):
-                    tracker.log(metrics)
+        step = getattr(self, "iter_num", None)
+        if "trackio" in self.trackers:
+            try:
+                import trackio
+
+                trackio.log(metrics)
+            except Exception as e:
+                print(f"Warning: Failed to log kvsplice metrics to trackio: {e}")
+
+        if "wandb" in self.trackers:
+            try:
+                import wandb
+
+                wandb.log(metrics, step=step)
+            except Exception as e:
+                print(f"Warning: Failed to log kvsplice metrics to wandb: {e}")
 
     def _log_sba_metrics(self):
         """Log SBA metrics to trackers."""
@@ -305,10 +317,22 @@ class RAMLATrainer(VanillaGPT2Trainer):
         print(f"  Mixed layers: {metrics.get('sba/mixed_layers', 'N/A')}")
 
         # Log to trackers
-        if hasattr(self, "trackers") and self.trackers:
-            for tracker in self.trackers:
-                if hasattr(tracker, "log"):
-                    tracker.log(metrics)
+        step = getattr(self, "iter_num", None)
+        if "trackio" in self.trackers:
+            try:
+                import trackio
+
+                trackio.log(metrics)
+            except Exception as e:
+                print(f"Warning: Failed to log sba metrics to trackio: {e}")
+
+        if "wandb" in self.trackers:
+            try:
+                import wandb
+
+                wandb.log(metrics, step=step)
+            except Exception as e:
+                print(f"Warning: Failed to log sba metrics to wandb: {e}")
 
     def _log_fisher_metrics(self):
         """
@@ -342,10 +366,22 @@ class RAMLATrainer(VanillaGPT2Trainer):
                         print(f"  {layer_idx} eigmax_mean: {value:.6f}")
 
                 # Log to trackers
-                if hasattr(self, "trackers") and self.trackers:
-                    for tracker in self.trackers:
-                        if hasattr(tracker, "log"):
-                            tracker.log(metrics)
+                step = getattr(self, "iter_num", None)
+                if "trackio" in self.trackers:
+                    try:
+                        import trackio
+
+                        trackio.log(metrics)
+                    except Exception as e:
+                        print(f"Warning: Failed to log fisher metrics to trackio: {e}")
+
+                if "wandb" in self.trackers:
+                    try:
+                        import wandb
+
+                        wandb.log(metrics, step=step)
+                    except Exception as e:
+                        print(f"Warning: Failed to log fisher metrics to wandb: {e}")
 
         except Exception as e:
             print(f"  (Fisher metrics computation failed: {e})")
@@ -509,11 +545,23 @@ class RAMLATrainer(VanillaGPT2Trainer):
                         lm_eval_metrics[key] = value
                         print(f"{task_name}/{metric_name}: {value:.4f}")
 
-            # Log to trackers if available
-            if hasattr(self, "trackers") and self.trackers:
-                for tracker in self.trackers:
-                    if hasattr(tracker, "log"):
-                        tracker.log(lm_eval_metrics)
+            # Log to trackers
+            step = getattr(self, "iter_num", None)
+            if "trackio" in self.trackers:
+                try:
+                    import trackio
+
+                    trackio.log(lm_eval_metrics)
+                except Exception as e:
+                    print(f"Warning: Failed to log lm_eval metrics to trackio: {e}")
+
+            if "wandb" in self.trackers:
+                try:
+                    import wandb
+
+                    wandb.log(lm_eval_metrics, step=step)
+                except Exception as e:
+                    print(f"Warning: Failed to log lm_eval metrics to wandb: {e}")
 
             return lm_eval_metrics
 
