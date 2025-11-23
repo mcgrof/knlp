@@ -197,14 +197,49 @@ class RAMLATrainer(VanillaGPT2Trainer):
             # Use RATrainer's train method
             return self._ra_trainer.train()
         else:
+            # For RAMLAKV, set up periodic metrics logging
+            if self.step_config["arch"] == "ramlakv":
+                self._setup_kvsplice_logging()
+
             # Use base trainer
             result = super().train()
+
+            # Log final KVSplice metrics
+            if self.step_config["arch"] == "ramlakv":
+                self._log_kvsplice_metrics()
 
             # Run lm-eval if requested
             if getattr(self.args, "run_lm_eval", False):
                 self._run_lm_eval()
 
             return result
+
+    def _setup_kvsplice_logging(self):
+        """Set up KVSplice metrics logging callback."""
+        # Store original log_interval for periodic logging
+        self._kvsplice_log_interval = getattr(self.args, "eval_interval", 50)
+
+    def _log_kvsplice_metrics(self):
+        """Log KVSplice compression metrics to trackers."""
+        if not hasattr(self.model, "get_kvsplice_metrics"):
+            return
+
+        metrics = self.model.get_kvsplice_metrics()
+
+        # Print summary
+        print("\n--- KVSplice Compression Metrics ---")
+        print(f"  Compression ratio: {metrics.get('kvsplice/compression_ratio', 'N/A')}")
+        print(f"  Memory reduction: {metrics.get('kvsplice/memory_reduction_pct', 'N/A'):.1f}%")
+        if "kvsplice/avg_reconstruction_error" in metrics:
+            print(f"  Avg reconstruction error: {metrics['kvsplice/avg_reconstruction_error']:.6f}")
+        print(f"  Reciprocal layers: {metrics.get('kvsplice/reciprocal_layers', 'N/A')}")
+        print(f"  Standard layers: {metrics.get('kvsplice/standard_layers', 'N/A')}")
+
+        # Log to trackers
+        if hasattr(self, "trackers") and self.trackers:
+            for tracker in self.trackers:
+                if hasattr(tracker, "log"):
+                    tracker.log(metrics)
 
     def _run_lm_eval(self):
         """Run lm-eval benchmarks on the model."""

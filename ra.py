@@ -1321,6 +1321,22 @@ class LearnedKVSplice(nn.Module):
             F.softplus(self.transform_scale) + 1e-6
         )
 
+    def get_reconstruction_error(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute reconstruction error for monitoring compression quality."""
+        with torch.no_grad():
+            reconstructed = self.forward(x)
+            error = F.mse_loss(reconstructed, x)
+        return error
+
+    def get_compression_stats(self) -> dict:
+        """Get compression statistics for logging."""
+        return {
+            "d_in": self.d_in,
+            "d_compressed": self.d_compressed,
+            "compression_ratio": self.d_compressed / self.d_in,
+            "memory_reduction": 1.0 - (self.d_compressed / self.d_in),
+        }
+
 
 class RA_MLA_KVSplice(nn.Module):
     """
@@ -1372,9 +1388,19 @@ class RA_MLA_KVSplice(nn.Module):
 
         self.scale = 1.0 / math.sqrt(cfg.head_dim)
 
+        # Track reconstruction error for metrics
+        self._last_reconstruction_error = None
+
     def get_alternation_prob(self) -> torch.Tensor:
         """Get this layer's probability of using reciprocal attention."""
         return torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+    def get_kvsplice_metrics(self) -> dict:
+        """Get KVSplice metrics for this layer."""
+        metrics = self.kvsplice.get_compression_stats()
+        if self._last_reconstruction_error is not None:
+            metrics["reconstruction_error"] = self._last_reconstruction_error
+        return metrics
 
     def forward(
         self,
@@ -1390,10 +1416,14 @@ class RA_MLA_KVSplice(nn.Module):
         B, T, D = x.shape
 
         # Project to latent space
-        latent = self.to_latent(x)  # [B, T, d_latent]
+        latent_orig = self.to_latent(x)  # [B, T, d_latent]
 
         # Apply KVSplice bottleneck (learn compressible representations)
-        latent = self.kvsplice(latent)
+        latent = self.kvsplice(latent_orig)
+
+        # Track reconstruction error (compute occasionally to avoid overhead)
+        if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
+            self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(latent_orig).item()
 
         # Handle cache (stored in compressed form)
         if cache is not None:
@@ -1850,3 +1880,44 @@ class RAMLAKV_GPT(nn.Module):
             "compression_ratio": self.compression_ratio,
             "cache_reduction": f"{(1 - self.compression_ratio) * 100:.1f}%",
         }
+
+    def get_kvsplice_metrics(self) -> dict:
+        """
+        Get comprehensive KVSplice metrics for logging to W&B.
+
+        Returns metrics for:
+        - Overall compression stats
+        - Per-layer reconstruction errors
+        - Attention pattern statistics
+        """
+        metrics = {}
+
+        # Overall compression stats
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        metrics["kvsplice/compression_ratio"] = self.compression_ratio
+        metrics["kvsplice/d_latent"] = self.cfg.d_latent
+        metrics["kvsplice/d_compressed"] = d_compressed
+        metrics["kvsplice/memory_reduction_pct"] = (1 - self.compression_ratio) * 100
+
+        # Collect per-layer reconstruction errors
+        reconstruction_errors = []
+        for i, block in enumerate(self.blocks):
+            if hasattr(block.attn, '_last_reconstruction_error'):
+                error = block.attn._last_reconstruction_error
+                if error is not None:
+                    reconstruction_errors.append(error)
+                    metrics[f"kvsplice/layer_{i}_recon_error"] = error
+
+        # Aggregate reconstruction error
+        if reconstruction_errors:
+            metrics["kvsplice/avg_reconstruction_error"] = sum(reconstruction_errors) / len(reconstruction_errors)
+            metrics["kvsplice/max_reconstruction_error"] = max(reconstruction_errors)
+            metrics["kvsplice/min_reconstruction_error"] = min(reconstruction_errors)
+
+        # Alternation distribution
+        probs = self.get_alternation_distribution()
+        metrics["kvsplice/reciprocal_layers"] = (probs > 0.5).sum().item()
+        metrics["kvsplice/standard_layers"] = (probs <= 0.5).sum().item()
+        metrics["kvsplice/alternation_balance"] = probs.sum().item() / self.cfg.n_layers
+
+        return metrics
