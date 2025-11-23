@@ -64,6 +64,10 @@ def parse_step(step: str) -> Dict:
         arch = "ramla"
     elif base == "RAMLAKV":
         arch = "ramlakv"
+    elif base == "RAMLAKVM":
+        arch = "ramlakvm"
+    elif base == "RAMLAKVME":
+        arch = "ramlakvme"
     elif base == "SBA":
         arch = "sba"
     elif base == "SBASS":
@@ -123,6 +127,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
             "mlakv",
             "ramla",
             "ramlakv",
+            "ramlakvm",
+            "ramlakvme",
             "sba",
             "sba_ss",
             "sba_kv",
@@ -138,7 +144,16 @@ class RAMLATrainer(VanillaGPT2Trainer):
     def _setup_mla_model(self):
         """Replace model with MLA/RAMLA/RAMLAKV/SBA variant."""
         import torch
-        from ra import RA_MLA_Config, MLAGPT, MLAKV_GPT, RAMLAGPT, RAMLAKV_GPT, SBAGPT
+        from ra import (
+            RA_MLA_Config,
+            MLAGPT,
+            MLAKV_GPT,
+            RAMLAGPT,
+            RAMLAKV_GPT,
+            RAMLAKVM_GPT,
+            RAMLAKVME_GPT,
+            SBAGPT,
+        )
 
         arch = self.step_config["arch"]
 
@@ -172,6 +187,24 @@ class RAMLATrainer(VanillaGPT2Trainer):
         elif arch == "ramlakv":
             self.model = RAMLAKV_GPT(cfg, compression_ratio=compression_ratio)
             print(f"Created RAMLAKV_GPT")
+            print(f"  Compression: {self.model.get_compression_stats()}")
+        elif arch == "ramlakvm":
+            mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
+            self.model = RAMLAKVM_GPT(
+                cfg, compression_ratio=compression_ratio, mlp_d_latent=mlp_d_latent
+            )
+            print(f"Created RAMLAKVM_GPT (+ MLPSplice)")
+            print(f"  Compression: {self.model.get_compression_stats()}")
+        elif arch == "ramlakvme":
+            mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
+            d_embed = getattr(self.args, "embed_d_latent", 256)
+            self.model = RAMLAKVME_GPT(
+                cfg,
+                d_embed=d_embed,
+                compression_ratio=compression_ratio,
+                mlp_d_latent=mlp_d_latent,
+            )
+            print(f"Created RAMLAKVME_GPT (+ MLPSplice + EmbedLatent)")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "sba":
             self.model = SBAGPT(cfg, kv_mode="separate")

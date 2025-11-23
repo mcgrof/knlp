@@ -2618,6 +2618,10 @@ def main():
                         "RAMLA1": "RA+MLA aggressive: Reciprocal alternation + latent compression (high LR)",
                         "RAMLAKV0": "RA+MLA+KVSplice: Full stack with learned compression (standard LR)",
                         "RAMLAKV1": "RA+MLA+KVSplice aggressive: Full stack with learned compression (high LR)",
+                        "RAMLAKVM0": "RA+MLA+KVSplice+MLPSplice: Attention + MLP latent compression (standard LR)",
+                        "RAMLAKVM1": "RA+MLA+KVSplice+MLPSplice: Attention + MLP latent compression (high LR)",
+                        "RAMLAKVME0": "Full latent stack: Attention + MLP + Embedding compression (standard LR)",
+                        "RAMLAKVME1": "Full latent stack: Attention + MLP + Embedding compression (high LR)",
                         # Baseline step descriptions for LR ablation
                         "B0": "Baseline GPT-2 (standard LR 6e-4)",
                         "B1": "Baseline GPT-2 (aggressive LR 1.2e-3)",
