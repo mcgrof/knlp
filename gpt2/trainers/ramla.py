@@ -62,6 +62,8 @@ def parse_step(step: str) -> Dict:
         arch = "ramla"
     elif base == "RAMLAKV":
         arch = "ramlakv"
+    elif base == "SBA":
+        arch = "sba"
     else:
         raise ValueError(f"Unknown architecture prefix: {base}")
 
@@ -110,19 +112,19 @@ class RAMLATrainer(VanillaGPT2Trainer):
             self.config = config
             self.trackers = self._ra_trainer.trackers
 
-        elif self.step_config["arch"] in ["mla", "ramla", "ramlakv"]:
-            # MLA-based architectures
+        elif self.step_config["arch"] in ["mla", "ramla", "ramlakv", "sba"]:
+            # MLA-based architectures (including SBA)
             super().__init__(args, config)
-            # Replace model with MLA variant
+            # Replace model with MLA/SBA variant
             self._setup_mla_model()
 
         else:
             raise ValueError(f"Unknown architecture: {self.step_config['arch']}")
 
     def _setup_mla_model(self):
-        """Replace model with MLA/RAMLA/RAMLAKV variant."""
+        """Replace model with MLA/RAMLA/RAMLAKV/SBA variant."""
         import torch
-        from ra import RA_MLA_Config, MLAGPT, RAMLAGPT, RAMLAKV_GPT
+        from ra import RA_MLA_Config, MLAGPT, RAMLAGPT, RAMLAKV_GPT, SBAGPT
 
         arch = self.step_config["arch"]
 
@@ -153,6 +155,10 @@ class RAMLATrainer(VanillaGPT2Trainer):
             self.model = RAMLAKV_GPT(cfg, compression_ratio=compression_ratio)
             print(f"Created RAMLAKV_GPT")
             print(f"  Compression: {self.model.get_compression_stats()}")
+        elif arch == "sba":
+            self.model = SBAGPT(cfg)
+            print(f"Created SBAGPT with d_latent={d_latent}")
+            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
 
         # Move to device
         self.model = self.model.to(self.args.device)
@@ -204,9 +210,11 @@ class RAMLATrainer(VanillaGPT2Trainer):
             # Use base trainer
             result = super().train()
 
-            # Log final KVSplice metrics
+            # Log final metrics based on architecture
             if self.step_config["arch"] == "ramlakv":
                 self._log_kvsplice_metrics()
+            elif self.step_config["arch"] == "sba":
+                self._log_sba_metrics()
 
             # Run lm-eval if requested
             if getattr(self.args, "run_lm_eval", False):
@@ -234,6 +242,27 @@ class RAMLATrainer(VanillaGPT2Trainer):
             print(f"  Avg reconstruction error: {metrics['kvsplice/avg_reconstruction_error']:.6f}")
         print(f"  Reciprocal layers: {metrics.get('kvsplice/reciprocal_layers', 'N/A')}")
         print(f"  Standard layers: {metrics.get('kvsplice/standard_layers', 'N/A')}")
+
+        # Log to trackers
+        if hasattr(self, "trackers") and self.trackers:
+            for tracker in self.trackers:
+                if hasattr(tracker, "log"):
+                    tracker.log(metrics)
+
+    def _log_sba_metrics(self):
+        """Log SBA metrics to trackers."""
+        if not hasattr(self.model, "get_sba_metrics"):
+            return
+
+        metrics = self.model.get_sba_metrics()
+
+        # Print summary
+        print("\n--- SBA Attention Metrics ---")
+        print(f"  Alpha mean: {metrics.get('sba/alpha_mean', 'N/A'):.3f}")
+        print(f"  Alpha std: {metrics.get('sba/alpha_std', 'N/A'):.3f}")
+        print(f"  Forward-dominant layers: {metrics.get('sba/forward_dominant_layers', 'N/A')}")
+        print(f"  Reverse-dominant layers: {metrics.get('sba/reverse_dominant_layers', 'N/A')}")
+        print(f"  Mixed layers: {metrics.get('sba/mixed_layers', 'N/A')}")
 
         # Log to trackers
         if hasattr(self, "trackers") and self.trackers:
