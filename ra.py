@@ -1395,7 +1395,8 @@ class FIMKVSplice(nn.Module):
         # C = U.T @ K: [r, T] @ [T, d_head] = [r, d_head]
         if k.dim() == 3:
             # [B, T, d_head] -> [B, r, d_head]
-            c = torch.einsum("tr,btd->brd", U.T, k)
+            # U.T is [r, T], k is [B, T, d_head]
+            c = torch.einsum("rt,btd->brd", U.T, k)
         else:
             # [T, d_head] -> [r, d_head]
             c = U.T @ k
@@ -1426,6 +1427,7 @@ class FIMKVSplice(nn.Module):
         # K_hat = U @ C: [T, r] @ [r, d_head] = [T, d_head]
         if c.dim() == 3:
             # [B, r, d_head] -> [B, T, d_head]
+            # U is [T, r], c is [B, r, d_head]
             k_hat = torch.einsum("tr,brd->btd", U, c)
         else:
             # [r, d_head] -> [T, d_head]
