@@ -257,6 +257,71 @@ class RAMLATrainer(VanillaGPT2Trainer):
         if getattr(self.args, "run_lm_eval", False):
             self._run_lm_eval()
 
+        # Generate text samples
+        self._log_text_samples()
+
+    def _log_text_samples(self):
+        """Generate and log text samples to W&B."""
+        import tiktoken
+
+        prompts = [
+            "The meaning of life is",
+            "In a shocking discovery, scientists found that",
+            "Once upon a time in a land far away,",
+            "The best way to learn programming is",
+        ]
+
+        enc = tiktoken.get_encoding("gpt2")
+        device = next(self.model.parameters()).device
+
+        samples = []
+        print("\n--- Text Generation Samples ---")
+
+        self.model.eval()
+        with torch.no_grad():
+            for prompt in prompts:
+                tokens = enc.encode(prompt)
+                tokens = torch.tensor(
+                    tokens, dtype=torch.long, device=device
+                ).unsqueeze(0)
+
+                # Generate
+                for _ in range(50):  # max 50 new tokens
+                    if tokens.size(1) > 1024:
+                        tokens = tokens[:, -1024:]
+
+                    logits, _ = self.model(tokens)
+                    logits = logits[:, -1, :] / 0.8  # temperature
+
+                    # Top-k sampling
+                    top_k = 40
+                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                    logits[logits < v[:, [-1]]] = float("-inf")
+
+                    probs = torch.softmax(logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                    tokens = torch.cat([tokens, next_token], dim=1)
+
+                    if next_token.item() == enc.eot_token:
+                        break
+
+                output = enc.decode(tokens[0].tolist())
+                samples.append({"prompt": prompt, "output": output})
+                print(f"\nPrompt: {prompt}")
+                print(f"Output: {output[:200]}...")
+
+        # Log to W&B as table
+        if "wandb" in self.trackers:
+            try:
+                import wandb
+
+                table = wandb.Table(columns=["prompt", "generated_text"])
+                for s in samples:
+                    table.add_data(s["prompt"], s["output"])
+                wandb.log({"text_samples": table})
+            except Exception as e:
+                print(f"Warning: Failed to log text samples to wandb: {e}")
+
     def _log_kv_cache_metrics(self):
         """Log KV cache memory metrics to W&B."""
         # Get model config
