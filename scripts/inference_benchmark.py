@@ -29,7 +29,7 @@ from ra import (
 
 def load_model(checkpoint_path, device="cuda"):
     """Load a model from checkpoint."""
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Determine model type from checkpoint or path
     if "ramla_stepMLA" in checkpoint_path or "stepMLA" in checkpoint_path:
