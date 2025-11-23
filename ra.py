@@ -1253,20 +1253,229 @@ class MLA_Model(nn.Module):
 
 
 # =============================================================================
-# SECTION 10: RA-MLA with Learned KVSplice
+# SECTION 10: FIM-Guided KVSplice (Fisher Information Matrix Compression)
 # =============================================================================
+
+
+class FIMKVSplice(nn.Module):
+    """
+    Fisher Information Matrix guided KV compression.
+
+    Compresses K/V along the temporal dimension using a basis derived from
+    the Fisher Information Matrix of attention. This preserves the temporal
+    directions that are most important for the attention distribution, as
+    defined by the SPDA (Scaled Dot-Product Attention as EOT) result.
+
+    Mathematical basis:
+    - F = diag(p) - p @ p.T is the FIM for attention distribution p
+    - Eigendecomposition F = U @ Λ @ U.T gives temporal "Fisher modes"
+    - Top-r eigenvectors U_r span information-critical temporal directions
+    - Compression: C = U_r.T @ K, Reconstruction: K_hat = U_r @ C
+
+    This is more principled than PCA because it preserves information
+    structure (what attention cares about) rather than just variance.
+    """
+
+    def __init__(
+        self,
+        max_seq_len: int,
+        rank: int,
+        n_heads: int = 1,
+        per_head: bool = False,
+    ):
+        """
+        Initialize FIM-guided KV compression.
+
+        Args:
+            max_seq_len: Maximum sequence length T (calibration T)
+            rank: Number of FIM modes to keep (r < T)
+            n_heads: Number of attention heads
+            per_head: If True, use per-head basis; else shared across heads
+        """
+        super().__init__()
+        self.max_seq_len = max_seq_len
+        self.rank = rank
+        self.n_heads = n_heads
+        self.per_head = per_head
+
+        # FIM basis: U_r ∈ R^{T×r} for each head (or shared)
+        # Initialized as truncated identity (top-r positions)
+        if per_head:
+            # [H, T, r] - per-head temporal basis
+            basis = torch.zeros(n_heads, max_seq_len, rank)
+            for h in range(n_heads):
+                basis[h, :rank, :] = torch.eye(rank)
+            self.register_buffer("fim_basis", basis)
+        else:
+            # [T, r] - shared basis
+            basis = torch.zeros(max_seq_len, rank)
+            basis[:rank, :] = torch.eye(rank)
+            self.register_buffer("fim_basis", basis)
+
+        self._calibrated = False
+
+    def calibrate(
+        self,
+        attn_probs: torch.Tensor,
+        head_idx: Optional[int] = None,
+        n_samples: int = 512,
+    ):
+        """
+        Calibrate FIM basis from attention probabilities.
+
+        Computes the average Fisher Information Matrix over samples and
+        extracts top-r eigenvectors as the compression basis.
+
+        Args:
+            attn_probs: [N, T, T] or [B, H, T, T] attention probabilities
+            head_idx: If per_head, which head to calibrate (None = all)
+            n_samples: Max samples to use for FIM estimation
+        """
+        if attn_probs.dim() == 4:
+            # [B, H, T, T] format
+            B, H, T, _ = attn_probs.shape
+            if self.per_head and head_idx is not None:
+                # Calibrate single head
+                p = attn_probs[:, head_idx].reshape(B * T, T)
+            else:
+                # Aggregate all heads
+                p = attn_probs.reshape(B * H * T, T)
+        else:
+            # [N, T, T] format
+            N, T, _ = attn_probs.shape
+            p = attn_probs.reshape(N * T, T)
+
+        # Subsample for efficiency
+        if p.size(0) > n_samples:
+            idx = torch.randperm(p.size(0), device=p.device)[:n_samples]
+            p = p[idx]
+        N_eff = p.size(0)
+
+        # Compute average FIM: F = mean_i(diag(p_i) - p_i @ p_i.T)
+        p_mean = p.mean(0)
+        F = torch.diag(p_mean) - (p.T @ p) / N_eff
+
+        # Eigendecomposition (eigvalsh returns ascending order)
+        eigvals, eigvecs = torch.linalg.eigh(F)
+
+        # Take top-r eigenvectors (largest eigenvalues = descending)
+        U_r = eigvecs[:, -self.rank:].flip(-1)  # [T, r]
+
+        # Update basis
+        if self.per_head and head_idx is not None:
+            self.fim_basis[head_idx] = U_r
+        else:
+            self.fim_basis.copy_(U_r)
+
+        self._calibrated = True
+
+    def compress(self, k: torch.Tensor, head_idx: Optional[int] = None) -> torch.Tensor:
+        """
+        Compress K along temporal dimension using FIM basis.
+
+        Args:
+            k: [B, T, d_head] or [T, d_head] key tensor
+            head_idx: Which head's basis to use (if per_head)
+
+        Returns:
+            c: [B, r, d_head] or [r, d_head] compressed representation
+        """
+        if self.per_head and head_idx is not None:
+            U = self.fim_basis[head_idx]  # [T, r]
+        else:
+            U = self.fim_basis  # [T, r]
+
+        # Handle sequence length mismatch
+        T = k.shape[-2]
+        if T > self.max_seq_len:
+            raise ValueError(f"Sequence length {T} > calibrated max {self.max_seq_len}")
+        elif T < self.max_seq_len:
+            U = U[:T]  # Truncate basis
+
+        # C = U.T @ K: [r, T] @ [T, d_head] = [r, d_head]
+        if k.dim() == 3:
+            # [B, T, d_head] -> [B, r, d_head]
+            c = torch.einsum("tr,btd->brd", U.T, k)
+        else:
+            # [T, d_head] -> [r, d_head]
+            c = U.T @ k
+
+        return c
+
+    def decompress(self, c: torch.Tensor, seq_len: int, head_idx: Optional[int] = None) -> torch.Tensor:
+        """
+        Decompress from FIM coefficients back to full K.
+
+        Args:
+            c: [B, r, d_head] or [r, d_head] compressed representation
+            seq_len: Target sequence length T
+            head_idx: Which head's basis to use (if per_head)
+
+        Returns:
+            k_hat: [B, T, d_head] or [T, d_head] reconstructed keys
+        """
+        if self.per_head and head_idx is not None:
+            U = self.fim_basis[head_idx]  # [T, r]
+        else:
+            U = self.fim_basis  # [T, r]
+
+        # Truncate basis if needed
+        if seq_len < self.max_seq_len:
+            U = U[:seq_len]
+
+        # K_hat = U @ C: [T, r] @ [r, d_head] = [T, d_head]
+        if c.dim() == 3:
+            # [B, r, d_head] -> [B, T, d_head]
+            k_hat = torch.einsum("tr,brd->btd", U, c)
+        else:
+            # [r, d_head] -> [T, d_head]
+            k_hat = U @ c
+
+        return k_hat
+
+    def forward(self, k: torch.Tensor, head_idx: Optional[int] = None) -> torch.Tensor:
+        """
+        Full compress-decompress cycle (for training with reconstruction loss).
+
+        Args:
+            k: [B, T, d_head] key tensor
+            head_idx: Which head's basis to use
+
+        Returns:
+            k_hat: [B, T, d_head] reconstructed keys
+        """
+        T = k.shape[-2]
+        c = self.compress(k, head_idx)
+        return self.decompress(c, T, head_idx)
+
+    def get_reconstruction_error(self, k: torch.Tensor, head_idx: Optional[int] = None) -> torch.Tensor:
+        """Compute reconstruction MSE for monitoring."""
+        with torch.no_grad():
+            k_hat = self.forward(k, head_idx)
+            return F.mse_loss(k_hat, k)
+
+    def get_compression_stats(self) -> dict:
+        """Get compression statistics for logging."""
+        return {
+            "max_seq_len": self.max_seq_len,
+            "rank": self.rank,
+            "compression_ratio": self.rank / self.max_seq_len,
+            "memory_reduction": 1.0 - (self.rank / self.max_seq_len),
+            "calibrated": self._calibrated,
+            "per_head": self.per_head,
+        }
+
+
+# Legacy LearnedKVSplice for RA_MLA_KVSplice compatibility
+# TODO: Update RA_MLA_KVSplice to use FIMKVSplice for temporal compression
 
 
 class LearnedKVSplice(nn.Module):
     """
-    Differentiable KVSplice for end-to-end training.
+    Legacy differentiable KVSplice for end-to-end training.
 
-    Unlike post-hoc KVSplice which fits on calibration data after training,
-    this version is fully differentiable and learns compression during training.
-
-    Combines:
-    - Learned monotonic transform (simplified spline via scale/shift)
-    - Learned low-rank projection (differentiable PCA)
+    Compresses in feature dimension (d_in → d_compressed).
+    For the principled FIM-based temporal compression, use FIMKVSplice.
     """
 
     def __init__(self, d_in: int, d_compressed: int):
@@ -1274,63 +1483,42 @@ class LearnedKVSplice(nn.Module):
         self.d_in = d_in
         self.d_compressed = d_compressed
 
-        # Learned monotonic transform (per-dimension scale/shift)
+        # Learned monotonic transform
         self.transform_scale = nn.Parameter(torch.ones(d_in))
         self.transform_shift = nn.Parameter(torch.zeros(d_in))
 
-        # Learned low-rank projection (differentiable PCA)
+        # Learned low-rank projection
         self.compress = nn.Linear(d_in, d_compressed, bias=False)
         self.expand = nn.Linear(d_compressed, d_in, bias=False)
 
-        # Initialize compress/expand as approximate inverse
+        # Initialize as approximate inverse
         nn.init.orthogonal_(self.compress.weight)
         with torch.no_grad():
             self.expand.weight.copy_(self.compress.weight.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compress and decompress through learned KVSplice.
-
-        This creates a bottleneck that forces the model to learn
-        compressible representations.
-        """
-        # Apply learned monotonic transform
         x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
-
-        # Compress through low-rank bottleneck
         compressed = self.compress(x_transformed)
-
-        # Decompress
         decompressed = self.expand(compressed)
-
-        # Inverse transform
-        out = (decompressed - self.transform_shift) / (
+        return (decompressed - self.transform_shift) / (
             F.softplus(self.transform_scale) + 1e-6
         )
 
-        return out
-
     def compress_only(self, x: torch.Tensor) -> torch.Tensor:
-        """Compress for caching (no decompression)."""
         x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
         return self.compress(x_transformed)
 
     def decompress_only(self, compressed: torch.Tensor) -> torch.Tensor:
-        """Decompress from cache."""
         decompressed = self.expand(compressed)
         return (decompressed - self.transform_shift) / (
             F.softplus(self.transform_scale) + 1e-6
         )
 
     def get_reconstruction_error(self, x: torch.Tensor) -> torch.Tensor:
-        """Compute reconstruction error for monitoring compression quality."""
         with torch.no_grad():
-            reconstructed = self.forward(x)
-            error = F.mse_loss(reconstructed, x)
-        return error
+            return F.mse_loss(self.forward(x), x)
 
     def get_compression_stats(self) -> dict:
-        """Get compression statistics for logging."""
         return {
             "d_in": self.d_in,
             "d_compressed": self.d_compressed,
