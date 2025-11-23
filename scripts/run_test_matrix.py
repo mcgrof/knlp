@@ -1240,7 +1240,12 @@ def run_single_test(
 
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
-        cmd.extend(["--architecture", "unified-ra"])
+        # Check if this is an MLA architecture step or RA routing step
+        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1")
+        if ra_mla_ablation_step.upper().startswith(mla_prefixes):
+            cmd.extend(["--architecture", "ramla"])
+        else:
+            cmd.extend(["--architecture", "unified-ra"])
         cmd.extend(["--ra-step", ra_mla_ablation_step])
 
         # Check for skip RA warmup (env var or config)
