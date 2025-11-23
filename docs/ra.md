@@ -304,3 +304,154 @@ The transpose flips the attention direction:
 This is the **reciprocal** relationship that enables Markov chain balance -
 information flows bidirectionally across layers when alternating between
 standard and reciprocal attention.
+
+## Mathematical Foundation: Entropic Optimal Transport
+
+### SPDA Paper Result
+
+The paper "Scaled Dot-Product Attention as One-Sided Entropic Optimal Transport"
+(August 2025, https://arxiv.org/pdf/2508.08369) proves that standard transformer
+attention is exactly solving an Entropic Optimal Transport (EOT) problem.
+
+Given query q and keys {k_j}, attention chooses a probability distribution p_j
+that minimizes:
+
+```
+EOT(p) = Σ_j p_j · C_j + τ · H(p)
+```
+
+where:
+- `C_j = -⟨q, k_j⟩` is the transport cost
+- `H(p) = -Σ_j p_j log p_j` is entropy (regularization)
+- τ is temperature (typically 1/√d_head)
+
+The unique minimizer is:
+
+```
+p_j = softmax(⟨q, k_j⟩ / τ)
+```
+
+This proves that **SDPA = EOT solution**.
+
+### Fisher Information Matrix
+
+The attention scores enter a log-sum-exp potential:
+
+```
+φ(s) = τ log Σ_j exp(s_j / τ)
+```
+
+Its gradient gives the attention distribution:
+
+```
+∇φ(s) = softmax(s / τ)
+```
+
+And its **Hessian** is:
+
+```
+∇²φ(s) = (1/τ²)(diag(p) - p pᵀ)
+```
+
+This Hessian is exactly the **Fisher Information Matrix (FIM)** of the categorical
+distribution p. Therefore:
+
+```
+Hessian of log-sum-exp = Fisher Information Matrix
+```
+
+The FIM describes the curvature geometry of attention:
+- **Eigenvalues**: Information density in each direction
+- **Large eigenvalues**: High curvature, sensitive to perturbations
+- **Small eigenvalues**: Flat directions, easy optimization
+
+### Why This Matters for RA/SBA
+
+**RA (Reciprocal Attention)** alternates between forward and reverse EOT:
+
+```
+F_fwd  from softmax(Q Kᵀ / τ)    # Forward geometry
+F_rev  from softmax(K Qᵀ / τ)    # Reverse geometry
+```
+
+Each layer experiences one geometry, alternating across depth.
+
+**SBA (Symmetric Bidirectional Attention)** mixes both within each layer:
+
+```
+p_SBA = α · p_fwd + (1-α) · p_rev
+```
+
+Since FIM is positive semi-definite, the effective curvature is:
+
+```
+F_SBA ≈ α · F_fwd + (1-α) · F_rev
+```
+
+This **convex combination cannot increase the maximal eigenvalue** beyond
+the worse of the two. SBA produces:
+- Smoother curvature spectrum
+- More stable optimization
+- Better-conditioned Fisher geometry
+
+### Backward Pass = Advantage Gradients
+
+The SPDA paper also shows that attention gradients have the exact structure
+of REINFORCE policy gradients:
+
+```
+∂L/∂s_j = -(p_j / τ) · (u_j - E_p[u])
+```
+
+This is an **advantage update** (reward minus baseline), revealing that
+attention learns via advantage-style policy optimization.
+
+### Implications for KV Compression
+
+The FIM defines which temporal directions are information-critical:
+
+- **High FIM eigenvalues** = important temporal modes (keep these)
+- **Low FIM eigenvalues** = flat directions safe to discard
+
+KVSplice can use FIM-guided compression:
+
+```python
+# Calibration: compute average FIM over samples
+F = mean_i(diag(p_i) - p_i @ p_i.T)
+U, Λ, _ = svd(F)  # Eigenvectors sorted by information
+
+# Compression: project K/V onto top-r FIM eigenvectors
+C = U_r.T @ K     # Compressed representation
+K_hat = U_r @ C   # Reconstruction
+```
+
+This is more principled than PCA because it preserves **information structure**
+rather than just variance.
+
+### Fisher Metrics in Training
+
+We log Fisher spectrum metrics to W&B:
+
+- `fisher/layer{i}/head{h}/eigmax`: Maximum eigenvalue (curvature sharpness)
+- `fisher/layer{i}/head{h}/trace`: Sum of eigenvalues (total information)
+- `fisher/layer{i}/head{h}/cond`: Condition number (curvature ratio)
+
+Lower eigmax and better conditioning indicate smoother optimization.
+SBA typically shows lower eigmax than standard attention due to the
+geometry averaging effect.
+
+### Summary: The Induction Chain
+
+1. SPDA shows attention = solution to an EOT problem
+2. Its curvature is given by the Hessian of log-sum-exp
+3. This Hessian is exactly the Fisher Information Matrix
+4. RA and SBA manipulate two EOT geometries (forward/reverse)
+5. SBA mixes these geometries → smoother curvature/FIM
+6. FIM eigenvalues reveal information structure of attention
+7. KV compression is best done by discarding low-Fisher directions
+8. Fisher metrics quantify optimization stability during training
+
+This mathematical foundation provides principled justification for:
+- SBA's smoother training compared to standard attention
+- Fisher-guided KV compression outperforming PCA
+- The inductive bias of reversible Markov chains in RA
