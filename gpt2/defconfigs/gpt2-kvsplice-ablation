@@ -1,7 +1,8 @@
-# GPT-2 MLA Architecture Ablation
+# GPT-2 KVSplice Ablation
 #
-# Compares MLA-based architectures Vs kvsplice architecture
+# Compares MLA-based architectures with KVSplice compression
 #   MLA0     - MLA only (TL-cache latent compression)
+#   MLAKV0   - MLA+KVSplice (+ learned compression, no RA)
 #   RAMLA0   - RA+MLA (+ reciprocal alternation)
 #   RAMLAKV0 - RA+MLA+KVSplice (+ learned compression)
 #
@@ -76,7 +77,7 @@ CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
 # Ablation mode - architecture comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="MLA0,RAMLA0,RAMLAKV0"
+CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0,RAMLA0,RAMLAKV0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y

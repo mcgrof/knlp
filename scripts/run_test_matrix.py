@@ -1241,7 +1241,17 @@ def run_single_test(
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
         # Check if this is an MLA architecture step or RA routing step
-        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1", "SBA", "SBASS", "SBAKV")
+        mla_prefixes = (
+            "MLA",
+            "RAMLA",
+            "RAMLAKV",
+            "B",
+            "RA0",
+            "RA1",
+            "SBA",
+            "SBASS",
+            "SBAKV",
+        )
         if ra_mla_ablation_step.upper().startswith(mla_prefixes):
             cmd.extend(["--architecture", "ramla"])
         else:
@@ -2602,6 +2612,8 @@ def main():
                         # MLA architecture ablation step descriptions
                         "MLA0": "MLA baseline: TL-cache latent compression (standard LR)",
                         "MLA1": "MLA aggressive: TL-cache latent compression (high LR)",
+                        "MLAKV0": "MLA+KVSplice: Latent compression + learned KVSplice (standard LR)",
+                        "MLAKV1": "MLA+KVSplice aggressive: Latent compression + learned KVSplice (high LR)",
                         "RAMLA0": "RA+MLA: Reciprocal alternation + latent compression (standard LR)",
                         "RAMLA1": "RA+MLA aggressive: Reciprocal alternation + latent compression (high LR)",
                         "RAMLAKV0": "RA+MLA+KVSplice: Full stack with learned compression (standard LR)",
