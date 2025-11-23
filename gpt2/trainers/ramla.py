@@ -250,9 +250,82 @@ class RAMLATrainer(VanillaGPT2Trainer):
         # Log Fisher metrics for all architectures that support it
         self._log_fisher_metrics()
 
+        # Log KV cache memory metrics
+        self._log_kv_cache_metrics()
+
         # Run lm-eval if requested
         if getattr(self.args, "run_lm_eval", False):
             self._run_lm_eval()
+
+    def _log_kv_cache_metrics(self):
+        """Log KV cache memory metrics to W&B."""
+        # Get model config
+        if hasattr(self.model, "cfg"):
+            cfg = self.model.cfg
+            n_layers = cfg.n_layers
+            n_heads = cfg.n_heads
+            head_dim = cfg.head_dim
+            d_latent = cfg.d_latent
+        else:
+            return
+
+        # Test sequence lengths
+        seq_lengths = [512, 1024, 2048, 4096]
+        batch_size = 1
+
+        metrics = {}
+
+        for seq_len in seq_lengths:
+            # Standard KV cache: K and V for each layer
+            standard_cache_bytes = (
+                batch_size * n_layers * 2 * n_heads * seq_len * head_dim * 2
+            )
+            standard_cache_mb = standard_cache_bytes / 1024**2
+
+            # Check if model uses KVSplice
+            if hasattr(self.model, "compression_ratio"):
+                compression_ratio = self.model.compression_ratio
+                d_compressed = int(d_latent * compression_ratio)
+                compressed_cache_bytes = (
+                    batch_size * n_layers * seq_len * d_compressed * 2
+                )
+                actual_cache_mb = compressed_cache_bytes / 1024**2
+                cache_type = "kvsplice"
+                savings_pct = (1 - actual_cache_mb / standard_cache_mb) * 100
+            else:
+                actual_cache_mb = standard_cache_mb
+                cache_type = "standard"
+                savings_pct = 0.0
+
+            metrics[f"kv_cache/seq{seq_len}_standard_mb"] = standard_cache_mb
+            metrics[f"kv_cache/seq{seq_len}_actual_mb"] = actual_cache_mb
+            metrics[f"kv_cache/seq{seq_len}_savings_pct"] = savings_pct
+
+        # Summary metrics
+        metrics["kv_cache/type"] = 1.0 if cache_type == "kvsplice" else 0.0
+        if hasattr(self.model, "compression_ratio"):
+            metrics["kv_cache/compression_ratio"] = self.model.compression_ratio
+
+        # Print summary
+        print("\n--- KV Cache Memory ---")
+        print(f"  Cache type: {cache_type}")
+        for seq_len in seq_lengths:
+            actual = metrics[f"kv_cache/seq{seq_len}_actual_mb"]
+            savings = metrics[f"kv_cache/seq{seq_len}_savings_pct"]
+            if savings > 0:
+                print(f"  seq={seq_len}: {actual:.1f} MB ({savings:.0f}% savings)")
+            else:
+                print(f"  seq={seq_len}: {actual:.1f} MB")
+
+        # Log to W&B
+        step = getattr(self, "iter_num", None)
+        if "wandb" in self.trackers:
+            try:
+                import wandb
+
+                wandb.log(metrics, step=step)
+            except Exception as e:
+                print(f"Warning: Failed to log kv_cache metrics to wandb: {e}")
 
     @torch.no_grad()
     def estimate_loss(self):
