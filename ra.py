@@ -1359,7 +1359,7 @@ class FIMKVSplice(nn.Module):
         eigvals, eigvecs = torch.linalg.eigh(F)
 
         # Take top-r eigenvectors (largest eigenvalues = descending)
-        U_r = eigvecs[:, -self.rank:].flip(-1)  # [T, r]
+        U_r = eigvecs[:, -self.rank :].flip(-1)  # [T, r]
 
         # Update basis
         if self.per_head and head_idx is not None:
@@ -1403,7 +1403,9 @@ class FIMKVSplice(nn.Module):
 
         return c
 
-    def decompress(self, c: torch.Tensor, seq_len: int, head_idx: Optional[int] = None) -> torch.Tensor:
+    def decompress(
+        self, c: torch.Tensor, seq_len: int, head_idx: Optional[int] = None
+    ) -> torch.Tensor:
         """
         Decompress from FIM coefficients back to full K.
 
@@ -1450,7 +1452,9 @@ class FIMKVSplice(nn.Module):
         c = self.compress(k, head_idx)
         return self.decompress(c, T, head_idx)
 
-    def get_reconstruction_error(self, k: torch.Tensor, head_idx: Optional[int] = None) -> torch.Tensor:
+    def get_reconstruction_error(
+        self, k: torch.Tensor, head_idx: Optional[int] = None
+    ) -> torch.Tensor:
         """Compute reconstruction MSE for monitoring."""
         with torch.no_grad():
             k_hat = self.forward(k, head_idx)
@@ -1614,7 +1618,9 @@ class RA_MLA_KVSplice(nn.Module):
 
         # Track reconstruction error (compute occasionally to avoid overhead)
         if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
-            self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(latent_orig).item()
+            self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(
+                latent_orig
+            ).item()
 
         # Handle cache (stored in compressed form)
         if cache is not None:
@@ -1944,7 +1950,7 @@ class SBA_Flash(nn.Module):
                 causal_mask = torch.triu(
                     torch.ones(T_q, T_k, dtype=torch.bool, device=q.device), diagonal=1
                 )
-                scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+                scores_masked = scores.masked_fill(causal_mask, float("-inf"))
             else:
                 scores_masked = scores
 
@@ -1967,7 +1973,9 @@ class SBA_Flash(nn.Module):
 
         # Use gradient checkpointing during training to save memory
         if self.training:
-            attn_out = checkpoint(_compute_attention, q, k, v, alpha, use_reentrant=False)
+            attn_out = checkpoint(
+                _compute_attention, q, k, v, alpha, use_reentrant=False
+            )
         else:
             attn_out = _compute_attention(q, k, v, alpha)
 
@@ -2200,6 +2208,86 @@ class MLAGPT(nn.Module):
     def get_num_params(self):
         return sum(p.numel() for p in self.parameters())
 
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """
+        Compute Fisher spectrum metrics for selected layers.
+
+        Args:
+            x: Input tensor [B, T]
+            layer_indices: Which layers to analyze (default: [0, n_layers//2, -1])
+            n_samples: Samples per head for eigenvalue computation
+            topk: Number of top eigenvalues to log
+
+        Returns:
+            Dictionary of Fisher metrics for W&B logging
+        """
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "MLA_Flash", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from MLA_Flash layer."""
+        B, T, _ = x.shape
+
+        # Project to latent
+        latent = attn.to_latent(x)
+
+        # Decompress to Q, K, V
+        qkv = attn.from_latent(latent)
+        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Standard attention probs
+        attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs  # [B, H, T, T]
+
 
 class RAMLAGPT(nn.Module):
     """Full GPT-2 model with RA+MLA attention."""
@@ -2272,6 +2360,74 @@ class RAMLAGPT(nn.Module):
         probs = self.get_alternation_distribution()
         target = self.cfg.n_layers / 2.0
         return (probs.sum() - target) ** 2
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "RA_MLA_Flash", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from RA_MLA_Flash layer."""
+        B, T, _ = x.shape
+
+        latent = attn.to_latent(x)
+
+        qkv = attn.from_latent(latent)
+        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Get attention probs based on alternation direction
+        p_recip = attn.get_alternation_prob()
+
+        if p_recip > 0.5:
+            attn_probs = F.softmax(scores, dim=-2)
+        else:
+            attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs
 
 
 class RAMLAKV_GPT(nn.Module):
@@ -2385,7 +2541,7 @@ class RAMLAKV_GPT(nn.Module):
         # Collect per-layer reconstruction errors
         reconstruction_errors = []
         for i, block in enumerate(self.blocks):
-            if hasattr(block.attn, '_last_reconstruction_error'):
+            if hasattr(block.attn, "_last_reconstruction_error"):
                 error = block.attn._last_reconstruction_error
                 if error is not None:
                     reconstruction_errors.append(error)
@@ -2393,7 +2549,9 @@ class RAMLAKV_GPT(nn.Module):
 
         # Aggregate reconstruction error
         if reconstruction_errors:
-            metrics["kvsplice/avg_reconstruction_error"] = sum(reconstruction_errors) / len(reconstruction_errors)
+            metrics["kvsplice/avg_reconstruction_error"] = sum(
+                reconstruction_errors
+            ) / len(reconstruction_errors)
             metrics["kvsplice/max_reconstruction_error"] = max(reconstruction_errors)
             metrics["kvsplice/min_reconstruction_error"] = min(reconstruction_errors)
 
@@ -2405,11 +2563,114 @@ class RAMLAKV_GPT(nn.Module):
 
         return metrics
 
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """
+        Compute Fisher spectrum metrics for selected layers.
+
+        Runs a forward pass capturing attention probabilities, then computes
+        Fisher Information Matrix eigenvalues to measure curvature geometry.
+
+        Args:
+            x: Input tensor [B, T]
+            layer_indices: Which layers to analyze (default: [0, n_layers//2, -1])
+            n_samples: Samples per head for eigenvalue computation
+            topk: Number of top eigenvalues to log
+
+        Returns:
+            Dictionary of Fisher metrics for W&B logging
+        """
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                # Get attention probabilities for this layer
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            # Normal forward through block
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "RA_MLA_KVSplice", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """
+        Extract attention probabilities from RA_MLA_KVSplice layer.
+
+        Computes Q @ K.T and applies softmax based on alternation direction.
+        """
+        B, T, _ = x.shape
+
+        # Project to latent and through KVSplice
+        latent = attn.to_latent(x)
+        latent = attn.kvsplice(latent)
+
+        # Decompress to Q, K, V
+        qkv = attn.from_latent(latent)
+        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Get attention probs based on alternation direction
+        p_recip = attn.get_alternation_prob()
+
+        if p_recip > 0.5:
+            # Reciprocal: softmax on dim=-2 (column-wise)
+            attn_probs = F.softmax(scores, dim=-2)
+        else:
+            # Standard: softmax on dim=-1 (row-wise)
+            attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs  # [B, H, T, T]
+
 
 class SBABlock(nn.Module):
     """Transformer block with SBA attention + MLP."""
 
-    def __init__(self, cfg: RA_MLA_Config, layer_idx: int, alpha_init: float = 0.5, kv_mode: str = "separate"):
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alpha_init: float = 0.5,
+        kv_mode: str = "separate",
+    ):
         super().__init__()
         self.ln_1 = nn.LayerNorm(cfg.d_model)
         self.attn = SBA_Flash(cfg, layer_idx, alpha_init, kv_mode)
@@ -2433,7 +2694,13 @@ class SBABlock(nn.Module):
 class SBAGPT(nn.Module):
     """Full GPT-2 model with SBA (Symmetric Bidirectional Attention)."""
 
-    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257, alpha_init: float = 0.5, kv_mode: str = "separate"):
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        alpha_init: float = 0.5,
+        kv_mode: str = "separate",
+    ):
         super().__init__()
         self.cfg = cfg
         self.kv_mode = kv_mode
@@ -2568,7 +2835,9 @@ class SBAGPT(nn.Module):
 
         return all_metrics
 
-    def _get_attn_probs(self, attn: "SBA_Flash", x: torch.Tensor) -> Optional[torch.Tensor]:
+    def _get_attn_probs(
+        self, attn: "SBA_Flash", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
         """
         Extract attention probabilities from SBA_Flash layer.
 
@@ -2610,7 +2879,7 @@ class SBAGPT(nn.Module):
         causal_mask = torch.triu(
             torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
         )
-        scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
 
         # Get attention probabilities
         alpha = attn.get_alpha()
@@ -2626,7 +2895,9 @@ class SBAGPT(nn.Module):
 # =============================================================================
 
 
-def compute_fisher_spectrum(attn_probs: torch.Tensor, n_samples: int = 64) -> torch.Tensor:
+def compute_fisher_spectrum(
+    attn_probs: torch.Tensor, n_samples: int = 64
+) -> torch.Tensor:
     """
     Compute Fisher Information Matrix eigenvalues from attention probabilities.
 
