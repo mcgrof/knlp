@@ -125,6 +125,107 @@ Architecture preserves symmetry for KV cache compression:
 - Router decisions don't affect attention structure
 - Future: router confidence informs pruning aggressiveness
 
+## LearnedKVSplice: Differentiable Compression
+
+### What It Does
+
+`LearnedKVSplice` is a simplified differentiable approximation of the original
+KVSplice paper's spline+PCA approach:
+
+```python
+class LearnedKVSplice(nn.Module):
+    def __init__(self, d_in: int, d_compressed: int):
+        # Learned monotonic transform (replaces spline)
+        self.transform_scale = nn.Parameter(torch.ones(d_in))
+        self.transform_shift = nn.Parameter(torch.zeros(d_in))
+
+        # Learned low-rank projection (replaces PCA)
+        self.compress = nn.Linear(d_in, d_compressed, bias=False)
+        self.expand = nn.Linear(d_compressed, d_in, bias=False)
+```
+
+**Forward pass:**
+1. Apply learned monotonic transform: `x * softplus(scale) + shift`
+2. Compress: linear projection to d_compressed
+3. Expand: linear projection back to d_in
+4. Inverse transform: undo the monotonic transform
+
+### Why Not Actual PCA + Spline?
+
+**Can we differentiate through PCA?** Yes, but expensive.
+
+PyTorch's `torch.linalg.eigh` is differentiable, so gradients flow through
+eigendecomposition. However:
+
+- **Computational cost**: O(d³) per forward pass for eigendecomposition
+- **Numerical instability**: Near-degenerate eigenvalues cause gradient issues
+- **Memory**: Must store full covariance matrix
+
+**Can we differentiate through splines?** Yes, cubic splines have closed-form
+derivatives. But fitting splines at each forward pass is expensive.
+
+### Current Approach: Learned Approximation
+
+Instead of computing PCA/splines at each step, we learn projections that achieve
+similar compression:
+
+| Original KVSplice | LearnedKVSplice |
+|-------------------|-----------------|
+| Cubic spline geometry transform | Learned monotonic transform (softplus scale + shift) |
+| PCA on transformed data | Learned orthogonal linear projection |
+| Post-hoc compression | End-to-end differentiable |
+
+**Advantages:**
+- Much faster (single matrix multiply vs eigendecomposition)
+- Learns task-specific compression (can outperform PCA)
+- Stable gradients
+
+**Disadvantages:**
+- May not find optimal compression directions initially
+- Requires training to converge
+
+### Future: Hybrid Approach
+
+A potential improvement is to use actual PCA/FIM during calibration, then
+transfer those directions to initialize the learned projection:
+
+```python
+# Calibration phase (no gradients)
+with torch.no_grad():
+    # Collect latents over calibration samples
+    latents = collect_latents(model, calibration_data)
+
+    # Compute FIM or PCA
+    U, S, _ = torch.linalg.svd(latents)
+    top_directions = U[:, :d_compressed]
+
+# Initialize learned projection with FIM/PCA directions
+model.kvsplice.compress.weight.copy_(top_directions.T)
+model.kvsplice.expand.weight.copy_(top_directions)
+
+# Fine-tune end-to-end
+train(model)
+```
+
+This gives principled initialization while maintaining fast differentiable
+training.
+
+### FIMKVSplice Alternative
+
+For principled temporal compression (sequence dimension, not feature dimension),
+use `FIMKVSplice` which computes Fisher Information Matrix-guided compression:
+
+```python
+from ra import FIMKVSplice
+
+kvsplice = FIMKVSplice(cfg, rank=8)
+K_compressed = kvsplice.compress(K, attn_probs)  # [B, H, r, D]
+K_reconstructed = kvsplice.expand(K_compressed)   # [B, H, T, D]
+```
+
+This preserves information-critical temporal directions rather than just
+variance, but is more expensive due to eigendecomposition.
+
 ## Usage
 
 ```python
