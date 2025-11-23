@@ -232,23 +232,27 @@ class RAMLATrainer(VanillaGPT2Trainer):
             if self.step_config["arch"] == "ramlakv":
                 self._setup_kvsplice_logging()
 
-            # Use base trainer
-            result = super().train()
+            # Use base trainer (on_train_end will be called before wandb finishes)
+            return super().train()
 
-            # Log final metrics based on architecture
-            if self.step_config["arch"] == "ramlakv":
-                self._log_kvsplice_metrics()
-            elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
-                self._log_sba_metrics()
+    def on_train_end(self):
+        """Log final metrics before trackers finish."""
+        # Skip for RA architecture (uses its own trainer)
+        if self.step_config["arch"] == "ra":
+            return
 
-            # Log Fisher metrics for all architectures that support it
-            self._log_fisher_metrics()
+        # Log final metrics based on architecture
+        if self.step_config["arch"] == "ramlakv":
+            self._log_kvsplice_metrics()
+        elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
+            self._log_sba_metrics()
 
-            # Run lm-eval if requested
-            if getattr(self.args, "run_lm_eval", False):
-                self._run_lm_eval()
+        # Log Fisher metrics for all architectures that support it
+        self._log_fisher_metrics()
 
-            return result
+        # Run lm-eval if requested
+        if getattr(self.args, "run_lm_eval", False):
+            self._run_lm_eval()
 
     @torch.no_grad()
     def estimate_loss(self):
