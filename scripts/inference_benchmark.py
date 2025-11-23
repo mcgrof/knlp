@@ -129,10 +129,58 @@ def measure_inference_memory(model, seq_len=512, batch_size=1, device="cuda"):
 
     peak_memory = torch.cuda.max_memory_allocated() / 1024**3  # GB
 
+    # Estimate KV cache size for this model
+    cache_info = estimate_cache_size(model, seq_len, batch_size)
+
     return {
         "peak_memory_gb": peak_memory,
         "latency_ms": elapsed * 1000,
         "tokens_per_sec": seq_len / elapsed,
+        **cache_info,
+    }
+
+
+def estimate_cache_size(model, seq_len, batch_size):
+    """Estimate KV cache memory for autoregressive generation."""
+    # Get model config
+    if hasattr(model, 'cfg'):
+        cfg = model.cfg
+        n_layers = cfg.n_layers
+        n_heads = cfg.n_heads
+        head_dim = cfg.head_dim
+        d_latent = cfg.d_latent
+    else:
+        # Default GPT-2 config
+        n_layers = 12
+        n_heads = 12
+        head_dim = 64
+        d_latent = 256
+
+    # Standard KV cache: store K and V for each layer
+    # Shape: [batch, n_heads, seq_len, head_dim] * 2 (K and V) * n_layers
+    standard_cache_bytes = batch_size * n_layers * 2 * n_heads * seq_len * head_dim * 2  # float16
+    standard_cache_mb = standard_cache_bytes / 1024**2
+
+    # Check if model uses KVSplice (compressed cache)
+    cache_type = "standard"
+    compressed_cache_mb = standard_cache_mb
+    compression_ratio = 1.0
+
+    if hasattr(model, 'compression_ratio'):
+        # RAMLAKV uses compressed latent cache
+        compression_ratio = model.compression_ratio
+        d_compressed = int(d_latent * compression_ratio)
+        # Cache stores compressed latents instead of full K/V
+        compressed_cache_bytes = batch_size * n_layers * seq_len * d_compressed * 2  # float16
+        compressed_cache_mb = compressed_cache_bytes / 1024**2
+        cache_type = "kvsplice"
+
+    return {
+        "cache_type": cache_type,
+        "standard_cache_mb": standard_cache_mb,
+        "actual_cache_mb": compressed_cache_mb,
+        "cache_compression": compression_ratio,
+        "cache_savings_pct": (1 - compressed_cache_mb / standard_cache_mb) * 100 if standard_cache_mb > 0 else 0,
     }
 
 
@@ -329,9 +377,14 @@ def main():
                 model, model_type = load_model(ckpt_path, args.device)
                 stats = measure_inference_memory(model, device=args.device)
                 memory_results[name] = stats
+                cache_info = ""
+                if stats.get('cache_savings_pct', 0) > 0:
+                    cache_info = f", cache: {stats['actual_cache_mb']:.1f}MB ({stats['cache_savings_pct']:.0f}% savings)"
+                else:
+                    cache_info = f", cache: {stats['standard_cache_mb']:.1f}MB"
                 print(f"{name}: {stats['peak_memory_gb']:.2f} GB, "
                       f"{stats['latency_ms']:.1f} ms, "
-                      f"{stats['tokens_per_sec']:.0f} tok/s")
+                      f"{stats['tokens_per_sec']:.0f} tok/s{cache_info}")
                 del model
                 torch.cuda.empty_cache()
             except Exception as e:
