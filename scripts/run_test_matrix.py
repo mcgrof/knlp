@@ -1241,7 +1241,7 @@ def run_single_test(
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
         # Check if this is an MLA architecture step or RA routing step
-        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1")
+        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1", "SBA")
         if ra_mla_ablation_step.upper().startswith(mla_prefixes):
             cmd.extend(["--architecture", "ramla"])
         else:
@@ -2611,6 +2611,9 @@ def main():
                         "B1": "Baseline GPT-2 (aggressive LR 1.2e-3)",
                         "RA0": "RA routing only (standard LR 6e-4)",
                         "RA1": "RA routing only (aggressive LR 1.2e-3)",
+                        # SBA (Symmetric Bidirectional Attention) step descriptions
+                        "SBA0": "SBA: Dual EOT attention with learned alpha mixing (standard LR)",
+                        "SBA1": "SBA: Dual EOT attention with learned alpha mixing (aggressive LR)",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
