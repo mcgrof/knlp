@@ -1602,19 +1602,52 @@ class SBA_Flash(nn.Module):
         cfg: RA_MLA_Config,
         layer_idx: int,
         alpha_init: float = 0.5,
+        kv_mode: str = "separate",
     ):
+        """
+        Initialize SBA attention layer.
+
+        Args:
+            cfg: Model configuration
+            layer_idx: Layer index
+            alpha_init: Initial mixing parameter (0.5 = equal mix)
+            kv_mode: QKV projection mode
+                - "separate": Independent Q, K, V projections (default)
+                - "shared_skew": Q = W_shared + W_skew, K = W_shared - W_skew
+                - "k_eq_v": K = V (key-value tying)
+        """
         super().__init__()
         self.cfg = cfg
         self.layer_idx = layer_idx
+        self.kv_mode = kv_mode
 
         self.n_heads = cfg.n_heads
         self.head_dim = cfg.head_dim
         self.d_latent = cfg.d_latent
 
-        # TL-cache: single latent decompresses to Q, K, V
+        # TL-cache: project to latent space
         self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
-        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
-        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # QKV projections based on mode
+        qk_dim = cfg.n_heads * cfg.head_dim
+        v_dim = cfg.n_heads * cfg.head_dim
+
+        if kv_mode == "separate":
+            # Standard: separate Q, K, V projections
+            qkv_dim = 3 * qk_dim
+            self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+        elif kv_mode == "shared_skew":
+            # Q = W_shared + W_skew, K = W_shared - W_skew
+            self.W_shared = nn.Linear(cfg.d_latent, qk_dim, bias=False)
+            self.W_skew = nn.Linear(cfg.d_latent, qk_dim, bias=False)
+            self.W_v = nn.Linear(cfg.d_latent, v_dim, bias=False)
+        elif kv_mode == "k_eq_v":
+            # Q from shared+skew, K = V
+            self.W_shared = nn.Linear(cfg.d_latent, qk_dim, bias=False)
+            self.W_skew = nn.Linear(cfg.d_latent, qk_dim, bias=False)
+            self.W_v = nn.Linear(cfg.d_latent, v_dim, bias=False)
+        else:
+            raise ValueError(f"Unknown kv_mode: {kv_mode}")
 
         # Output projection
         self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
@@ -1662,11 +1695,33 @@ class SBA_Flash(nn.Module):
             full_latent = latent
             T_total = T
 
-        # Decompress to Q, K, V
-        qkv = self.from_latent(full_latent)
-        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, H, T, D]
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # Decompress to Q, K, V based on kv_mode
+        if self.kv_mode == "separate":
+            qkv = self.from_latent(full_latent)
+            qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+            qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, H, T, D]
+            q, k, v = qkv[0], qkv[1], qkv[2]
+        elif self.kv_mode == "shared_skew":
+            # Q = W_shared + W_skew, K = W_shared - W_skew
+            shared = self.W_shared(full_latent)
+            skew = self.W_skew(full_latent)
+            q_flat = shared + skew
+            k_flat = shared - skew
+            v_flat = self.W_v(full_latent)
+            # Reshape to [B, H, T, D]
+            q = q_flat.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+            k = k_flat.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+            v = v_flat.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+        elif self.kv_mode == "k_eq_v":
+            # Q from shared+skew, K = V
+            shared = self.W_shared(full_latent)
+            skew = self.W_skew(full_latent)
+            q_flat = shared + skew
+            v_flat = self.W_v(full_latent)
+            # Reshape to [B, H, T, D]
+            q = q_flat.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+            v = v_flat.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+            k = v  # K = V tying
 
         if cache is not None:
             q = q[:, :, -T:, :]
@@ -2155,10 +2210,10 @@ class RAMLAKV_GPT(nn.Module):
 class SBABlock(nn.Module):
     """Transformer block with SBA attention + MLP."""
 
-    def __init__(self, cfg: RA_MLA_Config, layer_idx: int, alpha_init: float = 0.5):
+    def __init__(self, cfg: RA_MLA_Config, layer_idx: int, alpha_init: float = 0.5, kv_mode: str = "separate"):
         super().__init__()
         self.ln_1 = nn.LayerNorm(cfg.d_model)
-        self.attn = SBA_Flash(cfg, layer_idx, alpha_init)
+        self.attn = SBA_Flash(cfg, layer_idx, alpha_init, kv_mode)
         self.ln_2 = nn.LayerNorm(cfg.d_model)
 
         # MLP: 4x expansion
@@ -2179,9 +2234,10 @@ class SBABlock(nn.Module):
 class SBAGPT(nn.Module):
     """Full GPT-2 model with SBA (Symmetric Bidirectional Attention)."""
 
-    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257, alpha_init: float = 0.5):
+    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257, alpha_init: float = 0.5, kv_mode: str = "separate"):
         super().__init__()
         self.cfg = cfg
+        self.kv_mode = kv_mode
 
         # Embeddings
         self.wte = nn.Embedding(vocab_size, cfg.d_model)
@@ -2190,7 +2246,7 @@ class SBAGPT(nn.Module):
 
         # Transformer blocks
         self.blocks = nn.ModuleList(
-            [SBABlock(cfg, i, alpha_init) for i in range(cfg.n_layers)]
+            [SBABlock(cfg, i, alpha_init, kv_mode) for i in range(cfg.n_layers)]
         )
 
         # Output
@@ -2254,3 +2310,7 @@ class SBAGPT(nn.Module):
         for i, a in enumerate(alphas):
             metrics[f"sba/alpha_layer_{i}"] = a.item()
         return metrics
+
+    def get_kv_mode(self) -> str:
+        """Get the KV mode used by this model."""
+        return self.kv_mode
