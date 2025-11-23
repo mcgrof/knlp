@@ -282,6 +282,49 @@ class RAMLATrainer(VanillaGPT2Trainer):
                 if hasattr(tracker, "log"):
                     tracker.log(metrics)
 
+        # Also log Fisher metrics if model supports it
+        self._log_fisher_metrics()
+
+    def _log_fisher_metrics(self):
+        """
+        Log Fisher Information Matrix spectrum metrics.
+
+        The FIM eigenvalues reveal the curvature geometry of attention (SPDA paper).
+        Lower eigmax and better conditioning indicate smoother optimization.
+        """
+        if not hasattr(self.model, "compute_fisher_metrics"):
+            return
+
+        # Get a small batch for Fisher computation (use shorter sequence for speed)
+        try:
+            # Create a small dummy batch
+            batch_size = 4
+            seq_len = 128  # Shorter for O(T^3) eigendecomposition
+            device = next(self.model.parameters()).device
+
+            # Use random tokens for Fisher computation
+            x = torch.randint(0, 50257, (batch_size, seq_len), device=device)
+
+            metrics = self.model.compute_fisher_metrics(x, n_samples=64, topk=8)
+
+            if metrics:
+                # Print summary
+                print("\n--- Fisher Information Metrics ---")
+                # Find layer aggregates
+                for key, value in metrics.items():
+                    if "eigmax_mean" in key:
+                        layer_idx = key.split("/")[1]
+                        print(f"  {layer_idx} eigmax_mean: {value:.6f}")
+
+                # Log to trackers
+                if hasattr(self, "trackers") and self.trackers:
+                    for tracker in self.trackers:
+                        if hasattr(tracker, "log"):
+                            tracker.log(metrics)
+
+        except Exception as e:
+            print(f"  (Fisher metrics computation failed: {e})")
+
     def _run_lm_eval(self):
         """Run lm-eval benchmarks on the model."""
         try:
