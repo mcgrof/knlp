@@ -98,6 +98,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 # Enable TF32 for better GPU utilization
@@ -1739,38 +1740,46 @@ class SBA_Flash(nn.Module):
         alpha = self.get_alpha()
         self._last_alpha = alpha.item()
 
-        # Compute scores once: Q @ K.T -> [B, H, T_q, T_k]
+        # Compute attention with gradient checkpointing to save memory
+        # The full [B, H, T, T] attention matrix is memory-intensive
         T_q = q.shape[2]
         T_k = k.shape[2]
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, T_q, T_k]
 
-        # Apply causal mask for forward direction
-        if cache is None:
-            # Create causal mask
-            causal_mask = torch.triu(
-                torch.ones(T_q, T_k, dtype=torch.bool, device=x.device), diagonal=1
-            )
-            scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+        def _compute_attention(q, k, v, alpha):
+            # Compute scores once: Q @ K.T -> [B, H, T_q, T_k]
+            scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+
+            # Apply causal mask for forward direction
+            if cache is None:
+                causal_mask = torch.triu(
+                    torch.ones(T_q, T_k, dtype=torch.bool, device=q.device), diagonal=1
+                )
+                scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+            else:
+                scores_masked = scores
+
+            # Forward attention: row-wise softmax (Q→K)
+            attn_fwd = F.softmax(scores_masked, dim=-1)
+
+            # Reverse attention: column-wise softmax (K→Q)
+            attn_rev = F.softmax(scores, dim=-2)
+
+            # Apply dropout
+            if self.training and self.cfg.dropout > 0:
+                attn_fwd = F.dropout(attn_fwd, p=self.cfg.dropout, training=True)
+                attn_rev = F.dropout(attn_rev, p=self.cfg.dropout, training=True)
+
+            # Mix attention patterns
+            attn_mixed = alpha * attn_fwd + (1 - alpha) * attn_rev
+
+            # Apply attention to values
+            return torch.matmul(attn_mixed, v)
+
+        # Use gradient checkpointing during training to save memory
+        if self.training:
+            attn_out = checkpoint(_compute_attention, q, k, v, alpha, use_reentrant=False)
         else:
-            scores_masked = scores
-
-        # Forward attention: row-wise softmax (Q→K)
-        attn_fwd = F.softmax(scores_masked, dim=-1)  # [B, H, T_q, T_k]
-
-        # Reverse attention: column-wise softmax (K→Q)
-        # For reverse, we don't apply causal mask (complementary geometry)
-        attn_rev = F.softmax(scores, dim=-2)  # softmax over T_q dimension
-
-        # Apply dropout
-        if self.training and self.cfg.dropout > 0:
-            attn_fwd = F.dropout(attn_fwd, p=self.cfg.dropout, training=True)
-            attn_rev = F.dropout(attn_rev, p=self.cfg.dropout, training=True)
-
-        # Mix attention patterns
-        attn_mixed = alpha * attn_fwd + (1 - alpha) * attn_rev
-
-        # Apply attention to values
-        attn_out = torch.matmul(attn_mixed, v)  # [B, H, T_q, D]
+            attn_out = _compute_attention(q, k, v, alpha)
 
         # Merge heads and project output
         attn_out = attn_out.transpose(1, 2).contiguous()  # [B, T, H, head_dim]
