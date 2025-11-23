@@ -368,7 +368,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
             # Log to trackers if available
             if hasattr(self, 'trackers') and self.trackers:
                 for tracker in self.trackers:
-                    tracker.log(lm_eval_metrics)
+                    if hasattr(tracker, 'log'):
+                        tracker.log(lm_eval_metrics)
 
             return lm_eval_metrics
 
