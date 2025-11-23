@@ -1476,16 +1476,22 @@ class FIMKVSplice(nn.Module):
         }
 
 
-# Legacy LearnedKVSplice for RA_MLA_KVSplice compatibility
-# TODO: Update RA_MLA_KVSplice to use FIMKVSplice for temporal compression
-
-
 class LearnedKVSplice(nn.Module):
     """
-    Legacy differentiable KVSplice for end-to-end training.
+    Learned information bottleneck for QKV compression.
 
-    Compresses in feature dimension (d_in → d_compressed).
-    For the principled FIM-based temporal compression, use FIMKVSplice.
+    Compresses in feature dimension (d_in → d_compressed) using:
+    1. Monotonic transform: softplus(scale) * x + shift
+       - Reorders/ranks dimensions before compression
+    2. Low-rank projection: compress → expand linear layers
+       - Forces information through smaller space
+
+    This trains the model to produce representations that survive the
+    bottleneck, acting as a regularizer that encourages structured,
+    compressible QKV representations.
+
+    Note: This is NOT approximating spline+PCA despite historical naming.
+    It's a learned bottleneck with monotonic pre-transform.
     """
 
     def __init__(self, d_in: int, d_compressed: int):
@@ -1539,14 +1545,14 @@ class LearnedKVSplice(nn.Module):
 
 class RA_MLA_KVSplice(nn.Module):
     """
-    RA-MLA with learned KVSplice compression.
+    RA-MLA with learned information bottleneck compression.
 
-    Extends RA_MLA_Flash with end-to-end learned compression that mirrors
-    the geometry transformation + PCA approach of KVSplice, but is fully
-    differentiable for training.
+    Extends RA_MLA_Flash with LearnedKVSplice bottleneck that forces QKV
+    through a monotonic transform + low-rank projection. This trains the
+    model to produce representations that survive compression.
 
-    The model learns to produce latents that compress well through the
-    spline+PCA bottleneck, rather than hoping post-hoc compression works.
+    The bottleneck acts as a regularizer, encouraging structured QKV
+    representations that may generalize better.
     """
 
     def __init__(
