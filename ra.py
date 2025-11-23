@@ -2969,6 +2969,9 @@ def compute_fisher_metrics(
     eigmax_vals = []
     trace_vals = []
     cond_vals = []
+    energy_r8_vals = []
+    energy_r16_vals = []
+    decay_vals = []
 
     for h in range(H):
         eigvals = compute_fisher_spectrum(attn_probs[:, h], n_samples=n_samples)
@@ -2992,9 +2995,44 @@ def compute_fisher_metrics(
         for i, v in enumerate(topk_vals):
             metrics[f"fisher/layer{layer_idx}/head{h}/eig_top{i}"] = float(v)
 
-    # Layer aggregates
+        # Energy vs rank: E(r) = Σ_{i=T-r+1..T} λ_i / Σ λ_i
+        # Useful for picking KVsplice-FIM compression rank
+        if trace > 1e-8:
+            energy_r8 = float(eigvals[-8:].sum() / trace) if len(eigvals) >= 8 else 1.0
+            energy_r16 = (
+                float(eigvals[-16:].sum() / trace) if len(eigvals) >= 16 else 1.0
+            )
+        else:
+            energy_r8 = 1.0
+            energy_r16 = 1.0
+        energy_r8_vals.append(energy_r8)
+        energy_r16_vals.append(energy_r16)
+
+        # Spectral decay: eigmax / eig_5th (how concentrated is the spectrum)
+        if len(eigvals) >= 5:
+            decay = float(eigvals[-1] / (eigvals[-5].abs() + 1e-8))
+        else:
+            decay = 1.0
+        decay_vals.append(decay)
+
+        metrics[f"fisher/layer{layer_idx}/head{h}/energy_r8"] = energy_r8
+        metrics[f"fisher/layer{layer_idx}/head{h}/energy_r16"] = energy_r16
+        metrics[f"fisher/layer{layer_idx}/head{h}/decay"] = decay
+
+    # Layer aggregates (mean)
     metrics[f"fisher/layer{layer_idx}/eigmax_mean"] = sum(eigmax_vals) / H
     metrics[f"fisher/layer{layer_idx}/trace_mean"] = sum(trace_vals) / H
     metrics[f"fisher/layer{layer_idx}/cond_mean"] = sum(cond_vals) / H
+    metrics[f"fisher/layer{layer_idx}/energy_r8_mean"] = sum(energy_r8_vals) / H
+    metrics[f"fisher/layer{layer_idx}/energy_r16_mean"] = sum(energy_r16_vals) / H
+    metrics[f"fisher/layer{layer_idx}/decay_mean"] = sum(decay_vals) / H
+
+    # Layer aggregates (std) - stability fingerprint for RA vs SBA
+    if H > 1:
+        import statistics
+
+        metrics[f"fisher/layer{layer_idx}/eigmax_std"] = statistics.stdev(eigmax_vals)
+        metrics[f"fisher/layer{layer_idx}/trace_std"] = statistics.stdev(trace_vals)
+        metrics[f"fisher/layer{layer_idx}/cond_std"] = statistics.stdev(cond_vals)
 
     return metrics
