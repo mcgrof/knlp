@@ -4,6 +4,9 @@
 #   MLA0     - MLA only (TL-cache latent compression)
 #   RAMLA0   - RA+MLA (+ reciprocal alternation)
 #   RAMLAKV0 - RA+MLA+KVSplice (+ learned compression)
+#   SBA0     - SBA: Dual EOT attention with learned alpha mixing
+#   SBASS0   - SBA shared+skew: Symmetric Q/K projections
+#   SBAKV0   - SBA K=V: Key-value tying variant
 #
 # All use standard LR (6e-4) for fair comparison.
 
@@ -76,7 +79,7 @@ CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
 # Ablation mode - architecture comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="MLA0,RAMLA0,RAMLAKV0"
+CONFIG_RA_MLA_ABLATION_STEPS="MLA0,RAMLA0,RAMLAKV0,SBA0,SBASS0,SBAKV0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y

@@ -1241,7 +1241,7 @@ def run_single_test(
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
         # Check if this is an MLA architecture step or RA routing step
-        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1", "SBA")
+        mla_prefixes = ("MLA", "RAMLA", "RAMLAKV", "B", "RA0", "RA1", "SBA", "SBASS", "SBAKV")
         if ra_mla_ablation_step.upper().startswith(mla_prefixes):
             cmd.extend(["--architecture", "ramla"])
         else:
@@ -2614,6 +2614,10 @@ def main():
                         # SBA (Symmetric Bidirectional Attention) step descriptions
                         "SBA0": "SBA: Dual EOT attention with learned alpha mixing (standard LR)",
                         "SBA1": "SBA: Dual EOT attention with learned alpha mixing (aggressive LR)",
+                        "SBASS0": "SBA shared+skew: Symmetric Q/K projections (standard LR)",
+                        "SBASS1": "SBA shared+skew: Symmetric Q/K projections (aggressive LR)",
+                        "SBAKV0": "SBA K=V: Key-value tying variant (standard LR)",
+                        "SBAKV1": "SBA K=V: Key-value tying variant (aggressive LR)",
                     }
                     step_desc = step_descriptions.get(
                         ablation_step, f"Step {ablation_step}"
