@@ -56,6 +56,8 @@ def parse_step(step: str) -> Dict:
         arch = "baseline"
     elif base == "MLA":
         arch = "mla"
+    elif base == "MLAKV":
+        arch = "mlakv"
     elif base == "RA":
         arch = "ra"
     elif base == "RAMLA":
@@ -118,6 +120,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
 
         elif self.step_config["arch"] in [
             "mla",
+            "mlakv",
             "ramla",
             "ramlakv",
             "sba",
@@ -135,7 +138,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
     def _setup_mla_model(self):
         """Replace model with MLA/RAMLA/RAMLAKV/SBA variant."""
         import torch
-        from ra import RA_MLA_Config, MLAGPT, RAMLAGPT, RAMLAKV_GPT, SBAGPT
+        from ra import RA_MLA_Config, MLAGPT, MLAKV_GPT, RAMLAGPT, RAMLAKV_GPT, SBAGPT
 
         arch = self.step_config["arch"]
 
@@ -156,6 +159,10 @@ class RAMLATrainer(VanillaGPT2Trainer):
         if arch == "mla":
             self.model = MLAGPT(cfg)
             print(f"Created MLAGPT with d_latent={d_latent}")
+        elif arch == "mlakv":
+            self.model = MLAKV_GPT(cfg, compression_ratio=compression_ratio)
+            print(f"Created MLAKV_GPT (MLA + KVSplice, no RA)")
+            print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "ramla":
             self.model = RAMLAGPT(cfg)
             print(f"Created RAMLAGPT with d_latent={d_latent}")
@@ -228,8 +235,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
             # Use RATrainer's train method
             return self._ra_trainer.train()
         else:
-            # For RAMLAKV, set up periodic metrics logging
-            if self.step_config["arch"] == "ramlakv":
+            # For MLAKV/RAMLAKV, set up periodic metrics logging
+            if self.step_config["arch"] in ["mlakv", "ramlakv"]:
                 self._setup_kvsplice_logging()
 
             # Use base trainer (on_train_end will be called before wandb finishes)
@@ -242,7 +249,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
             return
 
         # Log final metrics based on architecture
-        if self.step_config["arch"] == "ramlakv":
+        if self.step_config["arch"] in ["mlakv", "ramlakv"]:
             self._log_kvsplice_metrics()
         elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
             self._log_sba_metrics()

@@ -2691,6 +2691,341 @@ class SBABlock(nn.Module):
         return x, new_cache
 
 
+class MLA_KVSplice(nn.Module):
+    """
+    MLA with learned KVSplice compression but NO reciprocal alternation.
+
+    Uses standard Q·K^T attention (not K·Q^T) while still applying the
+    KVSplice compression bottleneck. This isolates the benefit of learned
+    compression from the reciprocal attention mechanism.
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # Learned KVSplice compression
+        d_compressed = int(cfg.d_latent * compression_ratio)
+        self.kvsplice = LearnedKVSplice(cfg.d_latent, d_compressed)
+        self.d_compressed = d_compressed
+
+        # Input projection to latent space
+        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+
+        # Decompress latent to Q, K, V
+        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
+        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+        # Track reconstruction error for metrics
+        self._last_reconstruction_error = None
+
+    def get_kvsplice_metrics(self) -> dict:
+        """Get KVSplice metrics for this layer."""
+        metrics = self.kvsplice.get_compression_stats()
+        if self._last_reconstruction_error is not None:
+            metrics["reconstruction_error"] = self._last_reconstruction_error
+        return metrics
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[torch.Tensor] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Forward pass with learned KVSplice compression.
+
+        Always uses standard attention (Q·K^T), no alternation.
+        Cache stores compressed latents (d_compressed instead of d_latent).
+        """
+        B, T, D = x.shape
+
+        # Project to latent space
+        latent_orig = self.to_latent(x)  # [B, T, d_latent]
+
+        # Apply KVSplice bottleneck (learn compressible representations)
+        latent = self.kvsplice(latent_orig)
+
+        # Track reconstruction error (compute occasionally to avoid overhead)
+        if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
+            self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(
+                latent_orig
+            ).item()
+
+        # Handle cache (stored in compressed form)
+        if cache is not None:
+            # Decompress cached latents
+            cache_decompressed = self.kvsplice.decompress_only(cache)
+            full_latent = torch.cat([cache_decompressed, latent], dim=1)
+            T_total = full_latent.shape[1]
+        else:
+            full_latent = latent
+            T_total = T
+
+        # Decompress to Q, K, V
+        qkv = self.from_latent(full_latent)
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Standard attention (always Q·K^T, no alternation)
+        attn_out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            is_causal=(cache is None),
+            dropout_p=self.cfg.dropout if self.training else 0.0,
+        )
+
+        # Merge heads and project
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        # Store compressed cache
+        if use_cache:
+            new_cache = self.kvsplice.compress_only(full_latent)
+        else:
+            new_cache = None
+
+        return out, new_cache
+
+
+class MLAKVBlock(nn.Module):
+    """Transformer block with MLA_KVSplice attention + MLP."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        compression_ratio: float,
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = MLA_KVSplice(cfg, layer_idx, compression_ratio)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLP: 4x expansion
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class MLAKV_GPT(nn.Module):
+    """Full GPT-2 model with MLA+KVSplice attention (no reciprocal alternation)."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Transformer blocks (no alternation_logits needed)
+        self.blocks = nn.ModuleList(
+            [MLAKVBlock(cfg, i, compression_ratio) for i in range(cfg.n_layers)]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_compression_stats(self):
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        return {
+            "d_latent": self.cfg.d_latent,
+            "d_compressed": d_compressed,
+            "compression_ratio": self.compression_ratio,
+            "cache_reduction": f"{(1 - self.compression_ratio) * 100:.1f}%",
+        }
+
+    def get_kvsplice_metrics(self) -> dict:
+        """Get comprehensive KVSplice metrics for logging to W&B."""
+        metrics = {}
+
+        # Overall compression stats
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        metrics["kvsplice/compression_ratio"] = self.compression_ratio
+        metrics["kvsplice/d_latent"] = self.cfg.d_latent
+        metrics["kvsplice/d_compressed"] = d_compressed
+        metrics["kvsplice/memory_reduction_pct"] = (1 - self.compression_ratio) * 100
+
+        # Collect per-layer reconstruction errors
+        reconstruction_errors = []
+        for i, block in enumerate(self.blocks):
+            if hasattr(block.attn, "_last_reconstruction_error"):
+                error = block.attn._last_reconstruction_error
+                if error is not None:
+                    reconstruction_errors.append(error)
+                    metrics[f"kvsplice/layer_{i}_recon_error"] = error
+
+        # Aggregate reconstruction error
+        if reconstruction_errors:
+            metrics["kvsplice/avg_reconstruction_error"] = sum(
+                reconstruction_errors
+            ) / len(reconstruction_errors)
+            metrics["kvsplice/max_reconstruction_error"] = max(reconstruction_errors)
+            metrics["kvsplice/min_reconstruction_error"] = min(reconstruction_errors)
+
+        return metrics
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "MLA_KVSplice", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from MLA_KVSplice layer."""
+        B, T, _ = x.shape
+
+        # Project to latent
+        latent_orig = attn.to_latent(x)
+        latent = attn.kvsplice(latent_orig)
+
+        # Decompress to Q, K, V
+        qkv = attn.from_latent(latent)
+        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Standard attention probs
+        attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs  # [B, H, T, T]
+
+
 class SBAGPT(nn.Module):
     """Full GPT-2 model with SBA (Symmetric Bidirectional Attention)."""
 
