@@ -3026,6 +3026,347 @@ class MLAKV_GPT(nn.Module):
         return attn_probs  # [B, H, T, T]
 
 
+# =============================================================================
+# MLPSplice: Latent MLP
+# =============================================================================
+
+
+class MLPSplice(nn.Module):
+    """
+    MLP operating in a compressed latent space.
+
+    Instead of d_model -> 4*d_model -> d_model, we do:
+    d_model -> d_latent -> 4*d_latent -> d_latent -> d_model
+
+    This reduces MLP parameters by ~6-9x while maintaining expressiveness.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        d_latent: int,
+        dropout: float = 0.1,
+        tie_projections: bool = True,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.d_latent = d_latent
+        self.tie = tie_projections
+
+        # Project to latent
+        self.proj_in = nn.Linear(d_model, d_latent, bias=False)
+
+        # MLP in latent space
+        d_hidden = 4 * d_latent
+        self.fc1 = nn.Linear(d_latent, d_hidden)
+        self.fc2 = nn.Linear(d_hidden, d_latent)
+        self.act = nn.GELU()
+
+        # Project back (optionally tied)
+        if not tie_projections:
+            self.proj_out = nn.Linear(d_latent, d_model, bias=False)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Compress
+        h = self.proj_in(x)  # [B, T, d_latent]
+
+        # MLP in latent
+        h = self.fc1(h)
+        h = self.act(h)
+        h = self.fc2(h)
+
+        # Expand back
+        if self.tie:
+            out = F.linear(h, self.proj_in.weight.T)
+        else:
+            out = self.proj_out(h)
+
+        return self.dropout(out)
+
+    def get_compression_stats(self):
+        # Standard MLP params: 2 * d_model * 4 * d_model
+        standard = 2 * self.d_model * 4 * self.d_model
+        # MLPSplice params: proj_in + fc1 + fc2 + proj_out (if not tied)
+        mlpsplice = (
+            self.d_model * self.d_latent  # proj_in
+            + self.d_latent * 4 * self.d_latent  # fc1
+            + 4 * self.d_latent * self.d_latent  # fc2
+        )
+        if not self.tie:
+            mlpsplice += self.d_latent * self.d_model  # proj_out
+        return {
+            "d_latent": self.d_latent,
+            "standard_params": standard,
+            "mlpsplice_params": mlpsplice,
+            "reduction": f"{(1 - mlpsplice/standard) * 100:.1f}%",
+        }
+
+
+class RAMLAKVMBlock(nn.Module):
+    """Transformer block with RA_MLA_KVSplice attention + MLPSplice."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alternation_logits: nn.Parameter,
+        compression_ratio: float,
+        mlp_d_latent: int = 256,
+        tie_mlp: bool = True,
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = RA_MLA_KVSplice(
+            cfg, layer_idx, alternation_logits, compression_ratio
+        )
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLPSplice instead of standard MLP
+        self.mlp = MLPSplice(
+            d_model=cfg.d_model,
+            d_latent=mlp_d_latent,
+            dropout=cfg.dropout,
+            tie_projections=tie_mlp,
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class RAMLAKVM_GPT(nn.Module):
+    """Full GPT-2 model with RA+MLA+KVSplice attention + MLPSplice."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        compression_ratio: float = 0.5,
+        mlp_d_latent: int = 256,
+        tie_mlp: bool = True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+        self.mlp_d_latent = mlp_d_latent
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Shared alternation logits
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Transformer blocks with MLPSplice
+        self.blocks = nn.ModuleList(
+            [
+                RAMLAKVMBlock(
+                    cfg,
+                    i,
+                    self.alternation_logits,
+                    compression_ratio,
+                    mlp_d_latent,
+                    tie_mlp,
+                )
+                for i in range(cfg.n_layers)
+            ]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_alternation_distribution(self):
+        return torch.sigmoid(self.alternation_logits)
+
+    def get_compression_stats(self):
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        mlp_stats = self.blocks[0].mlp.get_compression_stats()
+        return {
+            "kv_d_latent": self.cfg.d_latent,
+            "kv_d_compressed": d_compressed,
+            "kv_compression_ratio": self.compression_ratio,
+            "mlp_d_latent": self.mlp_d_latent,
+            "mlp_reduction": mlp_stats["reduction"],
+        }
+
+
+class RAMLAKVME_GPT(nn.Module):
+    """
+    Full GPT-2 model with RA+MLA+KVSplice + MLPSplice + Embedding Latent.
+
+    The ultimate latent architecture:
+    - Embedding: vocab -> d_embed -> d_model (latent projection)
+    - Attention: KVSplice compressed latent
+    - MLP: MLPSplice compressed latent
+
+    This achieves maximum parameter efficiency.
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        d_embed: int = 256,
+        compression_ratio: float = 0.5,
+        mlp_d_latent: int = 256,
+        tie_mlp: bool = True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+        self.mlp_d_latent = mlp_d_latent
+        self.d_embed = d_embed
+
+        # Latent embeddings: vocab -> d_embed
+        self.wte = nn.Embedding(vocab_size, d_embed)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+
+        # Project embedding to model dimension
+        self.emb_proj = nn.Linear(d_embed, cfg.d_model, bias=False)
+
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Shared alternation logits
+        init_logits = torch.zeros(cfg.n_layers)
+        for i in range(cfg.n_layers):
+            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Transformer blocks with MLPSplice
+        self.blocks = nn.ModuleList(
+            [
+                RAMLAKVMBlock(
+                    cfg,
+                    i,
+                    self.alternation_logits,
+                    compression_ratio,
+                    mlp_d_latent,
+                    tie_mlp,
+                )
+                for i in range(cfg.n_layers)
+            ]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+
+        # Project back to embedding dim, then to vocab
+        self.out_proj = nn.Linear(cfg.d_model, d_embed, bias=False)
+        self.lm_head = nn.Linear(d_embed, vocab_size, bias=False)
+
+        # Weight tying: embedding and output share weights
+        self.lm_head.weight = self.wte.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        # Latent embedding path
+        tok_emb = self.wte(idx)  # [B, T, d_embed]
+        tok_emb = self.emb_proj(tok_emb)  # [B, T, d_model]
+
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+
+        # Project back to embedding space for output
+        x = self.out_proj(x)  # [B, T, d_embed]
+        logits = self.lm_head(x)  # [B, T, vocab_size]
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_alternation_distribution(self):
+        return torch.sigmoid(self.alternation_logits)
+
+    def get_compression_stats(self):
+        d_compressed = int(self.cfg.d_latent * self.compression_ratio)
+        mlp_stats = self.blocks[0].mlp.get_compression_stats()
+
+        # Embedding savings
+        standard_emb = 50257 * self.cfg.d_model
+        latent_emb = 50257 * self.d_embed + self.d_embed * self.cfg.d_model
+        emb_reduction = (1 - latent_emb / standard_emb) * 100
+
+        return {
+            "d_embed": self.d_embed,
+            "d_model": self.cfg.d_model,
+            "emb_reduction": f"{emb_reduction:.1f}%",
+            "kv_d_latent": self.cfg.d_latent,
+            "kv_d_compressed": d_compressed,
+            "kv_compression_ratio": self.compression_ratio,
+            "mlp_d_latent": self.mlp_d_latent,
+            "mlp_reduction": mlp_stats["reduction"],
+        }
+
+
 class SBAGPT(nn.Module):
     """Full GPT-2 model with SBA (Symmetric Bidirectional Attention)."""
 
