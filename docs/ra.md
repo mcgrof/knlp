@@ -430,15 +430,99 @@ rather than just variance.
 
 ### Fisher Metrics in Training
 
-We log Fisher spectrum metrics to W&B:
+We log Fisher spectrum metrics to W&B at every eval interval, enabling
+tracking of attention geometry evolution throughout training.
 
-- `fisher/layer{i}/head{h}/eigmax`: Maximum eigenvalue (curvature sharpness)
-- `fisher/layer{i}/head{h}/trace`: Sum of eigenvalues (total information)
-- `fisher/layer{i}/head{h}/cond`: Condition number (curvature ratio)
+#### Core Metrics
 
-Lower eigmax and better conditioning indicate smoother optimization.
-SBA typically shows lower eigmax than standard attention due to the
-geometry averaging effect.
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| `eigmax` | λ_max | Maximum eigenvalue = sharpest curvature direction |
+| `trace` | Σ λ_i | Total Fisher information mass |
+| `cond` | λ_max / λ_min | Condition number = curvature ratio |
+
+#### Energy Metrics (for KVsplice-FIM rank selection)
+
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| `energy_r8` | Σ_{top-8} λ / trace | Fraction of Fisher energy in top-8 modes |
+| `energy_r16` | Σ_{top-16} λ / trace | Fraction of Fisher energy in top-16 modes |
+
+**Rank Selection**: Pick smallest r where `energy_r{r} ≥ 0.9` (or 0.95 for
+conservative). If `energy_r8_mean ≥ 0.9`, you can use r=8 for KVsplice-FIM
+and capture 90% of the information-critical temporal directions.
+
+#### Stability Metrics (RA vs SBA comparison)
+
+| Metric | Meaning |
+|--------|---------|
+| `decay` | λ_max / λ_5th = spectral concentration |
+| `eigmax_std` | Std across heads = head variability |
+| `trace_std` | Std across heads |
+| `cond_std` | Std across heads |
+
+**Stability Fingerprint**: RA shows higher `eigmax_std` (more head-to-head
+variability) while SBA shows lower std due to geometry averaging.
+
+#### Interpretation Guide
+
+**What to watch for:**
+
+1. **Blowup Detection**: Any layer whose `eigmax_mean` steadily increases
+   compared to others indicates unstable geometry. This head/layer is
+   developing pathologically sharp curvature.
+
+2. **Training Evolution**:
+   - **Early steps**: Bumpy eigmax as attention discovers locality/globality
+   - **Mid-training**: Stabilization with layer-specific patterns
+   - **Layer 0**: Moderate eigmax (local token patterns, sharp)
+   - **Mid layers**: Often highest eigmax (complex interactions peak here)
+   - **Top layers**: Relatively flat (global mixing, uniform heads)
+
+3. **RA vs SBA Comparison**:
+   - **RA-only**: More variability, occasional sharp spikes layer-to-layer
+   - **SBA**: More even eigmax across layers, less oscillation over time
+   - SBA should show: similar eigmax, better cond, faster decay, lower std
+
+4. **KVsplice-FIM Readiness**: If eigmax is small and decays reasonably
+   (high `energy_r8`), you can use small r (8-16) and preserve most Fisher
+   energy. Pathological spectra (low energy at small r) need larger ranks.
+
+#### Example W&B Dashboard Setup
+
+Create panels to track over training steps:
+
+```
+# Eigmax evolution (should stabilize, not blow up)
+fisher/layer0/eigmax_mean
+fisher/layer6/eigmax_mean
+fisher/layer11/eigmax_mean
+
+# Conditioning (SBA should be better)
+fisher/layer0/cond_mean
+fisher/layer6/cond_mean
+fisher/layer11/cond_mean
+
+# Energy for rank selection
+fisher/layer0/energy_r8_mean
+fisher/layer6/energy_r8_mean
+fisher/layer11/energy_r8_mean
+
+# Stability fingerprint (SBA should be lower)
+fisher/layer0/eigmax_std
+fisher/layer6/eigmax_std
+fisher/layer11/eigmax_std
+```
+
+#### Actionable Workflow
+
+1. **During training**: Monitor `eigmax_mean` - watch for blowup
+2. **Compare architectures**: Run MLA baseline, RA, SBA with same config
+   - If SBA shows similar eigmax + better cond + lower std → geometry win
+3. **Pick KVsplice-FIM rank**: At stable checkpoint, check `energy_r{r}_mean`
+   - Pick smallest r where energy ≥ 0.9 across layers
+4. **Validate**: Compare perplexity at same compression ratio for different
+   rank choices - principled r should match or beat heuristic choices
 
 ### Summary: The Induction Chain
 
