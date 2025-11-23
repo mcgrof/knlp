@@ -249,3 +249,58 @@ are "easy" and can have more aggressive KV pruning. Connect to KVSpliceAttention
 ### Skip Computation Optimization
 In production, actually skip FULL head computation when p_ra is high (not just
 mix outputs). Requires dynamic computation graph or head-level masking.
+
+## Mathematical Identity: Transpose Optimization
+
+### The Identity
+
+For standard and reciprocal attention:
+
+```
+(Q @ K.T).T = K @ Q.T
+```
+
+This is a fundamental property: (AB)^T = B^T @ A^T, so (Q @ K.T).T = K.T.T @ Q.T = K @ Q.T
+
+### GPU Kernel Implications
+
+**Naive approach** (two separate matmuls):
+```python
+attn_std = Q @ K.T      # Standard: [B,H,T,T]
+attn_ra  = K @ Q.T      # Reciprocal: [B,H,T,T]
+```
+
+**Optimized approach** (one matmul + transpose):
+```python
+attn_std = Q @ K.T                    # [B,H,T,T]
+attn_ra  = attn_std.transpose(-2, -1) # Near-free view operation
+```
+
+The transpose is essentially free on GPU (just a stride change, no data copy),
+eliminating the second matmul entirely for ~2× speedup in attention compute.
+
+### Implementation in Flash Attention
+
+When using `F.scaled_dot_product_attention` (Flash Attention), we can't access
+the internal matmul. Instead, the optimization is achieved via **argument swapping**:
+
+```python
+# Standard: Q @ K.T @ V
+attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
+# Reciprocal: K @ Q.T @ V (swap q and k arguments)
+attn_out = F.scaled_dot_product_attention(k, q, v, is_causal=True)
+```
+
+This achieves the same effect - PyTorch's fused kernel handles the swapped
+arguments efficiently. The RA_MLA_Flash implementation uses this approach.
+
+### Semantic Meaning
+
+The transpose flips the attention direction:
+- `attn_std[b,h,i,j]` = how much token i attends to token j
+- `attn_ra[b,h,i,j] = attn_std[b,h,j,i]` = how much token j attends to token i
+
+This is the **reciprocal** relationship that enables Markov chain balance -
+information flows bidirectionally across layers when alternating between
+standard and reciprocal attention.
