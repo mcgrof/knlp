@@ -2323,3 +2323,217 @@ class SBAGPT(nn.Module):
     def get_kv_mode(self) -> str:
         """Get the KV mode used by this model."""
         return self.kv_mode
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """
+        Compute Fisher spectrum metrics for selected layers.
+
+        Runs a forward pass capturing attention probabilities, then computes
+        Fisher Information Matrix eigenvalues to measure curvature geometry.
+
+        Args:
+            x: Input tensor [B, T]
+            layer_indices: Which layers to analyze (default: [0, n_layers//2, -1])
+            n_samples: Samples per head for eigenvalue computation
+            topk: Number of top eigenvalues to log
+
+        Returns:
+            Dictionary of Fisher metrics for W&B logging
+        """
+        if layer_indices is None:
+            # Early, middle, late layers
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                # Get attention probabilities for this layer
+                ln_out = block.ln_1(h)
+                attn_probs = self._get_attn_probs(block.attn, ln_out)
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            # Normal forward through block
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(self, attn: "SBA_Flash", x: torch.Tensor) -> Optional[torch.Tensor]:
+        """
+        Extract attention probabilities from SBA_Flash layer.
+
+        This does a partial forward pass to get the mixed attention probabilities.
+        """
+        B, T, _ = x.shape
+
+        # Compress to latent
+        latent = attn.to_latent(x)
+
+        # Decompress to Q, K, V
+        if attn.kv_mode == "separate":
+            qkv = attn.from_latent(latent)
+            qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+            qkv = qkv.permute(2, 0, 3, 1, 4)
+            q, k, v = qkv[0], qkv[1], qkv[2]
+        elif attn.kv_mode == "shared_skew":
+            shared = attn.W_shared(latent)
+            skew = attn.W_skew(latent)
+            q = (shared + skew).view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+            k = (shared - skew).view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+        elif attn.kv_mode == "k_eq_v":
+            shared = attn.W_shared(latent)
+            skew = attn.W_skew(latent)
+            q = (shared + skew).view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+            v = attn.W_v(latent).view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+            k = v
+        else:
+            return None
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float('-inf'))
+
+        # Get attention probabilities
+        alpha = attn.get_alpha()
+        attn_fwd = F.softmax(scores_masked, dim=-1)
+        attn_rev = F.softmax(scores, dim=-2)
+        attn_mixed = alpha * attn_fwd + (1 - alpha) * attn_rev
+
+        return attn_mixed  # [B, H, T, T]
+
+
+# =============================================================================
+# SECTION 14: Fisher Information Matrix Utilities
+# =============================================================================
+
+
+def compute_fisher_spectrum(attn_probs: torch.Tensor, n_samples: int = 64) -> torch.Tensor:
+    """
+    Compute Fisher Information Matrix eigenvalues from attention probabilities.
+
+    The SPDA paper shows that the Hessian of log-sum-exp (softmax) equals the
+    Fisher Information Matrix: F = diag(p) - p @ p.T
+
+    This captures the curvature of the attention geometry - eigenvalues reveal
+    which directions in score space are high-information vs low-information.
+
+    Args:
+        attn_probs: [B, T, T] attention probabilities for a single head
+        n_samples: Maximum number of query positions to sample
+
+    Returns:
+        eigvals: [T] eigenvalues sorted ascending
+    """
+    B, T, _ = attn_probs.shape
+    device = attn_probs.device
+
+    # Flatten to [B*T_q, T_k] - each row is a query's attention distribution
+    p = attn_probs.reshape(B * T, T)
+
+    # Subsample for efficiency (O(T^3) eigendecomposition)
+    if p.size(0) > n_samples:
+        idx = torch.randperm(p.size(0), device=device)[:n_samples]
+        p = p[idx]
+    N = p.size(0)
+
+    # Compute average F = mean_i (diag(p_i) - p_i @ p_i.T)
+    # Vectorized: F = diag(p.mean(0)) - (p.T @ p) / N
+    p_mean = p.mean(0)
+    F = torch.diag(p_mean) - (p.T @ p) / N
+
+    # Symmetric PSD => use eigvalsh (sorted ascending)
+    eigvals = torch.linalg.eigvalsh(F)
+    return eigvals
+
+
+def compute_fisher_metrics(
+    attn_probs: torch.Tensor,
+    layer_idx: int,
+    n_samples: int = 64,
+    topk: int = 8,
+) -> dict:
+    """
+    Compute Fisher spectrum metrics for attention probabilities.
+
+    These metrics reveal the information geometry of attention (SPDA paper):
+    - eigmax: largest eigenvalue = maximum curvature direction
+    - trace: sum of eigenvalues = total Fisher information
+    - cond: condition number = ratio of max to min curvature
+
+    Lower eigmax and better conditioning indicate smoother optimization.
+    SBA tends to produce smoother curvature due to averaging F_fwd and F_rev.
+
+    Args:
+        attn_probs: [B, H, T, T] attention probabilities
+        layer_idx: Layer index for metric naming
+        n_samples: Samples per head for efficiency
+        topk: Number of top eigenvalues to log
+
+    Returns:
+        Dictionary of Fisher metrics for W&B logging
+    """
+    B, H, T, _ = attn_probs.shape
+    metrics = {}
+
+    # Aggregate metrics across heads
+    eigmax_vals = []
+    trace_vals = []
+    cond_vals = []
+
+    for h in range(H):
+        eigvals = compute_fisher_spectrum(attn_probs[:, h], n_samples=n_samples)
+        eigvals = eigvals.detach().cpu()
+
+        eigmax = float(eigvals[-1])
+        trace = float(eigvals.sum())
+        cond = float(eigvals[-1] / (eigvals[0].abs() + 1e-8))
+
+        eigmax_vals.append(eigmax)
+        trace_vals.append(trace)
+        cond_vals.append(cond)
+
+        # Per-head metrics
+        metrics[f"fisher/layer{layer_idx}/head{h}/eigmax"] = eigmax
+        metrics[f"fisher/layer{layer_idx}/head{h}/trace"] = trace
+        metrics[f"fisher/layer{layer_idx}/head{h}/cond"] = cond
+
+        # Top-k eigenvalues
+        topk_vals = eigvals[-topk:]
+        for i, v in enumerate(topk_vals):
+            metrics[f"fisher/layer{layer_idx}/head{h}/eig_top{i}"] = float(v)
+
+    # Layer aggregates
+    metrics[f"fisher/layer{layer_idx}/eigmax_mean"] = sum(eigmax_vals) / H
+    metrics[f"fisher/layer{layer_idx}/trace_mean"] = sum(trace_vals) / H
+    metrics[f"fisher/layer{layer_idx}/cond_mean"] = sum(cond_vals) / H
+
+    return metrics
