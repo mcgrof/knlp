@@ -1147,12 +1147,14 @@ class MLA_Flash(nn.Module):
         self.head_dim = cfg.head_dim
         self.d_latent = cfg.d_latent
 
-        # Input projection to latent space
-        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        # Q path - direct projection (no compression, not cached)
+        q_dim = cfg.n_heads * cfg.head_dim
+        self.W_q = nn.Linear(cfg.d_model, q_dim)
 
-        # Decompress latent to Q, K, V
-        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
-        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+        # KV path - compressed latent (this is what gets cached)
+        self.to_kv_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        kv_dim = 2 * cfg.n_heads * cfg.head_dim
+        self.from_kv_latent = nn.Linear(cfg.d_latent, kv_dim)
 
         # Output projection
         self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
@@ -1170,28 +1172,30 @@ class MLA_Flash(nn.Module):
         cache: Optional[torch.Tensor] = None,
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Forward pass with TL-cache, always using standard attention."""
+        """Forward pass with KV-latent cache, always using standard attention."""
         B, T, D = x.shape
 
-        # Project to latent space
-        latent = self.to_latent(x)
+        # Q computed directly from input (not cached)
+        q = self.W_q(x)  # [B, T, n_heads * head_dim]
+        q = q.view(B, T, self.n_heads, self.head_dim)
+        q = q.permute(0, 2, 1, 3)  # [B, H, T, head_dim]
+
+        # KV from compressed latent (this is what we cache)
+        kv_latent = self.to_kv_latent(x)  # [B, T, d_latent]
 
         # Handle cache
         if cache is not None:
-            full_latent = torch.cat([cache, latent], dim=1)
-            T_total = full_latent.shape[1]
+            full_kv_latent = torch.cat([cache, kv_latent], dim=1)
+            T_total = full_kv_latent.shape[1]
         else:
-            full_latent = latent
+            full_kv_latent = kv_latent
             T_total = T
 
-        # Decompress to Q, K, V
-        qkv = self.from_latent(full_latent)
-        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-
-        if cache is not None:
-            q = q[:, :, -T:, :]
+        # Decompress to K, V
+        kv = self.from_kv_latent(full_kv_latent)  # [B, T_total, 2*H*head_dim]
+        kv = kv.view(B, T_total, 2, self.n_heads, self.head_dim)
+        kv = kv.permute(2, 0, 3, 1, 4)  # [2, B, H, T_total, head_dim]
+        k, v = kv[0], kv[1]
 
         # Apply RoPE
         cos, sin = self.rope(x, T_total)
@@ -1216,7 +1220,7 @@ class MLA_Flash(nn.Module):
         attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
         out = self.out_proj(attn_out)
 
-        new_cache = full_latent if use_cache else None
+        new_cache = full_kv_latent if use_cache else None
         return out, new_cache
 
 
