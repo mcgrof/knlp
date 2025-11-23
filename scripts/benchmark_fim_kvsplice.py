@@ -298,10 +298,9 @@ def benchmark_with_sba_model(
         n_layers=2,
         block_size=seq_len,
         d_latent=64,
-        vocab_size=1000,
     )
 
-    model = SBAGPT(cfg, kv_mode="separate").to(device).eval()
+    model = SBAGPT(cfg, vocab_size=1000, kv_mode="separate").to(device).eval()
 
     # Generate input
     x = torch.randint(0, 1000, (4, seq_len), device=device)
