@@ -64,6 +64,10 @@ def parse_step(step: str) -> Dict:
         arch = "ramlakv"
     elif base == "SBA":
         arch = "sba"
+    elif base == "SBASS":
+        arch = "sba_ss"  # SBA with shared+skew
+    elif base == "SBAKV":
+        arch = "sba_kv"  # SBA with K=V tying
     else:
         raise ValueError(f"Unknown architecture prefix: {base}")
 
@@ -112,8 +116,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
             self.config = config
             self.trackers = self._ra_trainer.trackers
 
-        elif self.step_config["arch"] in ["mla", "ramla", "ramlakv", "sba"]:
-            # MLA-based architectures (including SBA)
+        elif self.step_config["arch"] in ["mla", "ramla", "ramlakv", "sba", "sba_ss", "sba_kv"]:
+            # MLA-based architectures (including SBA variants)
             super().__init__(args, config)
             # Replace model with MLA/SBA variant
             self._setup_mla_model()
@@ -156,8 +160,16 @@ class RAMLATrainer(VanillaGPT2Trainer):
             print(f"Created RAMLAKV_GPT")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "sba":
-            self.model = SBAGPT(cfg)
-            print(f"Created SBAGPT with d_latent={d_latent}")
+            self.model = SBAGPT(cfg, kv_mode="separate")
+            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=separate")
+            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
+        elif arch == "sba_ss":
+            self.model = SBAGPT(cfg, kv_mode="shared_skew")
+            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=shared_skew")
+            print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
+        elif arch == "sba_kv":
+            self.model = SBAGPT(cfg, kv_mode="k_eq_v")
+            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=k_eq_v")
             print(f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}...")
 
         # Move to device
@@ -213,7 +225,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
             # Log final metrics based on architecture
             if self.step_config["arch"] == "ramlakv":
                 self._log_kvsplice_metrics()
-            elif self.step_config["arch"] == "sba":
+            elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
                 self._log_sba_metrics()
 
             # Run lm-eval if requested
