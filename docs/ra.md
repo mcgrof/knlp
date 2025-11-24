@@ -7,6 +7,15 @@ reciprocal K@Q.T attention patterns in transformer architectures. The core
 insight: computing both attention directions provides richer bidirectional
 information flow across layers.
 
+### Key Result: Quality and Speed Improvement
+
+![Quality Speed Tradeoff](images/ra_quality_speed_tradeoff.png)
+
+**RA+MLA achieves both better quality and faster inference** - an unusual
+combination where typically optimizations trade one for the other. Compared to
+MLA alone, RA+MLA shows 5.6% perplexity improvement (3.6 → 3.4) and 27% faster
+inference (17K → 21.7K tokens/sec) with identical 6 MB cache size.
+
 ### Inductive Bias
 
 **Core Principle**: Reciprocal Attention implements the inductive bias that
@@ -425,14 +434,6 @@ compression results, see [kvsplice.md](kvsplice.md).
 5. **Same cache size**: No memory overhead for RA
 
 ![Inference Speed](images/ra_inference_speed.png)
-
-### Quality vs Speed Trade-off
-
-![Quality Speed Tradeoff](images/ra_quality_speed_tradeoff.png)
-
-RA+MLA achieves both better quality (lower perplexity) and faster inference
-compared to MLA alone. This combination of benefits is unusual - typically
-optimizations trade off quality for speed or vice versa.
 
 ### LM-Eval Benchmarks
 

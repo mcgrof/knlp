@@ -31,6 +31,20 @@ This methodology enables rapid iteration on transformer architectures through re
 
 ## Key Results
 
+### Attention Architecture: Quality and Speed Improvements
+
+![KVSplice Quality Speed Tradeoff](docs/images/kvsplice_quality_speed_tradeoff.png)
+
+Our attention R&D demonstrates that learned compression and reciprocal
+mechanisms achieve both quality improvements and inference speedup
+simultaneously. **MLA+KVSplice** delivers best quality (3.2 perplexity, 11%
+better than MLA alone) with 12x cache compression. **RA+MLA+KVSplice**
+achieves baseline GPT-2 quality (3.3 perplexity) with 12x compression and 22%
+faster inference - the sweet spot for production deployment.
+
+See [docs/ra.md](docs/ra.md) for Reciprocal Attention details and
+[docs/kvsplice.md](docs/kvsplice.md) for learned compression analysis.
+
 ### Cross-Model Validation
 
 | Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |

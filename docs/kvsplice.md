@@ -11,6 +11,16 @@ subspaces.
 compress the Token-Latent cache from RA+MLA, achieving 12x total compression
 vs standard KV cache.
 
+### Key Result: Compression with Quality Improvement
+
+![Quality Speed Tradeoff](images/kvsplice_quality_speed_tradeoff.png)
+
+**KVSplice achieves 12x cache compression while improving quality** - learned
+compression acts as beneficial regularization. MLA+KVSplice shows best quality
+(3.2 perplexity, 11% better than MLA alone) with 12x compression. Combined
+with RA, the full stack (RA+MLA+KVSplice) achieves baseline quality (3.3
+perplexity) with 12x compression and 22% faster inference.
+
 ## Architecture
 
 KVSplice operates on the Token-Latent (TL) cache introduced by RA+MLA:
@@ -118,8 +128,6 @@ for **12x total compression** vs standard KV cache.
 ![Validation Quality](images/kvsplice_validation_quality.png)
 
 ![Inference Speed](images/kvsplice_inference_speed.png)
-
-![Quality Speed Tradeoff](images/kvsplice_quality_speed_tradeoff.png)
 
 ### Key Findings
 
