@@ -397,6 +397,10 @@ class TransformerWithRA_MLA(nn.Module):
 Test configuration: GPT-2 124M, TinyStories dataset, identical
 hyperparameters, 2-hour training runs.
 
+**TODO**: Create separate visualization images comparing MLA vs RA+MLA only
+(without KVSplice variants). Current images include KVSplice which should be
+in kvsplice.md instead.
+
 ![Validation Quality](images/ra_validation_quality.png)
 
 | Architecture | Val Loss | Perplexity | Tokens/sec | Cache | Iters |
@@ -444,90 +448,9 @@ Evaluated on ARC-Easy, HellaSwag, and Winogrande (100 samples each):
 faster inference, same cache size. This validates the RA mechanism beyond
 routing overhead.
 
----
-
-## KVSplice: Learned Compression
-
-### Architecture
-
-KVSplice adds learned compression on top of the Token-Latent (TL) cache from
-RA+MLA, further reducing cache size by 50%:
-
-```python
-# RA+MLA: Token-Latent cache (supports Q/K transpose)
-token_latent = to_token_latent(x)  # [B, T, 256]
-cache = token_latent
-
-# RA+MLA+KVSplice: Token-Latent compressed before caching
-token_latent = to_token_latent(x)  # [B, T, 256]
-compressed = kvsplice.compress(token_latent)  # [B, T, 128]
-cache = compressed  # 50% smaller
-```
-
-**KVSplice implementation**: Learned monotonic transform + low-rank projection
-
-```python
-class LearnedKVSplice(nn.Module):
-    def __init__(self, d_in=256, d_compressed=128):
-        # Learned monotonic transform
-        self.transform_scale = nn.Parameter(torch.ones(d_in))
-        self.transform_shift = nn.Parameter(torch.zeros(d_in))
-
-        # Low-rank projection
-        self.compress = nn.Linear(d_in, d_compressed, bias=False)
-        self.expand = nn.Linear(d_compressed, d_in, bias=False)
-
-    def forward(self, x):
-        # Monotonic transform
-        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
-
-        # Compress and expand
-        compressed = self.compress(x_transformed)
-        reconstructed = self.expand(compressed)
-
-        # Inverse transform (omitted for brevity)
-        return reconstructed
-```
-
-### Cache Memory Comparison
-
-![Cache Compression](images/ra_cache_compression.png)
-
-| Architecture | Cache Size | vs Standard | vs TL-cache | Compression |
-|-------------|-----------|-------------|-------------|-------------|
-| Standard KV | 36.00 MB | - | - | 1.0x |
-| RA+MLA (TL-cache) | 6.00 MB | 83.3% | - | 6.0x |
-| **RA+MLA+KVSplice** | **3.00 MB** | **91.7%** | **50%** | **12.0x** |
-
-**KVSplice cuts the Token-Latent cache in half** (2x additional compression)
-for **12x total compression** vs standard KV cache.
-
-### Results: MLA vs MLA+KVSplice vs RA Combinations
-
-| Architecture | Val Loss | Perplexity | Tokens/sec | Cache | vs MLA |
-|-------------|----------|------------|------------|-------|--------|
-| MLA | 1.276 | 3.6 | 17,031 | 6 MB | - |
-| MLA+KVSplice | **1.166** | **3.2** | 17,429 | 3 MB | **-11.1%** ✓✓ |
-| RA+MLA | 1.223 | 3.4 | **21,696** | 6 MB | -4.2% ✓ |
-| RA+MLA+KVSplice | 1.188 | 3.3 | **20,820** | 3 MB | -6.9% ✓ |
-
-**Key Findings**:
-
-1. **Paradoxical quality improvement**: Despite 50% compression, KVSplice
-   **improves quality by 11%** over MLA alone
-2. **Best quality**: MLA+KVSplice (3.2 perplexity, matches baseline GPT-2)
-3. **Best speed**: RA+MLA (21.7K tokens/sec, 27% faster than MLA)
-4. **Best overall**: RA+MLA+KVSplice (baseline quality, 12x compression, 22%
-   faster)
-5. **Learned compression acts as regularization**: Forces latents into
-   information-dense subspace
-
-![Quality vs Speed Trade-off](images/ra_quality_speed_tradeoff.png)
-
-**Conclusion**: KVSplice is highly effective - 50% additional cache
-compression while **improving** model quality. The learned compression acts as
-beneficial regularization. Combined with RA: 12x compression, baseline quality,
-22% inference speedup.
+**Note**: For learned compression of the Token-Latent cache (KVSplice), see
+[kvsplice.md](kvsplice.md). KVSplice provides 12x total compression while
+improving quality through regularization effect.
 
 ---
 
