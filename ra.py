@@ -1264,6 +1264,232 @@ class MLA_Model(nn.Module):
 
 
 # =============================================================================
+# SECTION 9.5: Pure GPT-2 with Reciprocal Attention (no MLA, no latent compression)
+# =============================================================================
+
+
+class GPT2_RA_Attention(nn.Module):
+    """
+    GPT-2 attention with learned reciprocal alternation.
+
+    Standard GPT-2 attention (Q, K, V projections) with learned per-layer
+    probability of using reciprocal attention (K @ Q.T instead of Q @ K.T).
+    No latent compression - this isolates the RA mechanism for ablation.
+
+    Uses shared alternation_logits with balance_loss to encourage 50/50 split.
+    """
+
+    def __init__(
+        self,
+        config,
+        layer_idx: int,
+        alternation_logits: nn.Parameter,
+    ):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        self.alternation_logits = alternation_logits
+
+        assert config.n_embd % config.n_head == 0
+        self.n_head = config.n_head
+        self.head_dim = config.n_embd // config.n_head
+
+        # Standard GPT-2 QKV projection
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.dropout = config.dropout
+
+    def get_alternation_prob(self) -> torch.Tensor:
+        """Get this layer's probability of using reciprocal attention."""
+        return torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+    def forward(self, x):
+        B, T, C = x.size()
+
+        # Standard QKV projection
+        q, k, v = self.c_attn(x).split(self.config.n_embd, dim=2)
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # Learned alternation decision
+        p_recip = self.get_alternation_prob()
+
+        if self.training:
+            # Straight-through estimator
+            use_reciprocal = (p_recip > 0.5).float()
+            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
+        else:
+            use_reciprocal = (p_recip > 0.5).float()
+
+        # Flash attention with Q/K swap for reciprocal
+        if use_reciprocal > 0.5:
+            # Reciprocal: K @ Q.T @ V
+            y = F.scaled_dot_product_attention(
+                k,
+                q,
+                v,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+        else:
+            # Standard: Q @ K.T @ V
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+
+        # Merge heads and project
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_dropout(self.c_proj(y))
+
+        return y
+
+
+class GPT2_RA_Block(nn.Module):
+    """Transformer block with GPT2_RA attention."""
+
+    def __init__(self, config, layer_idx: int, alternation_logits: nn.Parameter):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = GPT2_RA_Attention(config, layer_idx, alternation_logits)
+        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        # Standard MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias),
+            nn.Dropout(config.dropout),
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+
+class GPT2_RA_Model(nn.Module):
+    """
+    Full GPT-2 model with learned reciprocal attention alternation.
+
+    Standard GPT-2 architecture but each layer learns whether to use
+    Q @ K.T (standard) or K @ Q.T (reciprocal) attention. Balance loss
+    encourages 50/50 split across layers.
+
+    Use for ablation: GPT-2 baseline vs GPT-2 + RA (no compression).
+    """
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        # Shared alternation logits
+        init_logits = torch.zeros(config.n_layer)
+        self.alternation_logits = nn.Parameter(init_logits)
+
+        # Token and position embeddings
+        self.wte = nn.Embedding(config.vocab_size, config.n_embd)
+        self.wpe = nn.Embedding(config.block_size, config.n_embd)
+        self.drop = nn.Dropout(config.dropout)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [
+                GPT2_RA_Block(config, i, self.alternation_logits)
+                for i in range(config.n_layer)
+            ]
+        )
+
+        self.ln_f = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # Weight tying
+        if config.weight_tying:
+            self.wte.weight = self.lm_head.weight
+
+        # Init weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def get_alternation_distribution(self) -> torch.Tensor:
+        """Get learned alternation probabilities for all layers."""
+        return torch.sigmoid(self.alternation_logits)
+
+    def balance_loss(self) -> torch.Tensor:
+        """Regularization loss for balanced 50/50 alternation."""
+        probs = self.get_alternation_distribution()
+        target = self.config.n_layer / 2.0
+        actual = probs.sum()
+        return (actual - target) ** 2
+
+    def get_balance_stats(self) -> dict:
+        """Get statistics about current alternation balance."""
+        probs = self.get_alternation_distribution()
+        n_recip = (probs > 0.5).sum().item()
+        return {
+            "n_reciprocal": n_recip,
+            "n_standard": self.config.n_layer - n_recip,
+            "prob_sum": probs.sum().item(),
+            "target_sum": self.config.n_layer / 2.0,
+        }
+
+    def forward(self, idx, targets=None):
+        device = idx.device
+        B, T = idx.size()
+        assert (
+            T <= self.config.block_size
+        ), f"Sequence {T} > block_size {self.config.block_size}"
+
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+
+        # Embeddings
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(pos)
+        x = self.drop(tok_emb + pos_emb)
+
+        # Transformer blocks
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.ln_f(x)
+
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
+        else:
+            logits = self.lm_head(x[:, [-1], :])
+            loss = None
+
+        return logits, loss
+
+    def get_num_params(self, non_embedding=True):
+        """Return number of parameters."""
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.wpe.weight.numel()
+            if not self.config.weight_tying:
+                n_params -= self.wte.weight.numel()
+        return n_params
+
+
+# =============================================================================
 # SECTION 10: FIM-Guided KVSplice (Fisher Information Matrix Compression)
 # =============================================================================
 
