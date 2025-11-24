@@ -1248,6 +1248,7 @@ def run_single_test(
             "B",
             "RA0",
             "RA1",
+            "RALEARN",
             "SBA",
             "SBASS",
             "SBAKV",
