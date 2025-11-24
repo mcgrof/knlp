@@ -60,11 +60,6 @@ that we tested empirically.
 - **Conclusion**: RA doesn't make cache more compressible; compression is
   orthogonal
 
-? **Easier routing** (unclear):
-- Router-based RA failed (11.7% quality degradation, 58% memory overhead)
-- Learned-layer RA succeeded (27% speedup, quality improvement)
-- **Conclusion**: Per-layer decisions work, per-token routing doesn't
-
 **Summary (One Sentence)**:
 
 The validated inductive bias of Reciprocal Attention is that token interactions
@@ -132,7 +127,6 @@ K@Q.T simultaneously to finding more compute-friendly implementations:
    mathematical perspective? Can we leverage it for better compression?
 3. **KVSplice**: Additional learned compression on top of Token-Latent cache
 4. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
-5. **Router-based RA**: Token-level routing (deprecated - limited value)
 
 #### Mathematical Introspection: Fisher Information Matrix
 
@@ -602,20 +596,9 @@ Question: Does this benefit hold for pure GPT-2 without compression?
 1. RA's speed benefit comes from helping compressed representations
 2. RA is fundamentally more efficient regardless of compression
 
-### Original RA Implementation Challenge
+### Implementation Approach
 
-The initial RA experiments used an inefficient GPU compute solution that
-computed both Q@K.T and K@Q.T simultaneously, then mixed outputs based on
-router decisions. This approach:
-
-- Doubled attention compute cost
-- Added router MLP overhead
-- Required dual output projections (FULL and RA heads)
-- Degraded quality by 11.7% (see Router section below)
-
-### Current Learned Layer Solution
-
-The MLA+RA success inspired a more efficient implementation:
+The efficient learned per-layer approach:
 
 - **Learned per-layer decision**: Each layer learns whether to use standard
   or reciprocal attention
@@ -624,7 +607,7 @@ The MLA+RA success inspired a more efficient implementation:
 - **Balance loss**: Encourages 50/50 split across layers for bidirectional
   information flow
 
-This approach eliminates the compute overhead while preserving RA's benefits.
+This approach provides RA's benefits without compute overhead.
 
 ### Expected Analysis
 
@@ -643,91 +626,6 @@ Will compare:
 **Key question**: If GPT-2+RA shows similar 20-27% inference speedup without
 compression, this confirms RA is fundamentally more efficient, not just
 beneficial for compressed models.
-
----
-
-## Router-Based RA (Deprecated)
-
-### Status: Limited Use Case
-
-Early approach using token-level routing between FULL attention (expensive,
-all heads) and RA attention (cheap, fewer heads) based on contextual shift.
-
-**Note**: This approach is deprecated for most use cases. For KV cache
-compression, focus on KVSplice instead. Router-based RA only has value for
-specific scenarios where light routing overhead is acceptable.
-
-### Architecture
-
-Token-level routing based on contextual shift:
-
-```python
-shift = |x - E(x)|  # How much context changed the token
-features = [shift, ||x||, ||E||, <x,E>]
-probs = softmax(router_mlp(features))  # [p_ra, p_full]
-
-# Dual attention paths
-qkv = c_attn(x)  # Single QKV projection
-out = sdpa(q, k, v)  # Flash attention for all heads
-out_full = proj_full(heads[:9])  # 9 heads → full projection
-out_ra = proj_ra(heads[9:])  # 3 heads → cheap projection
-
-# Mixed output
-output = p_ra * out_ra + p_full * out_full
-
-# Compute penalty discourages expensive path
-loss = lm_loss + lambda_comp * p_full.mean()
-```
-
-**Hypothesis**: Tokens with large contextual shift need full attention; tokens
-near their embedding can use cheaper RA.
-
-### Results: Baseline vs Routing
-
-Test configuration: GPT-2 124M with unified-ra architecture, FineWebEdu
-dataset, 2-hour training runs.
-
-![Router Validation Perplexity](images/router_validation_perplexity.png)
-
-| Configuration | Val Loss | Perplexity | GPU Memory | Iters |
-|--------------|----------|------------|------------|-------|
-| **Baseline (no routing)** | **5.823** | **337.9** | **15.7 GB** | **501** |
-| RA Router | 5.933 | 377.4 | 24.9 GB | 356 |
-
-![Router Final Comparison](images/router_final_comparison.png)
-
-**Key Findings**:
-
-1. **Quality degradation**: +11.7% worse perplexity (337.9 → 377.4)
-2. **Memory overhead**: +58.3% more GPU memory (15.7 GB → 24.9 GB)
-3. **Training slowdown**: -29% fewer iterations (501 → 356 in same time)
-4. **Router MLP overhead**: Adds compute and memory cost
-5. **Dual projection paths**: Both FULL and RA projections always computed
-
-![Router GPU Memory](images/router_gpu_memory.png)
-
-### Why Router-Based RA Failed
-
-1. **Compute overhead**: Computing both attention paths then mixing is
-   inefficient
-2. **Router decisions not correlated**: Contextual shift didn't clearly
-   indicate which tokens need full attention
-3. **Memory bloat**: Router MLP + dual projections + mixing logic
-4. **Training instability**: Warmup phase delays needed for shift to become
-   meaningful
-
-### Limited Use Case
-
-Router-based RA only makes sense for:
-
-- Scenarios where dynamic per-token compute allocation is critical
-- Applications with extreme memory constraints where any routing overhead is
-  acceptable
-- Research exploring token-level compute allocation strategies
-
-**For KV cache compression**: Use KVSplice instead. It provides 12x
-compression with quality improvement, no routing overhead, and 22% inference
-speedup when combined with learned-layer RA.
 
 ---
 
@@ -875,8 +773,6 @@ attention patterns since both Q and K need to be usable in either role.
    (acts as regularization)
 4. **Combined**: RA+MLA+KVSplice achieves baseline quality with 12x
    compression and 22% faster inference
-5. **Router-based RA**: Deprecated - 11.7% quality loss, 58% memory overhead,
-   29% training slowdown
 
 ### Recommendations
 
@@ -887,9 +783,6 @@ overhead)
 
 **Best overall**: RA+MLA+KVSplice (baseline quality, 12x compression, 22%
 faster)
-
-**Avoid**: Router-based RA (deprecated except for specific token-level compute
-allocation research)
 
 ### Architecture Trade-offs
 
