@@ -97,11 +97,6 @@ Results: [test_matrix_results_20251123_231956](https://github.com/mcgrof/knlp-ke
 
 ### Cache Memory Comparison
 
-**TODO**: Create separate visualization images comparing:
-- MLA+KVSplice vs MLA
-- RA+MLA+KVSplice vs RA+MLA
-Current images in ra.md include all variants together.
-
 | Architecture | Cache Size | vs Standard | vs TL-cache | Compression |
 |-------------|-----------|-------------|-------------|-------------|
 | Standard KV | 36.00 MB | - | - | 1.0x |
@@ -119,6 +114,12 @@ for **12x total compression** vs standard KV cache.
 | MLA+KVSplice | **1.166** | **3.2** | 17,429 | 3 MB | **-11.1%** ✓✓ |
 | RA+MLA | 1.223 | 3.4 | **21,696** | 6 MB | -4.2% ✓ |
 | RA+MLA+KVSplice | 1.188 | 3.3 | **20,820** | 3 MB | -6.9% ✓ |
+
+![Validation Quality](images/kvsplice_validation_quality.png)
+
+![Inference Speed](images/kvsplice_inference_speed.png)
+
+![Quality Speed Tradeoff](images/kvsplice_quality_speed_tradeoff.png)
 
 ### Key Findings
 
