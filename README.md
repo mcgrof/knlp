@@ -111,35 +111,14 @@ hyperparameter auto-detection, ResNet results, and transformer findings.
 
 knlp serves as a collaborative platform for ML architecture research:
 
-- **[AdamWPrune](docs/adding_state_pruning.md)**: State-based pruning using optimizer dynamics
-- **[Reciprocal Attention (RA)](docs/ra.md)**: Bidirectional attention with geometric initialization
+- **[Reciprocal Attention (RA)](docs/ra.md)**: Bidirectional attention alternating Q@K.T and K@Q.T across layers, achieving 27% inference speedup with improved optimization geometry
+- **[KVSplice](docs/kvsplice.md)**: Learned compression for attention cache achieving 12x compression while improving model quality through regularization effect
+- **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables for zero-overhead pruning decisions during training
 - **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
 - **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
 - **[Mechanistic Interpretability](docs/mechint.md)**: Post-training circuit analysis
 
 The kernel-inspired infrastructure enables rapid prototyping, automated validation, and reproducible experiments across contributors.
-
-## Pruning Method Insights
-
-### Movement Pruning: Designed for Fine-tuning, Not Training from Scratch
-
-Movement pruning, introduced by Sanh et al. (2020) in "Movement Pruning: Adaptive Sparsity by Fine-Tuning", was specifically designed for **fine-tuning pre-trained models**, not training from scratch. This distinction is critical:
-
-**Key characteristics:**
-- **Fine-tuning context**: Movement pruning identifies weights moving toward zero during adaptation to downstream tasks
-- **Pre-trained models**: Works best with models that have already learned meaningful representations
-- **Architecture differences**: Transformers and CNNs exhibit different pruning behaviors
-  - Transformers: Many redundant parameters naturally move toward zero, leading to aggressive pruning
-  - CNNs: More structured weight patterns maintain their magnitudes during training
-
-**Training from scratch limitations:**
-- Random initial weights lack meaningful movement patterns
-- Weights moving toward zero early in training may still be important later
-- Can lead to aggressive over-pruning beyond target sparsity levels
-- Less stable than magnitude-based methods for random initialization
-
-**Practical implications for GPT-2 comparisons:**
-Given that movement pruning is optimized for fine-tuning scenarios, our GPT-2 training-from-scratch experiments focus primarily on comparing **magnitude pruning vs. AdamWPrune's state-based pruning**, which are both designed for training from random initialization.
 
 ## Kernel-Inspired Features
 
@@ -284,8 +263,14 @@ sudo yum install python3-devel
 
 ### Core Dependencies
 ```bash
-pip install torch torchvision numpy matplotlib
+pip install -r requirements.txt
 ```
+
+The core dependencies include:
+- `torch` - PyTorch deep learning framework
+- `torchvision` - Computer vision datasets and transforms
+- `numpy` - Numerical computing
+- `matplotlib` - Plotting and visualization
 
 ### Optional: Experiment Tracking
 ```bash
@@ -357,30 +342,6 @@ cd resnet18
 python train.py --optimizer adamwprune --pruning-method state --target-sparsity 0.7
 ```
 
-## Optimizer Variants
-
-- **SGD**: Baseline stochastic gradient descent
-- **Adam**: Adaptive moment estimation
-- **AdamW**: Adam with decoupled weight decay
-- **AdamWAdv**: Enhanced with AMSGrad, cosine annealing, gradient clipping
-- **AdamWSpam**: Spike-aware pruning with momentum reset
-- **AdamWPrune**: State-based pruning using optimizer dynamics
-
-📚 **[Understanding Adam Optimizers: A Complete Guide](docs/adam-optimizers.md)** - Learn about the evolution from Adam to AdamW and modern variants, with practical guidelines for choosing the right optimizer for your model.
-
-## Movement Pruning
-
-Based on ["Movement Pruning: Adaptive Sparsity by Fine-Tuning"](https://arxiv.org/abs/2005.07683) by Sanh et al. (2020). Tracks weight movement patterns to determine importance.
-
-## References
-
-- Movement Pruning: Victor Sanh, Thomas Wolf, Alexander M. Rush (2020). ["Movement Pruning: Adaptive Sparsity by Fine-Tuning" PDF](https://arxiv.org/abs/2005.07683) & ["Audio summary"](https://open.spotify.com/episode/0Vrw2FiL44wlxxU4QA2zxt?si=rP3Ifc8JT1-iQJuEklCL2g)
-- SPAM: Tuan Nguyen, Tam Nguyen, Vinh Nguyen, Hoang Dang, Dung D. Le, Anh Tran (2024). ["SPAM: Spike-Aware Adam with Momentum Reset for Stable LLM Training" PDF](https://arxiv.org/abs/2409.07321) & ["Audio summary"](https://open.spotify.com/episode/7vKFYxrH1o137zl9MfcKAz?si=oVMoHS61QD6Jjm3XYOTDNQ)
-- Gradient Problems in RNNs: Razvan Pascanu, Tomas Mikolov, Yoshua Bengio (2013). ["On the difficulty of training recurrent neural networks" PDF](https://arxiv.org/abs/1211.5063) & ["Audio summary"](https://open.spotify.com/episode/0okbpKt5U4jmiYwqhVks1S?si=QeGK8t2MT5iYzcj5VE9dMw)
-- Adam: Diederik P. Kingma, Jimmy Ba (2014). ["Adam: A Method for Stochastic Optimization" PDF](https://arxiv.org/abs/1412.6980) & ["Audio summary"](https://open.spotify.com/episode/6GIPqEzRvwHvRMYYI3M4Ar?si=hMWeNH9PR-O48or43EN2iQ)
-- AdamW: Ilya Loshchilov, Frank Hutter (2019). ["Decoupled Weight Decay Regularization" PDF](https://arxiv.org/abs/1711.05101) & ["Audio summary"](https://open.spotify.com/episode/0s5ywoHyIS1dTTT2cLxPpV?si=h335wbgGQ0m94FsBtX-SxQ)
-- Adafactor: Noam Shazeer, Mitchell Stern (2018). ["Adafactor: Adaptive Learning Rates with Sublinear Memory Cost" PDF](https://arxiv.org/abs/1804.04235) & ["Audio summary"](https://open.spotify.com/episode/46DNk6Mkfk4r6xikZPzYT1?si=UUkAQyQEQai-rQypL_lqgA)
-
 ## Contributing
 
 knlp welcomes contributions following Linux kernel development practices:
@@ -443,38 +404,4 @@ This project draws inspiration from:
 - **Community contributors**: Ablation study ideas, architectural suggestions, validation testing
 
 The kernel-style workflow enables collaborative ML research with the rigor and reproducibility of systems programming.
-
-## RATIO: Hardware-Aware Golden Ratio Architecture
-
-**NEW**: RATIO combines inference-optimal architecture (golden ratio 1:2.5) with GPU-aligned tensor dimensions for maximum hardware efficiency.
-
-### Key Innovations
-- **Golden Ratio Enforcement**: Attention:MLP = 1:2.5 (inference-optimal vs GPT-2's 1:2.0)
-- **GPU-Aligned Dimensions**: All tensors are multiples of 64 for tensor core efficiency (following Karpathy's nanoGPT vocab padding principle)
-- **Structure-Aware Pruning**: New bitter7-9 variants that preserve golden ratio during pruning
-- **MLA Compression**: 6× smaller KV cache (latent_dim=128)
-
-### Pruning Variants for RATIO
-
-**bitter7 (Conservative Variance)**: `|w| * (exp_avg_sq^0.25 + eps)`
-- Uses Adam's second moment (beta2=0.999) which accumulates slowly
-- Fourth root = maximum conservatism
-- Best for: Finding parameters with long-term low activity
-
-**bitter8 (RATIO Structure-Aware)**: `structural_weight * |w| * sqrt(|exp_avg| + eps)`
-- Attention params weighted 2.5× (scarce, 1/2.5 of capacity)
-- MLP params weighted 1.0× (abundant, 2.5/2.5)
-- Coupling params weighted 3.0× (critical bidirectional flow)
-- Best for: RATIO models where ratio must be preserved
-
-**bitter9 (RATIO Conservative - Recommended)**: `structural_weight * |w| * (exp_avg_sq^0.25 + eps)`
-- Most conservative: combines structure + variance signals
-- Best for: Final deployment with maximum confidence
-
-### Configuration
-```bash
-make defconfig-gpt2-ratio-ablation && make
-```
-
-See `docs/ra.md` and `docs/ratio-pruning-variants.md` for technical details.
 
