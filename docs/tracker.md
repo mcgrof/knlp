@@ -50,6 +50,21 @@ You can enable both trackers simultaneously:
 python gpt2/train.py --tracker wandb,trackio --tracker-project my-project
 ```
 
+### Testing Tracker Integration
+
+Test your tracker setup before running full experiments:
+
+```bash
+# Test WandB with fake metrics
+make wandb-test
+
+# Test Trackio with fake metrics
+make trackio-test
+```
+
+These commands run quick validation to ensure your tracker configuration
+works correctly.
+
 ## Configuration via Defconfig
 
 Trackers can be configured in defconfig files using Kconfig syntax:
