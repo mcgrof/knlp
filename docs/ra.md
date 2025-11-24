@@ -57,9 +57,63 @@ K@Q.T simultaneously to finding more compute-friendly implementations:
 1. **MLA + RA**: Learned per-layer alternation with Multi-head Latent
    Attention for cache compression (introduces Token-Latent cache to support
    Q/K transpose)
-2. **KVSplice**: Additional learned compression on top of Token-Latent cache
-3. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
-4. **Router-based RA**: Token-level routing (deprecated - limited value)
+2. **Mathematical Introspection**: What does RA implicitly add from a
+   mathematical perspective? Can we leverage it for better compression?
+3. **KVSplice**: Additional learned compression on top of Token-Latent cache
+4. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
+5. **Router-based RA**: Token-level routing (deprecated - limited value)
+
+#### Mathematical Introspection: Fisher Information Matrix
+
+**Motivation**: The SPDA paper ("Scaled Dot-Product Attention as One-Sided
+Entropic Optimal Transport") proves that attention solves an Entropic Optimal
+Transport problem, and the Hessian of its log-sum-exp potential is exactly the
+Fisher Information Matrix (FIM). This provides a principled way to analyze
+attention geometry and information content.
+
+**Research Question**: Does RA change the Fisher Information geometry in ways
+that enable better cache compression? If alternating Q@K.T and K@Q.T changes
+the optimization landscape, does it concentrate information into fewer modes?
+
+**FIM Metrics Tracked**:
+- `eigmax`: Maximum eigenvalue (sharpest curvature direction)
+- `trace`: Total Fisher information mass
+- `energy_r8/r16`: Fraction of Fisher energy in top 8/16 modes
+- `decay`: Spectral concentration (eigmax / λ_5th)
+
+**Hypothesis**: Higher energy concentration (energy_r16 → 1.0) would indicate
+that information is packed into fewer modes, suggesting we could use smaller
+rank compression (r=8 or r=16) without quality loss.
+
+**Findings from test_matrix_results_20251123_231956**:
+
+| Architecture | eigmax | energy_r8 | energy_r16 | Interpretation |
+|-------------|--------|-----------|------------|----------------|
+| RA+MLA | 0.0352 | 0.223 | 0.373 | Low concentration |
+| RA+MLA+KVSplice | 0.0341 | 0.220 | 0.370 | Low concentration |
+
+**Key Results**:
+
+1. **Low energy concentration**: Only ~37% of Fisher energy in top 16 modes
+   across all architectures. Would need r>16 to capture 90% energy.
+
+2. **No FIM improvement from compression**: KVSplice shows nearly identical
+   energy concentration (0.370 vs 0.373) despite 50% cache reduction.
+
+3. **Slight eigmax reduction**: KVSplice has marginally lower eigmax (0.0341
+   vs 0.0352), suggesting flatter curvature, but effect is small.
+
+**Conclusion**: FIM analysis did **not** provide clear guidance for
+compression decisions. Despite low energy_r16 (~0.37), KVSplice with d=128
+(50% compression) empirically improves quality by 11%. The learned compression
+appears to find task-specific structure that FIM-based metrics don't capture.
+
+**Interpretation**: Fisher Information measures optimization geometry, not
+necessarily task-relevant information. Learned compression (KVSplice) acts as
+beneficial regularization that forces representations into information-dense
+subspaces, but this structure isn't visible in variance-based or FIM-based
+metrics. The value comes from end-to-end learning, not from following
+prescribed compression directions.
 
 ---
 
