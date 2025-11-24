@@ -380,8 +380,17 @@ def main():
                     trainer.train()
 
                 print(f"\nCompleted ablation step: {step}")
+        elif args.architecture == "ramla":
+            # RAMLA ablation mode
+            from gpt2.trainers.ramla import RAMLATrainer, RAMLACoordinator
+
+            steps = [s.strip() for s in args.ablation_steps.split(",")]
+            print(f"Running RAMLA ablation study with {len(steps)} steps: {steps}")
+
+            coordinator = RAMLACoordinator(args, config, steps)
+            coordinator.run()
         else:
-            # RA ablation mode
+            # RA ablation mode (unified-ra)
             from gpt2.trainers import AblationCoordinator, RATrainer
 
             steps = [s.strip() for s in args.ablation_steps.split(",")]
