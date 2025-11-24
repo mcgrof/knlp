@@ -36,8 +36,9 @@ Our research evolved from evaluating the impact of computing both Q@K.T and
 K@Q.T simultaneously to finding more compute-friendly implementations:
 
 1. **MLA + RA**: Learned per-layer alternation with Multi-head Latent
-   Attention for cache compression
-2. **KVSplice**: Additional learned compression on top of MLA's TL-cache
+   Attention for cache compression (introduces Token-Latent cache to support
+   Q/K transpose)
+2. **KVSplice**: Additional learned compression on top of Token-Latent cache
 3. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
 4. **Router-based RA**: Token-level routing (deprecated - limited value)
 
@@ -56,19 +57,38 @@ Cache: K, V per layer
 Size: 2 × n_layers × n_heads × seq_len × head_dim = 36 MB
 ```
 
-**MLA Token-Latent (TL) Cache**:
+**Standard MLA KV-Latent Cache**:
 ```python
-# Q computed directly (no compression, not cached)
-Q = W_q(x)  # [B, T, n_heads * head_dim]
+# Standard MLA (DeepSeek): Q direct, KV from shared latent
+Q = W_q(x)  # [B, T, n_heads * head_dim] - not cached
 
 # K, V share compressed latent (this gets cached)
-latent = to_latent(x)  # [B, T, d_latent=256]
-K, V = from_latent(latent).chunk(2)
+kv_latent = to_kv_latent(x)  # [B, T, d_latent=256]
+K, V = from_kv_latent(kv_latent).chunk(2)
 
-# Cache stores latent instead of K, V
-Cache: latent per layer
+# Cache stores kv_latent instead of K, V
+Cache: kv_latent per layer
 Size: n_layers × seq_len × d_latent = 6 MB (6x compression)
 ```
+
+**RA+MLA Token-Latent (TL) Cache**: When adding RA to MLA, we need to
+support both Q@K.T and K@Q.T attention patterns. Since RA requires using both
+Q and K in transposed roles, we generalize the cache to support both
+mechanisms:
+
+```python
+# RA+MLA: Both Q and K need latent representation for transpose support
+token_latent = to_token_latent(x)  # [B, T, d_latent=256]
+Q, K, V = from_token_latent(token_latent).chunk(3)
+
+# Cache stores token_latent (supports both Q and K usage)
+Cache: token_latent per layer (Token-Latent cache)
+Size: n_layers × seq_len × d_latent = 6 MB (6x compression)
+```
+
+The Token-Latent (TL) cache name reflects that the cached representation must
+support using both Q and K in either role (Q@K.T or K@Q.T). Standard MLA only
+needs KV-latent since Q is always in the query role.
 
 **RA Integration**: Learned per-layer alternation between Q@K.T (standard)
 and K@Q.T (reciprocal). Balance loss encourages 50/50 split across layers.
@@ -143,17 +163,17 @@ routing overhead.
 
 ### Architecture
 
-KVSplice adds learned compression on top of MLA's TL-cache, further reducing
-cache size by 50%:
+KVSplice adds learned compression on top of the Token-Latent (TL) cache from
+RA+MLA, further reducing cache size by 50%:
 
 ```python
-# MLA: latent is cached directly
-latent = to_latent(x)  # [B, T, 256]
-cache = latent
+# RA+MLA: Token-Latent cache (supports Q/K transpose)
+token_latent = to_token_latent(x)  # [B, T, 256]
+cache = token_latent
 
-# MLA+KVSplice: latent is compressed before caching
-latent = to_latent(x)  # [B, T, 256]
-compressed = kvsplice.compress(latent)  # [B, T, 128]
+# RA+MLA+KVSplice: Token-Latent compressed before caching
+token_latent = to_token_latent(x)  # [B, T, 256]
+compressed = kvsplice.compress(token_latent)  # [B, T, 128]
 cache = compressed  # 50% smaller
 ```
 
@@ -186,14 +206,14 @@ class LearnedKVSplice(nn.Module):
 
 ![Cache Compression](images/ra_cache_compression.png)
 
-| Architecture | Cache Size | vs Standard | vs MLA | Compression |
-|-------------|-----------|-------------|--------|-------------|
+| Architecture | Cache Size | vs Standard | vs TL-cache | Compression |
+|-------------|-----------|-------------|-------------|-------------|
 | Standard KV | 36.00 MB | - | - | 1.0x |
-| MLA | 6.00 MB | 83.3% | - | 6.0x |
-| **MLA+KVSplice** | **3.00 MB** | **91.7%** | **50%** | **12.0x** |
+| RA+MLA (TL-cache) | 6.00 MB | 83.3% | - | 6.0x |
+| **RA+MLA+KVSplice** | **3.00 MB** | **91.7%** | **50%** | **12.0x** |
 
-**KVSplice cuts MLA's cache in half** (2x additional compression) for **12x
-total compression** vs standard KV cache.
+**KVSplice cuts the Token-Latent cache in half** (2x additional compression)
+for **12x total compression** vs standard KV cache.
 
 ### Results: MLA vs MLA+KVSplice vs RA Combinations
 
@@ -506,13 +526,22 @@ flow creates more balanced optimization landscape.
 
 ## Summary
 
+### Terminology Note
+
+**KV-Latent Cache**: Standard MLA (DeepSeek) stores a compressed `kv_latent`
+that generates K and V. Q is computed directly.
+
+**Token-Latent (TL) Cache**: When combining RA with MLA, we generalize to
+`token_latent` that generates Q, K, and V. This supports both Q@K.T and K@Q.T
+attention patterns since both Q and K need to be usable in either role.
+
 ### Key Findings
 
 1. **MLA alone**: 6x cache compression, +8.6% perplexity degradation
-2. **RA + MLA**: Recovers MLA quality (-5.6%), 27% inference speedup, same
-   cache
-3. **KVSplice**: 2x more compression, **improves quality** by 11% (acts as
-   regularization)
+2. **RA + MLA**: Introduces Token-Latent cache, recovers MLA quality (-5.6%),
+   27% inference speedup, same cache size
+3. **KVSplice**: 2x more compression on TL-cache, **improves quality** by 11%
+   (acts as regularization)
 4. **Combined**: RA+MLA+KVSplice achieves baseline quality with 12x
    compression and 22% faster inference
 5. **Router-based RA**: Deprecated - 11.7% quality loss, 58% memory overhead,
