@@ -152,9 +152,16 @@ class RAMLATrainer(VanillaGPT2Trainer):
         """Replace model with GPT2_RA_Model (learned alternation, no MLA)."""
         import torch
         from ra import GPT2_RA_Model
+        from gpt2.model import GPTConfig
 
-        # GPT2_RA_Model uses standard GPT config, not RA_MLA_Config
-        self.model = GPT2_RA_Model(self.config)
+        # Create GPTConfig for GPT2_RA_Model
+        gpt_config = GPTConfig.from_name(self.args.model_name)
+        gpt_config.block_size = self.args.block_size
+        gpt_config.dropout = self.args.dropout
+        gpt_config.bias = getattr(self.args, "bias", True)
+
+        # Create model with proper GPTConfig
+        self.model = GPT2_RA_Model(gpt_config)
         print(f"Created GPT2_RA_Model with learned alternation")
         print(f"  Params: {self.model.get_num_params():,}")
         print(f"  Balance stats: {self.model.get_balance_stats()}")
