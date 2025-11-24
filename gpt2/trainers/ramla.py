@@ -56,6 +56,10 @@ def parse_step(step: str) -> Dict:
         arch = "baseline"
     elif base == "MLA":
         arch = "mla"
+    elif base == "MLAKV2-":
+        arch = "mlakv2"
+    elif base == "MLAKV2M":
+        arch = "mlakv2mlp"
     elif base == "MLAKV":
         arch = "mlakv"
     elif base == "RA":
@@ -132,6 +136,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
         elif self.step_config["arch"] in [
             "mla",
             "mlakv",
+            "mlakv2",
+            "mlakv2mlp",
             "ramla",
             "ramlakv",
             "ramlakvm",
@@ -192,6 +198,8 @@ class RAMLATrainer(VanillaGPT2Trainer):
             RA_MLA_Config,
             MLAGPT,
             MLAKV_GPT,
+            MLA_KV2_GPT,
+            MLA_KV2_MLPSPLICE_GPT,
             RAMLAGPT,
             RAMLAKV_GPT,
             RAMLAKVM_GPT,
@@ -221,6 +229,17 @@ class RAMLATrainer(VanillaGPT2Trainer):
         elif arch == "mlakv":
             self.model = MLAKV_GPT(cfg, compression_ratio=compression_ratio)
             print(f"Created MLAKV_GPT (MLA + KVSplice, no RA)")
+            print(f"  Compression: {self.model.get_compression_stats()}")
+        elif arch == "mlakv2":
+            self.model = MLA_KV2_GPT(cfg, compression_ratio=compression_ratio)
+            print(f"Created MLA_KV2_GPT (MLA + 2-latent: Q direct, K/V compressed)")
+            print(f"  Compression: {self.model.get_compression_stats()}")
+        elif arch == "mlakv2mlp":
+            mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
+            self.model = MLA_KV2_MLPSPLICE_GPT(
+                cfg, compression_ratio=compression_ratio, mlp_d_latent=mlp_d_latent
+            )
+            print(f"Created MLA_KV2_MLPSPLICE_GPT (2-latent + MLPSplice)")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "ramla":
             self.model = RAMLAGPT(cfg)
@@ -829,12 +848,12 @@ class RAMLATrainer(VanillaGPT2Trainer):
             traceback.print_exc()
             return {}
 
-    def run_dry_run(self):
+    def run_dry_run(self, exit_on_completion=True):
         """Run architecture validation."""
         if self.step_config["arch"] == "ra":
-            return self._ra_trainer.run_dry_run()
+            return self._ra_trainer.run_dry_run(exit_on_completion=exit_on_completion)
         else:
-            return super().run_dry_run()
+            return super().run_dry_run(exit_on_completion=exit_on_completion)
 
 
 class RAMLACoordinator:
@@ -855,7 +874,12 @@ class RAMLACoordinator:
             trainer = RAMLATrainer(self.args, self.config, ablation_step=step)
 
             if getattr(self.args, "dry_run", False):
-                trainer.run_dry_run()
+                status = trainer.run_dry_run(exit_on_completion=False)
+                if status != 0:
+                    print(f"✗ Step {step} failed validation")
+                    import sys
+
+                    sys.exit(1)
             else:
                 trainer.train()
 
