@@ -407,6 +407,9 @@ Experimental data: [test_matrix_results_20251123_231956](https://github.com/mcgr
 The following results compare MLA vs RA+MLA only (without KVSplice). For
 compression results, see [kvsplice.md](kvsplice.md).
 
+**TODO**: Ensure visualization images show MLA vs RA+MLA only (no KVSplice
+variants). Create new images if current ones include KVSplice results.
+
 ![Validation Quality](images/ra_validation_quality.png)
 
 | Architecture | Val Loss | Perplexity | Tokens/sec | Cache | Iters |
