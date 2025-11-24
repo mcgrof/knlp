@@ -594,13 +594,20 @@ class BaseGPT2Trainer:
         except Exception as e:
             print(f"Warning: Failed to save metrics to {output_path}: {e}")
 
-    def run_dry_run(self):
+    def run_dry_run(self, exit_on_completion=True):
         """
         Dry-run validation: tests architecture with minimal forward/backward
-        pass. Exits with status 0 if successful, 1 if error.
+        pass.
+
+        Args:
+            exit_on_completion: If True, exits with status 0 if successful, 1 if error.
+                               If False, returns status instead (for ablation mode).
+
+        Returns:
+            If exit_on_completion=False, returns 0 on success, 1 on error.
         """
         if not self.master_process:
-            return
+            return 0 if not exit_on_completion else None
 
         print("\n" + "=" * 60)
         print("DRY-RUN MODE: Architecture Validation")
@@ -643,7 +650,11 @@ class BaseGPT2Trainer:
             print("\n" + "=" * 60)
             print("✓ DRY-RUN PASSED: Architecture is valid")
             print("=" * 60 + "\n")
-            sys.exit(0)
+
+            if exit_on_completion:
+                sys.exit(0)
+            else:
+                return 0
 
         except Exception as e:
             print("\n" + "=" * 60)
@@ -653,7 +664,11 @@ class BaseGPT2Trainer:
             import traceback
 
             traceback.print_exc()
-            sys.exit(1)
+
+            if exit_on_completion:
+                sys.exit(1)
+            else:
+                return 1
 
     def train(self):
         """
