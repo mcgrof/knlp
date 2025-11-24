@@ -407,9 +407,6 @@ Experimental data: [test_matrix_results_20251123_231956](https://github.com/mcgr
 The following results compare MLA vs RA+MLA only (without KVSplice). For
 compression results, see [kvsplice.md](kvsplice.md).
 
-**TODO**: Ensure visualization images show MLA vs RA+MLA only (no KVSplice
-variants). Create new images if current ones include KVSplice results.
-
 ![Validation Quality](images/ra_validation_quality.png)
 
 | Architecture | Val Loss | Perplexity | Tokens/sec | Cache | Iters |
@@ -428,6 +425,14 @@ variants). Create new images if current ones include KVSplice results.
 5. **Same cache size**: No memory overhead for RA
 
 ![Inference Speed](images/ra_inference_speed.png)
+
+### Quality vs Speed Trade-off
+
+![Quality Speed Tradeoff](images/ra_quality_speed_tradeoff.png)
+
+RA+MLA achieves both better quality (lower perplexity) and faster inference
+compared to MLA alone. This combination of benefits is unusual - typically
+optimizations trade off quality for speed or vice versa.
 
 ### LM-Eval Benchmarks
 
