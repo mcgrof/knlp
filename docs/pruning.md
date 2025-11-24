@@ -376,3 +376,81 @@ Our GPT-2 experiments validate Rich Sutton's Bitter Lesson in neural network pru
 **When to use traditional pruning:**
 - Production models requiring absolute best perplexity
 - Small models where memory isn't a constraint
+
+## Pruning Method Insights
+
+### Movement Pruning: Designed for Fine-tuning, Not Training from Scratch
+
+Movement pruning, introduced by Sanh et al. (2020) in "Movement Pruning:
+Adaptive Sparsity by Fine-Tuning", was specifically designed for
+**fine-tuning pre-trained models**, not training from scratch. This
+distinction is critical:
+
+**Key characteristics:**
+- **Fine-tuning context**: Movement pruning identifies weights moving toward
+  zero during adaptation to downstream tasks
+- **Pre-trained models**: Works best with models that have already learned
+  meaningful representations
+- **Architecture differences**: Transformers and CNNs exhibit different
+  pruning behaviors
+  - Transformers: Many redundant parameters naturally move toward zero,
+    leading to aggressive pruning
+  - CNNs: More structured weight patterns maintain their magnitudes during
+    training
+
+**Training from scratch limitations:**
+- Random initial weights lack meaningful movement patterns
+- Weights moving toward zero early in training may still be important later
+- Can lead to aggressive over-pruning beyond target sparsity levels
+- Less stable than magnitude-based methods for random initialization
+
+**Practical implications for GPT-2 comparisons:**
+Given that movement pruning is optimized for fine-tuning scenarios, our GPT-2
+training-from-scratch experiments focus primarily on comparing **magnitude
+pruning vs. AdamWPrune's state-based pruning**, which are both designed for
+training from random initialization.
+
+## Optimizer Variants
+
+- **SGD**: Baseline stochastic gradient descent
+- **Adam**: Adaptive moment estimation
+- **AdamW**: Adam with decoupled weight decay
+- **AdamWAdv**: Enhanced with AMSGrad, cosine annealing, gradient clipping
+- **AdamWSpam**: Spike-aware pruning with momentum reset
+- **AdamWPrune**: State-based pruning using optimizer dynamics
+
+📚 **[Understanding Adam Optimizers: A Complete
+Guide](adam-optimizers.md)** - Learn about the evolution from Adam to AdamW
+and modern variants, with practical guidelines for choosing the right
+optimizer for your model.
+
+## Movement Pruning
+
+Based on ["Movement Pruning: Adaptive Sparsity by
+Fine-Tuning"](https://arxiv.org/abs/2005.07683) by Sanh et al. (2020). Tracks
+weight movement patterns to determine importance.
+
+## References
+
+- Movement Pruning: Victor Sanh, Thomas Wolf, Alexander M. Rush (2020).
+  ["Movement Pruning: Adaptive Sparsity by Fine-Tuning"
+  PDF](https://arxiv.org/abs/2005.07683) & ["Audio
+  summary"](https://open.spotify.com/episode/0Vrw2FiL44wlxxU4QA2zxt?si=rP3Ifc8JT1-iQJuEklCL2g)
+- SPAM: Tuan Nguyen, Tam Nguyen, Vinh Nguyen, Hoang Dang, Dung D. Le, Anh
+  Tran (2024). ["SPAM: Spike-Aware Adam with Momentum Reset for Stable LLM
+  Training" PDF](https://arxiv.org/abs/2409.07321) & ["Audio
+  summary"](https://open.spotify.com/episode/7vKFYxrH1o137zl9MfcKAz?si=oVMoHS61QD6Jjm3XYOTDNQ)
+- Gradient Problems in RNNs: Razvan Pascanu, Tomas Mikolov, Yoshua Bengio
+  (2013). ["On the difficulty of training recurrent neural networks"
+  PDF](https://arxiv.org/abs/1211.5063) & ["Audio
+  summary"](https://open.spotify.com/episode/0okbpKt5U4jmiYwqhVks1S?si=QeGK8t2MT5iYzcj5VE9dMw)
+- Adam: Diederik P. Kingma, Jimmy Ba (2014). ["Adam: A Method for Stochastic
+  Optimization" PDF](https://arxiv.org/abs/1412.6980) & ["Audio
+  summary"](https://open.spotify.com/episode/6GIPqEzRvwHvRMYYI3M4Ar?si=hMWeNH9PR-O48or43EN2iQ)
+- AdamW: Ilya Loshchilov, Frank Hutter (2019). ["Decoupled Weight Decay
+  Regularization" PDF](https://arxiv.org/abs/1711.05101) & ["Audio
+  summary"](https://open.spotify.com/episode/0s5ywoHyIS1dTTT2cLxPpV?si=h335wbgGQ0m94FsBtX-SxQ)
+- Adafactor: Noam Shazeer, Mitchell Stern (2018). ["Adafactor: Adaptive
+  Learning Rates with Sublinear Memory Cost"
+  PDF](https://arxiv.org/abs/1804.04235) & ["Audio
+  summary"](https://open.spotify.com/episode/46DNk6Mkfk4r6xikZPzYT1?si=UUkAQyQEQai-rQypL_lqgA)
