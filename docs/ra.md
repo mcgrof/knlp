@@ -27,8 +27,27 @@ output = attn_probs @ V
 - Standard: "how much does token i attend to token j"
 - Reciprocal: "how much does token j attend to token i" (reverse direction)
 
-**Mathematical identity**: `(Q @ K.T).T = K @ Q.T` (transpose is nearly free
-on GPU, just a stride change)
+**Mathematical identity**: `(Q @ K.T).T = K @ Q.T`
+
+The transpose operation is essentially **free** on GPU - it's just a view that
+changes tensor strides without copying data. Empirical benchmarks on AMD
+Radeon Pro W7900 (shape: [4, 16, 1024, 64]) show:
+
+| Operation | Eager Mode | torch.compile |
+|-----------|-----------|---------------|
+| Q @ K.T | 0.346 ms | 0.365 ms |
+| (Q @ K.T).T (view) | 0.340 ms | 0.333 ms |
+| K @ Q.T (direct) | 0.332 ms | 0.331 ms |
+
+**Key findings**:
+- Transpose adds ~0 overhead (view operation changes strides only)
+- `scores.data_ptr() == scores.transpose(-2,-1).data_ptr()` → True (same
+  memory)
+- `scores.transpose(-2,-1)._base is scores` → True (view, not copy)
+- K @ Q.T is equivalent in speed to (Q @ K.T).T
+
+See `scripts/benchmark_tranpsose_as_view.py` for benchmark code that verifies
+transpose is a zero-cost view operation.
 
 ### Research Evolution
 
