@@ -246,7 +246,7 @@ def create_ra_quality_speed_tradeoff(data):
     )
 
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=12, loc="lower right")
+    ax.legend(fontsize=12, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
 
     plt.tight_layout()
     output_path = OUTPUT_DIR / "ra_quality_speed_tradeoff.png"
@@ -441,7 +441,7 @@ def create_kvsplice_quality_speed_tradeoff(data):
     )
 
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=11, loc="lower right")
+    ax.legend(fontsize=11, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
 
     plt.tight_layout()
     output_path = OUTPUT_DIR / "kvsplice_quality_speed_tradeoff.png"
