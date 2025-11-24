@@ -31,7 +31,7 @@ This methodology enables rapid iteration on transformer architectures through re
 
 ## Key Results
 
-### Attention Architecture: Quality and Speed Improvements
+### Attention Architecture: RA + kvsplice R&D Quality and Speed Improvements
 
 ![KVSplice Quality Speed Tradeoff](docs/images/kvsplice_quality_speed_tradeoff.png)
 
@@ -45,7 +45,7 @@ faster inference - the sweet spot for production deployment.
 See [docs/ra.md](docs/ra.md) for Reciprocal Attention details and
 [docs/kvsplice.md](docs/kvsplice.md) for learned compression analysis.
 
-### Cross-Model Validation
+### Adam State based Pruning R&D results
 
 | Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |
 |-------|------------|---------|----------|---------------------|-------|
