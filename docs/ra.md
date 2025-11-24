@@ -7,6 +7,77 @@ reciprocal K@Q.T attention patterns in transformer architectures. The core
 insight: computing both attention directions provides richer bidirectional
 information flow across layers.
 
+### Inductive Bias
+
+**Core Principle**: Tokens should be interpreted not only by how the query
+views the keys (predictive forward mode: Q@K.T), but also by how the keys view
+the queries (reverse explanatory mode: K@Q.T).
+
+This induces a bidirectional Markov-chain–style neighborhood structure inside
+each layer's attention computation. RA introduces specific inductive biases
+that we tested empirically.
+
+**Hypothesized Biases** (from theoretical analysis):
+
+1. **Symmetric information flow**: Token interactions should be mutual across
+   positions
+2. **Higher Fisher Information**: Bidirectional flow concentrates information
+   into fewer modes
+3. **Compressible KV structure**: Shared latent geometry emerges from
+   alternation
+4. **Mutual influence perspective**: Context interpreted from other tokens'
+   viewpoints
+5. **Easier routing**: Token-level difficulty becomes more detectable
+
+**Empirically Validated** (test_matrix_results_20251123_231956):
+
+✓ **Improved optimization geometry** (supported):
+- RA+MLA recovers 5.6% quality loss from MLA compression
+- 27% inference speedup (17K → 21.7K tokens/sec)
+- Lower eigmax (0.0352 vs baseline, flatter curvature)
+- Suggests smoother gradient flow compensates for compression losses
+
+✓ **Bidirectional information flow** (supported):
+- 6% average LM-eval accuracy improvement
+- Perplexity improvement from 3.6 → 3.4
+- Alternation provides complementary views of token relationships
+
+✗ **Higher Fisher Information** (rejected):
+- FIM eigmax: RA shows **lower** values (0.0352 vs higher in standard attention)
+- FIM trace: Similar or slightly lower
+- energy_r16: ~37% (low concentration, not higher)
+- **Conclusion**: RA produces **flatter** Fisher geometry, not sharper
+
+✗ **Concentrated information modes** (rejected):
+- energy_r8: 0.223 (only 22% in top 8 modes)
+- energy_r16: 0.373 (only 37% in top 16 modes)
+- Would need r>16 to capture 90% Fisher energy
+- **Conclusion**: Information is diffuse, not concentrated
+
+✗ **KV compressibility from RA alone** (rejected):
+- RA doesn't change energy concentration (0.373 vs 0.370 with KVSplice)
+- Compression benefit comes from learned compression (KVSplice), not RA geometry
+- **Conclusion**: RA doesn't make cache more compressible; compression is
+  orthogonal
+
+? **Easier routing** (unclear):
+- Router-based RA failed (11.7% quality degradation, 58% memory overhead)
+- Learned-layer RA succeeded (27% speedup, quality improvement)
+- **Conclusion**: Per-layer decisions work, per-token routing doesn't
+
+**Summary (One Sentence)**:
+
+The validated inductive bias of Reciprocal Attention is that token interactions
+should incorporate bidirectional information flow (forward predictive + reverse
+explanatory), which empirically produces smoother optimization geometry and
+better gradient flow, but does **not** concentrate Fisher Information or make
+KV cache inherently more compressible.
+
+**Key Insight**: RA's value is in optimization dynamics (flatter curvature,
+better training), not in information concentration or structural compression
+properties. This explains why RA helps MLA (compensates for compression
+losses) but doesn't predict or enable further compression.
+
 ### The Mathematical Foundation
 
 Standard attention computes:
