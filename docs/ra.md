@@ -109,19 +109,206 @@ The Token-Latent (TL) cache name reflects that the cached representation must
 support using both Q and K in either role (Q@K.T or K@Q.T). Standard MLA only
 needs KV-latent since Q is always in the query role.
 
-**RA Integration**: Learned per-layer alternation between Q@K.T (standard)
-and K@Q.T (reciprocal). Balance loss encourages 50/50 split across layers.
+### Implementation Comparison
+
+**Standard Attention (Baseline GPT-2)**
 
 ```python
-# Per-layer alternation probability
-p_recip = sigmoid(alternation_logits[layer_idx])
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-# Straight-through estimator for hard decision
-use_reciprocal = (p_recip > 0.5).float()
-use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
+class StandardAttention(nn.Module):
+    """Standard multi-head self-attention (GPT-2 style)."""
 
-# Balance loss: encourage half layers to use RA
-balance_loss = (sum(probs) - n_layers/2)²
+    def __init__(self, d_model, n_heads, dropout=0.0):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+
+        # Single QKV projection
+        self.c_attn = nn.Linear(d_model, 3 * d_model)
+        self.c_proj = nn.Linear(d_model, d_model)
+        self.dropout = dropout
+
+    def forward(self, x, cache=None, use_cache=False):
+        B, T, C = x.shape
+
+        # Project to Q, K, V
+        qkv = self.c_attn(x)  # [B, T, 3*d_model]
+        q, k, v = qkv.split(self.d_model, dim=2)
+
+        # Reshape to [B, n_heads, T, head_dim]
+        q = q.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
+
+        # Concatenate with cache if present
+        if cache is not None:
+            k_cache, v_cache = cache
+            k = torch.cat([k_cache, k], dim=2)  # [B, H, T_cache+T, D]
+            v = torch.cat([v_cache, v], dim=2)
+
+        # Standard attention: Q @ K.T
+        y = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self.dropout if self.training else 0.0,
+            is_causal=(cache is None)
+        )
+
+        # Reshape and project output
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.c_proj(y)
+
+        # Return with cache if requested
+        new_cache = (k, v) if use_cache else None
+        return y, new_cache
+```
+
+**RA+MLA Attention (Token-Latent Cache)**
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class RA_MLA_Attention(nn.Module):
+    """RA + MLA with Token-Latent cache and learned alternation."""
+
+    def __init__(self, d_model, n_heads, d_latent=256, layer_idx=0,
+                 alternation_logits=None, dropout=0.0):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.d_latent = d_latent
+        self.layer_idx = layer_idx
+        self.dropout = dropout
+
+        # Token-Latent compression (supports Q, K, V from single latent)
+        self.to_token_latent = nn.Linear(d_model, d_latent, bias=False)
+        self.from_token_latent = nn.Linear(d_latent, 3 * d_model, bias=False)
+
+        # Learned alternation: shared across all layers
+        self.alternation_logits = alternation_logits
+
+        self.c_proj = nn.Linear(d_model, d_model)
+
+    def get_alternation_prob(self):
+        """Get this layer's probability of using reciprocal attention."""
+        return torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+    def forward(self, x, cache=None, use_cache=False):
+        B, T, C = x.shape
+
+        # Compress to token latent
+        token_latent = self.to_token_latent(x)  # [B, T, d_latent]
+
+        # Concatenate with cached latent if present
+        if cache is not None:
+            token_latent = torch.cat([cache, token_latent], dim=1)
+
+        # Decompress to Q, K, V from token latent
+        qkv = self.from_token_latent(token_latent)  # [B, T_total, 3*d_model]
+        q, k, v = qkv.split(self.d_model, dim=2)
+
+        # Reshape to [B, n_heads, T, head_dim]
+        T_total = token_latent.shape[1]
+        q = q.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+        k = k.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+
+        # Select only new tokens for q (if using cache)
+        if cache is not None:
+            q = q[:, :, -T:, :]
+
+        # Learned alternation: standard Q@K.T vs reciprocal K@Q.T
+        p_recip = self.get_alternation_prob()
+
+        if self.training:
+            # Straight-through estimator for hard decision
+            use_reciprocal = (p_recip > 0.5).float()
+            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
+        else:
+            use_reciprocal = (p_recip > 0.5).float()
+
+        # Apply attention based on learned decision
+        if use_reciprocal > 0.5:
+            # Reciprocal: K @ Q.T (swap q and k arguments)
+            y = F.scaled_dot_product_attention(
+                k, q, v,  # Note: k and q are swapped
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=(cache is None)
+            )
+        else:
+            # Standard: Q @ K.T
+            y = F.scaled_dot_product_attention(
+                q, k, v,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=(cache is None)
+            )
+
+        # Reshape and project output
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.c_proj(y)
+
+        # Return with token-latent cache if requested
+        new_cache = token_latent if use_cache else None
+        return y, new_cache
+```
+
+**Key Differences**:
+
+| Aspect | Standard Attention | RA+MLA Attention |
+|--------|-------------------|------------------|
+| Cache | K, V tensors (36 MB) | token_latent (6 MB) |
+| Q,K,V generation | Direct from `c_attn(x)` | From compressed `token_latent` |
+| Attention pattern | Always Q @ K.T | Learned per-layer (Q@K.T or K@Q.T) |
+| Alternation | Fixed | Learned via `sigmoid(alternation_logits)` |
+| Memory overhead | Standard | Same cache size, learned logits only |
+
+**Model Initialization with Shared Alternation Logits**
+
+```python
+class TransformerWithRA_MLA(nn.Module):
+    def __init__(self, n_layers, d_model, n_heads, d_latent=256):
+        super().__init__()
+        self.n_layers = n_layers
+
+        # Shared alternation logits across all layers
+        # Initialized to ~0 for balanced 50/50 split
+        self.alternation_logits = nn.Parameter(torch.zeros(n_layers))
+
+        # Create attention layers sharing alternation logits
+        self.layers = nn.ModuleList([
+            RA_MLA_Attention(
+                d_model=d_model,
+                n_heads=n_heads,
+                d_latent=d_latent,
+                layer_idx=i,
+                alternation_logits=self.alternation_logits
+            )
+            for i in range(n_layers)
+        ])
+
+    def compute_balance_loss(self):
+        """Encourage 50/50 split between standard and reciprocal attention."""
+        probs = torch.sigmoid(self.alternation_logits)  # [n_layers]
+        target = self.n_layers / 2.0
+        balance_loss = (probs.sum() - target) ** 2
+        return balance_loss
+
+    def get_layer_decisions(self):
+        """Get learned decisions for each layer (for analysis)."""
+        probs = torch.sigmoid(self.alternation_logits)
+        decisions = (probs > 0.5).float()
+        return {
+            "probs": probs.detach().cpu().tolist(),
+            "decisions": decisions.cpu().tolist(),
+            "n_reciprocal": decisions.sum().item(),
+            "n_standard": (self.n_layers - decisions.sum()).item()
+        }
 ```
 
 ### Results: MLA vs RA+MLA
