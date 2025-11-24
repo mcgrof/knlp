@@ -1128,17 +1128,18 @@ class RA_MLA_Model(nn.Module):
 
 class MLA_Flash(nn.Module):
     """
-    Multi-head Latent Attention baseline (no reciprocal alternation).
+    GPT-2 with Multi-head Latent Attention (DeepSeek-style MLA).
 
-    This is a simpler version of RA_MLA_Flash that always uses standard
-    Q@K.T attention. Used for ablation testing to measure the impact of:
-    - MLA alone (latent compression)
-    - vs RA_MLA (compression + bidirectional flow)
+    Implements the MLA mechanism from DeepSeek-V2/V3 for KV cache compression.
+    Q is computed directly (full dimension), while K and V share a compressed
+    latent representation that gets cached and decompressed at inference time.
 
-    Features:
-    - TL-cache: Single latent decompresses to Q, K, V
-    - Flash attention compatible via SDPA
-    - RoPE support
+    Architecture:
+    - Q path: x -> W_q -> Q (no compression, not cached)
+    - KV path: x -> to_kv_latent -> d_latent -> from_kv_latent -> [K, V]
+
+    The KV latent is what gets cached, reducing memory by compression_ratio.
+    Flash attention compatible via PyTorch SDPA with RoPE.
     """
 
     def __init__(self, cfg: RA_MLA_Config, layer_idx: int):
