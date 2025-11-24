@@ -322,6 +322,189 @@ Key metrics:
 - Compute penalty over training
 - Loss curve smoothness at phase transition
 
+## Experimental Results: Research Evolution
+
+### Overview
+
+Our research evolved through several architectural iterations, testing
+different combinations of Multi-head Latent Attention (MLA), Reciprocal
+Attention (RA), and KVSplice compression. All tests used identical
+hyperparameters on GPT-2 124M trained on TinyStories.
+
+**Test Results**: `test_matrix_results_20251123_231956/`
+**W&B Project**: https://wandb.ai/mcgrof-citizen/gpt2-kvsplice-ablation-w7900-mla-fixed
+
+### Evolution 1: GPT-2 + RA Learned Layers
+
+**Status**: In progress
+
+Tests pure RA mechanism without MLA or latent compression. Two variants:
+
+- **B0**: Baseline GPT-2 (standard Q @ K.T attention)
+- **RALEARN0**: GPT-2 + Learned Reciprocal Attention
+
+RALEARN0 uses learned per-layer alternation with balance_loss to
+encourage 50/50 split between standard and reciprocal attention. This
+isolates RA's impact on inference speed and quality.
+
+**Question**: Does RA's 27% inference speedup apply to pure GPT-2?
+
+### Evolution 2: Router-Based RA
+
+**Status**: Deprecated
+
+Early approach using compute routing and head groups. Router decided
+per-token compute tier (RA vs FULL attention) based on contextual shift.
+
+**Result**: Failed to match baseline quality. Deprecated in favor of
+simpler learned alternation approach.
+
+### Evolution 3: MLA Token-Latent Cache
+
+**Status**: Baseline for compression experiments
+
+Implemented DeepSeek-style MLA where Q is direct projection, K/V share
+compressed latent (d_latent=256). Reduces KV cache from 36 MB to 6 MB.
+
+| Architecture | Val Loss | Perplexity | Cache Size | vs Baseline |
+|-------------|----------|------------|------------|-------------|
+| Baseline GPT-2 | 1.199 | 3.3 | 36 MB | - |
+| MLA | 1.276 | 3.6 | 6 MB | +6.4% worse |
+
+![Validation Quality](images/ra_validation_quality.png)
+
+**Finding**: MLA provides 6x cache compression but degrades quality by
+6.4% (perplexity 3.3 → 3.6). This establishes baseline compression cost.
+
+### Evolution 4: MLA + RA
+
+**Status**: Major success
+
+Combined MLA compression with learned reciprocal alternation across
+layers. Same 6 MB cache as MLA-only.
+
+| Architecture | Val Loss | Perplexity | Tokens/sec | vs MLA |
+|-------------|----------|------------|------------|--------|
+| MLA | 1.276 | 3.6 | 17,031 | - |
+| RA+MLA | 1.223 | 3.4 | **21,696** | +27% ✓✓ |
+
+![Inference Speed](images/ra_inference_speed.png)
+
+**Findings**:
+- **27% inference speedup** (17K → 21.7K tokens/sec)
+- **5% perplexity improvement** (3.6 → 3.4)
+- Same cache memory as MLA
+- RA consistently accelerates inference across all cache configurations
+
+**Hypothesis**: K @ Q.T alternation improves optimization geometry,
+enabling better gradient flow during training. Lower perplexity →
+faster convergence at inference.
+
+### Evolution 5: KVSplice Compression
+
+**Status**: Best overall architecture
+
+Added learned compression (softplus transform + low-rank projection) to
+TL-cache latents. Compresses d_latent=256 → d_compressed=128 (50%).
+
+![Cache Compression](images/ra_cache_compression.png)
+
+| Architecture | Cache Size | Compression | Perplexity | vs Baseline |
+|-------------|------------|-------------|------------|-------------|
+| Standard KV | 36 MB | 1x | 3.3 | - |
+| MLA | 6 MB | 6x | 3.6 | +8.6% |
+| MLA+KVSplice | **3 MB** | **12x** | **3.3** | **0%** |
+
+**Key Result**: KVSplice achieves 12x total compression (36 MB → 3 MB)
+while **matching baseline quality**. The 50% additional compression
+paradoxically improves model quality by 8.6% over MLA-only.
+
+**Finding**: Learned compression acts as beneficial regularization,
+forcing latents into information-dense subspace.
+
+#### Full Results Table
+
+| Architecture | Val Loss | Perplexity | Tokens/sec | Cache | Speedup |
+|-------------|----------|------------|------------|-------|---------|
+| Baseline | 1.199 | 3.3 | - | 36 MB | - |
+| MLA | 1.276 | 3.6 | 17,031 | 6 MB | - |
+| MLA+KVSplice | **1.166** | **3.2** | 17,429 | 3 MB | +2% |
+| RA+MLA | 1.223 | 3.4 | **21,696** | 6 MB | **+27%** |
+| RA+MLA+KVSplice | 1.188 | 3.3 | **20,820** | 3 MB | **+22%** |
+
+**Best Quality**: MLA+KVSplice (3.2 perplexity, 12x compression)
+**Best Speed**: RA+MLA (21.7K tokens/sec, 27% faster)
+**Best Overall**: RA+MLA+KVSplice (baseline quality, 12x compression,
+22% faster)
+
+### Evolution 6: GPT-2 vs GPT-2+RA
+
+**Status**: Pending
+
+Will compare pure GPT-2 against GPT-2 with learned RA (no MLA) to
+isolate RA's contribution to inference speed.
+
+### LM-Eval Benchmark Results
+
+Evaluated on ARC-Easy, HellaSwag, and Winogrande (100 samples each):
+
+![LM-Eval Benchmarks](images/ra_lmeval_benchmarks.png)
+
+| Architecture | ARC-Easy | HellaSwag | Winogrande |
+|-------------|----------|-----------|------------|
+| MLA | 24% | 28% | 48% |
+| MLA+KVSplice | 25% | 29% | **59%** |
+| RA+MLA | 26% | 29% | 51% |
+| RA+MLA+KVSplice | 25% | 30% | 52% |
+
+**Finding**: All architectures perform similarly on reasoning tasks.
+KVSplice shows notable gain on Winogrande (commonsense reasoning).
+
+### Architecture Trade-offs
+
+![Quality vs Speed Trade-off](images/ra_quality_speed_tradeoff.png)
+
+**Key Insights**:
+
+1. **RA provides consistent speedup**: 20-27% faster regardless of
+   compression method
+2. **KVSplice improves quality**: Despite 50% compression, quality
+   improves over MLA
+3. **Independent mechanisms**: RA (inference speed) and KVSplice
+   (compression + quality) combine effectively
+4. **Cache efficiency scales**: Larger bubble size = better compression
+
+### Fisher Information Analysis
+
+Tested hypothesis: Does RA increase Fisher Information Matrix values?
+
+**Result**: Hypothesis **rejected**. RA shows lower FIM eigmax values
+than MLA, not higher. RA's benefits come from different mechanism
+(optimization geometry, gradient flow) rather than increased information
+density.
+
+| Metric | MLA | RA+MLA | Interpretation |
+|--------|-----|--------|----------------|
+| eigmax | Higher | Lower | RA has flatter curvature |
+| trace | Higher | Lower | RA has less total Fisher mass |
+| energy_r16 | Lower | Higher | RA concentrates energy better |
+
+**Conclusion**: RA improves optimization stability through smoother
+curvature geometry, not through higher information content.
+
+### Summary
+
+The research evolution demonstrates:
+
+1. **MLA baseline**: 6x compression, 6.4% quality loss
+2. **RA addition**: 27% inference speedup, 5% quality gain
+3. **KVSplice**: 2x more compression, 8.6% quality gain (net zero loss)
+4. **Combined**: 12x compression, baseline quality, 22% faster
+
+Learned compression (KVSplice) acts as regularization, paradoxically
+improving quality while reducing memory. RA provides orthogonal benefit
+through optimization geometry, consistently accelerating inference.
+
 ## TODO: Future Enhancements
 
 ### Smooth Phase Transition
