@@ -70,7 +70,7 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     # LeNet: Small memory footprint (tiny model, small images)
     model_configs = {
         "gpt2": {
-            "default_target": 1024,
+            "default_target": 512,  # Reduced from 1024 - large batches hurt convergence
             "scale_factor": 1.0,  # Baseline
             "grad_acc_attr": "GPT2_GRADIENT_ACCUMULATION",
         },
