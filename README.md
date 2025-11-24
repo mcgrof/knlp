@@ -12,7 +12,7 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **🚀 RA + R-MLP + KV Pruning**: Current research blends Reciprocal Attention (bidirectional attention with zero extra FLOPs using single-SDPA-call folded architecture) with attention-aware Reciprocal MLP and gate-informed adaptive KV cache pruning. R-MLP receives attention context via cheap vector add, and learned gates (w_rec × α) modulate pruning aggressiveness. See [docs/ra.md](docs/ra.md) for ablation study details.
+> **🚀 Reciprocal Attention + KVSplice**: Current research on bidirectional attention mechanisms and learned cache compression. Reciprocal Attention (RA) alternates Q@K.T and K@Q.T across layers, achieving 27% inference speedup with smoother optimization. KVSplice provides learned compression of attention cache with 12x memory reduction while improving quality. See [docs/ra.md](docs/ra.md) for RA details and [docs/kvsplice.md](docs/kvsplice.md) for compression techniques.
 
 > **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating the hypothesis that Adam's gradient statistics enable superior pruning decisions. Tested on NVIDIA B200 GPUs with torch.compile.
 
@@ -46,21 +46,23 @@ expected to improve CNN results further. See evolution story below.
 
 ## GPT-2 Transformer Results (124M Parameters)
 
-### Current Research: R-MLP + Gate-Informed KV Pruning
+### Current Research: Reciprocal Attention + KVSplice
 
-Exploring attention-aware MLP with adaptive KV cache pruning based
-on learned gate signals. R-MLP injects attention via cheap vector
-add (x + α×attn), and gates (w_rec, α) modulate KV pruning ratio.
+**Reciprocal Attention (RA)**: Bidirectional attention mechanism that alternates
+Q@K.T (standard) and K@Q.T (reciprocal) across transformer layers. Achieves 27%
+inference speedup with improved optimization geometry.
 
-**Ablation study (V1-V7)** tests:
-- Different R_ff dimensions (256 to 1920)
-- Weight tying between attention and MLP
-- Gate-informed adaptive pruning (V7)
+**KVSplice**: Learned compression technique for attention cache. Reduces cache
+size by 12x while improving model quality through regularization effect.
 
-See [docs/ra.md](docs/ra.md) for detailed architecture and results.
+**Combined results** (RA+MLA+KVSplice):
+- 12x cache compression (36 MB → 3 MB)
+- 22% inference speedup
+- Matches baseline GPT-2 quality
+- 2-hour training runs on AMD W7900 GPU
 
-**Training**: 2 hours per step, ~2065 iterations, 4× NVIDIA A10G
-(24GB). Minimal overhead (~4ms/iter). Production-ready stability.
+See [docs/ra.md](docs/ra.md) for Reciprocal Attention details and
+[docs/kvsplice.md](docs/kvsplice.md) for compression architecture.
 
 ---
 
