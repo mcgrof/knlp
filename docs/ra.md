@@ -18,22 +18,24 @@ This creates complementary views of the same token relationships across
 transformer depth, producing smoother optimization geometry and better gradient
 flow.
 
-#### What RA Provides (Empirically Validated)
+#### Empirically Validated Value of RA
 
-**Experimental setup**: GPT-2 124M on FineWebEdu dataset, 2-hour training runs
-per configuration on AMD Radeon Pro W7900 GPU, identical hyperparameters.
+**Experimental setup**: GPT-2 124M on FineWebEdu dataset using
+`make defconfig-gpt2-kvsplice-ablation`. Each configuration trained for 2 hours
+on AMD Radeon Pro W7900 GPU with identical hyperparameters.
 
 Results and trained models: [test_matrix_results_20251123_231956](https://github.com/mcgrof/knlp-key-results/tree/main/key_results/test_matrix_results_20251123_231956)
 
 **1. Smoother Optimization Geometry**
 
 RA produces flatter curvature in the optimization landscape, enabling better
-gradient flow:
+gradient flow. See [FIM.md](FIM.md) for explanation of Fisher Information
+Matrix metrics.
 
 | Metric | MLA | RA+MLA | Improvement |
 |--------|-----|--------|-------------|
 | Validation perplexity | 3.6 | 3.4 | -5.6% |
-| FIM eigmax (mean) | Higher | 0.0352 | Lower (flatter) |
+| [FIM eigmax](FIM.md#eigmax-maximum-eigenvalue) (mean) | Higher | 0.0352 | Lower (flatter) |
 | Inference tokens/sec | 17,031 | 21,696 | +27% |
 | Training iterations | 280 | 285 | +1.8% |
 
@@ -43,7 +45,9 @@ reduction) and achieves 27% inference speedup with identical cache size.
 
 **2. Bidirectional Information Flow**
 
-Alternating attention directions enriches representation learning:
+Alternating attention directions enriches representation learning. After 2-hour
+training runs on AMD W7900 GPU, we evaluated models with LM-eval to get a quick
+"pilot signal" of downstream task performance:
 
 | Benchmark | MLA | RA+MLA | Improvement |
 |-----------|-----|--------|-------------|
@@ -53,7 +57,8 @@ Alternating attention directions enriches representation learning:
 | Average | 33.3% | 35.3% | +6.0% |
 
 All three LM-eval benchmarks improved. The complementary forward and reverse
-views provide richer context for downstream tasks.
+views provide richer context for downstream tasks. These 2-hour runs provide
+fast validation before committing to longer training.
 
 **Summary**: Reciprocal Attention's empirically-validated inductive bias is
 that **bidirectional evaluation of token relationships produces smoother
@@ -110,8 +115,8 @@ Radeon Pro W7900 (shape: [4, 16, 1024, 64]) show:
 - `scores.transpose(-2,-1)._base is scores` → True (view, not copy)
 - K @ Q.T is equivalent in speed to (Q @ K.T).T
 
-See `scripts/benchmark_tranpsose_as_view.py` for benchmark code that verifies
-transpose is a zero-cost view operation.
+See [scripts/benchmark_tranpsose_as_view.py](../scripts/benchmark_tranpsose_as_view.py)
+for the complete benchmark code.
 
 ### Research Evolution
 
@@ -122,61 +127,10 @@ K@Q.T simultaneously to finding more compute-friendly implementations:
    Attention for cache compression (introduces Token-Latent cache to support
    Q/K transpose)
 2. **Mathematical Introspection**: What does RA implicitly add from a
-   mathematical perspective? Can we leverage it for better compression?
+   mathematical perspective? Can we leverage it for better compression? See
+   [FIM.md](FIM.md) for full Fisher Information Matrix analysis.
 3. **KVSplice**: Additional learned compression on top of Token-Latent cache
 4. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
-
-#### Mathematical Introspection: Fisher Information Matrix
-
-**Motivation**: The SPDA paper ("Scaled Dot-Product Attention as One-Sided
-Entropic Optimal Transport") proves that attention solves an Entropic Optimal
-Transport problem, and the Hessian of its log-sum-exp potential is exactly the
-Fisher Information Matrix (FIM). This provides a principled way to analyze
-attention geometry and information content.
-
-**Research Question**: Does RA change the Fisher Information geometry in ways
-that enable better cache compression? If alternating Q@K.T and K@Q.T changes
-the optimization landscape, does it concentrate information into fewer modes?
-
-**FIM Metrics Tracked**:
-- `eigmax`: Maximum eigenvalue (sharpest curvature direction)
-- `trace`: Total Fisher information mass
-- `energy_r8/r16`: Fraction of Fisher energy in top 8/16 modes
-- `decay`: Spectral concentration (eigmax / λ_5th)
-
-**Hypothesis**: Higher energy concentration (energy_r16 → 1.0) would indicate
-that information is packed into fewer modes, suggesting we could use smaller
-rank compression (r=8 or r=16) without quality loss.
-
-**Findings from test_matrix_results_20251123_231956**:
-
-| Architecture | eigmax | energy_r8 | energy_r16 | Interpretation |
-|-------------|--------|-----------|------------|----------------|
-| RA+MLA | 0.0352 | 0.223 | 0.373 | Low concentration |
-| RA+MLA+KVSplice | 0.0341 | 0.220 | 0.370 | Low concentration |
-
-**Key Results**:
-
-1. **Low energy concentration**: Only ~37% of Fisher energy in top 16 modes
-   across all architectures. Would need r>16 to capture 90% energy.
-
-2. **No FIM improvement from compression**: KVSplice shows nearly identical
-   energy concentration (0.370 vs 0.373) despite 50% cache reduction.
-
-3. **Slight eigmax reduction**: KVSplice has marginally lower eigmax (0.0341
-   vs 0.0352), suggesting flatter curvature, but effect is small.
-
-**Conclusion**: FIM analysis did **not** provide clear guidance for
-compression decisions. Despite low energy_r16 (~0.37), KVSplice with d=128
-(50% compression) empirically improves quality by 11%. The learned compression
-appears to find task-specific structure that FIM-based metrics don't capture.
-
-**Interpretation**: Fisher Information measures optimization geometry, not
-necessarily task-relevant information. Learned compression (KVSplice) acts as
-beneficial regularization that forces representations into information-dense
-subspaces, but this structure isn't visible in variance-based or FIM-based
-metrics. The value comes from end-to-end learning, not from following
-prescribed compression directions.
 
 ---
 
@@ -228,44 +182,53 @@ needs KV-latent since Q is always in the query role.
 
 ### Implementation Comparison
 
-**Standard Attention (Baseline GPT-2)**
+**MLA Attention (KV-Latent Cache)**
 
 ```python
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class StandardAttention(nn.Module):
-    """Standard multi-head self-attention (GPT-2 style)."""
+class MLAAttention(nn.Module):
+    """MLA with KV-Latent cache (DeepSeek-V2/V3 style)."""
 
-    def __init__(self, d_model, n_heads, dropout=0.0):
+    def __init__(self, d_model, n_heads, d_latent=256, dropout=0.0):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
-
-        # Single QKV projection
-        self.c_attn = nn.Linear(d_model, 3 * d_model)
-        self.c_proj = nn.Linear(d_model, d_model)
+        self.d_latent = d_latent
         self.dropout = dropout
+
+        # Q direct, KV from shared latent
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.to_kv_latent = nn.Linear(d_model, d_latent, bias=False)
+        self.from_kv_latent = nn.Linear(d_latent, 2 * d_model, bias=False)
+
+        self.c_proj = nn.Linear(d_model, d_model)
 
     def forward(self, x, cache=None, use_cache=False):
         B, T, C = x.shape
 
-        # Project to Q, K, V
-        qkv = self.c_attn(x)  # [B, T, 3*d_model]
-        q, k, v = qkv.split(self.d_model, dim=2)
+        # Q computed directly (not cached)
+        q = self.w_q(x)  # [B, T, d_model]
+
+        # K, V from compressed latent (this gets cached)
+        kv_latent = self.to_kv_latent(x)  # [B, T, d_latent]
+
+        # Concatenate with cached latent if present
+        if cache is not None:
+            kv_latent = torch.cat([cache, kv_latent], dim=1)
+
+        # Decompress to K, V
+        kv = self.from_kv_latent(kv_latent)  # [B, T_total, 2*d_model]
+        k, v = kv.split(self.d_model, dim=2)
 
         # Reshape to [B, n_heads, T, head_dim]
+        T_total = kv_latent.shape[1]
         q = q.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
-        k = k.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
-        v = v.view(B, T, self.n_heads, self.head_dim).transpose(1, 2)
-
-        # Concatenate with cache if present
-        if cache is not None:
-            k_cache, v_cache = cache
-            k = torch.cat([k_cache, k], dim=2)  # [B, H, T_cache+T, D]
-            v = torch.cat([v_cache, v], dim=2)
+        k = k.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, T_total, self.n_heads, self.head_dim).transpose(1, 2)
 
         # Standard attention: Q @ K.T
         y = F.scaled_dot_product_attention(
@@ -278,8 +241,8 @@ class StandardAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.c_proj(y)
 
-        # Return with cache if requested
-        new_cache = (k, v) if use_cache else None
+        # Return with kv-latent cache if requested
+        new_cache = kv_latent if use_cache else None
         return y, new_cache
 ```
 
@@ -377,13 +340,14 @@ class RA_MLA_Attention(nn.Module):
 
 **Key Differences**:
 
-| Aspect | Standard Attention | RA+MLA Attention |
-|--------|-------------------|------------------|
-| Cache | K, V tensors (36 MB) | token_latent (6 MB) |
-| Q,K,V generation | Direct from `c_attn(x)` | From compressed `token_latent` |
+| Aspect | MLA | RA+MLA |
+|--------|-----|--------|
+| Cache | kv_latent (6 MB) | token_latent (6 MB) |
+| Q generation | Direct from `w_q(x)` | From compressed `token_latent` |
+| K,V generation | From `kv_latent` (shared) | From `token_latent` (with Q) |
 | Attention pattern | Always Q @ K.T | Learned per-layer (Q@K.T or K@Q.T) |
-| Alternation | Fixed | Learned via `sigmoid(alternation_logits)` |
-| Memory overhead | Standard | Same cache size, learned logits only |
+| Alternation | Fixed standard | Learned via `sigmoid(alternation_logits)` |
+| Memory overhead | 6 MB cache | Same cache size, learned logits only |
 
 **Model Initialization with Shared Alternation Logits**
 
