@@ -994,15 +994,18 @@ class RA_MLA_Flash(nn.Module):
         # Flash attention via argument swapping
         # Standard: Q @ K.T @ V
         # Reciprocal: K @ Q.T @ V (swap Q and K roles)
+        #
+        # Always use causal masking. Chunked decode (cache + T>1) would need a
+        # custom mask accounting for prefix offset - is_causal alone won't work.
+        use_causal = True
         if use_reciprocal > 0.5:
             # Reciprocal: K plays role of Q, Q plays role of K
-            # For causal attention: we need to be careful about masking
             # K@Q.T gives [B, H, T_k, T_q], we want to attend from K positions to Q
             attn_out = F.scaled_dot_product_attention(
                 k[:, :, -T:, :] if cache is not None else k,
                 q,
                 v,
-                is_causal=(cache is None),  # Only causal for non-cached
+                is_causal=use_causal,
                 dropout_p=self.cfg.dropout if self.training else 0.0,
             )
         else:
@@ -1011,7 +1014,7 @@ class RA_MLA_Flash(nn.Module):
                 q,
                 k,
                 v,
-                is_causal=(cache is None),
+                is_causal=use_causal,
                 dropout_p=self.cfg.dropout if self.training else 0.0,
             )
 
@@ -1207,11 +1210,14 @@ class MLA_Flash(nn.Module):
             q, k = apply_rope(q, k, cos, sin)
 
         # Standard attention: Q @ K.T @ V
+        # Always use causal masking. Chunked decode (cache + T>1) would need a
+        # custom mask accounting for prefix offset - is_causal alone won't work.
+        use_causal = True
         attn_out = F.scaled_dot_product_attention(
             q,
             k,
             v,
-            is_causal=(cache is None),
+            is_causal=use_causal,
             dropout_p=self.cfg.dropout if self.training else 0.0,
         )
 
@@ -1670,12 +1676,15 @@ class RA_MLA_KVSplice(nn.Module):
             use_reciprocal = (p_recip > 0.5).float()
 
         # Flash attention
+        # Always use causal masking. Chunked decode (cache + T>1) would need a
+        # custom mask accounting for prefix offset - is_causal alone won't work.
+        use_causal = True
         if use_reciprocal > 0.5:
             attn_out = F.scaled_dot_product_attention(
                 k[:, :, -T:, :] if cache is not None else k,
                 q,
                 v,
-                is_causal=(cache is None),
+                is_causal=use_causal,
                 dropout_p=self.cfg.dropout if self.training else 0.0,
             )
         else:
@@ -1683,7 +1692,7 @@ class RA_MLA_KVSplice(nn.Module):
                 q,
                 k,
                 v,
-                is_causal=(cache is None),
+                is_causal=use_causal,
                 dropout_p=self.cfg.dropout if self.training else 0.0,
             )
 
@@ -2811,11 +2820,17 @@ class MLA_KVSplice(nn.Module):
             q, k = apply_rope(q, k, cos, sin)
 
         # Standard attention (always Q·K^T, no alternation)
+        # Causal masking: needed during training (cache=None) and when
+        # processing multiple new tokens with cache (chunked decoding).
+        # Safe to skip only when T=1 with cache (single token generation).
+        # Always use causal masking. Chunked decode (cache + T>1) would need a
+        # custom mask accounting for prefix offset - is_causal alone won't work.
+        use_causal = True
         attn_out = F.scaled_dot_product_attention(
             q,
             k,
             v,
-            is_causal=(cache is None),
+            is_causal=use_causal,
             dropout_p=self.cfg.dropout if self.training else 0.0,
         )
 
