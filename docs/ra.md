@@ -72,9 +72,11 @@ This smoother geometry enables:
 - Improved downstream task accuracy (6% average LM-eval gain)
 - More stable training with compressed representations
 
-**When to use RA**: Training with compressed attention mechanisms (MLA,
-KVSplice) or when seeking inference speedup. The optimization benefits
-compensate for compression losses without memory overhead.
+**When to use RA**: Training with compressed attention mechanisms (MLA) or
+when seeking inference speedup. The optimization benefits compensate for
+compression losses without memory overhead. See [kvsplice.md](kvsplice.md) for
+learned compression techniques that further benefit from RA's smooth
+optimization.
 
 ### The Mathematical Foundation
 
@@ -129,7 +131,10 @@ K@Q.T simultaneously to finding more compute-friendly implementations:
 2. **Mathematical Introspection**: What does RA implicitly add from a
    mathematical perspective? Can we leverage it for better compression? See
    [FIM.md](FIM.md) for full Fisher Information Matrix analysis.
-3. **KVSplice**: Additional learned compression on top of Token-Latent cache
+3. **KVSplice**: Additional learned compression on top of Token-Latent cache.
+   See [kvsplice.md](kvsplice.md) for complete architecture, results, and
+   future research directions. KVSplice achieves 12x total compression while
+   improving quality through regularization.
 4. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
 
 ---
@@ -394,12 +399,13 @@ class TransformerWithRA_MLA(nn.Module):
 
 ### Results: MLA vs RA+MLA
 
-Test configuration: GPT-2 124M, TinyStories dataset, identical
-hyperparameters, 2-hour training runs.
+Test configuration: GPT-2 124M, FineWebEdu dataset, identical hyperparameters,
+2-hour training runs per configuration on AMD Radeon Pro W7900 GPU.
 
-**TODO**: Create separate visualization images comparing MLA vs RA+MLA only
-(without KVSplice variants). Current images include KVSplice which should be
-in kvsplice.md instead.
+Experimental data: [test_matrix_results_20251123_231956](https://github.com/mcgrof/knlp-key-results/tree/main/key_results/test_matrix_results_20251123_231956)
+
+The following results compare MLA vs RA+MLA only (without KVSplice). For
+compression results, see [kvsplice.md](kvsplice.md).
 
 ![Validation Quality](images/ra_validation_quality.png)
 
@@ -445,12 +451,8 @@ Evaluated on ARC-Easy, HellaSwag, and Winogrande (100 samples each):
    inference → 27% speedup
 
 **Conclusion**: RA provides significant benefits to MLA - better quality, much
-faster inference, same cache size. This validates the RA mechanism beyond
-routing overhead.
-
-**Note**: For learned compression of the Token-Latent cache (KVSplice), see
-[kvsplice.md](kvsplice.md). KVSplice provides 12x total compression while
-improving quality through regularization effect.
+faster inference, same cache size. This validates the RA mechanism as an
+effective bidirectional attention approach.
 
 ---
 
@@ -609,36 +611,37 @@ low-dimensional attention patterns that pack information into top eigenmodes.
 
 **Data contradiction** (FIM energy concentration):
 
-| Rank | RA+MLA | RA+MLA+KVSplice |
-|------|--------|-----------------|
-| r=8 | 22.3% | 22.0% |
-| r=16 | 37.3% | 37.0% |
+| Rank | RA+MLA |
+|------|--------|
+| r=8 | 22.3% |
+| r=16 | 37.3% |
 
 Only 37% of Fisher energy captured in top 16 modes. Would need r>16 to reach
 90% energy concentration.
 
 **Verdict**: Rejected. Information is diffuse across the spectral basis, not
-concentrated. Low energy concentration holds for all RA variants.
+concentrated. RA does not concentrate Fisher energy into fewer modes.
 
 ### Hypothesis 3: RA Makes KV Cache More Compressible
 
 **Initial prediction**: Bidirectional alternation creates shared latent
 geometry that enables better compression of attention cache.
 
-**Data contradiction** (comparing energy_r16):
+**Data contradiction**: FIM energy concentration unchanged with RA.
 
-| Architecture | energy_r16 | Cache Size | Quality (ppl) |
-|-------------|-----------|-----------|---------------|
-| RA+MLA | 0.373 | 6 MB | 3.4 |
-| RA+MLA+KVSplice | 0.370 | 3 MB | 3.3 |
+| Architecture | eigmax | energy_r16 |
+|-------------|--------|------------|
+| MLA | Higher | 0.373 |
+| RA+MLA | 0.0352 | 0.373 |
 
-Energy concentration unchanged (0.373 → 0.370), yet KVSplice improves quality
-by 11% (3.6 → 3.2 perplexity for MLA → MLA+KVSplice).
+RA produces flatter curvature (lower eigmax) but does not change Fisher energy
+concentration in the cache.
 
 **Verdict**: Rejected. RA doesn't change the compressibility as measured by
-Fisher energy. Learned compression (KVSplice) works independently of RA's
-geometric properties. Compression benefit comes from end-to-end learning, not
-from RA-induced structure.
+Fisher energy geometry. RA's benefits are in optimization dynamics (flatter
+curvature, better gradient flow), not in creating compressible structure. See
+[kvsplice.md](kvsplice.md) for learned compression approaches that work
+independently of RA.
 
 ### Key Takeaway
 
@@ -648,9 +651,9 @@ RA does not fundamentally change the information structure of attention:
 - No improved compressibility from geometry alone
 
 Do not expect RA to enable geometric compression or guide low-rank
-approximations via FIM metrics. Learned compression (KVSplice) works
-independently and benefits from RA's smooth training, not from structural
-changes RA makes to attention patterns.
+approximations via FIM metrics. Learned compression techniques (see
+[kvsplice.md](kvsplice.md)) work independently and benefit from RA's smooth
+training, not from structural changes RA makes to attention patterns.
 
 ---
 
@@ -729,37 +732,34 @@ attention patterns since both Q and K need to be usable in either role.
 
 1. **MLA alone**: 6x cache compression, +8.6% perplexity degradation
 2. **RA + MLA**: Introduces Token-Latent cache, recovers MLA quality (-5.6%),
-   27% inference speedup, same cache size
-3. **KVSplice**: 2x more compression on TL-cache, **improves quality** by 11%
-   (acts as regularization)
-4. **Combined**: RA+MLA+KVSplice achieves baseline quality with 12x
-   compression and 22% faster inference
+   27% inference speedup, same 6x cache compression
 
 ### Recommendations
 
-**For KV cache compression**: Use MLA+KVSplice (12x compression, best quality)
+**For KV cache compression**: Combine RA+MLA with learned compression
+techniques. See [kvsplice.md](kvsplice.md) for compression research that
+achieves 12x total compression while improving quality.
 
 **For inference speed**: Add learned-layer RA (20-27% speedup, no memory
 overhead)
 
-**Best overall**: RA+MLA+KVSplice (baseline quality, 12x compression, 22%
-faster)
+**Best approach**: RA+MLA provides the foundation for both compression and
+speed improvements through flatter optimization geometry.
 
 ### Architecture Trade-offs
 
 | Goal | Architecture | Trade-off |
 |------|-------------|-----------|
-| Best quality | MLA+KVSplice | 3 MB cache, 2% faster |
-| Best speed | RA+MLA | 6 MB cache, 27% faster |
-| Best balance | RA+MLA+KVSplice | 3 MB cache, 22% faster, baseline quality |
-| Most memory efficient | MLA+KVSplice | 12x compression |
+| Cache compression | MLA | 6 MB cache, +8.6% perplexity |
+| Speed + quality | RA+MLA | 6 MB cache, 27% faster, -5.6% perplexity |
+
+See [kvsplice.md](kvsplice.md) for learned compression techniques that further
+reduce cache size from 6 MB to 3 MB (12x total compression).
 
 ### Future Work
 
 1. **GPT-2+RA validation**: Confirm 20-27% speedup applies to uncompressed
    models
-2. **Larger scales**: Test MLA+RA+KVSplice on GPT-2 1.5B and larger
-3. **Other architectures**: Apply to other compressed attention mechanisms
+2. **Larger scales**: Test RA+MLA on GPT-2 1.5B and larger models
+3. **Other architectures**: Apply RA to other compressed attention mechanisms
    (GQA, MQA)
-4. **FIM-guided compression**: Use Fisher Information to guide KVSplice
-   compression directions
