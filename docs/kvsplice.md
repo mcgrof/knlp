@@ -25,6 +25,30 @@ compressed = kvsplice.compress(token_latent)  # [B, T, 128]
 cache = compressed  # 3 MB (12x compression vs standard)
 ```
 
+### MLA Baseline: What Are We Compressing?
+
+Multi-head Latent Attention (MLA) from DeepSeek-V2/V3 achieves 6x KV cache
+compression by introducing a latent bottleneck:
+
+```python
+# Standard attention: Store full K, V for each head
+k = w_k(x)  # [B, n_heads, T, d_head] - 768 dims
+v = w_v(x)  # [B, n_heads, T, d_head] - 768 dims
+cache = (k, v)  # 36 MB for GPT-2 124M
+
+# MLA: Store compressed latent, generate K, V on-the-fly
+kv_latent = to_kv_latent(x)  # [B, T, 256] - shared across heads
+k, v = from_kv_latent(kv_latent)  # Expand to per-head K, V
+cache = kv_latent  # 6 MB (6x compression)
+```
+
+**MLA trade-off**: 6x smaller cache but +8.6% perplexity degradation due to
+compression bottleneck.
+
+**RA+MLA improvement**: Token-Latent cache (supports Q/K transpose) with
+reciprocal attention recovers quality (-5.6% vs MLA alone) through better
+optimization geometry. See [ra.md](ra.md) for details.
+
 ### Learned Compression Implementation
 
 ```python
@@ -151,152 +175,12 @@ and 22% inference speedup.
 
 ---
 
-## Future Work: Alternative Compression Strategies
+## Alternative Approaches
 
-The following sections describe research directions and alternative
-implementations not yet validated on transformers. These are integration plans
-for future experimentation.
-
-### Spline→PCA Approach
-
-**Core innovation**: Instead of learned neural compression, use spline
-transformation + PCA for geometric compression.
-
-```
-Standard PCA:    V → PCA(V) → compressed
-Spline→PCA:      V → Spline(V) → PCA(Z) → compressed (potentially better)
-```
-
-**Key advantages**:
-- Learns data-specific geometry from real V distributions
-- Invertible (perfect reconstruction possible)
-- Better compression than plain PCA at same rank
-- Per-dimension monotonic warping preserves ordering
-
-### Standalone Test Results
-
-From `~/devel/kvsplice/` experiments on synthetic data:
-
-```
-k=8:  PCA MSE=0.001314,  SplinePCA MSE=0.001312  (Δ=-0.000002) ✓
-k=16: PCA MSE=0.000789,  SplinePCA MSE=0.000788  (Δ=-0.000001) ✓
-k=64: PCA MSE=0.000451,  SplinePCA MSE=0.000451  (Δ=0.000000)  ✓
-```
-
-**SplinePCA never worse than plain PCA, often better at low rank.**
-
-### Integration with V-only Pruning
-
-KVSplice can potentially be combined with V-only pruning from
-`lib/kv_pruning.py`:
-
-**Strategy A**: Prune first, then compress
-```python
-# Select top-k V indices (k=391)
-idx = pruner.compute_indices(scores, attn)
-V_keep = torch.gather(v, 2, idx_expanded)  # [B,H,391,64]
-
-# Compress kept V with geometry
-V_compressed = kvg.compress(V_keep)  # [B,H,391,k_latent]
-```
-
-**Strategy B**: Compress first, then select
-```python
-# Compress all V
-V_compressed = kvg.compress(v)  # [B,H,T,k_latent]
-
-# Select top-k based on importance
-idx = pruner.compute_indices(scores, attn)
-V_keep_compressed = torch.gather(V_compressed, 2, idx_expanded)
-```
-
-**Strategy A is recommended**: Prune first reduces memory before compression.
-
-### Proposed Ablation Steps
-
-Add to existing ablation sequences:
-
-**V19**: Baseline + V-only KV pruning (k=391) - **NEW CLEAN BASELINE**
-- Standard GPT-2 attention
-- V-only pruning (from lib/kv_pruning.py)
-- **Purpose**: Isolate V-only pruning effect
-
-**V20**: V19 + KVSplice compression (k=64)
-- V-only pruning selects 391 tokens
-- KVSplice compresses each V from 64→16 dims
-- Total memory: 391 × 16 = 6,256 per head (vs 1024 × 64 = 65,536 baseline)
-- **90% memory reduction**
-- **Purpose**: Test if geometric compression hurts quality
-
-**V21**: RA + V-only pruning + KVSplice
-- Full feature stack
-- **Purpose**: Does RA + geometry synergize?
-
-### Expected Memory Savings
-
-| Config | V cache | Reduction |
-|--------|---------|-----------|
-| Baseline (V0) | 1024 × 64 = 65,536 | 0% |
-| V-only prune (V19) | 391 × 64 = 25,024 | 62% |
-| V-prune + Geom (V20) | 391 × 16 = 6,256 | **90%** |
-
-### Technical Challenges
-
-**1. GPT-2 Combined QKV Projection**
-
-GPT-2 uses a single `c_attn` projection for Q, K, V. The hook needs to:
-```python
-# GPT-2: c_attn outputs [B, T, 3*n_embd]
-# Split to get V
-qkv = c_attn_output
-q, k, v = qkv.split(n_embd, dim=2)
-```
-
-**2. Memory Management**
-
-Collecting 120k V vectors × 64 dims × fp32 = 30MB per layer × 12 layers = 360MB.
-Move to CPU immediately after collection to avoid GPU OOM.
-
-**3. Fitting Time**
-
-Spline fitting with 8 epochs on 120k samples takes ~30-60 seconds on GPU.
-This is one-time calibration cost, acceptable.
-
-**4. Inference Integration**
-
-The fitted geometry must be loaded during inference and applied in attention:
-```python
-# Load geometry
-kvg = torch.load("kvsplice.pt")
-
-# In attention forward
-V_compressed = kvg.compress(V)
-# ... attention computation ...
-V_decompressed = kvg.decompress(V_compressed)
-```
-
-### Implementation Status
-
-**Completed**:
-- Core Spline→PCA implementation (`gpt2/kvsplice.py`)
-- Numerical stability fixes (clamping, epsilon guards)
-- Standalone validation on synthetic data
-- Integration into `train_ra_mla.py`
-- KVSpliceCalibrator class
-- Argument parsing (--kvsplice-*)
-
-**Pending**:
-- V-only pruning + KVSplice combined testing on real GPUs
-- Transformer validation with actual language modeling
-
-### Next Steps
-
-1. Complete integration into train_ra_mla.py
-2. Test calibration on small run (--kvsplice-max-batches 16)
-3. Verify saved geometry can be loaded and used
-4. Add V19-V21 to ablation defconfig
-5. Run full test with 2-hour time limit
-6. Compare Spline→PCA vs learned compression results
+For alternative compression strategies using direct geometric transformation
+(Spline→PCA) rather than learned compression, see
+[kvsplice-raw.md](kvsplice-raw.md). That approach represents the original
+brute-force geometric method that inspired this research direction.
 
 ## References
 
