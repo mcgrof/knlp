@@ -159,6 +159,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
         gpt_config.block_size = self.args.block_size
         gpt_config.dropout = self.args.dropout
         gpt_config.bias = getattr(self.args, "bias", True)
+        gpt_config.weight_tying = getattr(self.args, "weight_tying", True)
 
         # Create model with proper GPTConfig
         self.model = GPT2_RA_Model(gpt_config)
