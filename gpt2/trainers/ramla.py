@@ -60,6 +60,8 @@ def parse_step(step: str) -> Dict:
         arch = "mlakv"
     elif base == "RA":
         arch = "ra"
+    elif base == "RALEARN":
+        arch = "ra_learned"
     elif base == "RAMLA":
         arch = "ramla"
     elif base == "RAMLAKV":
@@ -122,6 +124,11 @@ class RAMLATrainer(VanillaGPT2Trainer):
             self.config = config
             self.trackers = self._ra_trainer.trackers
 
+        elif self.step_config["arch"] == "ra_learned":
+            # Pure GPT-2 with learned reciprocal attention (no MLA, no router)
+            super().__init__(args, config)
+            self._setup_ra_learned_model()
+
         elif self.step_config["arch"] in [
             "mla",
             "mlakv",
@@ -140,6 +147,35 @@ class RAMLATrainer(VanillaGPT2Trainer):
 
         else:
             raise ValueError(f"Unknown architecture: {self.step_config['arch']}")
+
+    def _setup_ra_learned_model(self):
+        """Replace model with GPT2_RA_Model (learned alternation, no MLA)."""
+        import torch
+        from ra import GPT2_RA_Model
+
+        # GPT2_RA_Model uses standard GPT config, not RA_MLA_Config
+        self.model = GPT2_RA_Model(self.config)
+        print(f"Created GPT2_RA_Model with learned alternation")
+        print(f"  Params: {self.model.get_num_params():,}")
+        print(f"  Balance stats: {self.model.get_balance_stats()}")
+
+        # Move to device and setup optimizer
+        self.model.to(self.args.device)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.args.learning_rate,
+            weight_decay=self.args.weight_decay,
+        )
+
+        # Rebuild scheduler for new optimizer
+        if hasattr(self, "scheduler") and self.scheduler is not None:
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+
+            self.scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=getattr(self.args, "max_iters", 10000),
+                eta_min=getattr(self.args, "min_lr", 6e-5),
+            )
 
     def _setup_mla_model(self):
         """Replace model with MLA/RAMLA/RAMLAKV/SBA variant."""
