@@ -15,13 +15,15 @@ asks "how much should query i attend to key j" (Q@K.T). RA alternates this
 with the reverse question: "how much should key j attend to query i" (K@Q.T).
 
 This creates complementary views of the same token relationships across
-transformer depth. We empirically tested this inductive bias and several
-related hypotheses to understand RA's true value.
+transformer depth, producing smoother optimization geometry and better gradient
+flow.
 
-#### Empirically Validated Benefits
+#### What RA Provides (Empirically Validated)
 
-Data source: test_matrix_results_20251123_231956 (GPT-2 124M, TinyStories,
-2-hour training runs, identical hyperparameters)
+**Experimental setup**: GPT-2 124M on FineWebEdu dataset, 2-hour training runs
+per configuration on AMD Radeon Pro W7900 GPU, identical hyperparameters.
+
+Results and trained models: [test_matrix_results_20251123_231956](https://github.com/mcgrof/knlp-key-results/tree/main/key_results/test_matrix_results_20251123_231956)
 
 **1. Smoother Optimization Geometry**
 
@@ -53,121 +55,21 @@ Alternating attention directions enriches representation learning:
 All three LM-eval benchmarks improved. The complementary forward and reverse
 views provide richer context for downstream tasks.
 
-**Key Finding**: RA's value lies in optimization dynamics, not structural
-changes to information geometry. The bidirectional perspective produces
-smoother gradients that compensate for compression losses in MLA.
-
-#### Hypotheses Tested and Rejected
-
-We tested several plausible hypotheses about RA's mechanism. Empirical data
-rejected these predictions:
-
-**Hypothesis 1: RA Increases Fisher Information**
-
-Initial prediction: Bidirectional flow concentrates information into sharper,
-more informative attention patterns (higher FIM eigenvalues).
-
-Data contradiction (W&B project: gpt2-kvsplice-ablation-w7900-mla-fixed):
-
-| Architecture | eigmax | trace | energy_r16 |
-|-------------|--------|-------|------------|
-| MLA | Higher | Higher | 0.373 |
-| RA+MLA | 0.0352 | Similar/lower | 0.373 |
-
-**Verdict**: Rejected. RA produces **lower** eigmax (flatter geometry), not
-higher. The FIM trace shows similar or slightly reduced total Fisher
-information. RA improves optimization by smoothing curvature, not by
-concentrating information.
-
-**Hypothesis 2: RA Concentrates Information into Fewer Modes**
-
-Initial prediction: Alternating attention creates more structured,
-low-dimensional attention patterns that pack information into top eigenmodes.
-
-Data contradiction (FIM energy concentration):
-
-| Rank | RA+MLA | RA+MLA+KVSplice |
-|------|--------|-----------------|
-| r=8 | 22.3% | 22.0% |
-| r=16 | 37.3% | 37.0% |
-
-Only 37% of Fisher energy captured in top 16 modes. Would need r>16 to reach
-90% energy concentration.
-
-**Verdict**: Rejected. Information is diffuse across the spectral basis, not
-concentrated. Low energy concentration holds for all RA variants.
-
-**Hypothesis 3: RA Makes KV Cache More Compressible**
-
-Initial prediction: Bidirectional alternation creates shared latent geometry
-that enables better compression of attention cache.
-
-Data contradiction (comparing energy_r16):
-
-| Architecture | energy_r16 | Cache Size | Quality (ppl) |
-|-------------|-----------|-----------|---------------|
-| RA+MLA | 0.373 | 6 MB | 3.4 |
-| RA+MLA+KVSplice | 0.370 | 3 MB | 3.3 |
-
-Energy concentration unchanged (0.373 → 0.370), yet KVSplice improves quality
-by 11% (3.6 → 3.2 perplexity for MLA → MLA+KVSplice).
-
-**Verdict**: Rejected. RA doesn't change the compressibility as measured by
-Fisher energy. Learned compression (KVSplice) works independently of RA's
-geometric properties. Compression benefit comes from end-to-end learning,
-not from RA-induced structure.
-
-**Hypothesis 4: Per-Token Routing Benefits from Bidirectional View**
-
-Initial prediction: Token-level difficulty becomes more detectable with dual
-attention directions, enabling effective routing.
-
-Data contradiction (test_matrix_results_20251122_091959):
-
-| Configuration | Perplexity | GPU Memory | Iterations |
-|--------------|-----------|-----------|-----------|
-| Baseline | 337.9 | 15.7 GB | 501 |
-| Token-level router | 377.4 | 24.9 GB | 356 |
-| Change | +11.7% | +58.3% | -29% |
-
-Token-level routing with contextual shift features failed completely.
-
-**Verdict**: Rejected for token-level routing. Learned per-layer alternation
-succeeds (27% speedup), but per-token routing does not. Routing decisions
-need layer-level context, not token-level features.
-
-#### Summary: The Real Inductive Bias
-
-**What RA Actually Provides**:
-
-Reciprocal Attention's empirically-validated inductive bias is that
-**bidirectional evaluation of token relationships produces smoother
+**Summary**: Reciprocal Attention's empirically-validated inductive bias is
+that **bidirectional evaluation of token relationships produces smoother
 optimization geometry**. By alternating Q@K.T (forward: how queries view keys)
 and K@Q.T (reverse: how keys view queries) across transformer layers, RA
 flattens the curvature of the loss landscape.
 
 This smoother geometry enables:
-- Better gradient flow during training (recovers 5.6% quality loss)
+- Better gradient flow during training (recovers 5.6% quality loss from MLA)
 - Faster convergence at inference (27% tokens/sec increase)
 - Improved downstream task accuracy (6% average LM-eval gain)
 - More stable training with compressed representations
 
-**What RA Does Not Provide**:
-
-RA does not fundamentally change the information structure of attention:
-- No increase in Fisher Information (eigmax lower, not higher)
-- No concentration into fewer modes (37% energy in top 16)
-- No improved compressibility from geometry alone
-- No better token-level routing signals
-
-**Practical Implication**:
-
-Use RA when training with compressed attention mechanisms (MLA, KVSplice) or
-seeking inference speedup. The optimization benefits compensate for
-compression losses. Do not expect RA to enable geometric compression or
-guide low-rank approximations via FIM metrics. Learned compression works
-independently and benefits from RA's smooth training, not from structural
-changes RA makes to attention patterns.
+**When to use RA**: Training with compressed attention mechanisms (MLA,
+KVSplice) or when seeking inference speedup. The optimization benefits
+compensate for compression losses without memory overhead.
 
 ### The Mathematical Foundation
 
@@ -786,6 +688,82 @@ increased information density. The lower FIM values suggest RA provides:
 
 This explains why RA particularly helps MLA: the smoother optimization
 compensates for compression losses.
+
+---
+
+## Hypotheses Tested and Rejected
+
+During RA research, we tested several plausible hypotheses about the mechanism
+by which bidirectional attention might improve performance. Empirical data
+systematically rejected these predictions. This section documents what RA does
+**not** provide, helping clarify its actual value proposition.
+
+### Hypothesis 1: RA Increases Fisher Information
+
+**Initial prediction**: Bidirectional flow concentrates information into
+sharper, more informative attention patterns (higher FIM eigenvalues).
+
+**Data contradiction** (W&B: gpt2-kvsplice-ablation-w7900-mla-fixed):
+
+| Architecture | eigmax | trace | energy_r16 |
+|-------------|--------|-------|------------|
+| MLA | Higher | Higher | 0.373 |
+| RA+MLA | 0.0352 | Similar/lower | 0.373 |
+
+**Verdict**: Rejected. RA produces **lower** eigmax (flatter geometry), not
+higher. The FIM trace shows similar or slightly reduced total Fisher
+information. RA improves optimization by smoothing curvature, not by
+concentrating information.
+
+### Hypothesis 2: RA Concentrates Information into Fewer Modes
+
+**Initial prediction**: Alternating attention creates more structured,
+low-dimensional attention patterns that pack information into top eigenmodes.
+
+**Data contradiction** (FIM energy concentration):
+
+| Rank | RA+MLA | RA+MLA+KVSplice |
+|------|--------|-----------------|
+| r=8 | 22.3% | 22.0% |
+| r=16 | 37.3% | 37.0% |
+
+Only 37% of Fisher energy captured in top 16 modes. Would need r>16 to reach
+90% energy concentration.
+
+**Verdict**: Rejected. Information is diffuse across the spectral basis, not
+concentrated. Low energy concentration holds for all RA variants.
+
+### Hypothesis 3: RA Makes KV Cache More Compressible
+
+**Initial prediction**: Bidirectional alternation creates shared latent
+geometry that enables better compression of attention cache.
+
+**Data contradiction** (comparing energy_r16):
+
+| Architecture | energy_r16 | Cache Size | Quality (ppl) |
+|-------------|-----------|-----------|---------------|
+| RA+MLA | 0.373 | 6 MB | 3.4 |
+| RA+MLA+KVSplice | 0.370 | 3 MB | 3.3 |
+
+Energy concentration unchanged (0.373 → 0.370), yet KVSplice improves quality
+by 11% (3.6 → 3.2 perplexity for MLA → MLA+KVSplice).
+
+**Verdict**: Rejected. RA doesn't change the compressibility as measured by
+Fisher energy. Learned compression (KVSplice) works independently of RA's
+geometric properties. Compression benefit comes from end-to-end learning, not
+from RA-induced structure.
+
+### Key Takeaway
+
+RA does not fundamentally change the information structure of attention:
+- No increase in Fisher Information (eigmax lower, not higher)
+- No concentration into fewer modes (37% energy in top 16)
+- No improved compressibility from geometry alone
+
+Do not expect RA to enable geometric compression or guide low-rank
+approximations via FIM metrics. Learned compression (KVSplice) works
+independently and benefits from RA's smooth training, not from structural
+changes RA makes to attention patterns.
 
 ---
 
