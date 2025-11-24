@@ -46,7 +46,7 @@ endchoice
 
 config TARGET_EFFECTIVE_BATCH
 	int "Target effective batch size (AUTO mode)"
-	default 1024
+	default 512
 	range 64 8192
 	depends on HYPER_PARAM_AUTO
 	help
