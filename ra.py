@@ -1268,7 +1268,7 @@ class MLA_Model(nn.Module):
 # =============================================================================
 
 
-class GPT2_RA_Attention(nn.Module):
+class GPT2_RA_Learned_Attention(nn.Module):
     """
     GPT-2 attention with learned reciprocal alternation.
 
@@ -1352,13 +1352,13 @@ class GPT2_RA_Attention(nn.Module):
         return y
 
 
-class GPT2_RA_Block(nn.Module):
+class GPT2_RA_Learned_Block(nn.Module):
     """Transformer block with GPT2_RA attention."""
 
     def __init__(self, config, layer_idx: int, alternation_logits: nn.Parameter):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = GPT2_RA_Attention(config, layer_idx, alternation_logits)
+        self.attn = GPT2_RA_Learned_Attention(config, layer_idx, alternation_logits)
         self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
         # Standard MLP
         self.mlp = nn.Sequential(
@@ -1374,7 +1374,7 @@ class GPT2_RA_Block(nn.Module):
         return x
 
 
-class GPT2_RA(nn.Module):
+class GPT2_RA_Learned(nn.Module):
     """
     Full GPT-2 model with learned reciprocal attention alternation.
 
@@ -1401,7 +1401,7 @@ class GPT2_RA(nn.Module):
         # Transformer blocks
         self.blocks = nn.ModuleList(
             [
-                GPT2_RA_Block(config, i, self.alternation_logits)
+                GPT2_RA_Learned_Block(config, i, self.alternation_logits)
                 for i in range(config.n_layer)
             ]
         )
@@ -1491,6 +1491,228 @@ class GPT2_RA(nn.Module):
         if non_embedding:
             n_params -= self.wpe.weight.numel()
         return n_params
+
+
+class GPT2_RA_Fixed_Attention(nn.Module):
+    """
+    GPT-2 attention with FIXED reciprocal pattern (no learning).
+
+    Uses predetermined pattern to decide standard vs reciprocal per layer.
+    No learnable parameters for alternation - pattern is baked in at init.
+    """
+
+    def __init__(self, config, layer_idx: int, use_reciprocal: bool):
+        super().__init__()
+        self.config = config
+        self.layer_idx = layer_idx
+        self.use_reciprocal = use_reciprocal  # Fixed decision
+
+        assert config.n_embd % config.n_head == 0
+        self.n_head = config.n_head
+        self.head_dim = config.n_embd // config.n_head
+
+        # Standard GPT-2 QKV projection
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.dropout = config.dropout
+
+    def forward(self, x):
+        B, T, C = x.size()
+
+        # Standard QKV projection
+        q, k, v = self.c_attn(x).split(self.config.n_embd, dim=2)
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # Fixed decision (no branching needed - known at compile time)
+        if self.use_reciprocal:
+            # Reciprocal: K @ Q.T @ V
+            y = F.scaled_dot_product_attention(
+                k,
+                q,
+                v,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+        else:
+            # Standard: Q @ K.T @ V
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+
+        # Merge heads and project
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_dropout(self.c_proj(y))
+
+        return y
+
+
+class GPT2_RA_Fixed_Block(nn.Module):
+    """Transformer block with fixed RA pattern."""
+
+    def __init__(self, config, layer_idx: int, use_reciprocal: bool):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = GPT2_RA_Fixed_Attention(config, layer_idx, use_reciprocal)
+        self.ln_2 = nn.LayerNorm(config.n_embd, bias=config.bias)
+        # Standard MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias),
+            nn.Dropout(config.dropout),
+        )
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+
+class GPT2_RA_Fixed(nn.Module):
+    """
+    GPT-2 with FIXED reciprocal attention pattern.
+
+    No learning - pattern is predetermined at initialization.
+    Supports multiple pattern types for ablation studies.
+
+    Patterns:
+        "none":        All standard (equivalent to baseline GPT2)
+        "all":         All reciprocal
+        "alternating": Even layers reciprocal, odd standard
+        "late":        Last 6 layers reciprocal, first 6 standard
+        "early":       First 6 layers reciprocal, last 6 standard
+        custom list:   Pass list of layer indices for reciprocal
+
+    Args:
+        config: GPTConfig
+        pattern: str or list of ints for reciprocal layers
+    """
+
+    def __init__(self, config, pattern="alternating"):
+        super().__init__()
+        self.config = config
+
+        # Determine which layers are reciprocal
+        if isinstance(pattern, list):
+            # Custom pattern: list of layer indices
+            self.reciprocal_layers = set(pattern)
+        elif pattern == "none":
+            self.reciprocal_layers = set()
+        elif pattern == "all":
+            self.reciprocal_layers = set(range(config.n_layer))
+        elif pattern == "alternating":
+            # Even indices: 0, 2, 4, 6, 8, 10
+            self.reciprocal_layers = set(range(0, config.n_layer, 2))
+        elif pattern == "late":
+            # Last half of layers
+            self.reciprocal_layers = set(range(config.n_layer // 2, config.n_layer))
+        elif pattern == "early":
+            # First half of layers
+            self.reciprocal_layers = set(range(config.n_layer // 2))
+        else:
+            raise ValueError(f"Unknown pattern: {pattern}")
+
+        self.pattern = pattern
+
+        # Token and position embeddings
+        self.wte = nn.Embedding(config.vocab_size, config.n_embd)
+        self.wpe = nn.Embedding(config.block_size, config.n_embd)
+        self.drop = nn.Dropout(config.dropout)
+
+        # Transformer blocks with fixed pattern
+        self.blocks = nn.ModuleList(
+            [
+                GPT2_RA_Fixed_Block(
+                    config, i, use_reciprocal=(i in self.reciprocal_layers)
+                )
+                for i in range(config.n_layer)
+            ]
+        )
+
+        self.ln_f = nn.LayerNorm(config.n_embd, bias=config.bias)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
+
+        # Init weights
+        self.apply(self._init_weights)
+
+        print(f"GPT2_RA_Fixed pattern: {pattern}")
+        print(f"  Reciprocal layers: {sorted(self.reciprocal_layers)}")
+        print(
+            f"  Standard layers: {sorted(set(range(config.n_layer)) - self.reciprocal_layers)}"
+        )
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        device = idx.device
+        B, T = idx.size()
+        assert (
+            T <= self.config.block_size
+        ), f"Sequence {T} > block_size {self.config.block_size}"
+
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+
+        # Embeddings
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(pos)
+        x = self.drop(tok_emb + pos_emb)
+
+        # Transformer blocks
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.ln_f(x)
+
+        if targets is not None:
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
+        else:
+            logits = self.lm_head(x[:, [-1], :])
+            loss = None
+
+        return logits, loss
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return number of parameters in the model.
+        For non-embedding count (default), position embeddings get subtracted.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.wpe.weight.numel()
+        return n_params
+
+    def get_pattern_stats(self):
+        """Get statistics about the fixed pattern."""
+        return {
+            "pattern": str(self.pattern),
+            "n_reciprocal": len(self.reciprocal_layers),
+            "n_standard": self.config.n_layer - len(self.reciprocal_layers),
+            "reciprocal_layers": sorted(self.reciprocal_layers),
+        }
 
 
 # =============================================================================
