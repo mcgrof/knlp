@@ -139,7 +139,7 @@ def detect_model_type(checkpoint: Dict) -> Tuple[str, Dict]:
     elif has_ra:
         return "GPT2_RA", {}
     else:
-        return "GPT", {}
+        return "GPT2", {}
 
 
 def load_model(
