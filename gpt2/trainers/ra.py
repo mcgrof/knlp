@@ -23,7 +23,7 @@ parent_dir = os.path.dirname(
 )
 sys.path.insert(0, parent_dir)
 
-from gpt2.model import GPT, GPTConfig, Block, LayerNorm, MLP, CausalSelfAttention
+from gpt2.model import GPT2, GPTConfig, Block, LayerNorm, MLP, CausalSelfAttention
 from ra import (
     RAConfig,
     RAAttention,

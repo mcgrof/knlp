@@ -14,7 +14,7 @@ import torch
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 
-from gpt2.model import GPT, GPTConfig
+from gpt2.model import GPT2, GPTConfig
 
 
 def time_step(step_name: str, num_iters: int = 50):
