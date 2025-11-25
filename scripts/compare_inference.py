@@ -68,7 +68,6 @@ def create_config(config_type: str, **kwargs):
             d_latent=kwargs.get("d_latent", 256),
             block_size=kwargs.get("block_size", 1024),
             n_layers=kwargs.get("n_layers", 12),
-            vocab_size=kwargs.get("vocab_size", 50304),
             dropout=kwargs.get("dropout", 0.0),
         )
     else:
@@ -170,7 +169,9 @@ def load_model(
     return model, model_type
 
 
-def create_model_random(model_type: str, device: str = "cuda") -> torch.nn.Module:
+def create_model_random(
+    model_type: str, device: str = "cuda", vocab_size: int = 50257
+) -> torch.nn.Module:
     """Create model with random initialization."""
     if model_type not in MODEL_REGISTRY:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -181,15 +182,34 @@ def create_model_random(model_type: str, device: str = "cuda") -> torch.nn.Modul
     config = create_config(config_type)
 
     # Instantiate model with defaults
-    if model_type in ["RAMLAKV_GPT", "MLAKV_GPT", "RAMLAKVM_GPT", "RAMLAKVME_GPT"]:
-        model = model_class(config, compression_ratio=0.5)
+    # Note: vocab_size comes before other parameters in MLA model signatures
+    if model_type == "RAMLAKV_GPT":
+        model = model_class(config, vocab_size, compression_ratio=0.5)
+    elif model_type == "MLAKV_GPT":
+        model = model_class(config, vocab_size, compression_ratio=0.5)
+    elif model_type == "RAMLAKVM_GPT":
+        model = model_class(
+            config, vocab_size, compression_ratio=0.5, mlp_d_latent=256, tie_mlp=True
+        )
+    elif model_type == "RAMLAKVME_GPT":
+        model = model_class(
+            config,
+            vocab_size,
+            d_embed=256,
+            compression_ratio=0.5,
+            mlp_d_latent=256,
+            tie_mlp=True,
+        )
     elif model_type == "MLA_KV2_GPT":
-        model = model_class(config, compression_ratio=0.5)
+        model = model_class(config, vocab_size, compression_ratio=0.5)
     elif model_type == "MLA_KV2_MLPSPLICE_GPT":
-        model = model_class(config, compression_ratio=0.5, mlp_d_latent=256)
+        model = model_class(config, vocab_size, compression_ratio=0.5, mlp_d_latent=256)
     elif model_type == "SBAGPT":
-        model = model_class(config, alpha_init=2.0, kv_mode="topk")
+        model = model_class(config, vocab_size, alpha_init=2.0, kv_mode="separate")
+    elif model_type in ["MLAGPT", "RAMLAGPT"]:
+        model = model_class(config, vocab_size)
     else:
+        # GPT and GPT2_RA_Model use GPTConfig which includes vocab_size
         model = model_class(config)
 
     model.to(device)
