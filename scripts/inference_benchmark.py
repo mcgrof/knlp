@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Inference benchmark for comparing trained MLA/RAMLA/SBA models.
+Inference benchmark for comparing trained MLA/RAMLA models.
 
 Compares:
 1. Text generation quality
@@ -23,7 +23,6 @@ from ra import (
     MLAKV_GPT,
     RAMLAGPT,
     RAMLAKV_GPT,
-    SBAGPT,
     RA_MLA_Config,
 )
 
@@ -42,12 +41,6 @@ def load_model(checkpoint_path, device="cuda"):
         model_type = "ramlakv"
     elif "stepRAMLA" in checkpoint_path:
         model_type = "ramla"
-    elif "stepSBASS" in checkpoint_path:
-        model_type = "sba_ss"
-    elif "stepSBAKV" in checkpoint_path:
-        model_type = "sba_kv"
-    elif "stepSBA" in checkpoint_path:
-        model_type = "sba"
     else:
         model_type = "mla"  # default
 
@@ -70,11 +63,6 @@ def load_model(checkpoint_path, device="cuda"):
         model = RAMLAGPT(cfg)
     elif model_type == "ramlakv":
         model = RAMLAKV_GPT(cfg, compression_ratio=0.5)
-    elif model_type in ["sba", "sba_ss", "sba_kv"]:
-        kv_mode = {"sba": "separate", "sba_ss": "shared_skew", "sba_kv": "k_eq_v"}[
-            model_type
-        ]
-        model = SBAGPT(cfg, kv_mode=kv_mode)
 
     # Load weights
     model.load_state_dict(checkpoint["model"])
