@@ -330,9 +330,10 @@ def test_branching_breaks_gradients():
         print(f"✗ Tensor disconnected from input - no grad_fn")
 
     print("\nConclusion:")
-    print("GPT2_RA_Learned uses Python if-statement (line 1329)")
-    print("This disconnects alternation_logits from CE loss")
-    print("Gradients only flow when explicit penalty is added")
+    print("GPT2_RA_Learned now uses differentiable blending during training")
+    print("Computes both paths and blends with learned probability")
+    print("This allows gradients to flow from CE loss to alternation_logits")
+    print("Inference still uses branching for efficiency (no learning needed)")
 
     return True
 

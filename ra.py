@@ -1319,31 +1319,47 @@ class GPT2_RA_Learned_Attention(nn.Module):
         p_recip = self.get_alternation_prob()
 
         if self.training:
-            # Straight-through estimator
-            use_reciprocal = (p_recip > 0.5).float()
-            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
-        else:
-            use_reciprocal = (p_recip > 0.5).float()
-
-        # Flash attention with Q/K swap for reciprocal
-        if use_reciprocal > 0.5:
-            # Reciprocal: K @ Q.T @ V
-            y = F.scaled_dot_product_attention(
-                k,
-                q,
-                v,
-                dropout_p=self.dropout if self.training else 0.0,
-                is_causal=True,
-            )
-        else:
+            # During training: compute both paths and blend (enables learning)
             # Standard: Q @ K.T @ V
-            y = F.scaled_dot_product_attention(
+            y_standard = F.scaled_dot_product_attention(
                 q,
                 k,
                 v,
-                dropout_p=self.dropout if self.training else 0.0,
+                dropout_p=self.dropout,
                 is_causal=True,
             )
+
+            # Reciprocal: K @ Q.T @ V
+            y_reciprocal = F.scaled_dot_product_attention(
+                k,
+                q,
+                v,
+                dropout_p=self.dropout,
+                is_causal=True,
+            )
+
+            # Differentiable blend using learned probability
+            # Gradients flow through p_recip to alternation_logits
+            y = (1 - p_recip) * y_standard + p_recip * y_reciprocal
+        else:
+            # During inference: use branching (cheaper, no learning needed)
+            use_reciprocal = p_recip > 0.5
+            if use_reciprocal:
+                y = F.scaled_dot_product_attention(
+                    k,
+                    q,
+                    v,
+                    dropout_p=0.0,
+                    is_causal=True,
+                )
+            else:
+                y = F.scaled_dot_product_attention(
+                    q,
+                    k,
+                    v,
+                    dropout_p=0.0,
+                    is_causal=True,
+                )
 
         # Merge heads and project
         y = y.transpose(1, 2).contiguous().view(B, T, C)
