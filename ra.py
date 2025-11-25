@@ -1409,9 +1409,10 @@ class GPT2_RA_Model(nn.Module):
         self.ln_f = nn.LayerNorm(config.n_embd, bias=config.bias)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # Weight tying
-        if config.weight_tying:
-            self.wte.weight = self.lm_head.weight
+        # Weight tying: standard practice in modern LMs
+        # Shares token embedding matrix with output projection to reduce parameters
+        # and improve generalization (Press & Wolf 2016: https://arxiv.org/pdf/1608.05859)
+        self.wte.weight = self.lm_head.weight
 
         # Init weights
         self.apply(self._init_weights)
@@ -1480,12 +1481,14 @@ class GPT2_RA_Model(nn.Module):
         return logits, loss
 
     def get_num_params(self, non_embedding=True):
-        """Return number of parameters."""
+        """
+        Return number of parameters in the model.
+        For non-embedding count (default), position embeddings get subtracted.
+        Token embeddings are kept since they're shared with lm_head (weight tying).
+        """
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
             n_params -= self.wpe.weight.numel()
-            if not self.config.weight_tying:
-                n_params -= self.wte.weight.numel()
         return n_params
 
 
