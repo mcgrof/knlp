@@ -230,7 +230,9 @@ class GPT(nn.Module):
             )
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # weight tying: https://paperswithcode.com/method/weight-tying
+        # Weight tying: standard practice in modern LMs
+        # Shares token embedding matrix with output projection to reduce parameters
+        # and improve generalization (Press & Wolf 2016: https://arxiv.org/pdf/1608.05859)
         self.transformer.wte.weight = self.lm_head.weight
 
         # init all weights
