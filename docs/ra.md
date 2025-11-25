@@ -467,61 +467,108 @@ effective bidirectional attention approach.
 
 ## GPT-2 + RA (Pure Reciprocal Attention)
 
-### Status: In Progress
-
-Testing pure RA mechanism without MLA or latent compression to isolate RA's
-contribution to inference speed.
-
 ### Architecture
 
 Standard GPT-2 with learned per-layer decision on whether to use Q@K.T
-(standard) or K@Q.T (reciprocal) attention. Same implementation as MLA+RA but
-without compression:
+(standard) or K@Q.T (reciprocal) attention. No compression mechanisms:
 
 - No latent compression (full Q, K, V projections)
-- Same cache requirements as baseline GPT-2 (36 MB)
+- Same cache requirements as baseline GPT-2
 - Learned alternation with balance loss (50/50 split)
-- Same model size as baseline
+- Same parameter count as baseline (123.69M)
 
-### Motivation
-
-Evolution 4 (MLA+RA) showed RA provides 27% inference speedup with MLA.
-Question: Does this benefit hold for pure GPT-2 without compression?
-
-**Hypotheses**:
-1. RA's speed benefit comes from helping compressed representations
-2. RA is fundamentally more efficient regardless of compression
-
-### Implementation Approach
+### Implementation
 
 The efficient learned per-layer approach:
 
 - **Learned per-layer decision**: Each layer learns whether to use standard
-  or reciprocal attention
+  or reciprocal attention via sigmoid(alternation_logits[layer_idx])
 - **No dual computation**: Only compute chosen attention direction
 - **No router overhead**: Simple binary choice per layer
 - **Balance loss**: Encourages 50/50 split across layers for bidirectional
   information flow
 
+```python
+# Learned alternation decision
+p_recip = torch.sigmoid(self.alternation_logits[self.layer_idx])
+
+if p_recip > 0.5:
+    # Reciprocal: K @ Q.T
+    y = F.scaled_dot_product_attention(k, q, v, is_causal=True)
+else:
+    # Standard: Q @ K.T
+    y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+```
+
 This approach provides RA's benefits without compute overhead.
 
-### Expected Analysis
+### Results
 
-**TODO**: Results pending - test currently running
+Test configuration: GPT-2 124M on FineWebEdu dataset, 2-hour training runs on
+AMD W7900 GPU, identical hyperparameters (LR=6e-4, batch=32, grad_acc=16).
 
-Project: `gpt2-ra-ablation`
-Steps: B0 (baseline), RALEARN0 (learned RA)
+Project: [gpt2-ra-ablation](https://wandb.ai/mcgrof-citizen/gpt2-ra-ablation)
 
-Will compare:
-- Perplexity: GPT-2 baseline vs GPT-2+RA
-- Inference speed: tokens/sec for both architectures
-- Training efficiency: iterations completed in same time
-- Cache memory: should be identical (no compression)
-- LM-eval benchmarks: quality comparison
+![GPT-2 RA Perplexity](images/gpt2_ra_perplexity_comparison.png)
 
-**Key question**: If GPT-2+RA shows similar 20-27% inference speedup without
-compression, this confirms RA is fundamentally more efficient, not just
-beneficial for compressed models.
+| Architecture | Val Perplexity | Params | Cache Size | Inference Speed |
+|-------------|----------------|--------|------------|-----------------|
+| Baseline GPT-2 (B0) | 948.61 | 123.69M | Full KV | 212.1 tok/s |
+| **GPT-2 + RA (RALEARN0)** | **892.59** | **123.69M** | **Full KV** | **172.3 tok/s** |
+
+**Key Findings**:
+
+1. **Quality improvement**: **5.9% better perplexity** (948.61 → 892.59)
+2. **Inference cost**: **18.8% slower** (212.1 → 172.3 tok/s, 1.23x slowdown)
+3. **Parameter parity**: Same 123.69M params as baseline
+4. **No cache savings**: Full KV cache (no compression in this variant)
+5. **Training iterations**: 201 steps in 2 hours (same for both)
+
+![GPT-2 RA Inference Speed](images/gpt2_ra_inference_speed.png)
+
+![GPT-2 RA Training Curves](images/gpt2_ra_training_curves.png)
+
+### Analysis
+
+**Quality vs Speed Tradeoff**:
+
+![GPT-2 RA Tradeoff](images/gpt2_ra_tradeoff_summary.png)
+
+RA provides a **reasonable tradeoff**: 5.9% better perplexity for 18.8% slower
+inference (1.23x slowdown). Many architecture improvements (MoE, long-context)
+are 2-3x slower for similar quality gains.
+
+**Why is inference slower?**
+
+Despite the transpose operation being essentially free (tensor view, not
+copy), RA incurs overhead from:
+
+1. **Alternation decision overhead**: Each layer evaluates
+   sigmoid(alternation_logits) and branches
+2. **Flash attention kernel switching**: Different causal mask patterns for
+   Q@K.T vs K@Q.T may inhibit kernel fusion
+3. **Cache locality**: Swapping Q/K arguments may disrupt memory access
+   patterns
+
+**Hypothesis rejected**: Original hypothesis was that RA would provide
+inference speedup. Results show RA provides quality improvement at the cost of
+modest inference slowdown. The 27% speedup observed with RA+MLA must come from
+the interaction between RA and latent compression, not from RA alone.
+
+**Downstream task performance**: LM-eval results (HellaSwag) showed identical
+accuracy for both baseline and RA models after 2-hour training. This suggests
+RA's quality benefits show up in perplexity but may require longer training or
+different tasks to manifest in downstream metrics.
+
+### Conclusion
+
+GPT-2 + RA validates that reciprocal attention improves language modeling
+quality (5.9% better perplexity) independent of any compression mechanisms.
+The 1.23x inference slowdown is acceptable for applications where quality
+matters more than raw throughput.
+
+**Next steps**: Explore Q=K.T weight tying to reduce parameters and potentially
+recover inference speed while maintaining RA's quality benefits.
 
 ---
 
@@ -739,8 +786,10 @@ attention patterns since both Q and K need to be usable in either role.
 
 ### Key Findings
 
-1. **MLA alone**: 6x cache compression, +8.6% perplexity degradation
-2. **RA + MLA**: Introduces Token-Latent cache, recovers MLA quality (-5.6%),
+1. **GPT-2 + RA alone**: No compression, 5.9% better perplexity, 18.8% slower
+   inference (1.23x slowdown)
+2. **MLA alone**: 6x cache compression, +8.6% perplexity degradation
+3. **RA + MLA**: Introduces Token-Latent cache, recovers MLA quality (-5.6%),
    27% inference speedup, same 6x cache compression
 
 ### Recommendations
@@ -759,16 +808,19 @@ speed improvements through flatter optimization geometry.
 
 | Goal | Architecture | Trade-off |
 |------|-------------|-----------|
+| Quality (no compression) | GPT-2 + RA | Full cache, +5.9% perplexity, 18.8% slower |
 | Cache compression | MLA | 6 MB cache, +8.6% perplexity |
-| Speed + quality | RA+MLA | 6 MB cache, 27% faster, -5.6% perplexity |
+| Speed + quality + compression | RA+MLA | 6 MB cache, 27% faster, -5.6% perplexity vs MLA |
 
 See [kvsplice.md](kvsplice.md) for learned compression techniques that further
 reduce cache size from 6 MB to 3 MB (12x total compression).
 
 ### Future Work
 
-1. **GPT-2+RA validation**: Confirm 20-27% speedup applies to uncompressed
-   models
-2. **Larger scales**: Test RA+MLA on GPT-2 1.5B and larger models
-3. **Other architectures**: Apply RA to other compressed attention mechanisms
+1. **Q=K.T weight tying**: Explore weight tying to reduce parameters and
+   potentially recover inference speed while maintaining quality benefits
+2. **KV cache compression**: Combine RA with latent compression (compress K/V
+   through bottleneck while keeping Q direct or tied)
+3. **Larger scales**: Test RA+MLA on GPT-2 1.5B and larger models
+4. **Other architectures**: Apply RA to other compressed attention mechanisms
    (GQA, MQA)
