@@ -77,6 +77,94 @@ Architectural changes include:
 - Kconfig parser silently ignores lines with spaces around equals signs
 - After any edit to defconfigs, verify syntax: `grep " = " defconfigs/*` should return nothing
 
+## GPT2 Model Naming Convention
+
+### Overview
+All GPT-2 model variants follow a consistent hierarchical naming pattern
+that makes the research intent and feature composition clear. Models are
+automatically discovered by scripts using convention-based introspection.
+
+### Naming Pattern
+
+Base architecture with incremental features:
+```
+GPT2              # Baseline GPT-2 (no modifications)
+GPT2_RA           # + Reciprocal Attention (learned alternation)
+GPT2_MLA          # + Multi-head Latent Attention (cache compression)
+GPT2_MLA_RA       # + Both MLA and RA
+GPT2_MLA_KV       # + MLA with KV compression (KVSplice)
+GPT2_MLA_RA_KV    # + MLA + RA + KV compression
+GPT2_MLA_KV2      # + MLA with 2-latent (separate K/V latents)
+GPT2_MLA_KV2M     # + KV2 + MLP compression (MLPSplice)
+GPT2_MLA_RA_KVM   # + RA + MLA + KV + MLP compression
+```
+
+Feature abbreviations:
+- `_RA`: Reciprocal Attention (alternating Q@K.T and K@Q.T)
+- `_MLA`: Multi-head Latent Attention (DeepSeek-style cache compression)
+- `_KV`: KV compression via KVSplice
+- `_KV2`: 2-latent MLA (separate K and V latent spaces)
+- `M` suffix: MLP compression via MLPSplice
+
+### Adding New Models
+
+To add a new GPT-2 model variant, follow these conventions (automatically
+discovered by scripts, no manual registration needed):
+
+1. **Naming**: Class name must start with `GPT2`
+   - Example: `GPT2_MyFeature` or `GPT2_MLA_MyFeature`
+
+2. **Location**: Define in `ra.py` (for MLA-based) or `gpt2/model.py` (for baseline variants)
+
+3. **Inheritance**: Must inherit from `nn.Module`
+
+4. **Configuration Parameter**:
+   - Use `config: GPTConfig` for GPT-2 baseline architecture
+   - Use `cfg: RA_MLA_Config` for MLA-based architectures
+   - Must be the first parameter after `self` in `__init__`
+
+5. **Interface**: Must implement `get_num_params()` method
+
+6. **Example**:
+```python
+class GPT2_MLA_MyFeature(nn.Module):
+    def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
+        super().__init__()
+        self.cfg = cfg
+        # ... implementation ...
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def forward(self, idx, targets=None):
+        # ... implementation ...
+        return logits, loss
+```
+
+That's it! The model will be automatically discovered by:
+- `scripts/compare_inference.py --list` (inference benchmarking)
+- Future scripts using the `discover_gpt2_models()` pattern
+
+### Ablation Step Naming
+
+Ablation steps use short prefixes that map to model architectures:
+```
+B         → GPT2 baseline
+RA        → GPT2_RA (fixed reciprocal)
+RALEARN   → GPT2_RA (learned reciprocal)
+MLA       → GPT2_MLA
+RAMLA     → GPT2_MLA_RA
+RAMLAKV   → GPT2_MLA_RA_KV
+RAMLAKVM  → GPT2_MLA_RA_KVM
+MLAKV     → GPT2_MLA_KV
+MLAKV2    → GPT2_MLA_KV2
+MLAKV2M   → GPT2_MLA_KV2M
+```
+
+Legacy step names with "0" or "1" suffixes (for learning rate ablation)
+are still supported for backwards compatibility but are deprecated. New
+experiments should use the architecture name directly without suffixes.
+
 ## GPU Optimization Preferences
 
 ### Training Optimizations

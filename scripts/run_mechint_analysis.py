@@ -108,7 +108,7 @@ def load_model_and_data(checkpoint_path: str, dataset_name: str = "finewebedu"):
         state_dict = checkpoint
 
     # Load model (example for GPT-2)
-    from gpt2.model import GPT, GPTConfig
+    from gpt2.model import GPT2, GPTConfig
 
     # Load config from checkpoint if available
     if "config" in checkpoint:

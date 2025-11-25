@@ -39,41 +39,36 @@ def parse_step(step: str) -> Dict:
     """
     step = step.upper()
 
-    # Determine learning rate from suffix
-    if step.endswith("1"):
-        lr = LR_AGGRESSIVE
-        lr_name = "aggressive"
-        base = step[:-1]
-    elif step.endswith("0"):
-        lr = LR_STANDARD
-        lr_name = "standard"
+    # Support legacy naming with 0/1 suffixes for backwards compatibility
+    # New naming uses just the architecture name without learning rate suffix
+    if step.endswith(("0", "1")):
+        # Legacy: strip suffix, always use standard LR
         base = step[:-1]
     else:
-        raise ValueError(f"Step must end with 0 or 1: {step}")
+        # New style: no suffix needed
+        base = step
 
-    # Determine architecture from prefix
-    if base == "B":
-        arch = "baseline"
-    elif base == "MLA":
-        arch = "mla"
-    elif base == "MLAKV2-":
-        arch = "mlakv2"
-    elif base == "MLAKV2M":
-        arch = "mlakv2mlp"
-    elif base == "MLAKV":
-        arch = "mlakv"
-    elif base == "RA":
-        arch = "ra"
-    elif base == "RALEARN":
-        arch = "ra_learned"
-    elif base == "RAMLA":
-        arch = "ramla"
-    elif base == "RAMLAKV":
-        arch = "ramlakv"
-    elif base == "RAMLAKVM":
-        arch = "ramlakvm"
+    lr = LR_STANDARD
+    lr_name = "standard"
+
+    # Map step names to architecture identifiers
+    arch_map = {
+        "B": "baseline",  # GPT2 baseline
+        "MLA": "mla",  # GPT2_MLA
+        "MLAKV2": "mlakv2",  # GPT2_MLA_KV2
+        "MLAKV2M": "mlakv2mlp",  # GPT2_MLA_KV2M
+        "MLAKV": "mlakv",  # GPT2_MLA_KV
+        "RA": "ra",  # GPT2_RA (fixed reciprocal)
+        "RALEARN": "ra_learned",  # GPT2_RA (learned reciprocal)
+        "RAMLA": "ramla",  # GPT2_MLA_RA
+        "RAMLAKV": "ramlakv",  # GPT2_MLA_RA_KV
+        "RAMLAKVM": "ramlakvm",  # GPT2_MLA_RA_KVM
+    }
+
+    if base in arch_map:
+        arch = arch_map[base]
     else:
-        raise ValueError(f"Unknown architecture prefix: {base}")
+        raise ValueError(f"Unknown architecture: {base} (from step: {step})")
 
     return {
         "arch": arch,
@@ -143,20 +138,20 @@ class RAMLATrainer(VanillaGPT2Trainer):
             raise ValueError(f"Unknown architecture: {self.step_config['arch']}")
 
     def _setup_ra_learned_model(self):
-        """Replace model with GPT2_RA_Model (learned alternation, no MLA)."""
+        """Replace model with GPT2_RA (learned alternation, no MLA)."""
         import torch
-        from ra import GPT2_RA_Model
+        from ra import GPT2_RA
         from gpt2.model import GPTConfig
 
-        # Create GPTConfig for GPT2_RA_Model
+        # Create GPTConfig for GPT2_RA
         gpt_config = GPTConfig.from_name(self.args.model_name)
         gpt_config.block_size = self.args.block_size
         gpt_config.dropout = self.args.dropout
         gpt_config.bias = getattr(self.args, "bias", True)
 
         # Create model with proper GPTConfig
-        self.model = GPT2_RA_Model(gpt_config)
-        print(f"Created GPT2_RA_Model with learned alternation")
+        self.model = GPT2_RA(gpt_config)
+        print(f"Created GPT2_RA with learned alternation")
         print(f"  Params: {self.model.get_num_params():,}")
         print(f"  Balance stats: {self.model.get_balance_stats()}")
 
@@ -183,13 +178,13 @@ class RAMLATrainer(VanillaGPT2Trainer):
         import torch
         from ra import (
             RA_MLA_Config,
-            MLAGPT,
-            MLAKV_GPT,
-            MLA_KV2_GPT,
-            MLA_KV2_MLPSPLICE_GPT,
-            RAMLAGPT,
-            RAMLAKV_GPT,
-            RAMLAKVM_GPT,
+            GPT2_MLA,
+            GPT2_MLA_KV,
+            GPT2_MLA_KV2,
+            GPT2_MLA_KV2M,
+            GPT2_MLA_RA,
+            GPT2_MLA_RA_KV,
+            GPT2_MLA_RA_KVM,
         )
 
         arch = self.step_config["arch"]
@@ -209,39 +204,39 @@ class RAMLATrainer(VanillaGPT2Trainer):
 
         # Create appropriate full GPT model
         if arch == "mla":
-            self.model = MLAGPT(cfg)
-            print(f"Created MLAGPT with d_latent={d_latent}")
+            self.model = GPT2_MLA(cfg)
+            print(f"Created GPT2_MLA with d_latent={d_latent}")
         elif arch == "mlakv":
-            self.model = MLAKV_GPT(cfg, compression_ratio=compression_ratio)
-            print(f"Created MLAKV_GPT (MLA + KVSplice, no RA)")
+            self.model = GPT2_MLA_KV(cfg, compression_ratio=compression_ratio)
+            print(f"Created GPT2_MLA_KV (MLA + KVSplice, no RA)")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "mlakv2":
-            self.model = MLA_KV2_GPT(cfg, compression_ratio=compression_ratio)
-            print(f"Created MLA_KV2_GPT (MLA + 2-latent: Q direct, K/V compressed)")
+            self.model = GPT2_MLA_KV2(cfg, compression_ratio=compression_ratio)
+            print(f"Created GPT2_MLA_KV2 (MLA + 2-latent: Q direct, K/V compressed)")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "mlakv2mlp":
             mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
-            self.model = MLA_KV2_MLPSPLICE_GPT(
+            self.model = GPT2_MLA_KV2M(
                 cfg, compression_ratio=compression_ratio, mlp_d_latent=mlp_d_latent
             )
-            print(f"Created MLA_KV2_MLPSPLICE_GPT (2-latent + MLPSplice)")
+            print(f"Created GPT2_MLA_KV2M (2-latent + MLPSplice)")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "ramla":
-            self.model = RAMLAGPT(cfg)
-            print(f"Created RAMLAGPT with d_latent={d_latent}")
+            self.model = GPT2_MLA_RA(cfg)
+            print(f"Created GPT2_MLA_RA with d_latent={d_latent}")
             print(
                 f"  Layer directions: {self.model.get_alternation_distribution()[:3].tolist()}..."
             )
         elif arch == "ramlakv":
-            self.model = RAMLAKV_GPT(cfg, compression_ratio=compression_ratio)
-            print(f"Created RAMLAKV_GPT")
+            self.model = GPT2_MLA_RA_KV(cfg, compression_ratio=compression_ratio)
+            print(f"Created GPT2_MLA_RA_KV")
             print(f"  Compression: {self.model.get_compression_stats()}")
         elif arch == "ramlakvm":
             mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
-            self.model = RAMLAKVM_GPT(
+            self.model = GPT2_MLA_RA_KVM(
                 cfg, compression_ratio=compression_ratio, mlp_d_latent=mlp_d_latent
             )
-            print(f"Created RAMLAKVM_GPT (+ MLPSplice)")
+            print(f"Created GPT2_MLA_RA_KVM (+ MLPSplice)")
             print(f"  Compression: {self.model.get_compression_stats()}")
 
         # Move to device

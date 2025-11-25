@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gpt2.model import GPT, GPTConfig
+from gpt2.model import GPT2, GPTConfig
 from gpt2.trainers.ra import RAGPT, RAConfig
 
 
