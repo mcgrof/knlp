@@ -116,7 +116,7 @@ def load_model(
     Returns:
         (model, model_type_name)
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model_type, config_dict = detect_model_type(checkpoint)
 
     print(f"Detected model type: {model_type}")
