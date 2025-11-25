@@ -307,8 +307,31 @@ def main():
         default=None,
         help="Device (cuda/cpu, auto-detect if None)",
     )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List all supported model types and exit",
+    )
+    parser.add_argument(
+        "--test-models",
+        type=str,
+        default=None,
+        help="Comma-separated list of model types to test (only for mode 0: random init comparison). "
+        "Example: --test-models='GPT,GPT2_RA_Model,MLAGPT'",
+    )
 
     args = parser.parse_args()
+
+    # Handle --list option
+    if args.list:
+        print("Supported model architectures:")
+        print("-" * 80)
+        for i, model_name in enumerate(MODEL_REGISTRY.keys(), 1):
+            model_class, config_type = MODEL_REGISTRY[model_name]
+            print(f"  {i:2d}. {model_name:<25} (config: {config_type})")
+        print("-" * 80)
+        print(f"Total: {len(MODEL_REGISTRY)} architectures")
+        sys.exit(0)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print("=" * 80)
@@ -325,7 +348,21 @@ def main():
         print("\nMode: Comparing all model types with random initialization")
         print("-" * 80)
 
-        for model_type in MODEL_REGISTRY.keys():
+        # Filter models if --test-models specified
+        if args.test_models:
+            requested_models = [m.strip() for m in args.test_models.split(",")]
+            # Validate requested models
+            invalid_models = [m for m in requested_models if m not in MODEL_REGISTRY]
+            if invalid_models:
+                print(f"Error: Unknown model types: {', '.join(invalid_models)}")
+                print(f"Use --list to see all supported models")
+                sys.exit(1)
+            models_to_test = requested_models
+            print(f"Testing models: {', '.join(models_to_test)}")
+        else:
+            models_to_test = list(MODEL_REGISTRY.keys())
+
+        for model_type in models_to_test:
             print(f"\n{'='*80}")
             print(f"{model_type}")
             print(f"{'='*80}")
