@@ -22,14 +22,14 @@ from typing import Dict, List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gpt2.model import GPT, GPTConfig
+from gpt2.model import GPT2, GPTConfig
 from ra import (
-    GPT2_RA_Model,
+    GPT2_RA,
     RA_MLA_Config,
-    MLAGPT,
-    MLAKV_GPT,
-    RAMLAGPT,
-    RAMLAKV_GPT,
+    GPT2_MLA,
+    GPT2_MLA_KV,
+    GPT2_MLA_RA,
+    GPT2_MLA_RA_KV,
 )
 
 
@@ -204,27 +204,27 @@ def test_architecture(arch_name: str, seq_lengths: List[int], batch_size: int = 
     elif arch_name == "ra":
         config = GPTConfig.from_name("gpt2")
         config.block_size = 1024
-        model = GPT2_RA_Model(config).to(device)
+        model = GPT2_RA(config).to(device)
     elif arch_name == "mla":
         cfg = RA_MLA_Config(
             d_model=768, n_heads=12, head_dim=64, d_latent=256, block_size=1024
         )
-        model = MLAGPT(cfg).to(device)
+        model = GPT2_MLA(cfg).to(device)
     elif arch_name == "mlakv":
         cfg = RA_MLA_Config(
             d_model=768, n_heads=12, head_dim=64, d_latent=256, block_size=1024
         )
-        model = MLAKV_GPT(cfg, compression_ratio=0.5).to(device)
+        model = GPT2_MLA_KV(cfg, compression_ratio=0.5).to(device)
     elif arch_name == "ramla":
         cfg = RA_MLA_Config(
             d_model=768, n_heads=12, head_dim=64, d_latent=256, block_size=1024
         )
-        model = RAMLAGPT(cfg).to(device)
+        model = GPT2_MLA_RA(cfg).to(device)
     elif arch_name == "ramlakv":
         cfg = RA_MLA_Config(
             d_model=768, n_heads=12, head_dim=64, d_latent=256, block_size=1024
         )
-        model = RAMLAKV_GPT(cfg, compression_ratio=0.5).to(device)
+        model = GPT2_MLA_RA_KV(cfg, compression_ratio=0.5).to(device)
     else:
         raise ValueError(f"Unknown architecture: {arch_name}")
 
