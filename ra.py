@@ -1597,7 +1597,7 @@ class GPT2_RA_Fixed(nn.Module):
         pattern: str or list of ints for reciprocal layers
     """
 
-    def __init__(self, config, pattern="alternating"):
+    def __init__(self, config, pattern="late"):
         super().__init__()
         self.config = config
 
