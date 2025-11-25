@@ -33,7 +33,7 @@ from ra import (
     LearnedKVSplice,
     compute_fisher_spectrum,
     RA_MLA_Config,
-    RAMLAGPT,
+    GPT2_MLA_RA,
 )
 
 
@@ -305,7 +305,7 @@ def benchmark_with_sba_model(
         d_latent=64,
     )
 
-    model = RAMLAGPT(cfg, vocab_size=1000).to(device).eval()
+    model = GPT2_MLA_RA(cfg, vocab_size=1000).to(device).eval()
 
     # Generate input
     x = torch.randint(0, 1000, (4, seq_len), device=device)
