@@ -200,12 +200,10 @@ def test_architecture(arch_name: str, seq_lengths: List[int], batch_size: int = 
     if arch_name == "baseline":
         config = GPTConfig.from_name("gpt2")
         config.block_size = 1024
-        config.weight_tying = True
         model = GPT(config).to(device)
     elif arch_name == "ra":
         config = GPTConfig.from_name("gpt2")
         config.block_size = 1024
-        config.weight_tying = True
         model = GPT2_RA_Model(config).to(device)
     elif arch_name == "mla":
         cfg = RA_MLA_Config(
@@ -252,7 +250,9 @@ def test_architecture(arch_name: str, seq_lengths: List[int], batch_size: int = 
         else:
             config = GPTConfig.from_name("gpt2")
 
-        theoretical = calculate_theoretical_cache(arch_name, seq_len, batch_size, config)
+        theoretical = calculate_theoretical_cache(
+            arch_name, seq_len, batch_size, config
+        )
 
         stats = measure_inference_memory(model, seq_len, batch_size, num_tokens=50)
 
@@ -303,9 +303,7 @@ def print_comparison_table(all_results: Dict[str, List[CacheStats]]):
                 reduction = "—"
             else:
                 if baseline_cache and baseline_cache > 0:
-                    reduction_pct = (
-                        1 - result.cache_size_mb / baseline_cache
-                    ) * 100
+                    reduction_pct = (1 - result.cache_size_mb / baseline_cache) * 100
                     reduction = f"{reduction_pct:.1f}%"
                 else:
                     reduction = "—"
