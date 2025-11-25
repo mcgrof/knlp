@@ -72,14 +72,6 @@ def parse_step(step: str) -> Dict:
         arch = "ramlakv"
     elif base == "RAMLAKVM":
         arch = "ramlakvm"
-    elif base == "RAMLAKVME":
-        arch = "ramlakvme"
-    elif base == "SBA":
-        arch = "sba"
-    elif base == "SBASS":
-        arch = "sba_ss"  # SBA with shared+skew
-    elif base == "SBAKV":
-        arch = "sba_kv"  # SBA with K=V tying
     else:
         raise ValueError(f"Unknown architecture prefix: {base}")
 
@@ -141,14 +133,10 @@ class RAMLATrainer(VanillaGPT2Trainer):
             "ramla",
             "ramlakv",
             "ramlakvm",
-            "ramlakvme",
-            "sba",
-            "sba_ss",
-            "sba_kv",
         ]:
-            # MLA-based architectures (including SBA variants)
+            # MLA-based architectures
             super().__init__(args, config)
-            # Replace model with MLA/SBA variant
+            # Replace model with MLA variant
             self._setup_mla_model()
 
         else:
@@ -191,7 +179,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
             )
 
     def _setup_mla_model(self):
-        """Replace model with MLA/RAMLA/RAMLAKV/SBA variant."""
+        """Replace model with MLA/RAMLA/RAMLAKV variant."""
         import torch
         from ra import (
             RA_MLA_Config,
@@ -202,8 +190,6 @@ class RAMLATrainer(VanillaGPT2Trainer):
             RAMLAGPT,
             RAMLAKV_GPT,
             RAMLAKVM_GPT,
-            RAMLAKVME_GPT,
-            SBAGPT,
         )
 
         arch = self.step_config["arch"]
@@ -257,35 +243,6 @@ class RAMLATrainer(VanillaGPT2Trainer):
             )
             print(f"Created RAMLAKVM_GPT (+ MLPSplice)")
             print(f"  Compression: {self.model.get_compression_stats()}")
-        elif arch == "ramlakvme":
-            mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
-            d_embed = getattr(self.args, "embed_d_latent", 256)
-            self.model = RAMLAKVME_GPT(
-                cfg,
-                d_embed=d_embed,
-                compression_ratio=compression_ratio,
-                mlp_d_latent=mlp_d_latent,
-            )
-            print(f"Created RAMLAKVME_GPT (+ MLPSplice + EmbedLatent)")
-            print(f"  Compression: {self.model.get_compression_stats()}")
-        elif arch == "sba":
-            self.model = SBAGPT(cfg, kv_mode="separate")
-            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=separate")
-            print(
-                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
-            )
-        elif arch == "sba_ss":
-            self.model = SBAGPT(cfg, kv_mode="shared_skew")
-            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=shared_skew")
-            print(
-                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
-            )
-        elif arch == "sba_kv":
-            self.model = SBAGPT(cfg, kv_mode="k_eq_v")
-            print(f"Created SBAGPT with d_latent={d_latent}, kv_mode=k_eq_v")
-            print(
-                f"  Alpha distribution: {self.model.get_alpha_distribution()[:3].tolist()}..."
-            )
 
         # Move to device
         self.model = self.model.to(self.args.device)
@@ -346,8 +303,6 @@ class RAMLATrainer(VanillaGPT2Trainer):
         # Log final metrics based on architecture
         if self.step_config["arch"] in ["mlakv", "ramlakv"]:
             self._log_kvsplice_metrics()
-        elif self.step_config["arch"] in ["sba", "sba_ss", "sba_kv"]:
-            self._log_sba_metrics()
 
         # Log Fisher metrics for all architectures that support it
         self._log_fisher_metrics()
@@ -571,43 +526,6 @@ class RAMLATrainer(VanillaGPT2Trainer):
                 wandb.log(metrics, step=step)
             except Exception as e:
                 print(f"Warning: Failed to log kvsplice metrics to wandb: {e}")
-
-    def _log_sba_metrics(self):
-        """Log SBA metrics to trackers."""
-        if not hasattr(self.model, "get_sba_metrics"):
-            return
-
-        metrics = self.model.get_sba_metrics()
-
-        # Print summary
-        print("\n--- SBA Attention Metrics ---")
-        print(f"  Alpha mean: {metrics.get('sba/alpha_mean', 'N/A'):.3f}")
-        print(f"  Alpha std: {metrics.get('sba/alpha_std', 'N/A'):.3f}")
-        print(
-            f"  Forward-dominant layers: {metrics.get('sba/forward_dominant_layers', 'N/A')}"
-        )
-        print(
-            f"  Reverse-dominant layers: {metrics.get('sba/reverse_dominant_layers', 'N/A')}"
-        )
-        print(f"  Mixed layers: {metrics.get('sba/mixed_layers', 'N/A')}")
-
-        # Log to trackers
-        step = getattr(self, "iter_num", None)
-        if "trackio" in self.trackers:
-            try:
-                import trackio
-
-                trackio.log(metrics)
-            except Exception as e:
-                print(f"Warning: Failed to log sba metrics to trackio: {e}")
-
-        if "wandb" in self.trackers:
-            try:
-                import wandb
-
-                wandb.log(metrics, step=step)
-            except Exception as e:
-                print(f"Warning: Failed to log sba metrics to wandb: {e}")
 
     def _log_fisher_metrics(self):
         """
