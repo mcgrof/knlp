@@ -1413,6 +1413,7 @@ class GPT2_RA_Model(nn.Module):
         # Shares token embedding matrix with output projection to reduce parameters
         # and improve generalization (Press & Wolf 2016: https://arxiv.org/pdf/1608.05859)
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         # Init weights
         self.apply(self._init_weights)
@@ -2417,6 +2418,7 @@ class MLAGPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         # Initialize weights
         self.apply(self._init_weights)
@@ -2567,6 +2569,7 @@ class RAMLAGPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -2717,6 +2720,7 @@ class RAMLAKV_GPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -3136,6 +3140,7 @@ class MLAKV_GPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -3441,6 +3446,7 @@ class RAMLAKVM_GPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -3557,6 +3563,7 @@ class RAMLAKVME_GPT(nn.Module):
 
         # Weight tying: embedding and output share weights
         self.lm_head.weight = self.wte.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -3652,6 +3659,7 @@ class SBAGPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -4174,6 +4182,7 @@ class MLA_KV2_GPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
@@ -4280,6 +4289,7 @@ class MLA_KV2_MLPSPLICE_GPT(nn.Module):
 
         # Weight tying
         self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         self.apply(self._init_weights)
 
