@@ -46,7 +46,7 @@ def profile_step(step_name: str, num_iters: int = 20):
     )
     print(f"Model config: batch={batch_size}, block_size={block_size}")
 
-    model = GPT(config)
+    model = GPT2(config)
     model = model.to(device)
     model.train()
 

@@ -339,7 +339,7 @@ class RATrainer(VanillaGPT2Trainer):
 
         if args.use_baseline:
             # True baseline: standard GPT-2
-            model = GPT(gpt_config)
+            model = GPT2(gpt_config)
             print("Created baseline GPT-2")
         else:
             # RA config
