@@ -108,7 +108,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         config.k_eq_vt = getattr(self.args, "k_eq_vt", False)
 
         # Create model
-        model = GPT(config)
+        model = GPT2(config)
         model.to(self.device)
 
         # Compile if requested (must be before DDP)
