@@ -3964,3 +3964,362 @@ def compute_fisher_metrics(
         metrics[f"fisher/layer{layer_idx}/cond_std"] = statistics.stdev(cond_vals)
 
     return metrics
+
+
+# ==============================================================================
+# MLA 2-Latent Variants: Q direct, K/V separate compressed latents
+# ==============================================================================
+
+
+class MLA_KV2_Attention(nn.Module):
+    """
+    MLA with 2 separate compressed latents for K and V only.
+
+    Q is computed directly (no compression, not cached) for maximum efficiency.
+    K and V have separate compressed latents that are learned and cached.
+
+    This is more optimal than 3-latent (Q+K+V) because:
+    - Q doesn't need caching (recomputed each forward pass)
+    - Separate K/V latents allow independent optimization
+    - Reduces cache size while maintaining quality
+    """
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_latent = cfg.d_latent
+
+        # Q path - direct projection (no compression, not cached)
+        q_dim = cfg.n_heads * cfg.head_dim
+        self.W_q = nn.Linear(cfg.d_model, q_dim)
+
+        # K path - separate compressed latent
+        d_k_compressed = int(cfg.d_latent * compression_ratio)
+        self.to_k_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        self.k_splice = LearnedKVSplice(cfg.d_latent, d_k_compressed)
+        k_dim = cfg.n_heads * cfg.head_dim
+        self.from_k_latent = nn.Linear(cfg.d_latent, k_dim)
+
+        # V path - separate compressed latent
+        d_v_compressed = int(cfg.d_latent * compression_ratio)
+        self.to_v_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        self.v_splice = LearnedKVSplice(cfg.d_latent, d_v_compressed)
+        v_dim = cfg.n_heads * cfg.head_dim
+        self.from_v_latent = nn.Linear(cfg.d_latent, v_dim)
+
+        # Output projection
+        self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
+
+        # RoPE
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[tuple] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[tuple]]:
+        """
+        Forward with 2-latent caching (K and V only).
+
+        Cache is tuple of (k_latent_compressed, v_latent_compressed).
+        """
+        B, T, D = x.shape
+
+        # Q: Direct computation (no caching)
+        q = self.W_q(x)
+        q = q.view(B, T, self.n_heads, self.head_dim)
+        q = q.permute(0, 2, 1, 3)
+
+        # K: Compress latent
+        k_latent_orig = self.to_k_latent(x)
+        k_latent = self.k_splice(k_latent_orig)
+
+        # V: Compress latent
+        v_latent_orig = self.to_v_latent(x)
+        v_latent = self.v_splice(v_latent_orig)
+
+        # Handle cache
+        if cache is not None:
+            k_cache, v_cache = cache
+            # Decompress and concatenate
+            k_cache_decompressed = self.k_splice.decompress_only(k_cache)
+            v_cache_decompressed = self.v_splice.decompress_only(v_cache)
+            full_k_latent = torch.cat([k_cache_decompressed, k_latent], dim=1)
+            full_v_latent = torch.cat([v_cache_decompressed, v_latent], dim=1)
+            T_total = full_k_latent.shape[1]
+        else:
+            full_k_latent = k_latent
+            full_v_latent = v_latent
+            T_total = T
+
+        # Decompress to K, V
+        k = self.from_k_latent(full_k_latent)
+        k = k.view(B, T_total, self.n_heads, self.head_dim)
+        k = k.permute(0, 2, 1, 3)
+
+        v = self.from_v_latent(full_v_latent)
+        v = v.view(B, T_total, self.n_heads, self.head_dim)
+        v = v.permute(0, 2, 1, 3)
+
+        # Apply RoPE
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        # Standard attention
+        attn_out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            is_causal=True,
+            dropout_p=self.cfg.dropout if self.training else 0.0,
+        )
+
+        # Output
+        attn_out = attn_out.transpose(1, 2).contiguous()
+        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
+        out = self.out_proj(attn_out)
+
+        # New cache (compressed K and V latents)
+        new_cache = None
+        if use_cache:
+            # Compress for caching
+            k_compressed = self.k_splice.compress_only(k_latent_orig)
+            v_compressed = self.v_splice.compress_only(v_latent_orig)
+            if cache is not None:
+                k_cache, v_cache = cache
+                k_compressed = torch.cat([k_cache, k_compressed], dim=1)
+                v_compressed = torch.cat([v_cache, v_compressed], dim=1)
+            new_cache = (k_compressed, v_compressed)
+
+        return out, new_cache
+
+
+class MLA_KV2_Block(nn.Module):
+    """Transformer block with MLA_KV2_Attention + standard MLP."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        compression_ratio: float,
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = MLA_KV2_Attention(cfg, layer_idx, compression_ratio)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # Standard MLP
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class MLA_KV2_GPT(nn.Module):
+    """Full GPT-2 model with MLA 2-latent attention (K/V compressed, Q direct)."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        compression_ratio: float = 0.5,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [MLA_KV2_Block(cfg, i, compression_ratio) for i in range(cfg.n_layers)]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_compression_stats(self):
+        """Get compression statistics for all layers."""
+        stats = {
+            "k_compressed_dim": int(self.cfg.d_latent * self.compression_ratio),
+            "v_compressed_dim": int(self.cfg.d_latent * self.compression_ratio),
+            "compression_ratio": self.compression_ratio,
+        }
+        return stats
+
+
+class MLA_KV2_MLPSPLICE_Block(nn.Module):
+    """MLA 2-latent + MLPSplice (MLP compression)."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        compression_ratio: float,
+        mlp_d_latent: int,
+    ):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = MLA_KV2_Attention(cfg, layer_idx, compression_ratio)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+
+        # MLPSplice - compressed MLP with latent bottleneck
+        self.mlp = MLPSplice(cfg.d_model, mlp_d_latent)
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class MLA_KV2_MLPSPLICE_GPT(nn.Module):
+    """Full GPT-2 with MLA 2-latent + MLPSplice compression."""
+
+    def __init__(
+        self,
+        cfg: RA_MLA_Config,
+        vocab_size: int = 50257,
+        compression_ratio: float = 0.5,
+        mlp_d_latent: int = 256,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.compression_ratio = compression_ratio
+        self.mlp_d_latent = mlp_d_latent
+
+        # Embeddings
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        # Transformer blocks with MLP compression
+        self.blocks = nn.ModuleList(
+            [
+                MLA_KV2_MLPSPLICE_Block(cfg, i, compression_ratio, mlp_d_latent)
+                for i in range(cfg.n_layers)
+            ]
+        )
+
+        # Output
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-1,
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def get_compression_stats(self):
+        """Get compression statistics."""
+        stats = {
+            "k_compressed_dim": int(self.cfg.d_latent * self.compression_ratio),
+            "v_compressed_dim": int(self.cfg.d_latent * self.compression_ratio),
+            "mlp_latent_dim": self.mlp_d_latent,
+            "compression_ratio": self.compression_ratio,
+        }
+        return stats
