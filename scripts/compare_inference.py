@@ -28,8 +28,6 @@ from ra import (
     RAMLAKV_GPT,
     MLAKV_GPT,
     RAMLAKVM_GPT,
-    RAMLAKVME_GPT,
-    SBAGPT,
     MLA_KV2_GPT,
     MLA_KV2_MLPSPLICE_GPT,
     RA_MLA_Config,
@@ -45,8 +43,6 @@ MODEL_REGISTRY = {
     "RAMLAKV_GPT": (RAMLAKV_GPT, "mla"),
     "MLAKV_GPT": (MLAKV_GPT, "mla"),
     "RAMLAKVM_GPT": (RAMLAKVM_GPT, "mla"),
-    "RAMLAKVME_GPT": (RAMLAKVME_GPT, "mla"),
-    "SBAGPT": (SBAGPT, "mla"),
     "MLA_KV2_GPT": (MLA_KV2_GPT, "mla"),
     "MLA_KV2_MLPSPLICE_GPT": (MLA_KV2_MLPSPLICE_GPT, "mla"),
 }
@@ -143,7 +139,7 @@ def load_model(
     config = create_config(config_type, **config_dict)
 
     # Instantiate model
-    if model_type in ["RAMLAKV_GPT", "MLAKV_GPT", "RAMLAKVM_GPT", "RAMLAKVME_GPT"]:
+    if model_type in ["RAMLAKV_GPT", "MLAKV_GPT", "RAMLAKVM_GPT"]:
         # These models need compression_ratio
         compression_ratio = config_dict.get("compression_ratio", 0.5)
         model = model_class(config, compression_ratio=compression_ratio)
@@ -154,10 +150,6 @@ def load_model(
             model = model_class(config, compression_ratio, mlp_d_latent)
         else:
             model = model_class(config, compression_ratio)
-    elif model_type == "SBAGPT":
-        alpha_init = config_dict.get("alpha_init", 2.0)
-        kv_mode = config_dict.get("kv_mode", "topk")
-        model = model_class(config, alpha_init=alpha_init, kv_mode=kv_mode)
     else:
         model = model_class(config)
 
@@ -191,21 +183,10 @@ def create_model_random(
         model = model_class(
             config, vocab_size, compression_ratio=0.5, mlp_d_latent=256, tie_mlp=True
         )
-    elif model_type == "RAMLAKVME_GPT":
-        model = model_class(
-            config,
-            vocab_size,
-            d_embed=256,
-            compression_ratio=0.5,
-            mlp_d_latent=256,
-            tie_mlp=True,
-        )
     elif model_type == "MLA_KV2_GPT":
         model = model_class(config, vocab_size, compression_ratio=0.5)
     elif model_type == "MLA_KV2_MLPSPLICE_GPT":
         model = model_class(config, vocab_size, compression_ratio=0.5, mlp_d_latent=256)
-    elif model_type == "SBAGPT":
-        model = model_class(config, vocab_size, alpha_init=2.0, kv_mode="separate")
     elif model_type in ["MLAGPT", "RAMLAGPT"]:
         model = model_class(config, vocab_size)
     else:

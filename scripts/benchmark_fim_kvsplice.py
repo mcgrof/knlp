@@ -25,6 +25,7 @@ from contextlib import contextmanager
 # Add project root to path
 import sys
 import os
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ra import (
@@ -32,7 +33,7 @@ from ra import (
     LearnedKVSplice,
     compute_fisher_spectrum,
     RA_MLA_Config,
-    SBAGPT,
+    RAMLAGPT,
 )
 
 
@@ -61,12 +62,12 @@ def generate_synthetic_attention(batch_size, n_heads, seq_len, device, sparsity=
     causal_mask = torch.triu(
         torch.ones(seq_len, seq_len, dtype=torch.bool, device=device), diagonal=1
     )
-    logits = logits.masked_fill(causal_mask, float('-inf'))
+    logits = logits.masked_fill(causal_mask, float("-inf"))
 
     # Add recency bias (attend more to recent tokens)
     recency = torch.arange(seq_len, device=device).float()
     recency_bias = recency.unsqueeze(0) - recency.unsqueeze(1)
-    recency_bias = torch.where(recency_bias <= 0, recency_bias * 0.1, float('-inf'))
+    recency_bias = torch.where(recency_bias <= 0, recency_bias * 0.1, float("-inf"))
     logits = logits + recency_bias
 
     # Sparsify: make some attention heads more focused
@@ -78,7 +79,7 @@ def generate_synthetic_attention(batch_size, n_heads, seq_len, device, sparsity=
                 topk = logits[:, h].topk(k, dim=-1).indices
                 mask = torch.ones_like(logits[:, h], dtype=torch.bool)
                 mask.scatter_(-1, topk, False)
-                logits[:, h] = logits[:, h].masked_fill(mask, float('-inf'))
+                logits[:, h] = logits[:, h].masked_fill(mask, float("-inf"))
 
     return F.softmax(logits, dim=-1)
 
@@ -103,9 +104,7 @@ def benchmark_fim_kvsplice(
 
     # Generate synthetic attention probabilities for calibration
     print("\nGenerating calibration attention probabilities...")
-    attn_probs = generate_synthetic_attention(
-        batch_size * 4, n_heads, seq_len, device
-    )
+    attn_probs = generate_synthetic_attention(batch_size * 4, n_heads, seq_len, device)
 
     # Analyze FIM spectrum
     print("\n--- FIM Eigenvalue Spectrum ---")
@@ -165,12 +164,14 @@ def benchmark_fim_kvsplice(
         print(f"  Memory reduction: {stats['memory_reduction']:.1%}")
         print(f"  Calibrated: {stats['calibrated']}")
 
-        results.append({
-            "rank": rank,
-            "compression": rank / seq_len,
-            "recon_mse": avg_error,
-            "memory_reduction": stats["memory_reduction"],
-        })
+        results.append(
+            {
+                "rank": rank,
+                "compression": rank / seq_len,
+                "recon_mse": avg_error,
+                "memory_reduction": stats["memory_reduction"],
+            }
+        )
 
     return results
 
@@ -213,12 +214,14 @@ def benchmark_legacy_kvsplice(
         print(f"  Reconstruction MSE: {error:.6f}")
         print(f"  Memory reduction: {stats['memory_reduction']:.1%}")
 
-        results.append({
-            "ratio": ratio,
-            "d_compressed": d_compressed,
-            "recon_mse": error,
-            "memory_reduction": stats["memory_reduction"],
-        })
+        results.append(
+            {
+                "ratio": ratio,
+                "d_compressed": d_compressed,
+                "recon_mse": error,
+                "memory_reduction": stats["memory_reduction"],
+            }
+        )
 
     return results
 
@@ -272,10 +275,12 @@ def benchmark_pca_baseline(
 
         print(f"  Reconstruction MSE: {avg_error:.6f}")
 
-        results.append({
-            "rank": rank,
-            "recon_mse": avg_error,
-        })
+        results.append(
+            {
+                "rank": rank,
+                "recon_mse": avg_error,
+            }
+        )
 
     return results
 
@@ -300,7 +305,7 @@ def benchmark_with_sba_model(
         d_latent=64,
     )
 
-    model = SBAGPT(cfg, vocab_size=1000, kv_mode="separate").to(device).eval()
+    model = RAMLAGPT(cfg, vocab_size=1000).to(device).eval()
 
     # Generate input
     x = torch.randint(0, 1000, (4, seq_len), device=device)
@@ -309,7 +314,7 @@ def benchmark_with_sba_model(
 
     # Get attention probabilities by running compute_fisher_metrics
     # This gives us real attention patterns
-    print("\nComputing Fisher metrics from SBA model...")
+    print("\nComputing Fisher metrics from RAMLA model...")
     metrics = model.compute_fisher_metrics(x, n_samples=128, topk=4)
 
     # Print some metrics
@@ -317,7 +322,7 @@ def benchmark_with_sba_model(
         if "eigmax_mean" in key:
             print(f"  {key}: {value:.6f}")
 
-    print("\n✓ SBA model Fisher metrics computed successfully")
+    print("\n✓ RAMLA model Fisher metrics computed successfully")
 
 
 def main():
@@ -327,9 +332,18 @@ def main():
     parser.add_argument("--seq-len", type=int, default=128)
     parser.add_argument("--d-head", type=int, default=64)
     parser.add_argument("--d-latent", type=int, default=256)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--dtype", type=str, default="float32", choices=["float32", "float16", "bfloat16"])
-    parser.add_argument("--skip-sba", action="store_true", help="Skip SBA model benchmark")
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="float32",
+        choices=["float32", "float16", "bfloat16"],
+    )
+    parser.add_argument(
+        "--skip-sba", action="store_true", help="Skip SBA model benchmark"
+    )
     args = parser.parse_args()
 
     device = args.device
@@ -389,7 +403,9 @@ def main():
 
     print("\nFIMKVSplice (Temporal, FIM-based):")
     for r in fim_results:
-        print(f"  rank={r['rank']:3d}: MSE={r['recon_mse']:.6f}, reduction={r['memory_reduction']:.1%}")
+        print(
+            f"  rank={r['rank']:3d}: MSE={r['recon_mse']:.6f}, reduction={r['memory_reduction']:.1%}"
+        )
 
     print("\nPCA Baseline (Variance-based):")
     for r in pca_results:
@@ -397,7 +413,9 @@ def main():
 
     print("\nLegacy LearnedKVSplice (Feature-space):")
     for r in legacy_results:
-        print(f"  ratio={r['ratio']:.0%}: MSE={r['recon_mse']:.6f}, reduction={r['memory_reduction']:.1%}")
+        print(
+            f"  ratio={r['ratio']:.0%}: MSE={r['recon_mse']:.6f}, reduction={r['memory_reduction']:.1%}"
+        )
 
     print("\n" + "=" * 60)
     print("INTERPRETATION")
