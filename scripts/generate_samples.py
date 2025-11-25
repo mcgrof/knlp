@@ -36,7 +36,7 @@ def load_model(checkpoint_path, device="cuda"):
         model = RAGPT(gpt_config, ra_config)
         print("Loaded RAGPT model")
     else:
-        model = GPT(gpt_config)
+        model = GPT2(gpt_config)
         print("Loaded GPT model")
 
     # Load weights

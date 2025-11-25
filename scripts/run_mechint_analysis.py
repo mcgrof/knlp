@@ -125,7 +125,7 @@ def load_model_and_data(checkpoint_path: str, dataset_name: str = "finewebedu"):
         config = GPTConfig.from_name("gpt2")  # default
         print("No config in checkpoint, using default GPT-2 config")
 
-    model = GPT(config)
+    model = GPT2(config)
     model.load_state_dict(state_dict, strict=False)
     # Keep model in train mode for mechint optimization (need gradients)
     # KV masks will be optimized while model params stay frozen

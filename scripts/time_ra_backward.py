@@ -40,7 +40,7 @@ def time_step(step_name: str, num_iters: int = 50):
         bias=True,
     )
 
-    model = GPT(config)
+    model = GPT2(config)
     model = model.to(device)
     model.train()
 
