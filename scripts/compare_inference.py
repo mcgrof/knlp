@@ -361,8 +361,9 @@ def main():
     if args.list:
         print("Supported model architectures:")
         print("-" * 80)
-        for i, model_name in enumerate(MODEL_REGISTRY.keys(), 1):
-            model_class, config_type = MODEL_REGISTRY[model_name]
+        # Sort models: first by config type (gpt before mla), then alphabetically
+        sorted_models = sorted(MODEL_REGISTRY.items(), key=lambda x: (x[1][1], x[0]))
+        for i, (model_name, (model_class, config_type)) in enumerate(sorted_models, 1):
             print(f"  {i:2d}. {model_name:<25} (config: {config_type})")
         print("-" * 80)
         print(f"Total: {len(MODEL_REGISTRY)} architectures")
