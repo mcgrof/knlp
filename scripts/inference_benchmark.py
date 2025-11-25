@@ -19,10 +19,10 @@ import tiktoken
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ra import (
-    MLAGPT,
-    MLAKV_GPT,
-    RAMLAGPT,
-    RAMLAKV_GPT,
+    GPT2_MLA,
+    GPT2_MLA_KV,
+    GPT2_MLA_RA,
+    GPT2_MLA_RA_KV,
     RA_MLA_Config,
 )
 
@@ -56,13 +56,13 @@ def load_model(checkpoint_path, device="cuda"):
 
     # Create model
     if model_type == "mla":
-        model = MLAGPT(cfg)
+        model = GPT2_MLA(cfg)
     elif model_type == "mlakv":
-        model = MLAKV_GPT(cfg, compression_ratio=0.5)
+        model = GPT2_MLA_KV(cfg, compression_ratio=0.5)
     elif model_type == "ramla":
-        model = RAMLAGPT(cfg)
+        model = GPT2_MLA_RA(cfg)
     elif model_type == "ramlakv":
-        model = RAMLAKV_GPT(cfg, compression_ratio=0.5)
+        model = GPT2_MLA_RA_KV(cfg, compression_ratio=0.5)
 
     # Load weights
     model.load_state_dict(checkpoint["model"])

@@ -20,7 +20,7 @@ parent_dir = os.path.dirname(
 )
 sys.path.insert(0, parent_dir)
 
-from gpt2.model import GPT, GPTConfig
+from gpt2.model import GPT2, GPTConfig
 from lib.optimizers import create_optimizer
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer

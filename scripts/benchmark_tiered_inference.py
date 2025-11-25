@@ -177,7 +177,7 @@ def main():
     # Load model
     print(f"Loading {args.model} model...")
     if args.model == "gpt2":
-        from gpt2.model import GPT, GPTConfig
+        from gpt2.model import GPT2, GPTConfig
 
         config = GPTConfig()
         model = GPT(config)

@@ -211,7 +211,7 @@ class GPTConfig:
         return cls(**configs[name])
 
 
-class GPT(nn.Module):
+class GPT2(nn.Module):
     """GPT Language Model"""
 
     def __init__(self, config):

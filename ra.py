@@ -1374,7 +1374,7 @@ class GPT2_RA_Block(nn.Module):
         return x
 
 
-class GPT2_RA_Model(nn.Module):
+class GPT2_RA(nn.Module):
     """
     Full GPT-2 model with learned reciprocal attention alternation.
 
@@ -2103,7 +2103,7 @@ class RAMLAKVBlock(nn.Module):
         return x, new_cache
 
 
-class MLAGPT(nn.Module):
+class GPT2_MLA(nn.Module):
     """Full GPT-2 model with MLA attention."""
 
     def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
@@ -2246,7 +2246,7 @@ class MLAGPT(nn.Module):
         return attn_probs  # [B, H, T, T]
 
 
-class RAMLAGPT(nn.Module):
+class GPT2_MLA_RA(nn.Module):
     """Full GPT-2 model with RA+MLA attention."""
 
     def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
@@ -2388,7 +2388,7 @@ class RAMLAGPT(nn.Module):
         return attn_probs
 
 
-class RAMLAKV_GPT(nn.Module):
+class GPT2_MLA_RA_KV(nn.Module):
     """Full GPT-2 model with RA+MLA+KVSplice attention."""
 
     def __init__(
@@ -2787,7 +2787,7 @@ class MLAKVBlock(nn.Module):
         return x, new_cache
 
 
-class MLAKV_GPT(nn.Module):
+class GPT2_MLA_KV(nn.Module):
     """Full GPT-2 model with MLA+KVSplice attention (no reciprocal alternation)."""
 
     def __init__(
@@ -3074,7 +3074,7 @@ class RAMLAKVMBlock(nn.Module):
         return x, new_cache
 
 
-class RAMLAKVM_GPT(nn.Module):
+class GPT2_MLA_RA_KVM(nn.Module):
     """Full GPT-2 model with RA+MLA+KVSplice attention + MLPSplice."""
 
     def __init__(
@@ -3344,7 +3344,7 @@ class MLA_KV2_Block(nn.Module):
         return x, new_cache
 
 
-class MLA_KV2_GPT(nn.Module):
+class GPT2_MLA_KV2(nn.Module):
     """Full GPT-2 model with MLA 2-latent attention (K/V compressed, Q direct)."""
 
     def __init__(
@@ -3446,7 +3446,7 @@ class MLA_KV2_MLPSPLICE_Block(nn.Module):
         return x, new_cache
 
 
-class MLA_KV2_MLPSPLICE_GPT(nn.Module):
+class GPT2_MLA_KV2M(nn.Module):
     """Full GPT-2 with MLA 2-latent + MLPSplice compression."""
 
     def __init__(

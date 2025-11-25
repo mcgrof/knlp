@@ -20,32 +20,67 @@ from typing import Dict, Optional, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from gpt2.model import GPT, GPTConfig
-from ra import (
-    GPT2_RA_Model,
-    MLAGPT,
-    RAMLAGPT,
-    RAMLAKV_GPT,
-    MLAKV_GPT,
-    RAMLAKVM_GPT,
-    MLA_KV2_GPT,
-    MLA_KV2_MLPSPLICE_GPT,
-    RA_MLA_Config,
-)
+import inspect
+import torch.nn as nn
+
+from gpt2.model import GPT2, GPTConfig
+from ra import RA_MLA_Config
+import ra as ra_module
 
 
-# Model registry: maps model type name to (class, config_type)
-MODEL_REGISTRY = {
-    "GPT": (GPT, "gpt"),
-    "GPT2_RA_Model": (GPT2_RA_Model, "gpt"),
-    "MLAGPT": (MLAGPT, "mla"),
-    "RAMLAGPT": (RAMLAGPT, "mla"),
-    "RAMLAKV_GPT": (RAMLAKV_GPT, "mla"),
-    "MLAKV_GPT": (MLAKV_GPT, "mla"),
-    "RAMLAKVM_GPT": (RAMLAKVM_GPT, "mla"),
-    "MLA_KV2_GPT": (MLA_KV2_GPT, "mla"),
-    "MLA_KV2_MLPSPLICE_GPT": (MLA_KV2_MLPSPLICE_GPT, "mla"),
-}
+def discover_gpt2_models():
+    """
+    Auto-discover all GPT2 model classes using convention-based introspection.
+
+    Models must follow these conventions:
+    1. Named GPT2* (enforces naming convention)
+    2. Inherit from nn.Module
+    3. Implement get_num_params() method
+    4. Use 'config: GPTConfig' or 'cfg: RA_MLA_Config' as first __init__ parameter
+
+    Returns:
+        dict: Maps model name to (model_class, config_type)
+    """
+    models = {}
+
+    # Discover from gpt2.model module
+    models["GPT2"] = (GPT2, "gpt")
+
+    # Discover from ra module
+    for name, obj in inspect.getmembers(ra_module, inspect.isclass):
+        # Must match naming convention
+        if not name.startswith("GPT2"):
+            continue
+        # Must be a PyTorch model
+        if not issubclass(obj, nn.Module):
+            continue
+        # Must have standard interface
+        if not hasattr(obj, "get_num_params"):
+            continue
+
+        # Detect config type from __init__ signature
+        try:
+            sig = inspect.signature(obj.__init__)
+            params = list(sig.parameters.keys())
+
+            if "config" in params:
+                config_type = "gpt"
+            elif "cfg" in params:
+                config_type = "mla"
+            else:
+                # Skip models without standard config parameter
+                continue
+
+            models[name] = (obj, config_type)
+        except Exception:
+            # Skip if we can't inspect the signature
+            continue
+
+    return models
+
+
+# Auto-discover all GPT2 models
+MODEL_REGISTRY = discover_gpt2_models()
 
 
 def create_config(config_type: str, **kwargs):
@@ -91,18 +126,18 @@ def detect_model_type(checkpoint: Dict) -> Tuple[str, Dict]:
     has_mlakv = any("k_compress" in k or "v_compress" in k for k in keys)
 
     if has_mla and has_ra and has_mlakv:
-        # Could be RAMLAKV_GPT or variants
+        # Could be GPT2_MLA_RA_KV or variants
         if any("mlp_gate_proj" in k for k in keys):
-            return "RAMLAKVM_GPT", {}
-        return "RAMLAKV_GPT", {}
+            return "GPT2_MLA_RA_KVM", {}
+        return "GPT2_MLA_RA_KV", {}
     elif has_mla and has_ra:
-        return "RAMLAGPT", {}
+        return "GPT2_MLA_RA", {}
     elif has_mla and has_mlakv:
-        return "MLAKV_GPT", {}
+        return "GPT2_MLA_KV", {}
     elif has_mla:
-        return "MLAGPT", {}
+        return "GPT2_MLA", {}
     elif has_ra:
-        return "GPT2_RA_Model", {}
+        return "GPT2_RA", {}
     else:
         return "GPT", {}
 
@@ -139,13 +174,13 @@ def load_model(
     config = create_config(config_type, **config_dict)
 
     # Instantiate model
-    if model_type in ["RAMLAKV_GPT", "MLAKV_GPT", "RAMLAKVM_GPT"]:
+    if model_type in ["GPT2_MLA_RA_KV", "GPT2_MLA_KV", "GPT2_MLA_RA_KVM"]:
         # These models need compression_ratio
         compression_ratio = config_dict.get("compression_ratio", 0.5)
         model = model_class(config, compression_ratio=compression_ratio)
-    elif model_type in ["MLA_KV2_GPT", "MLA_KV2_MLPSPLICE_GPT"]:
+    elif model_type in ["GPT2_MLA_KV2", "GPT2_MLA_KV2M"]:
         compression_ratio = config_dict.get("compression_ratio", 0.5)
-        if model_type == "MLA_KV2_MLPSPLICE_GPT":
+        if model_type == "GPT2_MLA_KV2M":
             mlp_d_latent = config_dict.get("mlp_d_latent", 256)
             model = model_class(config, compression_ratio, mlp_d_latent)
         else:
@@ -175,22 +210,22 @@ def create_model_random(
 
     # Instantiate model with defaults
     # Note: vocab_size comes before other parameters in MLA model signatures
-    if model_type == "RAMLAKV_GPT":
+    if model_type == "GPT2_MLA_RA_KV":
         model = model_class(config, vocab_size, compression_ratio=0.5)
-    elif model_type == "MLAKV_GPT":
+    elif model_type == "GPT2_MLA_KV":
         model = model_class(config, vocab_size, compression_ratio=0.5)
-    elif model_type == "RAMLAKVM_GPT":
+    elif model_type == "GPT2_MLA_RA_KVM":
         model = model_class(
             config, vocab_size, compression_ratio=0.5, mlp_d_latent=256, tie_mlp=True
         )
-    elif model_type == "MLA_KV2_GPT":
+    elif model_type == "GPT2_MLA_KV2":
         model = model_class(config, vocab_size, compression_ratio=0.5)
-    elif model_type == "MLA_KV2_MLPSPLICE_GPT":
+    elif model_type == "GPT2_MLA_KV2M":
         model = model_class(config, vocab_size, compression_ratio=0.5, mlp_d_latent=256)
-    elif model_type in ["MLAGPT", "RAMLAGPT"]:
+    elif model_type in ["GPT2_MLA", "GPT2_MLA_RA"]:
         model = model_class(config, vocab_size)
     else:
-        # GPT and GPT2_RA_Model use GPTConfig which includes vocab_size
+        # GPT and GPT2_RA use GPTConfig which includes vocab_size
         model = model_class(config)
 
     model.to(device)
@@ -317,7 +352,7 @@ def main():
         type=str,
         default=None,
         help="Comma-separated list of model types to test (only for mode 0: random init comparison). "
-        "Example: --test-models='GPT,GPT2_RA_Model,MLAGPT'",
+        "Example: --test-models='GPT,GPT2_RA,GPT2_MLA'",
     )
 
     args = parser.parse_args()
