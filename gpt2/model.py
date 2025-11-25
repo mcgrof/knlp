@@ -234,6 +234,7 @@ class GPT(nn.Module):
         # Shares token embedding matrix with output projection to reduce parameters
         # and improve generalization (Press & Wolf 2016: https://arxiv.org/pdf/1608.05859)
         self.transformer.wte.weight = self.lm_head.weight
+        assert self.transformer.wte.weight is self.lm_head.weight, "Weight tying failed"
 
         # init all weights
         self.apply(self._init_weights)
