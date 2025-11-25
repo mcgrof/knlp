@@ -200,7 +200,7 @@ def test_architecture(arch_name: str, seq_lengths: List[int], batch_size: int = 
     if arch_name == "baseline":
         config = GPTConfig.from_name("gpt2")
         config.block_size = 1024
-        model = GPT(config).to(device)
+        model = GPT2(config).to(device)
     elif arch_name == "ra":
         config = GPTConfig.from_name("gpt2")
         config.block_size = 1024
