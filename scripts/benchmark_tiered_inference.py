@@ -180,7 +180,7 @@ def main():
         from gpt2.model import GPT2, GPTConfig
 
         config = GPTConfig()
-        model = GPT(config)
+        model = GPT2(config)
 
         if args.checkpoint:
             print(f"Loading checkpoint from {args.checkpoint}")

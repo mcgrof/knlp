@@ -129,7 +129,7 @@ def main():
 
     # Create model architecture (GPT-2 small: 12 layers, 768 dim)
     config = GPTConfig.from_name(args.base_model)
-    model = GPT(config)
+    model = GPT2(config)
 
     # Load weights
     model.load_state_dict(state_dict, strict=False)
