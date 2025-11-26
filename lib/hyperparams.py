@@ -19,10 +19,11 @@ def get_gpu_info():
     Returns:
         dict: GPU info with keys:
             - gpu_name: str (e.g., "NVIDIA B200")
-            - gpu_count: int (number of GPUs)
+            - gpu_count: int (number of homogeneous GPUs for training)
             - gpu_mem_gb: float (total memory per GPU in GB)
             - gpu_free_gb: float (free memory per GPU in GB)
             - has_gpu: bool (True if CUDA available)
+            - all_gpu_names: list (names of all detected GPUs)
     """
     if not torch.cuda.is_available():
         return {
@@ -31,18 +32,39 @@ def get_gpu_info():
             "gpu_mem_gb": 0.0,
             "gpu_free_gb": 0.0,
             "has_gpu": False,
+            "all_gpu_names": [],
         }
 
-    gpu = torch.cuda.get_device_properties(0)
+    # Check all GPUs to determine if they're homogeneous
+    total_gpus = torch.cuda.device_count()
+    all_gpu_names = [
+        torch.cuda.get_device_properties(i).name for i in range(total_gpus)
+    ]
+
+    # Only count GPUs for multi-GPU training if they're all identical
+    # This handles cases like W7900 + integrated GPU (only use W7900)
+    primary_gpu = torch.cuda.get_device_properties(0)
+    if total_gpus > 1:
+        # Check if all GPUs have the same name
+        if len(set(all_gpu_names)) == 1:
+            # All GPUs identical - use all for training
+            gpu_count = total_gpus
+        else:
+            # Mixed GPUs - assume single-GPU training on GPU 0
+            gpu_count = 1
+    else:
+        gpu_count = 1
+
     # Get free memory (accounts for other processes using GPU)
     free_mem, total_mem = torch.cuda.mem_get_info(0)
 
     return {
-        "gpu_name": gpu.name,
-        "gpu_count": torch.cuda.device_count(),
+        "gpu_name": primary_gpu.name,
+        "gpu_count": gpu_count,
         "gpu_mem_gb": total_mem / 1e9,
         "gpu_free_gb": free_mem / 1e9,
         "has_gpu": True,
+        "all_gpu_names": all_gpu_names,
     }
 
 
@@ -68,31 +90,46 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     # GPT-2: Large memory footprint per sample (activations, attention matrices)
     # ResNet: Medium memory footprint (image batches, conv activations)
     # LeNet: Small memory footprint (tiny model, small images)
+    #
+    # Strategy: Target per-GPU effective batch of ~256 for optimal convergence
+    # Empirical data (finewebedu, 2h training, GPT-2 124M):
+    #   - A100 (per_gpu=512): 201 iters, ppl=964 (POOR)
+    #   - W7900 (per_gpu=256): 601 iters, ppl=336 (GOOD)
+    #   - B200x4 (per_gpu=256): 4470 iters, ppl=38 (EXCELLENT)
     model_configs = {
         "gpt2": {
-            "default_target": 512,  # Reduced from 1024 - large batches hurt convergence
+            "default_per_gpu_target": 256,  # Target per-GPU effective batch
             "scale_factor": 1.0,  # Baseline
             "grad_acc_attr": "GPT2_GRADIENT_ACCUMULATION",
         },
         "resnet18": {
-            "default_target": 512,
+            "default_per_gpu_target": 256,
             "scale_factor": 2.0,  # ResNet uses ~half memory per sample vs GPT-2
             "grad_acc_attr": "GRADIENT_ACCUMULATION",
         },
         "resnet50": {
-            "default_target": 256,
+            "default_per_gpu_target": 128,
             "scale_factor": 1.5,  # ResNet-50 larger than ResNet-18 but smaller than GPT-2
             "grad_acc_attr": "GRADIENT_ACCUMULATION",
         },
         "lenet5": {
-            "default_target": 512,
+            "default_per_gpu_target": 512,
             "scale_factor": 4.0,  # LeNet very small, can fit huge batches
             "grad_acc_attr": "GRADIENT_ACCUMULATION",
         },
     }
 
     model_cfg = model_configs.get(model_type.lower(), model_configs["gpt2"])
-    target_eff = target_effective_batch or model_cfg["default_target"]
+
+    # Calculate target effective batch
+    # If user provides explicit target, use it; otherwise use per-GPU target × gpu_count
+    gpu_count = gpu_info["gpu_count"]
+    if target_effective_batch is not None:
+        target_eff = target_effective_batch
+    else:
+        # Use per-GPU target scaled by number of GPUs
+        per_gpu_target = model_cfg["default_per_gpu_target"]
+        target_eff = per_gpu_target * gpu_count
     scale = model_cfg["scale_factor"]
     compile_on = getattr(config, "COMPILE_MODEL", "y") in ("y", True)
 
@@ -175,11 +212,24 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     # Recompute actual effective batch (may differ slightly due to rounding)
     effective_batch = batch_size * gradient_accumulation * gpu_count
 
+    # Build rationale with GPU info
+    all_gpu_names = gpu_info.get("all_gpu_names", [])
+    total_gpus = len(all_gpu_names)
+    if total_gpus > 1 and gpu_count == 1:
+        # Mixed GPUs - show warning
+        gpu_str = (
+            f"{gpu_name} (detected {total_gpus} GPUs but using 1 due to mixed models)"
+        )
+    elif gpu_count > 1:
+        gpu_str = f"{gpu_name} × {gpu_count}"
+    else:
+        gpu_str = gpu_name
+
     rationale = (
-        f"GPU: {gpu_name} ({gpu_mem_gb:.1f}GB total, {gpu_free_gb:.1f}GB free) × {gpu_count}, "
+        f"GPU: {gpu_str} ({gpu_mem_gb:.1f}GB total, {gpu_free_gb:.1f}GB free), "
         f"model={model_type}, compile={'ON' if compile_on else 'OFF'} → "
         f"batch={batch_size}, grad_acc={gradient_accumulation} "
-        f"(effective={effective_batch}, target={target_eff})"
+        f"(per_gpu_eff={per_gpu_batch}, total_eff={effective_batch}, target={target_eff})"
     )
 
     return {
