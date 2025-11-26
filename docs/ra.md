@@ -283,8 +283,6 @@ information flow benefits.
 - Test multiple patterns if optimizing for specific hardware/batch size
 - Expect 5-9% perplexity improvements over baseline GPT-2
 
-**Next steps**: Investigate why RALEARN (learned pattern) OOMs on both GPUs,
-and extend training beyond 2 hours to verify pattern rankings remain stable.
 ---
 
 
@@ -863,6 +861,10 @@ chunked decoding.
 ---
 
 ## Fisher Information Matrix (FIM) Analysis
+
+**TODO**: Re-run FIM analysis with fixed RA implementation. Previous results
+were computed with the broken RA version and may not reflect actual optimization
+geometry.
 
 ### Hypothesis Testing
 
