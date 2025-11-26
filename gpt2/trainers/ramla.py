@@ -58,8 +58,12 @@ def parse_step(step: str) -> Dict:
         "MLAKV2": "mlakv2",  # GPT2_MLA_KV2
         "MLAKV2M": "mlakv2mlp",  # GPT2_MLA_KV2M
         "MLAKV": "mlakv",  # GPT2_MLA_KV
-        "RA": "ra",  # GPT2_RA (fixed reciprocal)
-        "RALEARN": "ra_learned",  # GPT2_RA (learned reciprocal)
+        "RA": "ra",  # GPT2_RA (router-based)
+        "RALEARN": "ra_learned",  # GPT2_RA_Learned (blend both paths)
+        "RANONE": "ra_fixed_none",  # GPT2_RA_Fixed pattern=none
+        "RAEARLY": "ra_fixed_early",  # GPT2_RA_Fixed pattern=early
+        "RALATE": "ra_fixed_late",  # GPT2_RA_Fixed pattern=late
+        "RAALL": "ra_fixed_all",  # GPT2_RA_Fixed pattern=all
         "RAMLA": "ramla",  # GPT2_MLA_RA
         "RAMLAKV": "ramlakv",  # GPT2_MLA_RA_KV
         "RAMLAKVM": "ramlakvm",  # GPT2_MLA_RA_KVM
@@ -120,6 +124,12 @@ class RAMLATrainer(VanillaGPT2Trainer):
             super().__init__(args, config)
             self._setup_ra_learned_model()
 
+        elif self.step_config["arch"].startswith("ra_fixed_"):
+            # GPT2_RA_Fixed with predetermined pattern
+            super().__init__(args, config)
+            pattern = self.step_config["arch"].replace("ra_fixed_", "")
+            self._setup_ra_fixed_model(pattern)
+
         elif self.step_config["arch"] in [
             "mla",
             "mlakv",
@@ -138,22 +148,63 @@ class RAMLATrainer(VanillaGPT2Trainer):
             raise ValueError(f"Unknown architecture: {self.step_config['arch']}")
 
     def _setup_ra_learned_model(self):
-        """Replace model with GPT2_RA (learned alternation, no MLA)."""
+        """Replace model with GPT2_RA_Learned (blend both paths during training)."""
         import torch
-        from ra import GPT2_RA
+        from ra import GPT2_RA_Learned
         from gpt2.model import GPTConfig
 
-        # Create GPTConfig for GPT2_RA
+        # Create GPTConfig
         gpt_config = GPTConfig.from_name(self.args.model_name)
         gpt_config.block_size = self.args.block_size
         gpt_config.dropout = self.args.dropout
         gpt_config.bias = getattr(self.args, "bias", True)
 
         # Create model with proper GPTConfig
-        self.model = GPT2_RA(gpt_config)
-        print(f"Created GPT2_RA with learned alternation")
+        self.model = GPT2_RA_Learned(gpt_config)
+        print(f"Created GPT2_RA_Learned with gradient flow")
         print(f"  Params: {self.model.get_num_params():,}")
-        print(f"  Balance stats: {self.model.get_balance_stats()}")
+        print(f"  Training: blends both standard and reciprocal paths")
+        print(f"  Inference: uses learned threshold per layer")
+
+        # Move to device and setup optimizer
+        self.model.to(self.args.device)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.args.learning_rate,
+            weight_decay=self.args.weight_decay,
+        )
+
+        # Rebuild scheduler for new optimizer
+        if hasattr(self, "scheduler") and self.scheduler is not None:
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+
+            self.scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=getattr(self.args, "max_iters", 10000),
+                eta_min=getattr(self.args, "min_lr", 6e-5),
+            )
+
+    def _setup_ra_fixed_model(self, pattern: str):
+        """Replace model with GPT2_RA_Fixed (predetermined pattern)."""
+        import torch
+        from ra import GPT2_RA_Fixed
+        from gpt2.model import GPTConfig
+
+        # Create GPTConfig
+        gpt_config = GPTConfig.from_name(self.args.model_name)
+        gpt_config.block_size = self.args.block_size
+        gpt_config.dropout = self.args.dropout
+        gpt_config.bias = getattr(self.args, "bias", True)
+
+        # Create model with fixed pattern
+        self.model = GPT2_RA_Fixed(gpt_config, pattern=pattern)
+        print(f"Created GPT2_RA_Fixed with pattern={pattern}")
+        print(f"  Params: {self.model.get_num_params():,}")
+        stats = self.model.get_pattern_stats()
+        print(
+            f"  Pattern: {stats['n_reciprocal']} reciprocal, {stats['n_standard']} standard"
+        )
+        print(f"  Reciprocal layers: {stats['reciprocal_layers']}")
 
         # Move to device and setup optimizer
         self.model.to(self.args.device)
