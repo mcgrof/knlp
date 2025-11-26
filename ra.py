@@ -1319,24 +1319,27 @@ class GPT2_RA_Learned_Attention(nn.Module):
         p_recip = self.get_alternation_prob()
 
         if self.training:
-            # During training: compute both paths and blend (enables learning)
-            # Standard: Q @ K.T @ V
-            y_standard = F.scaled_dot_product_attention(
-                q,
-                k,
-                v,
-                dropout_p=self.dropout,
-                is_causal=True,
-            )
+            # During training: shared score matrix for 1.5x FLOPs (not 2x)
+            # Compute scores once: S = Q @ K^T
+            scale = 1.0 / (self.head_dim**0.5)
+            scores = (q @ k.transpose(-2, -1)) * scale  # [B, H, T, T]
 
-            # Reciprocal: K @ Q.T @ V
-            y_reciprocal = F.scaled_dot_product_attention(
-                k,
-                q,
-                v,
-                dropout_p=self.dropout,
-                is_causal=True,
+            # Apply causal mask
+            causal_mask = torch.tril(
+                torch.ones(T, T, dtype=torch.bool, device=scores.device)
             )
+            scores = scores.masked_fill(~causal_mask, float("-inf"))
+
+            # Standard attention: softmax over rows (dim=-1)
+            attn_std = F.softmax(scores, dim=-1)
+            attn_std = F.dropout(attn_std, p=self.dropout, training=True)
+            y_standard = attn_std @ v
+
+            # Reciprocal attention: softmax over columns (transpose view)
+            scores_t = scores.transpose(-2, -1)
+            attn_ra = F.softmax(scores_t, dim=-1)
+            attn_ra = F.dropout(attn_ra, p=self.dropout, training=True)
+            y_reciprocal = attn_ra @ v
 
             # Differentiable blend using learned probability
             # Gradients flow through p_recip to alternation_logits
