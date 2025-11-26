@@ -2,7 +2,6 @@
 #
 # Tests RA mechanism with fixed patterns vs learned alternation.
 #   B0         - Baseline GPT-2 (standard Q @ K.T attention)
-#   RANONE0    - GPT2_RA_Fixed pattern=none (all standard, tests wrapper overhead)
 #   RAEARLY0   - GPT2_RA_Fixed pattern=early (first 6 layers reciprocal)
 #   RALATE0    - GPT2_RA_Fixed pattern=late (last 6 layers reciprocal)
 #   RAALL0     - GPT2_RA_Fixed pattern=all (all layers reciprocal)
@@ -81,7 +80,7 @@ CONFIG_PRUNING_METHOD="none"
 
 # Ablation mode - RA pattern comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="B0,RANONE0,RAEARLY0,RALATE0,RAALL0,RALEARN0"
+CONFIG_RA_MLA_ABLATION_STEPS="B0,RAEARLY0,RALATE0,RAALL0,RALEARN0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
