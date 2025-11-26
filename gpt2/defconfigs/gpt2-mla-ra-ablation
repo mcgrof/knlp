@@ -1,26 +1,25 @@
-# GPT-2 RA-MLA Learning Rate Ablation
+# GPT-2 MLA + RA Comprehensive Ablation
 #
-# Tests whether RA/MLA architectures enable more aggressive learning rates.
-# Hypothesis: adaptive compute allocation provides implicit regularization,
-# allowing higher LR without destabilizing.
+# Tests all MLA variants with and without reciprocal attention:
+#   MLA0       - GPT2_MLA: MLA only (TL-cache latent compression)
+#   MLAKV0     - GPT2_MLA_KV: MLA + learned KVSplice compression
+#   MLAKV20    - GPT2_MLA_KV2: Separate K/V latents (no shared TL-cache)
+#   MLAKV2M0   - GPT2_MLA_KV2M: K/V latents + MLP compression
+#   RAMLA0     - GPT2_MLA_RA: MLA + reciprocal attention (RALATE pattern)
+#   RAMLAKV0   - GPT2_MLA_RA_KV: RA + MLA + learned KVSplice compression
+#   RAMLAKVM0  - GPT2_MLA_RA_KVM: RA + MLA + KV + MLP compression (full stack)
 #
-# Architecture key:
-#   B     = Baseline GPT-2 (standard attention)
-#   MLA   = Multi-head Latent Attention (TL-cache compression)
-#   RA    = Reciprocal Attention routing (current GPT-2 RA)
-#   RAMLA = RA + MLA combined
-#   RAMLAKV = RA + MLA + learned KVSplice compression
+# RALATE pattern: layers 0-5 standard, layers 6-11 reciprocal (fixed at init).
+# All MLA variants use d_latent=256 for consistent compression ratio.
+# KVSplice uses compression_ratio=0.5 (further 2x compression beyond MLA).
 #
-# Learning rate suffix:
-#   0 = standard LR (6e-4)
-#   1 = aggressive LR (1.2e-3)
+# This ablation measures:
+# - Impact of MLA latent compression on quality
+# - Benefit of reciprocal attention for MLA architectures
+# - Effect of learned KVSplice compression
+# - Trade-offs of MLP compression combined with attention compression
 #
-# Steps:
-#   B0, B1       - Baseline at standard/aggressive LR
-#   MLA0, MLA1   - MLA at standard/aggressive LR
-#   RA0, RA1     - RA routing at standard/aggressive LR
-#   RAMLA0, RAMLA1 - RA+MLA at standard/aggressive LR
-#   RAMLAKV0, RAMLAKV1 - Full stack at standard/aggressive LR
+# All use standard LR (6e-4) for fair comparison.
 
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -37,8 +36,8 @@ CONFIG_GPT2_N_LAYER=12
 CONFIG_GPT2_N_HEAD=12
 CONFIG_GPT2_N_EMBD=768
 
-# Training time: 1 hour per step (3600 seconds)
-CONFIG_GPT2_MAX_TIME=3600
+# Training time: 2 hours per test (7200 seconds)
+CONFIG_GPT2_MAX_TIME=7200
 CONFIG_GPT2_GRADIENT_ACCUMULATION=4
 CONFIG_GPT2_EVAL_INTERVAL=50
 CONFIG_GPT2_EVAL_SAMPLES=200
@@ -85,21 +84,13 @@ CONFIG_SPAM_WARMUP_STEPS=1000
 CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
-# RA Configuration (for RA/RAMLA/RAMLAKV steps)
-CONFIG_ENABLE_RA=y
-CONFIG_RA_HEAD_FRAC="0.25"
-CONFIG_RA_ROUTER_HIDDEN=16
-CONFIG_RA_ROUTER_BIAS_FULL="-1.0"
-CONFIG_RA_WARMUP_LOSS_DROP="0.05"
-CONFIG_RA_COMPUTE_PENALTY_WEIGHT="0.01"
-
-# MLA Configuration (for MLA/RAMLA/RAMLAKV steps)
+# MLA Configuration
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
-# Ablation mode
+# Ablation mode - comprehensive MLA+RA comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="B0,B1,MLA0,MLA1,RA0,RA1,RAMLA0,RAMLA1,RAMLAKV0,RAMLAKV1"
+CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0,MLAKV20,MLAKV2M0,RAMLA0,RAMLAKV0,RAMLAKVM0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
@@ -110,7 +101,7 @@ CONFIG_LM_EVAL_LIMIT=100
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=y
-CONFIG_TRACKER_PROJECT="gpt2-ramla-lr-ablation"
+CONFIG_TRACKER_PROJECT="gpt2-mla-ra-ablation"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=n
