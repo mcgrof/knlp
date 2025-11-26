@@ -55,9 +55,13 @@ cache = kv_latent  # 6 MB (6x compression)
 **MLA trade-off**: 6x smaller cache but +8.6% perplexity degradation due to
 compression bottleneck.
 
-**RA+MLA improvement**: Token-Latent cache (supports Q/K transpose) with
-reciprocal attention recovers quality (-5.6% vs MLA alone) through better
-optimization geometry. See [ra.md](ra.md) for details.
+**Note**: References to "RA+MLA" in this document refer to the old Reciprocal
+Attention implementation (now deprecated). Those results used a flawed
+implementation where Q/K were swapped within layers. See
+[archive/ra-old.md](archive/ra-old.md) for historical context.
+
+Current RA research focuses on double attention evaluation. See [ra.md](ra.md)
+for the new direction.
 
 ### Learned Compression Implementation
 
