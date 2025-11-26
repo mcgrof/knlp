@@ -19,6 +19,12 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+# Import Fisher metrics helper
+try:
+    from ra import compute_fisher_metrics
+except ImportError:
+    compute_fisher_metrics = None
+
 
 class LayerNorm(nn.Module):
     """LayerNorm with optional bias. PyTorch doesn't support simply bias=False"""
@@ -363,6 +369,88 @@ class GPT2(nn.Module):
             optim_groups, lr=learning_rate, betas=betas, fused=use_fused
         )
         return optimizer
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """
+        Compute Fisher Information Matrix spectrum metrics for selected layers.
+
+        Args:
+            x: Input tensor [B, T]
+            layer_indices: Which layers to analyze (default: [0, n_layers//2, -1])
+            n_samples: Samples per head for eigenvalue computation
+            topk: Number of top eigenvalues to log
+
+        Returns:
+            Dictionary of Fisher metrics for W&B logging
+        """
+        if compute_fisher_metrics is None:
+            return {}
+
+        if layer_indices is None:
+            n = len(self.transformer.h)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.transformer.wte(x)
+        pos_emb = self.transformer.wpe(torch.arange(T, device=device))
+        h = self.transformer.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.transformer.h):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "CausalSelfAttention", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from CausalSelfAttention layer."""
+        B, T, C = x.shape
+        device = x.device
+
+        # Get Q, K, V
+        if self.config.kv_tying or self.config.k_eq_vt:
+            q, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+            k = v if self.config.kv_tying else q.transpose(-2, -1)
+        else:
+            q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+
+        # Reshape to [B, H, T, head_dim]
+        q = q.view(B, T, attn.n_head, C // attn.n_head).transpose(1, 2)
+        k = k.view(B, T, attn.n_head, C // attn.n_head).transpose(1, 2)
+
+        # Compute attention scores
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        # Apply causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        att = att.masked_fill(causal_mask, float("-inf"))
+
+        # Softmax to get probabilities
+        att = F.softmax(att, dim=-1)
+
+        return att  # [B, H, T, T]
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
