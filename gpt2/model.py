@@ -19,11 +19,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-# Import Fisher metrics helper
-try:
-    from ra import compute_fisher_metrics
-except ImportError:
-    compute_fisher_metrics = None
+# Fisher metrics functionality removed with old RA implementation
+compute_fisher_metrics = None
 
 
 class LayerNorm(nn.Module):
@@ -202,9 +199,10 @@ class GPTConfig:
     # Model size presets
     @classmethod
     def from_name(cls, name: str):
-        """Create config from model name (gpt2, gpt2-medium, gpt2-large, gpt2-xl)"""
+        """Create config from model name (gpt2-tiny, gpt2, gpt2-medium, gpt2-large, gpt2-xl)"""
         # GPT-2 model configurations
         configs = {
+            "gpt2-tiny": dict(n_layer=6, n_head=8, n_embd=512),  # ~22M params (for double-attn comparison)
             "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
             "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
             "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
