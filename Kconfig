@@ -45,28 +45,21 @@ config HYPER_PARAM_MANUAL
 endchoice
 
 config TARGET_EFFECTIVE_BATCH
-	int "Target effective batch (0=AUTO per-GPU defaults, recommended)"
-	default 0
-	range 0 8192
-	depends on HYPER_PARAM_AUTO
+	int "Target effective batch size override"
+	default 512
+	range 64 8192
+	depends on HYPER_PARAM_MANUAL
 	help
-	  Override for total effective batch size in AUTO mode.
+	  Target total effective batch size for MANUAL mode.
 
-	  RECOMMENDED: Leave at 0 to use automatic per-GPU defaults.
+	  The system will compute gradient_accumulation to achieve:
+	    effective_batch = batch_size × grad_acc × num_gpus
 
-	  The default (0) enables per-GPU targeting:
-	    - GPT-2: 256 per GPU (optimal convergence)
-	    - ResNet-18/50: 256/128 per GPU
-	    - Total scales with GPU count (e.g., 256×4=1024 for 4 GPUs)
+	  Example: target=512, batch=64, 1 GPU → grad_acc=8
 
-	  Empirical evidence (GPT-2, 2h training):
-	    - per_gpu=512 (old): 201 iters, val_ppl=964 (poor)
-	    - per_gpu=256 (new): 601 iters, val_ppl=336 (3x better!)
-
-	  Only set non-zero to force a specific total effective batch
-	  (not recommended - defeats per-GPU optimization).
-
-	  Formula: effective_batch = batch_size × grad_acc × num_gpus
+	  Note: In AUTO mode, this setting is not used. AUTO mode
+	  uses per-GPU targeting (256 for GPT-2) which automatically
+	  scales with GPU count for optimal convergence.
 
 	  Model-specific memory scaling factors account for different memory
 	  requirements per sample, allowing smaller models to use proportionally
