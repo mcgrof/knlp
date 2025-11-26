@@ -81,7 +81,6 @@ CONFIG_ENABLE_WANDB=y
 CONFIG_TRACKER_PROJECT="gpt2-mechint-kv-circuits"
 
 # Batch size for analysis (smaller than training for memory efficiency)
-CONFIG_BATCH_SIZE=8
 
 # Mixed precision for faster analysis
 CONFIG_MIXED_PRECISION=y

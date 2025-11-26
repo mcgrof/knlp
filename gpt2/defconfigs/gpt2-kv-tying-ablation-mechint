@@ -58,7 +58,6 @@ CONFIG_GPT2_AMP_DTYPE="bfloat16"
 CONFIG_HYPER_PARAM_AUTO=y
 
 # Basic training parameters (overridden by auto-detection)
-CONFIG_BATCH_SIZE=20
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"

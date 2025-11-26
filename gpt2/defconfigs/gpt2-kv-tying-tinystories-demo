@@ -31,7 +31,6 @@ CONFIG_GPT2_WEIGHT_TYING=y
 # Training Configuration - Short demo runs (10 minutes each)
 # Increased gradient accumulation to maintain effective batch size
 # effective_batch_size = 20 * 16 = 320
-CONFIG_GPT2_GRADIENT_ACCUMULATION=16
 CONFIG_GPT2_MAX_ITERS=10000
 CONFIG_GPT2_MAX_TIME=600
 CONFIG_GPT2_EVAL_INTERVAL=25
@@ -50,7 +49,6 @@ CONFIG_GPT2_AMP_DTYPE="bfloat16"
 
 # Batch size - reduced for K=V.T (V2) memory requirements
 # V2 uses manual attention (materializes full attn matrix)
-CONFIG_BATCH_SIZE=20
 CONFIG_NUM_EPOCHS=10
 CONFIG_LEARNING_RATE="6e-4"
 CONFIG_WEIGHT_DECAY="0.1"
