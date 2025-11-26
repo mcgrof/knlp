@@ -2524,10 +2524,8 @@ class GPT2_MLA_RA(nn.Module):
         )
         scores_masked = scores.masked_fill(causal_mask, float("-inf"))
 
-        # Get attention probs based on alternation direction
-        p_recip = attn.get_alternation_prob()
-
-        if p_recip > 0.5:
+        # Get attention probs based on RALATE pattern (fixed at init)
+        if attn.use_reciprocal:
             attn_probs = F.softmax(scores, dim=-2)
         else:
             attn_probs = F.softmax(scores_masked, dim=-1)
@@ -2740,10 +2738,8 @@ class GPT2_MLA_RA_KV(nn.Module):
         )
         scores_masked = scores.masked_fill(causal_mask, float("-inf"))
 
-        # Get attention probs based on alternation direction
-        p_recip = attn.get_alternation_prob()
-
-        if p_recip > 0.5:
+        # Get attention probs based on RALATE pattern (fixed at init)
+        if attn.use_reciprocal:
             # Reciprocal: softmax on dim=-2 (column-wise)
             attn_probs = F.softmax(scores, dim=-2)
         else:
