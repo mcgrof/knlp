@@ -131,22 +131,162 @@ for the complete benchmark code.
 
 ### Research Evolution
 
-Our research evolved from evaluating the impact of computing both Q@K.T and
-K@Q.T simultaneously to finding more compute-friendly implementations:
+Our research evolved from pure reciprocal attention to combining it with
+compression mechanisms for practical deployment:
 
-1. **MLA + RA**: Learned per-layer alternation with Multi-head Latent
-   Attention for cache compression (introduces Token-Latent cache to support
-   Q/K transpose)
-2. **Mathematical Introspection**: What does RA implicitly add from a
-   mathematical perspective? Can we leverage it for better compression? See
-   [FIM.md](FIM.md) for full Fisher Information Matrix analysis.
-3. **KVSplice**: Additional learned compression on top of Token-Latent cache.
-   See [kvsplice.md](kvsplice.md) for complete architecture, results, and
-   future research directions. KVSplice achieves 12x total compression while
-   improving quality through regularization.
-4. **GPT-2 + RA**: Pure reciprocal attention without compression (ongoing)
+1. **GPT-2 + RA**: Pure reciprocal attention with fixed patterns (see below).
+   Validates RA improves quality (4-9% better perplexity) across different GPUs
+   and batch sizes, with no memory overhead.
+
+2. **RA + MLA**: Combine RA with Multi-head Latent Attention for 6x cache
+   compression. Introducing Token-Latent (TL) cache to support both Q@K.T and
+   K@Q.T attention patterns.
+
+3. **KVSplice**: Add learned compression bottleneck on top of RA+MLA for 12x
+   total compression (3 MB cache). See [kvsplice.md](kvsplice.md) for complete
+   architecture and results.
+
+4. **Mathematical Introspection**: Why does RA work? Fisher Information Matrix
+   analysis reveals RA creates smoother optimization geometry (flatter
+   curvature). See [FIM.md](FIM.md) for details.
+
+**Reading Guide**: Start with baseline GPT-2 + RA to understand the core
+mechanism, then see how MLA adds compression, then KVSplice for extreme
+compression.
 
 ---
+
+## GPT-2 + RA (Pure Reciprocal Attention)
+
+### Architecture
+
+Standard GPT-2 with **fixed** per-layer reciprocal attention patterns. No
+compression mechanisms:
+
+- No latent compression (full Q, K, V projections)
+- Same cache requirements as baseline GPT-2
+- Fixed patterns: early layers (0-5), late layers (6-11), or all layers
+- Same parameter count as baseline (123.69M)
+
+Three fixed patterns tested:
+
+1. **RAEARLY**: Reciprocal attention in layers 0-5 (early), standard in 6-11
+2. **RALATE**: Standard in layers 0-5, reciprocal attention in layers 6-11 (late)
+3. **RAALL**: Reciprocal attention in all 12 layers
+
+### Implementation
+
+The fixed pattern approach eliminates branching overhead:
+
+```python
+class GPT2_RA_Fixed_Block(nn.Module):
+    def __init__(self, config, layer_idx, use_reciprocal):
+        self.use_reciprocal = use_reciprocal  # Compile-time decision
+
+    def forward(self, x):
+        # No runtime branching - pattern is fixed at initialization
+        if self.use_reciprocal:
+            # Reciprocal: K @ Q.T
+            y = F.scaled_dot_product_attention(k, q, v, is_causal=True)
+        else:
+            # Standard: Q @ K.T
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+```
+
+This approach provides RA's benefits with zero runtime overhead after
+torch.compile optimization.
+
+### Results
+
+Test configuration: GPT-2 124M on FineWebEdu dataset, 2-hour training runs,
+identical hyperparameters (LR=6e-4, AdamWSPAM optimizer).
+
+**Tested on two GPUs** with different gradient accumulation settings:
+
+- **A100 (40GB)**: grad_acc=16, effective batch=512, 201 iterations
+- **W7900 (48GB)**: grad_acc=8, effective batch=256, 601 iterations
+
+Projects:
+- [gpt2-ra-ablation-a100-40g](https://wandb.ai/mcgrof-citizen/gpt2-ra-ablation-a100-40g)
+- [gpt2-ra-ablation-w7900](https://wandb.ai/mcgrof-citizen/gpt2-ra-ablation-w7900)
+
+![GPT-2 RA Fixed Patterns Comparison](images/gpt2_ra_fixed_patterns_comparison.png)
+
+**A100 Results** (grad_acc=16, eff_batch=512):
+
+| Architecture | Val Perplexity | Improvement | HellaSwag Acc |
+|-------------|----------------|-------------|---------------|
+| Baseline GPT-2 (B0) | 964.50 | - | 23.0% |
+| RAEARLY | 897.60 | -6.9% | 23.0% |
+| **RALATE** | **880.12** | **-8.7%** ✓ | 23.0% |
+| RAALL | 887.30 | -8.0% | 23.0% |
+
+**W7900 Results** (grad_acc=8, eff_batch=256):
+
+| Architecture | Val Perplexity | Improvement | HellaSwag Acc |
+|-------------|----------------|-------------|---------------|
+| Baseline GPT-2 (B0) | 335.94 | - | 23.0% |
+| **RAEARLY** | **313.75** | **-6.6%** ✓ | 23.0% |
+| RALATE | 316.04 | -5.9% | 23.0% |
+| RAALL | 322.88 | -3.9% | 23.0% |
+
+![GPT-2 RA Pattern Rankings](images/gpt2_ra_pattern_rankings.png)
+
+**Key Findings**:
+
+1. **All RA patterns beat baseline** on both GPUs (4-9% improvement)
+2. **Hardware-agnostic**: RA works on both NVIDIA (A100) and AMD (W7900)
+3. **Pattern preferences differ**: RALATE best on A100, RAEARLY best on W7900
+4. **Robust to batch size**: Works with eff_batch=256 and 512
+5. **Same parameters**: 123.69M params as baseline, no overhead
+
+![GPT-2 RA Relative Improvements](images/gpt2_ra_relative_improvements.png)
+
+### Analysis
+
+**Why Different Absolute Perplexities?**
+
+A100 achieved 964 perplexity while W7900 achieved 336 despite A100 having a
+larger effective batch. This is due to different training dynamics:
+
+- **A100**: 201 optimizer updates (grad_acc=16 → slower per-iteration)
+- **W7900**: 601 optimizer updates (grad_acc=8 → faster per-iteration)
+
+Both hit the 2-hour time limit, but W7900 completed 3× more updates,
+explaining the better convergence. **Absolute perplexities cannot be compared
+directly** - only relative improvements vs baseline are valid.
+
+**Pattern-Specific Insights**:
+
+- **RALATE (late layers)**: Best on A100 (-8.7%), strong on W7900 (-5.9%).
+  Deep layers benefit from reciprocal attention for refinement and reasoning.
+- **RAEARLY (early layers)**: Best on W7900 (-6.6%), weaker on A100 (-6.9%).
+  Early feature extraction may benefit more with frequent updates.
+- **RAALL (all layers)**: Strong on A100 (-8.0%), weakest on W7900 (-3.9%).
+  Suggests mixing standard and reciprocal is better than pure reciprocal.
+
+**Validation Passed**: ✓ RA beats baseline consistently across:
+- Different hardware (NVIDIA vs AMD)
+- Different batch sizes (256 vs 512)
+- Different training trajectories (201 vs 601 updates)
+
+### Conclusion
+
+GPT-2 + RA with fixed patterns validates that reciprocal attention
+**consistently improves language modeling quality** (4-9% better perplexity)
+across different GPUs and training conditions. The fixed-pattern approach
+eliminates runtime branching overhead while preserving RA's bidirectional
+information flow benefits.
+
+**Best practices**:
+- Use **RALATE** (late layers reciprocal) as default - consistently strong
+- Test multiple patterns if optimizing for specific hardware/batch size
+- Expect 5-9% perplexity improvements over baseline GPT-2
+
+**Next steps**: Investigate why RALEARN (learned pattern) OOMs on both GPUs,
+and extend training beyond 2 hours to verify pattern rankings remain stable.
+---
+
 
 ## RA with Multi-head Latent Attention (MLA)
 
@@ -689,137 +829,6 @@ Evaluated on ARC-Easy, HellaSwag, and Winogrande (100 samples each):
 faster inference, same cache size. This validates the RA mechanism as an
 effective bidirectional attention approach.
 
----
-
-## GPT-2 + RA (Pure Reciprocal Attention)
-
-### Architecture
-
-Standard GPT-2 with **fixed** per-layer reciprocal attention patterns. No
-compression mechanisms:
-
-- No latent compression (full Q, K, V projections)
-- Same cache requirements as baseline GPT-2
-- Fixed patterns: early layers (0-5), late layers (6-11), or all layers
-- Same parameter count as baseline (123.69M)
-
-Three fixed patterns tested:
-
-1. **RAEARLY**: Reciprocal attention in layers 0-5 (early), standard in 6-11
-2. **RALATE**: Standard in layers 0-5, reciprocal attention in layers 6-11 (late)
-3. **RAALL**: Reciprocal attention in all 12 layers
-
-### Implementation
-
-The fixed pattern approach eliminates branching overhead:
-
-```python
-class GPT2_RA_Fixed_Block(nn.Module):
-    def __init__(self, config, layer_idx, use_reciprocal):
-        self.use_reciprocal = use_reciprocal  # Compile-time decision
-
-    def forward(self, x):
-        # No runtime branching - pattern is fixed at initialization
-        if self.use_reciprocal:
-            # Reciprocal: K @ Q.T
-            y = F.scaled_dot_product_attention(k, q, v, is_causal=True)
-        else:
-            # Standard: Q @ K.T
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-```
-
-This approach provides RA's benefits with zero runtime overhead after
-torch.compile optimization.
-
-### Results
-
-Test configuration: GPT-2 124M on FineWebEdu dataset, 2-hour training runs,
-identical hyperparameters (LR=6e-4, AdamWSPAM optimizer).
-
-**Tested on two GPUs** with different gradient accumulation settings:
-
-- **A100 (40GB)**: grad_acc=16, effective batch=512, 201 iterations
-- **W7900 (48GB)**: grad_acc=8, effective batch=256, 601 iterations
-
-Projects:
-- [gpt2-ra-ablation-a100-40g](https://wandb.ai/mcgrof-citizen/gpt2-ra-ablation-a100-40g)
-- [gpt2-ra-ablation-w7900](https://wandb.ai/mcgrof-citizen/gpt2-ra-ablation-w7900)
-
-![GPT-2 RA Fixed Patterns Comparison](images/gpt2_ra_fixed_patterns_comparison.png)
-
-**A100 Results** (grad_acc=16, eff_batch=512):
-
-| Architecture | Val Perplexity | Improvement | HellaSwag Acc |
-|-------------|----------------|-------------|---------------|
-| Baseline GPT-2 (B0) | 964.50 | - | 23.0% |
-| RAEARLY | 897.60 | -6.9% | 23.0% |
-| **RALATE** | **880.12** | **-8.7%** ✓ | 23.0% |
-| RAALL | 887.30 | -8.0% | 23.0% |
-
-**W7900 Results** (grad_acc=8, eff_batch=256):
-
-| Architecture | Val Perplexity | Improvement | HellaSwag Acc |
-|-------------|----------------|-------------|---------------|
-| Baseline GPT-2 (B0) | 335.94 | - | 23.0% |
-| **RAEARLY** | **313.75** | **-6.6%** ✓ | 23.0% |
-| RALATE | 316.04 | -5.9% | 23.0% |
-| RAALL | 322.88 | -3.9% | 23.0% |
-
-![GPT-2 RA Pattern Rankings](images/gpt2_ra_pattern_rankings.png)
-
-**Key Findings**:
-
-1. **All RA patterns beat baseline** on both GPUs (4-9% improvement)
-2. **Hardware-agnostic**: RA works on both NVIDIA (A100) and AMD (W7900)
-3. **Pattern preferences differ**: RALATE best on A100, RAEARLY best on W7900
-4. **Robust to batch size**: Works with eff_batch=256 and 512
-5. **Same parameters**: 123.69M params as baseline, no overhead
-
-![GPT-2 RA Relative Improvements](images/gpt2_ra_relative_improvements.png)
-
-### Analysis
-
-**Why Different Absolute Perplexities?**
-
-A100 achieved 964 perplexity while W7900 achieved 336 despite A100 having a
-larger effective batch. This is due to different training dynamics:
-
-- **A100**: 201 optimizer updates (grad_acc=16 → slower per-iteration)
-- **W7900**: 601 optimizer updates (grad_acc=8 → faster per-iteration)
-
-Both hit the 2-hour time limit, but W7900 completed 3× more updates,
-explaining the better convergence. **Absolute perplexities cannot be compared
-directly** - only relative improvements vs baseline are valid.
-
-**Pattern-Specific Insights**:
-
-- **RALATE (late layers)**: Best on A100 (-8.7%), strong on W7900 (-5.9%).
-  Deep layers benefit from reciprocal attention for refinement and reasoning.
-- **RAEARLY (early layers)**: Best on W7900 (-6.6%), weaker on A100 (-6.9%).
-  Early feature extraction may benefit more with frequent updates.
-- **RAALL (all layers)**: Strong on A100 (-8.0%), weakest on W7900 (-3.9%).
-  Suggests mixing standard and reciprocal is better than pure reciprocal.
-
-**Validation Passed**: ✓ RA beats baseline consistently across:
-- Different hardware (NVIDIA vs AMD)
-- Different batch sizes (256 vs 512)
-- Different training trajectories (201 vs 601 updates)
-
-### Conclusion
-
-GPT-2 + RA with fixed patterns validates that reciprocal attention
-**consistently improves language modeling quality** (4-9% better perplexity)
-across different GPUs and training conditions. The fixed-pattern approach
-eliminates runtime branching overhead while preserving RA's bidirectional
-information flow benefits.
-
-**Best practices**:
-- Use **RALATE** (late layers reciprocal) as default - consistently strong
-- Test multiple patterns if optimizing for specific hardware/batch size
-- Expect 5-9% perplexity improvements over baseline GPT-2
-
-**Next steps**: Investigate why RALEARN (learned pattern) OOMs on both GPUs,
-and extend training beyond 2 hours to verify pattern rankings remain stable.
 ---
 
 ## Implementation Details
