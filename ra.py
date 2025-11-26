@@ -1547,6 +1547,78 @@ class GPT2_RA_Learned(nn.Module):
             n_params -= self.wpe.weight.numel()
         return n_params
 
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(pos)
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "GPT2_RA_Learned_Attention", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from GPT2_RA_Learned_Attention layer."""
+        B, T, C = x.shape
+        device = x.device
+
+        # Get Q, K, V
+        q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+        q = q.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+        k = k.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+
+        # Compute scores
+        scale = 1.0 / (attn.head_dim**0.5)
+        scores = (q @ k.transpose(-2, -1)) * scale
+
+        # Apply causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Get learned alternation probability
+        p_recip = attn.get_alternation_prob()
+
+        # For FIM analysis, use hard decision based on learned probability
+        if p_recip > 0.5:
+            # Reciprocal: softmax on dim=-2
+            attn_probs = F.softmax(scores, dim=-2)
+        else:
+            # Standard: softmax on dim=-1
+            attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs
+
 
 class GPT2_RA_Fixed_Attention(nn.Module):
     """
@@ -3470,6 +3542,79 @@ class GPT2_MLA_RA_KVM(nn.Module):
             "mlp_reduction": mlp_stats["reduction"],
         }
 
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h, _ = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "RA_MLA_KVSplice", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from RA_MLA_KVSplice layer."""
+        B, T, _ = x.shape
+
+        # Project to latent
+        latent_orig = attn.to_latent(x)
+        latent = attn.kvsplice(latent_orig)
+
+        # Decompress to Q, K, V
+        qkv = attn.from_latent(latent)
+        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Get attention probs based on RALATE pattern
+        if attn.use_reciprocal:
+            attn_probs = F.softmax(scores, dim=-2)
+        else:
+            attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs
+
 
 class MLA_KV2_Attention(nn.Module):
     """
@@ -3718,6 +3863,80 @@ class GPT2_MLA_KV2(nn.Module):
         }
         return stats
 
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "MLA_KV2_Attention", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from MLA_KV2_Attention layer."""
+        B, T, _ = x.shape
+
+        # Q projection (direct, no compression)
+        q = attn.to_q(x)
+        q = q.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+
+        # K and V from separate compressed latents
+        k_latent = attn.to_k_latent(x)
+        v_latent = attn.to_v_latent(x)
+
+        k = attn.from_k_latent(k_latent)
+        v = attn.from_v_latent(v_latent)
+
+        k = k.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+        v = v.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute attention scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Standard attention (no reciprocal for MLA_KV2)
+        attn_probs = F.softmax(scores, dim=-1)
+
+        return attn_probs
+
 
 class MLA_KV2_MLPSPLICE_Block(nn.Module):
     """MLA 2-latent + MLPSplice (MLP compression)."""
@@ -3825,3 +4044,77 @@ class GPT2_MLA_KV2M(nn.Module):
             "compression_ratio": self.compression_ratio,
         }
         return stats
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(torch.arange(T, device=device))
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "MLA_KV2_Attention", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from MLA_KV2_Attention layer."""
+        B, T, _ = x.shape
+
+        # Q projection (direct, no compression)
+        q = attn.to_q(x)
+        q = q.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+
+        # K and V from separate compressed latents
+        k_latent = attn.to_k_latent(x)
+        v_latent = attn.to_v_latent(x)
+
+        k = attn.from_k_latent(k_latent)
+        v = attn.from_v_latent(v_latent)
+
+        k = k.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+        v = v.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
+
+        # Apply RoPE
+        cos, sin = attn.rope(x, T)
+        q, k = apply_rope(q, k, cos, sin)
+
+        # Compute attention scores
+        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Standard attention (no reciprocal for MLA_KV2M)
+        attn_probs = F.softmax(scores, dim=-1)
+
+        return attn_probs
