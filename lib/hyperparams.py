@@ -122,12 +122,12 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     model_cfg = model_configs.get(model_type.lower(), model_configs["gpt2"])
 
     # Calculate target effective batch
-    # If user provides explicit target, use it; otherwise use per-GPU target × gpu_count
+    # If user provides explicit target (non-zero), use it; otherwise use per-GPU target × gpu_count
     gpu_count = gpu_info["gpu_count"]
-    if target_effective_batch is not None:
+    if target_effective_batch is not None and target_effective_batch > 0:
         target_eff = target_effective_batch
     else:
-        # Use per-GPU target scaled by number of GPUs
+        # Use per-GPU target scaled by number of GPUs (default: 0 or None)
         per_gpu_target = model_cfg["default_per_gpu_target"]
         target_eff = per_gpu_target * gpu_count
     scale = model_cfg["scale_factor"]
