@@ -406,6 +406,232 @@ class TransformerWithRA_MLA(nn.Module):
         }
 ```
 
+### KVSplice: Learned Compression Bottleneck
+
+**KVSplice** adds a learned information bottleneck on top of MLA's latent compression, achieving 12x total cache compression (36 MB → 3 MB) while maintaining or improving quality when combined with RA.
+
+The name "KVSplice" reflects its function: it **splices** (compresses → decompresses) the latent representation through a learned bottleneck, forcing the model to produce compressible representations.
+
+#### Architecture Overview
+
+```
+Standard MLA:    x → latent (256) → Q,K,V → attention
+                          ↑ cached
+
+KVSplice:        x → latent (256) → [bottleneck] → latent' (256) → Q,K,V
+                                         ↓
+                                compressed (128) ← cached
+```
+
+**Compression stack:**
+- Base MLA: 768 → 256 latent (6x compression)
+- KVSplice: 256 → 128 → 256 (2x additional compression)
+- **Total: 12x compression** (36 MB → 3 MB cache)
+
+#### Implementation
+
+```python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class LearnedKVSplice(nn.Module):
+    """
+    Learned information bottleneck for latent compression.
+
+    Compresses latent dimension (d_in → d_compressed → d_in) using:
+      1. Monotonic transform: Reorders dimensions before compression
+      2. Low-rank projection: Forces information through bottleneck
+
+    This trains the model to produce latents that survive compression,
+    acting as a regularizer for structured representations.
+    """
+
+    def __init__(self, d_in: int, d_compressed: int):
+        super().__init__()
+        self.d_in = d_in              # e.g., 256
+        self.d_compressed = d_compressed  # e.g., 128
+
+        # Learned monotonic transform (reorders dimensions)
+        self.transform_scale = nn.Parameter(torch.ones(d_in))
+        self.transform_shift = nn.Parameter(torch.zeros(d_in))
+
+        # Learned low-rank projection (information bottleneck)
+        self.compress = nn.Linear(d_in, d_compressed, bias=False)
+        self.expand = nn.Linear(d_compressed, d_in, bias=False)
+
+        # Initialize as approximate inverse (compress.T ≈ expand)
+        nn.init.orthogonal_(self.compress.weight)
+        with torch.no_grad():
+            self.expand.weight.copy_(self.compress.weight.T)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Full compress-decompress cycle (training).
+
+        Args:
+            x: [B, T, d_in] latent tensor
+
+        Returns:
+            reconstructed: [B, T, d_in] reconstructed latent
+        """
+        # Monotonic transform (learnable dimension reordering)
+        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
+
+        # Compress through bottleneck
+        compressed = self.compress(x_transformed)  # [B, T, d_compressed]
+
+        # Expand back to original dimension
+        decompressed = self.expand(compressed)  # [B, T, d_in]
+
+        # Inverse transform to recover original scale
+        reconstructed = (decompressed - self.transform_shift) / (
+            F.softplus(self.transform_scale) + 1e-6
+        )
+
+        return reconstructed
+
+    def compress_only(self, x: torch.Tensor) -> torch.Tensor:
+        """Compress for caching (inference)."""
+        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
+        return self.compress(x_transformed)  # [B, T, d_compressed] ← cache this
+
+    def decompress_only(self, compressed: torch.Tensor) -> torch.Tensor:
+        """Decompress from cache (inference)."""
+        decompressed = self.expand(compressed)
+        return (decompressed - self.transform_shift) / (
+            F.softplus(self.transform_scale) + 1e-6
+        )
+```
+
+#### MLA + KVSplice Attention
+
+```python
+class MLA_KVSplice_Attention(nn.Module):
+    """MLA with learned KVSplice compression bottleneck."""
+
+    def __init__(self, d_model=768, n_heads=12, d_latent=256,
+                 compression_ratio=0.5, dropout=0.0):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.d_latent = d_latent
+
+        # Latent compression (base MLA)
+        self.to_latent = nn.Linear(d_model, d_latent)
+        self.from_latent = nn.Linear(d_latent, 3 * d_model)  # Q, K, V
+
+        # KVSplice bottleneck (additional compression)
+        d_compressed = int(d_latent * compression_ratio)  # 256 * 0.5 = 128
+        self.kvsplice = LearnedKVSplice(d_latent, d_compressed)
+
+        self.c_proj = nn.Linear(d_model, d_model)
+
+    def forward(self, x, cache=None, use_cache=False):
+        """
+        Forward pass with KVSplice compression.
+
+        Training:  x → latent → [splice] → latent' → Q,K,V → attention
+        Inference: cache (compressed) → decompress → Q,K,V → attention
+        """
+        B, T, C = x.shape
+
+        # Step 1: Compress to latent (base MLA)
+        latent = self.to_latent(x)  # [B, T, d_latent=256]
+
+        # Step 2: KVSplice bottleneck (learned compression)
+        if cache is not None:
+            # Inference: decompress from cache
+            # cache is [B, T_cache, d_compressed=128]
+            cache_decompressed = self.kvsplice.decompress_only(cache)
+            # Concatenate with new latent (after splicing)
+            latent_spliced = self.kvsplice(latent)
+            full_latent = torch.cat([cache_decompressed, latent_spliced], dim=1)
+        else:
+            # Training: full compress-decompress cycle
+            full_latent = self.kvsplice(latent)  # [B, T, d_latent=256]
+
+        T_total = full_latent.shape[1]
+
+        # Step 3: Generate Q, K, V from (spliced) latent
+        qkv = self.from_latent(full_latent)  # [B, T_total, 3*d_model]
+        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
+        q, k, v = qkv.permute(2, 0, 3, 1, 4)  # Each: [B, n_heads, T_total, head_dim]
+
+        # Step 4: Attention computation
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T_total, C)
+        y = self.c_proj(y)
+
+        # Step 5: Cache management (store compressed latent)
+        if use_cache:
+            # Cache the COMPRESSED latent (128-dim instead of 256-dim)
+            new_cache = self.kvsplice.compress_only(latent)  # [B, T, 128]
+        else:
+            new_cache = None
+
+        return y[:, -T:], new_cache
+```
+
+#### How KVSplice Works
+
+**1. Monotonic Transform (Dimension Reordering)**
+
+```python
+# Learnable per-dimension scale and shift
+x_transformed = x * softplus(scale) + shift
+
+# Example: If scale[i] is large, dimension i gets more weight
+# This reorders dimensions by importance before compression
+```
+
+**2. Low-Rank Projection (Information Bottleneck)**
+
+```python
+compressed = Linear_compress(x_transformed)   # 256 → 128
+expanded = Linear_expand(compressed)          # 128 → 256
+
+# Forces information through 128-dim bottleneck
+# Model learns to structure latent so it survives compression
+```
+
+**3. Training Signal**
+
+During training, the model experiences:
+- Forward pass: latent → compress → decompress → Q,K,V → loss
+- Gradient flows back through bottleneck
+- Model learns to produce latents that compress well
+
+**4. Inference (Cache Compressed Latent)**
+
+```python
+# Store only compressed representation
+cache = compress_only(latent)  # [B, T, 128] ← 2x smaller than MLA
+
+# Reconstruct when needed
+latent = decompress_only(cache)  # [B, T, 256]
+qkv = from_latent(latent)
+```
+
+#### Compression Comparison
+
+| Method | Cache per Token | Total Cache (1024 tokens) | Compression |
+|--------|-----------------|---------------------------|-------------|
+| Standard Attention | K, V per layer: 12 × 2 × 64 = 1536 dims | 36 MB | 1x (baseline) |
+| MLA | Latent: 256 dims | 6 MB | 6x |
+| MLA + KVSplice | Compressed latent: 128 dims | 3 MB | **12x** |
+
+#### Why It Works
+
+**Not static compression** (like PCA): The transform and projection matrices are learned end-to-end during training.
+
+**Learned information bottleneck**: By forcing activations through a smaller space during training, the model learns to structure its representations to be inherently compressible.
+
+**Regularization effect**: The bottleneck acts as regularization, preventing the model from relying on high-dimensional noise that doesn't compress well.
+
+**Synergy with RA**: RA's smoother optimization landscape (lower FIM eigenvalues) helps the compression layers learn better despite the information bottleneck. See [kvsplice.md](kvsplice.md) for detailed compression experiments.
+
 ### Results: MLA vs RA+MLA
 
 Test configuration: GPT-2 124M, FineWebEdu dataset, identical hyperparameters,
