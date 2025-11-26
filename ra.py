@@ -858,17 +858,14 @@ class RA_MLA_Flash(nn.Module):
     """
     Reciprocal Attention with Multi-head Latent Attention and Flash compatibility.
 
-    Key innovations:
-    1. TL-cache (Token-Latent cache): Single compressed latent decompresses to Q, K, V
-    2. Learned alternation: Network learns which layers use standard vs reciprocal
-    3. Global normalization: Layer alternation logits sum to 1 via softmax (Markov chain)
-    4. Flash attention: Compatible via argument swapping (arg1 @ arg2.T)
-    5. RoPE: Position information preserved in attention computation
+    Uses RALATE pattern: late layers (6-11 for GPT-2 12-layer) use reciprocal
+    attention, early layers (0-5) use standard attention. Fixed at initialization.
 
-    The Markov chain reciprocity constraint ensures balanced bidirectional flow:
-    - Half the layers (by probability mass) use Q@K.T
-    - Half use K@Q.T
-    - This creates optimal conditions for KVSplice compression
+    Key features:
+    1. TL-cache (Token-Latent cache): Single compressed latent decompresses to Q, K, V
+    2. RALATE pattern: Fixed late-layer reciprocal (no learned alternation)
+    3. Flash attention: Compatible via argument swapping (arg1 @ arg2.T)
+    4. RoPE: Position information preserved in attention computation
 
     Cache efficiency:
     - Standard attention: cache K, V per layer
@@ -880,18 +877,21 @@ class RA_MLA_Flash(nn.Module):
         self,
         cfg: RA_MLA_Config,
         layer_idx: int,
-        alternation_logits: nn.Parameter,
+        alternation_logits: Optional[nn.Parameter] = None,
     ):
         """
         Args:
             cfg: Configuration dataclass
             layer_idx: Index of this layer (0 to n_layers-1)
-            alternation_logits: Shared parameter [n_layers] for global normalization
+            alternation_logits: Deprecated parameter (kept for backward compatibility)
         """
         super().__init__()
         self.cfg = cfg
         self.layer_idx = layer_idx
-        self.alternation_logits = alternation_logits
+
+        # RALATE pattern: late layers (6-11 for GPT-2) use reciprocal
+        # Fixed at init, no learned alternation
+        self.use_reciprocal = layer_idx >= cfg.n_layers // 2
 
         self.n_heads = cfg.n_heads
         self.head_dim = cfg.head_dim
@@ -918,15 +918,6 @@ class RA_MLA_Flash(nn.Module):
 
         # Scale factor for attention
         self.scale = 1.0 / math.sqrt(cfg.head_dim)
-
-    def get_alternation_prob(self) -> torch.Tensor:
-        """
-        Get this layer's probability of using reciprocal attention.
-
-        Uses sigmoid for independent per-layer decision.
-        Balance is enforced via regularization loss in RA_MLA_Model.
-        """
-        return torch.sigmoid(self.alternation_logits[self.layer_idx])
 
     def forward(
         self,
@@ -979,26 +970,11 @@ class RA_MLA_Flash(nn.Module):
         else:
             q, k = apply_rope(q, k, cos, sin)
 
-        # Determine attention direction based on learned alternation
-        # During training: use probability for soft decision (Gumbel-softmax style)
-        # During inference: use hard decision
-        p_recip = self.get_alternation_prob()
-
-        if self.training:
-            # Straight-through estimator: hard forward, soft backward
-            use_reciprocal = (p_recip > 0.5).float()
-            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
-        else:
-            use_reciprocal = (p_recip > 0.5).float()
-
-        # Flash attention via argument swapping
-        # Standard: Q @ K.T @ V
-        # Reciprocal: K @ Q.T @ V (swap Q and K roles)
-        #
-        # Always use causal masking. Chunked decode (cache + T>1) would need a
-        # custom mask accounting for prefix offset - is_causal alone won't work.
+        # RALATE pattern: late layers use reciprocal (fixed at init)
+        # This is a Python boolean, not a tensor, so torch.compile optimizes away
+        # the unused branch. No gradient flow issues.
         use_causal = True
-        if use_reciprocal > 0.5:
+        if self.use_reciprocal:
             # Reciprocal: K plays role of Q, Q plays role of K
             # K@Q.T gives [B, H, T_k, T_q], we want to attend from K positions to Q
             attn_out = F.scaled_dot_product_attention(
@@ -1031,31 +1007,18 @@ class RA_MLA_Flash(nn.Module):
 
 class RA_MLA_Model(nn.Module):
     """
-    Container for multiple RA_MLA_Flash layers with shared alternation logits.
+    Container for multiple RA_MLA_Flash layers using RALATE pattern.
 
-    The shared alternation_logits parameter ensures global softmax normalization
-    across all layers, creating Markov chain reciprocity where approximately
-    half the probability mass goes to standard attention and half to reciprocal.
+    RALATE: Late layers (6-11 for GPT-2) use reciprocal attention,
+    early layers (0-5) use standard attention. Fixed at initialization.
     """
 
     def __init__(self, cfg: RA_MLA_Config):
         super().__init__()
         self.cfg = cfg
 
-        # Shared alternation logits for all layers
-        # Initialize with alternating pattern: odd layers start as reciprocal
-        # This ensures balanced standard/RA attention from the start
-        init_logits = torch.zeros(cfg.n_layers)
-        for i in range(cfg.n_layers):
-            init_logits[i] = (
-                1.0 if i % 2 == 1 else -1.0
-            )  # sigmoid(1)≈0.73, sigmoid(-1)≈0.27
-        self.alternation_logits = nn.Parameter(init_logits)
-
-        # Create layers
-        self.layers = nn.ModuleList(
-            [RA_MLA_Flash(cfg, i, self.alternation_logits) for i in range(cfg.n_layers)]
-        )
+        # Create layers with RALATE pattern (no learned alternation)
+        self.layers = nn.ModuleList([RA_MLA_Flash(cfg, i) for i in range(cfg.n_layers)])
 
     def forward(
         self,
@@ -1085,40 +1048,12 @@ class RA_MLA_Model(nn.Module):
 
         return x, new_caches
 
-    def get_alternation_distribution(self) -> torch.Tensor:
-        """Get the learned alternation probabilities for all layers."""
-        return torch.sigmoid(self.alternation_logits)
-
     def get_layer_directions(self) -> list:
         """Get which direction each layer uses (for debugging)."""
-        probs = self.get_alternation_distribution()
-        return ["reciprocal" if p > 0.5 else "standard" for p in probs]
-
-    def balance_loss(self) -> torch.Tensor:
-        """
-        Regularization loss to ensure balanced standard/reciprocal attention.
-
-        Encourages the sum of reciprocal probabilities to equal n_layers/2,
-        creating Markov chain reciprocity for optimal KVSplice compression.
-
-        Returns:
-            Scalar loss penalizing deviation from 50/50 balance
-        """
-        probs = self.get_alternation_distribution()
-        target = self.cfg.n_layers / 2.0
-        actual = probs.sum()
-        return (actual - target) ** 2
-
-    def get_balance_stats(self) -> dict:
-        """Get statistics about current alternation balance."""
-        probs = self.get_alternation_distribution()
-        n_recip = (probs > 0.5).sum().item()
-        return {
-            "n_reciprocal": n_recip,
-            "n_standard": self.cfg.n_layers - n_recip,
-            "prob_sum": probs.sum().item(),
-            "target_sum": self.cfg.n_layers / 2.0,
-        }
+        return [
+            "reciprocal" if layer.use_reciprocal else "standard"
+            for layer in self.layers
+        ]
 
 
 # =============================================================================
@@ -2037,13 +1972,14 @@ class RA_MLA_KVSplice(nn.Module):
         self,
         cfg: RA_MLA_Config,
         layer_idx: int,
-        alternation_logits: nn.Parameter,
         compression_ratio: float = 0.5,
     ):
         super().__init__()
         self.cfg = cfg
         self.layer_idx = layer_idx
-        self.alternation_logits = alternation_logits
+
+        # RALATE pattern: late layers use reciprocal
+        self.use_reciprocal = layer_idx >= cfg.n_layers // 2
 
         self.n_heads = cfg.n_heads
         self.head_dim = cfg.head_dim
@@ -2073,10 +2009,6 @@ class RA_MLA_KVSplice(nn.Module):
 
         # Track reconstruction error for metrics
         self._last_reconstruction_error = None
-
-    def get_alternation_prob(self) -> torch.Tensor:
-        """Get this layer's probability of using reciprocal attention."""
-        return torch.sigmoid(self.alternation_logits[self.layer_idx])
 
     def get_kvsplice_metrics(self) -> dict:
         """Get KVSplice metrics for this layer."""
@@ -2138,20 +2070,9 @@ class RA_MLA_KVSplice(nn.Module):
         else:
             q, k = apply_rope(q, k, cos, sin)
 
-        # Determine attention direction
-        p_recip = self.get_alternation_prob()
-
-        if self.training:
-            use_reciprocal = (p_recip > 0.5).float()
-            use_reciprocal = use_reciprocal - p_recip.detach() + p_recip
-        else:
-            use_reciprocal = (p_recip > 0.5).float()
-
-        # Flash attention
-        # Always use causal masking. Chunked decode (cache + T>1) would need a
-        # custom mask accounting for prefix offset - is_causal alone won't work.
+        # RALATE pattern: late layers use reciprocal (fixed at init)
         use_causal = True
-        if use_reciprocal > 0.5:
+        if self.use_reciprocal:
             attn_out = F.scaled_dot_product_attention(
                 k[:, :, -T:, :] if cache is not None else k,
                 q,
@@ -2287,14 +2208,17 @@ class MLABlock(nn.Module):
 
 
 class RAMLABlock(nn.Module):
-    """Transformer block with RA_MLA attention + MLP."""
+    """Transformer block with RA_MLA attention + MLP using RALATE pattern."""
 
     def __init__(
-        self, cfg: RA_MLA_Config, layer_idx: int, alternation_logits: nn.Parameter
+        self,
+        cfg: RA_MLA_Config,
+        layer_idx: int,
+        alternation_logits: Optional[nn.Parameter] = None,
     ):
         super().__init__()
         self.ln_1 = nn.LayerNorm(cfg.d_model)
-        self.attn = RA_MLA_Flash(cfg, layer_idx, alternation_logits)
+        self.attn = RA_MLA_Flash(cfg, layer_idx)
         self.ln_2 = nn.LayerNorm(cfg.d_model)
 
         # MLP: 4x expansion
@@ -2313,20 +2237,18 @@ class RAMLABlock(nn.Module):
 
 
 class RAMLAKVBlock(nn.Module):
-    """Transformer block with RA_MLA_KVSplice attention + MLP."""
+    """Transformer block with RA_MLA_KVSplice attention + MLP using RALATE pattern."""
 
     def __init__(
         self,
         cfg: RA_MLA_Config,
         layer_idx: int,
-        alternation_logits: nn.Parameter,
-        compression_ratio: float,
+        alternation_logits: Optional[nn.Parameter] = None,
+        compression_ratio: float = 1.0,
     ):
         super().__init__()
         self.ln_1 = nn.LayerNorm(cfg.d_model)
-        self.attn = RA_MLA_KVSplice(
-            cfg, layer_idx, alternation_logits, compression_ratio
-        )
+        self.attn = RA_MLA_KVSplice(cfg, layer_idx, compression_ratio)
         self.ln_2 = nn.LayerNorm(cfg.d_model)
 
         # MLP: 4x expansion
@@ -2488,7 +2410,7 @@ class GPT2_MLA(nn.Module):
 
 
 class GPT2_MLA_RA(nn.Module):
-    """Full GPT-2 model with RA+MLA attention."""
+    """Full GPT-2 model with RA+MLA attention using RALATE pattern."""
 
     def __init__(self, cfg: RA_MLA_Config, vocab_size: int = 50257):
         super().__init__()
@@ -2499,16 +2421,8 @@ class GPT2_MLA_RA(nn.Module):
         self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
 
-        # Shared alternation logits
-        init_logits = torch.zeros(cfg.n_layers)
-        for i in range(cfg.n_layers):
-            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
-        self.alternation_logits = nn.Parameter(init_logits)
-
-        # Transformer blocks
-        self.blocks = nn.ModuleList(
-            [RAMLABlock(cfg, i, self.alternation_logits) for i in range(cfg.n_layers)]
-        )
+        # Transformer blocks with RALATE pattern (no learned alternation)
+        self.blocks = nn.ModuleList([RAMLABlock(cfg, i) for i in range(cfg.n_layers)])
 
         # Output
         self.ln_f = nn.LayerNorm(cfg.d_model)
@@ -2551,14 +2465,6 @@ class GPT2_MLA_RA(nn.Module):
 
     def get_num_params(self):
         return sum(p.numel() for p in self.parameters())
-
-    def get_alternation_distribution(self):
-        return torch.sigmoid(self.alternation_logits)
-
-    def balance_loss(self):
-        probs = self.get_alternation_distribution()
-        target = self.cfg.n_layers / 2.0
-        return (probs.sum() - target) ** 2
 
     @torch.no_grad()
     def compute_fisher_metrics(
@@ -2630,7 +2536,7 @@ class GPT2_MLA_RA(nn.Module):
 
 
 class GPT2_MLA_RA_KV(nn.Module):
-    """Full GPT-2 model with RA+MLA+KVSplice attention."""
+    """Full GPT-2 model with RA+MLA+KVSplice attention using RALATE pattern."""
 
     def __init__(
         self,
@@ -2647,16 +2553,10 @@ class GPT2_MLA_RA_KV(nn.Module):
         self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
 
-        # Shared alternation logits
-        init_logits = torch.zeros(cfg.n_layers)
-        for i in range(cfg.n_layers):
-            init_logits[i] = 1.0 if i % 2 == 1 else -1.0
-        self.alternation_logits = nn.Parameter(init_logits)
-
-        # Transformer blocks
+        # Transformer blocks with RALATE pattern (no learned alternation)
         self.blocks = nn.ModuleList(
             [
-                RAMLAKVBlock(cfg, i, self.alternation_logits, compression_ratio)
+                RAMLAKVBlock(cfg, i, compression_ratio=compression_ratio)
                 for i in range(cfg.n_layers)
             ]
         )
@@ -2702,14 +2602,6 @@ class GPT2_MLA_RA_KV(nn.Module):
 
     def get_num_params(self):
         return sum(p.numel() for p in self.parameters())
-
-    def get_alternation_distribution(self):
-        return torch.sigmoid(self.alternation_logits)
-
-    def balance_loss(self):
-        probs = self.get_alternation_distribution()
-        target = self.cfg.n_layers / 2.0
-        return (probs.sum() - target) ** 2
 
     def get_compression_stats(self):
         d_compressed = int(self.cfg.d_latent * self.compression_ratio)
