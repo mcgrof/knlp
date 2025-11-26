@@ -107,6 +107,107 @@ torch.backends.cuda.matmul.allow_tf32 = True
 
 
 # =============================================================================
+# Fisher Information Matrix Helper
+# =============================================================================
+
+
+def compute_fisher_metrics(
+    attn_probs: torch.Tensor,
+    layer_idx: int,
+    n_samples: int = 64,
+    topk: int = 8,
+) -> dict:
+    """
+    Compute Fisher Information Matrix spectrum metrics for attention.
+
+    The FIM eigenvalues reveal the curvature geometry of attention (SPDA paper).
+    Lower eigmax and better conditioning indicate smoother optimization.
+
+    Args:
+        attn_probs: [B, H, T, T] attention probabilities (softmax outputs)
+        layer_idx: Layer index for metric naming
+        n_samples: Number of samples per head for eigenvalue computation
+        topk: Number of top eigenvalues to log
+
+    Returns:
+        Dictionary of Fisher metrics for W&B logging
+    """
+    B, H, T, _ = attn_probs.shape
+    device = attn_probs.device
+
+    all_metrics = {}
+
+    for h in range(H):
+        # Extract single head: [B, T, T]
+        attn_h = attn_probs[:, h]
+
+        # Reshape to [B*T_q, T_k] - treat each query's distribution as sample
+        p = attn_h.reshape(B * T, T)
+
+        # Subsample queries to reduce cost (eigendecomp is O(T^3))
+        if p.size(0) > n_samples:
+            idx = torch.randperm(p.size(0), device=device)[:n_samples]
+            p = p[idx]  # [N, T]
+        N = p.size(0)
+
+        # Compute average Fisher: F = mean_i (diag(p_i) - p_i p_i^T)
+        F = torch.zeros(T, T, device=device)
+        for i in range(N):
+            pi = p[i]  # [T]
+            F += torch.diag(pi) - torch.outer(pi, pi)
+        F /= N
+
+        # Compute eigenvalues (symmetric PSD matrix)
+        try:
+            eigvals = torch.linalg.eigvalsh(F)  # [T], sorted ascending
+            eigvals = eigvals.to("cpu")
+
+            eigmax = float(eigvals[-1])
+            trace = float(eigvals.sum())
+            cond = float(eigvals[-1] / (eigvals[0].abs() + 1e-8))
+
+            # Aggregate metrics across heads
+            prefix = f"fisher/layer{layer_idx}/head{h}"
+            all_metrics[f"{prefix}/eigmax"] = eigmax
+            all_metrics[f"{prefix}/trace"] = trace
+            all_metrics[f"{prefix}/cond"] = cond
+
+            # Top-k eigenvalues
+            topk_vals = eigvals[-topk:]
+            for i, v in enumerate(topk_vals):
+                all_metrics[f"{prefix}/eig_top{i}"] = float(v)
+
+            # Energy concentration in top-r modes
+            total_energy = eigvals.sum()
+            if total_energy > 1e-8:
+                for r in [8, 16]:
+                    if r <= len(eigvals):
+                        energy_r = eigvals[-r:].sum()
+                        all_metrics[f"{prefix}/energy_r{r}"] = float(
+                            energy_r / total_energy
+                        )
+
+        except Exception as e:
+            # Eigendecomposition can fail for ill-conditioned matrices
+            print(
+                f"  Warning: Fisher eigendecomp failed for layer {layer_idx} head {h}: {e}"
+            )
+
+    # Compute layer-level aggregates
+    if all_metrics:
+        eigmax_vals = [
+            v for k, v in all_metrics.items() if "eigmax" in k and "layer" in k
+        ]
+        if eigmax_vals:
+            all_metrics[f"fisher/layer{layer_idx}/eigmax_mean"] = sum(
+                eigmax_vals
+            ) / len(eigmax_vals)
+            all_metrics[f"fisher/layer{layer_idx}/eigmax_max"] = max(eigmax_vals)
+
+    return all_metrics
+
+
+# =============================================================================
 # SECTION 1: Configuration
 # =============================================================================
 
@@ -1667,6 +1768,74 @@ class GPT2_RA_Fixed(nn.Module):
             "n_standard": self.config.n_layer - len(self.reciprocal_layers),
             "reciprocal_layers": sorted(self.reciprocal_layers),
         }
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """Compute Fisher spectrum metrics for selected layers."""
+        if layer_indices is None:
+            n = len(self.blocks)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.wte(x)
+        pos_emb = self.wpe(pos)
+        h = self.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.blocks):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "GPT2_RA_Fixed_Attention", x: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Extract attention probabilities from GPT2_RA_Fixed_Attention layer."""
+        B, T, C = x.shape
+        device = x.device
+
+        # Get Q, K, V
+        q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+        q = q.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+        k = k.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+
+        # Compute scores
+        scores = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(attn.head_dim))
+
+        # Apply causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
+
+        # Attention probs (standard or reciprocal based on fixed pattern)
+        if attn.use_reciprocal:
+            # Reciprocal: softmax on dim=-2
+            attn_probs = F.softmax(scores, dim=-2)
+        else:
+            # Standard: softmax on dim=-1
+            attn_probs = F.softmax(scores_masked, dim=-1)
+
+        return attn_probs
 
 
 # =============================================================================
