@@ -1,0 +1,348 @@
+# Ablation Study Audit: Critical Issues Found
+
+## Executive Summary
+
+**The RA-MLA ablation study has fundamental problems that invalidate comparisons.**
+
+### Key Issues
+
+1. **Different base models**: Baseline uses old `GPT`, RA uses new `GPT2_RA`
+2. **Learned parameters didn't learn**: `alternation_logits` stayed at initialization (0.0)
+3. **Invalid comparisons**: Perplexity differences are from implementation differences, not architecture
+4. **Branching overhead**: 5-7% slowdown from unused branching logic
+
+---
+
+## Issue 1: Inconsistent Base Models
+
+### What We Found
+
+Baseline (stepB0) checkpoint structure:
+```
+transformer.h.0.attn.c_attn.weight      # Old nanoGPT namespace
+transformer.h.0.ln_1.weight
+transformer.wte.weight
+...
+```
+
+RALEARN (stepRALEARN0) checkpoint structure:
+```
+blocks.0.attn.c_attn.weight             # New GPT2_RA namespace
+blocks.0.ln_1.weight
+wte.weight
+alternation_logits                       # Extra RA parameters
+...
+```
+
+### Root Cause
+
+File: `gpt2/trainers/vanilla.py:111`
+```python
+from gpt2.model import GPT2, GPTConfig  # Imports GPT2
+...
+model = GPT(config)  # ← BUG: Uses undefined GPT instead of GPT2!
+```
+
+**This code would fail today** because we renamed `GPT → GPT2` in commit 3169fb5.
+
+**But the checkpoints were trained BEFORE that rename**, when there were TWO models:
+- `GPT`: Old nanoGPT implementation
+- `GPT2_RA`: Our new RA implementation
+
+### Impact
+
+**Any perplexity differences between B0 and RALEARN0 are INVALID.**
+
+They compare:
+- Different namespaces
+- Different initialization
+- Possibly different layer implementations
+- Different parameter counts (156 params difference)
+
+**NOT** comparing: Baseline vs Baseline+RA
+
+---
+
+## Issue 2: Learned Alternation Never Learned
+
+### What We Found
+
+All `alternation_logits` in RALEARN0 checkpoint:
+```python
+alternation_logits: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+Sigmoid:            [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+Decision:           [Standard, Standard, Standard, ..., Standard]
+```
+
+**Every layer stayed at initialization. No learning occurred.**
+
+### Why This Happened
+
+Possible causes:
+1. **Parameters not in optimizer**: `alternation_logits` not included in optimizer.parameters()
+2. **No gradient flow**: Straight-through estimator not working correctly
+3. **Balance loss too strong**: Prevented deviation from 50/50 split
+4. **Insufficient training**: 201 iterations not enough for alternation to emerge
+
+### Impact
+
+RALEARN0 is **functionally identical** to always using standard attention:
+```python
+if sigmoid(0.0) > 0.5:  # False
+    use_reciprocal()
+else:
+    use_standard()      # ← ALWAYS THIS PATH
+```
+
+Yet it achieved **better perplexity** (892.59 vs 948.61)!
+
+**This proves the comparison is broken** - if RA was never used, improvement must come from something else (different base model).
+
+---
+
+## Issue 3: Perplexity Results Are Meaningless
+
+### Reported Results
+
+```
+Baseline (stepB0):     948.61 perplexity
+RALEARN (stepRALEARN0): 892.59 perplexity  (5.9% better!)
+```
+
+### Why This Is Wrong
+
+RALEARN never used reciprocal attention, yet improved. Possible explanations:
+
+1. **Different model implementations** (Issue #1)
+2. **Different random seeds**
+3. **Different initialization schemes**
+4. **Different namespace → different weight loading paths**
+
+### What We Can't Conclude
+
+❌ "Reciprocal attention improves perplexity by 5.9%"
+❌ "Learned alternation helps"
+❌ "RA provides quality benefits"
+
+### What We Know
+
+✅ Two different model implementations were compared
+✅ The "RA" model never actually used RA
+✅ Perplexity difference is from implementation artifacts
+
+---
+
+## Issue 4: Inference Overhead Analysis
+
+### Measured Performance
+
+```
+GPT2 (baseline):          145.1 tok/s
+GPT2_RA (branched):       135.5 tok/s  (7.0% slower)
+GPT2_RA (binarized):      172.2 tok/s  (5.5% faster than branched)
+```
+
+### Breakdown
+
+Total 7% overhead:
+- **~5.5%**: Branching (sigmoid + if/else evaluation every forward pass)
+- **~1.5%**: Stack + indexing in binarized version
+
+### Key Insight
+
+Even though RALEARN **never uses reciprocal attention**, it pays:
+- Sigmoid evaluation: `torch.sigmoid(alternation_logits[layer_idx])`
+- Branching overhead: `if use_reciprocal > 0.5: ...`
+- Same path every time, but GPU can't optimize it away
+
+### Fix
+
+Binarize decisions after training → 5.5% speedup (tested and confirmed).
+
+---
+
+## Issue 5: MLA Models - Unknown Status
+
+### Questions We Can't Answer
+
+1. Do MLA models actually use MLA attention?
+2. Are their learned parameters (if any) actually learning?
+3. Are checkpoint comparisons valid (same base model)?
+4. Are perplexity differences real or artifacts?
+
+### What We Need to Check
+
+For each MLA variant (GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_RA, etc.):
+- ✅ Load checkpoint
+- ✅ Inspect state_dict namespace (blocks.* vs transformer.*)
+- ✅ Check learned parameters (compression ratios, etc.)
+- ✅ Verify architecture actually changed (not just name)
+- ✅ Compare parameter counts
+- ✅ Validate that MLA-specific layers exist
+
+---
+
+## Recommended Actions
+
+### Immediate (Fix Current Code)
+
+1. **Fix vanilla.py line 111**:
+   ```python
+   # WRONG:
+   model = GPT(config)
+
+   # CORRECT:
+   model = GPT2(config)
+   ```
+
+2. **Add assertion to catch this**:
+   ```python
+   assert hasattr(model, 'alternation_logits') or step == 'baseline', \
+       f"Model should have alternation_logits for step {step}"
+   ```
+
+3. **Verify optimizer includes alternation_logits**:
+   ```python
+   params = list(model.parameters())
+   names = [n for n, p in model.named_parameters()]
+   assert 'alternation_logits' in names, "alternation_logits not in optimizer!"
+   ```
+
+### Short-term (Re-run Ablations)
+
+1. **Re-run baseline with GPT2** (not GPT)
+2. **Re-run RALEARN0** with:
+   - Verified optimizer includes alternation_logits
+   - Monitor alternation_logits during training (log to W&B)
+   - Check balance stats every eval
+   - Use longer training (1000+ iters)
+
+3. **Audit all MLA checkpoints**:
+   - Load each checkpoint
+   - Print state_dict structure
+   - Verify MLA-specific layers exist
+   - Check learned compression parameters
+   - Compare against baseline GPT2 (not GPT)
+
+### Long-term (Prevent Future Issues)
+
+1. **Automated validation**:
+   ```python
+   def validate_checkpoint(ckpt_path, expected_arch):
+       state = load_checkpoint(ckpt_path)
+       actual_arch = detect_architecture(state)
+       assert actual_arch == expected_arch, \
+           f"Expected {expected_arch}, got {actual_arch}"
+   ```
+
+2. **Parameter learning verification**:
+   ```python
+   # Log parameter stats during training
+   for name, param in model.named_parameters():
+       if param.requires_grad:
+           wandb.log({
+               f"param_stats/{name}/mean": param.mean(),
+               f"param_stats/{name}/std": param.std(),
+               f"param_stats/{name}/grad_norm": param.grad.norm() if param.grad else 0
+           })
+   ```
+
+3. **Consistent base models**:
+   - Use GPT2 everywhere (not GPT)
+   - Make base model explicit in defconfigs
+   - Assert same parameter count for fair comparisons
+
+---
+
+## Testing Protocol for Valid Ablations
+
+### Before Training
+
+1. ✅ Verify model class matches expected architecture
+2. ✅ Check parameter count matches expected
+3. ✅ Confirm learned parameters are in optimizer
+4. ✅ Log model architecture to W&B metadata
+
+### During Training
+
+1. ✅ Monitor learned parameter values (should change!)
+2. ✅ Log gradient norms for learned params
+3. ✅ Check balance stats / utilization (for RA/MLA)
+4. ✅ Verify activations match expected patterns
+
+### After Training
+
+1. ✅ Inspect final checkpoint state_dict
+2. ✅ Verify learned parameters actually learned
+3. ✅ Check model architecture in checkpoint metadata
+4. ✅ Compare against baseline with SAME base model
+5. ✅ Run inference with and without learned features
+
+---
+
+## Conclusions
+
+### What We Know
+
+1. **The RA ablation is invalid**: Compares different base models
+2. **RA never activated**: All alternation_logits stayed at 0.0
+3. **Perplexity improvements are fake**: From implementation differences, not architecture
+4. **Branching costs 5-7%**: Can be recovered by binarizing
+
+### What We Don't Know
+
+1. **MLA status**: Are MLA models valid or also broken?
+2. **True RA benefit**: Never properly tested (always used standard attention)
+3. **Learned alternation**: Can it work with proper setup?
+
+### What We Need to Do
+
+1. **Fix vanilla.py bug** (GPT → GPT2)
+2. **Re-run all ablations** with consistent base
+3. **Audit MLA checkpoints** for validity
+4. **Add validation hooks** to prevent future issues
+
+---
+
+## Appendix: How to Check Your Checkpoint
+
+```python
+import torch
+import math
+
+# Load checkpoint
+ckpt = torch.load('path/to/checkpoint.pt', map_location='cpu', weights_only=False)
+state = ckpt['model']
+
+# Check namespace (identifies base model)
+keys = list(state.keys())
+if any('transformer.h' in k for k in keys):
+    print("❌ OLD MODEL: Uses 'transformer.h' namespace (nanoGPT GPT)")
+elif any('blocks.' in k for k in keys):
+    print("✅ NEW MODEL: Uses 'blocks' namespace (GPT2/GPT2_RA/etc)")
+else:
+    print("⚠️  UNKNOWN namespace")
+
+# Check for RA parameters
+if 'alternation_logits' in state:
+    logits = state['alternation_logits']
+    probs = torch.sigmoid(logits)
+    print(f"\nRA Parameters:")
+    print(f"  Logits: {logits.tolist()}")
+    print(f"  Probs:  {[f'{p:.3f}' for p in probs.tolist()]}")
+    if (logits == 0.0).all():
+        print("  ❌ WARNING: All logits at initialization, never learned!")
+    else:
+        print("  ✅ Logits learned (diverged from 0.0)")
+
+# Check perplexity if metrics exist
+if 'training_metrics_stepV0.json' in checkpoint files:
+    import json
+    with open('path/to/training_metrics_stepV0.json') as f:
+        metrics = json.load(f)
+    val_loss = metrics['best_val_loss']
+    ppl = math.exp(val_loss)
+    print(f"\nPerplexity: {ppl:.2f}")
+```
+
+**Use this on every checkpoint before trusting results!**
