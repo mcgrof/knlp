@@ -570,19 +570,17 @@ class MLA_KVSplice(nn.Module):
         q = q.view(B, T, self.n_heads, self.head_dim)
         q = q.permute(0, 2, 1, 3)  # [B, H, T, head_dim]
 
-        # KV from compressed latent (this is what we cache)
-        kv_latent_orig = self.to_kv_latent(x)  # [B, T, d_latent]
-
-        # Apply KVSplice bottleneck (learn compressible representations)
-        kv_latent = self.kvsplice(kv_latent_orig)
+        # KV from latent (stored compressed in cache)
+        kv_latent = self.to_kv_latent(x)  # [B, T, d_latent]
 
         # Track reconstruction error (compute occasionally to avoid overhead)
+        # This measures how well KVSplice can reconstruct the latent
         if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
             self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(
-                kv_latent_orig
+                kv_latent
             ).item()
 
-        # Handle cache (stored in compressed form)
+        # Handle cache (stored in compressed form, decompress on read)
         if cache is not None:
             # Decompress cached latents
             cache_decompressed = self.kvsplice.decompress_only(cache)
