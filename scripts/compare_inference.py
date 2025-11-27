@@ -24,8 +24,8 @@ import inspect
 import torch.nn as nn
 
 from gpt2.model import GPT2, GPTConfig
-from ra import RA_MLA_Config
-import ra as ra_module
+from gpt2.mla import MLA_Config
+import gpt2.mla as mla_module
 
 
 def discover_gpt2_models():
@@ -36,7 +36,7 @@ def discover_gpt2_models():
     1. Named GPT2* (enforces naming convention)
     2. Inherit from nn.Module
     3. Implement get_num_params() method
-    4. Use 'config: GPTConfig' or 'cfg: RA_MLA_Config' as first __init__ parameter
+    4. Use 'config: GPTConfig' or 'cfg: MLA_Config' as first __init__ parameter
 
     Returns:
         dict: Maps model name to (model_class, config_type)
@@ -46,8 +46,8 @@ def discover_gpt2_models():
     # Discover from gpt2.model module
     models["GPT2"] = (GPT2, "gpt")
 
-    # Discover from ra module
-    for name, obj in inspect.getmembers(ra_module, inspect.isclass):
+    # Discover from gpt2.mla module
+    for name, obj in inspect.getmembers(mla_module, inspect.isclass):
         # Must match naming convention
         if not name.startswith("GPT2"):
             continue
@@ -92,7 +92,7 @@ def create_config(config_type: str, **kwargs):
         config.bias = kwargs.get("bias", True)
         return config
     elif config_type == "mla":
-        return RA_MLA_Config(
+        return MLA_Config(
             d_model=kwargs.get("d_model", 768),
             n_heads=kwargs.get("n_heads", 12),
             head_dim=kwargs.get("head_dim", 64),
