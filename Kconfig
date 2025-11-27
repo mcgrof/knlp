@@ -528,8 +528,6 @@ config TEST_MATRIX_MODE
 	  Run standard test matrix testing optimizer/pruning combinations.
 	  Cannot be used simultaneously with ablation mode.
 
-endmenu
-
 menu "Hierarchical Memory Tiering (Experimental)"
 
 config ENABLE_HIERARCHICAL_TIERING
