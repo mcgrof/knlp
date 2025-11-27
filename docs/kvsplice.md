@@ -167,17 +167,6 @@ class LearnedKVSplice(nn.Module):
 - Best overall time×memory efficiency (32% of baseline burden)
 - Worth the trade-off when inference memory is critical
 
-## Removed Variants
-
-Previous experiments tested additional MLA variants. Results showed they all
-underperformed base MLA:
-
-- **MLA_KV2** (separate K/V latents): 957 PPL (+26% worse than MLA0)
-- **MLA_KV2M** (K/V latents + MLP compression): 1078 PPL (+42% worse)
-
-These variants have been removed from the codebase. Only base MLA (MLA0) and
-MLA+KVSplice (MLAKV0) remain for reference.
-
 ## Implementation
 
 **Code**: `gpt2/mla.py`
