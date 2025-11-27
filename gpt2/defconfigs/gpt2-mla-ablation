@@ -1,20 +1,17 @@
-# GPT-2 MLA Comprehensive Ablation
+# GPT-2 MLA Ablation
 #
-# Tests all MLA variants:
-#   MLA0       - GPT2_MLA: MLA only (TL-cache latent compression)
-#   MLAKV0     - GPT2_MLA_KV: MLA + learned KVSplice compression
-#   MLAKV20    - GPT2_MLA_KV2: Separate K/V latents (no shared TL-cache)
-#   MLAKV2M0   - GPT2_MLA_KV2M: K/V latents + MLP compression
+# Tests MLA variants:
+#   MLA0    - GPT2_MLA: Base MLA with shared latent for K/V (6x compression)
+#   MLAKV0  - GPT2_MLA_KV: MLA + learned KVSplice compression (12x total)
 #
-# All MLA variants use d_latent=256 for consistent compression ratio.
-# KVSplice uses compression_ratio=0.5 (further 2x compression beyond MLA).
+# Results from A100 40G testing show:
+# - MLA0: 760 PPL (baseline, best)
+# - MLAKV0: 950 PPL (25% worse than MLA0)
 #
-# This ablation measures:
-# - Impact of MLA latent compression on quality
-# - Effect of learned KVSplice compression
-# - Trade-offs of MLP compression combined with attention compression
+# Conclusion: Learned KVSplice compression (MLAKV0) significantly
+# degrades quality compared to base MLA. Use MLA0 for production.
 #
-# All use standard LR (6e-4) for fair comparison.
+# All use d_latent=256, standard LR (6e-4) for fair comparison.
 
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -81,9 +78,9 @@ CONFIG_PRUNING_METHOD="none"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
-# Ablation mode - comprehensive MLA comparison
+# Ablation mode - MLA comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0,MLAKV20,MLAKV2M0"
+CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
