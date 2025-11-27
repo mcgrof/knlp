@@ -1,21 +1,16 @@
-# GPT-2 MLA + RA Comprehensive Ablation
+# GPT-2 MLA Comprehensive Ablation
 #
-# Tests all MLA variants with and without reciprocal attention:
+# Tests all MLA variants:
 #   MLA0       - GPT2_MLA: MLA only (TL-cache latent compression)
 #   MLAKV0     - GPT2_MLA_KV: MLA + learned KVSplice compression
 #   MLAKV20    - GPT2_MLA_KV2: Separate K/V latents (no shared TL-cache)
 #   MLAKV2M0   - GPT2_MLA_KV2M: K/V latents + MLP compression
-#   RAMLA0     - GPT2_MLA_RA: MLA + reciprocal attention (RALATE pattern)
-#   RAMLAKV0   - GPT2_MLA_RA_KV: RA + MLA + learned KVSplice compression
-#   RAMLAKVM0  - GPT2_MLA_RA_KVM: RA + MLA + KV + MLP compression (full stack)
 #
-# RALATE pattern: layers 0-5 standard, layers 6-11 reciprocal (fixed at init).
 # All MLA variants use d_latent=256 for consistent compression ratio.
 # KVSplice uses compression_ratio=0.5 (further 2x compression beyond MLA).
 #
 # This ablation measures:
 # - Impact of MLA latent compression on quality
-# - Benefit of reciprocal attention for MLA architectures
 # - Effect of learned KVSplice compression
 # - Trade-offs of MLP compression combined with attention compression
 #
@@ -86,9 +81,9 @@ CONFIG_PRUNING_METHOD="none"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
-# Ablation mode - comprehensive MLA+RA comparison
+# Ablation mode - comprehensive MLA comparison
 CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0,MLAKV20,MLAKV2M0,RAMLA0,RAMLAKV0,RAMLAKVM0"
+CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0,MLAKV20,MLAKV2M0"
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
@@ -99,7 +94,7 @@ CONFIG_LM_EVAL_LIMIT=100
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=y
-CONFIG_TRACKER_PROJECT="gpt2-mla-ra-ablation"
+CONFIG_TRACKER_PROJECT="gpt2-mla-ablation"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=n
