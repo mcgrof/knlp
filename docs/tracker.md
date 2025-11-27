@@ -149,7 +149,7 @@ python scripts/inspect_wandb_keys.py \
 ```
 Run: gpt2_adamwprune_bitter9_state_50 (v2h4vzbc)
 State: finished
-URL: https://wandb.ai/mcgrof-citizen/gpt2-bitter9-compiled-b200x4/runs/v2h4vzbc
+
 --------------------------------------------------------------------------------
 
 Total unique keys: 87
@@ -189,7 +189,7 @@ python scripts/query_wandb_gpu.py \
 ```
 Run: gpt2_adamwprune_bitter9_state_50 (v2h4vzbc)
 State: finished
-URL: https://wandb.ai/mcgrof-citizen/gpt2-bitter9-compiled-b200x4/runs/v2h4vzbc
+
 --------------------------------------------------------------------------------
 
 GPU 0:
@@ -231,7 +231,7 @@ python scripts/query_wandb_gpu_full.py \
 ```
 Run: gpt2_adamwprune_bitter9_state_50 (v2h4vzbc)
 State: finished
-URL: https://wandb.ai/mcgrof-citizen/gpt2-bitter9-compiled-b200x4/runs/v2h4vzbc
+
 --------------------------------------------------------------------------------
 
 Detected 4 active GPUs
