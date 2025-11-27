@@ -445,31 +445,25 @@ config TRACKIO_PORT
 
 endmenu
 
-menu "Reciprocal Attention (RA) + MLA (Experimental)"
+menu "Double Attention (RA) Experiments"
 
-config ENABLE_RA
-	bool "Enable RA (2-way compute routing)"
+config ENABLE_DOUBLE_ATTENTION
+	bool "Enable double attention (Q@K.T + K@Q.T)"
 	default n
 	help
-	  Enable Reciprocal Attention with 2-way compute routing.
-	  Routes tokens between cheap (RA) and expensive (FULL) attention
-	  based on contextual hardness: |x - E(x)|.
+	  Enable double attention mechanism that computes both forward
+	  (Q@K.T) and reciprocal (K@Q.T) attention per layer.
 
-config RA_ABLATION_MODE
-	bool "Enable RA ablation study mode"
-	default n
-	help
-	  Run ablation study testing RA baseline vs routing.
-	  Step 0: Baseline (standard GPT-2)
-	  Step 1: RA with 2-way routing
+	  Doubles attention FLOPs. Use with GPT-2 Tiny (6L/512d/8H) to
+	  maintain fair compute comparison vs baseline.
 
-config RA_ABLATION_STEPS
-	string "RA ablation steps to run (comma-separated)"
-	default "0,1"
-	depends on RA_ABLATION_MODE
+config DOUBLE_ATTENTION_SEED
+	int "Random seed for reproducibility"
+	default 42
 	help
-	  Comma-separated list of ablation steps to run.
-	  0 = Baseline, 1 = RA with routing
+	  Fixed random seed for deterministic training. Run multiple
+	  experiments with different seeds (42-46) for statistical
+	  significance testing.
 
 config INFERENCE_BENCHMARK
 	bool "Run inference benchmark after training"
@@ -502,27 +496,29 @@ config LM_EVAL_LIMIT
 	  Limit the number of samples evaluated per task.
 	  Use for quick testing. 0 means evaluate all samples.
 
-config ENABLE_RA_MLA
-	bool "Enable RA+MLA experimental features"
+endmenu
+
+menu "MLA (Multi-head Latent Attention)"
+
+config ENABLE_MLA
+	bool "Enable MLA cache compression"
 	default n
 	help
-	  Enable Reciprocal Attention and Multi-Latent Attention
-	  experimental features for GPT-2 training.
+	  Enable Multi-head Latent Attention for 6x-12x KV cache compression.
+	  Independent of double attention research.
+	  See docs/kvsplice.md for details.
 
-config RA_MLA_ABLATION_MODE
-	bool "Enable RA+MLA ablation study mode"
-	default n
+config MLA_VARIANT
+	string "MLA variant to use"
+	default "mla"
+	depends on ENABLE_MLA
 	help
-	  Run ablation study testing different RA/MLA configurations.
-	  Disables standard test matrix mode.
+	  MLA variant: mla, mla_kv2, mla_kv2m
+	  - mla: Base MLA (6x compression)
+	  - mla_kv2: Improved MLA
+	  - mla_kv2m: MLA with MLP splice (12x compression)
 
-config RA_MLA_ABLATION_STEPS
-	string "Ablation steps to run (comma-separated)"
-	default "V0,V1,V2,V3"
-	depends on RA_MLA_ABLATION_MODE
-	help
-	  Comma-separated list of ablation steps to run.
-	  Example: "V0,V1,V2,V3" or "V0,V11,V12,V13,V14,V15"
+endmenu
 
 config TEST_MATRIX_MODE
 	bool "Enable standard test matrix mode"
