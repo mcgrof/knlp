@@ -1240,26 +1240,32 @@ def run_single_test(
 
     # Add RA ablation step parameter if specified (new unified interface)
     if ra_mla_ablation_step:
-        # Check if this is an MLA architecture step or RA routing step
-        mla_prefixes = (
-            "MLA",
-            "RAMLA",
-            "RAMLAKV",
-            "B",
-            "RA0",
-            "RA1",
-            "RALEARN",
-            "RAEARLY",
-            "RALATE",
-            "RAALL",
-            "SBA",
-            "SBASS",
-            "SBAKV",
-        )
-        if ra_mla_ablation_step.upper().startswith(mla_prefixes):
-            cmd.extend(["--architecture", "ramla"])
-        else:
+        # Check if this is a simple RA ablation (baseline vs ra) or MLA/RA-CT study
+        ra_simple_steps = ("baseline", "ra")
+        if ra_mla_ablation_step.lower() in ra_simple_steps:
+            # Simple RA ablation: baseline GPT-2 Tiny vs RA variant
             cmd.extend(["--architecture", "unified-ra"])
+        else:
+            # MLA/RA-CT ablation: check for MLA architecture prefixes
+            mla_prefixes = (
+                "MLA",
+                "RAMLA",
+                "RAMLAKV",
+                "B",
+                "RA0",
+                "RA1",
+                "RALEARN",
+                "RAEARLY",
+                "RALATE",
+                "RAALL",
+                "SBA",
+                "SBASS",
+                "SBAKV",
+            )
+            if ra_mla_ablation_step.upper().startswith(mla_prefixes):
+                cmd.extend(["--architecture", "ramla"])
+            else:
+                cmd.extend(["--architecture", "unified-ra"])
         cmd.extend(["--ra-step", ra_mla_ablation_step])
 
         # Check for skip RA warmup (env var or config)
