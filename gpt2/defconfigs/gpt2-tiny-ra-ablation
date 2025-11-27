@@ -8,8 +8,8 @@
 # Auto hyperparameters
 CONFIG_HYPER_PARAM_AUTO=y
 
-# Test matrix mode - run both baseline and RA
-CONFIG_TEST_MATRIX_MODE=y
+# RA ablation mode - run both baseline and RA
+CONFIG_RA_ABLATION_MODE=y
 
 # Model configurations to test
 CONFIG_MODEL_SELECT_GPT2=y

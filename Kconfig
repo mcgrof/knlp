@@ -457,6 +457,22 @@ config ENABLE_RA
 	  Doubles attention FLOPs. Use with GPT-2 Tiny (6L/512d/8H) to
 	  maintain fair compute comparison vs baseline.
 
+config RA_ABLATION_MODE
+	bool "Enable RA ablation study mode"
+	default n
+	help
+	  Run ablation study testing baseline GPT-2 Tiny vs RA.
+	  Disables standard test matrix mode.
+
+config RA_ABLATION_STEPS
+	string "RA ablation steps to run (comma-separated)"
+	default "baseline,ra"
+	depends on RA_ABLATION_MODE
+	help
+	  Comma-separated list of ablation steps.
+	  baseline = Standard GPT-2 Tiny (single attention)
+	  ra = RA variant (double attention: Q@K.T + K@Q.T)
+
 config RA_SEED
 	int "Random seed for reproducibility"
 	default 42
