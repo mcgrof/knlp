@@ -33,32 +33,46 @@ cache = latent  # 6x smaller cache (d_latent=256 vs 12*2*64=1536)
 
 ## Experimental Results
 
-Testing on GPT-2 124M, FineWebEdu dataset, NVIDIA A100 40GB, 2 hours training.
+Testing on GPT-2 124M, FineWebEdu dataset, 2 hours wall-clock training time.
 
 ![MLA Quality Comparison](images/mla_quality_comparison.png)
 
-### Results Summary
+### MLA Variant Comparison (A100 40GB, 2 hours)
 
-| Variant | Description | Val PPL | vs MLA0 |
-|---------|-------------|---------|---------|
-| **MLA0** | Base MLA (6x compression) | **760.15** | - |
-| MLAKV0 | MLA + KVSplice (12x compression) | 950.49 | +25.0% worse |
+| Variant | Val PPL | Iterations | vs MLA0 |
+|---------|---------|------------|---------|
+| **MLA0** | **760** | 251 | - |
+| MLAKV0 | 950 | 227 | +25% worse |
 
 **W&B Project**: [gpt2-mla-ra-ablation-a100-40g](https://wandb.ai/mcgrof-citizen/gpt2-mla-ra-ablation-a100-40g/)
 
+### GPT-2 Baseline vs MLA (W7900, 2 hours)
+
+| Architecture | Val PPL | Iterations | Cache Size |
+|--------------|---------|------------|------------|
+| **GPT-2 Baseline** | **497** | 351 | Standard (1x) |
+| MLA0 | 742 | 280 | 6x compressed |
+
+**W&B Project**: [gpt2-kvsplice-ablation-w7900-mla-fixed](https://wandb.ai/mcgrof-citizen/gpt2-kvsplice-ablation-w7900-mla-fixed)
+
 ### Key Findings
 
-1. **Base MLA is optimal**: MLA0 achieves 760 perplexity with 6x cache
-   compression
+1. **MLA trades training speed for cache compression**: MLA trains 20% slower
+   (280 vs 351 iterations in 2 hours), resulting in worse perplexity at the
+   same wall-clock time
 
-2. **KVSplice degrades quality**: Adding learned compression (MLAKV0)
-   increases perplexity by 25% (760 → 950 PPL)
+2. **GPT-2 baseline beats MLA on quality**: At 2 hours, baseline achieves
+   497 PPL vs MLA's 742 PPL due to faster iteration throughput
 
-3. **Compression has limits**: Further compression beyond 6x via learned
-   bottlenecks loses too much information
+3. **KVSplice makes it worse**: Adding learned compression (MLAKV0)
+   degrades quality by another 25% (760 → 950 PPL)
 
-4. **Recommendation**: Use base MLA (MLA0) for production. The 6x compression
-   is sufficient and achieves best quality.
+4. **The trade-off**: MLA offers 6x cache compression at the cost of:
+   - 20% slower training (fewer iterations per hour)
+   - Worse quality at fixed wall-clock time vs baseline
+
+5. **Use case**: MLA is valuable for **inference** where KV cache size
+   matters more than training speed. For training, standard GPT-2 is superior.
 
 ## Why KVSplice Failed
 
@@ -132,22 +146,26 @@ model = GPT2_MLA(cfg, vocab_size=50257)
 
 ## When to Use MLA
 
-**Use MLA (MLA0) when**:
-- Memory constraints require smaller KV cache
-- 6x compression is sufficient for your deployment
-- Quality is acceptable (note: untested vs GPT-2 baseline)
-- Training from scratch with compression integrated
+**Use MLA (MLA0) for inference deployment when**:
+- KV cache memory is the bottleneck (6x compression matters)
+- Inference throughput is critical (smaller cache = faster)
+- Can tolerate training being 20% slower
+- Willing to train longer to reach same quality as baseline
 
-**Do NOT use**:
-- MLA + KVSplice (MLAKV0): 25% quality degradation is too severe
-- Any variant with MLP compression: All tested worse than base MLA
+**Do NOT use MLA for**:
+- Training efficiency: Standard GPT-2 trains 20% faster
+- Quality-critical applications: Baseline achieves better PPL at same wall-clock
+- Further compression: KVSplice degrades quality by 25%
+
+**Bottom line**: MLA is an **inference optimization** that trades training
+speed for cache compression. For training-focused workflows, use standard GPT-2.
 
 ## Future Work
 
-- Compare MLA0 quality vs standard GPT-2 baseline
+- Train MLA for longer to match baseline quality (need ~25% more time)
 - Test different d_latent values (current: 256)
-- Explore architectural simplifications to base MLA
 - Measure inference speed improvements from 6x cache reduction
+- Profile training bottleneck causing 20% slowdown
 
 ## References
 
