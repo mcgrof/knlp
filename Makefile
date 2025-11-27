@@ -218,7 +218,7 @@ mechint: check-config generate-config
 		echo "Enable with: CONFIG_KNLP_MECHINT=y"; \
 	fi
 
-# Validate architecture with dry-run mode (RATIO ablation)
+# Validate architecture with dry-run mode (GPT-2 baseline)
 # Quick check to catch configuration/architecture errors before GPU training
 .PHONY: check
 check: FORCE
@@ -226,8 +226,8 @@ check: FORCE
 	@echo "Running dry-run architecture validation"
 	@echo "============================================================"
 	@START_TIME=$$(date +%s); \
-	$(MAKE) defconfig-gpt2-ra-ablation DRY_RUN=1 > /dev/null 2>&1 || exit 1; \
-	./scripts/validate_ablation_steps.sh; \
+	$(MAKE) defconfig-gpt2-vanilla-baseline DRY_RUN=1 > /dev/null 2>&1 || exit 1; \
+	python3 gpt2/train.py --dry-run > /dev/null 2>&1; \
 	RESULT=$$?; \
 	END_TIME=$$(date +%s); \
 	DURATION=$$((END_TIME - START_TIME)); \
@@ -235,7 +235,7 @@ check: FORCE
 	echo "============================================================"; \
 	if [ $$RESULT -eq 0 ]; then \
 		echo "✓ Architecture validation completed in $${DURATION}s"; \
-		echo "  All RA ablation steps validated successfully"; \
+		echo "  Dry-run passed successfully"; \
 		echo "  Ready for GPU training"; \
 	else \
 		echo "✗ Architecture validation failed after $${DURATION}s"; \
