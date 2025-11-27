@@ -22,7 +22,7 @@ from typing import Optional, Dict
 import torch
 import torch.nn.functional as F
 from gpt2.trainers.vanilla import VanillaGPT2Trainer
-from gpt2.trainers.ra import RATrainer
+# RATrainer removed with deprecated RA implementation
 
 
 # Learning rates for ablation
@@ -148,9 +148,11 @@ class RAMLATrainer(VanillaGPT2Trainer):
             raise ValueError(f"Unknown architecture: {self.step_config['arch']}")
 
     def _setup_ra_learned_model(self):
-        """Replace model with GPT2_RA_Learned (blend both paths during training)."""
-        import torch
-        from ra import GPT2_RA_Learned
+        """DEPRECATED: GPT2_RA_Learned removed with old RA implementation."""
+        raise NotImplementedError(
+            "GPT2_RA_Learned deprecated. Old RA implementation (Q/K swap within layers) "
+            "was fundamentally flawed. See docs/archive/ra-old.md for details."
+        )
         from gpt2.model import GPTConfig
 
         # Create GPTConfig
@@ -185,9 +187,11 @@ class RAMLATrainer(VanillaGPT2Trainer):
             )
 
     def _setup_ra_fixed_model(self, pattern: str):
-        """Replace model with GPT2_RA_Fixed (predetermined pattern)."""
-        import torch
-        from ra import GPT2_RA_Fixed
+        """DEPRECATED: GPT2_RA_Fixed removed with old RA implementation."""
+        raise NotImplementedError(
+            "GPT2_RA_Fixed deprecated. Old RA implementation (Q/K swap within layers) "
+            "was fundamentally flawed. See docs/archive/ra-old.md for details."
+        )
         from gpt2.model import GPTConfig
 
         # Create GPTConfig
@@ -225,17 +229,14 @@ class RAMLATrainer(VanillaGPT2Trainer):
             )
 
     def _setup_mla_model(self):
-        """Replace model with MLA/RAMLA/RAMLAKV variant."""
+        """Replace model with MLA variant."""
         import torch
-        from ra import (
-            RA_MLA_Config,
+        from gpt2.mla import (
+            MLA_Config,
             GPT2_MLA,
             GPT2_MLA_KV,
             GPT2_MLA_KV2,
             GPT2_MLA_KV2M,
-            GPT2_MLA_RA,
-            GPT2_MLA_RA_KV,
-            GPT2_MLA_RA_KVM,
         )
 
         arch = self.step_config["arch"]
@@ -244,7 +245,7 @@ class RAMLATrainer(VanillaGPT2Trainer):
         d_latent = getattr(self.args, "mla_d_latent", 256)
         compression_ratio = getattr(self.args, "mla_compression_ratio", 0.5)
 
-        cfg = RA_MLA_Config(
+        cfg = MLA_Config(
             d_model=768,
             n_heads=12,
             head_dim=64,
@@ -272,23 +273,12 @@ class RAMLATrainer(VanillaGPT2Trainer):
             )
             print(f"Created GPT2_MLA_KV2M (2-latent + MLPSplice)")
             print(f"  Compression: {self.model.get_compression_stats()}")
-        elif arch == "ramla":
-            self.model = GPT2_MLA_RA(cfg)
-            print(f"Created GPT2_MLA_RA with d_latent={d_latent}")
-            print(
-                f"  Layer directions: {self.model.get_alternation_distribution()[:3].tolist()}..."
+        elif arch in ("ramla", "ramlakv", "ramlakvm"):
+            raise NotImplementedError(
+                f"Architecture '{arch}' deprecated. RA+MLA combinations used broken RA "
+                "implementation (Q/K swap within layers). Use pure MLA variants instead: "
+                "mla, mlakv, mlakv2, mlakv2mlp"
             )
-        elif arch == "ramlakv":
-            self.model = GPT2_MLA_RA_KV(cfg, compression_ratio=compression_ratio)
-            print(f"Created GPT2_MLA_RA_KV")
-            print(f"  Compression: {self.model.get_compression_stats()}")
-        elif arch == "ramlakvm":
-            mlp_d_latent = getattr(self.args, "mlpsplice_d_latent", 256)
-            self.model = GPT2_MLA_RA_KVM(
-                cfg, compression_ratio=compression_ratio, mlp_d_latent=mlp_d_latent
-            )
-            print(f"Created GPT2_MLA_RA_KVM (+ MLPSplice)")
-            print(f"  Compression: {self.model.get_compression_stats()}")
 
         # Move to device
         self.model = self.model.to(self.args.device)
