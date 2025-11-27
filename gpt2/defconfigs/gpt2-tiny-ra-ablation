@@ -9,6 +9,7 @@
 CONFIG_HYPER_PARAM_AUTO=y
 
 # RA ablation mode - run both baseline and RA
+# CONFIG_TEST_MATRIX_MODE is not set
 CONFIG_RA_ABLATION_MODE=y
 
 # Model configurations to test
