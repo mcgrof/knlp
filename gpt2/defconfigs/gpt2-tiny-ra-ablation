@@ -38,10 +38,14 @@ CONFIG_RUN_LM_EVAL=y
 CONFIG_LM_EVAL_TASKS="hellaswag,arc_easy,winogrande"
 CONFIG_LM_EVAL_LIMIT=100
 
-# Optimizer
+# Optimizer - single optimizer mode for ablation
+CONFIG_OPTIMIZER_MODE_SINGLE=y
 CONFIG_OPTIMIZER_SELECT_ADAMWSPAM=y
 CONFIG_ADV_WEIGHT_DECAY="0.01"
 CONFIG_ADV_USE_AMSGRAD=y
+
+# Pruning - disable for architectural ablation
+CONFIG_PRUNING_MODE_NONE=y
 
 # Advanced
 CONFIG_GPT2_FLASH_ATTENTION=y
