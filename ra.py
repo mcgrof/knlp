@@ -184,7 +184,7 @@ class GPT2TinyRA(nn.Module):
         d_model: int = 512,
         n_heads: int = 8,
         d_ff: Optional[int] = None,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         bias: bool = True,
     ):
         super().__init__()
