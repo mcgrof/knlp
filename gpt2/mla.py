@@ -4,12 +4,15 @@
 Multi-head Latent Attention (MLA) implementations
 
 This module contains MLA variants:
-- MLA: Base multi-head latent attention with 6x cache compression
-- MLA_KV2: Improved MLA with better K/V decomposition
-- MLA_KV2M: MLA_KV2 with MLP splice compression
-- KVSplice: Learned compression for 12x total cache reduction
+- MLA (GPT2_MLA): Base multi-head latent attention with 6x cache compression
+- MLA+KVSplice (GPT2_MLA_KV): MLA with learned compression for 12x total cache reduction
 
-See docs/kvsplice.md for details.
+Both use the same architecture:
+- Q path: Direct projection from input (not cached)
+- KV path: Shared latent compressed representation (cached)
+- KVSplice adds additional learned bottleneck on KV latent (256→128 dims)
+
+See docs/kvsplice.md for trade-off analysis and usage guidance.
 """
 
 from __future__ import annotations
@@ -23,12 +26,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+@dataclass
 class MLA_Config:
     """
     Configuration for MLA (Multi-head Latent Attention).
 
     Features:
-    - Latent compression: single latent decompresses to Q, K, V
+    - Latent compression: KV latent decompresses to K, V (Q computed directly)
     - KVSplice compatibility: learned compression for 12x cache reduction
     - RoPE positional embeddings
 
@@ -37,7 +41,7 @@ class MLA_Config:
     d_model:      Model embedding dimension
     n_heads:      Number of attention heads
     head_dim:     Dimension per head (d_model // n_heads)
-    d_latent:     Latent dimension for cache (compressed representation)
+    d_latent:     Latent dimension for KV cache (compressed representation)
     block_size:   Maximum sequence length
     n_layers:     Total number of layers
 
@@ -53,7 +57,7 @@ class MLA_Config:
     d_model: int = 768
     n_heads: int = 12
     head_dim: int = 64
-    d_latent: int = 256  # Compressed latent dimension
+    d_latent: int = 256  # Compressed latent dimension for KV
     block_size: int = 1024
     n_layers: int = 12
     rope_theta: float = 10000.0
@@ -79,6 +83,40 @@ class RotaryEmbedding(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return cos and sin for positions up to seq_len."""
         return self.cos_cached[:seq_len], self.sin_cached[:seq_len]
+
+
+def apply_rope(
+    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Apply rotary position embeddings to Q and K tensors.
+
+    Args:
+        q: Query tensor [B, H, T, head_dim]
+        k: Key tensor [B, H, T, head_dim]
+        cos: Cosine values [T, head_dim//2]
+        sin: Sine values [T, head_dim//2]
+
+    Returns:
+        Rotated (q, k) tensors
+    """
+    # Duplicate cos/sin to match head_dim: [T, head_dim//2] -> [T, head_dim]
+    cos = torch.cat([cos, cos], dim=-1)
+    sin = torch.cat([sin, sin], dim=-1)
+
+    # Reshape for complex rotation
+    def rotate_half(x):
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat([-x2, x1], dim=-1)
+
+    # Broadcast cos/sin to [1, 1, T, head_dim]
+    cos = cos.unsqueeze(0).unsqueeze(0)
+    sin = sin.unsqueeze(0).unsqueeze(0)
+
+    q_rot = q * cos + rotate_half(q) * sin
+    k_rot = k * cos + rotate_half(k) * sin
+
+    return q_rot, k_rot
 
 
 class LearnedKVSplice(nn.Module):
@@ -455,10 +493,14 @@ class GPT2_MLA(nn.Module):
 
 class MLA_KVSplice(nn.Module):
     """
-    MLA with learned KVSplice compression.
+    MLA with learned KVSplice compression on KV latent only.
 
-    Uses standard Q·K^T attention while applying the KVSplice
-    compression bottleneck.
+    Architecture matches base MLA (separate Q path, shared KV latent) but
+    adds KVSplice compression bottleneck on the KV latent before caching.
+
+    - Q path: x -> W_q -> Q (direct, not cached)
+    - KV path: x -> to_kv_latent -> d_latent -> KVSplice -> d_compressed (cached)
+      At inference: d_compressed -> KVSplice.decompress -> d_latent -> K, V
     """
 
     def __init__(
@@ -475,17 +517,19 @@ class MLA_KVSplice(nn.Module):
         self.head_dim = cfg.head_dim
         self.d_latent = cfg.d_latent
 
-        # Learned KVSplice compression
+        # Learned KVSplice compression on KV latent
         d_compressed = int(cfg.d_latent * compression_ratio)
         self.kvsplice = LearnedKVSplice(cfg.d_latent, d_compressed)
         self.d_compressed = d_compressed
 
-        # Input projection to latent space
-        self.to_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        # Q path - direct projection (no compression, not cached)
+        q_dim = cfg.n_heads * cfg.head_dim
+        self.W_q = nn.Linear(cfg.d_model, q_dim)
 
-        # Decompress latent to Q, K, V
-        qkv_dim = 3 * cfg.n_heads * cfg.head_dim
-        self.from_latent = nn.Linear(cfg.d_latent, qkv_dim)
+        # KV path - compressed latent (this is what gets cached after KVSplice)
+        self.to_kv_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        kv_dim = 2 * cfg.n_heads * cfg.head_dim
+        self.from_kv_latent = nn.Linear(cfg.d_latent, kv_dim)
 
         # Output projection
         self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
@@ -514,43 +558,45 @@ class MLA_KVSplice(nn.Module):
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
-        Forward pass with learned KVSplice compression.
+        Forward pass with KVSplice compression on KV latent.
 
-        Always uses standard attention (Q·K^T), no alternation.
-        Cache stores compressed latents (d_compressed instead of d_latent).
+        Cache stores compressed KV latents (d_compressed instead of d_latent).
+        Q is computed directly from input, not from latent.
         """
         B, T, D = x.shape
 
-        # Project to latent space
-        latent_orig = self.to_latent(x)  # [B, T, d_latent]
+        # Q computed directly from input (not cached)
+        q = self.W_q(x)  # [B, T, n_heads * head_dim]
+        q = q.view(B, T, self.n_heads, self.head_dim)
+        q = q.permute(0, 2, 1, 3)  # [B, H, T, head_dim]
+
+        # KV from compressed latent (this is what we cache)
+        kv_latent_orig = self.to_kv_latent(x)  # [B, T, d_latent]
 
         # Apply KVSplice bottleneck (learn compressible representations)
-        latent = self.kvsplice(latent_orig)
+        kv_latent = self.kvsplice(kv_latent_orig)
 
         # Track reconstruction error (compute occasionally to avoid overhead)
         if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
             self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(
-                latent_orig
+                kv_latent_orig
             ).item()
 
         # Handle cache (stored in compressed form)
         if cache is not None:
             # Decompress cached latents
             cache_decompressed = self.kvsplice.decompress_only(cache)
-            full_latent = torch.cat([cache_decompressed, latent], dim=1)
-            T_total = full_latent.shape[1]
+            full_kv_latent = torch.cat([cache_decompressed, kv_latent], dim=1)
+            T_total = full_kv_latent.shape[1]
         else:
-            full_latent = latent
+            full_kv_latent = kv_latent
             T_total = T
 
-        # Decompress to Q, K, V
-        qkv = self.from_latent(full_latent)
-        qkv = qkv.view(B, T_total, 3, self.n_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-
-        if cache is not None:
-            q = q[:, :, -T:, :]
+        # Decompress to K, V
+        kv = self.from_kv_latent(full_kv_latent)  # [B, T_total, 2*H*head_dim]
+        kv = kv.view(B, T_total, 2, self.n_heads, self.head_dim)
+        kv = kv.permute(2, 0, 3, 1, 4)  # [2, B, H, T_total, head_dim]
+        k, v = kv[0], kv[1]
 
         # Apply RoPE
         cos, sin = self.rope(x, T_total)
@@ -561,12 +607,7 @@ class MLA_KVSplice(nn.Module):
         else:
             q, k = apply_rope(q, k, cos, sin)
 
-        # Standard attention (always Q·K^T, no alternation)
-        # Causal masking: needed during training (cache=None) and when
-        # processing multiple new tokens with cache (chunked decoding).
-        # Safe to skip only when T=1 with cache (single token generation).
-        # Always use causal masking. Chunked decode (cache + T>1) would need a
-        # custom mask accounting for prefix offset - is_causal alone won't work.
+        # Standard attention: Q @ K.T @ V
         use_causal = True
         attn_out = F.scaled_dot_product_attention(
             q,
@@ -583,7 +624,7 @@ class MLA_KVSplice(nn.Module):
 
         # Store compressed cache
         if use_cache:
-            new_cache = self.kvsplice.compress_only(full_latent)
+            new_cache = self.kvsplice.compress_only(full_kv_latent)
         else:
             new_cache = None
 
@@ -765,15 +806,20 @@ class GPT2_MLA_KV(nn.Module):
         """Extract attention probabilities from MLA_KVSplice layer."""
         B, T, _ = x.shape
 
-        # Project to latent
-        latent_orig = attn.to_latent(x)
-        latent = attn.kvsplice(latent_orig)
+        # Q computed directly
+        q = attn.W_q(x)
+        q = q.view(B, T, attn.n_heads, attn.head_dim)
+        q = q.permute(0, 2, 1, 3)
 
-        # Decompress to Q, K, V
-        qkv = attn.from_latent(latent)
-        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # KV from compressed latent
+        kv_latent_orig = attn.to_kv_latent(x)
+        kv_latent = attn.kvsplice(kv_latent_orig)
+
+        # Decompress to K, V
+        kv = attn.from_kv_latent(kv_latent)
+        kv = kv.view(B, T, 2, attn.n_heads, attn.head_dim)
+        kv = kv.permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
 
         # Apply RoPE
         cos, sin = attn.rope(x, T)
