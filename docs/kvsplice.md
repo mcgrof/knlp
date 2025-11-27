@@ -36,11 +36,11 @@ cache = latent  # 6x smaller cache (d_latent=256 vs 12*2*64=1536)
 
 Testing on GPT-2 124M, FineWebEdu dataset, comparing quality and cache memory.
 
-![MLA Comprehensive Comparison](images/mla_comprehensive_comparison.png)
-
 ### Primary Trade-off: GPT-2 vs MLA
 
 First, consider the baseline decision: standard GPT-2 vs MLA cache compression.
+
+![Primary Trade-off: GPT-2 vs MLA](images/mla_primary_tradeoff.png)
 
 **Quality at same iteration count** (iteration 200):
 | Architecture | Val PPL | KV Cache | Compression |
@@ -66,6 +66,8 @@ in exchange for 67% less KV cache memory at inference.
 ### Secondary Trade-off: MLA vs MLA+KVSplice
 
 If you chose MLA, consider whether to add KVSplice for additional compression.
+
+![Secondary Trade-off: MLA vs MLA+KVSplice](images/mla_secondary_tradeoff.png)
 
 **Quality at iteration 200**:
 | Architecture | Val PPL | KV Cache | Compression vs MLA |
@@ -111,6 +113,8 @@ If you chose MLA, consider whether to add KVSplice for additional compression.
 Projecting how long each variant needs to train to match baseline quality
 (497 PPL):
 
+![Time×Memory Burden Comparison](images/mla_time_memory_burden.png)
+
 | Architecture | Time to 497 PPL | Extra Training | KV Cache | Time×Memory Burden |
 |--------------|-----------------|----------------|----------|-------------------|
 | **Baseline** | 2.0 hours | - | 36 MB | 4320 MB·min (100%) |
@@ -118,7 +122,7 @@ Projecting how long each variant needs to train to match baseline quality
 | **MLAKV0** | ~3.8 hours | +90% | 6 MB | 1367 MB·min (32%) |
 
 **Key insight**: Despite requiring 90% more training time, MLAKV0 achieves
-the best **overall resource efficiency** when accounting for both training
+the best overall resource efficiency when accounting for both training
 time and inference memory:
 - MLAKV0 uses only **32%** of baseline's time×memory burden
 - MLA0 uses **50%** of baseline's burden
