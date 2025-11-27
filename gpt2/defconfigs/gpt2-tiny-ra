@@ -1,15 +1,14 @@
 #
-# GPT-2 Tiny with Double Attention (6L/512d/8H)
+# GPT-2 Tiny with RA (6L/512d/8H)
 #
-# Double attention configuration: computes both Q@K.T and K@Q.T per layer.
-# Uses 2x attention FLOPs vs baseline, but model is scaled down to maintain
-# fair compute comparison (6 layers vs 12, d_model=512 vs 768).
+# RA (double attention): computes both Q@K.T and K@Q.T per layer.
+# Uses 2x attention FLOPs vs baseline, model scaled down for fair comparison.
 #
 
 # Auto hyperparameters
 CONFIG_HYPER_PARAM_AUTO=y
 
-# Model: GPT-2 Tiny with Double Attention
+# Model: GPT-2 Tiny with RA
 CONFIG_MODEL_SELECT_GPT2=y
 CONFIG_GPT2_MODEL_NAME="gpt2-tiny"
 CONFIG_ENABLE_DOUBLE_ATTENTION=y
@@ -51,4 +50,4 @@ CONFIG_CHECKPOINT_INTERVAL=1000
 # Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=y
-CONFIG_TRACKER_PROJECT="gpt2-tiny-double-attn"
+CONFIG_TRACKER_PROJECT="gpt2-tiny-ra"
