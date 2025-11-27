@@ -42,13 +42,7 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        # if kv_tying or k_eq_vt is enabled, only create Q and V
-        qkv_dim = (
-            2 * config.n_embd
-            if (config.kv_tying or config.k_eq_vt)
-            else 3 * config.n_embd
-        )
-        self.c_attn = nn.Linear(config.n_embd, qkv_dim, bias=config.bias)
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
@@ -57,16 +51,12 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
-        self.kv_tying = config.kv_tying
-        self.k_eq_vt = config.k_eq_vt
         # flash attention support (PyTorch >= 2.0)
         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
-        # need manual attention path for k_eq_vt or when flash unavailable
-        if not self.flash or self.k_eq_vt:
-            if not self.flash:
-                print(
-                    "WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0"
-                )
+        if not self.flash:
+            print(
+                "WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0"
+            )
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer(
                 "bias",
@@ -81,46 +71,23 @@ class CausalSelfAttention(nn.Module):
         )  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        if self.kv_tying:
-            # when kv_tying is enabled, only compute Q and V, then set K = V
-            q, v = self.c_attn(x).split(self.n_embd, dim=2)
-            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            k = v  # tie K to V
-        elif self.k_eq_vt:
-            # when k_eq_vt is enabled, only compute Q and V, then set K = V
-            # transpose will be handled in attention computation
-            q, v = self.c_attn(x).split(self.n_embd, dim=2)
-            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            k = v  # K = V (transpose handled in attention)
-        else:
-            # standard attention with separate Q, K, V
-            q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-            k = k.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            q = q.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
-            v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-                1, 2
-            )  # (B, nh, T, hs)
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
 
         # Apply mechint KV masks if provided (for circuit discovery)
         if mechint_kv_mask is not None:
             k, v, _ = mechint_kv_mask(k, v)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash and not self.k_eq_vt:
+        if self.flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(
                 q,
@@ -132,7 +99,6 @@ class CausalSelfAttention(nn.Module):
             )
         else:
             # manual implementation of attention
-            # when k_eq_vt: K = V, so attention uses Q @ V.T instead of Q @ K.T
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
             att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
             att = F.softmax(att, dim=-1)
@@ -193,8 +159,6 @@ class GPTConfig:
     n_embd: int = 768  # embedding dimension
     dropout: float = 0.0  # dropout rate
     bias: bool = True  # use bias in Linear and LayerNorm
-    kv_tying: bool = False  # tie key and value projections (K = V)
-    k_eq_vt: bool = False  # set key to transpose of value (K = V.T)
 
     # Model size presets
     @classmethod
@@ -202,7 +166,9 @@ class GPTConfig:
         """Create config from model name (gpt2-tiny, gpt2, gpt2-medium, gpt2-large, gpt2-xl)"""
         # GPT-2 model configurations
         configs = {
-            "gpt2-tiny": dict(n_layer=6, n_head=8, n_embd=512),  # ~22M params (for double-attn comparison)
+            "gpt2-tiny": dict(
+                n_layer=6, n_head=8, n_embd=512
+            ),  # ~22M params (for double-attn comparison)
             "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
             "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
             "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
@@ -426,11 +392,7 @@ class GPT2(nn.Module):
         device = x.device
 
         # Get Q, K, V
-        if self.config.kv_tying or self.config.k_eq_vt:
-            q, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
-            k = v if self.config.kv_tying else q.transpose(-2, -1)
-        else:
-            q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+        q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
 
         # Reshape to [B, H, T, head_dim]
         q = q.view(B, T, attn.n_head, C // attn.n_head).transpose(1, 2)
