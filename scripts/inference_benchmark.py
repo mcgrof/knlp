@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-Inference benchmark for comparing trained MLA/RAMLA models.
+Inference benchmark for comparing trained MLA models.
 
 Compares:
 1. Text generation quality
 2. Extended lm-eval benchmarks
 3. Inference memory usage
+
+Supports:
+- GPT2_MLA: Base MLA with 6x KV cache compression
+- GPT2_MLA_KV: MLA + KVSplice with 12x cache compression
 """
 
 import argparse
@@ -18,12 +22,10 @@ import tiktoken
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ra import (
+from gpt2.mla import (
     GPT2_MLA,
     GPT2_MLA_KV,
-    GPT2_MLA_RA,
-    GPT2_MLA_RA_KV,
-    RA_MLA_Config,
+    MLA_Config,
 )
 
 
@@ -32,20 +34,16 @@ def load_model(checkpoint_path, device="cuda"):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Determine model type from checkpoint or path
-    # Note: Check more specific patterns first (MLAKV before MLA, RAMLAKV before RAMLA)
-    if "stepMLAKV" in checkpoint_path:
+    # Check more specific patterns first (MLAKV before MLA)
+    if "stepMLAKV" in checkpoint_path or "MLAKV" in checkpoint_path:
         model_type = "mlakv"
-    elif "ramla_stepMLA" in checkpoint_path or "stepMLA" in checkpoint_path:
+    elif "stepMLA" in checkpoint_path or "MLA" in checkpoint_path:
         model_type = "mla"
-    elif "stepRAMLAKV" in checkpoint_path:
-        model_type = "ramlakv"
-    elif "stepRAMLA" in checkpoint_path:
-        model_type = "ramla"
     else:
         model_type = "mla"  # default
 
     # Create config
-    cfg = RA_MLA_Config(
+    cfg = MLA_Config(
         d_model=768,
         n_heads=12,
         n_layers=12,
@@ -59,10 +57,6 @@ def load_model(checkpoint_path, device="cuda"):
         model = GPT2_MLA(cfg)
     elif model_type == "mlakv":
         model = GPT2_MLA_KV(cfg, compression_ratio=0.5)
-    elif model_type == "ramla":
-        model = GPT2_MLA_RA(cfg)
-    elif model_type == "ramlakv":
-        model = GPT2_MLA_RA_KV(cfg, compression_ratio=0.5)
 
     # Load weights
     model.load_state_dict(checkpoint["model"])
