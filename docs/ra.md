@@ -178,6 +178,5 @@ Initial experiments use simple addition.
 
 ## References
 
-- Old RA documentation (flawed implementation): `docs/archive/ra-old.md`
 - MLA compression research: `docs/kvsplice.md`
 - Fisher Information Matrix analysis: `docs/FIM.md`
