@@ -12,8 +12,6 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **🚀 Reciprocal Attention + KVSplice**: Current research on bidirectional attention mechanisms and learned cache compression. Reciprocal Attention (RA) alternates Q@K.T and K@Q.T across layers, achieving 27% inference speedup with smoother optimization. KVSplice provides learned compression of attention cache with 12x memory reduction while improving quality. See [docs/ra.md](docs/ra.md) for RA details and [docs/kvsplice.md](docs/kvsplice.md) for compression techniques.
-
 > **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating the hypothesis that Adam's gradient statistics enable superior pruning decisions. Tested on NVIDIA B200 GPUs with torch.compile.
 
 ## Development Philosophy
@@ -27,23 +25,9 @@ knlp applies **Linux kernel development practices** to machine learning research
 - **Collaborative contributions**: Community-driven ideas and ablation studies
 - **Rigorous validation**: Automated test matrices before merging experiments
 
-This methodology enables rapid iteration on transformer architectures through reciprocal mechanisms, geometric compression, and state-based optimization while maintaining reproducibility and rigor.
+This methodology enables rapid iteration on transformer architectures and state-based optimization while maintaining reproducibility and rigor.
 
 ## Key Results
-
-### Attention Architecture: RA + kvsplice R&D Quality and Speed Improvements
-
-![KVSplice Quality Speed Tradeoff](docs/images/kvsplice_quality_speed_tradeoff.png)
-
-Our attention R&D demonstrates that learned compression and reciprocal
-mechanisms achieve both quality improvements and inference speedup
-simultaneously. **MLA+KVSplice** delivers best quality (3.2 perplexity, 11%
-better than MLA alone) with 12x cache compression. **RA+MLA+KVSplice**
-achieves baseline GPT-2 quality (3.3 perplexity) with 12x compression and 22%
-faster inference - the sweet spot for production deployment.
-
-See [docs/ra.md](docs/ra.md) for Reciprocal Attention details and
-[docs/kvsplice.md](docs/kvsplice.md) for learned compression analysis.
 
 ### Adam State based Pruning R&D results
 
@@ -59,26 +43,6 @@ on CNNs. bitter7 (variance-based) emerged from transformer R&D and is
 expected to improve CNN results further. See evolution story below.
 
 ## GPT-2 Transformer Results (124M Parameters)
-
-### Current Research: Reciprocal Attention + KVSplice
-
-**Reciprocal Attention (RA)**: Bidirectional attention mechanism that alternates
-Q@K.T (standard) and K@Q.T (reciprocal) across transformer layers. Achieves 27%
-inference speedup with improved optimization geometry.
-
-**KVSplice**: Learned compression technique for attention cache. Reduces cache
-size by 12x while improving model quality through regularization effect.
-
-**Combined results** (RA+MLA+KVSplice):
-- 12x cache compression (36 MB → 3 MB)
-- 22% inference speedup
-- Matches baseline GPT-2 quality
-- 2-hour training runs on AMD W7900 GPU
-
-See [docs/ra.md](docs/ra.md) for Reciprocal Attention details and
-[docs/kvsplice.md](docs/kvsplice.md) for compression architecture.
-
----
 
 ### Adam State-Based Pruning: Hypothesis Validated
 
@@ -111,8 +75,6 @@ hyperparameter auto-detection, ResNet results, and transformer findings.
 
 knlp serves as a collaborative platform for ML architecture research:
 
-- **[Reciprocal Attention (RA)](docs/ra.md)**: Bidirectional attention alternating Q@K.T and K@Q.T across layers, achieving 27% inference speedup with improved optimization geometry
-- **[KVSplice](docs/kvsplice.md)**: Learned compression for attention cache achieving 12x compression while improving model quality through regularization effect
 - **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables for zero-overhead pruning decisions during training
 - **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
 - **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
