@@ -1003,7 +1003,12 @@ def run_single_test(
         if vanilla_ablation_step:
             test_id = f"{model}_{optimizer}_vanilla_{baseline_step_name}"
         else:
-            test_id = f"{model}_{optimizer}_ramla_step{baseline_step_name}"
+            # Check if this is simple RA ablation or MLA/RA-CT ablation
+            ra_simple_steps = ("baseline", "ra")
+            ablation_type = (
+                "ra" if baseline_step_name.lower() in ra_simple_steps else "ramla"
+            )
+            test_id = f"{model}_{optimizer}_{ablation_type}_step{baseline_step_name}"
 
         return {
             "success": True,
@@ -1026,13 +1031,19 @@ def run_single_test(
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
         elif ra_mla_ablation_step:
-            # Include RA_MLA ablation step in test ID (e.g., gpt2_adamwspam_ramla_step2)
+            # Check if this is simple RA ablation or MLA/RA-CT ablation
+            ra_simple_steps = ("baseline", "ra")
+            ablation_type = (
+                "ra" if ra_mla_ablation_step.lower() in ra_simple_steps else "ramla"
+            )
+
+            # Include ablation step in test ID (e.g., gpt2_adamwspam_ra_stepbaseline or gpt2_adamwspam_ramla_step2)
             if variant:
-                test_id = (
-                    f"{model}_{optimizer}_{variant}_ramla_step{ra_mla_ablation_step}"
-                )
+                test_id = f"{model}_{optimizer}_{variant}_{ablation_type}_step{ra_mla_ablation_step}"
             else:
-                test_id = f"{model}_{optimizer}_ramla_step{ra_mla_ablation_step}"
+                test_id = (
+                    f"{model}_{optimizer}_{ablation_type}_step{ra_mla_ablation_step}"
+                )
             # Tokenizer method for ablation (if applicable)
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
