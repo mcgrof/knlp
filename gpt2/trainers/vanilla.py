@@ -73,26 +73,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.baseline_metrics = self._fetch_baseline_metrics(baseline_run_id)
 
     def _configure_step(self, args, step: str):
-        """Configure args based on vanilla ablation step."""
-        if step == "V0":
-            # Baseline GPT-2 (no modifications)
-            args.kv_tying = False
-            args.k_eq_vt = False
-        elif step == "V1":
-            # GPT-2 with KV tying (K = V)
-            args.kv_tying = True
-            args.k_eq_vt = False
-        elif step == "V2":
-            # GPT-2 with K = V.T (transpose)
-            args.kv_tying = False
-            args.k_eq_vt = True
-        else:
-            if self.master_process:
-                print(
-                    f"Warning: Unknown vanilla ablation step {step}, using baseline V0"
-                )
-            args.kv_tying = False
-            args.k_eq_vt = False
+        """Configure args based on vanilla ablation step (no-op after KV tying removal)."""
+        # KV tying ablation steps (V0/V1/V2) removed - no longer supported
+        # This method kept for compatibility but does nothing
+        pass
 
     def create_model(self):
         """Create standard GPT-2 model."""
@@ -104,8 +88,6 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         config.block_size = self.args.block_size
         config.dropout = self.args.dropout
         config.bias = getattr(self.args, "bias", True)
-        config.kv_tying = getattr(self.args, "kv_tying", False)
-        config.k_eq_vt = getattr(self.args, "k_eq_vt", False)
 
         # Create model
         model = GPT2(config)
