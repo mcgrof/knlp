@@ -1,0 +1,58 @@
+#
+# GPT-2 Tiny: Baseline vs Double Attention Comparison
+#
+# Runs both configurations with multiple seeds (42-46) for statistical
+# significance testing. Fair comparison: both use GPT-2 Tiny (6L/512d/8H)
+# with similar total attention FLOPs.
+#
+# Baseline: 6L × 1 attn/layer
+# Double: 6L × 2 attn/layer (but smaller d_model compensates)
+#
+
+# Auto hyperparameters
+CONFIG_HYPER_PARAM_AUTO=y
+
+# Test matrix mode for multiple seeds
+CONFIG_TEST_MATRIX_MODE=y
+CONFIG_TEST_MODELS="gpt2-tiny,gpt2-tiny-double"
+CONFIG_TEST_SEEDS="42,43,44,45,46"
+
+# Dataset
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_BLOCK_SIZE=1024
+
+# Training
+CONFIG_NUM_EPOCHS=10
+CONFIG_LEARNING_RATE="6e-4"
+CONFIG_GPT2_WARMUP_STEPS=2000
+CONFIG_GPT2_MAX_ITERS=10000
+CONFIG_GPT2_MAX_TIME=14400
+CONFIG_GPT2_DECAY_LR=y
+CONFIG_GPT2_MIN_LR="6e-5"
+
+# Evaluation
+CONFIG_INFERENCE_BENCHMARK=y
+CONFIG_RUN_LM_EVAL=y
+CONFIG_LM_EVAL_TASKS="hellaswag,arc_easy,winogrande"
+CONFIG_LM_EVAL_LIMIT=100
+
+# Optimizer
+CONFIG_OPTIMIZER_SELECT_ADAMWSPAM=y
+CONFIG_ADV_WEIGHT_DECAY="0.01"
+CONFIG_ADV_USE_AMSGRAD=y
+
+# Advanced
+CONFIG_GPT2_FLASH_ATTENTION=y
+CONFIG_GPT2_WEIGHT_TYING=y
+CONFIG_GPT2_AMP_DTYPE="bfloat16"
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Tracking
+CONFIG_ENABLE_TRACKIO=y
+CONFIG_ENABLE_WANDB=y
+CONFIG_TRACKER_PROJECT="gpt2-tiny-comparison"
+CONFIG_AUTO_GENERATE_GRAPHS=y
+
+# Parallel execution
+CONFIG_PARALLEL_JOBS=2
