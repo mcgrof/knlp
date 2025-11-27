@@ -109,13 +109,13 @@ class RATrainer(VanillaGPT2Trainer):
 
         model = model.to(self.device)
 
-        # Compile model if enabled
-        if self.args.compile_model:
+        # Compile if requested (must be before DDP)
+        if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
             if self.master_process:
-                print("Compiling model with torch.compile()...")
-            model = torch.compile(model)
+                print("Compiling model with torch.compile(dynamic=True)...")
+            model = torch.compile(model, dynamic=True)
 
-        # Setup DDP if applicable
+        # Wrap in DDP if needed
         if self.ddp:
             model = torch.nn.parallel.DistributedDataParallel(
                 model, device_ids=[self.ddp_local_rank]
