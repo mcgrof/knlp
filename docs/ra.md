@@ -15,17 +15,12 @@ mechanisms.
 
 ## Motivation
 
-Previous "Reciprocal Attention" (RA) implementations swapped Q and K **within
-a single layer** with no cross-layer context. This is fundamentally broken
-because Q and K are arbitrary projections from the same initialization
-distribution - swapping them is meaningless relabeling.
+Original RA R&D explored double attention but the FLOPS cost was prohibitive.
+This research evaluates the actual value of double attention by accepting the
+2x FLOPS cost and scaling down model size to maintain fair comparison.
 
-**Key insight**: For reciprocal patterns to be meaningful, they must either:
-
-1. **Cross-layer communication**: Layer N's attention influences layer N+1
-2. **Double computation**: Compute BOTH Q@K.T and K@Q.T in the same layer
-
-This research focuses on option 2: double attention within each layer.
+**Goal**: Understand if computing both Q@K.T and K@Q.T per layer provides
+meaningful quality improvements that justify the computational cost.
 
 ## Cost-Quality Tradeoff
 
@@ -67,7 +62,7 @@ max_iters = 10000
 max_time = 14400  # 4 hours
 
 # Dataset
-dataset = "finewebedu"
+dataset = "tinystories"
 ```
 
 ### Deterministic Seeding
