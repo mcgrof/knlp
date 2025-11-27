@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-Double Attention: Evaluating Reciprocal Patterns
+Reciprocal Attention (RA)
 
 Research question: What does computing attention twice per layer add?
 
 Standard attention: softmax(Q@K.T)@V
-Double attention: softmax(Q@K.T)@V + softmax(K@Q.T)@V
+RA: softmax(Q@K.T)@V + softmax(K@Q.T)@V
 
-This doubles FLOPs per attention layer. Fair comparison requires scaling down
+Doubles FLOPs per attention layer. Fair comparison requires scaling down
 model size to maintain total compute budget.
 
 See docs/ra.md for experiment design and results.
@@ -24,15 +24,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class DoubleAttention(nn.Module):
+class RAAttention(nn.Module):
     """
-    Compute both forward (Q@K.T) and reciprocal (K@Q.T) attention.
+    Reciprocal Attention: compute both Q@K.T and K@Q.T per layer.
 
     Standard: y = softmax(Q@K.T)@V
     Reciprocal: y = softmax(K@Q.T)@V
     Combined: y = y_forward + y_reciprocal
 
-    This doubles attention FLOPs. Use with smaller models to maintain
+    Doubles attention FLOPs. Use with smaller models to maintain
     fair compute comparison vs baseline.
     """
 
@@ -116,12 +116,12 @@ class DoubleAttention(nn.Module):
         return y
 
 
-class DoubleAttentionBlock(nn.Module):
+class RABlock(nn.Module):
     """
-    Transformer block with double attention.
+    Transformer block with reciprocal attention.
 
     Architecture:
-        x = x + double_attention(LayerNorm(x))
+        x = x + ra_attention(LayerNorm(x))
         x = x + mlp(LayerNorm(x))
     """
 
@@ -136,7 +136,7 @@ class DoubleAttentionBlock(nn.Module):
         super().__init__()
 
         self.ln1 = nn.LayerNorm(d_model)
-        self.attn = DoubleAttention(d_model, n_heads, dropout, bias)
+        self.attn = RAAttention(d_model, n_heads, dropout, bias)
 
         self.ln2 = nn.LayerNorm(d_model)
         self.mlp = nn.Sequential(
@@ -163,9 +163,9 @@ class DoubleAttentionBlock(nn.Module):
         return x
 
 
-class GPT2TinyDoubleAttention(nn.Module):
+class GPT2TinyRA(nn.Module):
     """
-    GPT-2 Tiny with double attention.
+    GPT-2 Tiny with Reciprocal Attention.
 
     Configuration for fair comparison vs baseline:
     - 6 layers (half of GPT-2 124M's 12)
@@ -204,7 +204,7 @@ class GPT2TinyDoubleAttention(nn.Module):
         # Transformer blocks
         self.blocks = nn.ModuleList(
             [
-                DoubleAttentionBlock(d_model, n_heads, d_ff, dropout, bias)
+                RABlock(d_model, n_heads, d_ff, dropout, bias)
                 for _ in range(n_layers)
             ]
         )
