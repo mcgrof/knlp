@@ -5,11 +5,10 @@ Multi-head Latent Attention (MLA) implementations
 
 This module contains MLA variants:
 - MLA: Base multi-head latent attention with 6x cache compression
-- MLA_KV2: Improved MLA with better K/V decomposition  
+- MLA_KV2: Improved MLA with better K/V decomposition
 - MLA_KV2M: MLA_KV2 with MLP splice compression
 - KVSplice: Learned compression for 12x total cache reduction
 
-These are independent of Reciprocal Attention research.
 See docs/kvsplice.md for details.
 """
 
@@ -22,7 +21,6 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 
 
 class MLA_Config:
@@ -62,8 +60,6 @@ class MLA_Config:
     dropout: float = 0.0
 
 
-
-
 class RotaryEmbedding(nn.Module):
     """Rotary Position Embeddings (RoPE) for attention."""
 
@@ -83,12 +79,6 @@ class RotaryEmbedding(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return cos and sin for positions up to seq_len."""
         return self.cos_cached[:seq_len], self.sin_cached[:seq_len]
-
-
-
-
-def apply_rope(
-    q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
 
 
 class LearnedKVSplice(nn.Module):
@@ -156,8 +146,6 @@ class LearnedKVSplice(nn.Module):
             "compression_ratio": self.d_compressed / self.d_in,
             "memory_reduction": 1.0 - (self.d_compressed / self.d_in),
         }
-
-
 
 
 class MLA_Flash(nn.Module):
@@ -265,15 +253,12 @@ class MLA_Flash(nn.Module):
         return out, new_cache
 
 
-
-
 class MLA_Model(nn.Module):
     """
-    Container for MLA_Flash layers (baseline without reciprocal alternation).
+    Container for MLA_Flash layers.
 
     Use for ablation testing:
     - GPT-2 baseline vs MLA: measures latent compression benefit
-    - MLA vs RA_MLA: measures reciprocal alternation benefit
     """
 
     def __init__(self, cfg: MLA_Config):
@@ -297,8 +282,6 @@ class MLA_Model(nn.Module):
                 new_caches.append(new_cache)
 
         return x, new_caches
-
-
 
 
 class MLABlock(nn.Module):
@@ -325,8 +308,6 @@ class MLABlock(nn.Module):
         # MLP with residual
         x = x + self.mlp(self.ln_2(x))
         return x, new_cache
-
-
 
 
 class GPT2_MLA(nn.Module):
@@ -472,15 +453,12 @@ class GPT2_MLA(nn.Module):
         return attn_probs  # [B, H, T, T]
 
 
-
-
 class MLA_KVSplice(nn.Module):
     """
-    MLA with learned KVSplice compression but NO reciprocal alternation.
+    MLA with learned KVSplice compression.
 
-    Uses standard Q·K^T attention (not K·Q^T) while still applying the
-    KVSplice compression bottleneck. This isolates the benefit of learned
-    compression from the reciprocal attention mechanism.
+    Uses standard Q·K^T attention while applying the KVSplice
+    compression bottleneck.
     """
 
     def __init__(
@@ -612,8 +590,6 @@ class MLA_KVSplice(nn.Module):
         return out, new_cache
 
 
-
-
 class MLAKVBlock(nn.Module):
     """Transformer block with MLA_KVSplice attention + MLP."""
 
@@ -643,10 +619,8 @@ class MLAKVBlock(nn.Module):
         return x, new_cache
 
 
-
-
 class GPT2_MLA_KV(nn.Module):
-    """Full GPT-2 model with MLA+KVSplice attention (no reciprocal alternation)."""
+    """Full GPT-2 model with MLA+KVSplice attention."""
 
     def __init__(
         self,
@@ -820,8 +794,6 @@ class GPT2_MLA_KV(nn.Module):
         return attn_probs  # [B, H, T, T]
 
 
-
-
 class MLPSplice(nn.Module):
     """
     MLP operating in a compressed latent space.
@@ -893,8 +865,6 @@ class MLPSplice(nn.Module):
             "mlpsplice_params": mlpsplice,
             "reduction": f"{(1 - mlpsplice/standard) * 100:.1f}%",
         }
-
-
 
 
 class MLA_KV2_Attention(nn.Module):
@@ -1039,8 +1009,6 @@ class MLA_KV2_Attention(nn.Module):
         return out, new_cache
 
 
-
-
 class MLA_KV2_Block(nn.Module):
     """Transformer block with MLA_KV2_Attention + standard MLP."""
 
@@ -1068,8 +1036,6 @@ class MLA_KV2_Block(nn.Module):
         x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
         return x, new_cache
-
-
 
 
 class GPT2_MLA_KV2(nn.Module):
@@ -1217,12 +1183,10 @@ class GPT2_MLA_KV2(nn.Module):
         )
         scores = scores.masked_fill(causal_mask, float("-inf"))
 
-        # Standard attention (no reciprocal for MLA_KV2)
+        # Standard attention
         attn_probs = F.softmax(scores, dim=-1)
 
         return attn_probs
-
-
 
 
 class MLA_KV2_MLPSPLICE_Block(nn.Module):
@@ -1248,8 +1212,6 @@ class MLA_KV2_MLPSPLICE_Block(nn.Module):
         x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
         return x, new_cache
-
-
 
 
 class GPT2_MLA_KV2M(nn.Module):
@@ -1403,9 +1365,7 @@ class GPT2_MLA_KV2M(nn.Module):
         )
         scores = scores.masked_fill(causal_mask, float("-inf"))
 
-        # Standard attention (no reciprocal for MLA_KV2M)
+        # Standard attention
         attn_probs = F.softmax(scores, dim=-1)
 
         return attn_probs
-
-
