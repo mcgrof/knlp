@@ -445,42 +445,6 @@ config TRACKIO_PORT
 
 endmenu
 
-menu "Reciprocal Attention (RA) Experiments"
-
-config ENABLE_RA
-	bool "Enable RA (Q@K.T + K@Q.T)"
-	default n
-	help
-	  Enable Reciprocal Attention that computes both forward
-	  (Q@K.T) and reciprocal (K@Q.T) attention per layer.
-
-	  Doubles attention FLOPs. Use with GPT-2 Tiny (6L/512d/8H) to
-	  maintain fair compute comparison vs baseline.
-
-config RA_ABLATION_MODE
-	bool "Enable RA ablation study mode"
-	default n
-	help
-	  Run ablation study testing baseline GPT-2 Tiny vs RA.
-	  Disables standard test matrix mode.
-
-config RA_ABLATION_STEPS
-	string "RA ablation steps to run (comma-separated)"
-	default "baseline,ra"
-	depends on RA_ABLATION_MODE
-	help
-	  Comma-separated list of ablation steps.
-	  baseline = Standard GPT-2 Tiny (single attention)
-	  ra = RA variant (double attention: Q@K.T + K@Q.T)
-
-config RA_SEED
-	int "Random seed for reproducibility"
-	default 42
-	help
-	  Fixed random seed for deterministic training. Run multiple
-	  experiments with different seeds (42-46) for statistical
-	  significance testing.
-
 config INFERENCE_BENCHMARK
 	bool "Run inference benchmark after training"
 	default y
@@ -512,8 +476,6 @@ config LM_EVAL_LIMIT
 	  Limit the number of samples evaluated per task.
 	  Use for quick testing. 0 means evaluate all samples.
 
-endmenu
-
 menu "MLA (Multi-head Latent Attention)"
 
 config ENABLE_MLA
@@ -539,7 +501,7 @@ endmenu
 config TEST_MATRIX_MODE
 	bool "Enable standard test matrix mode"
 	default y
-	depends on !RA_ABLATION_MODE && !RA_MLA_ABLATION_MODE
+	depends on !RA_MLA_ABLATION_MODE
 	help
 	  Run standard test matrix testing optimizer/pruning combinations.
 	  Cannot be used simultaneously with ablation mode.
