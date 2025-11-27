@@ -203,10 +203,7 @@ class GPT2TinyRA(nn.Module):
 
         # Transformer blocks
         self.blocks = nn.ModuleList(
-            [
-                RABlock(d_model, n_heads, d_ff, dropout, bias)
-                for _ in range(n_layers)
-            ]
+            [RABlock(d_model, n_heads, d_ff, dropout, bias) for _ in range(n_layers)]
         )
 
         # Final layer norm and output
@@ -231,6 +228,18 @@ class GPT2TinyRA(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.pos_emb.weight.numel()
+        return n_params
+
     def forward(
         self,
         idx: torch.Tensor,
@@ -246,7 +255,9 @@ class GPT2TinyRA(nn.Module):
             loss: scalar loss if targets provided, else None
         """
         B, T = idx.shape
-        assert T <= self.block_size, f"Sequence length {T} exceeds block_size {self.block_size}"
+        assert (
+            T <= self.block_size
+        ), f"Sequence length {T} exceeds block_size {self.block_size}"
 
         # Embeddings
         tok_emb = self.token_emb(idx)  # [B, T, d_model]
@@ -295,7 +306,9 @@ class GPT2TinyRA(nn.Module):
         """
         for _ in range(max_new_tokens):
             # Crop to block_size
-            idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
+            idx_cond = (
+                idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
+            )
 
             # Forward pass
             logits, _ = self(idx_cond)
