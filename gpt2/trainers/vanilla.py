@@ -72,6 +72,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if baseline_run_id and baseline_run_id.strip():
                 self.baseline_metrics = self._fetch_baseline_metrics(baseline_run_id)
 
+        # Track scale parameter history for stability analysis
+        self.scale_history = []  # List of (iteration, scale_params) tuples
+        self.max_scale_history = 10  # Keep last 10 checkpoints
+
     def _configure_step(self, args, step: str):
         """Configure args based on vanilla ablation step (no-op after KV tying removal)."""
         # KV tying ablation steps (V0/V1/V2) removed - no longer supported
@@ -338,6 +342,16 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     kvsplice_metrics = self._compute_kvsplice_param_metrics()
                     if kvsplice_metrics:
                         metrics_to_log.update(kvsplice_metrics)
+
+                    # Add pruning sensitivity analysis (test reconstruction error)
+                    pruning_metrics = self._compute_pruning_sensitivity()
+                    if pruning_metrics:
+                        metrics_to_log.update(pruning_metrics)
+
+                    # Add scale stability tracking (convergence monitoring)
+                    stability_metrics = self._compute_scale_stability()
+                    if stability_metrics:
+                        metrics_to_log.update(stability_metrics)
 
                     self.log_metrics(metrics_to_log)
 
@@ -693,41 +707,84 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         if not hasattr(attn, "kvsplice"):
             return None
 
-        kvsplice = attn.kvsplice
-
-        # Extract scale and shift parameters
-        scale_raw = kvsplice.transform_scale.data  # [d_in]
-        shift = kvsplice.transform_shift.data  # [d_in]
-
-        # Apply softplus to get actual scale values
+        # Collect scale/shift from ALL layers for per-layer analysis
         import torch.nn.functional as F
+        import numpy as np
 
-        scale = F.softplus(scale_raw)
+        n_layers = len(raw_model.transformer.h)
+        all_scales = []
+        all_shifts = []
 
-        # Compute statistics
+        for layer_idx, layer in enumerate(raw_model.transformer.h):
+            if not hasattr(layer.attn, "kvsplice"):
+                continue
+
+            kvsplice = layer.attn.kvsplice
+            scale_raw = kvsplice.transform_scale.data
+            shift = kvsplice.transform_shift.data
+
+            scale = F.softplus(scale_raw)
+            all_scales.append(scale.cpu().numpy())
+            all_shifts.append(shift.cpu().numpy())
+
+        if not all_scales:
+            return None
+
+        all_scales = np.array(all_scales)  # [n_layers, d_in]
+        all_shifts = np.array(all_shifts)  # [n_layers, d_in]
+
+        # Compute average across layers
+        avg_scale = np.mean(all_scales, axis=0)  # [d_in]
+        avg_shift = np.mean(all_shifts, axis=0)  # [d_in]
+
         metrics = {}
 
-        # Scale statistics
-        metrics["kvsplice/scale_mean"] = scale.mean().item()
-        metrics["kvsplice/scale_std"] = scale.std().item()
-        metrics["kvsplice/scale_min"] = scale.min().item()
-        metrics["kvsplice/scale_max"] = scale.max().item()
+        # Average scale statistics across all layers
+        metrics["kvsplice/scale_mean"] = float(np.mean(avg_scale))
+        metrics["kvsplice/scale_std"] = float(np.std(avg_scale))
+        metrics["kvsplice/scale_min"] = float(np.min(avg_scale))
+        metrics["kvsplice/scale_max"] = float(np.max(avg_scale))
 
-        # Shift statistics
-        metrics["kvsplice/shift_mean"] = shift.mean().item()
-        metrics["kvsplice/shift_std"] = shift.std().item()
-        metrics["kvsplice/shift_min"] = shift.min().item()
-        metrics["kvsplice/shift_max"] = shift.max().item()
+        # Average shift statistics
+        metrics["kvsplice/shift_mean"] = float(np.mean(avg_shift))
+        metrics["kvsplice/shift_std"] = float(np.std(avg_shift))
+        metrics["kvsplice/shift_min"] = float(np.min(avg_shift))
+        metrics["kvsplice/shift_max"] = float(np.max(avg_shift))
+
+        # Per-layer statistics (track first, middle, last layers)
+        layers_to_track = [0, n_layers // 2, n_layers - 1]
+        layer_names = ["first", "middle", "last"]
+
+        for layer_idx, layer_name in zip(layers_to_track, layer_names):
+            if layer_idx < len(all_scales):
+                layer_scale = all_scales[layer_idx]
+                layer_shift = all_shifts[layer_idx]
+
+                metrics[f"kvsplice/{layer_name}_layer_scale_mean"] = float(
+                    np.mean(layer_scale)
+                )
+                metrics[f"kvsplice/{layer_name}_layer_shift_mean"] = float(
+                    np.mean(layer_shift)
+                )
+
+                # Count low-scale dims per layer
+                scale_threshold_low = 0.1
+                low_scale_dims = np.sum(layer_scale < scale_threshold_low)
+                low_scale_pct = 100 * low_scale_dims / len(layer_scale)
+                metrics[f"kvsplice/{layer_name}_layer_low_scale_pct"] = float(
+                    low_scale_pct
+                )
 
         # Count dimensions with extreme scaling (important for pruning)
+        # Use averaged scale across all layers
         scale_threshold_low = 0.1  # Nearly zero scale = unimportant dimension
         scale_threshold_high = 10.0  # Very high scale = important dimension
 
-        low_scale_dims = (scale < scale_threshold_low).sum().item()
-        high_scale_dims = (scale > scale_threshold_high).sum().item()
+        low_scale_dims = int(np.sum(avg_scale < scale_threshold_low))
+        high_scale_dims = int(np.sum(avg_scale > scale_threshold_high))
 
-        low_scale_pct = 100 * low_scale_dims / scale.numel()
-        high_scale_pct = 100 * high_scale_dims / scale.numel()
+        low_scale_pct = 100 * low_scale_dims / len(avg_scale)
+        high_scale_pct = 100 * high_scale_dims / len(avg_scale)
 
         metrics["kvsplice/low_scale_dims"] = low_scale_dims
         metrics["kvsplice/high_scale_dims"] = high_scale_dims
@@ -739,23 +796,19 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
         if "wandb" in self.trackers and self.master_process:
             try:
-                # Create histogram of actual scale values
-                scale_np = scale.cpu().numpy()
-                shift_np = shift.cpu().numpy()
-
-                metrics["kvsplice/scale_histogram"] = wandb.Histogram(scale_np)
-                metrics["kvsplice/shift_histogram"] = wandb.Histogram(shift_np)
+                # Create histogram of actual scale values (averaged across layers)
+                metrics["kvsplice/scale_histogram"] = wandb.Histogram(avg_scale)
+                metrics["kvsplice/shift_histogram"] = wandb.Histogram(avg_shift)
 
                 # Create scatter plot: scale vs dimension index
                 # This shows which dimensions are being scaled up/down
                 import matplotlib.pyplot as plt
-                import numpy as np
 
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
                 # Plot 1: Scale values by dimension
-                dims = np.arange(len(scale_np))
-                ax1.scatter(dims, scale_np, alpha=0.6, s=10)
+                dims = np.arange(len(avg_scale))
+                ax1.scatter(dims, avg_scale, alpha=0.6, s=10)
                 ax1.axhline(
                     y=1.0,
                     color="r",
@@ -784,7 +837,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 ax1.grid(True, alpha=0.3)
 
                 # Plot 2: Shift values by dimension
-                ax2.scatter(dims, shift_np, alpha=0.6, s=10, color="purple")
+                ax2.scatter(dims, avg_shift, alpha=0.6, s=10, color="purple")
                 ax2.axhline(
                     y=0.0, color="r", linestyle="--", alpha=0.5, label="shift=0"
                 )
@@ -804,7 +857,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 # This shows the "importance" distribution
                 fig2, ax = plt.subplots(1, 1, figsize=(10, 5))
 
-                sorted_scales = np.sort(scale_np)[::-1]  # Sort descending
+                sorted_scales = np.sort(avg_scale)[::-1]  # Sort descending
                 ax.plot(sorted_scales, linewidth=2)
                 ax.axhline(
                     y=1.0,
@@ -865,5 +918,264 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             print(
                 f"  High-scale dims (>{scale_threshold_high}): {high_scale_dims} ({metrics['kvsplice/high_scale_pct']:.1f}%)"
             )
+
+        return metrics
+
+    def _compute_pruning_sensitivity(self):
+        """
+        Test reconstruction error and perplexity impact when pruning low-scale
+        dimensions. This simulates pruning at inference time by temporarily
+        zeroing out dimensions with scale below various thresholds.
+
+        Returns:
+            Dictionary with pruning sensitivity metrics or None if not applicable
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Check if this is an MLA model with KVSplice
+        if not hasattr(raw_model, "transformer"):
+            return None
+
+        # Verify all layers have KVSplice
+        has_kvsplice = True
+        for layer in raw_model.transformer.h:
+            if not hasattr(layer, "attn") or not hasattr(layer.attn, "kvsplice"):
+                has_kvsplice = False
+                break
+
+        if not has_kvsplice:
+            return None
+
+        # Get validation batch for testing
+        try:
+            # Create small validation batch (reuse existing data)
+            batch_size = 4
+            seq_len = 128
+            device = next(raw_model.parameters()).device
+
+            x = torch.randint(0, 50257, (batch_size, seq_len), device=device)
+            targets = x.clone()
+
+            # Baseline: compute loss with no pruning
+            raw_model.eval()
+            with torch.no_grad():
+                logits, _ = raw_model(x)
+                baseline_loss = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)), targets.view(-1)
+                )
+                baseline_ppl = torch.exp(baseline_loss).item()
+
+            metrics = {}
+            metrics["pruning/baseline_ppl"] = baseline_ppl
+
+            # Test different pruning thresholds
+            thresholds = [0.05, 0.1, 0.2, 0.5]
+
+            for thresh in thresholds:
+                # Temporarily mask low-scale dimensions in all layers
+                original_scales = []
+
+                for layer in raw_model.transformer.h:
+                    kvsplice = layer.attn.kvsplice
+                    scale_raw = kvsplice.transform_scale.data.clone()
+                    original_scales.append(scale_raw.clone())
+
+                    # Apply softplus to get actual scale
+                    scale = F.softplus(scale_raw)
+
+                    # Create mask: zero out dimensions with scale < threshold
+                    mask = (scale >= thresh).float()
+
+                    # Temporarily modify scale parameters
+                    # Set low-scale dims to very negative value so softplus -> 0
+                    kvsplice.transform_scale.data[scale < thresh] = -10.0
+
+                # Compute loss with pruned dimensions
+                with torch.no_grad():
+                    logits_pruned, _ = raw_model(x)
+                    pruned_loss = F.cross_entropy(
+                        logits_pruned.view(-1, logits_pruned.size(-1)),
+                        targets.view(-1),
+                    )
+                    pruned_ppl = torch.exp(pruned_loss).item()
+
+                # Restore original scales
+                for layer, orig_scale in zip(raw_model.transformer.h, original_scales):
+                    layer.attn.kvsplice.transform_scale.data.copy_(orig_scale)
+
+                # Compute metrics
+                ppl_increase = pruned_ppl - baseline_ppl
+                ppl_increase_pct = 100 * (pruned_ppl / baseline_ppl - 1)
+
+                # Count pruned dimensions (from first layer as proxy)
+                first_scale = F.softplus(original_scales[0])
+                pruned_dims = (first_scale < thresh).sum().item()
+                pruned_pct = 100 * pruned_dims / first_scale.numel()
+
+                metrics[f"pruning/thresh_{thresh}_ppl"] = pruned_ppl
+                metrics[f"pruning/thresh_{thresh}_ppl_increase"] = ppl_increase
+                metrics[f"pruning/thresh_{thresh}_ppl_increase_pct"] = ppl_increase_pct
+                metrics[f"pruning/thresh_{thresh}_pruned_pct"] = pruned_pct
+
+            # Determine safe pruning threshold (< 5% PPL increase)
+            safe_threshold = None
+            max_prunable_pct = 0.0
+
+            for thresh in thresholds:
+                ppl_increase_pct = metrics[f"pruning/thresh_{thresh}_ppl_increase_pct"]
+                pruned_pct = metrics[f"pruning/thresh_{thresh}_pruned_pct"]
+
+                if ppl_increase_pct < 5.0:  # Safe if < 5% degradation
+                    safe_threshold = thresh
+                    max_prunable_pct = pruned_pct
+
+            metrics["pruning/safe_threshold"] = (
+                safe_threshold if safe_threshold else 0.0
+            )
+            metrics["pruning/max_prunable_pct"] = max_prunable_pct
+
+            # Print summary
+            if self.master_process:
+                print("\n--- Pruning Sensitivity Analysis ---")
+                print(f"  Baseline PPL: {baseline_ppl:.2f}")
+                for thresh in thresholds:
+                    ppl = metrics[f"pruning/thresh_{thresh}_ppl"]
+                    increase = metrics[f"pruning/thresh_{thresh}_ppl_increase_pct"]
+                    pruned = metrics[f"pruning/thresh_{thresh}_pruned_pct"]
+                    status = "✓ SAFE" if increase < 5.0 else "✗ UNSAFE"
+                    print(
+                        f"  Threshold {thresh}: {ppl:.2f} PPL (+{increase:.1f}%), {pruned:.0f}% pruned {status}"
+                    )
+                if safe_threshold:
+                    print(
+                        f"\n  Safe pruning: threshold={safe_threshold}, up to {max_prunable_pct:.0f}% dims"
+                    )
+                else:
+                    print("  ⚠ No safe pruning threshold found (all degrade >5%)")
+
+            return metrics
+
+        except Exception as e:
+            if self.master_process:
+                print(f"\nWarning: Failed to compute pruning sensitivity: {e}")
+            return None
+
+    def _compute_scale_stability(self):
+        """
+        Compute scale parameter stability and convergence metrics.
+
+        Tracks scale parameters over time and determines if they have
+        converged (safe to start pruning).
+
+        Returns:
+            Dictionary with stability metrics or None if not applicable
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Check if this is an MLA model with KVSplice
+        if not hasattr(raw_model, "transformer"):
+            return None
+
+        first_layer = raw_model.transformer.h[0]
+        if not hasattr(first_layer, "attn") or not hasattr(
+            first_layer.attn, "kvsplice"
+        ):
+            return None
+
+        # Get current scale parameters (averaged across all layers)
+        scales_per_layer = []
+        for layer in raw_model.transformer.h:
+            kvsplice = layer.attn.kvsplice
+            scale_raw = kvsplice.transform_scale.data
+            scale = F.softplus(scale_raw)
+            scales_per_layer.append(scale.cpu().numpy())
+
+        # Average across layers for stability tracking
+        import numpy as np
+
+        avg_scales = np.mean(scales_per_layer, axis=0)  # [d_in]
+
+        # Add to history
+        self.scale_history.append((self.iter_num, avg_scales.copy()))
+
+        # Keep only last N checkpoints
+        if len(self.scale_history) > self.max_scale_history:
+            self.scale_history.pop(0)
+
+        metrics = {}
+
+        # Need at least 3 checkpoints for stability analysis
+        if len(self.scale_history) >= 3:
+            # Extract recent scales
+            recent_scales = np.array([s for _, s in self.scale_history])  # [N, d_in]
+
+            # Compute variance across checkpoints for each dimension
+            scale_variance = np.var(recent_scales, axis=0)  # [d_in]
+            avg_variance = np.mean(scale_variance)
+            max_variance = np.max(scale_variance)
+
+            metrics["stability/scale_variance_mean"] = float(avg_variance)
+            metrics["stability/scale_variance_max"] = float(max_variance)
+
+            # Compute ranking stability (Spearman correlation between consecutive checkpoints)
+            from scipy.stats import spearmanr
+
+            if len(self.scale_history) >= 2:
+                prev_scales = self.scale_history[-2][1]
+                curr_scales = self.scale_history[-1][1]
+
+                # Rank correlation (do important dims stay important?)
+                rank_corr, _ = spearmanr(prev_scales, curr_scales)
+                metrics["stability/rank_correlation"] = float(rank_corr)
+
+            # Determine convergence status
+            # Converged if: variance is low AND ranking is stable
+            variance_threshold = 0.01
+            rank_corr_threshold = 0.95
+
+            is_converged = (
+                avg_variance < variance_threshold
+                and metrics.get("stability/rank_correlation", 0) > rank_corr_threshold
+            )
+
+            metrics["stability/converged"] = 1.0 if is_converged else 0.0
+
+            # Estimate gradient norms on scales (proxy: change from last checkpoint)
+            if len(self.scale_history) >= 2:
+                prev_scales = self.scale_history[-2][1]
+                curr_scales = self.scale_history[-1][1]
+                delta = curr_scales - prev_scales
+                avg_change = np.mean(np.abs(delta))
+                max_change = np.max(np.abs(delta))
+
+                metrics["stability/avg_scale_change"] = float(avg_change)
+                metrics["stability/max_scale_change"] = float(max_change)
+
+            # Print summary
+            if self.master_process:
+                print("\n--- Scale Parameter Stability ---")
+                print(
+                    f"  History: {len(self.scale_history)} checkpoints (last {self.max_scale_history})"
+                )
+                print(
+                    f"  Variance: {avg_variance:.6f} (threshold: {variance_threshold})"
+                )
+                if "stability/rank_correlation" in metrics:
+                    print(
+                        f"  Rank correlation: {metrics['stability/rank_correlation']:.4f} (threshold: {rank_corr_threshold})"
+                    )
+                if "stability/avg_scale_change" in metrics:
+                    print(f"  Avg change: {metrics['stability/avg_scale_change']:.6f}")
+                print(
+                    f"  Status: {'✓ CONVERGED' if is_converged else '⧗ TRAINING'} (safe to prune: {is_converged})"
+                )
+
+        else:
+            # Not enough history yet
+            metrics["stability/converged"] = 0.0
+            if self.master_process:
+                print(
+                    f"\n--- Scale Parameter Stability: {len(self.scale_history)}/{max(3, self.max_scale_history)} checkpoints (need 3 min) ---"
+                )
 
         return metrics
