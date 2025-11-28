@@ -153,6 +153,8 @@ class LearnedKVSplice(nn.Module):
         self.compress = nn.Linear(d_in, d_compressed, bias=False)
         self.expand = nn.Linear(d_compressed, d_in, bias=False)
 
+        self.latent_ln = nn.LayerNorm(d_compressed)
+
         # Initialize as approximate inverse
         nn.init.orthogonal_(self.compress.weight)
         with torch.no_grad():
@@ -161,6 +163,7 @@ class LearnedKVSplice(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
         compressed = self.compress(x_transformed)
+        compressed = self.latent_ln(compressed)
         decompressed = self.expand(compressed)
         return (decompressed - self.transform_shift) / (
             F.softplus(self.transform_scale) + 1e-6
