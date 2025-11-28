@@ -1639,10 +1639,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             logits = logits[:, -1, :] / 0.8  # temperature
                             probs = torch.softmax(logits, dim=-1)
                             # Top-k sampling
-                            topk_probs, topk_indices = torch.topk(probs, 200)
-                            next_token = topk_indices[0, torch.multinomial(topk_probs, 1)]
-                            generated_tokens.append(next_token.item())
-                            x = torch.cat([x, next_token.unsqueeze(0)], dim=1)
+                            topk_probs, topk_indices = torch.topk(probs[0], 200)
+                            # Sample from top-k distribution
+                            idx = torch.multinomial(topk_probs, 1)
+                            next_token = topk_indices[idx].item()
+                            generated_tokens.append(next_token)
+                            # Append to sequence
+                            next_token_tensor = torch.tensor([[next_token]], device=self.device)
+                            x = torch.cat([x, next_token_tensor], dim=1)
                         generated = enc.decode(generated_tokens)
 
                 samples.append(f"Prompt: {prompt}\n{generated}\n")
