@@ -1339,6 +1339,14 @@ def run_single_test(
             lm_eval_tasks = config.get("LM_EVAL_TASKS", "hellaswag")
             if lm_eval_tasks:
                 cmd.extend(["--lm-eval-tasks", str(lm_eval_tasks)])
+            lm_eval_limit = config.get("LM_EVAL_LIMIT")
+            if lm_eval_limit:
+                cmd.extend(["--lm-eval-limit", str(lm_eval_limit)])
+
+        # Check for inference benchmarks
+        inference_benchmark = config.get("INFERENCE_BENCHMARK")
+        if inference_benchmark in ("y", True):
+            cmd.append("--inference-benchmark")
 
     # Note: batch size is configured via config.py, not command line arguments
 

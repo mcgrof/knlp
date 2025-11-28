@@ -117,8 +117,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 )
                 model = GPT2_MLA_KV(config, compression_ratio=compression_ratio)
                 if self.master_process:
-                    print(f"  MLA+KVSplice: d_latent={config.d_latent}, "
-                          f"compression_ratio={compression_ratio}")
+                    print(
+                        f"  MLA+KVSplice: d_latent={config.d_latent}, "
+                        f"compression_ratio={compression_ratio}"
+                    )
             else:
                 model = GPT2_MLA(config)
                 if self.master_process:
@@ -378,6 +380,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         metrics_to_log.update(fisher_metrics)
                         # Add global Fisher summaries for easier interpretation
                         from gpt2.model import aggregate_fisher_metrics
+
                         fisher_summaries = aggregate_fisher_metrics(fisher_metrics)
                         if fisher_summaries:
                             metrics_to_log.update(fisher_summaries)
@@ -412,12 +415,19 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     if lm_eval_metrics:
                         metrics_to_log.update(lm_eval_metrics)
 
+                    # Run inference benchmarks if requested
+                    inference_benchmark_metrics = self._run_inference_benchmark()
+                    if inference_benchmark_metrics:
+                        metrics_to_log.update(inference_benchmark_metrics)
+
                     # Generate sample text
                     sample_text = self._generate_sample_text()
                     if sample_text:
                         metrics_to_log["sample_text"] = sample_text
                         if self.master_process:
-                            print(f"\nGenerated sample text (length: {len(sample_text)})")
+                            print(
+                                f"\nGenerated sample text (length: {len(sample_text)})"
+                            )
                     elif self.master_process:
                         print("\nWarning: Sample text generation returned None")
 
@@ -839,8 +849,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             dim_indices = range(0, d_in, sample_interval)[:8]
 
             for dim_idx in dim_indices:
-                metrics[f"kvsplice/dim{dim_idx}_scale"] = float(first_layer_scale[dim_idx])
-                metrics[f"kvsplice/dim{dim_idx}_shift"] = float(first_layer_shift[dim_idx])
+                metrics[f"kvsplice/dim{dim_idx}_scale"] = float(
+                    first_layer_scale[dim_idx]
+                )
+                metrics[f"kvsplice/dim{dim_idx}_shift"] = float(
+                    first_layer_shift[dim_idx]
+                )
 
         # Per-layer statistics (track first, middle, last layers)
         layers_to_track = [0, n_layers // 2, n_layers - 1]
@@ -1581,20 +1595,178 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
             # Extract and print metrics
             lm_eval_metrics = {}
+            table_rows = []  # For W&B Table
+
             for task_name, task_results in results.get("results", {}).items():
+                row_data = {"task": task_name, "iteration": self.iter_num}
                 for metric_name, value in task_results.items():
                     if isinstance(value, (int, float)) and not metric_name.endswith(
                         "_stderr"
                     ):
                         key = f"lm_eval/{task_name}_{metric_name}"
                         lm_eval_metrics[key] = value
+                        row_data[metric_name] = value
                         print(f"{task_name}/{metric_name}: {value:.4f}")
+                table_rows.append(row_data)
+
+            # Create W&B Table for better visualization
+            if "wandb" in self.trackers and table_rows:
+                import wandb
+
+                # Get all metric columns (excluding task and iteration)
+                metric_cols = set()
+                for row in table_rows:
+                    metric_cols.update(
+                        k for k in row.keys() if k not in ["task", "iteration"]
+                    )
+
+                # Create table with columns
+                columns = ["iteration", "task"] + sorted(metric_cols)
+                table_data = []
+                for row in table_rows:
+                    table_data.append([row.get(col, None) for col in columns])
+
+                lm_eval_table = wandb.Table(columns=columns, data=table_data)
+                lm_eval_metrics["lm_eval/results_table"] = lm_eval_table
+                print(f"Created lm-eval results table with {len(table_rows)} tasks")
 
             return lm_eval_metrics
 
         except Exception as e:
             print(f"lm-eval failed: {e}")
             return None
+
+    def _run_inference_benchmark(self):
+        """Run inference benchmarks: throughput, latency, GPU utilization."""
+        if not getattr(self.args, "inference_benchmark", False):
+            return None
+
+        # Run benchmarks only at specific intervals to avoid overhead
+        benchmark_interval = getattr(self.args, "inference_benchmark_interval", 1000)
+        if self.iter_num % benchmark_interval != 0:
+            return None
+
+        if not self.master_process:
+            return None
+
+        print("\n--- Inference Benchmarks ---")
+
+        # Use unwrapped model for benchmarks
+        model = self.raw_model if hasattr(self, "raw_model") else self.model
+        model.eval()
+
+        # Benchmark parameters
+        warmup_runs = 10
+        measure_runs = 50
+        batch_sizes = [1, 4, 8]  # Test multiple batch sizes
+        seq_len = self.args.block_size
+
+        benchmark_results = []
+
+        for batch_size in batch_sizes:
+            # Create dummy input
+            dummy_input = torch.randint(
+                0, 50257, (batch_size, seq_len), device=self.device
+            )
+
+            # Warmup
+            with torch.no_grad():
+                for _ in range(warmup_runs):
+                    _ = model(dummy_input)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+
+            # Measure inference time
+            latencies = []
+            with torch.no_grad():
+                for _ in range(measure_runs):
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    start_time = time.perf_counter()
+
+                    _ = model(dummy_input)
+
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    end_time = time.perf_counter()
+
+                    latency_ms = (end_time - start_time) * 1000
+                    latencies.append(latency_ms)
+
+            # Calculate statistics
+            import numpy as np
+
+            latency_mean = np.mean(latencies)
+            latency_std = np.std(latencies)
+            latency_min = np.min(latencies)
+            latency_max = np.max(latencies)
+
+            # Throughput calculations
+            tokens_per_batch = batch_size * seq_len
+            throughput_tokens_sec = (tokens_per_batch / latency_mean) * 1000
+            samples_per_sec = (batch_size / latency_mean) * 1000
+
+            result = {
+                "iteration": self.iter_num,
+                "batch_size": batch_size,
+                "seq_len": seq_len,
+                "latency_mean_ms": latency_mean,
+                "latency_std_ms": latency_std,
+                "latency_min_ms": latency_min,
+                "latency_max_ms": latency_max,
+                "throughput_tokens_sec": throughput_tokens_sec,
+                "throughput_samples_sec": samples_per_sec,
+            }
+
+            benchmark_results.append(result)
+
+            print(
+                f"Batch {batch_size:2d}: {latency_mean:6.2f}±{latency_std:5.2f} ms, "
+                f"{throughput_tokens_sec:8.1f} tokens/sec, {samples_per_sec:6.1f} samples/sec"
+            )
+
+        # Convert to metrics dict for logging
+        inference_metrics = {}
+
+        # Log metrics for each batch size
+        for result in benchmark_results:
+            bs = result["batch_size"]
+            inference_metrics[f"inference/batch{bs}_latency_ms"] = result[
+                "latency_mean_ms"
+            ]
+            inference_metrics[f"inference/batch{bs}_throughput_tokens_sec"] = result[
+                "throughput_tokens_sec"
+            ]
+            inference_metrics[f"inference/batch{bs}_throughput_samples_sec"] = result[
+                "throughput_samples_sec"
+            ]
+
+        # Create W&B Table for better visualization
+        if "wandb" in self.trackers and benchmark_results:
+            import wandb
+
+            columns = [
+                "iteration",
+                "batch_size",
+                "seq_len",
+                "latency_mean_ms",
+                "latency_std_ms",
+                "throughput_tokens_sec",
+                "throughput_samples_sec",
+            ]
+
+            table_data = []
+            for result in benchmark_results:
+                table_data.append([result.get(col, None) for col in columns])
+
+            inference_table = wandb.Table(columns=columns, data=table_data)
+            inference_metrics["inference/benchmark_table"] = inference_table
+            print(
+                f"Created inference benchmark table with {len(benchmark_results)} batch sizes"
+            )
+
+        model.train()
+        return inference_metrics
 
     def _generate_sample_text(self):
         """
@@ -1649,7 +1821,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             next_token = topk_indices[idx].item()
                             generated_tokens.append(next_token)
                             # Append to sequence
-                            next_token_tensor = torch.tensor([[next_token]], device=self.device)
+                            next_token_tensor = torch.tensor(
+                                [[next_token]], device=self.device
+                            )
                             x = torch.cat([x, next_token_tensor], dim=1)
                         generated = enc.decode(generated_tokens)
 
@@ -1658,7 +1832,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             self.model.train()
 
             # Return formatted samples
-            return "\n" + "="*60 + "\n" + "\n".join(samples) + "="*60
+            return "\n" + "=" * 60 + "\n" + "\n".join(samples) + "=" * 60
 
         except Exception as e:
             if self.master_process:
