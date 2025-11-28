@@ -100,7 +100,7 @@ CONFIG_LM_EVAL_LIMIT=100
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=y
-CONFIG_TRACKER_PROJECT="gpt2-kvsplice-ablation-50pct-w7900"
+CONFIG_TRACKER_PROJECT="gpt2-kvsplice-ablation"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=n
