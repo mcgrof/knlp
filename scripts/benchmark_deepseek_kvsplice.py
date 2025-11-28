@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Benchmark KVSplice compression on DeepSeek models.
+Benchmark KVSplice compression on language models.
 
 Compares inference throughput and memory usage between:
-- Original model (with native MLA compression)
-- Model with KVSplice (additional compression on top of MLA)
+- Original model (standard KV cache)
+- Model with KVSplice (compressed KV cache)
 
 Usage:
     python scripts/benchmark_deepseek_kvsplice.py \
-        --model deepseek-ai/DeepSeek-V2-Lite \
+        --model mistralai/Mistral-7B-Instruct-v0.3 \
         --compression-ratio 0.5 \
         --batch-sizes 1,4,8,16 \
         --seq-len 512
@@ -49,11 +49,6 @@ if not hasattr(DynamicCache, "seen_tokens"):
         if hasattr(self, "key_cache") and len(self.key_cache) > 0:
             # Get the length from the first layer (all layers should have same length)
             self._seen_tokens = self.get_seq_length(0)
-            # Debug: print cache state
-            if layer_idx == 0:  # Only print for first layer to avoid spam
-                print(
-                    f"DEBUG: Cache updated - layer {layer_idx}, seen_tokens={self._seen_tokens}, cache_len={self.get_seq_length(0)}, new_keys_shape={key_states.shape if hasattr(key_states, 'shape') else 'N/A'}"
-                )
         return result
 
     @property
@@ -114,34 +109,7 @@ except Exception as e:
     print(f"Warning: Could not check transformers version: {e}")
     print("Continuing anyway, but may encounter issues...")
 
-# Check for stale transformers_modules cache
-import os
-import glob
-
-cache_patterns = [
-    os.path.expanduser(
-        "~/.cache/huggingface/hub/modules--transformers_modules/deepseek*"
-    ),
-    "/home/ubuntu/hg-cache/modules/transformers_modules/deepseek*",
-    os.path.expanduser("~/hg-cache/modules/transformers_modules/deepseek*"),
-]
-
-stale_caches = []
-for pattern in cache_patterns:
-    stale_caches.extend(glob.glob(pattern))
-
-if stale_caches:
-    print("=" * 80)
-    print("WARNING: Stale DeepSeek model cache detected!")
-    print("=" * 80)
-    print("\nFound cached model code that may be incompatible:")
-    for cache in stale_caches:
-        print(f"  {cache}")
-    print("\nIf you see 'DynamicCache' errors, delete these caches:")
-    print(f"\n  rm -rf {' '.join(stale_caches)}")
-    print("\nThen run this script again.")
-    print("=" * 80)
-    print()
+# Note: DeepSeek-specific cache checking removed - now using standard models
 
 
 def benchmark_generation(
@@ -224,8 +192,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="deepseek-ai/DeepSeek-V2-Lite",
-        help="Model name or path",
+        default="mistralai/Mistral-7B-Instruct-v0.3",
+        help="Model name or path (try: mistralai/Mistral-7B-Instruct-v0.3, meta-llama/Llama-3.2-1B)",
     )
     parser.add_argument(
         "--compression-ratio",
@@ -274,28 +242,20 @@ def main():
 
     # Load tokenizer
     print("Loading tokenizer...")
-    print("Note: Using force_download=True to bypass stale cached code")
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model,
-        trust_remote_code=True,
-        force_download=True,  # Force re-download
-    )
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Benchmark 1: Original model
     print("\n" + "=" * 80)
-    print("Benchmark 1: Original Model (MLA only)")
+    print("Benchmark 1: Original Model (Standard KV Cache)")
     print("=" * 80)
 
     print("Loading model...")
-    print("WARNING: Using force_download=True to bypass stale cache")
     model_original = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.float16,
         device_map="auto",
-        trust_remote_code=True,
-        force_download=True,  # Force re-download to bypass cache
     )
 
     print("\nRunning benchmarks...")
@@ -332,8 +292,6 @@ def main():
         args.model,
         torch_dtype=torch.float16,
         device_map="auto",
-        trust_remote_code=True,
-        force_download=True,  # Force re-download
     )
 
     print("Patching with KVSplice...")
