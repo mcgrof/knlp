@@ -42,7 +42,7 @@ def find_wandb_run_id(test_dir):
     return None
 
 
-def load_model_and_config(checkpoint_path):
+def load_model_and_config(checkpoint_path, test_dir_name=None):
     """Load model from checkpoint."""
     print(f"\nLoading model from {checkpoint_path}")
     # weights_only=False because checkpoint contains argparse.Namespace (trusted source)
@@ -52,43 +52,75 @@ def load_model_and_config(checkpoint_path):
     model_args = checkpoint.get("model_args", {})
     config = checkpoint.get("config", {})
 
-    # Determine model type
-    mla_variant = config.get("MLA_VARIANT", "")
+    # Determine model type from checkpoint keys (not directory name)
+    # Standard GPT-2 uses "transformer.wte.weight", "transformer.h.0.ln_1.weight"
+    # MLA uses "wte.weight", "blocks.0.ln_1.weight", "blocks.0.attn.W_q.weight"
+    # MLA_KV also has "blocks.0.attn.kvsplice.transform_scale"
+    checkpoint_keys = list(checkpoint["model"].keys())
+
+    mla_variant = ""
+    if any("kvsplice" in k for k in checkpoint_keys):
+        mla_variant = "mla_kv"
+    elif any("blocks.0.attn.W_q" in k for k in checkpoint_keys):
+        mla_variant = "mla"
+    # else: standard GPT-2
 
     # Import appropriate model
     if "mla_kv" in mla_variant:
         from gpt2.mla import GPT2_MLA_KV, MLA_Config
 
         print("  Model type: GPT2_MLA_KV (MLA + KVSplice)")
-        model_class = GPT2_MLA_KV
-    elif "mla" in mla_variant or config.get("ENABLE_MLA"):
+
+        # Create model config (use defaults from defconfig)
+        cfg = MLA_Config(
+            d_model=model_args.get("n_embd", 768),
+            n_heads=model_args.get("n_head", 12),
+            head_dim=model_args.get("n_embd", 768) // model_args.get("n_head", 12),
+            d_latent=256,  # Default from defconfig
+            block_size=model_args.get("block_size", 1024),
+            n_layers=model_args.get("n_layer", 12),
+            dropout=model_args.get("dropout", 0.0),
+        )
+
+        compression_ratio = 0.5  # Default from defconfig
+        model = GPT2_MLA_KV(cfg, compression_ratio=compression_ratio)
+
+    elif "mla" in mla_variant:
         from gpt2.mla import GPT2_MLA, MLA_Config
 
         print("  Model type: GPT2_MLA (base MLA)")
-        model_class = GPT2_MLA
+
+        # Create model config (use defaults from defconfig)
+        cfg = MLA_Config(
+            d_model=model_args.get("n_embd", 768),
+            n_heads=model_args.get("n_head", 12),
+            head_dim=model_args.get("n_embd", 768) // model_args.get("n_head", 12),
+            d_latent=256,  # Default from defconfig
+            block_size=model_args.get("block_size", 1024),
+            n_layers=model_args.get("n_layer", 12),
+            dropout=model_args.get("dropout", 0.0),
+        )
+
+        model = GPT2_MLA(cfg)
+
     else:
-        # Standard GPT-2
+        # Standard GPT-2 from gpt2/model.py
+        from gpt2.model import GPT2, GPTConfig
+
         print("  Model type: GPT2 (standard)")
-        # TODO: Import standard GPT2 if needed
-        return None, None
 
-    # Create model config
-    cfg = MLA_Config(
-        d_model=model_args.get("n_embd", 768),
-        n_heads=model_args.get("n_head", 12),
-        head_dim=model_args.get("n_embd", 768) // model_args.get("n_head", 12),
-        d_latent=config.get("MLA_D_LATENT", 256),
-        block_size=model_args.get("block_size", 1024),
-        n_layers=model_args.get("n_layer", 12),
-        dropout=model_args.get("dropout", 0.0),
-    )
+        # Create GPTConfig from model_args
+        cfg = GPTConfig(
+            block_size=model_args.get("block_size", 1024),
+            vocab_size=model_args.get("vocab_size", 50304),
+            n_layer=model_args.get("n_layer", 12),
+            n_head=model_args.get("n_head", 12),
+            n_embd=model_args.get("n_embd", 768),
+            dropout=model_args.get("dropout", 0.0),
+            bias=model_args.get("bias", True),
+        )
 
-    # Instantiate model
-    if "mla_kv" in mla_variant:
-        compression_ratio = float(config.get("MLA_COMPRESSION_RATIO", 0.5))
-        model = model_class(cfg, compression_ratio=compression_ratio)
-    else:
-        model = model_class(cfg)
+        model = GPT2(cfg)
 
     # Load weights
     model.load_state_dict(checkpoint["model"])
@@ -102,9 +134,10 @@ def run_kv_cache_analysis(model, cfg):
     """Compute KV cache memory metrics."""
     print("\n--- KV Cache Analysis ---")
 
-    n_layers = cfg.n_layers
-    n_heads = cfg.n_heads
-    head_dim = cfg.head_dim
+    # Handle both GPTConfig (n_layer, n_head) and MLA_Config (n_layers, n_heads)
+    n_layers = getattr(cfg, "n_layers", None) or getattr(cfg, "n_layer", 12)
+    n_heads = getattr(cfg, "n_heads", None) or getattr(cfg, "n_head", 12)
+    head_dim = getattr(cfg, "head_dim", None) or (getattr(cfg, "n_embd", 768) // n_heads)
     seq_lengths = [512, 1024, 2048, 4096]
     batch_size = 1
 
@@ -512,7 +545,7 @@ def main():
         checkpoint_path = checkpoint_files[0]
 
         # Load model
-        model, cfg = load_model_and_config(checkpoint_path)
+        model, cfg = load_model_and_config(checkpoint_path, test_dir.name)
         if model is None:
             print("  Failed to load model, skipping")
             continue
