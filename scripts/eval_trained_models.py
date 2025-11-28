@@ -45,7 +45,8 @@ def find_wandb_run_id(test_dir):
 def load_model_and_config(checkpoint_path):
     """Load model from checkpoint."""
     print(f"\nLoading model from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    # weights_only=False because checkpoint contains argparse.Namespace (trusted source)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     # Get model config from checkpoint
     model_args = checkpoint.get("model_args", {})
