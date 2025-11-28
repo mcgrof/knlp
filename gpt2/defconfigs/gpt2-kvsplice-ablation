@@ -87,7 +87,7 @@ CONFIG_PRUNING_METHOD="none"
 #   mla    - Base MLA with shared KV latent (6x compression)
 #   mla_kv - MLA + learned KVSplice layer (12x compression)
 CONFIG_ENABLE_MLA=y
-CONFIG_MLA_VARIANTS="mla,mla_kv"
+CONFIG_MLA_VARIANT="mla,mla_kv"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
