@@ -66,8 +66,13 @@ if not hasattr(DynamicCache, "get_usable_length"):
 
     def get_usable_length(self, new_seq_length, layer_idx=None):
         # Return the current sequence length from the cache
-        # get_seq_length exists in DynamicCache
-        return self.get_seq_length(layer_idx)
+        # If layer_idx is None, use layer 0 or return 0 if cache is empty
+        if layer_idx is None:
+            layer_idx = 0
+        # Check if cache has any layers
+        if hasattr(self, "key_cache") and len(self.key_cache) > layer_idx:
+            return self.get_seq_length(layer_idx)
+        return 0
 
     DynamicCache.get_usable_length = get_usable_length
 
