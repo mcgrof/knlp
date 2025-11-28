@@ -1,17 +1,21 @@
-# GPT-2 MLA Ablation
+# GPT-2 MLA Ablation Study
 #
-# Tests MLA variants:
-#   MLA0    - GPT2_MLA: Base MLA with shared latent for K/V (6x compression)
-#   MLAKV0  - GPT2_MLA_KV: MLA + learned KVSplice compression (12x total)
+# Tests MLA variants with KVSplice compression on TinyStories:
+#   MLA0    - GPT2_MLA: Base MLA with shared KV latent (6x compression)
+#   MLAKV0  - GPT2_MLA_KV: MLA + learned KVSplice (12x compression)
 #
-# Results from A100 40G testing show:
-# - MLA0: 760 PPL (baseline, best)
-# - MLAKV0: 950 PPL (25% worse than MLA0)
+# Features:
+# - CONFIG_HYPER_PARAM_AUTO: Auto-detects batch size and gradient accumulation
+# - CONFIG_COMPILE_AUTO: Auto-detects torch.compile based on GPU
+# - Inference benchmarks and lm-eval enabled for downstream validation
+# - Comprehensive metrics: KV cache analysis, scale stability, pruning sensitivity
 #
-# Conclusion: Learned KVSplice compression (MLAKV0) significantly
-# degrades quality compared to base MLA. Use MLA0 for production.
-#
-# All use d_latent=256, standard LR (6e-4) for fair comparison.
+# All use d_latent=256 for fair comparison. TinyStories allows faster
+# iteration and easier ablation testing than FineWebEdu.
+
+CONFIG_HYPER_PARAM_AUTO=y
+
+CONFIG_COMPILE_AUTO=y
 
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -21,8 +25,8 @@ CONFIG_MODEL="gpt2"
 # GPT-2 Model Configuration
 CONFIG_GPT2_MODEL_124M=y
 CONFIG_GPT2_MODEL_NAME="gpt2"
-CONFIG_GPT2_DATASET_FINEWEBEDU=y
-CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_DATASET_TINYSTORIES=y
+CONFIG_GPT2_DATASET="tinystories"
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_N_LAYER=12
 CONFIG_GPT2_N_HEAD=12
@@ -75,12 +79,16 @@ CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
 # MLA Configuration
+# This trains base MLA model (GPT2_MLA from gpt2/mla.py)
+# For KVSplice variant, change ENABLE_MLA to y and set MLA_VARIANT="mla_kv"
+CONFIG_ENABLE_MLA=y
+CONFIG_MLA_VARIANT="mla"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
-# Ablation mode - MLA comparison
-CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="MLA0,MLAKV0"
+# NOTE: To test both MLA0 and MLAKV0, run two separate training jobs:
+#   1. CONFIG_MLA_VARIANT="mla" - Base MLA (6x compression)
+#   2. CONFIG_MLA_VARIANT="mla_kv" - MLA + KVSplice (12x compression)
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
