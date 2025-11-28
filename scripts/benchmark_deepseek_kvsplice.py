@@ -26,9 +26,12 @@ import transformers
 from transformers.cache_utils import DynamicCache
 from deepseek_kvsplice_plugin import patch_model_with_kvsplice, get_kv_cache_size
 
-# Monkey-patch DynamicCache to add seen_tokens if missing
+# Monkey-patch DynamicCache to add missing methods for DeepSeek compatibility
+patched = False
+
 if not hasattr(DynamicCache, "seen_tokens"):
     print("Patching DynamicCache to add seen_tokens attribute...")
+    patched = True
 
     original_init = DynamicCache.__init__
 
@@ -46,6 +49,18 @@ if not hasattr(DynamicCache, "seen_tokens"):
 
     DynamicCache.__init__ = patched_init
     DynamicCache.seen_tokens = seen_tokens
+
+if not hasattr(DynamicCache, "get_max_length"):
+    print("Patching DynamicCache to add get_max_length method...")
+    patched = True
+
+    def get_max_length(self):
+        # Return None for unlimited cache length
+        return None
+
+    DynamicCache.get_max_length = get_max_length
+
+if patched:
     print("DynamicCache patched successfully!")
 
 # Check transformers version
