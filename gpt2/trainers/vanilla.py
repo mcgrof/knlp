@@ -416,6 +416,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     sample_text = self._generate_sample_text()
                     if sample_text:
                         metrics_to_log["sample_text"] = sample_text
+                        if self.master_process:
+                            print(f"\nGenerated sample text (length: {len(sample_text)})")
+                    elif self.master_process:
+                        print("\nWarning: Sample text generation returned None")
 
                     self.log_metrics(metrics_to_log)
 
