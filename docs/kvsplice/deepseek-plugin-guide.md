@@ -305,14 +305,22 @@ Testing on DeepSeek helps answer:
 
 ### AttributeError: 'DynamicCache' object has no attribute 'seen_tokens'
 
-This means transformers is too old. DeepSeek requires >= 4.36.0.
+This can happen for two reasons:
 
-Fix:
+**1. Transformers too old** - DeepSeek requires >= 4.36.0:
 ```bash
 pip install --upgrade 'transformers>=4.36.0'
 ```
 
-The scripts now check version automatically and will exit with a helpful message if transformers is too old.
+**2. Stale cached model code** - Even with latest transformers, cached model code from `trust_remote_code` can be incompatible:
+```bash
+# Clear cached DeepSeek model code
+rm -rf ~/.cache/huggingface/hub/modules--transformers_modules/deepseek*
+# Or if cache is elsewhere:
+rm -rf /home/ubuntu/hg-cache/modules/transformers_modules/deepseek*
+```
+
+The scripts now use `code_revision="main"` to force latest model code, but if you still see errors, manually clearing the cache fixes it.
 
 ### OOM during benchmark
 
