@@ -206,7 +206,7 @@ def main():
     # Load tokenizer
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
-        args.model, trust_remote_code=True, revision="main"
+        args.model, trust_remote_code=True, code_revision="main"
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -223,7 +223,7 @@ def main():
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        revision="main",  # Force latest model code
+        code_revision="main",  # Force latest custom model code
     )
 
     print("Computing perplexity...")
@@ -253,7 +253,7 @@ def main():
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        revision="main",  # Force latest model code
+        code_revision="main",  # Force latest custom model code
     )
 
     print("Patching with KVSplice...")

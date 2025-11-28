@@ -169,10 +169,11 @@ def main():
 
     # Load tokenizer
     print("Loading tokenizer...")
+    print("Note: Forcing refresh of model code (code_revision='main')")
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
         trust_remote_code=True,
-        revision="main",  # Force latest model code
+        code_revision="main",  # Force latest custom model code
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -183,13 +184,12 @@ def main():
     print("=" * 80)
 
     print("Loading model...")
-    print("Note: Using revision='main' to ensure latest model code")
     model_original = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        revision="main",  # Force latest model code from HF
+        code_revision="main",  # Force latest custom model code
     )
 
     print("\nRunning benchmarks...")
@@ -227,7 +227,7 @@ def main():
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        revision="main",  # Force latest model code
+        code_revision="main",  # Force latest custom model code
     )
 
     print("Patching with KVSplice...")
