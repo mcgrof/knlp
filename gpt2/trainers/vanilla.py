@@ -913,7 +913,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         # Histogram of scale values (for visualization in W&B)
         import wandb
 
-        if "wandb" in self.trackers and self.master_process:
+        # Only add W&B-specific objects (Histogram, Image) when using actual W&B
+        # trackio can't serialize these objects to JSON
+        use_wandb_objects = "wandb" in self.trackers and "trackio" not in self.trackers
+
+        if use_wandb_objects and self.master_process:
             try:
                 # Create histogram of actual scale values (averaged across layers)
                 metrics["kvsplice/scale_histogram"] = wandb.Histogram(avg_scale)
@@ -968,8 +972,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
                 plt.tight_layout()
 
-                # Log to W&B
-                metrics["kvsplice/scale_shift_plot"] = wandb.Image(fig)
+                # Log to W&B (only if using actual W&B, not trackio)
+                if use_wandb_objects:
+                    metrics["kvsplice/scale_shift_plot"] = wandb.Image(fig)
                 plt.close(fig)
 
                 # Create a second visualization: sorted scale values
@@ -1009,7 +1014,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 ax.legend()
                 ax.grid(True, alpha=0.3)
 
-                metrics["kvsplice/importance_plot"] = wandb.Image(fig2)
+                # Log to W&B (only if using actual W&B, not trackio)
+                if use_wandb_objects:
+                    metrics["kvsplice/importance_plot"] = wandb.Image(fig2)
                 plt.close(fig2)
 
             except Exception as e:
