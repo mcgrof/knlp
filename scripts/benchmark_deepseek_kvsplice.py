@@ -169,11 +169,11 @@ def main():
 
     # Load tokenizer
     print("Loading tokenizer...")
-    print("Note: Forcing refresh of model code (code_revision='main')")
+    print("Note: Using force_download=True to bypass stale cached code")
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
         trust_remote_code=True,
-        code_revision="main",  # Force latest custom model code
+        force_download=True,  # Force re-download
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -184,12 +184,13 @@ def main():
     print("=" * 80)
 
     print("Loading model...")
+    print("WARNING: Using force_download=True to bypass stale cache")
     model_original = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        code_revision="main",  # Force latest custom model code
+        force_download=True,  # Force re-download to bypass cache
     )
 
     print("\nRunning benchmarks...")
@@ -227,7 +228,7 @@ def main():
         torch_dtype=torch.float16,
         device_map="auto",
         trust_remote_code=True,
-        code_revision="main",  # Force latest custom model code
+        force_download=True,  # Force re-download
     )
 
     print("Patching with KVSplice...")
