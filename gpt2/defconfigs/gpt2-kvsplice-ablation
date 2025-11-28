@@ -1,13 +1,25 @@
-# GPT-2 KVSplice Ablation
+# GPT-2 KVSplice Ablation Study
 #
-# Compares MLA-based architectures with KVSplice compression
-#   B0       - Baseline GPT-2 (no MLA, no RA, no KVSplice)
-#   MLA0     - MLA only (TL-cache latent compression)
-#   MLAKV0   - MLA+KVSplice (+ learned compression, no RA)
-#   RAMLA0   - RA+MLA (+ reciprocal alternation)
-#   RAMLAKV0 - RA+MLA+KVSplice (+ learned compression)
+# Tests KV cache compression effectiveness on TinyStories:
+#   MLA     - Base MLA with shared KV latent (6x compression)
+#   KVSplice - MLA + learned KVSplice layer (12x compression)
 #
-# All use standard LR (6e-4) for fair comparison.
+# KVSplice is the learned compression layer on top of MLA that doubles
+# compression ratio from 6x to 12x. This defconfig tests whether the
+# additional compression is worth the quality trade-off.
+#
+# Features:
+# - CONFIG_HYPER_PARAM_AUTO: Auto-detects batch size/gradient accumulation
+# - CONFIG_COMPILE_AUTO: Auto-detects torch.compile based on GPU
+# - Comprehensive metrics: KV cache, scale stability, pruning sensitivity
+# - Inference benchmarks: tokens/sec, latency, GPU utilization
+# - lm-eval: downstream task performance (hellaswag)
+#
+# TinyStories allows faster iteration than FineWebEdu for ablation testing.
+
+CONFIG_HYPER_PARAM_AUTO=y
+
+CONFIG_COMPILE_AUTO=y
 
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -17,8 +29,8 @@ CONFIG_MODEL="gpt2"
 # GPT-2 Model Configuration
 CONFIG_GPT2_MODEL_124M=y
 CONFIG_GPT2_MODEL_NAME="gpt2"
-CONFIG_GPT2_DATASET_FINEWEBEDU=y
-CONFIG_GPT2_DATASET="finewebedu"
+CONFIG_GPT2_DATASET_TINYSTORIES=y
+CONFIG_GPT2_DATASET="tinystories"
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_N_LAYER=12
 CONFIG_GPT2_N_HEAD=12
@@ -71,12 +83,16 @@ CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
 # MLA Configuration
+# This trains base MLA model (GPT2_MLA from gpt2/mla.py)
+# For KVSplice variant, change ENABLE_MLA to y and set MLA_VARIANT="mla_kv"
+CONFIG_ENABLE_MLA=y
+CONFIG_MLA_VARIANT="mla"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
 
-# Ablation mode - architecture comparison
-CONFIG_RA_MLA_ABLATION_MODE=y
-CONFIG_RA_MLA_ABLATION_STEPS="B0,MLA0,MLAKV0,RAMLA0,RAMLAKV0"
+# NOTE: To test both MLA0 and MLAKV0, run two separate training jobs:
+#   1. CONFIG_MLA_VARIANT="mla" - Base MLA (6x compression)
+#   2. CONFIG_MLA_VARIANT="mla_kv" - MLA + KVSplice (12x compression)
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
@@ -87,7 +103,7 @@ CONFIG_LM_EVAL_LIMIT=100
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y
 CONFIG_ENABLE_WANDB=y
-CONFIG_TRACKER_PROJECT="gpt2-kvsplice-ablation-w7900-mla-fixed"
+CONFIG_TRACKER_PROJECT="gpt2-kvsplice-ablation"
 
 # Advanced options
 CONFIG_COMPILE_MODEL=n
