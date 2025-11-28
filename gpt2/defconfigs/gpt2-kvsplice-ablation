@@ -83,16 +83,13 @@ CONFIG_PRUNING_MODE_NONE=y
 CONFIG_PRUNING_METHOD="none"
 
 # MLA Configuration
-# This trains base MLA model (GPT2_MLA from gpt2/mla.py)
-# For KVSplice variant, change ENABLE_MLA to y and set MLA_VARIANT="mla_kv"
+# Tests both MLA variants automatically:
+#   mla    - Base MLA with shared KV latent (6x compression)
+#   mla_kv - MLA + learned KVSplice layer (12x compression)
 CONFIG_ENABLE_MLA=y
-CONFIG_MLA_VARIANT="mla"
+CONFIG_MLA_VARIANTS="mla,mla_kv"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
-
-# NOTE: To test both MLA0 and MLAKV0, run two separate training jobs:
-#   1. CONFIG_MLA_VARIANT="mla" - Base MLA (6x compression)
-#   2. CONFIG_MLA_VARIANT="mla_kv" - MLA + KVSplice (12x compression)
 
 # Inference benchmarks
 CONFIG_INFERENCE_BENCHMARK=y
