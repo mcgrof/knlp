@@ -614,10 +614,18 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
 
         if not hasattr(raw_model, "cfg"):
+            if self.master_process and self.iter_num == self.args.eval_interval:
+                print(
+                    f"DEBUG: Model has no cfg attribute (type: {type(raw_model).__name__})"
+                )
             return None
 
         cfg = raw_model.cfg
         if not hasattr(cfg, "n_layers"):
+            if self.master_process and self.iter_num == self.args.eval_interval:
+                print(
+                    f"DEBUG: cfg has no n_layers attribute (cfg type: {type(cfg).__name__})"
+                )
             return None
 
         n_layers = cfg.n_layers
