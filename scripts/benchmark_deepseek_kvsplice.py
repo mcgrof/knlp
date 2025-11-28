@@ -38,6 +38,35 @@ except Exception as e:
     print(f"Warning: Could not check transformers version: {e}")
     print("Continuing anyway, but may encounter issues...")
 
+# Check for stale transformers_modules cache
+import os
+import glob
+
+cache_patterns = [
+    os.path.expanduser(
+        "~/.cache/huggingface/hub/modules--transformers_modules/deepseek*"
+    ),
+    "/home/ubuntu/hg-cache/modules/transformers_modules/deepseek*",
+    os.path.expanduser("~/hg-cache/modules/transformers_modules/deepseek*"),
+]
+
+stale_caches = []
+for pattern in cache_patterns:
+    stale_caches.extend(glob.glob(pattern))
+
+if stale_caches:
+    print("=" * 80)
+    print("WARNING: Stale DeepSeek model cache detected!")
+    print("=" * 80)
+    print("\nFound cached model code that may be incompatible:")
+    for cache in stale_caches:
+        print(f"  {cache}")
+    print("\nIf you see 'DynamicCache' errors, delete these caches:")
+    print(f"\n  rm -rf {' '.join(stale_caches)}")
+    print("\nThen run this script again.")
+    print("=" * 80)
+    print()
+
 
 def benchmark_generation(
     model,
