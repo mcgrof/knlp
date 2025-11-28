@@ -115,6 +115,49 @@ def compute_fisher_metrics(
     return all_metrics
 
 
+def aggregate_fisher_metrics(fisher_dict: dict) -> dict:
+    """
+    Aggregate Fisher metrics across all layers into global summaries.
+
+    Creates easy-to-interpret summary metrics:
+    - fisher/eigmax_global_mean: Average curvature across all heads
+    - fisher/eigmax_global_max: Worst-case curvature (optimization difficulty)
+    - fisher/cond_global_mean: Average conditioning (numerical stability)
+
+    Lower values = smoother optimization landscape.
+
+    Args:
+        fisher_dict: Dictionary from compute_fisher_metrics()
+
+    Returns:
+        Dictionary with global summary metrics
+    """
+    if not fisher_dict:
+        return {}
+
+    summaries = {}
+
+    # Collect all eigmax values across all layers/heads
+    eigmax_vals = [v for k, v in fisher_dict.items() if "/eigmax" in k and "/head" in k]
+    if eigmax_vals:
+        summaries["fisher/eigmax_global_mean"] = sum(eigmax_vals) / len(eigmax_vals)
+        summaries["fisher/eigmax_global_max"] = max(eigmax_vals)
+        summaries["fisher/eigmax_global_min"] = min(eigmax_vals)
+
+    # Collect conditioning numbers
+    cond_vals = [v for k, v in fisher_dict.items() if "/cond" in k and "/head" in k]
+    if cond_vals:
+        summaries["fisher/cond_global_mean"] = sum(cond_vals) / len(cond_vals)
+        summaries["fisher/cond_global_max"] = max(cond_vals)
+
+    # Collect trace values (total curvature)
+    trace_vals = [v for k, v in fisher_dict.items() if "/trace" in k and "/head" in k]
+    if trace_vals:
+        summaries["fisher/trace_global_mean"] = sum(trace_vals) / len(trace_vals)
+
+    return summaries
+
+
 class LayerNorm(nn.Module):
     """LayerNorm with optional bias. PyTorch doesn't support simply bias=False"""
 
