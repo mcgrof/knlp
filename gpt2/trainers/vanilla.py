@@ -788,12 +788,18 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         """
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
 
-        # Check if this is an MLA model with KVSplice
-        if not hasattr(raw_model, "transformer"):
+        # Detect model architecture (standard GPT-2 vs MLA)
+        if hasattr(raw_model, "blocks"):
+            # MLA model structure
+            layers = raw_model.blocks
+        elif hasattr(raw_model, "transformer") and hasattr(raw_model.transformer, "h"):
+            # Standard GPT-2 structure
+            layers = raw_model.transformer.h
+        else:
             return None
 
-        # Get first layer's attention to check for KVSplice
-        first_layer = raw_model.transformer.h[0]
+        # Get first layer to check for KVSplice
+        first_layer = layers[0]
         if not hasattr(first_layer, "attn"):
             return None
 
@@ -805,11 +811,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         import torch.nn.functional as F
         import numpy as np
 
-        n_layers = len(raw_model.transformer.h)
         all_scales = []
         all_shifts = []
 
-        for layer_idx, layer in enumerate(raw_model.transformer.h):
+        for layer_idx, layer in enumerate(layers):
             if not hasattr(layer.attn, "kvsplice"):
                 continue
 
@@ -826,6 +831,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
         all_scales = np.array(all_scales)  # [n_layers, d_in]
         all_shifts = np.array(all_shifts)  # [n_layers, d_in]
+        n_layers = len(all_scales)
 
         # Compute average across layers
         avg_scale = np.mean(all_scales, axis=0)  # [d_in]
