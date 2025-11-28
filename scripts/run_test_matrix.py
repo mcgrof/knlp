@@ -2661,15 +2661,37 @@ def main():
                     )
                     test_desc = f"  - {variant_str}RA ablation step {ablation_step} - {step_desc}"
                 else:
+                    # Only show pruning/tokenizer details if actually testing them
+                    # When PRUNING_MODE_NONE, don't bloat output with "none (no sparsity)"
+                    pruning_mode_none = config.get("PRUNING_MODE_NONE") == "y"
                     tokenizer_method = combo.get("tokenizer_method", "none")
-                    tokenizer_suffix = (
-                        f" [{tokenizer_method}]" if tokenizer_method else ""
-                    )
-                    test_desc = f"  - {variant_str}{combo['pruning']} (no sparsity){tokenizer_suffix}"
+
+                    # Only show tokenizer suffix if testing multiple methods
+                    # (not if it's just the default "none")
+                    if tokenizer_method and tokenizer_method != "none":
+                        tokenizer_suffix = f" [{tokenizer_method}]"
+                    else:
+                        tokenizer_suffix = ""
+
+                    if pruning_mode_none:
+                        # Not testing pruning - just show variant/optimizer
+                        if variant_str.strip():
+                            test_desc = f"  - {variant_str.strip()}{tokenizer_suffix}"
+                        else:
+                            test_desc = f"  - default configuration{tokenizer_suffix}"
+                    else:
+                        # Testing pruning - show pruning method details
+                        test_desc = f"  - {variant_str}{combo['pruning']} (no sparsity){tokenizer_suffix}"
             else:
                 sparsity_pct = int(float(combo.get("sparsity", "0")) * 100)
                 tokenizer_method = combo.get("tokenizer_method", "none")
-                tokenizer_suffix = f" [{tokenizer_method}]" if tokenizer_method else ""
+
+                # Only show tokenizer suffix if testing multiple methods
+                if tokenizer_method and tokenizer_method != "none":
+                    tokenizer_suffix = f" [{tokenizer_method}]"
+                else:
+                    tokenizer_suffix = ""
+
                 test_desc = f"  - {variant_str}{combo['pruning']} @ {sparsity_pct}% sparsity{tokenizer_suffix}"
             tests_by_optimizer[opt].append(test_desc)
 
