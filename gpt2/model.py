@@ -19,8 +19,100 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-# Fisher metrics functionality removed with old RA implementation
-compute_fisher_metrics = None
+def compute_fisher_metrics(
+    attn_probs: torch.Tensor,
+    layer_idx: int,
+    n_samples: int = 64,
+    topk: int = 8,
+) -> dict:
+    """
+    Compute Fisher Information Matrix spectrum metrics for attention.
+
+    The FIM eigenvalues reveal the curvature geometry of attention (SPDA paper).
+    Lower eigmax and better conditioning indicate smoother optimization.
+
+    Args:
+        attn_probs: [B, H, T, T] attention probabilities (softmax outputs)
+        layer_idx: Layer index for metric naming
+        n_samples: Number of samples per head for eigenvalue computation
+        topk: Number of top eigenvalues to log
+
+    Returns:
+        Dictionary of Fisher metrics for W&B logging
+    """
+    B, H, T, _ = attn_probs.shape
+    device = attn_probs.device
+
+    all_metrics = {}
+
+    for h in range(H):
+        # Extract single head: [B, T, T]
+        attn_h = attn_probs[:, h]
+
+        # Reshape to [B*T_q, T_k] - treat each query's distribution as sample
+        p = attn_h.reshape(B * T, T)
+
+        # Subsample queries to reduce cost (eigendecomp is O(T^3))
+        if p.size(0) > n_samples:
+            idx = torch.randperm(p.size(0), device=device)[:n_samples]
+            p = p[idx]  # [N, T]
+        N = p.size(0)
+
+        # Compute average Fisher: F = mean_i (diag(p_i) - p_i p_i^T)
+        F = torch.zeros(T, T, device=device)
+        for i in range(N):
+            pi = p[i]  # [T]
+            F += torch.diag(pi) - torch.outer(pi, pi)
+        F /= N
+
+        # Compute eigenvalues (symmetric PSD matrix)
+        try:
+            eigvals = torch.linalg.eigvalsh(F)  # [T], sorted ascending
+            eigvals = eigvals.to("cpu")
+
+            eigmax = float(eigvals[-1])
+            trace = float(eigvals.sum())
+            cond = float(eigvals[-1] / (eigvals[0].abs() + 1e-8))
+
+            # Aggregate metrics across heads
+            prefix = f"fisher/layer{layer_idx}/head{h}"
+            all_metrics[f"{prefix}/eigmax"] = eigmax
+            all_metrics[f"{prefix}/trace"] = trace
+            all_metrics[f"{prefix}/cond"] = cond
+
+            # Top-k eigenvalues
+            topk_vals = eigvals[-topk:]
+            for i, v in enumerate(topk_vals):
+                all_metrics[f"{prefix}/eig_top{i}"] = float(v)
+
+            # Energy concentration in top-r modes
+            total_energy = eigvals.sum()
+            if total_energy > 1e-8:
+                for r in [8, 16]:
+                    if r <= len(eigvals):
+                        energy_r = eigvals[-r:].sum()
+                        all_metrics[f"{prefix}/energy_r{r}"] = float(
+                            energy_r / total_energy
+                        )
+
+        except Exception as e:
+            # Eigendecomposition can fail for ill-conditioned matrices
+            print(
+                f"  Warning: Fisher eigendecomp failed for layer {layer_idx} head {h}: {e}"
+            )
+
+    # Compute layer-level aggregates
+    if all_metrics:
+        eigmax_vals = [
+            v for k, v in all_metrics.items() if "eigmax" in k and "layer" in k
+        ]
+        if eigmax_vals:
+            all_metrics[f"fisher/layer{layer_idx}/eigmax_mean"] = sum(
+                eigmax_vals
+            ) / len(eigmax_vals)
+            all_metrics[f"fisher/layer{layer_idx}/eigmax_max"] = max(eigmax_vals)
+
+    return all_metrics
 
 
 class LayerNorm(nn.Module):
