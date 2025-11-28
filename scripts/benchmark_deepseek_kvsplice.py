@@ -19,9 +19,24 @@ Requirements:
 
 import argparse
 import time
+import sys
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import transformers
 from deepseek_kvsplice_plugin import patch_model_with_kvsplice, get_kv_cache_size
+
+# Check transformers version
+try:
+    version_tuple = tuple(int(x) for x in transformers.__version__.split(".")[:2])
+    if version_tuple < (4, 36):
+        print(f"ERROR: transformers {transformers.__version__} is too old")
+        print("DeepSeek models require transformers >= 4.36.0")
+        print("\nPlease upgrade:")
+        print("  pip install --upgrade 'transformers>=4.36.0'")
+        sys.exit(1)
+except Exception as e:
+    print(f"Warning: Could not check transformers version: {e}")
+    print("Continuing anyway, but may encounter issues...")
 
 
 def benchmark_generation(
