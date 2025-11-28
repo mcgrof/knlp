@@ -588,14 +588,23 @@ class BaseGPT2Trainer:
         metrics_dict.update(gpu_metrics)
 
         # Sanitize metrics: convert tensors to Python scalars
+        # Separate wandb-specific objects (Tables) from JSON-serializable metrics
         sanitized_metrics = {}
+        wandb_only_metrics = {}
+
         for key, value in metrics_dict.items():
             if isinstance(value, torch.Tensor):
                 sanitized_metrics[key] = value.item()
             else:
-                sanitized_metrics[key] = value
+                # Check if this is a wandb-specific type (Table, Image, etc.)
+                type_name = type(value).__name__
+                if type_name in ("Table", "Image", "Video", "Audio", "Html"):
+                    # These are W&B-specific types, don't send to trackio
+                    wandb_only_metrics[key] = value
+                else:
+                    sanitized_metrics[key] = value
 
-        # Log to trackio
+        # Log to trackio (only JSON-serializable metrics)
         if "trackio" in self.trackers:
             try:
                 import trackio
@@ -604,12 +613,14 @@ class BaseGPT2Trainer:
             except Exception as e:
                 print(f"Warning: Failed to log to trackio: {e}")
 
-        # Log to wandb
+        # Log to wandb (all metrics including Tables)
         if "wandb" in self.trackers:
             try:
                 import wandb
 
-                wandb.log(sanitized_metrics, step=self.iter_num)
+                # Combine both metric types for wandb
+                all_wandb_metrics = {**sanitized_metrics, **wandb_only_metrics}
+                wandb.log(all_wandb_metrics, step=self.iter_num)
             except Exception as e:
                 print(f"Warning: Failed to log to wandb: {e}")
 
