@@ -49,6 +49,11 @@ if not hasattr(DynamicCache, "seen_tokens"):
         if hasattr(self, "key_cache") and len(self.key_cache) > 0:
             # Get the length from the first layer (all layers should have same length)
             self._seen_tokens = self.get_seq_length(0)
+            # Debug: print cache state
+            if layer_idx == 0:  # Only print for first layer to avoid spam
+                print(
+                    f"DEBUG: Cache updated - layer {layer_idx}, seen_tokens={self._seen_tokens}, cache_len={self.get_seq_length(0)}, new_keys_shape={key_states.shape if hasattr(key_states, 'shape') else 'N/A'}"
+                )
         return result
 
     @property
@@ -78,13 +83,17 @@ if not hasattr(DynamicCache, "get_usable_length"):
     patched = True
 
     def get_usable_length(self, new_seq_length, layer_idx=None):
-        # Return the current sequence length from the cache
-        # If layer_idx is None, use layer 0 or return 0 if cache is empty
+        # Return how much of the cache is usable (past tokens, not including new ones)
+        # new_seq_length is the total sequence length including new tokens
+        # We return the cache length which is the past tokens
         if layer_idx is None:
             layer_idx = 0
         # Check if cache has any layers
         if hasattr(self, "key_cache") and len(self.key_cache) > layer_idx:
-            return self.get_seq_length(layer_idx)
+            cache_len = self.get_seq_length(layer_idx)
+            # Return cache length (past tokens)
+            # If cache is empty, return 0
+            return cache_len if cache_len is not None else 0
         return 0
 
     DynamicCache.get_usable_length = get_usable_length
