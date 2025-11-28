@@ -1338,10 +1338,17 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         if not getattr(self.args, "run_lm_eval", False):
             return None
 
+        # Run lm-eval only at specific intervals to avoid overhead
+        # Default to 1000 iterations if not specified (eval_interval is typically 50-100)
+        lm_eval_interval = getattr(self.args, "lm_eval_interval", 1000)
+        if self.iter_num % lm_eval_interval != 0:
+            return None
+
         try:
             from lm_eval import evaluator
             from lm_eval.api.model import LM
             import tiktoken
+            import torch.nn.functional as F
         except ImportError as e:
             if self.master_process:
                 print(f"lm-eval not available (pip install lm-eval tiktoken): {e}")
