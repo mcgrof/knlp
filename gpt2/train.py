@@ -380,55 +380,18 @@ def main():
                     trainer.train()
 
                 print(f"\nCompleted ablation step: {step}")
-        elif args.architecture == "ramla":
-            # RAMLA ablation mode
-            from gpt2.trainers.ramla import RAMLATrainer, RAMLACoordinator
-
-            steps = [s.strip() for s in args.ablation_steps.split(",")]
-            print(f"Running RAMLA ablation study with {len(steps)} steps: {steps}")
-
-            coordinator = RAMLACoordinator(args, config, steps)
-            coordinator.run()
         else:
-            # RA ablation mode (unified-ra)
-            from gpt2.trainers import AblationCoordinator, RATrainer
+            # Unsupported architecture in ablation mode
+            print(f"Error: Architecture '{args.architecture}' does not support ablation mode")
+            print("Supported: vanilla")
+            sys.exit(1)
 
-            steps = [s.strip() for s in args.ablation_steps.split(",")]
-            print(f"Running RA ablation study with {len(steps)} steps: {steps}")
-
-            coordinator = AblationCoordinator(args, config, steps)
-            coordinator.run()
-
-    elif args.architecture == "unified-ra":
-        # Single RA run
-        from gpt2.trainers import RATrainer
-
-        print(f"Running RA trainer (step {args.ra_step})")
-        trainer = RATrainer(args, config, ablation_step=args.ra_step)
-        if args.dry_run:
-            trainer.run_dry_run()
-        else:
-            trainer.train()
-
-    elif args.architecture == "ramla":
-        # RAMLA LR ablation
-        from gpt2.trainers.ramla import RAMLATrainer, RAMLACoordinator
-
-        if args.ablation_mode:
-            steps = [s.strip() for s in args.ablation_steps.split(",")]
-            print(f"Running RAMLA ablation study with {len(steps)} steps: {steps}")
-
-            coordinator = RAMLACoordinator(args, config, steps)
-            coordinator.run()
-        else:
-            # Single step
-            step = getattr(args, "ra_step", "B0")
-            print(f"Running RAMLA trainer (step {step})")
-            trainer = RAMLATrainer(args, config, ablation_step=step)
-            if args.dry_run:
-                trainer.run_dry_run()
-            else:
-                trainer.train()
+    elif args.architecture in ["ramla", "unified-ra"]:
+        # Removed architectures (RA/MLA were cleaned up)
+        print(f"Error: Architecture '{args.architecture}' has been removed from codebase")
+        print("Removed architectures: unified-ra, ramla (RA ablation study completed)")
+        print("Available architectures: vanilla, gpt2")
+        sys.exit(1)
 
     else:  # vanilla
         # Standard GPT-2 training
