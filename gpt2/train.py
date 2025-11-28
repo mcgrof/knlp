@@ -98,6 +98,18 @@ def create_argument_parser():
         help="Limit number of samples per lm-eval task (None = all)",
     )
     parser.add_argument(
+        "--inference-benchmark",
+        action="store_true",
+        default=False,
+        help="Run inference benchmarks (throughput, latency) during training",
+    )
+    parser.add_argument(
+        "--inference-benchmark-interval",
+        type=int,
+        default=1000,
+        help="Interval for running inference benchmarks (iterations)",
+    )
+    parser.add_argument(
         "--vanilla-step",
         type=str,
         default="V0",
@@ -382,13 +394,17 @@ def main():
                 print(f"\nCompleted ablation step: {step}")
         else:
             # Unsupported architecture in ablation mode
-            print(f"Error: Architecture '{args.architecture}' does not support ablation mode")
+            print(
+                f"Error: Architecture '{args.architecture}' does not support ablation mode"
+            )
             print("Supported: vanilla")
             sys.exit(1)
 
     elif args.architecture in ["ramla", "unified-ra"]:
         # Removed architectures (RA/MLA were cleaned up)
-        print(f"Error: Architecture '{args.architecture}' has been removed from codebase")
+        print(
+            f"Error: Architecture '{args.architecture}' has been removed from codebase"
+        )
         print("Removed architectures: unified-ra, ramla (RA ablation study completed)")
         print("Available architectures: vanilla, gpt2")
         sys.exit(1)
