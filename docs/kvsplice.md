@@ -63,9 +63,9 @@ First, consider the baseline decision: standard GPT-2 vs MLA cache compression.
 **MLA0 decision point**: Use MLA if you can tolerate 50% more training time
 in exchange for 67% less KV cache memory at inference.
 
-### Secondary Trade-off: MLA vs MLA+KVSplice (UPDATED)
+### Secondary Trade-off: MLA vs MLA+KVSplice
 
-**Recent results show KVSplice adds minimal quality degradation!**
+KVSplice adds minimal quality degradation after architectural improvements.
 
 After architectural improvements (LayerNorm, better initialization), KVSplice
 now achieves near-identical quality to MLA with 2x additional compression.
@@ -91,18 +91,17 @@ MLA vs GPT-2 trade-off. If you're willing to use MLA (which requires
 ~50% more training time vs baseline), adding KVSplice is nearly free
 from a quality perspective while doubling compression again.
 
-**Updated decision point**: Add KVSplice unless you need absolute
-best quality. The 0.5-1.4% quality cost is minimal compared to the
-2x cache reduction benefit.
+Add KVSplice unless you need absolute best quality. The 0.5-1.4% quality
+cost is minimal compared to the 2x cache reduction benefit.
 
-### Key Findings (UPDATED)
+### Key Findings
 
 1. **Compression effectiveness**: MLA achieves 6-12x KV cache reduction
    - MLA: 36 MB → 12 MB (6x compression)
    - MLA+KVSplice: 36 MB → 6 MB (12x compression)
    - Verified across H100, W7900, and A100 GPUs
 
-2. **Quality/compression trade-off** (IMPROVED):
+2. **Quality/compression trade-off**:
    - **Baseline GPT-2**: Best quality, 36 MB cache
    - **MLA**: Moderate degradation (~50% more training time), 12 MB cache
    - **MLA+KVSplice**: Minimal additional degradation (+0.5-1.4%), 6 MB cache
@@ -122,7 +121,7 @@ best quality. The 0.5-1.4% quality cost is minimal compared to the
    - Trade-off: 11% slower for 2x cache reduction
    - On memory-constrained GPUs, enables 2x larger batch sizes
 
-5. **Updated use case decision tree**:
+5. **Use case decision tree**:
    - **Inference memory critical**: Use MLA+KVSplice (12x, minimal quality cost)
    - **Balanced deployment**: Use MLA+KVSplice (quality impact negligible)
    - **Latency-critical + big GPU**: Use MLA only (avoid 11% throughput cost)
@@ -132,10 +131,10 @@ best quality. The 0.5-1.4% quality cost is minimal compared to the
    KVSplice quality degradation from 25% to under 2%. This makes 12x compression
    practical for production use.
 
-### Training Time Analysis (UPDATED)
+### Training Time Analysis
 
-**Key finding**: After improvements, MLA+KVSplice training time is comparable
-to MLA alone, with minimal additional quality cost.
+MLA+KVSplice training time is comparable to MLA alone, with minimal additional
+quality cost.
 
 **GPU comparison results** (2-4 hour runs on TinyStories):
 
@@ -153,7 +152,6 @@ to MLA alone, with minimal additional quality cost.
 - **Quality gap**: Only 0.5-1.4% degradation from KVSplice compression
 - **GPU hierarchy**: H100 > W7900 > A100 (consistent across both architectures)
 
-**Updated trade-off**:
 The minimal quality cost (0.5-1.4%) makes MLA+KVSplice the clear choice for
 inference-focused deployments. You get 2x cache reduction with negligible
 quality impact and similar training time to MLA alone.
@@ -234,7 +232,7 @@ model = GPT2_MLA_KV(cfg, compression_ratio=0.5, vocab_size=50257)
 # Total: 12x compression vs standard GPT-2
 ```
 
-## When to Use MLA and KVSplice (UPDATED)
+## When to Use MLA and KVSplice
 
 **Use MLA+KVSplice (recommended for inference) when**:
 - KV cache memory is the bottleneck (12x compression)
@@ -332,13 +330,92 @@ With 24GB GPU memory:
 **Trade-off**: KVSplice requires 0.5-1.4% quality degradation (see GPU comparison
 results) but enables 6x higher inference throughput in memory-constrained scenarios.
 
+## Transform Parameter Analysis
+
+KVSplice includes learned monotonic transform parameters (scale and shift) that
+theoretically enable per-dimension feature scaling before low-rank projection.
+Analysis of trained checkpoints reveals these parameters remain at initialization.
+
+### Discovery Process
+
+**Missing metrics**: Initial W&B runs showed no KVSplice parameter logging due to
+architecture detection bug. The metrics collection code checked for
+`raw_model.transformer` (standard GPT-2) but MLA models use `raw_model.blocks`.
+
+**Checkpoint extraction**: Created `scripts/extract_kvsplice_params.py` to directly
+inspect learned parameters from saved checkpoints:
+
+```python
+checkpoint = torch.load(checkpoint_path, map_location="cpu")
+state_dict = checkpoint["model"]
+
+# Extract transform parameters
+scale_raw = state_dict["blocks.0.attn.kvsplice.transform_scale"]
+shift = state_dict["blocks.0.attn.kvsplice.transform_shift"]
+
+# Apply softplus to get actual scale values
+scale = F.softplus(scale_raw)
+```
+
+**Results from W7900 checkpoint** (1044 iterations, 4 hours training):
+
+```
+Layer 0: scale mean=1.3133, std=0.0000, shift mean=0.0000, std=0.0000
+Layer 1: scale mean=1.3133, std=0.0000, shift mean=0.0000, std=0.0000
+...
+Layer 11: scale mean=1.3133, std=0.0000, shift mean=0.0000, std=0.0000
+```
+
+All 12 layers show identical values:
+- `scale = 1.3133` matches `softplus(1.0)` (initialization)
+- `shift = 0.0` matches initialization
+- `std = 0.0` indicates zero variance across 256 dimensions
+
+### Interpretation
+
+**Parameters not learning**: Transform parameters remain at initialization values
+after 1000+ gradient updates. This indicates gradients are either vanishing or
+the optimizer isn't updating these parameters.
+
+**Low-rank projection only**: KVSplice compression works entirely through the
+compress/expand linear layers:
+- `compress: Linear(256 → 128)` - learned low-rank projection
+- `expand: Linear(128 → 256)` - learned reconstruction
+
+The identity transform (scale≈1, shift=0) means KVSplice simplifies to:
+```
+compressed = compress(latent)  # 256 → 128
+reconstructed = expand(compressed)  # 128 → 256
+```
+
+**Why this might be optimal**: If the compress/expand layers learn a good
+low-rank approximation directly, adding a learned transform is redundant. The
+0.5-1.4% quality degradation suggests this approach works well in practice.
+
+### Ongoing Investigation
+
+**Hypothesis**: LayerNorm on compressed latent may stabilize gradients and enable
+transform parameter learning. Testing in progress.
+
+**Gradient flow**: Need to verify whether:
+1. Transform parameters receive gradients during backpropagation
+2. Gradients are non-zero but optimizer isn't updating
+3. Forward-reverse pattern in transform cancels gradient signal
+
+**Pruning potential**: Current results show no low-importance dimensions since all
+scales are identical. If LayerNorm enables learning, dimensions with `scale < 0.1`
+after training could be pruned for additional compression.
+
 ## Future Work
 
 **Completed:**
-- ✅ Test LayerNorm impact → Reduced quality degradation to <2%
 - ✅ Measure actual inference throughput → Confirmed 50% cache reduction, 11% compute cost
 - ✅ Multi-GPU validation → Consistent results across H100, W7900, A100
 - ✅ Verify inference memory savings → Direct cache tensor measurement shows exact 50% reduction
+- ✅ Extract and analyze transform parameters from checkpoints
+
+**In Progress:**
+- 🔄 Test LayerNorm impact on transform parameter learning
 
 **Remaining:**
 - Train MLA/KVSplice longer on larger datasets (current: TinyStories)
