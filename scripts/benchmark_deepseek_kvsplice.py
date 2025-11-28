@@ -34,10 +34,22 @@ if not hasattr(DynamicCache, "seen_tokens"):
     patched = True
 
     original_init = DynamicCache.__init__
+    original_update = DynamicCache.update
 
     def patched_init(self, *args, **kwargs):
         original_init(self, *args, **kwargs)
         self._seen_tokens = 0
+
+    def patched_update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        # Call original update
+        result = original_update(
+            self, key_states, value_states, layer_idx, cache_kwargs
+        )
+        # Update seen_tokens based on the sequence length
+        if hasattr(self, "key_cache") and len(self.key_cache) > 0:
+            # Get the length from the first layer (all layers should have same length)
+            self._seen_tokens = self.get_seq_length(0)
+        return result
 
     @property
     def seen_tokens(self):
@@ -48,6 +60,7 @@ if not hasattr(DynamicCache, "seen_tokens"):
         self._seen_tokens = value
 
     DynamicCache.__init__ = patched_init
+    DynamicCache.update = patched_update
     DynamicCache.seen_tokens = seen_tokens
 
 if not hasattr(DynamicCache, "get_max_length"):
