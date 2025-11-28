@@ -23,7 +23,30 @@ import sys
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import transformers
+from transformers.cache_utils import DynamicCache
 from deepseek_kvsplice_plugin import patch_model_with_kvsplice, get_kv_cache_size
+
+# Monkey-patch DynamicCache to add seen_tokens if missing
+if not hasattr(DynamicCache, "seen_tokens"):
+    print("Patching DynamicCache to add seen_tokens attribute...")
+
+    original_init = DynamicCache.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._seen_tokens = 0
+
+    @property
+    def seen_tokens(self):
+        return self._seen_tokens
+
+    @seen_tokens.setter
+    def seen_tokens(self, value):
+        self._seen_tokens = value
+
+    DynamicCache.__init__ = patched_init
+    DynamicCache.seen_tokens = seen_tokens
+    print("DynamicCache patched successfully!")
 
 # Check transformers version
 try:
