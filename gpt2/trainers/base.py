@@ -19,6 +19,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+import functools
 from torch.distributed import init_process_group, destroy_process_group
 
 # Add parent directory to path
@@ -120,8 +124,14 @@ class BaseGPT2Trainer:
         )
 
     def setup_ddp(self):
-        """Setup Distributed Data Parallel if applicable."""
+        """Setup Distributed Data Parallel or FSDP if applicable."""
         self.ddp = int(os.environ.get("RANK", -1)) != -1
+
+        # Check if FSDP is requested (via config or environment)
+        self.use_fsdp = (
+            getattr(self.config, "USE_FSDP", False) if self.config else False
+        ) or (os.environ.get("USE_FSDP", "0") == "1")
+
         if self.ddp:
             init_process_group(backend="nccl")
             self.ddp_rank = int(os.environ["RANK"])
@@ -135,10 +145,15 @@ class BaseGPT2Trainer:
                 self.args.gradient_accumulation % self.ddp_world_size == 0
             ), f"gradient_accumulation ({self.args.gradient_accumulation}) must be divisible by world_size ({self.ddp_world_size})"
             self.args.gradient_accumulation //= self.ddp_world_size
+
+            if self.master_process:
+                mode = "FSDP" if self.use_fsdp else "DDP"
+                print(f"Initialized {mode}: rank {self.ddp_rank}/{self.ddp_world_size}")
         else:
             self.master_process = True
             self.seed_offset = 0
             self.ddp_world_size = 1
+            self.use_fsdp = False
 
     def setup_data(self):
         """Setup data loading (to be implemented by subclass if needed)."""
@@ -394,23 +409,73 @@ class BaseGPT2Trainer:
 
     def wrap_model_ddp(self, model: nn.Module) -> nn.Module:
         """
-        Wrap model in DDP if distributed training is enabled.
+        Wrap model in DDP or FSDP if distributed training is enabled.
 
         Args:
             model: Model to wrap
 
         Returns:
-            DDP-wrapped model or original model
+            DDP/FSDP-wrapped model or original model
         """
         if self.ddp:
-            # Check if find_unused_parameters should be enabled
-            # Default to False for better performance (vanilla GPT-2 has no unused params)
-            find_unused = getattr(self.args, "ddp_find_unused_params", False)
-            model = DDP(
-                model,
-                device_ids=[self.ddp_local_rank],
-                find_unused_parameters=find_unused,
-            )
+            if self.use_fsdp:
+                # FSDP wrapping - auto-wrap transformer blocks
+                # Determine transformer block class based on model type
+                try:
+                    # Try to get the block class from model
+                    if hasattr(model, "transformer") and hasattr(
+                        model.transformer, "h"
+                    ):
+                        # Standard GPT-2 style: transformer.h[i] are blocks
+                        block_class = type(model.transformer.h[0])
+                    elif hasattr(model, "blocks"):
+                        # MLA style: blocks[i]
+                        block_class = type(model.blocks[0])
+                    else:
+                        block_class = None
+
+                    if block_class and self.master_process:
+                        print(f"FSDP auto-wrap policy: {block_class.__name__}")
+
+                    # Create auto-wrap policy
+                    auto_wrap_policy = (
+                        functools.partial(
+                            transformer_auto_wrap_policy,
+                            transformer_layer_cls={block_class},
+                        )
+                        if block_class
+                        else None
+                    )
+
+                    # FSDP configuration
+                    model = FSDP(
+                        model,
+                        auto_wrap_policy=auto_wrap_policy,
+                        device_id=self.ddp_local_rank,
+                        # cpu_offload=CPUOffload(offload_params=True),  # Uncomment for CPU offload
+                    )
+
+                    if self.master_process:
+                        print("Model wrapped with FSDP")
+
+                except Exception as e:
+                    if self.master_process:
+                        print(
+                            f"Warning: FSDP wrapping failed ({e}), falling back to DDP"
+                        )
+                    self.use_fsdp = False
+
+            if not self.use_fsdp:
+                # DDP wrapping
+                find_unused = getattr(self.args, "ddp_find_unused_params", False)
+                model = DDP(
+                    model,
+                    device_ids=[self.ddp_local_rank],
+                    find_unused_parameters=find_unused,
+                )
+                if self.master_process:
+                    print("Model wrapped with DDP")
+
         return model
 
     def setup_mixed_precision(self):
