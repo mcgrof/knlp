@@ -155,6 +155,42 @@ Direct measurement of KV cache sizes confirms theoretical predictions:
 **Conclusion**: KVSplice achieves advertised 12x compression during inference
 with no overhead beyond the learned compress/expand layers.
 
+## Inference Throughput Benchmarks ✅
+
+Measured actual generation throughput with proper KV caching (W7900 46GB):
+
+| Batch | MLA (tok/s) | KVSplice (tok/s) | Speedup | Cache MB (MLA) | Cache MB (KV) |
+|-------|-------------|------------------|---------|----------------|---------------|
+| 1 | 168 | 153 | 0.91x | 1.5 | 0.75 |
+| 4 | 624 | 558 | 0.89x | 6.0 | 3.00 |
+| 8 | 1,147 | 1,020 | 0.89x | 12.0 | 6.00 |
+| 16 | 1,951 | 1,724 | 0.88x | 24.0 | 12.00 |
+| 32 | 2,955 | 2,634 | 0.89x | 48.0 | 24.00 |
+| 64 | 3,783 | 3,420 | 0.90x | 96.0 | 48.00 |
+| 128 | 4,084 | 3,767 | 0.92x | 192.0 | 96.00 |
+
+**Key Findings:**
+- **11% throughput cost**: KVSplice runs at 0.89-0.92x speed of MLA
+- Compress/expand layers add computational overhead
+- Cache reduction is perfect 50% at all batch sizes
+- On high-memory GPUs, compute cost outweighs memory benefits
+
+**Trade-off Analysis:**
+- **Memory-constrained scenarios**: KVSplice wins by enabling 2x batch size
+- **Compute-bound scenarios**: MLA wins with 11% higher throughput
+- **W7900 (46GB)**: Both handle batch=128 easily, cache not bottleneck
+
+**When to use KVSplice:**
+- Smaller GPUs (8-16GB) where cache limits batch size
+- Long sequences (2K+ tokens) where cache dominates memory
+- High concurrency serving where fitting more requests matters
+- Willing to trade 11% speed for 2x capacity
+
+**When to use MLA only:**
+- Large GPUs with abundant memory
+- Latency-critical applications
+- Short sequences where cache is small anyway
+
 ## Next Steps
 
 1. ✅ **Fixed**: KVSplice metrics logging bug
