@@ -421,14 +421,22 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         metrics_to_log.update(inference_benchmark_metrics)
 
                     # Generate sample text
-                    sample_text = self._generate_sample_text()
-                    if sample_text:
-                        metrics_to_log["sample_text"] = sample_text
+                    sample_outputs = self._generate_sample_text()
+                    if sample_outputs and "wandb" in self.trackers:
+                        import wandb
+
+                        # Create W&B Table for sample text visibility
+                        columns = ["iteration", "prompt", "generated_text"]
+                        table_data = []
+                        for prompt, generated in sample_outputs:
+                            table_data.append([self.iter_num, prompt, generated])
+
+                        sample_table = wandb.Table(columns=columns, data=table_data)
+                        metrics_to_log["samples/generated_text"] = sample_table
+
                         if self.master_process:
-                            print(
-                                f"\nGenerated sample text (length: {len(sample_text)})"
-                            )
-                    elif self.master_process:
+                            print(f"\nGenerated {len(sample_outputs)} text samples")
+                    elif self.master_process and sample_outputs is None:
                         print("\nWarning: Sample text generation returned None")
 
                     self.log_metrics(metrics_to_log)
@@ -1773,7 +1781,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         Generate sample text from the model for W&B logging.
 
         Returns:
-            String containing generated sample text or None if generation fails
+            List of (prompt, generated_text) tuples or None if generation fails
         """
         try:
             import tiktoken
@@ -1827,12 +1835,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             x = torch.cat([x, next_token_tensor], dim=1)
                         generated = enc.decode(generated_tokens)
 
-                samples.append(f"Prompt: {prompt}\n{generated}\n")
+                samples.append((prompt, generated))
 
             self.model.train()
 
-            # Return formatted samples
-            return "\n" + "=" * 60 + "\n" + "\n".join(samples) + "=" * 60
+            # Return list of (prompt, generated_text) tuples
+            return samples
 
         except Exception as e:
             if self.master_process:
