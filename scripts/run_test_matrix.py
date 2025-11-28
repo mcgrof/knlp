@@ -2674,9 +2674,22 @@ def main():
                         tokenizer_suffix = ""
 
                     if pruning_mode_none:
-                        # Not testing pruning - just show variant/optimizer
+                        # Not testing pruning - check for MLA or other architecture tests
                         if variant_str.strip():
                             test_desc = f"  - {variant_str.strip()}{tokenizer_suffix}"
+                        elif config.get("ENABLE_MLA"):
+                            # MLA architecture test - show variant
+                            mla_variant = config.get("MLA_VARIANT", "mla")
+                            if mla_variant == "mla":
+                                test_desc = (
+                                    f"  - MLA (6x compression){tokenizer_suffix}"
+                                )
+                            elif mla_variant == "mla_kv":
+                                test_desc = f"  - MLA+KVSplice (12x compression){tokenizer_suffix}"
+                            else:
+                                test_desc = (
+                                    f"  - MLA variant: {mla_variant}{tokenizer_suffix}"
+                                )
                         else:
                             test_desc = f"  - default configuration{tokenizer_suffix}"
                     else:
