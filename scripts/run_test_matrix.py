@@ -2554,13 +2554,34 @@ def main():
         print(f"Output directory: {output_dir}")
         print("\nTests that will be executed:")
 
-    # Group tests by optimizer for clearer display (skip for continuation)
+    # Group tests by optimizer or model depending on what's being tested
     if not args.continue_dir:
-        tests_by_optimizer = {}
+        # Detect if we're testing architecture (MLA variants) vs optimizer/pruning
+        testing_architecture = (
+            config.get("ENABLE_MLA")
+            and config.get("PRUNING_MODE_NONE") == "y"
+            and not config.get("OPTIMIZER_MODE_MULTIPLE")
+        )
+
+        if testing_architecture:
+            # Group by model when testing architecture variants
+            tests_by_group = {}
+            group_key = config.get("MODEL", "gpt2").upper()
+            tests_by_group[group_key] = []
+        else:
+            # Group by optimizer when testing optimizer/pruning
+            tests_by_group = {}
+
         for combo in combinations:
-            opt = combo["optimizer"]
-            if opt not in tests_by_optimizer:
-                tests_by_optimizer[opt] = []
+            if testing_architecture:
+                # Use model as grouping key
+                group = config.get("MODEL", "gpt2").upper()
+            else:
+                # Use optimizer as grouping key
+                group = combo["optimizer"]
+
+            if group not in tests_by_group:
+                tests_by_group[group] = []
 
             variant_str = f"{combo.get('variant', '')} " if combo.get("variant") else ""
             ablation_step = combo.get("ra_mla_ablation_step")
@@ -2706,19 +2727,24 @@ def main():
                     tokenizer_suffix = ""
 
                 test_desc = f"  - {variant_str}{combo['pruning']} @ {sparsity_pct}% sparsity{tokenizer_suffix}"
-            tests_by_optimizer[opt].append(test_desc)
+            tests_by_group[group].append(test_desc)
 
-        for optimizer in sorted(tests_by_optimizer.keys()):
-            # Check if AdamWPrune has a base optimizer configured
-            optimizer_display = optimizer.upper()
-            if optimizer == "adamwprune" and "ADAMWPRUNE_BASE_OPTIMIZER_NAME" in config:
-                base_opt = config["ADAMWPRUNE_BASE_OPTIMIZER_NAME"]
-                optimizer_display = f"{optimizer.upper()} (base: {base_opt.upper()})"
+        for group_name in sorted(tests_by_group.keys()):
+            if testing_architecture:
+                # Display model name for architecture tests
+                display_name = group_name
+            else:
+                # Display optimizer name for optimizer/pruning tests
+                display_name = group_name.upper()
+                if (
+                    group_name == "adamwprune"
+                    and "ADAMWPRUNE_BASE_OPTIMIZER_NAME" in config
+                ):
+                    base_opt = config["ADAMWPRUNE_BASE_OPTIMIZER_NAME"]
+                    display_name = f"{group_name.upper()} (base: {base_opt.upper()})"
 
-            print(
-                f"\n{optimizer_display} ({len(tests_by_optimizer[optimizer])} tests):"
-            )
-            for test in tests_by_optimizer[optimizer]:
+            print(f"\n{display_name} ({len(tests_by_group[group_name])} tests):")
+            for test in tests_by_group[group_name]:
                 print(test)
 
         print("\n" + "=" * 60)
