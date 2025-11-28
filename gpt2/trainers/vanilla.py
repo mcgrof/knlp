@@ -823,6 +823,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         metrics["kvsplice/shift_min"] = float(np.min(avg_shift))
         metrics["kvsplice/shift_max"] = float(np.max(avg_shift))
 
+        # Per-dimension tracking for first layer (sample of dimensions)
+        # Track every 32nd dimension to avoid overwhelming W&B
+        if len(all_scales) > 0:
+            first_layer_scale = all_scales[0]
+            first_layer_shift = all_shifts[0]
+            d_in = len(first_layer_scale)
+
+            # Sample dimensions (every 32nd, max 8 samples)
+            sample_interval = max(1, d_in // 8)
+            dim_indices = range(0, d_in, sample_interval)[:8]
+
+            for dim_idx in dim_indices:
+                metrics[f"kvsplice/dim{dim_idx}_scale"] = float(first_layer_scale[dim_idx])
+                metrics[f"kvsplice/dim{dim_idx}_shift"] = float(first_layer_shift[dim_idx])
+
         # Per-layer statistics (track first, middle, last layers)
         layers_to_track = [0, n_layers // 2, n_layers - 1]
         layer_names = ["first", "middle", "last"]
