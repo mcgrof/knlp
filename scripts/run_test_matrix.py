@@ -780,6 +780,18 @@ def get_test_matrix(config):
         vanilla_ablation_steps if vanilla_ablation_steps else None
     )
 
+    # Check for MLA variant testing (MLA vs MLA+KVSplice ablation)
+    mla_variants = []
+    if config.get("ENABLE_MLA") in ("y", True):
+        # Parse MLA_VARIANTS config (e.g., "mla,mla_kv")
+        mla_variants_str = config.get("MLA_VARIANTS", "")
+        if isinstance(mla_variants_str, str):
+            mla_variants_str = mla_variants_str.strip('"')
+        if mla_variants_str:
+            mla_variants = [s.strip() for s in str(mla_variants_str).split(",")]
+
+    matrix["mla_variants"] = mla_variants if mla_variants else None
+
     # Get sparsity levels from individual TEST_SPARSITY_* configs
     matrix["sparsity_levels"] = []
 
@@ -831,6 +843,9 @@ def generate_combinations(matrix):
     # Get Vanilla GPT-2 ablation steps
     vanilla_ablation_steps = matrix.get("vanilla_ablation_steps", None)
 
+    # Get MLA variants
+    mla_variants = matrix.get("mla_variants", None)
+
     for model, optimizer, pruning, tokenizer_method in itertools.product(
         matrix["models"],
         matrix["optimizers"],
@@ -875,6 +890,26 @@ def generate_combinations(matrix):
                         "pruning": pruning,
                         "sparsity": "0.0",
                         "ra_mla_ablation_step": ablation_step,
+                        "tokenizer_method": tokenizer_method,
+                    }
+                    # Include AdamWPrune variant if applicable
+                    if optimizer == "adamwprune":
+                        for variant in adamwprune_variants:
+                            combo_with_variant = combo.copy()
+                            combo_with_variant["variant"] = variant
+                            combinations.append(combo_with_variant)
+                    else:
+                        combinations.append(combo)
+            # Check if we should generate MLA variant tests
+            elif mla_variants and model == "gpt2":
+                # Generate one combination for each MLA variant (mla, mla_kv)
+                for mla_variant in mla_variants:
+                    combo = {
+                        "model": model,
+                        "optimizer": optimizer,
+                        "pruning": pruning,
+                        "sparsity": "0.0",
+                        "mla_variant": mla_variant,
                         "tokenizer_method": tokenizer_method,
                     }
                     # Include AdamWPrune variant if applicable
@@ -963,6 +998,7 @@ def run_single_test(
     variant = combination.get("variant", None)
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
     vanilla_ablation_step = combination.get("vanilla_ablation_step", None)
+    mla_variant = combination.get("mla_variant", None)
     tokenizer_method = combination.get("tokenizer_method", "none")
 
     # Check if we should skip baseline step and use a reference run instead
@@ -1044,6 +1080,15 @@ def run_single_test(
                 test_id = (
                     f"{model}_{optimizer}_{ablation_type}_step{ra_mla_ablation_step}"
                 )
+            # Tokenizer method for ablation (if applicable)
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{test_id}_{tokenizer_method}"
+        elif mla_variant:
+            # Include MLA variant in test ID (e.g., gpt2_adamwspam_mla or gpt2_adamwspam_mla_kv)
+            if variant:
+                test_id = f"{model}_{optimizer}_{variant}_{mla_variant}"
+            else:
+                test_id = f"{model}_{optimizer}_{mla_variant}"
             # Tokenizer method for ablation (if applicable)
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
@@ -1369,6 +1414,10 @@ def run_single_test(
             env["GPT2_MAX_ITERS"] = os.environ["GPT2_MAX_ITERS"]
         if "GPT2_MAX_TIME" in os.environ:
             env["GPT2_MAX_TIME"] = os.environ["GPT2_MAX_TIME"]
+
+        # Set MLA variant if testing MLA architectures
+        if mla_variant:
+            env["CONFIG_MLA_VARIANT"] = mla_variant
 
         # Set PyTorch memory allocator configuration for better memory management
         # This helps prevent OOM errors by allowing expandable memory segments
@@ -2558,7 +2607,7 @@ def main():
     if not args.continue_dir:
         # Detect if we're testing architecture (MLA variants) vs optimizer/pruning
         testing_architecture = (
-            config.get("ENABLE_MLA")
+            config.get("MLA_VARIANTS")  # Testing multiple MLA variants
             and config.get("PRUNING_MODE_NONE") == "y"
             and not config.get("OPTIMIZER_MODE_MULTIPLE")
         )
@@ -2696,11 +2745,9 @@ def main():
 
                     if pruning_mode_none:
                         # Not testing pruning - check for MLA or other architecture tests
-                        if variant_str.strip():
-                            test_desc = f"  - {variant_str.strip()}{tokenizer_suffix}"
-                        elif config.get("ENABLE_MLA"):
-                            # MLA architecture test - show variant
-                            mla_variant = config.get("MLA_VARIANT", "mla")
+                        mla_variant = combo.get("mla_variant")
+                        if mla_variant:
+                            # MLA architecture test - show variant from combo
                             if mla_variant == "mla":
                                 test_desc = (
                                     f"  - MLA (6x compression){tokenizer_suffix}"
@@ -2711,6 +2758,8 @@ def main():
                                 test_desc = (
                                     f"  - MLA variant: {mla_variant}{tokenizer_suffix}"
                                 )
+                        elif variant_str.strip():
+                            test_desc = f"  - {variant_str.strip()}{tokenizer_suffix}"
                         else:
                             test_desc = f"  - default configuration{tokenizer_suffix}"
                     else:
