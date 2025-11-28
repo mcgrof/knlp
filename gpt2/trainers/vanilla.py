@@ -1203,9 +1203,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
 
         # Run benchmarks only at specific intervals to avoid overhead
-        # Skip if not at a benchmark interval
-        benchmark_interval = getattr(self.args, "inference_benchmark_interval", 0)
-        if benchmark_interval == 0 or self.iter_num % benchmark_interval != 0:
+        # Default to 1000 iterations (same as lm_eval) if INFERENCE_BENCHMARK is enabled
+        if not getattr(self.args, "inference_benchmark", False):
+            return None
+
+        benchmark_interval = getattr(self.args, "inference_benchmark_interval", 1000)
+        if self.iter_num % benchmark_interval != 0:
             return None
 
         try:
