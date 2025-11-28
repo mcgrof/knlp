@@ -23,7 +23,11 @@ scripts/
 ### Prerequisites
 
 ```bash
-pip install transformers torch datasets accelerate
+# DeepSeek models require transformers >= 4.36.0
+pip install 'transformers>=4.36.0' torch datasets accelerate
+
+# Or upgrade if already installed
+pip install --upgrade 'transformers>=4.36.0'
 ```
 
 ### Run All Tests
@@ -298,6 +302,17 @@ Testing on DeepSeek helps answer:
    - Determine if approach generalizes
 
 ## Troubleshooting
+
+### AttributeError: 'DynamicCache' object has no attribute 'seen_tokens'
+
+This means transformers is too old. DeepSeek requires >= 4.36.0.
+
+Fix:
+```bash
+pip install --upgrade 'transformers>=4.36.0'
+```
+
+The scripts now check version automatically and will exit with a helpful message if transformers is too old.
 
 ### OOM during benchmark
 
