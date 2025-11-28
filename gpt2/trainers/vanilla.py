@@ -407,6 +407,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     if lm_eval_metrics:
                         metrics_to_log.update(lm_eval_metrics)
 
+                    # Generate sample text
+                    sample_text = self._generate_sample_text()
+                    if sample_text:
+                        metrics_to_log["sample_text"] = sample_text
+
                     self.log_metrics(metrics_to_log)
 
                     # Save best model (step-specific for ablation runs)
@@ -1565,4 +1570,69 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
         except Exception as e:
             print(f"lm-eval failed: {e}")
+            return None
+
+    def _generate_sample_text(self):
+        """
+        Generate sample text from the model for W&B logging.
+
+        Returns:
+            String containing generated sample text or None if generation fails
+        """
+        try:
+            import tiktoken
+
+            # Load tokenizer
+            enc = tiktoken.get_encoding("gpt2")
+
+            # Sample prompts to test the model
+            prompts = [
+                "Once upon a time",
+                "The quick brown fox",
+                "In a world where",
+            ]
+
+            self.model.eval()
+            samples = []
+
+            for prompt in prompts:
+                # Encode prompt
+                tokens = enc.encode(prompt, allowed_special={"<|endoftext|>"})
+                x = torch.tensor([tokens], dtype=torch.long, device=self.device)
+
+                # Generate
+                with torch.no_grad():
+                    # Use model's generate method if available
+                    if hasattr(self.raw_model, "generate"):
+                        y = self.raw_model.generate(
+                            x,
+                            max_new_tokens=50,
+                            temperature=0.8,
+                            top_k=200,
+                        )
+                        generated = enc.decode(y[0].tolist())
+                    else:
+                        # Fallback: manual generation
+                        generated_tokens = tokens.copy()
+                        for _ in range(50):
+                            logits, _ = self.model(x)
+                            logits = logits[:, -1, :] / 0.8  # temperature
+                            probs = torch.softmax(logits, dim=-1)
+                            # Top-k sampling
+                            topk_probs, topk_indices = torch.topk(probs, 200)
+                            next_token = topk_indices[0, torch.multinomial(topk_probs, 1)]
+                            generated_tokens.append(next_token.item())
+                            x = torch.cat([x, next_token.unsqueeze(0)], dim=1)
+                        generated = enc.decode(generated_tokens)
+
+                samples.append(f"Prompt: {prompt}\n{generated}\n")
+
+            self.model.train()
+
+            # Return formatted samples
+            return "\n" + "="*60 + "\n" + "\n".join(samples) + "="*60
+
+        except Exception as e:
+            if self.master_process:
+                print(f"Warning: Failed to generate sample text: {e}")
             return None
