@@ -496,6 +496,26 @@ config MLA_VARIANT
 	  - mla_kv2: Improved MLA
 	  - mla_kv2m: MLA with MLP splice (12x compression)
 
+config MLA_D_LATENT
+	int "MLA latent dimension"
+	default 256
+	depends on ENABLE_MLA
+	help
+	  Dimension of the shared KV latent space.
+	  Lower values = more compression but potential quality loss.
+	  Default 256 provides good balance for GPT-2 124M (d_model=768).
+
+config MLA_COMPRESSION_RATIO
+	string "KVSplice compression ratio"
+	default "0.5"
+	depends on ENABLE_MLA
+	help
+	  Compression ratio for KVSplice layer (mla_kv variant).
+	  0.5 = 2x additional compression (d_latent 256 -> 128)
+	  0.7 = 1.4x additional compression (d_latent 256 -> 179)
+	  Higher values = less compression, better quality.
+	  Only applies to mla_kv variant with KVSplice enabled.
+
 endmenu
 
 config TEST_MATRIX_MODE
