@@ -60,6 +60,17 @@ if not hasattr(DynamicCache, "get_max_length"):
 
     DynamicCache.get_max_length = get_max_length
 
+if not hasattr(DynamicCache, "get_usable_length"):
+    print("Patching DynamicCache to add get_usable_length method...")
+    patched = True
+
+    def get_usable_length(self, new_seq_length, layer_idx=None):
+        # Return the current sequence length from the cache
+        # get_seq_length exists in DynamicCache
+        return self.get_seq_length(layer_idx)
+
+    DynamicCache.get_usable_length = get_usable_length
+
 if patched:
     print("DynamicCache patched successfully!")
 
