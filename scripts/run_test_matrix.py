@@ -783,11 +783,12 @@ def get_test_matrix(config):
     # Check for MLA variant testing (MLA vs MLA+KVSplice ablation)
     mla_variants = []
     if config.get("ENABLE_MLA") in ("y", True):
-        # Parse MLA_VARIANTS config (e.g., "mla,mla_kv")
-        mla_variants_str = config.get("MLA_VARIANTS", "")
+        # Parse MLA_VARIANTS (plural) or MLA_VARIANT (singular, supports comma-separated)
+        mla_variants_str = config.get("MLA_VARIANTS") or config.get("MLA_VARIANT", "")
         if isinstance(mla_variants_str, str):
             mla_variants_str = mla_variants_str.strip('"')
         if mla_variants_str:
+            # Support comma-separated list for testing multiple variants
             mla_variants = [s.strip() for s in str(mla_variants_str).split(",")]
 
     matrix["mla_variants"] = mla_variants if mla_variants else None
@@ -2606,8 +2607,12 @@ def main():
     # Group tests by optimizer or model depending on what's being tested
     if not args.continue_dir:
         # Detect if we're testing architecture (MLA variants) vs optimizer/pruning
+        # Check if MLA_VARIANT contains comma (multiple variants) or if MLA_VARIANTS is set
+        mla_variant_str = config.get("MLA_VARIANTS") or config.get("MLA_VARIANT", "")
+        testing_multiple_mla = mla_variant_str and "," in str(mla_variant_str)
+
         testing_architecture = (
-            config.get("MLA_VARIANTS")  # Testing multiple MLA variants
+            testing_multiple_mla  # Testing multiple MLA variants
             and config.get("PRUNING_MODE_NONE") == "y"
             and not config.get("OPTIMIZER_MODE_MULTIPLE")
         )
