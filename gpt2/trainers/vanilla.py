@@ -376,6 +376,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     fisher_metrics = self._compute_fisher_metrics()
                     if fisher_metrics:
                         metrics_to_log.update(fisher_metrics)
+                        # Add global Fisher summaries for easier interpretation
+                        from gpt2.model import aggregate_fisher_metrics
+                        fisher_summaries = aggregate_fisher_metrics(fisher_metrics)
+                        if fisher_summaries:
+                            metrics_to_log.update(fisher_summaries)
 
                     # Add KV cache memory metrics
                     kv_cache_metrics = self._compute_kv_cache_metrics()
