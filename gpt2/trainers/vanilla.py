@@ -324,6 +324,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     if self.baseline_metrics:
                         metrics_to_log.update(self.baseline_metrics)
 
+                    # Add Fisher Information metrics if available
+                    fisher_metrics = self._compute_fisher_metrics()
+                    if fisher_metrics:
+                        metrics_to_log.update(fisher_metrics)
+
+                    # Add KV cache memory metrics
+                    kv_cache_metrics = self._compute_kv_cache_metrics()
+                    if kv_cache_metrics:
+                        metrics_to_log.update(kv_cache_metrics)
+
+                    # Add KVSplice parameter metrics
+                    kvsplice_metrics = self._compute_kvsplice_param_metrics()
+                    if kvsplice_metrics:
+                        metrics_to_log.update(kvsplice_metrics)
+
                     self.log_metrics(metrics_to_log)
 
                     # Save best model (step-specific for ablation runs)
@@ -535,3 +550,320 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 print(f"\nWarning: Failed to fetch baseline metrics: {e}")
                 print("Continuing without baseline reference...")
             return None
+
+    def _compute_fisher_metrics(self):
+        """
+        Compute Fisher Information Matrix metrics for the model.
+
+        Returns:
+            Dictionary with FIM metrics or None if computation fails
+        """
+        if not hasattr(self.raw_model, "compute_fisher_metrics"):
+            return None
+
+        try:
+            # Create a small batch for Fisher computation
+            batch_size = 4
+            seq_len = 128
+            device = next(self.raw_model.parameters()).device
+
+            x = torch.randint(0, 50257, (batch_size, seq_len), device=device)
+
+            # Compute FIM metrics
+            metrics = self.raw_model.compute_fisher_metrics(x, n_samples=64, topk=8)
+
+            return metrics if metrics else None
+
+        except Exception as e:
+            if self.master_process:
+                print(f"\nWarning: Failed to compute Fisher metrics: {e}")
+            return None
+
+    def _compute_kv_cache_metrics(self):
+        """
+        Compute KV cache memory metrics for different sequence lengths.
+
+        Returns:
+            Dictionary with KV cache metrics or None if not applicable
+        """
+        # Get model config
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        if not hasattr(raw_model, "cfg"):
+            return None
+
+        cfg = raw_model.cfg
+        if not hasattr(cfg, "n_layers"):
+            return None
+
+        n_layers = cfg.n_layers
+        n_heads = cfg.n_heads
+        head_dim = cfg.head_dim
+
+        # Test sequence lengths
+        seq_lengths = [512, 1024, 2048, 4096]
+        batch_size = 1
+
+        metrics = {}
+
+        for seq_len in seq_lengths:
+            # Standard KV cache: K and V for each layer (2 bytes per fp16 element)
+            standard_cache_bytes = (
+                batch_size * n_layers * 2 * n_heads * seq_len * head_dim * 2
+            )
+            standard_cache_mb = standard_cache_bytes / 1024**2
+
+            # Check if model uses compressed KV cache
+            if hasattr(cfg, "d_latent"):
+                # MLA model - cache stores latent instead of full K/V
+                d_latent = cfg.d_latent
+
+                # Check if KVSplice compression is used
+                if hasattr(raw_model, "compression_ratio"):
+                    compression_ratio = raw_model.compression_ratio
+                    d_compressed = int(d_latent * compression_ratio)
+                    compressed_cache_bytes = (
+                        batch_size * n_layers * seq_len * d_compressed * 2
+                    )
+                    actual_cache_mb = compressed_cache_bytes / 1024**2
+                    cache_type = "kvsplice"
+                else:
+                    # MLA without KVSplice - cache stores d_latent
+                    latent_cache_bytes = batch_size * n_layers * seq_len * d_latent * 2
+                    actual_cache_mb = latent_cache_bytes / 1024**2
+                    cache_type = "mla"
+
+                savings_pct = (1 - actual_cache_mb / standard_cache_mb) * 100
+            else:
+                # Standard GPT-2
+                actual_cache_mb = standard_cache_mb
+                cache_type = "standard"
+                savings_pct = 0.0
+
+            metrics[f"kv_cache/seq{seq_len}_standard_mb"] = standard_cache_mb
+            metrics[f"kv_cache/seq{seq_len}_actual_mb"] = actual_cache_mb
+            metrics[f"kv_cache/seq{seq_len}_savings_pct"] = savings_pct
+
+        # Summary metrics
+        if cache_type == "kvsplice":
+            metrics["kv_cache/type"] = 2.0  # KVSplice
+            if hasattr(raw_model, "compression_ratio"):
+                metrics["kv_cache/compression_ratio"] = raw_model.compression_ratio
+        elif cache_type == "mla":
+            metrics["kv_cache/type"] = 1.0  # MLA
+        else:
+            metrics["kv_cache/type"] = 0.0  # Standard
+
+        # Print summary (once at first eval)
+        if self.master_process and self.iter_num == self.args.eval_interval:
+            print("\n--- KV Cache Memory ---")
+            print(f"  Cache type: {cache_type}")
+            for seq_len in seq_lengths:
+                actual = metrics[f"kv_cache/seq{seq_len}_actual_mb"]
+                savings = metrics[f"kv_cache/seq{seq_len}_savings_pct"]
+                if savings > 0:
+                    print(f"  seq={seq_len}: {actual:.1f} MB ({savings:.0f}% savings)")
+                else:
+                    print(f"  seq={seq_len}: {actual:.1f} MB")
+
+        return metrics
+
+    def _compute_kvsplice_param_metrics(self):
+        """
+        Compute metrics on KVSplice transform_scale and transform_shift parameters.
+
+        These parameters control the learned monotonic transform before compression:
+            x_transformed = x * softplus(scale) + shift
+
+        Returns:
+            Dictionary with KVSplice parameter metrics or None if not applicable
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Check if this is an MLA model with KVSplice
+        if not hasattr(raw_model, "transformer"):
+            return None
+
+        # Get first layer's attention to check for KVSplice
+        first_layer = raw_model.transformer.h[0]
+        if not hasattr(first_layer, "attn"):
+            return None
+
+        attn = first_layer.attn
+        if not hasattr(attn, "kvsplice"):
+            return None
+
+        kvsplice = attn.kvsplice
+
+        # Extract scale and shift parameters
+        scale_raw = kvsplice.transform_scale.data  # [d_in]
+        shift = kvsplice.transform_shift.data  # [d_in]
+
+        # Apply softplus to get actual scale values
+        import torch.nn.functional as F
+
+        scale = F.softplus(scale_raw)
+
+        # Compute statistics
+        metrics = {}
+
+        # Scale statistics
+        metrics["kvsplice/scale_mean"] = scale.mean().item()
+        metrics["kvsplice/scale_std"] = scale.std().item()
+        metrics["kvsplice/scale_min"] = scale.min().item()
+        metrics["kvsplice/scale_max"] = scale.max().item()
+
+        # Shift statistics
+        metrics["kvsplice/shift_mean"] = shift.mean().item()
+        metrics["kvsplice/shift_std"] = shift.std().item()
+        metrics["kvsplice/shift_min"] = shift.min().item()
+        metrics["kvsplice/shift_max"] = shift.max().item()
+
+        # Count dimensions with extreme scaling (important for pruning)
+        scale_threshold_low = 0.1  # Nearly zero scale = unimportant dimension
+        scale_threshold_high = 10.0  # Very high scale = important dimension
+
+        low_scale_dims = (scale < scale_threshold_low).sum().item()
+        high_scale_dims = (scale > scale_threshold_high).sum().item()
+
+        low_scale_pct = 100 * low_scale_dims / scale.numel()
+        high_scale_pct = 100 * high_scale_dims / scale.numel()
+
+        metrics["kvsplice/low_scale_dims"] = low_scale_dims
+        metrics["kvsplice/high_scale_dims"] = high_scale_dims
+        metrics["kvsplice/low_scale_pct"] = low_scale_pct
+        metrics["kvsplice/high_scale_pct"] = high_scale_pct
+
+        # Histogram of scale values (for visualization in W&B)
+        import wandb
+
+        if "wandb" in self.trackers and self.master_process:
+            try:
+                # Create histogram of actual scale values
+                scale_np = scale.cpu().numpy()
+                shift_np = shift.cpu().numpy()
+
+                metrics["kvsplice/scale_histogram"] = wandb.Histogram(scale_np)
+                metrics["kvsplice/shift_histogram"] = wandb.Histogram(shift_np)
+
+                # Create scatter plot: scale vs dimension index
+                # This shows which dimensions are being scaled up/down
+                import matplotlib.pyplot as plt
+                import numpy as np
+
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+
+                # Plot 1: Scale values by dimension
+                dims = np.arange(len(scale_np))
+                ax1.scatter(dims, scale_np, alpha=0.6, s=10)
+                ax1.axhline(
+                    y=1.0,
+                    color="r",
+                    linestyle="--",
+                    alpha=0.5,
+                    label="scale=1 (identity)",
+                )
+                ax1.axhline(
+                    y=scale_threshold_low,
+                    color="orange",
+                    linestyle="--",
+                    alpha=0.5,
+                    label=f"low (<{scale_threshold_low})",
+                )
+                ax1.axhline(
+                    y=scale_threshold_high,
+                    color="green",
+                    linestyle="--",
+                    alpha=0.5,
+                    label=f"high (>{scale_threshold_high})",
+                )
+                ax1.set_xlabel("Dimension Index")
+                ax1.set_ylabel("Scale (softplus)")
+                ax1.set_title("KVSplice Scale by Dimension")
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+
+                # Plot 2: Shift values by dimension
+                ax2.scatter(dims, shift_np, alpha=0.6, s=10, color="purple")
+                ax2.axhline(
+                    y=0.0, color="r", linestyle="--", alpha=0.5, label="shift=0"
+                )
+                ax2.set_xlabel("Dimension Index")
+                ax2.set_ylabel("Shift")
+                ax2.set_title("KVSplice Shift by Dimension")
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+
+                plt.tight_layout()
+
+                # Log to W&B
+                metrics["kvsplice/scale_shift_plot"] = wandb.Image(fig)
+                plt.close(fig)
+
+                # Create a second visualization: sorted scale values
+                # This shows the "importance" distribution
+                fig2, ax = plt.subplots(1, 1, figsize=(10, 5))
+
+                sorted_scales = np.sort(scale_np)[::-1]  # Sort descending
+                ax.plot(sorted_scales, linewidth=2)
+                ax.axhline(
+                    y=1.0,
+                    color="r",
+                    linestyle="--",
+                    alpha=0.5,
+                    label="scale=1 (identity)",
+                )
+                ax.axhline(
+                    y=scale_threshold_low,
+                    color="orange",
+                    linestyle="--",
+                    alpha=0.5,
+                    label=f"low (<{scale_threshold_low})",
+                )
+                ax.fill_between(
+                    range(len(sorted_scales)),
+                    0,
+                    sorted_scales,
+                    where=(sorted_scales < scale_threshold_low),
+                    alpha=0.3,
+                    color="orange",
+                    label=f"Prunable ({low_scale_dims} dims)",
+                )
+                ax.set_xlabel("Dimension (sorted by importance)")
+                ax.set_ylabel("Scale (softplus)")
+                ax.set_title(
+                    f"KVSplice Dimension Importance ({low_scale_pct:.1f}% prunable)"
+                )
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+                metrics["kvsplice/importance_plot"] = wandb.Image(fig2)
+                plt.close(fig2)
+
+            except Exception as e:
+                if self.master_process:
+                    print(f"\nWarning: Failed to create KVSplice visualizations: {e}")
+
+        # Print summary (once at first eval)
+        if self.master_process and self.iter_num == self.args.eval_interval:
+            print("\n--- KVSplice Parameters ---")
+            print(
+                f"  Scale: {metrics['kvsplice/scale_mean']:.3f} ± {metrics['kvsplice/scale_std']:.3f}"
+            )
+            print(
+                f"         range=[{metrics['kvsplice/scale_min']:.3f}, {metrics['kvsplice/scale_max']:.3f}]"
+            )
+            print(
+                f"  Shift: {metrics['kvsplice/shift_mean']:.3f} ± {metrics['kvsplice/shift_std']:.3f}"
+            )
+            print(
+                f"         range=[{metrics['kvsplice/shift_min']:.3f}, {metrics['kvsplice/shift_max']:.3f}]"
+            )
+            print(
+                f"  Low-scale dims (<{scale_threshold_low}): {low_scale_dims} ({metrics['kvsplice/low_scale_pct']:.1f}%)"
+            )
+            print(
+                f"  High-scale dims (>{scale_threshold_high}): {high_scale_dims} ({metrics['kvsplice/high_scale_pct']:.1f}%)"
+            )
+
+        return metrics
