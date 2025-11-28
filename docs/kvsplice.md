@@ -136,6 +136,10 @@ cost is minimal compared to the 2x cache reduction benefit.
 MLA+KVSplice training time is comparable to MLA alone, with minimal additional
 quality cost.
 
+![GPU Training Comparison](kvsplice/gpu_training_comparison.png)
+
+![GPU Degradation Comparison](kvsplice/gpu_degradation_comparison.png)
+
 **GPU comparison results** (2-4 hour runs on TinyStories):
 
 | GPU | Architecture | Iterations | Time | Final Val Loss | Final PPL |
