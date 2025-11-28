@@ -18,7 +18,7 @@ plt.rcParams.update(
 )
 
 # Data from GPU comparison results
-gpus = ["H100", "W7900", "A100-40G"]
+gpus = ["H100\n(2h)", "W7900\n(4h)", "A100-40G\n(4h)"]
 mla_ppl = [8.68, 10.31, 16.66]
 kvsplice_ppl = [8.78, 10.65, 16.94]
 mla_loss = [2.161, 2.333, 2.813]
