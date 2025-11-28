@@ -25,6 +25,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Import Fisher metrics function
+from gpt2.model import compute_fisher_metrics
+
 
 @dataclass
 class MLA_Config:
