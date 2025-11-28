@@ -21,6 +21,7 @@ parent_dir = os.path.dirname(
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT2, GPTConfig
+from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, MLA_Config
 from lib.optimizers import create_optimizer
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer
@@ -83,19 +84,62 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         pass
 
     def create_model(self):
-        """Create standard GPT-2 model."""
-        if self.master_process:
-            print(f"Initializing GPT-2 model: {self.args.model_name}")
+        """Create GPT-2 model (standard or MLA variant)."""
+        # Check if MLA is enabled via config or environment
+        enable_mla = getattr(self.config, "ENABLE_MLA", False)
+        mla_variant = os.environ.get("CONFIG_MLA_VARIANT") or getattr(
+            self.config, "MLA_VARIANT", ""
+        )
 
-        # Create GPT config
-        config = GPTConfig.from_name(self.args.model_name)
-        config.block_size = self.args.block_size
-        config.dropout = self.args.dropout
-        config.bias = getattr(self.args, "bias", True)
+        if enable_mla and mla_variant:
+            # Create MLA model
+            if self.master_process:
+                print(f"Initializing MLA model: {mla_variant}")
 
-        # Create model
-        model = GPT2(config)
-        model.to(self.device)
+            # Get base model config
+            base_config = GPTConfig.from_name(self.args.model_name)
+
+            # Create MLA config
+            config = MLA_Config(
+                d_model=base_config.n_embd,
+                n_heads=base_config.n_head,
+                head_dim=base_config.n_embd // base_config.n_head,
+                d_latent=getattr(self.config, "MLA_D_LATENT", 256),
+                block_size=self.args.block_size,
+                n_layers=base_config.n_layer,
+                dropout=self.args.dropout,
+            )
+
+            # Create appropriate MLA model
+            if "mla_kv" in mla_variant.lower():
+                compression_ratio = float(
+                    getattr(self.config, "MLA_COMPRESSION_RATIO", 0.5)
+                )
+                model = GPT2_MLA_KV(config, compression_ratio=compression_ratio)
+                if self.master_process:
+                    print(f"  MLA+KVSplice: d_latent={config.d_latent}, "
+                          f"compression_ratio={compression_ratio}")
+            else:
+                model = GPT2_MLA(config)
+                if self.master_process:
+                    print(f"  MLA: d_latent={config.d_latent}")
+
+            model.to(self.device)
+
+        else:
+            # Create standard GPT-2 model
+            if self.master_process:
+                print(f"Initializing GPT-2 model: {self.args.model_name}")
+
+            # Create GPT config
+            config = GPTConfig.from_name(self.args.model_name)
+            config.block_size = self.args.block_size
+            config.dropout = self.args.dropout
+            config.bias = getattr(self.args, "bias", True)
+
+            # Create model
+            model = GPT2(config)
+            model.to(self.device)
 
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
