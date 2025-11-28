@@ -86,6 +86,14 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     """
     gpu_info = get_gpu_info()
 
+    # Check if MLA is enabled (requires ~40% more memory than standard GPT-2)
+    # MLA uses extra latent projection layers and different activation patterns
+    enable_mla = getattr(config, "ENABLE_MLA", False)
+    if enable_mla in ("y", True):
+        mla_scale = 0.6  # Conservative: reduce batch by 40% for MLA
+    else:
+        mla_scale = 1.0
+
     # Model-specific defaults and memory scaling
     # GPT-2: Large memory footprint per sample (activations, attention matrices)
     # ResNet: Medium memory footprint (image batches, conv activations)
@@ -181,9 +189,11 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
         (None, 0, (2, 1)),
     ]
 
-    # Scale batch sizes based on model type
+    # Scale batch sizes based on model type and MLA
+    # Apply both model scale (ResNet vs GPT-2) and MLA scale (MLA vs vanilla GPT-2)
+    combined_scale = scale * mla_scale
     heuristics = [
-        (patterns, min_free, (int(bc * scale), int(bnc * scale)))
+        (patterns, min_free, (int(bc * combined_scale), int(bnc * combined_scale)))
         for patterns, min_free, (bc, bnc) in base_heuristics
     ]
 
@@ -225,9 +235,11 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     else:
         gpu_str = gpu_name
 
+    # Build rationale with MLA info if applicable
+    mla_info = "+MLA" if mla_scale < 1.0 else ""
     rationale = (
         f"GPU: {gpu_str} ({gpu_mem_gb:.1f}GB total, {gpu_free_gb:.1f}GB free), "
-        f"model={model_type}, compile={'ON' if compile_on else 'OFF'} → "
+        f"model={model_type}{mla_info}, compile={'ON' if compile_on else 'OFF'} → "
         f"batch={batch_size}, grad_acc={gradient_accumulation} "
         f"(per_gpu_eff={per_gpu_batch}, total_eff={effective_batch}, target={target_eff})"
     )
