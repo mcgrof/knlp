@@ -80,9 +80,9 @@ class AblationCoordinator:
             step_start_time = time.time()
 
             # Create trainer for this step
-            from .ra import RATrainer
+            from .vanilla import VanillaGPT2Trainer
 
-            trainer = RATrainer(self.args, self.config, ablation_step=step)
+            trainer = VanillaGPT2Trainer(self.args, self.config, ablation_step=step)
 
             # Run training or dry-run
             if getattr(self.args, "dry_run", False):
