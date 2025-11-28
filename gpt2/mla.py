@@ -466,14 +466,16 @@ class GPT2_MLA(nn.Module):
         """Extract attention probabilities from MLA_Flash layer."""
         B, T, _ = x.shape
 
-        # Project to latent
-        latent = attn.to_latent(x)
+        # Q path - direct projection
+        q = attn.W_q(x)
+        q = q.view(B, T, attn.n_heads, attn.head_dim).transpose(1, 2)
 
-        # Decompress to Q, K, V
-        qkv = attn.from_latent(latent)
-        qkv = qkv.view(B, T, 3, attn.n_heads, attn.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        # KV path - project to latent then decompress
+        kv_latent = attn.to_kv_latent(x)
+        kv = attn.from_kv_latent(kv_latent)
+        kv = kv.view(B, T, 2, attn.n_heads, attn.head_dim)
+        k = kv[:, :, 0].transpose(1, 2)
+        v = kv[:, :, 1].transpose(1, 2)
 
         # Apply RoPE
         cos, sin = attn.rope(x, T)
