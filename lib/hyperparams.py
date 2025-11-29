@@ -170,17 +170,18 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     # Heuristic table for batch size selection (for GPT-2 baseline)
     # Format: (gpu_pattern, min_free_mem_gb) -> (batch_with_compile, batch_without_compile)
     # CRITICAL: These are based on AVAILABLE memory, not total memory
-    # Note: torch.compile() optimizes memory, so compile=ON allows larger batches
+    # Note: torch.compile() creates significant memory overhead during compilation phase
+    # Compiled batches must be conservative to avoid OOM during graph construction
     # These will be scaled by model_type scale_factor
     base_heuristics = [
         # Very high free memory (128GB+)
-        (None, 128, (256, 128)),
-        # High free memory (64GB+)
-        (None, 64, (128, 64)),
+        (None, 128, (128, 128)),
+        # High free memory (64GB+) - H100/A100 80GB
+        (None, 64, (64, 64)),
         # Good free memory (32GB+) - W7900/A100 if mostly free
-        (None, 32, (32, 16)),
+        (None, 32, (24, 16)),
         # Medium free memory (16GB+) - A10G or W7900 with other processes
-        (None, 16, (16, 8)),
+        (None, 16, (12, 8)),
         # Low free memory (8GB+)
         (None, 8, (8, 4)),
         # Very low free memory (4GB+)
