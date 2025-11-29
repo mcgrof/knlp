@@ -126,9 +126,15 @@ class CompressedKVAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        past_key_values=None,  # Transformers compatibility
         output_attentions: bool = False,
         use_cache: bool = False,
+        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor]]]:
+        # Handle both singular and plural argument names
+        if past_key_values is not None:
+            past_key_value = past_key_values
+
         bsz, q_len, _ = hidden_states.size()
 
         # Project Q, K, V
