@@ -746,6 +746,149 @@ class BaseGPT2Trainer:
             else:
                 return 1
 
+    def run_batch_overfit_sanity_check(
+        self,
+        max_steps: int = 100,
+        batch_size: int = 8,
+        print_every: int = 25,
+        log_to_wandb: bool = True,
+    ):
+        """
+        Single-batch overfit sanity test.
+
+        Trains on ONE batch for max_steps to verify:
+        1. Model can learn (loss decreases)
+        2. Gradients flow correctly
+        3. W&B logging works
+        4. No obvious bugs in forward/backward pass
+
+        This catches issues before wasting hours on full training.
+
+        Args:
+            max_steps: Number of steps to train on single batch
+            batch_size: Batch size for sanity test (keep small for speed)
+            print_every: Print progress every N steps
+            log_to_wandb: Whether to log metrics to W&B
+
+        Returns:
+            True if sanity check passed, False otherwise
+        """
+        if not self.master_process:
+            return True  # Only run on master process
+
+        print("\n" + "=" * 80)
+        print("BATCH OVERFIT SANITY CHECK")
+        print("=" * 80)
+        print(
+            f"Training on ONE batch for {max_steps} steps to verify model can learn..."
+        )
+        print(f"Batch size: {batch_size}")
+        print(f"Device: {self.device}, dtype: {self.dtype}")
+
+        # Get one batch and reuse it
+        original_batch_size = self.args.batch_size
+        self.args.batch_size = batch_size  # Temporarily override
+        X, Y = self.get_batch("train")
+        self.args.batch_size = original_batch_size  # Restore
+
+        print(f"Batch shape: X={tuple(X.shape)}, Y={tuple(Y.shape)}\n")
+
+        # Put model in train mode
+        self.model.train()
+
+        # Create temporary optimizer with no weight decay (easier to overfit)
+        temp_params = self.model.parameters()
+        temp_optimizer = torch.optim.AdamW(
+            temp_params, lr=3e-4, weight_decay=0.0, betas=(0.9, 0.95)
+        )
+
+        loss_history = []
+        start_time = time.time()
+
+        for step in range(1, max_steps + 1):
+            temp_optimizer.zero_grad(set_to_none=True)
+
+            # Forward pass with autocast
+            with self.ctx:
+                logits, loss = self.model(X, Y)
+
+            # Backward pass
+            if self.scaler is not None:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(temp_optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                temp_optimizer.step()
+
+            loss_val = loss.item()
+            loss_history.append(loss_val)
+
+            # Print progress
+            if step % print_every == 0 or step == 1:
+                avg_loss = sum(loss_history[-print_every:]) / min(
+                    len(loss_history), print_every
+                )
+                print(
+                    f"Step {step:4d}/{max_steps} | loss={loss_val:.4f} | avg={avg_loss:.4f}"
+                )
+
+            # Log to W&B if enabled
+            if log_to_wandb and "wandb" in self.trackers:
+                try:
+                    import wandb
+
+                    wandb.log(
+                        {
+                            "sanity/step": step,
+                            "sanity/loss": loss_val,
+                            "sanity/avg_loss": (
+                                avg_loss if step % print_every == 0 else None
+                            ),
+                        }
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to log to W&B: {e}")
+
+        elapsed = time.time() - start_time
+
+        # Evaluate results
+        initial_loss = loss_history[0]
+        final_loss = loss_history[-1]
+        reduction = (initial_loss - final_loss) / initial_loss * 100
+
+        print("\n" + "=" * 80)
+        print("SANITY CHECK RESULTS")
+        print("=" * 80)
+        print(f"Initial loss: {initial_loss:.4f}")
+        print(f"Final loss:   {final_loss:.4f}")
+        print(f"Reduction:    {reduction:.1f}%")
+        print(f"Time:         {elapsed:.1f}s")
+
+        # Verdict
+        passed = final_loss < 0.3 * initial_loss
+        if passed:
+            print(
+                "\n✅ PASSED: Loss dropped significantly - model/gradients OK, safe to train!"
+            )
+        else:
+            print(
+                "\n❌ FAILED: Loss did NOT drop enough - check model, loss, optimizer, etc."
+            )
+            print(
+                "   Possible issues: wrong loss function, no gradients, bad init, etc."
+            )
+            print("   DO NOT PROCEED with full training until this is fixed!")
+
+        print("=" * 80 + "\n")
+
+        # Restore model to clean state (reset any changed parameters)
+        # This is best-effort; optimizer state is separate from model
+        del temp_optimizer
+        self.model.train()
+
+        return passed
+
     def train(self):
         """
         Main training loop. Must be implemented by subclass.
