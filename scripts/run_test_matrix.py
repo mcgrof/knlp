@@ -2229,8 +2229,14 @@ def main():
 
         if baseline_run_id:
             # Filter out baseline combinations
+            # OR skip first test in non-ablation mode
             filtered_combinations = []
-            for combo in all_combinations:
+            has_ablation_steps = any(
+                c.get("ra_mla_ablation_step") or c.get("vanilla_ablation_step")
+                for c in all_combinations
+            )
+
+            for idx, combo in enumerate(all_combinations):
                 ra_step = combo.get("ra_mla_ablation_step")
                 vanilla_step = combo.get("vanilla_ablation_step")
 
@@ -2246,6 +2252,9 @@ def main():
                         and vanilla_step[0].isalpha()
                         and vanilla_step[1] == "0"
                     )
+                elif not has_ablation_steps and idx == 0:
+                    # No ablation steps - skip first test as baseline
+                    is_baseline = True
 
                 if not is_baseline:
                     filtered_combinations.append(combo)
@@ -2470,10 +2479,15 @@ def main():
 
         if baseline_run_id:
             # Filter out baseline combinations (X0 where X is single letter, or "0")
+            # OR skip first test in non-ablation mode
             filtered_combinations = []
             skipped_baseline = None
+            has_ablation_steps = any(
+                c.get("ra_mla_ablation_step") or c.get("vanilla_ablation_step")
+                for c in combinations
+            )
 
-            for combo in combinations:
+            for idx, combo in enumerate(combinations):
                 ra_step = combo.get("ra_mla_ablation_step")
                 vanilla_step = combo.get("vanilla_ablation_step")
 
@@ -2493,6 +2507,10 @@ def main():
                     )
                     if is_baseline:
                         skipped_baseline = vanilla_step
+                elif not has_ablation_steps and idx == 0:
+                    # No ablation steps - skip first test as baseline
+                    is_baseline = True
+                    skipped_baseline = "first test"
 
                 if not is_baseline:
                     filtered_combinations.append(combo)
