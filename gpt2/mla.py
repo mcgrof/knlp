@@ -165,9 +165,7 @@ class LearnedKVSplice(nn.Module):
         compressed = self.compress(x_transformed)
         compressed = self.latent_ln(compressed)
         decompressed = self.expand(compressed)
-        return (decompressed - self.transform_shift) / (
-            F.softplus(self.transform_scale) + 1e-6
-        )
+        return decompressed
 
     def compress_only(self, x: torch.Tensor) -> torch.Tensor:
         x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
@@ -588,14 +586,17 @@ class MLA_KVSplice(nn.Module):
                 kv_latent
             ).item()
 
+        # Apply KVSplice compression (always in training path!)
+        kv_latent_processed = self.kvsplice(kv_latent)
+
         # Handle cache (stored in compressed form, decompress on read)
         if cache is not None:
             # Decompress cached latents
             cache_decompressed = self.kvsplice.decompress_only(cache)
-            full_kv_latent = torch.cat([cache_decompressed, kv_latent], dim=1)
+            full_kv_latent = torch.cat([cache_decompressed, kv_latent_processed], dim=1)
             T_total = full_kv_latent.shape[1]
         else:
-            full_kv_latent = kv_latent
+            full_kv_latent = kv_latent_processed
             T_total = T
 
         # Decompress to K, V
@@ -630,7 +631,9 @@ class MLA_KVSplice(nn.Module):
 
         # Store compressed cache
         if use_cache:
-            new_cache = self.kvsplice.compress_only(full_kv_latent)
+            # Compress the original kv_latent, not the processed one
+            # (kv_latent_processed has already been through compress+expand)
+            new_cache = self.kvsplice.compress_only(kv_latent)
         else:
             new_cache = None
 
