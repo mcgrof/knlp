@@ -255,8 +255,8 @@ def main():
     model_original = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.float16,
-        device_map="auto",
     )
+    model_original = model_original.to(args.device)
 
     print("\nRunning benchmarks...")
     results_original = []
@@ -291,8 +291,8 @@ def main():
     model_kvsplice = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.float16,
-        device_map="auto",
     )
+    model_kvsplice = model_kvsplice.to(args.device)
 
     print("Patching with KVSplice...")
     patch_model_with_kvsplice(
@@ -306,9 +306,10 @@ def main():
     print(f"\nEstimated KV cache (seq_len=2048):")
     print(f"  Original: {orig_cache_mb:.1f} MB")
     print(f"  Compressed: {compressed_cache_mb:.1f} MB")
-    print(
-        f"  Reduction: {orig_cache_mb - compressed_cache_mb:.1f} MB ({100 * (1 - compressed_cache_mb/orig_cache_mb):.1f}%)"
-    )
+    if orig_cache_mb > 0:
+        print(
+            f"  Reduction: {orig_cache_mb - compressed_cache_mb:.1f} MB ({100 * (1 - compressed_cache_mb/orig_cache_mb):.1f}%)"
+        )
 
     print("\nRunning benchmarks...")
     results_kvsplice = []
