@@ -3,6 +3,15 @@
 #
 # This script runs both benchmark and quality evaluation on DeepSeek-V2-Lite.
 # Adjust parameters as needed for your hardware.
+#
+# Requirements:
+#   - Python environment with transformers, torch, datasets, accelerate
+#   - sentencepiece: pip install sentencepiece
+#
+# Usage:
+#   Activate your Python environment first, then run this script:
+#   $ source /path/to/your/venv/bin/activate
+#   $ ./scripts/test_deepseek_kvsplice.sh
 
 set -e
 
@@ -17,7 +26,7 @@ echo "Compression ratio: $COMPRESSION_RATIO (2x KV cache compression)"
 echo ""
 
 # Check if model cache exists
-echo "Note: First run will download the model (~8GB for Lite version)"
+echo "Note: First run will download the model (~27GB for Lite version)"
 echo "Press Ctrl+C to cancel, or Enter to continue..."
 read
 
