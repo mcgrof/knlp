@@ -156,7 +156,12 @@ class CompressedKVAttention(nn.Module):
         # RoPE
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
+            # Handle nested tuple structure from transformers
+            cache_k, cache_v = past_key_value
+            if isinstance(cache_k, tuple):
+                # Nested structure: ((k, v),) -> (k, v)
+                cache_k, cache_v = cache_k[0], cache_v[0]
+            kv_seq_len += cache_k.shape[-2]
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = apply_rotary_pos_emb(
@@ -165,11 +170,16 @@ class CompressedKVAttention(nn.Module):
 
         # Handle cache
         if past_key_value is not None:
+            # Unwrap nested tuple structure if needed
+            cache_k, cache_v = past_key_value
+            if isinstance(cache_k, tuple):
+                cache_k, cache_v = cache_k[0], cache_v[0]
+
             # Decompress cached K, V
             if self.use_compressed_cache:
-                # past_key_value: (compressed_k, compressed_v)
+                # cache: (compressed_k, compressed_v)
                 # Shape: [bsz, num_kv_heads, past_len, d_compressed]
-                compressed_k, compressed_v = past_key_value
+                compressed_k, compressed_v = cache_k, cache_v
                 past_len = compressed_k.shape[2]
 
                 # Decompress: reshape, expand, reshape back
@@ -194,7 +204,7 @@ class CompressedKVAttention(nn.Module):
                 )
             else:
                 # Standard cache (not compressed)
-                past_k, past_v = past_key_value
+                past_k, past_v = cache_k, cache_v
 
             # Concatenate past and current
             key_states = torch.cat([past_k, key_states], dim=2)
