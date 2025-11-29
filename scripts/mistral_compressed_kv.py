@@ -318,7 +318,7 @@ def load_mistral_with_compressed_kv(
         print(f"Cache path: {cache_path}")
 
         # Load cached compressor and model
-        cached_data = torch.load(cache_path, map_location=device)
+        cached_data = torch.load(cache_path, map_location=device, weights_only=False)
         compressor = cached_data["compressor"]
 
         # Load base model
