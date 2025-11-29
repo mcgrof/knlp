@@ -346,11 +346,17 @@ def main():
     print(f"Compression: {args.compression_ratio}")
 
     # Load model and tokenizer
-    print(f"\nLoading model...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    print(f"\nLoading tokenizer...")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
+    except (TypeError, OSError) as e:
+        print(f"  Failed with fast tokenizer, trying slow tokenizer...")
+        tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    print(f"Loading model...")
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.float16
     ).to(args.device)
