@@ -380,23 +380,27 @@ def load_mistral_with_compressed_kv(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # Collect activations
-    print(f"Collecting {calibration_samples} activation samples...")
+    # Collect K/V head activations for SVD calibration
+    print(f"Collecting {calibration_samples} K/V activation samples...")
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
     texts = [item["text"] for item in dataset if len(item["text"].strip()) > 50]
 
-    activations = []
+    head_dim = config.hidden_size // config.num_attention_heads
+    k_activations = []
     samples_collected = 0
 
-    def hook_fn(module, input, output):
-        if isinstance(output, tuple):
-            hidden = output[0]
-        else:
-            hidden = output
-        activations.append(hidden.detach().cpu().reshape(-1, hidden.shape[-1]))
+    # Hook K projection to capture per-head activations
+    def hook_k_proj(module, input, output):
+        # output shape: [batch, seq, num_kv_heads * head_dim]
+        bsz, seq_len, _ = output.shape
+        # Reshape to [batch, seq, num_kv_heads, head_dim]
+        k_heads = output.reshape(bsz, seq_len, config.num_key_value_heads, head_dim)
+        # Flatten to [batch * seq * num_kv_heads, head_dim]
+        k_flat = k_heads.reshape(-1, head_dim)
+        k_activations.append(k_flat.detach().cpu())
 
-    # Hook first layer attention
-    hook = model.model.layers[0].self_attn.register_forward_hook(hook_fn)
+    # Hook K projection on first layer
+    hook = model.model.layers[0].self_attn.k_proj.register_forward_hook(hook_k_proj)
 
     model.eval()
     with torch.no_grad():
@@ -411,13 +415,15 @@ def load_mistral_with_compressed_kv(
                 continue
 
             model(**inputs)
-            samples_collected += inputs["input_ids"].shape[1]
+            samples_collected += (
+                inputs["input_ids"].shape[1] * config.num_key_value_heads
+            )
 
     hook.remove()
 
-    # Compute SVD
-    all_activations = torch.cat(activations, dim=0)[:calibration_samples].float()
-    print(f"Computing SVD on {all_activations.shape}...")
+    # Compute SVD on per-head activations
+    all_activations = torch.cat(k_activations, dim=0)[:calibration_samples].float()
+    print(f"Computing SVD on K heads: {all_activations.shape}...")
 
     mean = all_activations.mean(dim=0, keepdim=True)
     centered = all_activations - mean
@@ -425,7 +431,6 @@ def load_mistral_with_compressed_kv(
     U, S, V = torch.svd(centered.cpu())
 
     total_var = S.pow(2).sum()
-    head_dim = config.hidden_size // config.num_attention_heads
     d_compressed = max(1, int(head_dim * compression_ratio))
     kept_var = S[:d_compressed].pow(2).sum()
     explained = (kept_var / total_var * 100).item()
@@ -433,8 +438,8 @@ def load_mistral_with_compressed_kv(
     print(f"Explained variance: {explained:.2f}%")
     print(f"Compression: {head_dim} → {d_compressed} per head")
 
-    # Create compressor
-    V_compressed = V[:, :d_compressed]  # [hidden_size, d_compressed]
+    # Create compressor from top-k principal components
+    V_compressed = V[:, :d_compressed]  # [head_dim, d_compressed]
 
     compressor = SVDCompressor(head_dim, d_compressed)
     compressor.calibrate_from_svd(V_compressed)
