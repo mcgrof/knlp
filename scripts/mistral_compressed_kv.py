@@ -178,9 +178,10 @@ class CompressedKVAttention(nn.Module):
         if past_key_value is not None:
             # Handle transformers Cache object or tuple
             if hasattr(past_key_value, "update"):
-                # It's a Cache object - for now, don't use compressed cache with Cache objects
-                # Just concatenate normally (transformers will manage the cache)
-                pass  # No past to concat, transformers handles it
+                # It's a Cache object - transformers will manage it
+                # We can't use compressed cache with Cache objects yet
+                # Skip manual cache handling
+                pass
             else:
                 # Tuple format - unwrap and decompress
                 if len(past_key_value) >= 2:
@@ -188,40 +189,40 @@ class CompressedKVAttention(nn.Module):
                     if isinstance(cache_k, tuple):
                         cache_k, cache_v = cache_k[0], cache_v[0]
 
-            # Decompress cached K, V (only for tuple format)
-            if self.use_compressed_cache and not hasattr(past_key_value, "update"):
-                # cache: (compressed_k, compressed_v)
-                # Shape: [bsz, num_kv_heads, past_len, d_compressed]
-                compressed_k, compressed_v = cache_k, cache_v
-                past_len = compressed_k.shape[2]
+                    # Decompress or use directly
+                    if self.use_compressed_cache:
+                        # cache: (compressed_k, compressed_v)
+                        # Shape: [bsz, num_kv_heads, past_len, d_compressed]
+                        compressed_k, compressed_v = cache_k, cache_v
+                        past_len = compressed_k.shape[2]
 
-                # Decompress: reshape, expand, reshape back
-                # [bsz, num_kv_heads, past_len, d_compressed] -> [bsz * num_kv_heads * past_len, d_compressed]
-                compressed_k_flat = compressed_k.reshape(
-                    -1, self.compressor.d_compressed
-                )
-                compressed_v_flat = compressed_v.reshape(
-                    -1, self.compressor.d_compressed
-                )
+                        # Decompress: reshape, expand, reshape back
+                        # [bsz, num_kv_heads, past_len, d_compressed] -> [bsz * num_kv_heads * past_len, d_compressed]
+                        compressed_k_flat = compressed_k.reshape(
+                            -1, self.compressor.d_compressed
+                        )
+                        compressed_v_flat = compressed_v.reshape(
+                            -1, self.compressor.d_compressed
+                        )
 
-                # Expand to full dimension
-                past_k_flat = self.compressor.expand(compressed_k_flat)
-                past_v_flat = self.compressor.expand(compressed_v_flat)
+                        # Expand to full dimension
+                        past_k_flat = self.compressor.expand(compressed_k_flat)
+                        past_v_flat = self.compressor.expand(compressed_v_flat)
 
-                # Reshape back to [bsz, num_kv_heads, past_len, head_dim]
-                past_k = past_k_flat.reshape(
-                    bsz, self.num_key_value_heads, past_len, self.head_dim
-                )
-                past_v = past_v_flat.reshape(
-                    bsz, self.num_key_value_heads, past_len, self.head_dim
-                )
-            else:
-                # Standard cache (not compressed)
-                past_k, past_v = cache_k, cache_v
+                        # Reshape back to [bsz, num_kv_heads, past_len, head_dim]
+                        past_k = past_k_flat.reshape(
+                            bsz, self.num_key_value_heads, past_len, self.head_dim
+                        )
+                        past_v = past_v_flat.reshape(
+                            bsz, self.num_key_value_heads, past_len, self.head_dim
+                        )
+                    else:
+                        # Standard cache (not compressed)
+                        past_k, past_v = cache_k, cache_v
 
-            # Concatenate past and current
-            key_states = torch.cat([past_k, key_states], dim=2)
-            value_states = torch.cat([past_v, value_states], dim=2)
+                    # Concatenate past and current
+                    key_states = torch.cat([past_k, key_states], dim=2)
+                    value_states = torch.cat([past_v, value_states], dim=2)
 
         # Prepare cache for next iteration
         if use_cache:
