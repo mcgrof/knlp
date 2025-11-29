@@ -436,7 +436,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt2",
+        default="openai-community/gpt2",
         help="Model name or path",
     )
     parser.add_argument(
