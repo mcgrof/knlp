@@ -68,12 +68,12 @@ def create_svd_projection(
     activations_centered = activations - mean
 
     print(f"  Computing SVD...")
-    # Compute SVD
-    U, S, Vh = torch.svd(activations_centered.cpu())
+    # Compute SVD (economic mode: V has shape [d_in, min(n_samples, d_in)])
+    U, S, V = torch.svd(activations_centered.cpu())
 
-    # Top k components
-    compress_weight = Vh[:d_compressed, :].to(device)
-    expand_weight = compress_weight.T.to(device)
+    # Top k components (columns of V are the principal directions)
+    expand_weight = V[:, :d_compressed].to(device)  # [d_in, d_compressed]
+    compress_weight = expand_weight.T.to(device)  # [d_compressed, d_in]
 
     # Compute explained variance
     total_var = S.pow(2).sum()
@@ -83,7 +83,7 @@ def create_svd_projection(
     # Compute reconstruction error on sample
     sample = activations[:100].to(device)
     compressed = sample @ expand_weight
-    reconstructed = compressed @ compress_weight.T
+    reconstructed = compressed @ compress_weight
     recon_error = (sample - reconstructed).pow(2).mean().sqrt().item()
 
     stats = {
