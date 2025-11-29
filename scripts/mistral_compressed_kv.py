@@ -291,6 +291,8 @@ class CompressedKVAttention(nn.Module):
         # Reshape and project
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size)
+        # Ensure dtype matches o_proj weights
+        attn_output = attn_output.to(dtype=self.o_proj.weight.dtype)
         attn_output = self.o_proj(attn_output)
 
         if output_attentions:
