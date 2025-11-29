@@ -170,10 +170,19 @@ def param_groups_for_weight_decay(model, model_type="resnet"):
         List of parameter groups with appropriate weight decay settings
     """
     decay, no_decay = [], []
+    seen_params = set()  # Track parameters by ID to avoid duplicates
+
     for mn, m in model.named_modules():
         for pn, p in m.named_parameters(recurse=False):
             if not p.requires_grad:
                 continue
+
+            # Skip if we've already seen this parameter (avoid duplicates)
+            param_id = id(p)
+            if param_id in seen_params:
+                continue
+            seen_params.add(param_id)
+
             full = f"{mn}.{pn}" if mn else pn
             # Exclude bias, normalization layers, and embeddings from weight decay
             if pn.endswith("bias") or isinstance(
