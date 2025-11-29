@@ -207,9 +207,10 @@ def compare_projection_methods(
     print(f"Compression ratio: {compression_ratio} ({d_compressed}/{d_in})")
 
     # Test data (held out from training)
+    # Convert to float32 for projection operations
     test_size = min(500, activations.shape[0] // 4)
-    test_data = activations[-test_size:].to(device)
-    train_data = activations[:-test_size]
+    test_data = activations[-test_size:].to(device).float()
+    train_data = activations[:-test_size].float()
 
     # Method 1: Random Orthogonal
     print(f"\n{'=' * 80}")
