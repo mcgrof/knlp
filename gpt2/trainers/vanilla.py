@@ -807,6 +807,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         if not hasattr(attn, "kvsplice"):
             return None
 
+        # Check if this is the simplified version (no transform params)
+        if not hasattr(attn.kvsplice, "transform_scale"):
+            return None
+
         # Collect scale/shift from ALL layers for per-layer analysis
         import torch.nn.functional as F
         import numpy as np
