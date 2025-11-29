@@ -200,6 +200,94 @@ def patch_model_with_svd_kvsplice(
     model._kvsplice_compressor = compressor
     model._kvsplice_enabled = True
 
+    # Patch attention layers to compress/decompress cache
+    print(f"\n{'=' * 80}")
+    print("PATCHING ATTENTION LAYERS")
+    print(f"{'=' * 80}")
+
+    num_patched = 0
+    for layer_idx, layer in enumerate(model.model.layers):
+        attn = layer.self_attn
+
+        # Store compressor reference on each attention layer
+        attn._kvsplice_compressor = compressor
+
+        # Wrap the forward method to compress/decompress cache
+        original_forward = attn.forward
+
+        def make_forward_with_compression(orig_forward, comp):
+            def forward_with_compression(
+                hidden_states,
+                attention_mask=None,
+                position_ids=None,
+                past_key_value=None,
+                output_attentions=False,
+                use_cache=False,
+                **kwargs,
+            ):
+                # Decompress incoming cache if present
+                if past_key_value is not None and len(past_key_value) == 2:
+                    # Cache is tuple of (key, value) tensors
+                    key_cache, value_cache = past_key_value
+
+                    # Decompress: [B, H, T, d_compressed] -> [B, H, T, d_head]
+                    if key_cache.shape[-1] == comp.d_compressed:
+                        # Reshape for decompression
+                        B, H, T, _ = key_cache.shape
+                        key_flat = key_cache.reshape(B * H * T, comp.d_compressed)
+                        value_flat = value_cache.reshape(B * H * T, comp.d_compressed)
+
+                        # Expand
+                        key_expanded = comp.expand(key_flat).reshape(B, H, T, -1)
+                        value_expanded = comp.expand(value_flat).reshape(B, H, T, -1)
+
+                        past_key_value = (key_expanded, value_expanded)
+
+                # Call original forward
+                outputs = orig_forward(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    **kwargs,
+                )
+
+                # Compress outgoing cache if present
+                if use_cache and len(outputs) > 1:
+                    attn_output = outputs[0]
+                    new_cache = outputs[1]
+
+                    if new_cache is not None and len(new_cache) == 2:
+                        key_cache, value_cache = new_cache
+
+                        # Compress: [B, H, T, d_head] -> [B, H, T, d_compressed]
+                        B, H, T, d_head = key_cache.shape
+                        key_flat = key_cache.reshape(B * H * T, d_head)
+                        value_flat = value_cache.reshape(B * H * T, d_head)
+
+                        # Compress
+                        key_compressed = comp.compress(key_flat).reshape(
+                            B, H, T, comp.d_compressed
+                        )
+                        value_compressed = comp.compress(value_flat).reshape(
+                            B, H, T, comp.d_compressed
+                        )
+
+                        new_cache = (key_compressed, value_compressed)
+
+                        return (attn_output, new_cache) + outputs[2:]
+
+                return outputs
+
+            return forward_with_compression
+
+        attn.forward = make_forward_with_compression(original_forward, compressor)
+        num_patched += 1
+
+    print(f"Patched {num_patched} attention layers")
+
     print(f"\n{'=' * 80}")
     print("CALIBRATION COMPLETE")
     print(f"{'=' * 80}")
