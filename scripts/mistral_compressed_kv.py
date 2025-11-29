@@ -205,17 +205,18 @@ class CompressedKVAttention(nn.Module):
                             -1, self.compressor.d_compressed
                         )
 
-                        # Expand to full dimension
+                        # Expand to full dimension (output will be in compressor's dtype)
                         past_k_flat = self.compressor.expand(compressed_k_flat)
                         past_v_flat = self.compressor.expand(compressed_v_flat)
 
-                        # Reshape back to [bsz, num_kv_heads, past_len, head_dim]
+                        # Reshape and convert to match key_states dtype
+                        target_dtype = key_states.dtype
                         past_k = past_k_flat.reshape(
                             bsz, self.num_key_value_heads, past_len, self.head_dim
-                        )
+                        ).to(dtype=target_dtype)
                         past_v = past_v_flat.reshape(
                             bsz, self.num_key_value_heads, past_len, self.head_dim
-                        )
+                        ).to(dtype=target_dtype)
                     else:
                         # Standard cache (not compressed)
                         past_k, past_v = cache_k, cache_v
@@ -233,9 +234,13 @@ class CompressedKVAttention(nn.Module):
                 key_flat = key_states.reshape(-1, self.head_dim)
                 value_flat = value_states.reshape(-1, self.head_dim)
 
-                # Compress
-                compressed_k_flat = self.compressor.compress(key_flat)
-                compressed_v_flat = self.compressor.compress(value_flat)
+                # Compress (ensure dtype matches compressor)
+                compressed_k_flat = self.compressor.compress(
+                    key_flat.to(dtype=next(self.compressor.parameters()).dtype)
+                )
+                compressed_v_flat = self.compressor.compress(
+                    value_flat.to(dtype=next(self.compressor.parameters()).dtype)
+                )
 
                 # Reshape back to [bsz, num_kv_heads, total_len, d_compressed]
                 compressed_k = compressed_k_flat.reshape(
