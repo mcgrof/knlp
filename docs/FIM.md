@@ -182,8 +182,268 @@ enable further compression (no structural changes to information geometry).
 - Task-specific information structure differs from geometric information (FIM)
 - End-to-end learning finds compressible structure that variance/FIM miss
 
+## Actionable Interpretations for Compression
+
+While early experiments showed FIM didn't predict learned compression
+effectiveness, FIM metrics provide valuable guidance for identifying
+compression targets, critical heads to protect, and tiering strategies.
+
+### High Trace Hotspots
+
+**What it means mathematically**: Sum of eigenvalues → total curvature /
+total sensitivity of that parameter block.
+
+**What it means for the model**:
+- Head/layer doing disproportionate representational work
+- Encodes features heavily used across the dataset
+- Critical feature extractor or key-value transformer
+
+**Implications for KV compression**:
+- **Cannot be compressed aggressively** - stores information that
+  frequently affects next-token distribution
+- Structure is still learnable (PCA, low-rank) even at high trace
+- Often remain low-rank despite high trace
+
+**Implications for pruning/tiering**:
+- **DO NOT prune these heads** - critical for model performance
+- **Best candidates for**:
+  - Quantization-aware retraining
+  - Adaptive precision (FP16/BF16 for critical, FP8 for others)
+  - Dual-tier KV cache (keep these in fast tier)
+
+**Implications for routing/scheduling**:
+- High-trace heads are where dynamic attention routing is most valuable
+- Easy tokens can skip these heads
+- Hard tokens should go through these heads
+
+**Example**: `trace > 0.95` in layer11/head5 → critical head, protect it
+
+### High Eigmax Hotspots
+
+**What it means mathematically**: Largest eigenvalue = maximum curvature
+direction. High eigmax → extremely sensitive to perturbations along one
+specific direction.
+
+**What it means for the model**:
+- Specialized, sharp, learning highly non-smooth features
+- Handles rare / high-stakes token interactions
+- Often corresponds to:
+  - Rare token handling
+  - Long-tail disambiguation
+  - Discrete structural cues (syntax repair)
+  - Retrieval-style behaviors (pre-GQA)
+
+**Implications for compression**:
+- **Top-eigenvector projection is extremely powerful**
+- Dominant direction captures disproportionate information
+- Usually rank-1 or rank-2 reconstruction recovers most behavior
+
+**Implications for pruning/tiering**:
+- **DO NOT prune the whole head**
+- **Can prune orthogonal low-signal directions**
+- Can compress aggressively in orthogonal space
+
+**Best candidates for**:
+- Residual-branch gating
+- Attention reuse / caching
+- Reversible layers
+- **KVSplice-style latent KV compression**
+- FIM-guided routing
+
+**Example**: `eigmax > 0.2` in layer6/head8 → specialized head, use
+top-eigenvector projection
+
+### High Condition Number Hotspots
+
+**What it means mathematically**: `cond(FIM) = eigmax / eigmin` →
+anisotropy. High cond means curvature is very stretched → gradient flows
+overwhelmingly along 1-few directions, while others are flat.
+
+**What it means for the model**:
+- Highly anisotropic
+- Has a small set of "key directions" that matter a LOT
+- Other directions are nearly irrelevant
+- Indicates natural low-rank structure
+
+**Implications for compression** (BEST COMPRESSION TARGETS):
+- If `cond >> 1e4` can safely compress:
+  - KV cache (50-90% reduction via low-rank projection)
+  - Projections (W_q, W_k, W_v quantization to FP8/FP4)
+  - MLP intermediate activations
+- Effective rank is small regardless of total dimensionality
+
+**Implications for pruning**:
+- **Prune low-energy directions → nearly zero loss**
+- Head pruning sometimes possible, but direction pruning is safer
+
+**Implications for tiering**:
+- High-cond heads are:
+  - Expensive in dimension
+  - BUT cheap to approximate (most info in top few eigenvectors)
+- Great for:
+  - Mixed precision KV caches (FP8/FP4)
+  - Rank-limited KVSplice
+  - Gated heads
+  - Adaptive attention at inference
+
+**Condition number scale**:
+- `cond < 1e3`: Well-conditioned / isotropic (hard to compress)
+- `cond ~ 1e5`: Moderately anisotropic (moderate compression)
+- `cond ~ 1e7`: Strong anisotropy (good compression target)
+- `cond > 1e7`: Extremely ill-conditioned (excellent compression target)
+
+**Example**: `cond = 2.7e7` in layer6/head8 → compress KV by 80-90%
+
+### Energy Concentration (energy_r8, energy_r16)
+
+**What it means**: Fraction of total energy captured by top k eigenvalues.
+
+**Interpretation scale**:
+- `energy_r8 ≥ 0.95`: Almost all energy in top 8 modes → very low-rank
+- `energy_r8 ≥ 0.90`: Most energy in top 8 modes → low effective rank
+- `energy_r8 ≥ 0.80`: Substantial low-rank structure
+- `energy_r8 < 0.80`: Energy spread across spectrum (harder to compress)
+
+**Effective rank**: Smallest k where `energy_rk ≥ 0.9`
+
+**Implications**:
+- High energy concentration → can use rank-k approximation
+- `effective_rank < 16` → excellent candidate for low-rank compression
+- Combined with high condition number → best compression targets
+
+### Compression Strategy Decision Tree
+
+```
+For each head/layer:
+
+1. Check trace:
+   - If trace > 0.95: CRITICAL HEAD
+     → Protect from compression
+     → Use adaptive precision (keep FP16/BF16)
+     → Place in fast-tier cache
+
+2. Check condition number:
+   - If cond > 1e7 AND trace < 0.95: EXCELLENT COMPRESSION TARGET
+     → KV cache: 70-90% compression via low-rank
+     → Quantize to FP8/FP4
+     → Prune low-energy directions
+
+   - If cond > 1e5 AND trace < 0.95: GOOD COMPRESSION TARGET
+     → KV cache: 50-70% compression
+     → Quantize to FP8
+     → Moderate pruning
+
+   - If cond < 1e5: HARD TO COMPRESS
+     → Minimal compression (< 30%)
+     → Keep higher precision
+
+3. Check eigmax:
+   - If eigmax > 0.15: SPECIALIZED HEAD
+     → Use top-eigenvector projection
+     → KVSplice-style latent compression
+     → Keep in routing-aware tier
+
+4. Check energy_r8:
+   - If energy_r8 > 0.9 AND cond > 1e6: VERY COMPRESSIBLE
+     → Rank-8 approximation captures 90% of information
+     → Can use aggressive low-rank compression
+
+   - If energy_r8 < 0.8: SPREAD SPECTRUM
+     → Need higher rank for compression
+     → Use learned compression (KVSplice) instead of PCA
+```
+
+### Example: Tiered Compression Strategy
+
+From `gpt2-ra-v2-h100` analysis:
+
+**Layer 6, Head 8** (Best compression target):
+```
+trace = 0.85, cond = 2.7e7, eigmax = 0.28, energy_r8 = 0.35
+```
+**Strategy**:
+- KV cache: 80% compression (256 → 51 dims via low-rank)
+- Projections: Quantize to FP8
+- Top-eigenvector projection: Keep top-1 direction at full precision
+- Place in slow-tier cache (can reconstruct on demand)
+
+**Layer 11, Head 5** (Critical head):
+```
+trace = 0.975, cond = 3.5e6, eigmax = 0.08, energy_r8 = 0.31
+```
+**Strategy**:
+- KV cache: Minimal compression (30% max)
+- Projections: Keep FP16/BF16
+- NO pruning
+- Place in fast-tier cache (always available)
+
+**Layer 0, Head 3** (Moderate):
+```
+trace = 0.88, cond = 5.2e6, eigmax = 0.06, energy_r8 = 0.28
+```
+**Strategy**:
+- KV cache: 50% compression
+- Projections: Quantize to FP8/INT8
+- Moderate pruning of low-energy directions
+- Place in medium-tier cache
+
+## Tool Integration
+
+### Automated FIM Analysis
+
+Use the unified FIM analysis tool to generate actionable compression
+recommendations:
+
+```bash
+# Extract and analyze FIM metrics from W&B
+source ~/envs/w7900-ml/bin/activate
+python scripts/analyze_fim_metrics.py \
+  --entity mcgrof-citizen \
+  --project gpt2-ra-v2-h100 \
+  --output-dir test_matrix_results \
+  --output-summary fim.txt
+
+# View human-readable summary with compression recommendations
+cat test_matrix_results/fim.txt
+```
+
+The summary includes:
+- Per-run FIM statistics
+- Cross-run comparisons
+- Hotspot detection (extreme metric values)
+- Compression potential scores
+- Interpretation guide
+
+### W&B Visualization
+
+Log FIM insights to W&B for interactive exploration:
+
+```python
+from scripts.fim_wandb_viz import log_fim_to_wandb
+
+log_fim_to_wandb(
+    entity="mcgrof-citizen",
+    project="gpt2-ra-v2-h100",
+    run_id=wandb_run.id,
+    df=fim_dataframe,
+    global_stats=global_stats,
+    low_rank_stats=low_rank_stats,
+    summary_text=summary_text,
+)
+```
+
+This creates:
+- Compression potential heatmap (layer×head grid)
+- Scatter plot (condition number vs trace)
+- Single-number insights (compression_potential, efficiency_score)
+- HTML panel with full interpretation
+
+See `docs/fim_analysis.md` for detailed documentation.
+
 ## References
 
 - SPDA Paper: "Scaled Dot-Product Attention as One-Sided Entropic Optimal Transport"
 - Code for FIM metrics: `gpt2/trainers/ra.py` (FisherMetricsCallback)
 - Experimental results: [test_matrix_results_20251123_231956](https://github.com/mcgrof/knlp-key-results/tree/main/key_results/test_matrix_results_20251123_231956)
+- FIM Analysis Tools: `scripts/analyze_fim_metrics.py`, `scripts/fim_wandb_viz.py`
+- Full FIM Analysis Guide: `docs/fim_analysis.md`
