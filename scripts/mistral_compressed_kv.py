@@ -337,7 +337,7 @@ def load_mistral_with_compressed_kv(
         print(f"Replacing attention layers with cached compressor...")
         for layer_idx, layer in enumerate(model.model.layers):
             old_attn = layer.self_attn
-            new_attn = CompressedKVAttention(config, compressor)
+            new_attn = CompressedKVAttention(config, compressor).to(device)
 
             # Copy weights
             new_attn.q_proj.weight.data = old_attn.q_proj.weight.data
@@ -450,7 +450,7 @@ def load_mistral_with_compressed_kv(
         old_attn = layer.self_attn
 
         # Create new compressed attention
-        new_attn = CompressedKVAttention(config, compressor)
+        new_attn = CompressedKVAttention(config, compressor).to(device)
 
         # Copy weights from pretrained
         new_attn.q_proj.weight.data = old_attn.q_proj.weight.data
