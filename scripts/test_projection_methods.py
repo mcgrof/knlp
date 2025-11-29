@@ -12,6 +12,7 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 import numpy as np
+from typing import Tuple
 
 
 def create_random_orthogonal_projection(
@@ -382,6 +383,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from typing import Tuple
-
     main()
