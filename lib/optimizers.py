@@ -160,7 +160,7 @@ def _sinkhorn_like_transform(g, tau=0.1, n_iter=5, eps=1e-8):
 def param_groups_for_weight_decay(model, model_type="resnet"):
     """
     Separate model parameters into groups with and without weight decay.
-    Bias and normalization parameters should not have weight decay.
+    Bias, normalization, and embedding parameters should not have weight decay.
 
     Args:
         model: The model to get parameters from
@@ -169,21 +169,22 @@ def param_groups_for_weight_decay(model, model_type="resnet"):
     Returns:
         List of parameter groups with appropriate weight decay settings
     """
-    # For GPT2, use its own configure_optimizers method if available
-    if model_type == "gpt2" and hasattr(model, "configure_optimizers"):
-        # GPT2 has its own parameter grouping logic for weight decay
-        # Just return all parameters as a single group to avoid the duplicate warning
-        # The weight decay will be applied uniformly
-        return [{"params": model.parameters(), "weight_decay": 0.0}]
-
     decay, no_decay = [], []
     for mn, m in model.named_modules():
         for pn, p in m.named_parameters(recurse=False):
             if not p.requires_grad:
                 continue
             full = f"{mn}.{pn}" if mn else pn
+            # Exclude bias, normalization layers, and embeddings from weight decay
             if pn.endswith("bias") or isinstance(
-                m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.LayerNorm, nn.GroupNorm)
+                m,
+                (
+                    nn.BatchNorm1d,
+                    nn.BatchNorm2d,
+                    nn.LayerNorm,
+                    nn.GroupNorm,
+                    nn.Embedding,
+                ),
             ):
                 no_decay.append(p)
             else:
