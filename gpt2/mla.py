@@ -124,20 +124,14 @@ def apply_rope(
 
 class LearnedKVSplice(nn.Module):
     """
-    Learned information bottleneck for QKV compression.
+    Pure learned low-rank projection for QKV compression.
 
-    Compresses in feature dimension (d_in → d_compressed) using:
-    1. Monotonic transform: softplus(scale) * x + shift
-       - Reorders/ranks dimensions before compression
-    2. Low-rank projection: compress → expand linear layers
-       - Forces information through smaller space
+    Compresses in feature dimension (d_in → d_compressed) using
+    orthogonal linear projections initialized as approximate inverses.
 
     This trains the model to produce representations that survive the
-    bottleneck, acting as a regularizer that encourages structured,
-    compressible QKV representations.
-
-    Note: This is NOT approximating spline+PCA despite historical naming.
-    It's a learned bottleneck with monotonic pre-transform.
+    low-rank bottleneck, acting as a regularizer that encourages
+    structured, compressible QKV representations.
     """
 
     def __init__(self, d_in: int, d_compressed: int):
@@ -145,15 +139,9 @@ class LearnedKVSplice(nn.Module):
         self.d_in = d_in
         self.d_compressed = d_compressed
 
-        # Learned monotonic transform
-        self.transform_scale = nn.Parameter(torch.ones(d_in))
-        self.transform_shift = nn.Parameter(torch.zeros(d_in))
-
-        # Learned low-rank projection
+        # Low-rank projection
         self.compress = nn.Linear(d_in, d_compressed, bias=False)
         self.expand = nn.Linear(d_compressed, d_in, bias=False)
-
-        self.latent_ln = nn.LayerNorm(d_compressed)
 
         # Initialize as approximate inverse
         nn.init.orthogonal_(self.compress.weight)
@@ -161,21 +149,15 @@ class LearnedKVSplice(nn.Module):
             self.expand.weight.copy_(self.compress.weight.T)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
-        compressed = self.compress(x_transformed)
-        compressed = self.latent_ln(compressed)
+        compressed = self.compress(x)
         decompressed = self.expand(compressed)
         return decompressed
 
     def compress_only(self, x: torch.Tensor) -> torch.Tensor:
-        x_transformed = x * F.softplus(self.transform_scale) + self.transform_shift
-        return self.compress(x_transformed)
+        return self.compress(x)
 
     def decompress_only(self, compressed: torch.Tensor) -> torch.Tensor:
-        decompressed = self.expand(compressed)
-        return (decompressed - self.transform_shift) / (
-            F.softplus(self.transform_scale) + 1e-6
-        )
+        return self.expand(compressed)
 
     def get_reconstruction_error(self, x: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
