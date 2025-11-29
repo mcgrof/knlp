@@ -203,9 +203,13 @@ def patch_model_with_kvsplice(
         layers = getattr(model.model, layer_pattern)
     elif hasattr(model, layer_pattern):
         layers = getattr(model, layer_pattern)
+    # GPT-2 style: model.transformer.h
+    elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+        layers = model.transformer.h
     else:
         raise ValueError(
-            f"Could not find layers with pattern '{layer_pattern}' in model"
+            f"Could not find layers with pattern '{layer_pattern}' in model. "
+            f"Try passing layer_pattern='h' for GPT-2 models."
         )
 
     # Detect latent dimension from first layer
@@ -225,16 +229,26 @@ def patch_model_with_kvsplice(
     )
 
     # Wrap each attention layer with KVSplice
+    patched_count = 0
     for i, layer in enumerate(layers):
+        # Handle different attention attribute names
         if hasattr(layer, "self_attn"):
-            original_attn = layer.self_attn
-            wrapped_attn = KVSpliceWrapper(
-                original_attn, d_latent, compression_ratio, use_layernorm
-            )
-            layer.self_attn = wrapped_attn
+            attn_attr = "self_attn"
+        elif hasattr(layer, "attn"):
+            attn_attr = "attn"
+        else:
+            continue
+
+        original_attn = getattr(layer, attn_attr)
+        wrapped_attn = KVSpliceWrapper(
+            original_attn, d_latent, compression_ratio, use_layernorm
+        )
+        setattr(layer, attn_attr, wrapped_attn)
+        patched_count += 1
+        if i < 3 or i >= len(layers) - 1:  # Print first 3 and last layer
             print(f"  Patched layer {i}")
 
-    print(f"\nSuccessfully patched {len(layers)} layers with KVSplice")
+    print(f"\nSuccessfully patched {patched_count} layers with KVSplice")
     return model
 
 
@@ -245,8 +259,11 @@ def get_kv_cache_size(model: nn.Module) -> Tuple[int, int]:
     Returns:
         (original_size_mb, compressed_size_mb)
     """
+    # Detect model architecture
     if hasattr(model, "model") and hasattr(model.model, "layers"):
         layers = model.model.layers
+    elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+        layers = model.transformer.h
     else:
         return (0, 0)
 
@@ -254,8 +271,15 @@ def get_kv_cache_size(model: nn.Module) -> Tuple[int, int]:
     compressed_size = 0
 
     for layer in layers:
+        # Check for wrapped attention (handle both self_attn and attn)
+        attn = None
         if hasattr(layer, "self_attn") and isinstance(layer.self_attn, KVSpliceWrapper):
-            kvsplice = layer.self_attn.kvsplice
+            attn = layer.self_attn
+        elif hasattr(layer, "attn") and isinstance(layer.attn, KVSpliceWrapper):
+            attn = layer.attn
+
+        if attn is not None:
+            kvsplice = attn.kvsplice
             # Assuming batch=1, seq_len=2048, fp16
             seq_len = 2048
             bytes_per_param = 2  # fp16
