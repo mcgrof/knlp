@@ -301,7 +301,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt2",
+        default="openai-community/gpt2",
         help="Model to use for activation collection",
     )
     parser.add_argument(
