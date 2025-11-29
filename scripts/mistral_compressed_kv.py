@@ -262,6 +262,11 @@ class CompressedKVAttention(nn.Module):
         else:
             cache_to_return = None
 
+        # Ensure all states have same dtype
+        target_dtype = query_states.dtype
+        key_states = key_states.to(dtype=target_dtype)
+        value_states = value_states.to(dtype=target_dtype)
+
         # Repeat KV for grouped-query attention
         key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
         value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
