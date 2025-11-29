@@ -485,7 +485,7 @@ def load_mistral_with_compressed_kv(
     print(f"Cached for future use")
 
     # Cleanup
-    del activations, all_activations
+    del k_activations, all_activations
     gc.collect()
     torch.cuda.empty_cache()
 
