@@ -188,8 +188,9 @@ def patch_model_with_svd_kvsplice(
     compressor = SVDKVCompressor(hidden_size, d_compressed)
     explained_var = compressor.calibrate_from_activations(activations)
 
-    # Move to device and freeze
-    compressor = compressor.to(device)
+    # Move to device, match model dtype, and freeze
+    model_dtype = next(model.parameters()).dtype
+    compressor = compressor.to(device=device, dtype=model_dtype)
     compressor.requires_grad_(False)
     compressor.eval()
 
