@@ -556,7 +556,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
     def on_train_end(self):
         """Hook for subclasses to run code before trackers finish."""
-        pass
+        # Generate FIM summary if FIM tracking was enabled
+        self._generate_fim_summary()
 
     def _apply_adamprune_masking(self):
         """Apply AdamWPrune gradient masking."""
@@ -691,6 +692,112 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if self.master_process:
                 print(f"\nWarning: Failed to compute Fisher metrics: {e}")
             return None
+
+    def _generate_fim_summary(self):
+        """
+        Generate FIM analysis summary if FIM metrics were logged to W&B.
+
+        Automatically runs after training if FIM tracking was enabled.
+        Saves summary to output_dir/fim.txt.
+        """
+        if not self.master_process:
+            return
+
+        # Check if we have W&B tracking enabled
+        if not hasattr(self.args, "tracker_enabled") or not self.args.tracker_enabled:
+            return
+
+        if not hasattr(self.args, "tracker_project"):
+            return
+
+        try:
+            import os
+            import subprocess
+
+            # Check if FIM metrics exist in W&B by looking at summary
+            import wandb
+
+            api = wandb.Api()
+
+            # Get current run
+            if not hasattr(wandb, "run") or wandb.run is None:
+                return
+
+            run = wandb.run
+
+            # Check if any fisher/ metrics were logged
+            has_fim = any(k.startswith("fisher/") for k in run.summary.keys())
+
+            if not has_fim:
+                if self.master_process:
+                    print("\nSkipping FIM summary generation: No FIM metrics found")
+                return
+
+            print("\n" + "=" * 80)
+            print("Generating FIM Analysis Summary")
+            print("=" * 80)
+
+            # Determine output directory
+            output_dir = getattr(self.args, "output_dir", ".")
+
+            # Determine entity - try config first, then default
+            entity = getattr(self.args, "tracker_entity", None)
+            if entity is None:
+                # Try to get from W&B run
+                entity = run.entity if run else "mcgrof-citizen"
+
+            project = self.args.tracker_project
+
+            # Run the FIM analysis script
+            cmd = [
+                "python",
+                "scripts/analyze_fim_metrics.py",
+                "--entity",
+                entity,
+                "--project",
+                project,
+                "--output-dir",
+                output_dir,
+                "--output-summary",
+                "fim.txt",
+            ]
+
+            print(f"Running: {' '.join(cmd)}")
+
+            # Need to activate virtual environment for wandb
+            env = os.environ.copy()
+            env["PATH"] = f"{os.path.expanduser('~/envs/w7900-ml/bin')}:{env['PATH']}"
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,  # 2 minute timeout
+                env=env,
+            )
+
+            if result.returncode == 0:
+                fim_path = os.path.join(output_dir, "fim.txt")
+                print(f"\n✓ FIM summary saved to: {fim_path}")
+
+                # Print first 50 lines of summary for immediate feedback
+                try:
+                    with open(fim_path, "r") as f:
+                        lines = f.readlines()[:50]
+                        print("\n" + "".join(lines))
+                        if len(lines) >= 50:
+                            print("\n... (see fim.txt for full summary)")
+                except Exception:
+                    pass
+            else:
+                print(f"\n⚠️ FIM analysis failed: {result.stderr}")
+
+        except subprocess.TimeoutExpired:
+            print("\n⚠️ FIM analysis timed out (> 2 minutes)")
+        except Exception as e:
+            print(f"\n⚠️ Failed to generate FIM summary: {e}")
+            # Don't fail training just because FIM summary failed
+            pass
 
     def _compute_kv_cache_metrics(self):
         """
