@@ -222,8 +222,10 @@ def compare_projection_methods(
     )
 
     # Test reconstruction
+    # Forward: data @ expand -> compressed latent
+    # Backward: compressed @ compress -> reconstructed data
     compressed_rand = test_data @ expand_rand
-    reconstructed_rand = compressed_rand @ compress_rand.T
+    reconstructed_rand = compressed_rand @ compress_rand
     error_rand = (test_data - reconstructed_rand).pow(2).mean().sqrt().item()
 
     # Measure dimension preservation
@@ -248,7 +250,7 @@ def compare_projection_methods(
 
     # Test reconstruction
     compressed_svd = test_data @ expand_svd
-    reconstructed_svd = compressed_svd @ compress_svd.T
+    reconstructed_svd = compressed_svd @ compress_svd
     error_svd = (test_data - reconstructed_svd).pow(2).mean().sqrt().item()
 
     # Measure dimension preservation
