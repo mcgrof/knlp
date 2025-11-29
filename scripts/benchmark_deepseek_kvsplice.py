@@ -24,7 +24,10 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import transformers
 from transformers.cache_utils import DynamicCache
-from deepseek_kvsplice_plugin import patch_model_with_kvsplice, get_kv_cache_size
+
+# Import new calibrated KVSplice plugin
+sys.path.insert(0, "/data/knlp/scripts")
+from kvsplice_plugin import enable_kvsplice, calibrate_kvsplice
 
 # Monkey-patch DynamicCache to add missing methods for DeepSeek compatibility
 patched = False
@@ -294,22 +297,22 @@ def main():
     )
     model_kvsplice = model_kvsplice.to(args.device)
 
-    print("Patching with KVSplice...")
-    patch_model_with_kvsplice(
+    print("Calibrating KVSplice with SVD on actual K/V activations...")
+    calibrated = calibrate_kvsplice(
+        model_kvsplice,
+        tokenizer,
+        compression_ratio=args.compression_ratio,
+        calibration_samples=2000,
+        max_length=512,
+    )
+
+    print("Enabling KVSplice with calibrated weights...")
+    enable_kvsplice(
         model_kvsplice,
         compression_ratio=args.compression_ratio,
         use_layernorm=args.use_layernorm,
+        calibrated_kvsplice=calibrated,
     )
-
-    # Estimate KV cache sizes
-    orig_cache_mb, compressed_cache_mb = get_kv_cache_size(model_kvsplice)
-    print(f"\nEstimated KV cache (seq_len=2048):")
-    print(f"  Original: {orig_cache_mb:.1f} MB")
-    print(f"  Compressed: {compressed_cache_mb:.1f} MB")
-    if orig_cache_mb > 0:
-        print(
-            f"  Reduction: {orig_cache_mb - compressed_cache_mb:.1f} MB ({100 * (1 - compressed_cache_mb/orig_cache_mb):.1f}%)"
-        )
 
     print("\nRunning benchmarks...")
     results_kvsplice = []
