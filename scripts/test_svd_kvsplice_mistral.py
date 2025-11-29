@@ -53,8 +53,10 @@ class SVDKVCompressor(nn.Module):
         expand_weight = V[:, : self.d_compressed]  # [d_in, d_compressed]
         compress_weight = expand_weight.T  # [d_compressed, d_in]
 
-        # Set weights
-        self.expand.weight.data = expand_weight.T.contiguous()
+        # Set weights (nn.Linear weights are transposed internally)
+        # expand: nn.Linear(d_compressed, d_in) -> weight is [d_in, d_compressed]
+        # compress: nn.Linear(d_in, d_compressed) -> weight is [d_compressed, d_in]
+        self.expand.weight.data = expand_weight.contiguous()
         self.compress.weight.data = compress_weight.contiguous()
 
         # Compute explained variance
