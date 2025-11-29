@@ -156,12 +156,18 @@ class CompressedKVAttention(nn.Module):
         # RoPE
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            # Handle nested tuple structure from transformers
-            cache_k, cache_v = past_key_value
-            if isinstance(cache_k, tuple):
-                # Nested structure: ((k, v),) -> (k, v)
-                cache_k, cache_v = cache_k[0], cache_v[0]
-            kv_seq_len += cache_k.shape[-2]
+            # Handle transformers Cache object or tuple
+            if hasattr(past_key_value, "get_seq_length"):
+                # It's a Cache object (e.g., DynamicCache)
+                past_len = past_key_value.get_seq_length()
+                kv_seq_len += past_len
+            else:
+                # Tuple format - extract k tensor
+                if len(past_key_value) >= 2:
+                    cache_k = past_key_value[0]
+                    if isinstance(cache_k, tuple):
+                        cache_k = cache_k[0]
+                    kv_seq_len += cache_k.shape[-2]
 
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
         query_states, key_states = apply_rotary_pos_emb(
@@ -170,13 +176,20 @@ class CompressedKVAttention(nn.Module):
 
         # Handle cache
         if past_key_value is not None:
-            # Unwrap nested tuple structure if needed
-            cache_k, cache_v = past_key_value
-            if isinstance(cache_k, tuple):
-                cache_k, cache_v = cache_k[0], cache_v[0]
+            # Handle transformers Cache object or tuple
+            if hasattr(past_key_value, "update"):
+                # It's a Cache object - for now, don't use compressed cache with Cache objects
+                # Just concatenate normally (transformers will manage the cache)
+                pass  # No past to concat, transformers handles it
+            else:
+                # Tuple format - unwrap and decompress
+                if len(past_key_value) >= 2:
+                    cache_k, cache_v = past_key_value[0], past_key_value[1]
+                    if isinstance(cache_k, tuple):
+                        cache_k, cache_v = cache_k[0], cache_v[0]
 
-            # Decompress cached K, V
-            if self.use_compressed_cache:
+            # Decompress cached K, V (only for tuple format)
+            if self.use_compressed_cache and not hasattr(past_key_value, "update"):
                 # cache: (compressed_k, compressed_v)
                 # Shape: [bsz, num_kv_heads, past_len, d_compressed]
                 compressed_k, compressed_v = cache_k, cache_v
@@ -280,10 +293,67 @@ def load_mistral_with_compressed_kv(
     compression_ratio: float = 0.5,
     calibration_samples: int = 2000,
     device: str = "cuda",
+    cache_dir: str = "./kvsplice_cache",
 ):
     """
     Load Mistral model and replace attention with compressed KV version.
+    Caches calibrated models to avoid re-running SVD.
     """
+    import os
+
+    # Create cache directory
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Generate cache path based on model name and compression
+    model_basename = model_name.replace("/", "_")
+    cache_path = os.path.join(
+        cache_dir, f"{model_basename}_kvsplice_r{compression_ratio}.pt"
+    )
+
+    # Check if cached model exists
+    if os.path.exists(cache_path):
+        print(f"\n{'=' * 80}")
+        print(f"LOADING CACHED KVSPLICE MODEL")
+        print(f"{'=' * 80}")
+        print(f"Cache path: {cache_path}")
+
+        # Load cached compressor and model
+        cached_data = torch.load(cache_path, map_location=device)
+        compressor = cached_data["compressor"]
+
+        # Load base model
+        print(f"Loading base model {model_name}...")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16,
+        ).to(device)
+
+        config = model.config
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        # Replace attention layers with cached compressor
+        print(f"Replacing attention layers with cached compressor...")
+        for layer_idx, layer in enumerate(model.model.layers):
+            old_attn = layer.self_attn
+            new_attn = CompressedKVAttention(config, compressor)
+
+            # Copy weights
+            new_attn.q_proj.weight.data = old_attn.q_proj.weight.data
+            new_attn.k_proj.weight.data = old_attn.k_proj.weight.data
+            new_attn.v_proj.weight.data = old_attn.v_proj.weight.data
+            new_attn.o_proj.weight.data = old_attn.o_proj.weight.data
+
+            layer.self_attn = new_attn
+
+        print(f"Loaded cached model with {len(model.model.layers)} layers")
+        return model, tokenizer, compressor
+
+    # No cache - perform full calibration
+    print(f"\n{'=' * 80}")
+    print(f"NO CACHED MODEL FOUND - CALIBRATING")
+    print(f"{'=' * 80}")
     print(f"\nLoading {model_name}...")
 
     # Load pretrained model
@@ -392,6 +462,21 @@ def load_mistral_with_compressed_kv(
         layer.self_attn = new_attn
 
     print(f"Replaced {len(model.model.layers)} attention layers")
+
+    # Save compressor to cache
+    print(f"\nSaving compressor to cache: {cache_path}")
+    torch.save(
+        {
+            "compressor": compressor.cpu(),
+            "compression_ratio": compression_ratio,
+            "calibration_samples": calibration_samples,
+            "head_dim": head_dim,
+            "d_compressed": d_compressed,
+        },
+        cache_path,
+    )
+    compressor = compressor.to(device)
+    print(f"Cached for future use")
 
     # Cleanup
     del activations, all_activations
