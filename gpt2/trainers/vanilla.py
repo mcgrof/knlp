@@ -242,6 +242,19 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         self.optimizer.zero_grad(set_to_none=True)
         self.training_start_time = time.time()
 
+        # Batch overfit sanity check (enabled by default)
+        if getattr(self.args, "sanity_check", True):
+            max_steps = getattr(self.args, "sanity_check_steps", 100)
+            passed = self.run_batch_overfit_sanity_check(
+                max_steps=max_steps,
+                batch_size=8,
+                print_every=25,
+                log_to_wandb=True,
+            )
+            if not passed and getattr(self.args, "sanity_check_strict", False):
+                print("Sanity check failed and strict mode enabled - exiting.")
+                sys.exit(1)
+
         t0 = time.time()
         running_loss = 0.0
 
