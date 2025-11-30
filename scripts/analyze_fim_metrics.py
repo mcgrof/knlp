@@ -439,7 +439,274 @@ def generate_summary_text(
 
 
 # ============================================================================
-# Step 5: Log insights to W&B
+# Step 5: FIM-Guided Compression Config Generation
+# ============================================================================
+
+
+def generate_compression_config(
+    df: pd.DataFrame,
+    target_memory_reduction: float = 0.5,
+    d_head: int = 64,
+    trace_critical: float = 0.95,
+    trace_moderate: float = 0.90,
+    cond_excellent: float = 1e7,
+    cond_good: float = 1e6,
+) -> Dict:
+    """
+    Generate per-head compression config from FIM analysis.
+
+    Uses FIM metrics (trace, condition number, eigmax) to recommend
+    compression ranks for each layer/head combination.
+
+    Strategy:
+    - High trace (>0.95): CRITICAL heads, minimal/no compression
+    - High cond (>1e7) + low trace: Excellent targets, aggressive compression
+    - Moderate cond (>1e6): Good targets, moderate compression
+    - Otherwise: Conservative compression
+
+    Args:
+        df: FIM metrics dataframe (from json_to_csv)
+        target_memory_reduction: Target overall KV memory reduction (0.0-1.0)
+        d_head: Dimensionality per head (for memory calculation)
+        trace_critical: Trace threshold for critical heads
+        trace_moderate: Trace threshold for moderate compression
+        cond_excellent: Condition number for excellent compression targets
+        cond_good: Condition number for good compression targets
+
+    Returns:
+        config: dict with keys:
+            - target_memory_reduction: float
+            - per_layer_head: dict[(layer, head)] -> {rank, enabled, reason, algo}
+            - expected_kv_memory_savings: str (percentage)
+            - compression_summary: dict with category counts
+    """
+    # Get unique run (assume single run for now, or use first run)
+    runs = df["run_name"].unique()
+    if len(runs) == 0:
+        return {"error": "No runs found in dataframe"}
+
+    run_name = runs[0]
+    if len(runs) > 1:
+        print(
+            f"Warning: Multiple runs found, using first: {run_name}. "
+            f"Others: {runs[1:]}"
+        )
+
+    # Extract all layer/head combinations
+    layer_head_df = df[
+        (df["run_name"] == run_name) & (df["layer"] != "global") & (df["head"] != "all")
+    ].copy()
+
+    if layer_head_df.empty:
+        return {"error": "No per-head FIM metrics found"}
+
+    # Get unique (layer, head) pairs
+    layer_heads = layer_head_df[["layer", "head"]].drop_duplicates()
+
+    config = {
+        "target_memory_reduction": target_memory_reduction,
+        "d_head": d_head,
+        "algo_default": "kvsplice",
+        "per_layer_head": {},
+        "compression_summary": {
+            "critical": [],
+            "excellent": [],
+            "good": [],
+            "moderate": [],
+        },
+    }
+
+    total_heads = 0
+    total_original_dims = 0
+    total_compressed_dims = 0
+
+    for _, row in layer_heads.iterrows():
+        layer = row["layer"]
+        head = row["head"]
+
+        # Extract metrics for this head
+        trace = get_scalar_metric(df, run_name, layer, head, "trace")
+        cond = get_scalar_metric(df, run_name, layer, head, "cond")
+        eigmax = get_scalar_metric(df, run_name, layer, head, "eigmax")
+
+        # Default values if missing
+        if trace is None:
+            trace = 0.5
+        if cond is None:
+            cond = 1e3
+        if eigmax is None:
+            eigmax = 0.05
+
+        # Apply tiering strategy
+        key = f"{layer}/{head}"
+
+        if trace > trace_critical:
+            # CRITICAL HEAD - protect from compression
+            rank = d_head  # Minimal or no compression
+            enabled = False  # Disable compression entirely
+            category = "critical"
+            reason = f"CRITICAL: trace={trace:.3f} (>{trace_critical})"
+            algo = "none"
+
+        elif cond > cond_excellent and trace < trace_moderate:
+            # EXCELLENT COMPRESSION TARGET
+            rank = 8
+            enabled = True
+            category = "excellent"
+            reason = f"EXCELLENT: cond={cond:.2e}, trace={trace:.3f}"
+            algo = "kvsplice"
+
+        elif cond > cond_good:
+            # GOOD COMPRESSION TARGET
+            rank = 16
+            enabled = True
+            category = "good"
+            reason = f"GOOD: cond={cond:.2e}, trace={trace:.3f}"
+            algo = "kvsplice"
+
+        else:
+            # MODERATE COMPRESSION
+            rank = 32
+            enabled = True
+            category = "moderate"
+            reason = f"MODERATE: cond={cond:.2e}, trace={trace:.3f}"
+            algo = "kvsplice"
+
+        # Store config
+        config["per_layer_head"][key] = {
+            "enabled": enabled,
+            "rank": rank,
+            "algo": algo,
+            "compression_ratio": 1.0 - (rank / d_head) if enabled else 0.0,
+            "reason": reason,
+            "metrics": {"trace": trace, "cond": cond, "eigmax": eigmax},
+        }
+
+        config["compression_summary"][category].append(key)
+
+        # Update memory calculations
+        total_heads += 1
+        total_original_dims += d_head
+        if enabled:
+            total_compressed_dims += rank
+        else:
+            total_compressed_dims += d_head
+
+    # Calculate expected memory savings
+    if total_original_dims > 0:
+        actual_reduction = 1.0 - (total_compressed_dims / total_original_dims)
+        config["expected_kv_memory_savings"] = f"{actual_reduction * 100:.1f}%"
+        config["actual_memory_reduction"] = actual_reduction
+    else:
+        config["expected_kv_memory_savings"] = "N/A"
+        config["actual_memory_reduction"] = 0.0
+
+    # Add summary statistics
+    config["summary_stats"] = {
+        "total_heads": total_heads,
+        "critical_heads": len(config["compression_summary"]["critical"]),
+        "excellent_targets": len(config["compression_summary"]["excellent"]),
+        "good_targets": len(config["compression_summary"]["good"]),
+        "moderate_targets": len(config["compression_summary"]["moderate"]),
+        "total_original_params": total_original_dims,
+        "total_compressed_params": total_compressed_dims,
+    }
+
+    return config
+
+
+def format_compression_config_summary(config: Dict) -> str:
+    """Generate human-readable summary of compression config."""
+    out = StringIO()
+
+    out.write("=" * 80 + "\n")
+    out.write("FIM-Guided KV Cache Compression Configuration\n")
+    out.write("=" * 80 + "\n\n")
+
+    if "error" in config:
+        out.write(f"ERROR: {config['error']}\n")
+        return out.getvalue()
+
+    stats = config.get("summary_stats", {})
+    out.write(
+        f"Target memory reduction: {config['target_memory_reduction'] * 100:.0f}%\n"
+    )
+    out.write(f"Expected KV memory savings: {config['expected_kv_memory_savings']}\n\n")
+
+    out.write("=== Compression Summary ===\n\n")
+    out.write(f"Total heads analyzed: {stats.get('total_heads', 0)}\n")
+    out.write(
+        f"  • Critical heads (NO compression): {stats.get('critical_heads', 0)}\n"
+    )
+    out.write(
+        f"  • Excellent targets (rank=8, ~88% compression): {stats.get('excellent_targets', 0)}\n"
+    )
+    out.write(
+        f"  • Good targets (rank=16, ~75% compression): {stats.get('good_targets', 0)}\n"
+    )
+    out.write(
+        f"  • Moderate targets (rank=32, ~50% compression): {stats.get('moderate_targets', 0)}\n"
+    )
+    out.write("\n")
+
+    out.write(
+        f"Total parameters: {stats.get('total_original_params', 0)} → "
+        f"{stats.get('total_compressed_params', 0)} "
+        f"({config.get('actual_memory_reduction', 0) * 100:.1f}% reduction)\n\n"
+    )
+
+    # Show examples from each category
+    for category in ["critical", "excellent", "good", "moderate"]:
+        heads = config["compression_summary"].get(category, [])
+        if not heads:
+            continue
+
+        out.write(f"=== {category.upper()} HEADS ===\n\n")
+        for key in heads[:5]:  # Show first 5
+            head_cfg = config["per_layer_head"][key]
+            out.write(f"{key}:\n")
+            out.write(f"  Rank: {head_cfg['rank']}\n")
+            out.write(f"  Enabled: {head_cfg['enabled']}\n")
+            out.write(f"  Algorithm: {head_cfg['algo']}\n")
+            out.write(
+                f"  Compression ratio: {head_cfg['compression_ratio'] * 100:.1f}%\n"
+            )
+            out.write(f"  Reason: {head_cfg['reason']}\n")
+            out.write("\n")
+
+        if len(heads) > 5:
+            out.write(f"  ... and {len(heads) - 5} more\n\n")
+
+    out.write("\n" + "=" * 80 + "\n")
+    out.write("Usage Instructions\n")
+    out.write("=" * 80 + "\n\n")
+
+    out.write("To use this config for KV cache compression:\n\n")
+    out.write("1. Save config to JSON:\n")
+    out.write("   python scripts/analyze_fim_metrics.py \\\n")
+    out.write("     --entity <entity> --project <project> \\\n")
+    out.write("     --generate-compression-config \\\n")
+    out.write("     --compression-config-output compression_config.json\n\n")
+
+    out.write("2. Load config in compression plugin:\n")
+    out.write("   ```python\n")
+    out.write("   import json\n")
+    out.write('   with open("compression_config.json") as f:\n')
+    out.write("       config = json.load(f)\n")
+    out.write("   compressor = KVSpliceCompressor(config)\n")
+    out.write("   ```\n\n")
+
+    out.write("3. Apply to HF model:\n")
+    out.write("   ```python\n")
+    out.write('   model = AutoModelForCausalLM.from_pretrained("gpt2")\n')
+    out.write("   wrapped_model = CompressedKVModelWrapper(model, compressor)\n")
+    out.write("   ```\n\n")
+
+    return out.getvalue()
+
+
+# ============================================================================
+# Step 6: Log insights to W&B
 # ============================================================================
 
 
@@ -562,6 +829,29 @@ def main():
         default="fim_summary.txt",
         help="Output file for human-readable summary",
     )
+    parser.add_argument(
+        "--generate-compression-config",
+        action="store_true",
+        help="Generate FIM-guided compression config",
+    )
+    parser.add_argument(
+        "--compression-config-output",
+        type=str,
+        default="compression_config.json",
+        help="Output file for compression config JSON",
+    )
+    parser.add_argument(
+        "--target-memory-reduction",
+        type=float,
+        default=0.5,
+        help="Target KV memory reduction (0.0-1.0, default: 0.5)",
+    )
+    parser.add_argument(
+        "--d-head",
+        type=int,
+        default=64,
+        help="Head dimension for memory calculation (default: 64)",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -616,9 +906,38 @@ def main():
     # Print summary to stdout
     print("\n" + summary_text)
 
-    # Step 5: Generate W&B viz instructions
+    # Step 5: Generate compression config (optional)
+    if args.generate_compression_config:
+        print("\n" + "=" * 80)
+        print("Step 5: Generating FIM-Guided Compression Config")
+        print("=" * 80)
+
+        compression_config = generate_compression_config(
+            df,
+            target_memory_reduction=args.target_memory_reduction,
+            d_head=args.d_head,
+        )
+
+        config_file = output_dir / args.compression_config_output
+        with open(config_file, "w") as f:
+            json.dump(compression_config, f, indent=2)
+        print(f"✓ Saved compression config: {config_file}")
+
+        # Generate and save human-readable config summary
+        config_summary = format_compression_config_summary(compression_config)
+        config_summary_file = output_dir / args.compression_config_output.replace(
+            ".json", "_summary.txt"
+        )
+        with open(config_summary_file, "w") as f:
+            f.write(config_summary)
+        print(f"✓ Saved config summary: {config_summary_file}")
+
+        # Print summary to stdout
+        print("\n" + config_summary)
+
+    # Step 6: Generate W&B viz instructions
     print("\n" + "=" * 80)
-    print("Step 5: W&B Visualization Recommendations")
+    print("Step 6: W&B Visualization Recommendations")
     print("=" * 80)
     print("\nTo log FIM insights to W&B, add this to your training code:")
     print("\n```python")
