@@ -85,7 +85,7 @@ make
 ```bash
 # Baseline (no tiering)
 python3 scripts/benchmark_tiered_inference.py \
-  --model gpt2 \
+  --model openai-community/gpt2 \
   --checkpoint checkpoints/model.pt \
   --tier-hints tier_hints.json \
   --mode emulated \
