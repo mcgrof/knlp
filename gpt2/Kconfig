@@ -497,6 +497,19 @@ config GPT2_KNLP_RA_HEADS
 	  Using a subset reduces compute cost while still capturing
 	  bidirectional patterns. 1 head = minimal FLOP overhead.
 
+config KNLP_VARIANT
+	string "KNLP variant for ablation testing"
+	default ""
+	depends on GPT2_KNLP
+	help
+	  Comma-separated list of KNLP variants to test in ablation mode.
+	  Supported variants:
+	    baseline   - Standard GPT-2 (no KNLP features)
+	    sdpa_gate  - SDPA output gating only (Qwen3-style)
+	    ra         - Reciprocal Attention only
+	    sdpa_ra    - Both SDPA gating and RA
+	  Example: "baseline,sdpa_gate,ra"
+
 source "gpt2/Kconfig.mechint"
 
 endmenu
