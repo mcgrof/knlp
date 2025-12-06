@@ -1,0 +1,21 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# knlp gen_hosts tasks
+
+- name: Set knlp plugin directory
+  ansible.builtin.set_fact:
+    knlp_plugin_dir: "{{ ansible_env.HOME }}/.config/kdevops/plugins/knlp"
+
+- name: Generate the Ansible hosts file for knlp plugin setup
+  tags: ['hosts']
+  ansible.builtin.template:
+    src: "{{ knlp_plugin_dir }}/playbooks/roles/gen_hosts/templates/knlp.j2"
+    dest: "{{ ansible_cfg_inventory }}"
+    force: true
+    trim_blocks: True
+    lstrip_blocks: True
+    mode: '0644'
+  when:
+    - kdevops_user_workflow_knlp|default(false)|bool
+    - not kdevops_use_declared_hosts|default(false)|bool
