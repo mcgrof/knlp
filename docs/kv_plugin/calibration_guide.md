@@ -64,16 +64,20 @@ calibration_texts = [
 
 ## Rank Selection
 
-| Rank | Compression | Typical PPL Impact |
-|------|-------------|-------------------|
-| 128 | 1.00x (none) | 0% |
-| 116 | 1.10x | ~0% |
-| 96 | **1.33x** | **<1%** (7B) |
-| 80 | 1.60x | 3-5% |
-| 64 | 2.00x | 10-30% |
+**Measured on Qwen2.5-7B with V-only calibrated PCA (head_dim=128):**
 
-With int8 quantization, effective compression doubles:
-- Rank 96 + int8 = **2.67x** compression
+| Rank | Compression | Measured PPL Impact |
+|------|-------------|---------------------|
+| 128 | 1.00x (none) | 0% |
+| 120 | 1.03x | +6% |
+| 112 | 1.07x | +14% |
+| 96 | 1.14x | +35% |
+| 64 | 1.33x | +647% (broken) |
+
+**Reality check**: Aggressive compression does not work. Even with
+calibrated PCA and V-only compression, 1.14x (rank 96) causes +35%
+PPL degradation. The practical limit is 1.03-1.07x compression with
+6-14% quality loss.
 
 ## Architecture-Specific Notes
 
@@ -92,18 +96,21 @@ With int8 quantization, effective compression doubles:
 After calibration, validate with PPL measurement:
 
 ```bash
-python scripts/validate_ppl.py \
+python scripts/benchmark_kv_compression_quality.py \
   --model Qwen/Qwen2.5-7B \
-  --preset kv_preset_qwen2.5-7b.json \
-  --dataset wikitext
+  --ranks 120 \
+  --calibration key_results/kv_calib_qwen7b_r120.pt \
+  --num-samples 50
 ```
 
-Expected output:
+Expected output (conservative rank 120):
 ```
-Baseline PPL: 9.80
-Compressed PPL: 9.90
-Delta: +1.02%
+Baseline PPL: 7.88
+Compressed PPL: 8.35
+Delta: +5.9%
 ```
+
+Note: Do not expect <1% PPL impact. That was never achievable.
 
 ## Troubleshooting
 
