@@ -220,6 +220,11 @@ def auto_detect_hyperparams(config, target_effective_batch=None, model_type="gpt
     per_gpu_batch = target_eff // gpu_count
     gradient_accumulation = max(1, per_gpu_batch // batch_size)
 
+    # DDP requires gradient_accumulation to be divisible by gpu_count
+    # (trainer divides by world_size). Round up to nearest multiple.
+    if gpu_count > 1 and gradient_accumulation % gpu_count != 0:
+        gradient_accumulation = ((gradient_accumulation // gpu_count) + 1) * gpu_count
+
     # Recompute actual effective batch (may differ slightly due to rounding)
     effective_batch = batch_size * gradient_accumulation * gpu_count
 
