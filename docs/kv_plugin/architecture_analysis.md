@@ -68,13 +68,17 @@ Any dimension can be compressed with similar impact.
 
 ### Compression Safety
 
-| Target | Safe Compression | PPL Impact |
-|--------|------------------|------------|
-| V-only | **2.67x** | +0.99% |
-| K-only | ~1.2x | +3-5% |
-| K+V | ~1.5x | +2-4% |
+**Measured on Qwen2.5-7B with calibrated PCA (B200):**
 
-**Recommendation**: Always use V-only compression for standard attention.
+| Target | Compression | Measured PPL Impact |
+|--------|-------------|---------------------|
+| V-only (rank 120) | 1.03x | +6% |
+| V-only (rank 112) | 1.07x | +14% |
+| V-only (rank 96) | 1.14x | +35% |
+| K+V | Any | +600%+ (broken) |
+
+**Recommendation**: Use V-only compression. Expect 6-14% PPL increase
+for 3-7% memory savings. K compression causes catastrophic failure.
 
 ---
 
