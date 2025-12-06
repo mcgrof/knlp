@@ -2,113 +2,102 @@
 
 Low-rank projection for KV cache memory reduction.
 
-## Verdict: Not Recommended for Most Use Cases
+## What This Is
 
-**The throughput cost exceeds the memory benefit.**
+A research tool for exploring KV cache compression via orthogonal projection.
+Useful for understanding compression dynamics and architectural differences
+between attention mechanisms.
 
-This plugin reduces KV cache memory via orthogonal projection. The compression
-math is sound and memory savings are real. However, the compression/expansion
-overhead makes inference slower, typically negating any practical benefit.
+**Not recommended for production.** The throughput cost exceeds the memory benefit.
 
-### Measured Results on B200 (Qwen2.5-7B)
+## Measured Results (B200, Qwen2.5-7B)
 
-**Throughput** = tokens generated per second during inference. Higher is better.
+Throughput = tokens generated per second. Higher is better.
 
-| Rank | Memory Savings | Throughput | PPL Increase | Task Degradation |
-|------|----------------|------------|--------------|------------------|
-| Baseline | 0% | 110 tok/s | 0% | 0% |
-| 120 | 3.1% | 105 tok/s (**-5%**) | +6% | 0% |
-| 96 | 12.5% | 106 tok/s (**-4%**) | +35% | Unknown |
-| 64 | 25.0% | ~94 tok/s (**-15%**) | +647% | Catastrophic |
+| Configuration | Memory | Throughput | Quality (PPL) |
+|---------------|--------|------------|---------------|
+| Baseline | 56 MB | 110 tok/s | 7.88 |
+| FP16 Low-Rank (r120) | 54 MB (-3%) | 105 tok/s (-5%) | 8.35 (+6%) |
+| INT8 Low-Rank (r120) | 41 MB (-27%) | 87 tok/s (-21%) | 8.34 (+6%) |
+| FP16 Low-Rank (r96) | 49 MB (-12%) | 106 tok/s (-4%) | 10.6 (+35%) |
 
-**The problem**: You save 3-12% memory but lose 4-15% throughput (fewer tokens
-per second). For most deployments, this is a net negative. Memory is cheap;
-latency matters.
+Task accuracy (HellaSwag, ARC-Easy, WinoGrande, PIQA) showed 0% degradation
+at rank 120 despite +6% PPL increase.
 
----
+## Research Value
 
-## When This Might Be Useful
+### K vs V Compression Dynamics
 
-Use only if ALL of these apply:
+The plugin proved that K and V have fundamentally different compressibility:
 
-1. **Memory-bound, not compute-bound**: You're hitting GPU memory limits
-   before compute saturation
-2. **Latency-insensitive**: You can tolerate 13-15% slower inference
-3. **Batch size constrained**: You need to fit more concurrent requests
-   and can't add more GPUs
-4. **Quality-tolerant**: Your use case can handle 6-35% perplexity increase
+| Component | Variance Spread | Interpretation |
+|-----------|-----------------|----------------|
+| K | 132x | Few dimensions dominate - fragile |
+| V | 4x | Uniform importance - robust |
 
-Example use case: Batch inference with very long contexts where memory is
-the bottleneck and latency doesn't matter.
+**K compression fails catastrophically.** A few dimensions carry almost all
+attention pattern information. Compressing K destroys these critical dimensions.
 
----
+**V compression is tolerable.** All dimensions contribute roughly equally,
+so compression removes less critical information.
 
-## Key Findings
+This finding applies to standard attention (Qwen, Llama, Mistral). MLA
+architectures (DeepSeek-V2) equalize K/V through their shared latent space.
 
-### Memory Savings Work as Expected
-
-The compression ratios match theory. For head_dim=128:
-
-| Rank | V Compression | Effective Savings |
-|------|---------------|-------------------|
-| 120 | 128/120 = 1.07x | 3.1% |
-| 112 | 128/112 = 1.14x | 6.2% |
-| 96 | 128/96 = 1.33x | 12.5% |
-| 64 | 128/64 = 2.00x | 25.0% |
-
-### Throughput Penalty is Fixed
-
-The ~13-14% overhead comes from:
-- Compression: `(x - mean) @ U` per layer per token
-- Expansion: `z @ U.T + mean` per layer per token
-
-This overhead is roughly constant regardless of compression rank.
-
-### Task Performance vs Perplexity
-
-Interesting finding: +6% PPL increase (rank 120) showed **0% degradation** on
-downstream tasks (HellaSwag, ARC-Easy, WinoGrande, PIQA). The perplexity
-increase doesn't directly translate to task performance loss at conservative
-compression levels.
-
-However, at +35% PPL (rank 96), task degradation is likely significant (not
-fully tested).
-
-### V-Only Compression is Essential
-
-K compression causes catastrophic quality degradation due to extreme variance
-concentration (132x spread in K vs 4x in V). Always use V-only compression.
-
-### Calibration Provides Modest Improvement
+### Calibration vs Random Projection
 
 PCA-calibrated projections outperform random orthogonal by ~8%:
 
-| Method | Rank 112 PPL |
-|--------|--------------|
-| Random orthogonal | +15.2% |
+| Method | PPL at Rank 112 |
+|--------|-----------------|
+| Random | +15.2% |
 | Calibrated PCA | +14.0% |
 
-Calibration helps but isn't transformative.
+Modest improvement. Calibration helps but isn't transformative.
 
----
+### Scaling with Model Size
 
-## If You Still Want to Use This
+Larger models tolerate compression slightly better:
 
-### Conservative Configuration (Rank 120)
+| Model | Rank 120 PPL | Rank 112 PPL |
+|-------|--------------|--------------|
+| 7B | +5.9% | +14.0% |
+| 72B | +4.6% | +10.6% |
 
-3.1% memory savings, 6% PPL increase, 0% task degradation, 13% slower:
+~20% relative improvement at 72B vs 7B. Real but modest.
+
+## When to Use
+
+Use for **research and experimentation** only:
+
+- Understanding attention compression dynamics
+- Comparing standard attention vs MLA architectures
+- Benchmarking compression quality/speed tradeoffs
+- Memory profiling experiments
+
+Do not use for production inference. Better alternatives exist.
+
+## Quick Start
 
 ```python
+import torch
+from transformers import AutoModelForCausalLM
 from gpt2.compression.compressed_cache import (
     CompressedDynamicCache,
     CalibratedCompressor,
     IdentityCompressor,
 )
 
+# Calibrate first
+# python scripts/calibrate_kv_lowrank.py --model Qwen/Qwen2.5-7B --rank 120
+
 # Load calibration
 calib = torch.load("key_results/kv_calib_qwen7b_r120.pt")
 
-# V-only compression
+model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B", device_map="cuda")
+num_layers = model.config.num_hidden_layers
+
+# V-only compression (K uses identity)
 k_compressors = [IdentityCompressor() for _ in range(num_layers)]
 v_compressors = [
     CalibratedCompressor(layer["V"]["U"], layer["V"]["mean"])
@@ -119,118 +108,54 @@ cache = CompressedDynamicCache(k_compressors, v_compressors, num_layers)
 outputs = model.generate(input_ids, past_key_values=cache, max_new_tokens=100)
 ```
 
-### Aggressive Configuration (Rank 96)
+## INT8 Quantization
 
-12.5% memory savings, 35% PPL increase, unknown task degradation, 14% slower:
+INT8 reduces memory further but costs more throughput:
 
-Not recommended unless you've validated quality on your specific use case.
+| vs Baseline | Memory | Throughput |
+|-------------|--------|------------|
+| FP16 Low-Rank | -3% | -5% |
+| INT8 Low-Rank | -27% | -21% |
 
----
-
-## Calibration
-
-Create calibration files with:
-
-```bash
-python scripts/calibrate_kv_lowrank.py \
-    --model Qwen/Qwen2.5-7B \
-    --rank 120 \
-    --output key_results/kv_calib_qwen7b_r120.pt
-```
-
----
+Use `QuantizedCalibratedCompressor` instead of `CalibratedCompressor`.
 
 ## Benchmarking
 
-Run comprehensive benchmarks:
-
 ```bash
-# Memory + throughput + quality
+# Full benchmark (memory, throughput, quality)
 python scripts/benchmark_kv_comprehensive.py \
     --model Qwen/Qwen2.5-7B \
     --rank 120 \
     --calibration key_results/kv_calib_qwen7b_r120.pt
 
-# Quality only (lm-eval)
-python scripts/benchmark_kv_comprehensive.py \
+# Quantization comparison
+python scripts/benchmark_kv_quantized.py \
     --model Qwen/Qwen2.5-7B \
     --rank 120 \
-    --calibration key_results/kv_calib_qwen7b_r120.pt \
-    --skip-memory --skip-throughput
+    --calibration key_results/kv_calib_qwen7b_r120.pt
 ```
 
----
+## Better Alternatives for Production
 
-## INT8 Quantization
+1. **KV Cache Quantization** - INT8/INT4 KV cache in frameworks like vLLM.
+   2x memory reduction with minimal quality loss and no throughput penalty.
 
-The plugin supports INT8 quantization on top of low-rank compression via
-`QuantizedCalibratedCompressor`. Values are stored as actual int8 tensors with
-per-row float16 scales.
+2. **Grouped-Query Attention** - Architecture change that reduces KV cache
+   at the model level. No runtime overhead.
 
-**Measured results (INT8 vs FP16 low-rank at rank 120):**
+3. **Sliding Window Attention** - Fixed memory regardless of sequence length.
 
-| Configuration | Memory | Throughput | PPL |
-|---------------|--------|------------|-----|
-| Baseline | 56 MB | 110 tok/s | 7.88 |
-| FP16 Low-Rank | 54.25 MB | 105 tok/s (**-5%**) | 8.35 (+6%) |
-| INT8 Low-Rank | **41.12 MB** | 87 tok/s (**-21%**) | 8.34 (+6%) |
-
-INT8 saves 24% memory vs FP16 low-rank, but throughput drops from 105 to 87
-tokens/second (16% slower than FP16, 21% slower than baseline).
-
-**When to use INT8**: Only if you're severely memory-bound AND can tolerate
-generating 21% fewer tokens per second. The memory savings come at significant
-speed cost.
-
----
-
-## Benchmark Plots
-
-### Task Performance (lm-eval)
-
-![Task Performance](b200_lm_eval_results.png)
-
-Zero task degradation at rank 120 despite +6% PPL increase.
-
-### Tradeoff Summary
-
-![Tradeoff Summary](b200_tradeoff_summary.png)
-
----
-
-## Alternatives
-
-For significant KV cache reduction with better tradeoffs, consider:
-
-1. **Quantization**: INT8 KV cache gives 2x memory reduction with minimal
-   quality loss and no throughput penalty (often faster due to memory
-   bandwidth)
-
-2. **Sliding window attention**: Fixed memory regardless of sequence length
-
-3. **Sparse attention**: Reduce attention compute and memory together
-
-4. **Flash attention with paging**: Better memory utilization without
-   compression overhead
-
-5. **Multi-Query/Grouped-Query Attention**: Architecture change that reduces
-   KV cache at the model level
-
----
+4. **PagedAttention** - Better memory utilization without compression overhead.
 
 ## Hardware Tested
 
 - 4x NVIDIA B200 (766 GB total VRAM)
-- Model: Qwen2.5-7B (28 layers, head_dim=128)
+- Model: Qwen2.5-7B, Qwen2.5-72B
 - Framework: PyTorch 2.x, Transformers 4.x
 
----
+## Files
 
-## Conclusion
-
-KV cache compression via low-rank projection is mathematically elegant but
-practically limited. The throughput penalty (13-14%) typically exceeds the
-memory benefit (3-12.5%). For most deployments, the tradeoff isn't worthwhile.
-
-The plugin may have value in extreme memory-constrained scenarios where latency
-doesn't matter, but these are rare in production.
+- `README.md` - This file
+- `calibration_guide.md` - How to create calibration files
+- `architecture_analysis.md` - K vs V compression dynamics
+- `quality_results.md` - Benchmark data

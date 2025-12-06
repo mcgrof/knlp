@@ -101,20 +101,21 @@ Preset files are JSON with calibration data:
 ```json
 {
   "model": "Qwen/Qwen2.5-7B",
-  "rank": 96,
+  "rank": 120,
   "head_dim": 128,
-  "n_layers": 32,
+  "n_layers": 28,
   "n_heads": 28,
-  "compression_ratio": 2.67,
+  "compression_ratio": 1.03,
   "layers": [
     {
-      "K": {"U": [...], "mean": [...]},
       "V": {"U": [...], "mean": [...]}
     },
     ...
   ]
 }
 ```
+
+Note: Only V calibration is stored. K uses IdentityCompressor (no compression).
 
 ---
 
