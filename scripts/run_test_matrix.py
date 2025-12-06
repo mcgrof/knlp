@@ -1428,26 +1428,31 @@ def run_single_test(
         if mla_variant:
             env["CONFIG_MLA_VARIANT"] = mla_variant
 
-        # Set PyTorch memory allocator configuration for better memory management
-        # This helps prevent OOM errors by allowing expandable memory segments
-        env["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+        # Detect GPU vendor and set appropriate memory configuration
+        is_amd_gpu = False
+        try:
+            import torch
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                device_name = torch.cuda.get_device_name(0).lower()
+                is_amd_gpu = "amd" in device_name or "radeon" in device_name
+        except Exception:
+            pass
 
-        # Disable PyTorch's memory caching to ensure GPU memory is truly released
-        # between sequential test runs. Without this, PyTorch's caching allocator
-        # holds onto freed memory, causing OOM errors in later tests.
-        # See: https://pytorch.org/docs/stable/notes/hip.html
-        env["PYTORCH_NO_HIP_MEMORY_CACHING"] = "1"
-
-        # MIOpen configuration for gfx1100 (W7900) stability
-        # Disable kernel compilation and use only pre-built kernels to avoid
-        # HIPRTC compilation errors with ROCm version mismatches
-        env["MIOPEN_FIND_MODE"] = "1"  # 1=immediate, 2=normal, 3=fast
-        env["MIOPEN_DEBUG_DISABLE_FIND_DB"] = "1"  # Disable find database
-        env["MIOPEN_FIND_ENFORCE"] = "SEARCH_DB_UPDATE"  # Only use database
-        env["MIOPEN_DEBUG_CONV_IMPLICIT_GEMM"] = "0"  # Disable implicit GEMM
-        env["MIOPEN_DEBUG_CONV_WINOGRAD"] = "0"  # Disable Winograd
-        env["MIOPEN_DEBUG_CONV_DIRECT"] = "0"  # Disable direct convolutions
-        env["MIOPEN_DEBUG_CONV_FFT"] = "0"  # Disable FFT convolutions
+        if is_amd_gpu:
+            # AMD ROCm/HIP configuration for W7900 and similar GPUs
+            env["PYTORCH_HIP_ALLOC_CONF"] = "expandable_segments:True"
+            env["PYTORCH_NO_HIP_MEMORY_CACHING"] = "1"
+            # MIOpen configuration for gfx1100 (W7900) stability
+            env["MIOPEN_FIND_MODE"] = "1"
+            env["MIOPEN_DEBUG_DISABLE_FIND_DB"] = "1"
+            env["MIOPEN_FIND_ENFORCE"] = "SEARCH_DB_UPDATE"
+            env["MIOPEN_DEBUG_CONV_IMPLICIT_GEMM"] = "0"
+            env["MIOPEN_DEBUG_CONV_WINOGRAD"] = "0"
+            env["MIOPEN_DEBUG_CONV_DIRECT"] = "0"
+            env["MIOPEN_DEBUG_CONV_FFT"] = "0"
+        else:
+            # NVIDIA CUDA configuration for B200, H100, A100, etc.
+            env["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
         # Run with real-time output to console AND capture to file
         with open(log_file, "w") as f_log:
@@ -1464,10 +1469,14 @@ def run_single_test(
             )
 
             # Create colorized test prefix for output
-            # Add DDP info if enabled
+            # Add DDP info if enabled (auto-detect GPU count)
             ddp_info = ""
             if config.get("GPT2_USE_DDP") == "y" or config.get("GPT2_USE_DDP") is True:
-                num_gpus = config.get("GPT2_DDP_NUM_GPUS", 1)
+                try:
+                    import torch
+                    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
+                except Exception:
+                    num_gpus = config.get("GPT2_DDP_NUM_GPUS", 1)
                 ddp_info = (
                     f" {Colors.BOLD}{Colors.GREEN}[DDP:{num_gpus}x]{Colors.RESET}"
                 )
