@@ -12,14 +12,18 @@ overhead makes inference slower, typically negating any practical benefit.
 
 ### Measured Results on B200 (Qwen2.5-7B)
 
-| Rank | Memory Savings | Throughput Penalty | PPL Increase | Task Degradation |
-|------|----------------|-------------------|--------------|------------------|
-| 120 | 3.1% | **-13%** | +6% | 0% |
-| 96 | 12.5% | **-14%** | +35% | Unknown |
-| 64 | 25.0% | ~-15% | +647% | Catastrophic |
+**Throughput** = tokens generated per second during inference. Higher is better.
 
-**The problem**: You save 3-12% memory but lose 13-14% throughput. For most
-deployments, this is a net negative. Memory is cheap; latency matters.
+| Rank | Memory Savings | Throughput | PPL Increase | Task Degradation |
+|------|----------------|------------|--------------|------------------|
+| Baseline | 0% | 110 tok/s | 0% | 0% |
+| 120 | 3.1% | 105 tok/s (**-5%**) | +6% | 0% |
+| 96 | 12.5% | 106 tok/s (**-4%**) | +35% | Unknown |
+| 64 | 25.0% | ~94 tok/s (**-15%**) | +647% | Catastrophic |
+
+**The problem**: You save 3-12% memory but lose 4-15% throughput (fewer tokens
+per second). For most deployments, this is a net negative. Memory is cheap;
+latency matters.
 
 ---
 
@@ -165,19 +169,18 @@ per-row float16 scales.
 
 **Measured results (INT8 vs FP16 low-rank at rank 120):**
 
-| Metric | FP16 Low-Rank | INT8 Low-Rank |
-|--------|---------------|---------------|
-| Memory | 54.25 MB | **41.12 MB** (-24%) |
-| Throughput | -5.3% | **-20.9%** |
-| PPL | +5.6% | +5.5% |
+| Configuration | Memory | Throughput | PPL |
+|---------------|--------|------------|-----|
+| Baseline | 56 MB | 110 tok/s | 7.88 |
+| FP16 Low-Rank | 54.25 MB | 105 tok/s (**-5%**) | 8.35 (+6%) |
+| INT8 Low-Rank | **41.12 MB** | 87 tok/s (**-21%**) | 8.34 (+6%) |
 
-INT8 saves 24% additional memory but costs 16% more throughput. Total vs baseline:
-- Memory: ~25% of original (low-rank + int8)
-- Throughput: -21% slower
-- Quality: +5.5% PPL
+INT8 saves 24% memory vs FP16 low-rank, but throughput drops from 105 to 87
+tokens/second (16% slower than FP16, 21% slower than baseline).
 
-**When to use INT8**: Only if you're severely memory-bound AND can tolerate the
-throughput penalty. The 24% memory savings come at significant speed cost.
+**When to use INT8**: Only if you're severely memory-bound AND can tolerate
+generating 21% fewer tokens per second. The memory savings come at significant
+speed cost.
 
 ---
 
