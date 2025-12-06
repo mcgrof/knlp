@@ -21,7 +21,7 @@ parent_dir = os.path.dirname(
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT2, GPTConfig
-from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, MLA_Config
+from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_KV_FIM, MLA_Config
 from lib.optimizers import create_optimizer
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer
@@ -111,7 +111,30 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             )
 
             # Create appropriate MLA model
-            if "mla_kv" in mla_variant.lower():
+            if "mla_kv_fim" in mla_variant.lower():
+                # Selective KVSplice: only last N layers
+                compression_ratio = float(
+                    getattr(self.config, "MLA_COMPRESSION_RATIO", 0.5)
+                )
+                kv_layers = int(getattr(self.config, "MLA_KV_FIM_LAYERS", 4))
+                model = GPT2_MLA_KV_FIM(
+                    config,
+                    compression_ratio=compression_ratio,
+                    kv_layers=kv_layers,
+                )
+                if self.master_process:
+                    print(
+                        f"  MLA+KVSplice (last {kv_layers} layers): "
+                        f"d_latent={config.d_latent}, "
+                        f"compression_ratio={compression_ratio}"
+                    )
+                    stats = model.get_compression_stats()
+                    print(
+                        f"  Effective: {stats['effective_compression']}, "
+                        f"cache reduction: {stats['cache_reduction_vs_mla']}"
+                    )
+            elif "mla_kv" in mla_variant.lower():
+                # Full KVSplice: all layers
                 compression_ratio = float(
                     getattr(self.config, "MLA_COMPRESSION_RATIO", 0.5)
                 )
