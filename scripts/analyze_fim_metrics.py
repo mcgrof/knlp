@@ -263,6 +263,84 @@ def find_hotspots(
     ]
 
 
+def find_coldspots(
+    df: pd.DataFrame, metric_name: str, bottom_k: int = 5
+) -> List[Tuple[str, str, str, float]]:
+    """Find bottom-k entries with smallest value for a metric."""
+    sub = df[df["metric"] == metric_name].copy()
+    if sub.empty:
+        return []
+    sub = sub.sort_values("value", ascending=True).head(bottom_k)
+    return [
+        (str(r["run_name"]), str(r["layer"]), str(r["head"]), float(r["value"]))
+        for _, r in sub.iterrows()
+    ]
+
+
+def compute_layer_mean_trace(
+    df: pd.DataFrame, run_name: Optional[str] = None
+) -> List[Tuple[str, str, float]]:
+    """
+    Compute mean FIM trace per layer across all heads.
+
+    Returns list of (run_name, layer, mean_trace) sorted by mean_trace ascending.
+    Layers with lowest mean trace are best compression candidates.
+    """
+    sub = df[df["metric"] == "trace"].copy()
+    if sub.empty:
+        return []
+
+    if run_name:
+        sub = sub[sub["run_name"] == run_name]
+
+    # Filter to per-head metrics (exclude global)
+    sub = sub[sub["layer"].str.startswith("layer")]
+    sub = sub[sub["head"].str.startswith("head")]
+
+    if sub.empty:
+        return []
+
+    # Group by run and layer, compute mean trace
+    grouped = sub.groupby(["run_name", "layer"])["value"].mean().reset_index()
+    grouped = grouped.sort_values("value", ascending=True)
+
+    return [
+        (str(r["run_name"]), str(r["layer"]), float(r["value"]))
+        for _, r in grouped.iterrows()
+    ]
+
+
+def compute_head_mean_trace(
+    df: pd.DataFrame, run_name: Optional[str] = None
+) -> List[Tuple[str, str, str, float]]:
+    """
+    Get per-head FIM trace values sorted by trace ascending.
+
+    Returns list of (run_name, layer, head, trace) sorted by trace ascending.
+    Heads with lowest trace are best compression candidates.
+    """
+    sub = df[df["metric"] == "trace"].copy()
+    if sub.empty:
+        return []
+
+    if run_name:
+        sub = sub[sub["run_name"] == run_name]
+
+    # Filter to per-head metrics (exclude global)
+    sub = sub[sub["layer"].str.startswith("layer")]
+    sub = sub[sub["head"].str.startswith("head")]
+
+    if sub.empty:
+        return []
+
+    sub = sub.sort_values("value", ascending=True)
+
+    return [
+        (str(r["run_name"]), str(r["layer"]), str(r["head"]), float(r["value"]))
+        for _, r in sub.iterrows()
+    ]
+
+
 # ============================================================================
 # Step 4: Generate human-readable summary
 # ============================================================================
@@ -407,6 +485,49 @@ def generate_summary_text(
                 f"  • {metric} = {val:.3e}  @ run={run}, layer={layer}, head={head}\n"
             )
         out.write("\n")
+
+    # Coldspots - LOWEST FIM trace (best compression candidates)
+    out.write("\n" + "=" * 80 + "\n")
+    out.write("COMPRESSION TARGETS: Layers/Heads with LOWEST FIM Trace\n")
+    out.write("=" * 80 + "\n\n")
+    out.write("Low FIM trace = minimal representational work = SAFE TO COMPRESS\n")
+    out.write(
+        "These heads/layers can be aggressively compressed with minimal loss.\n\n"
+    )
+
+    # Show coldspots per run
+    for run in runs:
+        out.write(f"--- {run} ---\n\n")
+
+        # Layer mean trace for this run
+        layer_traces = compute_layer_mean_trace(df, run_name=run)
+        if layer_traces:
+            out.write("Layers ranked by mean FIM trace (lowest → highest):\n")
+            for _, layer, trace_val in layer_traces[:12]:  # All layers
+                bar_len = int(trace_val * 40)  # Visual bar
+                bar = "█" * bar_len + "░" * (40 - bar_len)
+                out.write(f"  {layer:8s}: {trace_val:.4f} |{bar}|\n")
+            out.write("\n")
+
+            # Identify best compression candidates
+            if len(layer_traces) >= 3:
+                out.write("BEST COMPRESSION TARGETS (lowest 3 layers):\n")
+                for _, layer, trace_val in layer_traces[:3]:
+                    out.write(f"  ★ {layer}: trace={trace_val:.4f}\n")
+                out.write("\n")
+
+        # Head-level analysis for this run
+        head_traces = compute_head_mean_trace(df, run_name=run)
+        if head_traces:
+            out.write("Top-10 heads with LOWEST trace (best compression targets):\n")
+            for _, layer, head, trace_val in head_traces[:10]:
+                out.write(f"  ✓ {layer}/{head}: trace={trace_val:.4f}\n")
+            out.write("\n")
+
+            out.write("Top-5 heads with HIGHEST trace (DO NOT COMPRESS):\n")
+            for _, layer, head, trace_val in head_traces[-5:]:
+                out.write(f"  ✗ {layer}/{head}: trace={trace_val:.4f}\n")
+            out.write("\n")
 
     # Interpretation guide
     out.write("\n" + "=" * 80 + "\n")
@@ -830,6 +951,12 @@ def main():
         help="Output file for human-readable summary",
     )
     parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Filter to specific run name (e.g., gpt2_mla_fineweb)",
+    )
+    parser.add_argument(
         "--generate-compression-config",
         action="store_true",
         help="Generate FIM-guided compression config",
@@ -884,6 +1011,17 @@ def main():
     print(f"✓ Saved CSV: {csv_file}")
     print(f"  Rows: {len(df)}")
     print(f"  Runs: {df['run_name'].nunique()}")
+
+    # Filter to specific run if requested
+    if args.run_name:
+        available_runs = df["run_name"].unique().tolist()
+        if args.run_name not in available_runs:
+            print(f"\nERROR: Run '{args.run_name}' not found!")
+            print(f"Available runs: {available_runs}")
+            sys.exit(1)
+        print(f"\n✓ Filtering to run: {args.run_name}")
+        df = df[df["run_name"] == args.run_name]
+        print(f"  Filtered rows: {len(df)}")
 
     # Step 3: Analyze
     print("\n" + "=" * 80)
