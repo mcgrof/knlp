@@ -143,12 +143,81 @@ CONFIG_MLA_COMPRESSION_RATIO="0.5"
 - Training efficiency matters (MLA trains slower)
 - No inference deployment planned
 
+## FIM-Guided Selective Compression (mla_kv_fim)
+
+FIM (Fisher Information Matrix) trace analysis reveals that different layers
+have vastly different representational importance. Layers with high FIM trace
+do critical work and should be protected from compression, while layers with
+low trace are safe targets for aggressive compression.
+
+### FIM Analysis Results (H100, 3-hour baseline MLA run)
+
+From `gpt2_mla_fineweb` run in project `gpt2-kvsplice-h100-90pct-lnfv2`:
+
+| Layer | Mean FIM Trace | Interpretation |
+|-------|----------------|----------------|
+| layer0 | 0.9551 | CRITICAL - protect from compression |
+| layer6 | 0.8191 | Moderate - some compression OK |
+| layer11 | 0.6215 | SAFE - aggressive compression OK |
+
+Per-head breakdown shows the pattern is consistent:
+- layer0/head11: 0.9769 (highest - critical)
+- layer11/head10: 0.4149 (lowest - most compressible)
+
+### Selective KVSplice Architecture
+
+`GPT2_MLA_KV_LAST` applies KVSplice compression only to the last N layers:
+
+```
+Layers 0-7:  MLABlock (MLA only, 256 dims cached)
+Layers 8-11: MLAKVBlock (MLA + KVSplice, 128 dims cached)
+```
+
+### Memory Savings Comparison
+
+| Strategy | Compression | Cache (1024 tok) | Parallel Seqs (24GB) |
+|----------|-------------|------------------|----------------------|
+| Standard GPT-2 | 1.0x | 36.00 MB | 668 |
+| MLA only | 6.0x | 6.00 MB | 4,010 |
+| MLA + KVSplice (last 4) | 7.2x | 5.00 MB | 4,812 |
+| MLA + KVSplice (all) | 12.0x | 3.00 MB | 8,021 |
+
+### Configuration
+
+```bash
+# Enable selective KVSplice
+CONFIG_ENABLE_MLA=y
+CONFIG_MLA_VARIANT="mla_kv_fim"
+CONFIG_MLA_COMPRESSION_RATIO="0.5"
+CONFIG_MLA_KV_FIM_LAYERS=4
+```
+
+### Expected Benefits
+
+1. **Better quality** than full KVSplice (early layers protected)
+2. **16.7% cache reduction** vs MLA-only
+3. **7.2x total compression** vs standard GPT-2
+4. **~800 more parallel sequences** on 24GB GPU vs MLA-only
+
+### When to Use
+
+Use `mla_kv_fim` when:
+- You want KVSplice benefits with less quality degradation
+- FIM analysis shows your early layers have high trace
+- You can accept moderate (not maximum) cache compression
+
+Use full `mla_kv` when:
+- Maximum cache compression is critical
+- Quality degradation is acceptable
+- Memory is severely constrained
+
 ## Future Work
 
 - Longer training runs to assess convergence gap
 - Higher compression ratios (70%, 90%)
 - Compare with xKV and other compression methods
 - Production inference latency benchmarks
+- Per-layer adaptive compression ratios based on FIM trace
 
 ## References
 
