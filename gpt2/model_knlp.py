@@ -36,7 +36,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from gpt2.model import LayerNorm, MLP, GPTConfig
+from gpt2.model import LayerNorm, MLP, GPTConfig, compute_fisher_metrics
 
 
 @dataclass
@@ -320,3 +320,81 @@ class GPT2_KNLP(nn.Module):
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
+
+    @torch.no_grad()
+    def compute_fisher_metrics(
+        self,
+        x: torch.Tensor,
+        layer_indices: list = None,
+        n_samples: int = 64,
+        topk: int = 8,
+    ) -> dict:
+        """
+        Compute Fisher Information Matrix spectrum metrics for selected layers.
+
+        Args:
+            x: Input tensor [B, T]
+            layer_indices: Which layers to analyze (default: [0, n_layers//2, -1])
+            n_samples: Samples per head for eigenvalue computation
+            topk: Number of top eigenvalues to log
+
+        Returns:
+            Dictionary of Fisher metrics for W&B logging
+        """
+        if compute_fisher_metrics is None:
+            return {}
+
+        if layer_indices is None:
+            n = len(self.transformer.h)
+            layer_indices = [0, n // 2, n - 1]
+
+        B, T = x.shape
+        device = x.device
+
+        # Forward pass to capture attention probabilities
+        tok_emb = self.transformer.wte(x)
+        pos_emb = self.transformer.wpe(torch.arange(T, device=device))
+        h = self.transformer.drop(tok_emb + pos_emb)
+
+        all_metrics = {}
+
+        for i, block in enumerate(self.transformer.h):
+            if i in layer_indices:
+                attn_probs = self._get_attn_probs(block.attn, block.ln_1(h))
+                if attn_probs is not None:
+                    metrics = compute_fisher_metrics(
+                        attn_probs, i, n_samples=n_samples, topk=topk
+                    )
+                    all_metrics.update(metrics)
+
+            h = block(h)
+
+        return all_metrics
+
+    def _get_attn_probs(
+        self, attn: "CausalSelfAttention_KNLP", x: torch.Tensor
+    ) -> torch.Tensor:
+        """Extract attention probabilities from CausalSelfAttention_KNLP layer."""
+        B, T, C = x.shape
+        device = x.device
+
+        # Get Q, K, V
+        q, k, v = attn.c_attn(x).split(self.config.n_embd, dim=2)
+
+        # Reshape to [B, H, T, head_dim]
+        q = q.view(B, T, attn.n_head, C // attn.n_head).transpose(1, 2)
+        k = k.view(B, T, attn.n_head, C // attn.n_head).transpose(1, 2)
+
+        # Compute attention scores
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        # Apply causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        att = att.masked_fill(causal_mask, float("-inf"))
+
+        # Softmax to get probabilities
+        att = F.softmax(att, dim=-1)
+
+        return att  # [B, H, T, T]
