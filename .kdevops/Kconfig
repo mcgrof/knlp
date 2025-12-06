@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# kdevops plugin: knlp
+#
+# This file is sourced when the knlp plugin is installed.
+
+source "$(shell, echo $HOME/.config/kdevops/plugins/knlp/workflows/knlp/Kconfig)"
