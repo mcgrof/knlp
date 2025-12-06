@@ -2,228 +2,194 @@
 
 Low-rank projection for KV cache memory reduction.
 
-## Honest Assessment
+## Verdict: Not Recommended for Most Use Cases
 
-**Memory savings work. Quality preservation is limited.**
+**The throughput cost exceeds the memory benefit.**
 
 This plugin reduces KV cache memory via orthogonal projection. The compression
-math is sound and memory savings are real. However, quality-preserving compression
-is much more limited than initially hoped.
+math is sound and memory savings are real. However, the compression/expansion
+overhead makes inference slower, typically negating any practical benefit.
 
-### What Works
+### Measured Results on B200 (Qwen2.5-7B)
 
-- **Memory reduction**: Verified 2-4x cache size reduction on B200
-- **V-only compression**: Compressing only V (not K) preserves quality better
-- **Calibrated PCA**: ~20% quality improvement over random projections
-- **Larger models compress better**: 72B tolerates compression better than 7B
+| Rank | Memory Savings | Throughput Penalty | PPL Increase | Task Degradation |
+|------|----------------|-------------------|--------------|------------------|
+| 120 | 3.1% | **-13%** | +6% | 0% |
+| 96 | 12.5% | **-14%** | +35% | Unknown |
+| 64 | 25.0% | ~-15% | +647% | Catastrophic |
 
-### What Doesn't Work
-
-- **Aggressive compression**: 2x compression destroys quality (+600% PPL)
-- **K compression**: Any K compression causes catastrophic degradation
-- **Random projections on large models**: Unusable quality loss
-
-### Practical Limits
-
-| Compression | Memory Savings | Quality Loss | Verdict |
-|-------------|----------------|--------------|---------|
-| 1.03x | 3% | 5-6% PPL | Usable |
-| 1.07x | 6% | 10-14% PPL | Marginal |
-| 1.14x | 12% | 35-44% PPL | Too high |
-| 1.33x+ | 25%+ | 600%+ PPL | Broken |
-
-**Bottom line**: You can save ~3-6% KV cache memory with acceptable quality loss.
-This is not the 4x compression the theory promises.
+**The problem**: You save 3-12% memory but lose 13-14% throughput. For most
+deployments, this is a net negative. Memory is cheap; latency matters.
 
 ---
 
-## B200 Benchmark Results
+## When This Might Be Useful
 
-Tested on 4x NVIDIA B200 (766 GB total VRAM).
+Use only if ALL of these apply:
 
-### Memory Verification (Works)
+1. **Memory-bound, not compute-bound**: You're hitting GPU memory limits
+   before compute saturation
+2. **Latency-insensitive**: You can tolerate 13-15% slower inference
+3. **Batch size constrained**: You need to fit more concurrent requests
+   and can't add more GPUs
+4. **Quality-tolerant**: Your use case can handle 6-35% perplexity increase
 
-Compression ratios match theory. At rank 32 with head_dim=64:
-
-| Model | Baseline Cache | Compressed | Savings |
-|-------|---------------|------------|---------|
-| GPT-2 @ 512 tokens | 18 MB | 9 MB | 50% |
-| Qwen2.5-0.5B @ 1024 tokens | 12 MB | 6 MB | 50% |
-
-### Quality Benchmarks (Disappointing)
-
-WikiText-2 perplexity with V-only calibrated PCA:
-
-**Qwen2.5-7B** (Baseline PPL: 7.88)
-
-| Rank | Savings | PPL | ΔPPL |
-|------|---------|-----|------|
-| 120 | 3.1% | 8.35 | +5.9% |
-| 112 | 6.2% | 8.99 | +14.0% |
-| 96 | 12.5% | 10.61 | +34.6% |
-| 64 | 25.0% | 58.89 | +647% |
-
-**Qwen2.5-72B** (Baseline PPL: 2.68)
-
-| Rank | Savings | PPL | ΔPPL |
-|------|---------|-----|------|
-| 120 | 3.1% | 2.80 | +4.6% |
-| 112 | 6.2% | 2.96 | +10.6% |
-| 96 | 12.5% | 3.86 | +43.9% |
-
-![Quality vs Compression](b200_quality_tradeoff.png)
-
----
-
-## Scaling Law
-
-Larger models tolerate compression slightly better:
-
-| Model | Rank 120 | Rank 112 |
-|-------|----------|----------|
-| 7B | +5.9% PPL | +14.0% PPL |
-| 72B | +4.6% PPL | +10.6% PPL |
-
-The improvement is real but modest (~20% relative). Not enough to unlock
-aggressive compression on larger models.
-
-![Scaling Law](b200_scaling_law.png)
-
----
-
-## When to Use This
-
-**Use if:**
-- You need marginal KV cache savings (3-6%)
-- You can tolerate 5-15% quality degradation
-- You're memory-bound on very long sequences
-- You want to fit slightly more concurrent requests
-
-**Don't use if:**
-- You need significant memory savings (>10%)
-- Quality degradation must stay under 5%
-- You're looking for "free" compression
-
----
-
-## Usage
-
-### Conservative (Recommended)
-
-V-only compression at rank 120 for ~3% savings, ~5% PPL loss:
-
-```python
-import torch
-from transformers import AutoModelForCausalLM
-from gpt2.compression.compressed_cache import (
-    CompressedDynamicCache,
-    IdentityCompressor,
-)
-
-# Calibrate first
-# python scripts/calibrate_kv_lowrank.py --model your-model --rank 120
-
-# Load calibration
-calib = torch.load("kv_calib_your-model_r120.pt")
-
-model = AutoModelForCausalLM.from_pretrained("your-model", device_map="cuda")
-num_layers = model.config.num_hidden_layers
-
-# V-only compression
-k_compressors = [IdentityCompressor() for _ in range(num_layers)]
-v_compressors = []
-for layer in calib["layers"]:
-    v_compressors.append(CalibratedCompressor(layer["V"]["U"], layer["V"]["mean"]))
-
-cache = CompressedDynamicCache(k_compressors, v_compressors, num_layers)
-```
-
-### Aggressive (Not Recommended)
-
-Higher compression is possible but quality suffers:
-
-```python
-# Rank 96 = 12.5% savings, but 35-44% PPL loss
-# Only use if you've validated on your specific use case
-```
+Example use case: Batch inference with very long contexts where memory is
+the bottleneck and latency doesn't matter.
 
 ---
 
 ## Key Findings
 
-### K vs V Sensitivity
+### Memory Savings Work as Expected
 
-K compression fails catastrophically. V compression is tolerable.
+The compression ratios match theory. For head_dim=128:
 
-| Target | Result |
-|--------|--------|
-| K+V compression | +647,883% PPL (broken) |
-| V-only compression | +5-14% PPL (usable) |
+| Rank | V Compression | Effective Savings |
+|------|---------------|-------------------|
+| 120 | 128/120 = 1.07x | 3.1% |
+| 112 | 128/112 = 1.14x | 6.2% |
+| 96 | 128/96 = 1.33x | 12.5% |
+| 64 | 128/64 = 2.00x | 25.0% |
 
-K has extreme variance concentration (132x spread). A few dimensions carry
-almost all the attention pattern information. Compressing K destroys these
-critical dimensions.
+### Throughput Penalty is Fixed
 
-V has uniform variance (4x spread). All dimensions contribute roughly equally,
-so compression removes less critical information.
+The ~13-14% overhead comes from:
+- Compression: `(x - mean) @ U` per layer per token
+- Expansion: `z @ U.T + mean` per layer per token
 
-### Calibration vs Random
+This overhead is roughly constant regardless of compression rank.
 
-PCA-calibrated projections outperform random orthogonal modestly:
+### Task Performance vs Perplexity
 
-| Method | Rank 112 PPL | ΔPPL |
-|--------|--------------|------|
-| Random orthogonal | 9.09 | +15.2% |
-| Calibrated PCA | 8.99 | +14.0% |
+Interesting finding: +6% PPL increase (rank 120) showed **0% degradation** on
+downstream tasks (HellaSwag, ARC-Easy, WinoGrande, PIQA). The perplexity
+increase doesn't directly translate to task performance loss at conservative
+compression levels.
 
-Calibration provides ~8% relative improvement over random projections.
-This is helpful but not transformative.
+However, at +35% PPL (rank 96), task degradation is likely significant (not
+fully tested).
 
-### Why Aggressive Compression Fails
+### V-Only Compression is Essential
 
-The KV cache is not as redundant as hoped. Even with:
-- V-only compression (K preserved)
-- PCA calibration (optimal projection)
-- Large models (more redundancy expected)
+K compression causes catastrophic quality degradation due to extreme variance
+concentration (132x spread in K vs 4x in V). Always use V-only compression.
 
-2x compression still causes 600%+ PPL degradation. The information density
-in the KV cache is higher than low-rank approximation can capture.
+### Calibration Provides Modest Improvement
+
+PCA-calibrated projections outperform random orthogonal by ~8%:
+
+| Method | Rank 112 PPL |
+|--------|--------------|
+| Random orthogonal | +15.2% |
+| Calibrated PCA | +14.0% |
+
+Calibration helps but isn't transformative.
 
 ---
 
-## Reproducing Results
+## If You Still Want to Use This
+
+### Conservative Configuration (Rank 120)
+
+3.1% memory savings, 6% PPL increase, 0% task degradation, 13% slower:
+
+```python
+from gpt2.compression.compressed_cache import (
+    CompressedDynamicCache,
+    CalibratedCompressor,
+    IdentityCompressor,
+)
+
+# Load calibration
+calib = torch.load("key_results/kv_calib_qwen7b_r120.pt")
+
+# V-only compression
+k_compressors = [IdentityCompressor() for _ in range(num_layers)]
+v_compressors = [
+    CalibratedCompressor(layer["V"]["U"], layer["V"]["mean"])
+    for layer in calib["layers"]
+]
+
+cache = CompressedDynamicCache(k_compressors, v_compressors, num_layers)
+outputs = model.generate(input_ids, past_key_values=cache, max_new_tokens=100)
+```
+
+### Aggressive Configuration (Rank 96)
+
+12.5% memory savings, 35% PPL increase, unknown task degradation, 14% slower:
+
+Not recommended unless you've validated quality on your specific use case.
+
+---
+
+## Calibration
+
+Create calibration files with:
 
 ```bash
-# Calibration
-python scripts/calibrate_kv_lowrank.py --model Qwen/Qwen2.5-7B --rank 120
-
-# Quality benchmark
-python scripts/benchmark_kv_compression_quality.py \
+python scripts/calibrate_kv_lowrank.py \
     --model Qwen/Qwen2.5-7B \
-    --ranks 120 \
-    --calibration key_results/kv_calib_qwen7b_r120.pt \
-    --num-samples 100 \
-    --wandb
-
-# Generate plots
-python scripts/plot_kv_quality_b200.py
-python scripts/plot_scaling_laws_b200.py
+    --rank 120 \
+    --output key_results/kv_calib_qwen7b_r120.pt
 ```
 
 ---
 
-## W&B Results
+## Benchmarking
 
-All benchmarks logged:
-- https://wandb.ai/mcgrof-citizen/kv-compression-b200
-- https://wandb.ai/mcgrof-citizen/kv-compression-quality
+Run comprehensive benchmarks:
+
+```bash
+# Memory + throughput + quality
+python scripts/benchmark_kv_comprehensive.py \
+    --model Qwen/Qwen2.5-7B \
+    --rank 120 \
+    --calibration key_results/kv_calib_qwen7b_r120.pt
+
+# Quality only (lm-eval)
+python scripts/benchmark_kv_comprehensive.py \
+    --model Qwen/Qwen2.5-7B \
+    --rank 120 \
+    --calibration key_results/kv_calib_qwen7b_r120.pt \
+    --skip-memory --skip-throughput
+```
+
+---
+
+## Alternatives
+
+For significant KV cache reduction with better tradeoffs, consider:
+
+1. **Quantization**: INT8 KV cache gives 2x memory reduction with minimal
+   quality loss and no throughput penalty (often faster due to memory
+   bandwidth)
+
+2. **Sliding window attention**: Fixed memory regardless of sequence length
+
+3. **Sparse attention**: Reduce attention compute and memory together
+
+4. **Flash attention with paging**: Better memory utilization without
+   compression overhead
+
+5. **Multi-Query/Grouped-Query Attention**: Architecture change that reduces
+   KV cache at the model level
+
+---
+
+## Hardware Tested
+
+- 4x NVIDIA B200 (766 GB total VRAM)
+- Model: Qwen2.5-7B (28 layers, head_dim=128)
+- Framework: PyTorch 2.x, Transformers 4.x
 
 ---
 
 ## Conclusion
 
 KV cache compression via low-rank projection is mathematically elegant but
-practically limited. The achievable quality-preserving compression (~3-6%
-memory savings) is modest. For significant KV cache reduction, other
-approaches like sliding window attention, sparse attention, or quantization
-may be more effective.
+practically limited. The throughput penalty (13-14%) typically exceeds the
+memory benefit (3-12.5%). For most deployments, the tradeoff isn't worthwhile.
+
+The plugin may have value in extreme memory-constrained scenarios where latency
+doesn't matter, but these are rare in production.
