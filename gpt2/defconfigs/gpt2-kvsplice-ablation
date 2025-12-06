@@ -15,11 +15,13 @@
 # - Inference benchmarks: tokens/sec, latency, GPU utilization
 # - lm-eval: downstream task performance (hellaswag)
 #
-# TinyStories allows faster iteration than FineWebEdu for ablation testing.
+# FineWebEdu provides sufficient training data for meaningful ablation results.
 
 CONFIG_HYPER_PARAM_AUTO=y
 
-CONFIG_COMPILE_AUTO=y
+# Disable torch.compile for DDP - causes NCCL collective desync
+CONFIG_COMPILE_AUTO=n
+CONFIG_GPT2_COMPILE=n
 
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GPT2=y
@@ -29,8 +31,8 @@ CONFIG_MODEL="gpt2"
 # GPT-2 Model Configuration
 CONFIG_GPT2_MODEL_124M=y
 CONFIG_GPT2_MODEL_NAME="gpt2"
-CONFIG_GPT2_DATASET_TINYSTORIES=y
-CONFIG_GPT2_DATASET="tinystories"
+CONFIG_GPT2_DATASET_FINEWEBEDU=y
+CONFIG_GPT2_DATASET="finewebedu"
 CONFIG_GPT2_BLOCK_SIZE=1024
 CONFIG_GPT2_N_LAYER=12
 CONFIG_GPT2_N_HEAD=12
@@ -108,6 +110,9 @@ CONFIG_MIXED_PRECISION=y
 CONFIG_GPU_WARMUP=y
 CONFIG_SAVE_CHECKPOINT=y
 CONFIG_CHECKPOINT_INTERVAL=1000
+
+# Distributed Training (multi-GPU)
+CONFIG_GPT2_USE_DDP=y
 
 # Memory Optimizations
 CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
