@@ -8,6 +8,10 @@ keeping the baseline pristine. Features include:
   sigmoid-modulated gating. Based on "Gated Attention for Large Language
   Models" (NeurIPS 2025 Oral).
 
+- Reciprocal Attention (RA): Second SDPA with swapped Q/K (K@Q.T instead of
+  Q@K.T) mixed with base attention via learnable coefficient. Based on FIM
+  analysis showing bidirectional attention flow benefits middle layers.
+
 These features are motivated by empirical observations that trained models
 use far fewer effective attention dimensions than available. KV compression
 experiments (2-4x cache reduction with <1% PPL increase) demonstrate this
@@ -16,13 +20,17 @@ redundancy. See https://github.com/mcgrof/attention-low-rank for analysis.
 Usage:
     from gpt2.model_knlp import GPT2_KNLP, GPT2_KNLP_Config
 
-    config = GPT2_KNLP_Config(use_sdpa_gate=True)
+    config = GPT2_KNLP_Config(
+        use_sdpa_gate=True,
+        use_ra=True,
+        n_ra_layers=3,
+    )
     model = GPT2_KNLP(config)
 """
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Set
 
 import torch
 import torch.nn as nn
@@ -38,10 +46,18 @@ class GPT2_KNLP_Config(GPTConfig):
 
     Inherits all GPTConfig parameters plus:
     - use_sdpa_gate: Enable SDPA output gating (Qwen3-style)
+    - use_ra: Enable Reciprocal Attention
+    - n_ra_layers: Number of middle layers to apply RA
+    - n_ra_heads: Number of heads per layer for RA (subset for efficiency)
     """
 
     # SDPA Output Gating (Qwen3-style)
     use_sdpa_gate: bool = False
+
+    # Reciprocal Attention
+    use_ra: bool = False
+    n_ra_layers: int = 3  # Apply RA to this many middle layers
+    n_ra_heads: int = 1  # Number of heads for RA (subset for efficiency)
 
 
 class CausalSelfAttention_KNLP(nn.Module):
@@ -50,12 +66,14 @@ class CausalSelfAttention_KNLP(nn.Module):
 
     Features:
     - SDPA output gating: y = attn_output * sigmoid(W_gate @ x)
+    - Reciprocal Attention: y = y_base + beta * ra_ln(SDPA(k, q, v))
     """
 
     def __init__(
         self,
         config: GPT2_KNLP_Config,
         use_sdpa_gate: bool = False,
+        use_ra: bool = False,
     ):
         super().__init__()
         assert config.n_embd % config.n_head == 0
@@ -80,6 +98,23 @@ class CausalSelfAttention_KNLP(nn.Module):
         else:
             self.register_parameter("sdpa_gate", None)
 
+        # Reciprocal Attention (RA)
+        # Second SDPA with swapped Q/K for FIM benefit in middle layers.
+        # At init beta=tanh(0)=0 means RA is completely off; training enables if helpful.
+        # Uses subset of heads to reduce FLOP cost.
+        self.use_ra = use_ra
+        if use_ra:
+            self.n_ra_heads = config.n_ra_heads
+            self.ra_logit = nn.Parameter(torch.zeros(1))  # beta=tanh(0)=0 at init
+            self.ra_head_proj = nn.Linear(
+                self.n_ra_heads * self.head_dim, config.n_embd, bias=config.bias
+            )
+            self.ra_ln = LayerNorm(config.n_embd, bias=config.bias)
+        else:
+            self.register_parameter("ra_logit", None)
+            self.ra_head_proj = None
+            self.ra_ln = None
+
     def forward(self, x, mechint_kv_mask=None):
         B, T, C = x.size()
 
@@ -94,7 +129,7 @@ class CausalSelfAttention_KNLP(nn.Module):
             k, v, _ = mechint_kv_mask(k, v)
 
         # Base attention: standard SDPA
-        y = F.scaled_dot_product_attention(
+        y_base = F.scaled_dot_product_attention(
             q,
             k,
             v,
@@ -102,12 +137,40 @@ class CausalSelfAttention_KNLP(nn.Module):
             dropout_p=self.dropout if self.training else 0,
             is_causal=True,
         )
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y_base = y_base.transpose(1, 2).contiguous().view(B, T, C)
 
         # SDPA output gating: apply sigmoid gate to attention output
         if self.use_sdpa_gate:
             gate = torch.sigmoid(self.sdpa_gate(x))
-            y = y * gate
+            y_base = y_base * gate
+
+        # Reciprocal Attention branch
+        if self.use_ra:
+            # Subset to last n_ra_heads for efficiency
+            q_subset = q[:, -self.n_ra_heads :, :, :]
+            k_subset = k[:, -self.n_ra_heads :, :, :]
+            v_subset = v[:, -self.n_ra_heads :, :, :]
+
+            # SDPA with swapped Q and K
+            y_ra = F.scaled_dot_product_attention(
+                k_subset,  # swap: use k as query
+                q_subset,  # swap: use q as key
+                v_subset,
+                attn_mask=None,
+                dropout_p=self.dropout if self.training else 0,
+                is_causal=True,
+            )
+            y_ra = y_ra.transpose(1, 2).contiguous().view(B, T, -1)
+
+            # Project back to full embedding dim and stabilize
+            y_ra = self.ra_head_proj(y_ra)
+            y_ra = self.ra_ln(y_ra)
+
+            # Learnable mixing: beta in [-1, 1], starts at 0 (RA off)
+            beta = torch.tanh(self.ra_logit)
+            y = y_base + beta * y_ra
+        else:
+            y = y_base
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -121,12 +184,14 @@ class Block_KNLP(nn.Module):
         self,
         config: GPT2_KNLP_Config,
         use_sdpa_gate: bool = False,
+        use_ra: bool = False,
     ):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention_KNLP(
             config,
             use_sdpa_gate=use_sdpa_gate,
+            use_ra=use_ra,
         )
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
@@ -151,6 +216,13 @@ class GPT2_KNLP(nn.Module):
         assert config.block_size is not None
         self.config = config
 
+        # Determine which layers get RA (middle layers)
+        ra_layers: Set[int] = set()
+        if config.use_ra:
+            center = config.n_layer // 2
+            half = config.n_ra_layers // 2
+            ra_layers = set(range(center - half, center - half + config.n_ra_layers))
+
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
@@ -161,6 +233,7 @@ class GPT2_KNLP(nn.Module):
                         Block_KNLP(
                             config,
                             use_sdpa_gate=config.use_sdpa_gate,
+                            use_ra=(i in ra_layers),
                         )
                         for i in range(config.n_layer)
                     ]
@@ -183,6 +256,7 @@ class GPT2_KNLP(nn.Module):
 
         print(f"GPT2_KNLP parameters: {self.get_num_params()/1e6:.2f}M")
         print(f"  SDPA gating: {config.use_sdpa_gate}")
+        print(f"  Reciprocal Attention: {config.use_ra} ({len(ra_layers)} layers)")
 
     def get_num_params(self, non_embedding=True):
         n_params = sum(p.numel() for p in self.parameters())

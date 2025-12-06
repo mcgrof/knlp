@@ -64,6 +64,10 @@ CONFIG_PRUNING_METHOD="none"
 CONFIG_GPT2_KNLP=y
 # Enable SDPA output gating (Qwen3-style)
 CONFIG_GPT2_KNLP_SDPA_GATE=y
+# Enable Reciprocal Attention on middle layers
+CONFIG_GPT2_KNLP_RA=y
+CONFIG_GPT2_KNLP_RA_LAYERS=3
+CONFIG_GPT2_KNLP_RA_HEADS=1
 
 # Experiment Tracking
 CONFIG_ENABLE_TRACKIO=y

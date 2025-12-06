@@ -469,6 +469,34 @@ config GPT2_KNLP_SDPA_GATE
 	  y = attn_output * sigmoid(W_gate @ x)
 	  Based on "Gated Attention for Large Language Models" (NeurIPS 2025).
 
+config GPT2_KNLP_RA
+	bool "Enable Reciprocal Attention (RA)"
+	default n
+	depends on GPT2_KNLP
+	help
+	  Second SDPA with swapped Q/K (K@Q.T instead of Q@K.T) mixed with
+	  base attention via learnable coefficient. Applied to middle layers.
+	  Motivated by FIM analysis showing bidirectional attention benefits.
+
+config GPT2_KNLP_RA_LAYERS
+	int "Number of middle layers for RA"
+	default 3
+	range 1 12
+	depends on GPT2_KNLP_RA
+	help
+	  Number of middle transformer layers to apply Reciprocal Attention.
+	  RA is applied to N layers centered around layer n_layer//2.
+
+config GPT2_KNLP_RA_HEADS
+	int "Number of heads for RA (subset)"
+	default 1
+	range 1 12
+	depends on GPT2_KNLP_RA
+	help
+	  Number of attention heads to use for Reciprocal Attention.
+	  Using a subset reduces compute cost while still capturing
+	  bidirectional patterns. 1 head = minimal FLOP overhead.
+
 source "gpt2/Kconfig.mechint"
 
 endmenu
