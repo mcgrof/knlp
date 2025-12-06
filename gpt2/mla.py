@@ -5,12 +5,18 @@ Multi-head Latent Attention (MLA) implementations
 
 This module contains MLA variants:
 - MLA (GPT2_MLA): Base multi-head latent attention with 6x cache compression
-- MLA+KVSplice (GPT2_MLA_KV): MLA with learned compression for 12x total cache reduction
+- MLA+KVSplice (GPT2_MLA_KV): MLA with learned compression and *latent-only* SDPA
 
-Both use the same architecture:
-- Q path: Direct projection from input (not cached)
-- KV path: Shared latent compressed representation (cached)
-- KVSplice adds additional learned bottleneck on KV latent (256→128 dims)
+Key points for GPT2_MLA_KV:
+- KV cache is stored in compressed latent space (d_compressed)
+- For attention, cache is decompressed only to latent space (d_latent)
+- Scaled dot-product attention is performed entirely in latent space
+- K/V are never materialized in head space; only the *final* per-head output
+  is projected back to head_dim using the value weights from from_kv_latent.
+
+NOTE: The latent-only SDPA path uses a separate RoPE in latent space (d_latent),
+so it is an architectural variant, not a mathematically exact rewrite of the
+original head-space RoPE attention.
 
 See docs/kvsplice.md for trade-off analysis and usage guidance.
 """
@@ -124,10 +130,11 @@ def apply_rope(
 
 class LearnedKVSplice(nn.Module):
     """
-    Pure learned low-rank projection for QKV compression.
+    Learned low-rank projection for KV latent: d_in -> d_compressed -> d_in.
 
-    Compresses in feature dimension (d_in → d_compressed) using
-    orthogonal linear projections initialized as approximate inverses.
+    - compress: d_in -> d_compressed
+    - latent_ln: LayerNorm in compressed space (stabilizes gradients)
+    - expand: d_compressed -> d_in
 
     This trains the model to produce representations that survive the
     low-rank bottleneck, acting as a regularizer that encourages
@@ -139,22 +146,18 @@ class LearnedKVSplice(nn.Module):
         self.d_in = d_in
         self.d_compressed = d_compressed
 
-        # Low-rank projection
+        # Low-rank projection with LayerNorm in compressed space
         self.compress = nn.Linear(d_in, d_compressed, bias=False)
+        self.latent_ln = nn.LayerNorm(d_compressed)
         self.expand = nn.Linear(d_compressed, d_in, bias=False)
 
-        # Initialize as approximate inverse
-        nn.init.orthogonal_(self.compress.weight)
-        with torch.no_grad():
-            self.expand.weight.copy_(self.compress.weight.T)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        compressed = self.compress(x)
-        decompressed = self.expand(compressed)
-        return decompressed
+        compressed = self.latent_ln(self.compress(x))
+        return self.expand(compressed)
 
     def compress_only(self, x: torch.Tensor) -> torch.Tensor:
-        return self.compress(x)
+        # What we store in cache: compressed + LN
+        return self.latent_ln(self.compress(x))
 
     def decompress_only(self, compressed: torch.Tensor) -> torch.Tensor:
         return self.expand(compressed)
@@ -481,14 +484,17 @@ class GPT2_MLA(nn.Module):
 
 class MLA_KVSplice(nn.Module):
     """
-    MLA with learned KVSplice compression on KV latent only.
+    MLA with learned KVSplice compression and *latent-only* SDPA.
 
-    Architecture matches base MLA (separate Q path, shared KV latent) but
-    adds KVSplice compression bottleneck on the KV latent before caching.
+    - Cache stores compressed KV latents: d_compressed = d_latent * compression_ratio
+    - For attention:
+        * Cache is decompressed to latent space (d_latent)
+        * Current tokens pass through KVSplice bottleneck (d_latent -> d_compressed -> d_latent)
+        * All attention math (Q, K, V) is done in latent space (d_latent)
+        * Final per-head outputs are obtained by applying the V-part of from_kv_latent
+    - No [B, H, T_total, head_dim] K or V tensors are ever materialized.
 
-    - Q path: x -> W_q -> Q (direct, not cached)
-    - KV path: x -> to_kv_latent -> d_latent -> KVSplice -> d_compressed (cached)
-      At inference: d_compressed -> KVSplice.decompress -> d_latent -> K, V
+    NOTE: Uses a separate RoPE in latent space; this is an architectural variant.
     """
 
     def __init__(
@@ -505,32 +511,55 @@ class MLA_KVSplice(nn.Module):
         self.head_dim = cfg.head_dim
         self.d_latent = cfg.d_latent
 
-        # Learned KVSplice compression on KV latent
+        # KVSplice bottleneck
         d_compressed = int(cfg.d_latent * compression_ratio)
         self.kvsplice = LearnedKVSplice(cfg.d_latent, d_compressed)
         self.d_compressed = d_compressed
 
-        # Q path - direct projection (no compression, not cached)
+        # Compressed-space SDPA: single head in d_compressed instead of
+        # multi-head in d_latent. This exploits the low-rank KV structure
+        # more aggressively and keeps cache in compressed space end-to-end.
+        self.use_compressed_attn = True
+
+        # Projections for compressed-space attention (single head)
+        self.q_proj_compressed = nn.Linear(d_compressed, d_compressed, bias=False)
+        self.kv_proj_compressed = nn.Linear(d_compressed, 2 * d_compressed, bias=False)
+        # Map compressed output back to latent space (then decode via tied E)
+        self.comp2lat = nn.Linear(d_compressed, cfg.d_latent, bias=False)
+
+        # Residual correction: allows model to deviate from strict tied map
+        # Zero-init so model starts as pure tied map, relaxes only if needed
+        self.out_residual = nn.Linear(cfg.d_latent, cfg.d_model, bias=True)
+        nn.init.zeros_(self.out_residual.weight)
+        nn.init.zeros_(self.out_residual.bias)
+
+        # RoPE for compressed space
+        self.rope_compressed = RotaryEmbedding(
+            d_compressed, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+
+        # Q path in head space (full-rank)
         q_dim = cfg.n_heads * cfg.head_dim
         self.W_q = nn.Linear(cfg.d_model, q_dim)
 
-        # KV path - compressed latent (this is what gets cached after KVSplice)
-        self.to_kv_latent = nn.Linear(cfg.d_model, cfg.d_latent)
+        # Latent path from input (shared encoder E, also used transposed for output)
+        self.to_kv_latent = nn.Linear(cfg.d_model, cfg.d_latent, bias=False)
+
+        # Latent -> [K,V] projection (we re-use only the *value* half explicitly);
+        # the key half weights are used to define query projections into latent space.
         kv_dim = 2 * cfg.n_heads * cfg.head_dim
         self.from_kv_latent = nn.Linear(cfg.d_latent, kv_dim)
 
-        # Output projection
+        # Output projection after heads are merged
         self.out_proj = nn.Linear(cfg.n_heads * cfg.head_dim, cfg.d_model)
 
-        # RoPE
-        self.rope = RotaryEmbedding(
-            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        # RoPE in latent space (d_latent)
+        self.rope_latent = RotaryEmbedding(
+            cfg.d_latent, max_seq_len=cfg.block_size, theta=cfg.rope_theta
         )
 
-        self.scale = 1.0 / math.sqrt(cfg.head_dim)
-
-        # Track reconstruction error for metrics
-        self._last_reconstruction_error = None
+        # For logging
+        self._last_reconstruction_error: Optional[float] = None
 
     def get_kvsplice_metrics(self) -> dict:
         """Get KVSplice metrics for this layer."""
@@ -539,83 +568,195 @@ class MLA_KVSplice(nn.Module):
             metrics["reconstruction_error"] = self._last_reconstruction_error
         return metrics
 
+    def _project_q_to_latent(
+        self,
+        q_full: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Project Q (in head space) into latent space using the *key* part of
+        from_kv_latent.
+
+        Shapes:
+            q_full: [B, H, T, head_dim]
+        Returns:
+            q_latent: [B, H, T, d_latent]
+        """
+        # from_kv_latent.weight: [2*H*head_dim, d_latent]
+        w = self.from_kv_latent.weight  # (2*H*head_dim, d_latent)
+        H = self.n_heads
+        d = self.head_dim
+
+        # First half are keys: shape [H*head_dim, d_latent]
+        w_k_full = w[: H * d, :]  # (H*head_dim, d_latent)
+        w_k_full = w_k_full.view(H, d, self.d_latent)  # [H, head_dim, d_latent]
+
+        # q_latent[b,h,t,m] = sum_d q_full[b,h,t,d] * w_k_full[h,d,m]
+        q_latent = torch.einsum("bhtd,hdm->bhtm", q_full, w_k_full)
+        return q_latent  # [B, H, T, d_latent]
+
+    def _project_latent_to_head_values(
+        self,
+        v_latent_out: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Project latent attention outputs back to per-head value space using
+        the *value* part of from_kv_latent.
+
+        Shapes:
+            v_latent_out: [B, H, T, d_latent]
+        Returns:
+            v_head: [B, H, T, head_dim]
+        """
+        w = self.from_kv_latent.weight  # [2*H*head_dim, d_latent]
+        H = self.n_heads
+        d = self.head_dim
+
+        # Second half are values: [H*head_dim, d_latent]
+        w_v_full = w[H * d :, :]  # (H*head_dim, d_latent)
+        w_v_full = w_v_full.view(H, d, self.d_latent)  # [H, head_dim, d_latent]
+
+        v_head = torch.einsum("bhtm,hdm->bhtd", v_latent_out, w_v_full)
+
+        if self.from_kv_latent.bias is not None:
+            b = self.from_kv_latent.bias[H * d :]  # (H*head_dim,)
+            b = b.view(H, d)  # [H, head_dim]
+            v_head = v_head + b.view(1, H, 1, d)
+
+        return v_head  # [B, H, T, head_dim]
+
     def forward(
         self,
         x: torch.Tensor,
         cache: Optional[torch.Tensor] = None,
         use_cache: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Forward pass with KVSplice compression on KV latent.
-
-        Cache stores compressed KV latents (d_compressed instead of d_latent).
-        Q is computed directly from input, not from latent.
-        """
         B, T, D = x.shape
 
-        # Q computed directly from input (not cached)
-        q = self.W_q(x)  # [B, T, n_heads * head_dim]
-        q = q.view(B, T, self.n_heads, self.head_dim)
-        q = q.permute(0, 2, 1, 3)  # [B, H, T, head_dim]
+        # ---- Compressed-space SDPA path (single head in d_compressed) ----
+        if self.use_compressed_attn:
+            kv_latent = self.to_kv_latent(x)  # [B,T,d_latent]
 
-        # KV from latent (stored compressed in cache)
+            # Occasionally track reconstruction error
+            if self.training and torch.rand(1).item() < 0.01:
+                self._last_reconstruction_error = (
+                    self.kvsplice.get_reconstruction_error(kv_latent).item()
+                )
+
+            # Compress current tokens to cache space
+            compressed_current = self.kvsplice.compress_only(kv_latent)  # [B,T,d_comp]
+
+            # Stitch cache + current in compressed space
+            if cache is not None:
+                compressed_all = torch.cat([cache, compressed_current], dim=1)
+            else:
+                compressed_all = compressed_current
+            T_total = compressed_all.shape[1]
+
+            # Q from current compressed tokens, K/V from full compressed sequence
+            q_lat = self.q_proj_compressed(compressed_current)  # [B,T,d_comp]
+            kv_lat = self.kv_proj_compressed(compressed_all)  # [B,T_total,2*d_comp]
+            k_lat, v_lat = kv_lat.split(self.d_compressed, dim=-1)
+
+            # Single head: shape [B,1,T,d_compressed] for SDPA
+            q = q_lat.unsqueeze(1)
+            k = k_lat.unsqueeze(1)
+            v = v_lat.unsqueeze(1)
+
+            # RoPE in compressed space
+            cos, sin = self.rope_compressed(x, T_total)
+            if cache is not None:
+                q_cos, q_sin = cos[-T:], sin[-T:]
+                q, _ = apply_rope(q, q, q_cos, q_sin)
+                k, _ = apply_rope(k, k, cos, sin)
+            else:
+                q, k = apply_rope(q, k, cos, sin)
+
+            attn_out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                is_causal=True,
+                dropout_p=self.cfg.dropout if self.training else 0.0,
+            )  # [B,1,T,d_comp]
+
+            attn_out = attn_out.squeeze(1)  # [B,T,d_comp]
+
+            # Decode via tied map + residual correction
+            # to_kv_latent.weight is [d_latent, d_model], so z @ weight gives [B,T,d_model]
+            z_out = self.comp2lat(attn_out)  # [B,T,d_latent]
+            base_out = z_out @ self.to_kv_latent.weight  # tied map
+            corr_out = self.out_residual(z_out)  # residual correction
+            out = base_out + corr_out  # [B,T,d_model]
+
+            new_cache = compressed_all if use_cache else None
+            return out, new_cache
+
+        # ---- Fallback: multi-head SDPA in d_latent space ----
+        H = self.n_heads
+
+        # Q in head space
+        q_full = self.W_q(x)  # [B, T, H*d]
+        q_full = q_full.view(B, T, H, self.head_dim).permute(0, 2, 1, 3)  # [B,H,T,d]
+
+        # KV latent for current tokens
         kv_latent = self.to_kv_latent(x)  # [B, T, d_latent]
 
-        # Track reconstruction error (compute occasionally to avoid overhead)
-        # This measures how well KVSplice can reconstruct the latent
-        if self.training and torch.rand(1).item() < 0.01:  # 1% of steps
+        # Occasionally track reconstruction error
+        if self.training and torch.rand(1).item() < 0.01:
             self._last_reconstruction_error = self.kvsplice.get_reconstruction_error(
                 kv_latent
             ).item()
 
-        # Apply KVSplice compression (always in training path!)
-        kv_latent_processed = self.kvsplice(kv_latent)
+        # Pass current tokens through KVSplice bottleneck
+        kv_latent_current = self.kvsplice(kv_latent)  # [B, T, d_latent]
 
-        # Handle cache (stored in compressed form, decompress on read)
+        # Handle cache in compressed space
         if cache is not None:
-            # Decompress cached latents
-            cache_decompressed = self.kvsplice.decompress_only(cache)
-            full_kv_latent = torch.cat([cache_decompressed, kv_latent_processed], dim=1)
-            T_total = full_kv_latent.shape[1]
+            # cache: [B, T_cache, d_compressed]
+            kv_latent_cache = self.kvsplice.decompress_only(cache)  # [B,Tc,d_latent]
+            z_all = torch.cat([kv_latent_cache, kv_latent_current], dim=1)
+            T_total = z_all.shape[1]
         else:
-            full_kv_latent = kv_latent_processed
+            z_all = kv_latent_current
             T_total = T
 
-        # Decompress to K, V
-        kv = self.from_kv_latent(full_kv_latent)  # [B, T_total, 2*H*head_dim]
-        kv = kv.view(B, T_total, 2, self.n_heads, self.head_dim)
-        kv = kv.permute(2, 0, 3, 1, 4)  # [2, B, H, T_total, head_dim]
-        k, v = kv[0], kv[1]
+        # Project Q into latent space using key weights
+        q_latent = self._project_q_to_latent(q_full)  # [B,H,T,d_latent]
 
-        # Apply RoPE
-        cos, sin = self.rope(x, T_total)
+        # Keys and values in latent space
+        k_latent = z_all.unsqueeze(1).expand(B, H, T_total, self.d_latent)
+        v_latent = k_latent  # use same latent for K and V
+
+        # RoPE in latent space
+        cos_lat, sin_lat = self.rope_latent(x, T_total)
         if cache is not None:
-            q_cos, q_sin = cos[-T:], sin[-T:]
-            q, _ = apply_rope(q, q, q_cos, q_sin)
-            k, _ = apply_rope(k, k, cos, sin)
+            q_cos, q_sin = cos_lat[-T:], sin_lat[-T:]
+            q_latent, _ = apply_rope(q_latent, q_latent, q_cos, q_sin)
+            k_latent, _ = apply_rope(k_latent, k_latent, cos_lat, sin_lat)
         else:
-            q, k = apply_rope(q, k, cos, sin)
+            q_latent, k_latent = apply_rope(q_latent, k_latent, cos_lat, sin_lat)
 
-        # Standard attention: Q @ K.T @ V
-        use_causal = True
-        attn_out = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            is_causal=use_causal,
+        # Latent-only SDPA
+        attn_out_latent = F.scaled_dot_product_attention(
+            q_latent,
+            k_latent,
+            v_latent,
+            is_causal=True,
             dropout_p=self.cfg.dropout if self.training else 0.0,
-        )
+        )  # [B,H,T,d_latent]
+
+        # Map latent outputs back to head_dim via value weights
+        attn_out_heads = self._project_latent_to_head_values(attn_out_latent)
+        # [B,H,T,head_dim]
 
         # Merge heads and project
-        attn_out = attn_out.transpose(1, 2).contiguous()
-        attn_out = attn_out.view(B, T, self.n_heads * self.head_dim)
-        out = self.out_proj(attn_out)
+        attn_out_heads = attn_out_heads.transpose(1, 2).contiguous()  # [B,T,H,d]
+        attn_out_heads = attn_out_heads.view(B, T, H * self.head_dim)
+        out = self.out_proj(attn_out_heads)  # [B,T,d_model]
 
         # Store compressed cache
         if use_cache:
-            # Compress the original kv_latent, not the processed one
-            # (kv_latent_processed has already been through compress+expand)
-            new_cache = self.kvsplice.compress_only(kv_latent)
+            new_cache = self.kvsplice.compress_only(kv_latent)  # [B,T,d_compressed]
         else:
             new_cache = None
 
@@ -652,7 +793,7 @@ class MLAKVBlock(nn.Module):
 
 
 class GPT2_MLA_KV(nn.Module):
-    """Full GPT-2 model with MLA+KVSplice attention."""
+    """Full GPT-2 with MLA+KVSplice using latent-only SDPA."""
 
     def __init__(
         self,
@@ -763,7 +904,13 @@ class GPT2_MLA_KV(nn.Module):
         n_samples: int = 64,
         topk: int = 8,
     ) -> dict:
-        """Compute Fisher spectrum metrics for selected layers."""
+        """
+        Compute Fisher spectrum metrics for selected layers.
+
+        FIM is computed using a "logical" attention prob over latent-only SDPA.
+        This is *not* bitwise identical to the head-space version, but gives
+        meaningful relative comparisons across layers / runs.
+        """
         if layer_indices is None:
             n = len(self.blocks)
             layer_indices = [0, n // 2, n - 1]
@@ -776,7 +923,7 @@ class GPT2_MLA_KV(nn.Module):
         pos_emb = self.wpe(torch.arange(T, device=device))
         h = self.drop(tok_emb + pos_emb)
 
-        all_metrics = {}
+        all_metrics: Dict[str, float] = {}
 
         for i, block in enumerate(self.blocks):
             if i in layer_indices:
@@ -794,38 +941,40 @@ class GPT2_MLA_KV(nn.Module):
     def _get_attn_probs(
         self, attn: "MLA_KVSplice", x: torch.Tensor
     ) -> Optional[torch.Tensor]:
-        """Extract attention probabilities from MLA_KVSplice layer."""
+        """
+        Approximate attention probabilities for latent-only SDPA.
+
+        We replay the latent-only path without cache and extract the
+        softmax(qk^T) in latent space.
+        """
         B, T, _ = x.shape
+        H = attn.n_heads
 
-        # Q computed directly
-        q = attn.W_q(x)
-        q = q.view(B, T, attn.n_heads, attn.head_dim)
-        q = q.permute(0, 2, 1, 3)
+        # Q in head space
+        q_full = attn.W_q(x).view(B, T, H, attn.head_dim).transpose(1, 2)
 
-        # KV from compressed latent
-        kv_latent_orig = attn.to_kv_latent(x)
-        kv_latent = attn.kvsplice(kv_latent_orig)
+        # Latent
+        kv_latent = attn.to_kv_latent(x)
+        kv_latent_current = attn.kvsplice(kv_latent)  # [B,T,d_latent]
 
-        # Decompress to K, V
-        kv = attn.from_kv_latent(kv_latent)
-        kv = kv.view(B, T, 2, attn.n_heads, attn.head_dim)
-        kv = kv.permute(2, 0, 3, 1, 4)
-        k, v = kv[0], kv[1]
+        # Project Q to latent
+        q_latent = attn._project_q_to_latent(q_full)  # [B,H,T,d_latent]
 
-        # Apply RoPE
-        cos, sin = attn.rope(x, T)
-        q, k = apply_rope(q, k, cos, sin)
+        # K in latent
+        k_latent = kv_latent_current.unsqueeze(1).expand(B, H, T, attn.d_latent)
 
-        # Compute scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * attn.scale
+        # Latent RoPE
+        cos_lat, sin_lat = attn.rope_latent(x, T)
+        q_latent, k_latent = apply_rope(q_latent, k_latent, cos_lat, sin_lat)
 
-        # Causal mask
+        # Scores in latent
+        scores = torch.matmul(q_latent, k_latent.transpose(-2, -1)) / math.sqrt(
+            attn.d_latent
+        )
+
         causal_mask = torch.triu(
             torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
         )
-        scores_masked = scores.masked_fill(causal_mask, float("-inf"))
-
-        # Standard attention probs
-        attn_probs = F.softmax(scores_masked, dim=-1)
-
-        return attn_probs  # [B, H, T, T]
+        scores = scores.masked_fill(causal_mask, float("-inf"))
+        attn_probs = F.softmax(scores, dim=-1)
+        return attn_probs
