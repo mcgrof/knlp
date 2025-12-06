@@ -1,0 +1,8 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# Install dependencies for the knlp role
+
+- name: Install KNLP dependencies for Debian
+  ansible.builtin.import_tasks: debian/main.yml
+  when: ansible_facts['os_family']|lower == 'debian'
