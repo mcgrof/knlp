@@ -178,12 +178,24 @@ class CompressedCacheLayer:
                 self.keys_compressed = k_comp_new
                 self.values_compressed = v_comp_new
             else:
-                self.keys_compressed = torch.cat(
-                    [self.keys_compressed, k_comp_new], dim=2
-                )
-                self.values_compressed = torch.cat(
-                    [self.values_compressed, v_comp_new], dim=2
-                )
+                # Handle K compression (may be regular tensor from IdentityCompressor)
+                if isinstance(k_comp_new, QuantizedTensor):
+                    self.keys_compressed = QuantizedTensor.cat(
+                        [self.keys_compressed, k_comp_new], dim=2
+                    )
+                else:
+                    self.keys_compressed = torch.cat(
+                        [self.keys_compressed, k_comp_new], dim=2
+                    )
+                # Handle V compression (may be QuantizedTensor)
+                if isinstance(v_comp_new, QuantizedTensor):
+                    self.values_compressed = QuantizedTensor.cat(
+                        [self.values_compressed, v_comp_new], dim=2
+                    )
+                else:
+                    self.values_compressed = torch.cat(
+                        [self.values_compressed, v_comp_new], dim=2
+                    )
 
         # Build output: expanded compressed + uncompressed tail
         if self.keys_compressed is not None:
@@ -285,10 +297,15 @@ class CompressedCacheLayer:
         """Return memory usage of compressed cache (compressed + uncompressed)."""
         total = 0
         if self.keys_compressed is not None:
-            total += self.keys_compressed.numel() * self.keys_compressed.element_size()
-            total += (
-                self.values_compressed.numel() * self.values_compressed.element_size()
-            )
+            # Handle QuantizedTensor with proper memory accounting
+            if isinstance(self.keys_compressed, QuantizedTensor):
+                total += self.keys_compressed.memory_bytes()
+                total += self.values_compressed.memory_bytes()
+            else:
+                total += self.keys_compressed.numel() * self.keys_compressed.element_size()
+                total += (
+                    self.values_compressed.numel() * self.values_compressed.element_size()
+                )
         if self.keys_uncompressed is not None:
             total += (
                 self.keys_uncompressed.numel() * self.keys_uncompressed.element_size()
@@ -835,12 +852,98 @@ class CalibratedCompressor(nn.Module):
         return self.d_input / self.rank
 
 
+class QuantizedTensor:
+    """
+    Wrapper for quantized tensor storage with proper memory accounting.
+
+    Stores int8 quantized values + float16 scales, but acts like a single tensor
+    for the cache layer. Memory is computed from actual storage, not the expanded size.
+    """
+
+    def __init__(self, quantized: torch.Tensor, scale: torch.Tensor):
+        """
+        Args:
+            quantized: [N, rank] int8 quantized values
+            scale: [N, 1] float16 per-row scales
+        """
+        self.quantized = quantized  # int8
+        self.scale = scale  # float16
+
+    @property
+    def shape(self):
+        """Return shape as if it were the quantized tensor."""
+        return self.quantized.shape
+
+    @property
+    def device(self):
+        return self.quantized.device
+
+    @property
+    def dtype(self):
+        """Report as int8 for memory accounting."""
+        return self.quantized.dtype
+
+    def numel(self) -> int:
+        """Return number of elements (quantized only, scale is small overhead)."""
+        return self.quantized.numel()
+
+    def element_size(self) -> int:
+        """Return element size (1 byte for int8)."""
+        return self.quantized.element_size()
+
+    def memory_bytes(self) -> int:
+        """Return actual memory usage in bytes."""
+        q_bytes = self.quantized.numel() * self.quantized.element_size()
+        s_bytes = self.scale.numel() * self.scale.element_size()
+        return q_bytes + s_bytes
+
+    def reshape(self, *shape):
+        """Reshape both tensors consistently."""
+        # For reshape [B*H*T, R] -> [B, H, T, R]
+        new_q = self.quantized.reshape(*shape)
+        # Scale shape: [B*H*T, 1] -> [B, H, T, 1]
+        scale_shape = list(shape)
+        scale_shape[-1] = 1
+        new_s = self.scale.reshape(*scale_shape)
+        return QuantizedTensor(new_q, new_s)
+
+    def index_select(self, dim: int, index: torch.Tensor):
+        """Select indices along dimension."""
+        new_q = self.quantized.index_select(dim, index)
+        new_s = self.scale.index_select(dim, index)
+        return QuantizedTensor(new_q, new_s)
+
+    def repeat_interleave(self, repeats: int, dim: int):
+        """Repeat interleave for beam search."""
+        new_q = self.quantized.repeat_interleave(repeats, dim=dim)
+        new_s = self.scale.repeat_interleave(repeats, dim=dim)
+        return QuantizedTensor(new_q, new_s)
+
+    def __getitem__(self, idx):
+        """Slicing support."""
+        new_q = self.quantized[idx]
+        new_s = self.scale[idx]
+        return QuantizedTensor(new_q, new_s)
+
+    @staticmethod
+    def cat(tensors: list, dim: int):
+        """Concatenate multiple QuantizedTensors."""
+        q_list = [t.quantized for t in tensors]
+        s_list = [t.scale for t in tensors]
+        new_q = torch.cat(q_list, dim=dim)
+        new_s = torch.cat(s_list, dim=dim)
+        return QuantizedTensor(new_q, new_s)
+
+
 class QuantizedCalibratedCompressor(nn.Module):
     """
     PCA-calibrated low-rank compressor with int8/int4 quantization in latent space.
 
-    compress(x) = quantize((x - mean) @ U)
+    compress(x) = quantize((x - mean) @ U) -> QuantizedTensor (int8 + scale)
     expand(z) = dequantize(z) @ U.T + mean
+
+    Memory savings: int8 uses 1 byte vs 2 bytes for float16 = 50% reduction
+    on the compressed representation (in addition to low-rank reduction).
     """
 
     def __init__(
@@ -868,8 +971,10 @@ class QuantizedCalibratedCompressor(nn.Module):
         # Quantization range
         if bits == 8:
             self.qmin, self.qmax = -128, 127
+            self.qtype = torch.int8
         elif bits == 4:
             self.qmin, self.qmax = -8, 7
+            self.qtype = torch.int8  # Store int4 in int8
         else:
             raise ValueError(f"Unsupported bits: {bits}")
 
@@ -880,23 +985,32 @@ class QuantizedCalibratedCompressor(nn.Module):
         else:
             self.register_buffer("mean", torch.zeros(self.d_input, dtype=dtype))
 
-    def compress(self, x: torch.Tensor) -> torch.Tensor:
-        """Project to low-rank subspace and quantize: [*, d_input] -> [*, rank]."""
+    def compress(self, x: torch.Tensor) -> QuantizedTensor:
+        """Project to low-rank subspace and quantize: [N, d_input] -> QuantizedTensor."""
         centered = x - self.mean
-        latent = centered @ self.U
+        latent = centered @ self.U  # [N, rank]
 
-        # Quantize per-token (symmetric quantization)
+        # Quantize per-row (symmetric quantization)
         absmax = latent.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8)
-        scale = absmax / self.qmax
+        scale = absmax / self.qmax  # [N, 1]
         quantized = (latent / scale).round().clamp(self.qmin, self.qmax)
 
-        # Return dequantized for now (stores quantized internally)
-        dequantized = quantized * scale
-        return dequantized
+        # Store as actual int8 for memory savings
+        quantized_int8 = quantized.to(self.qtype)
+        scale_fp16 = scale.to(torch.float16)
 
-    def expand(self, z: torch.Tensor) -> torch.Tensor:
-        """Reconstruct from low-rank: [*, rank] -> [*, d_input]."""
-        return z @ self.U.T + self.mean
+        return QuantizedTensor(quantized_int8, scale_fp16)
+
+    def expand(self, z) -> torch.Tensor:
+        """Reconstruct from low-rank: QuantizedTensor -> [N, d_input]."""
+        if isinstance(z, QuantizedTensor):
+            # Dequantize: int8 -> float16
+            dequantized = z.quantized.to(self.dtype) * z.scale.to(self.dtype)
+        else:
+            # Fallback for non-quantized input (e.g., during testing)
+            dequantized = z
+
+        return dequantized @ self.U.T + self.mean
 
     def calibrate(self, data: torch.Tensor) -> None:
         """No-op - already calibrated."""
@@ -904,8 +1018,12 @@ class QuantizedCalibratedCompressor(nn.Module):
 
     @property
     def compression_ratio(self) -> float:
-        """Return compression ratio (not accounting for quantization bits)."""
-        return self.d_input / self.rank
+        """Return compression ratio including quantization benefit."""
+        # Low-rank: d_input -> rank
+        # Quantization: 2 bytes (fp16) -> 1 byte (int8) + ~0.015 bytes (scale overhead)
+        lowrank_ratio = self.d_input / self.rank
+        quant_ratio = 2.0 / 1.015  # ~1.97x from int8
+        return lowrank_ratio * quant_ratio
 
 
 class GammaAwareQuantizedCompressor(nn.Module):
