@@ -64,7 +64,11 @@ class SimpleGPUMonitor:
             if result.returncode != 0:
                 return None
 
-            line = result.stdout.strip()
+            # Handle multi-GPU output - take first line only (GPU 0)
+            lines = result.stdout.strip().split("\n")
+            if not lines:
+                return None
+            line = lines[0]
             parts = [p.strip() for p in line.split(",")]
 
             if len(parts) >= 6:
@@ -179,8 +183,8 @@ class SimpleGPUMonitor:
 
                     self.data.append(stats)
 
-                    # Save periodically (every 10 samples)
-                    if len(self.data) % 10 == 0:
+                    # Save periodically (every 5 samples for crash resilience)
+                    if len(self.data) % 5 == 0:
                         self._save_data()
 
                 time.sleep(1)  # Sample every second
