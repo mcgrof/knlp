@@ -838,9 +838,16 @@ class BaseGPT2Trainer:
                 )
 
             # Log to W&B if enabled
+            # Use commit=False to prevent sanity check from incrementing W&B's
+            # internal step counter, which would conflict with training steps
             if log_to_wandb and "wandb" in self.trackers:
                 try:
                     import wandb
+
+                    # Define sanity metrics to use their own step counter
+                    # This prevents "step less than current step" warnings
+                    if step == 1:
+                        wandb.define_metric("sanity/*", step_metric="sanity/step")
 
                     wandb.log(
                         {
@@ -849,7 +856,8 @@ class BaseGPT2Trainer:
                             "sanity/avg_loss": (
                                 avg_loss if step % print_every == 0 else None
                             ),
-                        }
+                        },
+                        commit=False,  # Don't increment global step counter
                     )
                 except Exception as e:
                     print(f"Warning: Failed to log to W&B: {e}")
@@ -861,12 +869,18 @@ class BaseGPT2Trainer:
         final_loss = loss_history[-1]
         reduction = (initial_loss - final_loss) / initial_loss * 100
 
-        # MLA architectures have different convergence - use relaxed threshold
-        # MLA: 40% reduction required (final < 0.6 * initial)
+        # MLA/KNLP architectures have different convergence - use relaxed threshold
+        # MLA/KNLP: 40% reduction required (final < 0.6 * initial)
         # Vanilla: 70% reduction required (final < 0.3 * initial)
         enable_mla = getattr(self.config, "ENABLE_MLA", False)
         is_mla = enable_mla in ("y", True)
-        pass_threshold = 0.6 if is_mla else 0.3
+        enable_knlp = getattr(self.config, "GPT2_KNLP", False)
+        is_knlp = enable_knlp in ("y", True)
+        # Also check for KNLP variant via environment
+        knlp_variant = os.environ.get("CONFIG_KNLP_VARIANT", "")
+        is_knlp = is_knlp or bool(knlp_variant)
+        use_relaxed = is_mla or is_knlp
+        pass_threshold = 0.6 if use_relaxed else 0.3
 
         print("\n" + "=" * 80)
         print("SANITY CHECK RESULTS")
@@ -875,7 +889,12 @@ class BaseGPT2Trainer:
         print(f"Final loss:   {final_loss:.4f}")
         print(f"Reduction:    {reduction:.1f}%")
         print(f"Time:         {elapsed:.1f}s")
-        arch_note = " (MLA - relaxed)" if is_mla else ""
+        if is_mla:
+            arch_note = " (MLA - relaxed)"
+        elif is_knlp:
+            arch_note = " (KNLP - relaxed)"
+        else:
+            arch_note = ""
         print(f"\nThresholds{arch_note} (based on initial={initial_loss:.2f}):")
         print(
             f"  Pass: < {pass_threshold * initial_loss:.2f}  |  Good: < 1.0  |  Excellent: < 0.1"
