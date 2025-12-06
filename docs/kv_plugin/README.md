@@ -157,6 +157,44 @@ python scripts/benchmark_kv_comprehensive.py \
 
 ---
 
+## Quantization Support (Broken)
+
+The plugin includes `QuantizedCalibratedCompressor` for INT8 quantization, but it's
+**not functional**. The implementation quantizes then immediately dequantizes,
+storing values as FP16:
+
+```python
+# From compressed_cache.py line 893-895
+dequantized = quantized * scale
+return dequantized  # Still FP16!
+```
+
+**Measured results (INT8 vs FP16 low-rank):**
+
+| Metric | FP16 | INT8 |
+|--------|------|------|
+| Memory | 54.25 MB | 54.25 MB (same) |
+| Throughput | -5.3% | **-16.6%** (worse) |
+| PPL | +5.6% | +5.5% (same) |
+
+INT8 adds overhead with no memory benefit. Don't use it.
+
+---
+
+## Benchmark Plots
+
+### Task Performance (lm-eval)
+
+![Task Performance](b200_lm_eval_results.png)
+
+Zero task degradation at rank 120 despite +6% PPL increase.
+
+### Tradeoff Summary
+
+![Tradeoff Summary](b200_tradeoff_summary.png)
+
+---
+
 ## Alternatives
 
 For significant KV cache reduction with better tradeoffs, consider:
