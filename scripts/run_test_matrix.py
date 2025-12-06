@@ -793,6 +793,20 @@ def get_test_matrix(config):
 
     matrix["mla_variants"] = mla_variants if mla_variants else None
 
+    # Check for KNLP variant testing (baseline vs SDPA gate vs RA ablation)
+    knlp_variants = []
+    if config.get("GPT2_KNLP") in ("y", True):
+        # Parse KNLP_VARIANTS or KNLP_VARIANT (comma-separated)
+        knlp_variants_str = config.get("KNLP_VARIANTS") or config.get(
+            "KNLP_VARIANT", ""
+        )
+        if isinstance(knlp_variants_str, str):
+            knlp_variants_str = knlp_variants_str.strip('"')
+        if knlp_variants_str:
+            knlp_variants = [s.strip() for s in str(knlp_variants_str).split(",")]
+
+    matrix["knlp_variants"] = knlp_variants if knlp_variants else None
+
     # Get sparsity levels from individual TEST_SPARSITY_* configs
     matrix["sparsity_levels"] = []
 
@@ -846,6 +860,9 @@ def generate_combinations(matrix):
 
     # Get MLA variants
     mla_variants = matrix.get("mla_variants", None)
+
+    # Get KNLP variants
+    knlp_variants = matrix.get("knlp_variants", None)
 
     for model, optimizer, pruning, tokenizer_method in itertools.product(
         matrix["models"],
@@ -911,6 +928,26 @@ def generate_combinations(matrix):
                         "pruning": pruning,
                         "sparsity": "0.0",
                         "mla_variant": mla_variant,
+                        "tokenizer_method": tokenizer_method,
+                    }
+                    # Include AdamWPrune variant if applicable
+                    if optimizer == "adamwprune":
+                        for variant in adamwprune_variants:
+                            combo_with_variant = combo.copy()
+                            combo_with_variant["variant"] = variant
+                            combinations.append(combo_with_variant)
+                    else:
+                        combinations.append(combo)
+            # Check if we should generate KNLP variant tests
+            elif knlp_variants and model == "gpt2":
+                # Generate one combination for each KNLP variant (baseline, sdpa_gate, ra)
+                for knlp_variant in knlp_variants:
+                    combo = {
+                        "model": model,
+                        "optimizer": optimizer,
+                        "pruning": pruning,
+                        "sparsity": "0.0",
+                        "knlp_variant": knlp_variant,
                         "tokenizer_method": tokenizer_method,
                     }
                     # Include AdamWPrune variant if applicable
@@ -1000,6 +1037,7 @@ def run_single_test(
     ra_mla_ablation_step = combination.get("ra_mla_ablation_step", None)
     vanilla_ablation_step = combination.get("vanilla_ablation_step", None)
     mla_variant = combination.get("mla_variant", None)
+    knlp_variant = combination.get("knlp_variant", None)
     tokenizer_method = combination.get("tokenizer_method", "none")
 
     # Check if we should skip baseline step and use a reference run instead
@@ -1090,6 +1128,15 @@ def run_single_test(
                 test_id = f"{model}_{optimizer}_{variant}_{mla_variant}"
             else:
                 test_id = f"{model}_{optimizer}_{mla_variant}"
+            # Tokenizer method for ablation (if applicable)
+            if tokenizer_method and tokenizer_method != "none":
+                test_id = f"{test_id}_{tokenizer_method}"
+        elif knlp_variant:
+            # Include KNLP variant in test ID (e.g., gpt2_adamwspam_knlp_ra)
+            if variant:
+                test_id = f"{model}_{optimizer}_{variant}_knlp_{knlp_variant}"
+            else:
+                test_id = f"{model}_{optimizer}_knlp_{knlp_variant}"
             # Tokenizer method for ablation (if applicable)
             if tokenizer_method and tokenizer_method != "none":
                 test_id = f"{test_id}_{tokenizer_method}"
@@ -1428,10 +1475,15 @@ def run_single_test(
         if mla_variant:
             env["CONFIG_MLA_VARIANT"] = mla_variant
 
+        # Set KNLP variant if testing KNLP architectures
+        if knlp_variant:
+            env["CONFIG_KNLP_VARIANT"] = knlp_variant
+
         # Detect GPU vendor and set appropriate memory configuration
         is_amd_gpu = False
         try:
             import torch
+
             if torch.cuda.is_available() and torch.cuda.device_count() > 0:
                 device_name = torch.cuda.get_device_name(0).lower()
                 is_amd_gpu = "amd" in device_name or "radeon" in device_name
@@ -1474,7 +1526,10 @@ def run_single_test(
             if config.get("GPT2_USE_DDP") == "y" or config.get("GPT2_USE_DDP") is True:
                 try:
                     import torch
-                    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
+
+                    num_gpus = (
+                        torch.cuda.device_count() if torch.cuda.is_available() else 1
+                    )
                 except Exception:
                     num_gpus = config.get("GPT2_DDP_NUM_GPUS", 1)
                 ddp_info = (
@@ -2797,6 +2852,21 @@ def main():
                             else:
                                 test_desc = (
                                     f"  - MLA variant: {mla_variant}{tokenizer_suffix}"
+                                )
+                        elif combo.get("knlp_variant"):
+                            # KNLP architecture test - show variant details
+                            knlp_var = combo.get("knlp_variant")
+                            if knlp_var == "baseline":
+                                test_desc = f"  - GPT2_KNLP baseline (no features){tokenizer_suffix}"
+                            elif knlp_var == "sdpa_gate":
+                                test_desc = f"  - SDPA output gating (Qwen3-style){tokenizer_suffix}"
+                            elif knlp_var == "ra":
+                                test_desc = f"  - Reciprocal Attention (K@Q.T swap){tokenizer_suffix}"
+                            elif knlp_var == "sdpa_ra":
+                                test_desc = f"  - SDPA gating + Reciprocal Attention{tokenizer_suffix}"
+                            else:
+                                test_desc = (
+                                    f"  - KNLP variant: {knlp_var}{tokenizer_suffix}"
                                 )
                         elif variant_str.strip():
                             test_desc = f"  - {variant_str.strip()}{tokenizer_suffix}"

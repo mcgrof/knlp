@@ -22,6 +22,7 @@ sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT2, GPTConfig
 from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_KV_FIM, MLA_Config
+from gpt2.model_knlp import GPT2_KNLP, GPT2_KNLP_Config
 from lib.optimizers import create_optimizer
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer
@@ -152,19 +153,83 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             model.to(self.device)
 
         else:
-            # Create standard GPT-2 model
-            if self.master_process:
-                print(f"Initializing GPT-2 model: {self.args.model_name}")
+            # Check if KNLP variant is enabled
+            enable_knlp = getattr(self.config, "GPT2_KNLP", False)
+            knlp_variant = os.environ.get("CONFIG_KNLP_VARIANT") or getattr(
+                self.config, "KNLP_VARIANT", ""
+            )
 
-            # Create GPT config
-            config = GPTConfig.from_name(self.args.model_name)
-            config.block_size = self.args.block_size
-            config.dropout = self.args.dropout
-            config.bias = getattr(self.args, "bias", True)
+            if enable_knlp in ("y", True) or knlp_variant:
+                # Create GPT2_KNLP model
+                if self.master_process:
+                    variant_name = knlp_variant or "default"
+                    print(f"Initializing GPT2_KNLP model: {variant_name}")
 
-            # Create model
-            model = GPT2(config)
-            model.to(self.device)
+                # Parse KNLP variant for ablation
+                # Variants: "baseline", "sdpa_gate", "ra"
+                use_sdpa_gate = False
+                use_ra = False
+
+                if knlp_variant:
+                    variant_lower = knlp_variant.lower()
+                    if variant_lower == "sdpa_gate":
+                        use_sdpa_gate = True
+                    elif variant_lower == "ra":
+                        use_ra = True
+                    elif variant_lower == "sdpa_ra" or variant_lower == "both":
+                        use_sdpa_gate = True
+                        use_ra = True
+                    # "baseline" leaves both False
+                else:
+                    # Use config flags if no variant override
+                    use_sdpa_gate = getattr(self.config, "GPT2_KNLP_SDPA_GATE", False)
+                    use_sdpa_gate = use_sdpa_gate in ("y", True)
+                    use_ra = getattr(self.config, "GPT2_KNLP_RA", False)
+                    use_ra = use_ra in ("y", True)
+
+                # Get RA settings
+                n_ra_layers = int(getattr(self.config, "GPT2_KNLP_RA_LAYERS", 3))
+                n_ra_heads = int(getattr(self.config, "GPT2_KNLP_RA_HEADS", 1))
+
+                # Create base GPT config
+                base_config = GPTConfig.from_name(self.args.model_name)
+
+                # Create KNLP config
+                config = GPT2_KNLP_Config(
+                    n_layer=base_config.n_layer,
+                    n_head=base_config.n_head,
+                    n_embd=base_config.n_embd,
+                    block_size=self.args.block_size,
+                    bias=getattr(self.args, "bias", True),
+                    vocab_size=base_config.vocab_size,
+                    dropout=self.args.dropout,
+                    use_sdpa_gate=use_sdpa_gate,
+                    use_ra=use_ra,
+                    n_ra_layers=n_ra_layers,
+                    n_ra_heads=n_ra_heads,
+                )
+
+                model = GPT2_KNLP(config)
+                if self.master_process:
+                    print(f"  SDPA gating: {use_sdpa_gate}")
+                    print(f"  Reciprocal Attention: {use_ra}")
+                    if use_ra:
+                        print(f"    RA layers: {n_ra_layers}, RA heads: {n_ra_heads}")
+                model.to(self.device)
+            else:
+                # Create standard GPT-2 model
+                if self.master_process:
+                    print(f"Initializing GPT-2 model: {self.args.model_name}")
+
+                # Create GPT config
+                config = GPTConfig.from_name(self.args.model_name)
+                config.block_size = self.args.block_size
+                config.dropout = self.args.dropout
+                config.bias = getattr(self.args, "bias", True)
+
+                # Create model
+                model = GPT2(config)
+                model.to(self.device)
 
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
@@ -430,6 +495,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     kvsplice_metrics = self._compute_kvsplice_param_metrics()
                     if kvsplice_metrics:
                         metrics_to_log.update(kvsplice_metrics)
+
+                    # Add KNLP metrics (RA beta, gate statistics)
+                    knlp_metrics = self._compute_knlp_metrics()
+                    if knlp_metrics:
+                        metrics_to_log.update(knlp_metrics)
 
                     # Add pruning sensitivity analysis (test reconstruction error)
                     pruning_metrics = self._compute_pruning_sensitivity()
@@ -2006,3 +2076,110 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if self.master_process:
                 print(f"Warning: Failed to generate sample text: {e}")
             return None
+
+    def _compute_knlp_metrics(self):
+        """
+        Compute metrics for GPT2_KNLP models: RA beta values and gate statistics.
+
+        For Reciprocal Attention (RA):
+            - beta = tanh(ra_logit) is the mixing coefficient for RA
+            - beta=0 means RA is fully disabled, beta=1 means full RA contribution
+            - Tracks per-layer beta values to see which layers learn to use RA
+
+        For SDPA gating (Qwen3-style):
+            - Tracks gate weight statistics (mean, std, min, max)
+            - Tracks gate bias statistics
+
+        Returns:
+            Dictionary with KNLP metrics or None if not applicable
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Check if this is a GPT2_KNLP model
+        if not hasattr(raw_model, "transformer"):
+            return None
+
+        layers = raw_model.transformer.h
+        if len(layers) == 0:
+            return None
+
+        # Check first layer for KNLP features
+        first_layer = layers[0]
+        if not hasattr(first_layer, "attn"):
+            return None
+
+        attn = first_layer.attn
+        has_ra = hasattr(attn, "ra_logit") and attn.ra_logit is not None
+        has_gate = hasattr(attn, "sdpa_gate") and attn.sdpa_gate is not None
+
+        if not has_ra and not has_gate:
+            return None
+
+        metrics = {}
+
+        # Collect RA beta values from all layers
+        if has_ra:
+            ra_betas = []
+            for layer_idx, layer in enumerate(layers):
+                if hasattr(layer.attn, "ra_logit") and layer.attn.ra_logit is not None:
+                    ra_logit = layer.attn.ra_logit.data.item()
+                    beta = float(torch.tanh(torch.tensor(ra_logit)).item())
+                    ra_betas.append((layer_idx, beta))
+                    # Log per-layer beta
+                    metrics[f"knlp/ra_beta_layer{layer_idx}"] = beta
+
+            if ra_betas:
+                betas = [b for _, b in ra_betas]
+                metrics["knlp/ra_beta_mean"] = float(sum(betas) / len(betas))
+                metrics["knlp/ra_beta_min"] = float(min(betas))
+                metrics["knlp/ra_beta_max"] = float(max(betas))
+                # Number of layers with RA enabled (beta > 0.1)
+                metrics["knlp/ra_active_layers"] = sum(1 for b in betas if abs(b) > 0.1)
+
+        # Collect SDPA gate statistics
+        if has_gate:
+            gate_weight_means = []
+            gate_weight_stds = []
+            gate_bias_means = []
+
+            for layer_idx, layer in enumerate(layers):
+                if (
+                    hasattr(layer.attn, "sdpa_gate")
+                    and layer.attn.sdpa_gate is not None
+                ):
+                    gate = layer.attn.sdpa_gate
+                    # Gate weight statistics
+                    weight = gate.weight.data
+                    gate_weight_means.append(weight.mean().item())
+                    gate_weight_stds.append(weight.std().item())
+                    # Gate bias statistics (if present)
+                    if gate.bias is not None:
+                        gate_bias_means.append(gate.bias.data.mean().item())
+
+            if gate_weight_means:
+                metrics["knlp/gate_weight_mean"] = float(
+                    sum(gate_weight_means) / len(gate_weight_means)
+                )
+                metrics["knlp/gate_weight_std"] = float(
+                    sum(gate_weight_stds) / len(gate_weight_stds)
+                )
+            if gate_bias_means:
+                metrics["knlp/gate_bias_mean"] = float(
+                    sum(gate_bias_means) / len(gate_bias_means)
+                )
+
+        # Print summary (once at first eval)
+        if self.master_process and self.iter_num == self.args.eval_interval:
+            print("\n--- KNLP Parameters ---")
+            if has_ra and "knlp/ra_beta_mean" in metrics:
+                print(f"  RA beta: {metrics['knlp/ra_beta_mean']:.4f}")
+                print(
+                    f"  RA range: [{metrics['knlp/ra_beta_min']:.4f}, "
+                    f"{metrics['knlp/ra_beta_max']:.4f}]"
+                )
+                print(f"  RA active layers: {metrics['knlp/ra_active_layers']}")
+            if has_gate and "knlp/gate_weight_mean" in metrics:
+                print(f"  Gate weight: {metrics['knlp/gate_weight_mean']:.4f}")
+                print(f"  Gate weight std: {metrics['knlp/gate_weight_std']:.4f}")
+
+        return metrics
