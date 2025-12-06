@@ -367,6 +367,10 @@ def main():
         if config.get("RA_ABLATION_STEPS"):
             args.ablation_steps = config.get("RA_ABLATION_STEPS")
 
+        # Load DDP configuration
+        if config.get("GPT2_DDP_FIND_UNUSED_PARAMS") in ("y", True):
+            args.ddp_find_unused_params = True
+
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
