@@ -76,17 +76,39 @@ cache = load_preset_cache(
 
 ---
 
-## Results at a Glance
+## Results at a Glance (H100)
+
+Results from NVIDIA H100 80GB HBM3:
 
 | Model | Compression | Quality Loss | Config |
 |-------|-------------|--------------|--------|
-| Qwen2.5-7B | **2.67x** | **+0.99%** PPL | V-only, rank 96, int8 |
-| Mistral-7B | 2.42x | +2.30% PPL | V-only, rank 96, int8 |
-| Qwen2-1.5B | 2.67x | ~+3% PPL | V-only, rank 96, int8 |
-| Qwen2.5-0.5B | 2.67x | +4.6% PPL | V-only, rank 48, int8 |
+| **Qwen2.5-7B** | **2.67x** | **+1.97%** PPL | V-only, rank 96, int8 |
+| Mistral-7B | 2.67x | +4.23% PPL | V-only, rank 96, int8 |
+| Qwen2-1.5B | 2.51x | +2.22% PPL | V-only, rank 102, int8 |
+| Qwen2.5-0.5B | 2.51x | +4.68% PPL | V-only, rank 51, int8 |
 
-**Scaling law**: Larger models compress better. 7B models lose <1% quality at 2.67x;
-0.5B models lose 4.6% at the same ratio.
+**Scaling law**: Larger models compress better. 7B models achieve 2.67x compression
+with only ~2-4% PPL loss; smaller models show higher degradation at the same ratio.
+
+---
+
+## Scaling Laws
+
+![PPL vs Compression](plots/ppl_vs_compression.png)
+
+The graph shows PPL degradation across compression ratios for all tested models.
+Key observation: **larger models follow a flatter curve**, meaning they tolerate
+more compression before quality degrades.
+
+![Compression vs Model Size](plots/compression_vs_model_size.png)
+
+At a fixed quality loss threshold (e.g., 3% ΔPPL), larger models achieve higher
+compression ratios. This validates the scaling law hypothesis.
+
+![Delta PPL vs Model Size](plots/delta_ppl_vs_model_size.png)
+
+At fixed compression (e.g., 2.5x), quality loss decreases with model size.
+This is consistent with larger models having more redundancy in KV representations.
 
 ---
 
@@ -121,7 +143,7 @@ If you use this plugin in your research, please cite:
 @software{kv_compression_plugin,
   title = {KV Cache Compression Plugin},
   author = {Chamberlain, Luis},
-  year = {2024},
+  year = {2025},
   url = {https://github.com/mcgrof/knlp}
 }
 ```
