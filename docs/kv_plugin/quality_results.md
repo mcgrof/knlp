@@ -4,8 +4,8 @@
 
 | Metric | Rank 120 | Rank 96 |
 |--------|----------|---------|
-| Memory Savings | 3.1% | 12.5% |
-| Throughput Penalty | -13% | -14% |
+| Memory Savings | 3% | 12% |
+| Throughput Penalty | -5% | -4% |
 | PPL Increase | +6% | +35% |
 | Task Degradation | 0% | Unknown |
 
