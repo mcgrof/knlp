@@ -157,27 +157,27 @@ python scripts/benchmark_kv_comprehensive.py \
 
 ---
 
-## Quantization Support (Broken)
+## INT8 Quantization
 
-The plugin includes `QuantizedCalibratedCompressor` for INT8 quantization, but it's
-**not functional**. The implementation quantizes then immediately dequantizes,
-storing values as FP16:
+The plugin supports INT8 quantization on top of low-rank compression via
+`QuantizedCalibratedCompressor`. Values are stored as actual int8 tensors with
+per-row float16 scales.
 
-```python
-# From compressed_cache.py line 893-895
-dequantized = quantized * scale
-return dequantized  # Still FP16!
-```
+**Measured results (INT8 vs FP16 low-rank at rank 120):**
 
-**Measured results (INT8 vs FP16 low-rank):**
+| Metric | FP16 Low-Rank | INT8 Low-Rank |
+|--------|---------------|---------------|
+| Memory | 54.25 MB | **41.12 MB** (-24%) |
+| Throughput | -5.3% | **-20.9%** |
+| PPL | +5.6% | +5.5% |
 
-| Metric | FP16 | INT8 |
-|--------|------|------|
-| Memory | 54.25 MB | 54.25 MB (same) |
-| Throughput | -5.3% | **-16.6%** (worse) |
-| PPL | +5.6% | +5.5% (same) |
+INT8 saves 24% additional memory but costs 16% more throughput. Total vs baseline:
+- Memory: ~25% of original (low-rank + int8)
+- Throughput: -21% slower
+- Quality: +5.5% PPL
 
-INT8 adds overhead with no memory benefit. Don't use it.
+**When to use INT8**: Only if you're severely memory-bound AND can tolerate the
+throughput penalty. The 24% memory savings come at significant speed cost.
 
 ---
 
