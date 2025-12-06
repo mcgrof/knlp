@@ -105,7 +105,8 @@ CONFIG_CHECKPOINT_INTERVAL=1000
 
 # Distributed Training (multi-GPU)
 CONFIG_GPT2_USE_DDP=y
-CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=y
+# KNLP variants don't have unused params - disable for better performance
+CONFIG_GPT2_DDP_FIND_UNUSED_PARAMS=n
 
 # Memory Optimizations
 CONFIG_PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
