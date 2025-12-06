@@ -1,0 +1,12 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# knlp playbook
+
+- name: Setup knlp ML research workflow
+  hosts: all
+  gather_facts: yes
+  vars:
+    knlp_plugin_dir: "{{ ansible_env.HOME }}/.config/kdevops/plugins/knlp"
+  roles:
+    - role: "{{ knlp_plugin_dir }}/playbooks/roles/knlp"

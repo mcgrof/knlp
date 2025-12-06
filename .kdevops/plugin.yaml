@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# kdevops plugin manifest for knlp
+#
+apiVersion: kdevops.io/v1
+kind: Plugin
+
+metadata:
+  name: knlp
+  version: 1.0.0
+  description: "Kernel Natural Language Processing - ML research workflow"
+  author: "Luis Chamberlain <mcgrof@kernel.org>"
+  license: "copyleft-next-0.3.1"
+  repository: "https://github.com/mcgrof/knlp"
+  homepage: "https://github.com/mcgrof/knlp"
+
+spec:
+  kdevops:
+    minVersion: "5.0.0"
+    maxVersion: ""
+
+  dependencies: []
+
+  workflowType: dedicated
+
+  tags:
+    - ml
+    - ai
+    - research
+    - transformer
+    - gpt2

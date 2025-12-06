@@ -1,0 +1,47 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# knlp role tasks
+
+- name: Install KNLP dependencies
+  ansible.builtin.include_tasks: install-deps/main.yml
+  tags:
+    - knlp
+    - deps
+
+- name: Ensure parent directory exists for knlp
+  ansible.builtin.file:
+    path: "{{ knlp_data_path | dirname }}"
+    state: directory
+    mode: '0755'
+  become: yes
+  tags:
+    - knlp
+
+- name: Clone knlp repository
+  ansible.builtin.git:
+    repo: "{{ workflow_knlp_git_url | default(knlp_git_url) }}"
+    dest: "{{ workflow_knlp_data | default(knlp_data_path) }}"
+    version: "{{ workflow_knlp_git_ref | default(knlp_git_ref) }}"
+    update: yes
+  tags:
+    - knlp
+
+- name: Install knlp Python requirements using uv or pip fallback
+  ansible.builtin.shell: |
+    cd {{ workflow_knlp_data | default(knlp_data_path) }}
+    if command -v uv >/dev/null 2>&1; then
+      echo "Using uv for virtual environment and package installation"
+      uv venv {{ ansible_env.HOME }}/.venv
+      . {{ ansible_env.HOME }}/.venv/bin/activate
+      uv pip install -r requirements.txt
+    else
+      echo "uv not found, falling back to pip"
+      python3 -m venv {{ ansible_env.HOME }}/.venv
+      . {{ ansible_env.HOME }}/.venv/bin/activate
+      pip install -r requirements.txt
+    fi
+  args:
+    executable: /bin/bash
+  tags:
+    - knlp
