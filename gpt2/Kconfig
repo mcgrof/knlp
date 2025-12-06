@@ -451,6 +451,24 @@ config GPT2_VANILLA_ABLATION_STEPS
 	  V1: GPT-2 with KV tying enabled
 	  Example: "V0,V1"
 
+# GPT2_KNLP Experimental Features
+config GPT2_KNLP
+	bool "Enable GPT2_KNLP experimental variant"
+	default n
+	help
+	  Enable the GPT2_KNLP variant with experimental attention features.
+	  This keeps baseline GPT-2 pristine while allowing experimentation.
+	  Features can be enabled independently below.
+
+config GPT2_KNLP_SDPA_GATE
+	bool "Enable SDPA output gating (Qwen3-style)"
+	default n
+	depends on GPT2_KNLP
+	help
+	  Adds non-linearity after attention via sigmoid-modulated gating:
+	  y = attn_output * sigmoid(W_gate @ x)
+	  Based on "Gated Attention for Large Language Models" (NeurIPS 2025).
+
 source "gpt2/Kconfig.mechint"
 
 endmenu
