@@ -23,8 +23,8 @@ model = AutoModelForCausalLM.from_pretrained(
     model_name, torch_dtype=torch.float16, device_map="cuda"
 )
 
-# Get v9 preset (2.67x compression, +0.99% PPL)
-preset = get_preset_info(model_name, "v9-vonly-int8")
+# Get conservative preset (1.03x compression, +6% PPL)
+preset = get_preset_info(model_name, "r120-vonly")
 
 # Create compressed cache
 cache = create_cache_from_preset(preset)
@@ -126,29 +126,30 @@ outputs = model.generate(
 
 | Target | What's Compressed | Typical Compression | Notes |
 |--------|-------------------|---------------------|-------|
-| `v` | V cache only | 2-3x | **Recommended**. K preserves attention patterns. |
-| `k` | K cache only | 2-3x | Use if V is less compressible (rare). |
-| `kv` | Both K and V | 4-6x | More compression, more quality loss. |
+| `v` | V cache only | 1.03-1.14x | **Recommended**. K preserves attention patterns. |
+| `k` | K cache only | N/A | **Do not use.** Causes catastrophic quality loss. |
+| `kv` | Both K and V | N/A | **Do not use.** K compression destroys quality. |
 
 ### Quantization
 
-| Bits | Compression Boost | PPL Impact |
-|------|-------------------|------------|
-| 16 | 1x (none) | 0% |
-| 8 | 2x | <0.1% |
-| 4 | 4x | 1-5% |
+| Bits | Memory vs FP16 | Throughput Cost | PPL Impact |
+|------|----------------|-----------------|------------|
+| 16 | Baseline | -5% | +6% |
+| 8 | -24% | -21% | +6% |
 
-**Recommendation:** Always use int8 on calibrated low-rank. It's essentially free.
+**Trade-off:** INT8 saves 24% memory but costs 21% throughput vs baseline.
+Not free - use only if memory-constrained.
 
 ### Rank Selection
 
-| Model Size | head_dim | Recommended Rank | Compression |
-|------------|----------|------------------|-------------|
-| 0.5B-1B | 64 | 56-60 | 1.07-1.14x |
-| 7B | 128 | 96 | 1.33x |
-| 13B+ | 128 | 96-112 | 1.14-1.33x |
+| Model Size | head_dim | Recommended Rank | PPL Impact |
+|------------|----------|------------------|------------|
+| 7B | 128 | 120 | +6% |
+| 7B | 128 | 112 | +14% |
+| 72B | 128 | 120 | +5% |
 
-**Rule of thumb:** Start with `rank = head_dim * 0.75`, adjust based on PPL budget.
+**Conservative approach:** Use rank 120 (head_dim - 8) for ~6% PPL impact.
+Lower ranks cause rapidly increasing quality degradation.
 
 ## Troubleshooting
 
@@ -249,16 +250,14 @@ python scripts/eval_stability.py \
 ```json
 {
   "model": "Qwen/Qwen2.5-7B",
-  "version": "v9",
-  "rank": 96,
+  "rank": 120,
   "target": "v",
-  "bits": 8,
-  "compression_ratio": 1.33,
-  "total_compression": 2.67,
-  "baseline_ppl": 1.382,
-  "compressed_ppl": 1.396,
-  "ppl_delta": 0.0099,
-  "calibration_file": "kv_lowrank_calib_qwen-qwen2.5-7b_r96.pt",
+  "bits": 16,
+  "compression_ratio": 1.03,
+  "baseline_ppl": 7.88,
+  "compressed_ppl": 8.35,
+  "ppl_delta": 0.06,
+  "calibration_file": "kv_calib_qwen7b_r120.pt",
   "head_dim": 128,
   "num_layers": 28
 }
@@ -310,9 +309,8 @@ config = build_compressor_config_for_policy(
 
 ## Tips for Best Results
 
-1. **Always compress V first** - V is consistently more compressible than K
-2. **Use int8 quantization** - It's essentially free on calibrated low-rank
-3. **Start with conservative settings** - Then increase compression if PPL allows
+1. **Only compress V** - K compression causes catastrophic quality loss
+2. **Start with rank 120** - Conservative setting with ~6% PPL impact
+3. **INT8 trades throughput for memory** - 24% memory savings but 21% slower
 4. **Run needle test** - Verify long-context retrieval before deployment
-5. **Profile at target context lengths** - Benefits increase with longer contexts
-6. **Use policy API** - Let the policy layer choose settings based on your constraints
+5. **Profile at target context lengths** - Overhead is relatively constant
