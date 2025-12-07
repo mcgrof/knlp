@@ -348,10 +348,22 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
         # Training loop
         while self.iter_num < self.args.max_iters:
-            # Check time limit
+            # Check time limit - must synchronize across all ranks to avoid NCCL hangs
             if getattr(self.args, "max_time", 0) > 0:
                 elapsed = time.time() - self.training_start_time
-                if elapsed >= self.args.max_time:
+                should_stop = elapsed >= self.args.max_time
+
+                # In DDP, broadcast stop decision from rank 0 to all ranks
+                if self.ddp:
+                    import torch.distributed as dist
+
+                    stop_tensor = torch.tensor(
+                        [1 if should_stop else 0], device=self.device
+                    )
+                    dist.broadcast(stop_tensor, src=0)
+                    should_stop = stop_tensor.item() == 1
+
+                if should_stop:
                     if self.master_process:
                         print(
                             f"\nReached max training time of {self.args.max_time}s ({elapsed:.1f}s elapsed)"
