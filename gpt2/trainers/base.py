@@ -773,21 +773,22 @@ class BaseGPT2Trainer:
         Returns:
             True if sanity check passed, False otherwise
         """
-        if not self.master_process:
-            return True  # Only run on master process
+        # In DDP, all ranks must participate in forward/backward to avoid NCCL hangs
+        # But only master process prints output and logs to W&B
 
-        print("\n" + "=" * 80)
-        print("BATCH OVERFIT SANITY CHECK")
-        print("=" * 80)
-        print(
-            f"Training on ONE batch for {max_steps} steps to verify model can learn..."
-        )
-        print(f"Batch size: {batch_size}")
-        print(f"Device: {self.device}, dtype: {self.dtype}")
-        print(f"\nExpected loss progression (initial ~11.0 for GPT-2):")
-        print(f"  Pass threshold: < 30% of initial (e.g., < 3.3)")
-        print(f"  Good:           < 1.0 (memorizing batch)")
-        print(f"  Excellent:      < 0.1 (near-perfect)")
+        if self.master_process:
+            print("\n" + "=" * 80)
+            print("BATCH OVERFIT SANITY CHECK")
+            print("=" * 80)
+            print(
+                f"Training on ONE batch for {max_steps} steps to verify model can learn..."
+            )
+            print(f"Batch size: {batch_size}")
+            print(f"Device: {self.device}, dtype: {self.dtype}")
+            print(f"\nExpected loss progression (initial ~11.0 for GPT-2):")
+            print(f"  Pass threshold: < 30% of initial (e.g., < 3.3)")
+            print(f"  Good:           < 1.0 (memorizing batch)")
+            print(f"  Excellent:      < 0.1 (near-perfect)")
 
         # Get one batch and reuse it
         original_batch_size = self.args.batch_size
@@ -795,7 +796,8 @@ class BaseGPT2Trainer:
         X, Y = self.get_batch("train")
         self.args.batch_size = original_batch_size  # Restore
 
-        print(f"Batch shape: X={tuple(X.shape)}, Y={tuple(Y.shape)}\n")
+        if self.master_process:
+            print(f"Batch shape: X={tuple(X.shape)}, Y={tuple(Y.shape)}\n")
 
         # Put model in train mode
         self.model.train()
@@ -828,8 +830,8 @@ class BaseGPT2Trainer:
             loss_val = loss.item()
             loss_history.append(loss_val)
 
-            # Print progress
-            if step % print_every == 0 or step == 1:
+            # Print progress (master only)
+            if self.master_process and (step % print_every == 0 or step == 1):
                 avg_loss = sum(loss_history[-print_every:]) / min(
                     len(loss_history), print_every
                 )
@@ -837,10 +839,10 @@ class BaseGPT2Trainer:
                     f"Step {step:4d}/{max_steps} | loss={loss_val:.4f} | avg={avg_loss:.4f}"
                 )
 
-            # Log to W&B if enabled
+            # Log to W&B if enabled (master only)
             # Use commit=False to prevent sanity check from incrementing W&B's
             # internal step counter, which would conflict with training steps
-            if log_to_wandb and "wandb" in self.trackers:
+            if self.master_process and log_to_wandb and "wandb" in self.trackers:
                 try:
                     import wandb
 
@@ -882,40 +884,43 @@ class BaseGPT2Trainer:
         use_relaxed = is_mla or is_knlp
         pass_threshold = 0.6 if use_relaxed else 0.3
 
-        print("\n" + "=" * 80)
-        print("SANITY CHECK RESULTS")
-        print("=" * 80)
-        print(f"Initial loss: {initial_loss:.4f}")
-        print(f"Final loss:   {final_loss:.4f}")
-        print(f"Reduction:    {reduction:.1f}%")
-        print(f"Time:         {elapsed:.1f}s")
-        if is_mla:
-            arch_note = " (MLA - relaxed)"
-        elif is_knlp:
-            arch_note = " (KNLP - relaxed)"
-        else:
-            arch_note = ""
-        print(f"\nThresholds{arch_note} (based on initial={initial_loss:.2f}):")
-        print(
-            f"  Pass: < {pass_threshold * initial_loss:.2f}  |  Good: < 1.0  |  Excellent: < 0.1"
-        )
-
         # Verdict
         passed = final_loss < pass_threshold * initial_loss
-        if passed:
-            print(
-                "\n✅ PASSED: Loss dropped significantly - model/gradients OK, safe to train!"
-            )
-        else:
-            print(
-                "\n❌ FAILED: Loss did NOT drop enough - check model, loss, optimizer, etc."
-            )
-            print(
-                "   Possible issues: wrong loss function, no gradients, bad init, etc."
-            )
-            print("   DO NOT PROCEED with full training until this is fixed!")
 
-        print("=" * 80 + "\n")
+        # Print results (master only)
+        if self.master_process:
+            print("\n" + "=" * 80)
+            print("SANITY CHECK RESULTS")
+            print("=" * 80)
+            print(f"Initial loss: {initial_loss:.4f}")
+            print(f"Final loss:   {final_loss:.4f}")
+            print(f"Reduction:    {reduction:.1f}%")
+            print(f"Time:         {elapsed:.1f}s")
+            if is_mla:
+                arch_note = " (MLA - relaxed)"
+            elif is_knlp:
+                arch_note = " (KNLP - relaxed)"
+            else:
+                arch_note = ""
+            print(f"\nThresholds{arch_note} (based on initial={initial_loss:.2f}):")
+            print(
+                f"  Pass: < {pass_threshold * initial_loss:.2f}  |  Good: < 1.0  |  Excellent: < 0.1"
+            )
+
+            if passed:
+                print(
+                    "\n✅ PASSED: Loss dropped significantly - model/gradients OK, safe to train!"
+                )
+            else:
+                print(
+                    "\n❌ FAILED: Loss did NOT drop enough - check model, loss, optimizer, etc."
+                )
+                print(
+                    "   Possible issues: wrong loss function, no gradients, bad init, etc."
+                )
+                print("   DO NOT PROCEED with full training until this is fixed!")
+
+            print("=" * 80 + "\n")
 
         # Restore model to clean state (reset any changed parameters)
         # This is best-effort; optimizer state is separate from model
