@@ -293,6 +293,268 @@ def get_kv_cache_size(model: nn.Module) -> Tuple[int, int]:
     return (original_mb, compressed_mb)
 
 
+# =============================================================================
+# FIM-Guided Selective Compression
+# =============================================================================
+
+
+def compute_fim_trace_per_layer(
+    model: nn.Module,
+    tokenizer,
+    calibration_texts: list,
+    device: str = "cuda",
+    n_samples: int = 64,
+) -> dict:
+    """
+    Compute Fisher Information Matrix trace for each layer.
+
+    FIM trace measures the "representational work" each layer does.
+    Lower trace = less important = safe to compress aggressively.
+
+    Args:
+        model: Pretrained model (e.g., DeepSeek-V2-Lite)
+        tokenizer: Model tokenizer
+        calibration_texts: List of text samples for calibration
+        device: Device to run on
+        n_samples: Number of attention samples per layer
+
+    Returns:
+        Dictionary mapping layer_idx -> mean_fim_trace
+    """
+    print("\n" + "=" * 70)
+    print("FIM TRACE CALIBRATION")
+    print("=" * 70)
+    print(f"Running calibration on {len(calibration_texts)} samples...")
+
+    # Detect model layers
+    if hasattr(model, "model") and hasattr(model.model, "layers"):
+        layers = model.model.layers
+    elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+        layers = model.transformer.h
+    else:
+        raise ValueError("Could not find layers in model")
+
+    n_layers = len(layers)
+    print(f"Detected {n_layers} layers")
+
+    # Storage for attention weights per layer
+    attn_storage = {i: [] for i in range(n_layers)}
+
+    # Register hooks to capture attention weights
+    hooks = []
+
+    def make_hook(layer_idx):
+        def hook(module, input, output):
+            # Try to extract attention weights from output
+            # DeepSeek returns (hidden_states, attn_weights, ...)
+            if isinstance(output, tuple) and len(output) >= 2:
+                attn_weights = output[1]
+                if attn_weights is not None and isinstance(attn_weights, torch.Tensor):
+                    # Store detached copy
+                    attn_storage[layer_idx].append(attn_weights.detach().cpu())
+
+        return hook
+
+    for i, layer in enumerate(layers):
+        # Register hook on attention module
+        if hasattr(layer, "self_attn"):
+            h = layer.self_attn.register_forward_hook(make_hook(i))
+            hooks.append(h)
+        elif hasattr(layer, "attn"):
+            h = layer.attn.register_forward_hook(make_hook(i))
+            hooks.append(h)
+
+    # Run calibration forward passes
+    model.eval()
+    with torch.no_grad():
+        for text in calibration_texts[:10]:  # Limit for speed
+            inputs = tokenizer(
+                text, return_tensors="pt", truncation=True, max_length=512
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            try:
+                # Enable attention output if supported
+                model(**inputs, output_attentions=True)
+            except Exception:
+                # Fallback without attention output
+                model(**inputs)
+
+    # Remove hooks
+    for h in hooks:
+        h.remove()
+
+    # Compute FIM trace per layer
+    fim_traces = {}
+
+    print("\nFIM Trace per Layer:")
+    print("-" * 50)
+
+    for layer_idx in range(n_layers):
+        attns = attn_storage[layer_idx]
+
+        if not attns:
+            # No attention captured - estimate from layer position
+            # Later layers typically have lower trace
+            estimated_trace = 1.0 - (layer_idx / n_layers) * 0.4
+            fim_traces[layer_idx] = estimated_trace
+            print(f"  Layer {layer_idx:2d}: ~{estimated_trace:.4f} (estimated)")
+            continue
+
+        # Concatenate all attention weights: [total_samples, H, T, T]
+        try:
+            all_attn = torch.cat(attns, dim=0)
+            B, H, T, _ = all_attn.shape
+
+            # Compute FIM trace for this layer
+            total_trace = 0.0
+            count = 0
+
+            for h in range(min(H, 4)):  # Sample heads for speed
+                attn_h = all_attn[:, h]  # [B, T, T]
+                p = attn_h.reshape(-1, T)  # [B*T, T]
+
+                # Subsample
+                if p.size(0) > n_samples:
+                    idx = torch.randperm(p.size(0))[:n_samples]
+                    p = p[idx]
+                N = p.size(0)
+
+                # Compute FIM: F = mean_i (diag(p_i) - p_i @ p_i.T)
+                F = torch.zeros(T, T)
+                for i in range(N):
+                    pi = p[i]
+                    F += torch.diag(pi) - torch.outer(pi, pi)
+                F /= N
+
+                # Trace = sum of eigenvalues
+                try:
+                    eigvals = torch.linalg.eigvalsh(F)
+                    trace = float(eigvals.sum())
+                    total_trace += trace
+                    count += 1
+                except Exception:
+                    pass
+
+            if count > 0:
+                mean_trace = total_trace / count
+            else:
+                mean_trace = 1.0 - (layer_idx / n_layers) * 0.4
+
+            fim_traces[layer_idx] = mean_trace
+            print(f"  Layer {layer_idx:2d}: {mean_trace:.4f}")
+
+        except Exception as e:
+            estimated_trace = 1.0 - (layer_idx / n_layers) * 0.4
+            fim_traces[layer_idx] = estimated_trace
+            print(f"  Layer {layer_idx:2d}: ~{estimated_trace:.4f} (estimated, {e})")
+
+    print("-" * 50)
+
+    return fim_traces
+
+
+def patch_model_with_kvsplice_fim(
+    model: nn.Module,
+    fim_traces: dict,
+    compression_ratio: float = 0.5,
+    fim_threshold: float = 0.7,
+    use_layernorm: bool = True,
+    layer_pattern: str = "layers",
+) -> Tuple[nn.Module, list]:
+    """
+    Patch model with FIM-guided selective KVSplice compression.
+
+    Only layers with FIM trace below threshold get compressed.
+    This preserves early layers that do critical representational work.
+
+    Args:
+        model: Pretrained model
+        fim_traces: Dictionary from compute_fim_trace_per_layer
+        compression_ratio: KVSplice compression ratio for selected layers
+        fim_threshold: Layers with trace < threshold get compressed
+        use_layernorm: Whether to use LayerNorm in latent space
+        layer_pattern: Attribute name for transformer layers
+
+    Returns:
+        (modified_model, list of compressed layer indices)
+    """
+    print("\n" + "=" * 70)
+    print("FIM-GUIDED SELECTIVE KVSPLICE")
+    print("=" * 70)
+    print(f"FIM threshold: {fim_threshold}")
+    print(f"Compression ratio: {compression_ratio} (for selected layers)")
+
+    # Detect model layers
+    if hasattr(model, "model") and hasattr(model.model, layer_pattern):
+        layers = getattr(model.model, layer_pattern)
+    elif hasattr(model, layer_pattern):
+        layers = getattr(model, layer_pattern)
+    elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
+        layers = model.transformer.h
+    else:
+        raise ValueError(f"Could not find layers with pattern '{layer_pattern}'")
+
+    # Detect latent dimension
+    if hasattr(model.config, "kv_lora_rank"):
+        d_latent = model.config.kv_lora_rank
+    elif hasattr(model.config, "hidden_size"):
+        d_latent = model.config.hidden_size // model.config.num_attention_heads
+    else:
+        raise ValueError("Could not detect latent dimension")
+
+    print(f"Latent dimension: {d_latent}")
+    print(f"Compressed dimension: {max(1, int(d_latent * compression_ratio))}")
+
+    # Identify layers to compress based on FIM
+    layers_to_compress = []
+    for layer_idx, trace in fim_traces.items():
+        if trace < fim_threshold:
+            layers_to_compress.append(layer_idx)
+
+    print(f"\nLayers selected for compression (FIM < {fim_threshold}):")
+    if layers_to_compress:
+        print(f"  {layers_to_compress}")
+        print(f"  ({len(layers_to_compress)}/{len(fim_traces)} layers)")
+    else:
+        print("  None - all layers above threshold")
+        print("  Consider raising fim_threshold")
+
+    # Patch selected layers
+    patched_count = 0
+    for i, layer in enumerate(layers):
+        if i not in layers_to_compress:
+            continue
+
+        # Find attention attribute
+        if hasattr(layer, "self_attn"):
+            attn_attr = "self_attn"
+        elif hasattr(layer, "attn"):
+            attn_attr = "attn"
+        else:
+            continue
+
+        original_attn = getattr(layer, attn_attr)
+        wrapped_attn = KVSpliceWrapper(
+            original_attn, d_latent, compression_ratio, use_layernorm
+        )
+        setattr(layer, attn_attr, wrapped_attn)
+        patched_count += 1
+
+    # Summary
+    total_layers = len(fim_traces)
+    protected_layers = total_layers - patched_count
+    cache_reduction = patched_count * (1 - compression_ratio) / total_layers * 100
+
+    print(f"\nSummary:")
+    print(f"  Protected layers (high FIM): {protected_layers}")
+    print(f"  Compressed layers (low FIM): {patched_count}")
+    print(f"  Estimated cache reduction: {cache_reduction:.1f}%")
+    print("=" * 70 + "\n")
+
+    return model, layers_to_compress
+
+
 if __name__ == "__main__":
     print("KVSplice plug-in for DeepSeek models")
     print("=" * 50)
