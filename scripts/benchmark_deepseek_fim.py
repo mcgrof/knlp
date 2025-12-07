@@ -11,7 +11,8 @@ Usage:
     python scripts/benchmark_deepseek_fim.py \
         --model deepseek-ai/DeepSeek-V2-Lite \
         --compression-ratio 0.5 \
-        --fim-threshold 0.7
+        --fim-threshold 0.7 \
+        --wandb-project deepseek-fim-kvsplice
 
 The key insight from FIM analysis:
 - Early layers have HIGH FIM trace = critical representational work = protect
@@ -24,7 +25,8 @@ baseline by compressing only the last 4 layers.
 import argparse
 import gc
 import time
-from typing import Dict, List, Tuple
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from datasets import load_dataset
@@ -40,6 +42,97 @@ from deepseek_kvsplice_plugin import (
     patch_model_with_kvsplice_fim,
     get_kv_cache_size,
 )
+
+# Global wandb run reference
+_wandb_run = None
+
+
+def init_wandb(args) -> bool:
+    """Initialize W&B logging if requested."""
+    global _wandb_run
+
+    if not args.wandb_project:
+        return False
+
+    try:
+        import wandb
+
+        # Generate run name if not provided
+        run_name = args.wandb_run_name
+        if not run_name:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_short = args.model.split("/")[-1]
+            run_name = f"fim_benchmark_{model_short}_{timestamp}"
+
+        # Initialize W&B
+        _wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "model": args.model,
+                "compression_ratio": args.compression_ratio,
+                "fim_threshold": args.fim_threshold,
+                "seq_len": args.seq_len,
+                "device": args.device,
+                "benchmark_type": "fim_guided_kvsplice",
+            },
+            tags=["kvsplice", "fim", "deepseek", "benchmark"],
+        )
+
+        print(f"W&B initialized: {wandb.run.url}")
+        return True
+
+    except Exception as e:
+        print(f"Warning: Could not initialize W&B: {e}")
+        return False
+
+
+def log_wandb(metrics: dict, step: Optional[int] = None):
+    """Log metrics to W&B if initialized."""
+    global _wandb_run
+
+    if _wandb_run is None:
+        return
+
+    try:
+        import wandb
+
+        if step is not None:
+            wandb.log(metrics, step=step)
+        else:
+            wandb.log(metrics)
+    except Exception as e:
+        print(f"Warning: W&B logging failed: {e}")
+
+
+def log_wandb_summary(key: str, value):
+    """Log a summary metric to W&B."""
+    global _wandb_run
+
+    if _wandb_run is None:
+        return
+
+    try:
+        import wandb
+
+        wandb.run.summary[key] = value
+    except Exception:
+        pass
+
+
+def finish_wandb():
+    """Finish W&B run."""
+    global _wandb_run
+
+    if _wandb_run is None:
+        return
+
+    try:
+        import wandb
+
+        wandb.finish()
+    except Exception:
+        pass
 
 
 def get_calibration_texts(n_samples: int = 20) -> List[str]:
@@ -70,7 +163,8 @@ def evaluate_perplexity(
             )
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            outputs = model(**inputs, labels=inputs["input_ids"])
+            # Disable KV cache to avoid compatibility issues with custom models
+            outputs = model(**inputs, labels=inputs["input_ids"], use_cache=False)
             loss = outputs.loss
 
             n_tokens = inputs["input_ids"].numel()
@@ -92,39 +186,44 @@ def benchmark_throughput(
     prompt = "The quick brown fox"
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-    with torch.no_grad():
-        for _ in range(2):
-            model.generate(
-                **inputs,
-                max_new_tokens=32,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-
-    # Benchmark
-    torch.cuda.synchronize()
-    times = []
-
-    for _ in range(n_trials):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-
+    try:
         with torch.no_grad():
-            model.generate(
-                **inputs,
-                max_new_tokens=seq_len,
-                do_sample=False,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+            for _ in range(2):
+                model.generate(
+                    **inputs,
+                    max_new_tokens=32,
+                    do_sample=False,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
 
+        # Benchmark
         torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
-        times.append(elapsed)
+        times = []
 
-    avg_time = sum(times) / len(times)
-    tokens_per_sec = seq_len / avg_time
+        for _ in range(n_trials):
+            torch.cuda.synchronize()
+            start = time.perf_counter()
 
-    return avg_time, tokens_per_sec
+            with torch.no_grad():
+                model.generate(
+                    **inputs,
+                    max_new_tokens=seq_len,
+                    do_sample=False,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+
+            torch.cuda.synchronize()
+            elapsed = time.perf_counter() - start
+            times.append(elapsed)
+
+        avg_time = sum(times) / len(times)
+        tokens_per_sec = seq_len / avg_time
+
+        return avg_time, tokens_per_sec
+
+    except Exception as e:
+        print(f"  Warning: Throughput benchmark failed ({e}), skipping...")
+        return 0.0, 0.0
 
 
 def get_gpu_memory_mb() -> float:
@@ -144,6 +243,9 @@ def run_benchmark(args):
     print(f"FIM threshold: {args.fim_threshold}")
     print()
 
+    # Initialize W&B
+    wandb_enabled = init_wandb(args)
+
     # Load tokenizer
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -158,6 +260,8 @@ def run_benchmark(args):
     test_texts = get_calibration_texts(50)[20:50]  # Different samples for test
 
     results = {}
+    fim_traces = None
+    compressed_layers = []
 
     # =========================================================================
     # 1. Baseline (no compression)
@@ -194,9 +298,35 @@ def run_benchmark(args):
         "compressed_layers": 0,
     }
 
+    # Log baseline results to W&B
+    log_wandb(
+        {
+            "baseline/perplexity": baseline_ppl,
+            "baseline/throughput": baseline_tps,
+            "baseline/memory_mb": baseline_mem,
+        },
+        step=1,
+    )
+
     # Run FIM calibration on baseline model
     print("\nRunning FIM calibration...")
     fim_traces = compute_fim_trace_per_layer(model, tokenizer, calib_texts, args.device)
+
+    # Log FIM traces to W&B
+    for layer_idx, trace in fim_traces.items():
+        log_wandb({f"fim/layer_{layer_idx:02d}_trace": trace}, step=1)
+
+    # Log FIM statistics
+    traces_list = list(fim_traces.values())
+    log_wandb(
+        {
+            "fim/mean_trace": sum(traces_list) / len(traces_list),
+            "fim/min_trace": min(traces_list),
+            "fim/max_trace": max(traces_list),
+            "fim/n_layers": len(traces_list),
+        },
+        step=1,
+    )
 
     # Clean up baseline model
     del model
@@ -242,6 +372,17 @@ def run_benchmark(args):
         "compressed_layers": n_layers,
     }
 
+    # Log uniform results to W&B
+    log_wandb(
+        {
+            "uniform/perplexity": uniform_ppl,
+            "uniform/throughput": uniform_tps,
+            "uniform/memory_mb": uniform_mem,
+            "uniform/compressed_layers": n_layers,
+        },
+        step=2,
+    )
+
     # Clean up
     del model
     gc.collect()
@@ -286,6 +427,18 @@ def run_benchmark(args):
         "memory_mb": fim_mem,
         "compressed_layers": len(compressed_layers),
     }
+
+    # Log FIM-guided results to W&B
+    log_wandb(
+        {
+            "fim_guided/perplexity": fim_ppl,
+            "fim_guided/throughput": fim_tps,
+            "fim_guided/memory_mb": fim_mem,
+            "fim_guided/compressed_layers": len(compressed_layers),
+            "fim_guided/protected_layers": n_layers - len(compressed_layers),
+        },
+        step=3,
+    )
 
     # Clean up
     del model
@@ -338,6 +491,32 @@ def run_benchmark(args):
     print(f"  FIM: {fim_layers}/{n_layers} layers compressed")
     print(f"  FIM protects {uniform_layers - fim_layers} high-importance early layers")
 
+    # Log summary comparison to W&B
+    log_wandb(
+        {
+            "summary/baseline_ppl": baseline_ppl,
+            "summary/uniform_ppl": uniform_ppl,
+            "summary/fim_guided_ppl": fim_ppl,
+            "summary/uniform_ppl_degradation_pct": uniform_degrad,
+            "summary/fim_ppl_degradation_pct": fim_degrad,
+            "summary/fim_improvement_over_uniform_pct": uniform_degrad - fim_degrad,
+            "summary/total_layers": n_layers,
+            "summary/fim_compressed_layers": fim_layers,
+            "summary/fim_protected_layers": uniform_layers - fim_layers,
+        },
+        step=4,
+    )
+
+    # Set W&B summary metrics (appear in run overview)
+    log_wandb_summary(
+        "best_method", "fim_guided" if fim_ppl < uniform_ppl else "uniform"
+    )
+    log_wandb_summary("baseline_ppl", baseline_ppl)
+    log_wandb_summary("uniform_ppl", uniform_ppl)
+    log_wandb_summary("fim_guided_ppl", fim_ppl)
+    log_wandb_summary("fim_improvement_pct", uniform_degrad - fim_degrad)
+    log_wandb_summary("protected_layers", uniform_layers - fim_layers)
+
     print("\n" + "=" * 80)
 
     # Save FIM traces for analysis
@@ -347,7 +526,10 @@ def run_benchmark(args):
         print(f"  Layer {layer_idx:2d}: {trace:.4f}{marker}")
     print("  (* = compressed)")
 
-    return results
+    # Finish W&B
+    finish_wandb()
+
+    return results, fim_traces, compressed_layers
 
 
 def main():
@@ -382,11 +564,25 @@ def main():
         default=256,
         help="Sequence length for throughput benchmark",
     )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="deepseek-fim-kvsplice",
+        help="W&B project name (set to empty string to disable)",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default="",
+        help="W&B run name (auto-generated if not provided)",
+    )
     args = parser.parse_args()
 
-    results = run_benchmark(args)
+    results, fim_traces, compressed_layers = run_benchmark(args)
 
     print("\nBenchmark complete!")
+    if args.wandb_project:
+        print(f"Results logged to W&B project: {args.wandb_project}")
 
 
 if __name__ == "__main__":
