@@ -2,22 +2,29 @@
 """
 KVSplice plug-in for DeepSeek models.
 
-This module provides a plug-and-play KVSplice compression layer that can be
-inserted into pretrained DeepSeek models to reduce KV cache memory usage
-during inference.
+WARNING: THIS APPROACH IS FUNDAMENTALLY BROKEN FOR QUALITY MEASUREMENT.
 
-DeepSeek-V2 already uses MLA (Multi-head Latent Attention) which compresses
-the KV cache into a latent space. KVSplice adds an additional compression
-layer on top of this latent representation, achieving further memory savings.
+The wrapper approach modifies K,V values AFTER hidden_states is computed:
+  1. Attention computes: hidden_states = softmax(Q @ K.T) @ V (using ORIGINAL K,V)
+  2. Returns: (hidden_states, (K, V)) for cache
+  3. Wrapper modifies (K, V) AFTER hidden_states is already computed
 
-Usage:
-    from transformers import AutoModelForCausalLM
-    from deepseek_kvsplice_plugin import patch_model_with_kvsplice
+The compression NEVER affects model quality because hidden_states uses
+original K,V. Compression only affects autoregressive generation when
+cached K,V is reused for future tokens.
 
-    model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-V2-Lite")
-    patch_model_with_kvsplice(model, compression_ratio=0.5)
+CORRECT APPROACHES FOR KV COMPRESSION:
+  1. Modify attention forward() to compress K,V BEFORE attention computation
+  2. Train with compression layers (like GPT2_MLA_KV in gpt2/model_knlp.py)
+  3. For inference-only: Replace attention with custom implementation
 
-    # Model now uses KVSplice for reduced KV cache memory
+This module is kept for reference and FIM trace computation utilities.
+The patch functions should NOT be used for quality benchmarking.
+
+Original Description (now outdated):
+This module was intended to provide plug-and-play KVSplice compression for
+pretrained models. However, the wrapper approach cannot affect model quality
+during evaluation because hidden_states are computed before wrapper runs.
 """
 
 import torch
