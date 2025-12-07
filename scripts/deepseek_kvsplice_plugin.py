@@ -153,6 +153,7 @@ class KVSpliceWrapper(nn.Module):
         Forward pass with KVSplice compression.
 
         Intercepts past_key_values, compresses them, and expands before use.
+        Preserves all output elements from the original layer.
         """
         # Check if past_key_values is provided
         past_key_values = kwargs.get("past_key_values", None)
@@ -165,13 +166,24 @@ class KVSpliceWrapper(nn.Module):
         # Run original attention layer
         outputs = self.original_layer(*args, **kwargs)
 
-        # If the layer returns updated cache, compress it
+        # If the layer returns a tuple, look for cache tensor and compress it
+        # DeepSeek returns: (hidden_states, attn_weights, present_key_value)
+        # We need to preserve all elements and only compress the cache
         if isinstance(outputs, tuple) and len(outputs) > 1:
-            output, new_cache = outputs[0], outputs[1]
-            if new_cache is not None:
-                # Compress the new cache
-                self._compressed_cache = self.kvsplice.compress_cache(new_cache)
-            return (output, new_cache)
+            outputs_list = list(outputs)
+
+            # Find the cache tensor (typically last element, or second if len==2)
+            # Cache is usually a tensor with shape matching our expected d_latent
+            for i in range(len(outputs_list) - 1, 0, -1):
+                cache = outputs_list[i]
+                if cache is not None and isinstance(cache, torch.Tensor):
+                    # Check if this looks like a KV cache (has right dimension)
+                    if cache.dim() >= 2 and cache.shape[-1] == self.kvsplice.d_in:
+                        self._compressed_cache = self.kvsplice.compress_cache(cache)
+                        break
+
+            # Return all outputs unchanged (compression is stored internally)
+            return tuple(outputs_list)
         else:
             return outputs
 
@@ -374,11 +386,14 @@ def compute_fim_trace_per_layer(
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
             try:
-                # Enable attention output if supported
-                model(**inputs, output_attentions=True)
+                # Enable attention output if supported, disable cache for compatibility
+                model(**inputs, output_attentions=True, use_cache=False)
             except Exception:
                 # Fallback without attention output
-                model(**inputs)
+                try:
+                    model(**inputs, use_cache=False)
+                except Exception:
+                    model(**inputs)
 
     # Remove hooks
     for h in hooks:
