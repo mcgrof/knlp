@@ -30,7 +30,6 @@ warnings.filterwarnings(
     "ignore", message=".*duplicate parameters.*", category=UserWarning
 )
 warnings.filterwarnings("ignore", message=".*PYTORCH_HIP_ALLOC_CONF.*")
-warnings.filterwarnings("ignore", message=".*destroy_process_group.*")
 
 # Import config first (needed for env setup)
 try:
