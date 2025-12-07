@@ -659,6 +659,13 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 except Exception as e:
                     print(f"Warning: Failed to finish wandb: {e}")
 
+        # Clean up DDP process group (must be called by all processes)
+        if self.ddp:
+            import torch.distributed as dist
+
+            dist.barrier()  # Ensure all processes finished
+            dist.destroy_process_group()
+
     def on_train_end(self):
         """Hook for subclasses to run code before trackers finish."""
         # Generate FIM summary if FIM tracking was enabled
