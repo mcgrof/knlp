@@ -962,11 +962,31 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 if hasattr(raw_model, "compression_ratio"):
                     compression_ratio = raw_model.compression_ratio
                     d_compressed = int(d_latent * compression_ratio)
-                    compressed_cache_bytes = (
-                        batch_size * n_layers * seq_len * d_compressed * 2
-                    )
+
+                    # Check for hybrid architecture (mla_kv_fim)
+                    if hasattr(raw_model, "kv_layers"):
+                        # GPT2_MLA_KV_FIM: only last kv_layers use KVSplice
+                        kv_layers = raw_model.kv_layers
+                        mla_layers = n_layers - kv_layers
+
+                        # MLA-only layers: d_latent per layer
+                        mla_cache_bytes = (
+                            batch_size * mla_layers * seq_len * d_latent * 2
+                        )
+                        # KVSplice layers: d_compressed per layer
+                        kv_cache_bytes = (
+                            batch_size * kv_layers * seq_len * d_compressed * 2
+                        )
+                        compressed_cache_bytes = mla_cache_bytes + kv_cache_bytes
+                        cache_type = "kvsplice_fim"
+                    else:
+                        # GPT2_MLA_KV: all layers use KVSplice
+                        compressed_cache_bytes = (
+                            batch_size * n_layers * seq_len * d_compressed * 2
+                        )
+                        cache_type = "kvsplice"
+
                     actual_cache_mb = compressed_cache_bytes / 1024**2
-                    cache_type = "kvsplice"
                 else:
                     # MLA without KVSplice - cache stores d_latent
                     latent_cache_bytes = batch_size * n_layers * seq_len * d_latent * 2
@@ -985,8 +1005,15 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             metrics[f"kv_cache/seq{seq_len}_savings_pct"] = savings_pct
 
         # Summary metrics
-        if cache_type == "kvsplice":
-            metrics["kv_cache/type"] = 2.0  # KVSplice
+        if cache_type == "kvsplice_fim":
+            metrics["kv_cache/type"] = 3.0  # KVSplice FIM (hybrid)
+            if hasattr(raw_model, "compression_ratio"):
+                metrics["kv_cache/compression_ratio"] = raw_model.compression_ratio
+            if hasattr(raw_model, "kv_layers"):
+                metrics["kv_cache/kv_layers"] = raw_model.kv_layers
+                metrics["kv_cache/mla_layers"] = n_layers - raw_model.kv_layers
+        elif cache_type == "kvsplice":
+            metrics["kv_cache/type"] = 2.0  # KVSplice (all layers)
             if hasattr(raw_model, "compression_ratio"):
                 metrics["kv_cache/compression_ratio"] = raw_model.compression_ratio
         elif cache_type == "mla":
