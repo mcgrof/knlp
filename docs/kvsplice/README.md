@@ -69,36 +69,41 @@ the compressed latent is stored and expanded on-demand during attention.
 
 ### Quality Comparison
 
-| Architecture | Val Loss | Val PPL | Iterations | Speed |
-|--------------|----------|---------|------------|-------|
-| MLA (6x) | **5.54** | **255** | 2350 | 367ms/iter |
-| MLA+KVSplice (12x) | 5.69 | 296 | 3000 | 285ms/iter |
+| Architecture | Val PPL | HellaSwag | Iterations | Speed |
+|--------------|---------|-----------|------------|-------|
+| MLA+KVSplice FIM (7.2x) | **63.08** | **31%** | 2601 | 1392ms/iter |
+| MLA+KVSplice (12x) | 83.85 | 24% | 3065 | 1176ms/iter |
 
-**Quality degradation**: +2.7% val_loss, +16% val_perplexity
+**FIM-guided wins**: The selective compression approach (mla_kv_fim) achieves
+25% better perplexity and +7 points on HellaSwag compared to full KVSplice,
+despite 18% slower iteration speed. Protecting early layers with high FIM
+trace preserves critical representational capacity.
 
 ### Training Speed
 
-KVSplice trains **22% faster** than MLA alone (285ms vs 367ms per iteration)
-due to smaller latent dimensions. In the same training time:
-- MLA: 2350 iterations
-- KVSplice: 3000 iterations (28% more)
+Full KVSplice trains **18% faster** than FIM-guided (1176ms vs 1392ms per
+iteration) due to smaller latent dimensions across all layers. In the same
+training time:
+- mla_kv: 3065 iterations
+- mla_kv_fim: 2601 iterations (15% fewer)
 
-Despite more iterations, KVSplice shows quality degradation, indicating the
-compression bottleneck affects representational capacity. Longer training
-runs may help close this gap.
+Despite fewer iterations, mla_kv_fim achieves much better quality because
+protecting early layers (high FIM trace) preserves representational capacity
+that full compression destroys.
 
 ### Memory Savings (Inference)
 
-| Seq Length | Standard GPT-2 | MLA (6x) | KVSplice (12x) | Savings |
-|------------|----------------|----------|----------------|---------|
-| 256 tokens | 9 MB | 3 MB | 1.5 MB | 83% |
-| 512 tokens | 18 MB | 6 MB | 3 MB | 83% |
-| 1024 tokens | 36 MB | 12 MB | 6 MB | 83% |
+| Seq Length | Standard GPT-2 | MLA (6x) | KVSplice FIM (7.2x) | KVSplice (12x) |
+|------------|----------------|----------|---------------------|----------------|
+| 256 tokens | 9 MB | 1.5 MB | 1.25 MB | 0.75 MB |
+| 512 tokens | 18 MB | 3 MB | 2.5 MB | 1.5 MB |
+| 1024 tokens | 36 MB | 6 MB | 5 MB | 3 MB |
 
 For production inference with 24GB GPU memory:
 - Standard GPT-2: ~650 parallel sequences
-- MLA: ~1950 sequences (3x throughput)
-- KVSplice: ~3900 sequences (6x throughput)
+- MLA: ~4,000 sequences (6x throughput)
+- KVSplice FIM: ~4,800 sequences (7.2x throughput, best quality)
+- KVSplice: ~8,000 sequences (12x throughput)
 
 ## Implementation
 
@@ -111,6 +116,7 @@ For production inference with 24GB GPU memory:
 - `MLAKVBlock`: MLA + KVSplice transformer block
 - `GPT2_MLA`: GPT-2 with MLA (6x compression)
 - `GPT2_MLA_KV`: GPT-2 with MLA + KVSplice (12x compression)
+- `GPT2_MLA_KV_FIM`: GPT-2 with FIM-guided selective KVSplice (7.2x, best quality)
 
 **Running the ablation**:
 ```bash
@@ -121,9 +127,10 @@ make
 **Configuration** (`defconfigs/gpt2-kvsplice-ablation`):
 ```
 CONFIG_ENABLE_MLA=y
-CONFIG_MLA_VARIANT="mla,mla_kv"
+CONFIG_MLA_VARIANT="mla,mla_kv,mla_kv_fim"
 CONFIG_MLA_D_LATENT=256
 CONFIG_MLA_COMPRESSION_RATIO="0.5"
+CONFIG_MLA_KV_FIM_LAYERS=4
 ```
 
 ## When to Use
