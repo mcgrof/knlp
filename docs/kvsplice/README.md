@@ -79,6 +79,12 @@ the compressed latent is stored and expanded on-demand during attention.
 despite 18% slower iteration speed. Protecting early layers with high FIM
 trace preserves critical representational capacity.
 
+![KVSplice FIM Combined Results](kvsplice_fim_combined.png)
+
+*FIM-guided selective compression (green) outperforms full KVSplice (red) on
+both metrics. Lower perplexity and higher HellaSwag accuracy demonstrate that
+protecting early layers preserves model quality.*
+
 ### Training Speed
 
 Full KVSplice trains **18% faster** than FIM-guided (1176ms vs 1392ms per
