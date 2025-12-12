@@ -12,7 +12,11 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating the hypothesis that Adam's gradient statistics enable superior pruning decisions. Tested on NVIDIA B200 GPUs with torch.compile.
+> **⚡ KVSplice**: FIM-guided selective compression achieves **25% better perplexity** (63 vs 84 PPL) and **+7 points HellaSwag** compared to naive compression by protecting high-trace early layers. 7.2x total KV cache compression on B200x4.
+>
+> **⚡ Reciprocal Attention**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
+>
+> **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating that Adam's gradient statistics enable superior pruning decisions. B200 with torch.compile.
 
 ## Development Philosophy
 
@@ -29,45 +33,68 @@ This methodology enables rapid iteration on transformer architectures and state-
 
 ## Key Results
 
-### Adam State based Pruning R&D results
+All results on GPT-2 124M with FineWebEdu dataset on NVIDIA B200x4.
 
-| Model | Parameters | Dataset | Sparsity | Accuracy/Perplexity | Notes |
-|-------|------------|---------|----------|---------------------|-------|
-| GPT-2 | 124M | FineWebEdu | 50% | **37.28 PPL** | **bitter7 (15.6% better)** |
-| ResNet-50 | 25.6M | CIFAR-100 | 50% | 74.56% | bitter0 (original hybrid) |
-| ResNet-18 | 11.2M | CIFAR-10 | 70% | 90.66% | bitter0 (original hybrid) |
-| LeNet-5 | 61.7K | MNIST | 70% | 98.9% | bitter0 (original hybrid) |
+### KVSplice: FIM-Guided KV Cache Compression
 
-bitter0 (original hybrid momentum-stability) achieved excellent results
-on CNNs. bitter7 (variance-based) emerged from transformer R&D and is
-expected to improve CNN results further. See evolution story below.
+FIM (Fisher Information Matrix) trace analysis reveals early layers do critical
+representational work (high trace) while late layers are safe compression targets
+(low trace). KVSplice applies learned compression selectively based on this insight.
 
-## GPT-2 Transformer Results (124M Parameters)
+| Architecture | Val PPL | HellaSwag | KV Cache | Description |
+|--------------|---------|-----------|----------|-------------|
+| MLA+KVSplice (all) | 83.85 | 24% | 3 MB | Naive 12x compression |
+| **MLA+KVSplice FIM** | **63.08** | **31%** | 5 MB | FIM-guided 7.2x compression |
+
+![KVSplice FIM Results](docs/kvsplice/kvsplice_fim_combined.png)
+*FIM-guided selective compression (green) achieves 25% better perplexity and
++7 points HellaSwag by protecting high-trace early layers from compression.*
+
+See [docs/kvsplice/README.md](docs/kvsplice/README.md) for architecture details,
+FIM analysis methodology, and memory savings calculations.
+
+---
+
+### Reciprocal Attention: Learned Bidirectional Attention Flow
+
+Reciprocal Attention alternates between Q@K.T (standard) and K@Q.T (reciprocal)
+attention patterns. FIM analysis shows middle layers benefit most from this
+bidirectional flow while early layers should remain unmodified.
+
+| Architecture | Val PPL | HellaSwag | Speed | Description |
+|--------------|---------|-----------|-------|-------------|
+| Baseline GPT-2 | 72.5 | 28% | 285ms | Standard attention |
+| SDPA Gate (Qwen3) | 71.8 | 28.5% | 295ms | Output gating only |
+| **RA (middle layers)** | **68.9** | **30%** | 320ms | Reciprocal attention |
+
+![RA Quality Comparison](docs/images/ra_quality_comparison.png)
+*Reciprocal Attention (green) outperforms baseline and Qwen3-style gating
+with 5% better perplexity and +2 points HellaSwag at 12% speed cost.*
+
+See [docs/ra.md](docs/ra.md) for layer strategy, FIM trace justification,
+and comparison with Qwen3 SDPA gating.
+
+---
 
 ### Adam State-Based Pruning: Hypothesis Validated
 
-Our Adam state-based pruning research conclusively validates the
-hypothesis that **leveraging Adam's accumulated gradient statistics
-enables superior pruning decisions** compared to magnitude-based
-approaches. State-based variants (bitter7, bitter8) significantly
-outperform magnitude pruning baseline when tested with identical
-hyperparameters on NVIDIA B200 GPUs.
+Adam's accumulated gradient statistics enable superior pruning decisions
+compared to magnitude-based approaches. State-based variants significantly
+outperform magnitude pruning baseline with identical hyperparameters.
+
+| Model | Sparsity | Perplexity | Improvement | Method |
+|-------|----------|------------|-------------|--------|
+| GPT-2 | 50% | 44.15 | baseline | Movement pruning |
+| GPT-2 | 50% | 40.94 | +7.3% | bitter8 (state-based) |
+| GPT-2 | 50% | **37.28** | **+15.6%** | **bitter7 (variance)** |
 
 ![AdamWPrune Comparison](images/adamwprune_fair_comparison.png)
 *State-based pruning outperforms magnitude baseline with identical
-hyperparameters. All runs WITH torch.compile on B200: bitter8
-achieves 40.94 PPL (7.3% better), bitter7 achieves 37.28 PPL
-(15.6% better) than movement pruning baseline (44.15 PPL).*
+hyperparameters. bitter7 achieves 37.28 PPL (15.6% better) than
+movement pruning baseline (44.15 PPL).*
 
-**Test Configuration:**
-- Model: GPT-2 (124M parameters)
-- Dataset: FineWebEdu
-- Target Sparsity: 50%
-- **Learning Rate:** 0.0006, Weight Decay: 0.1
-- **Hyperparameters:** AUTO mode (adapts to available hardware)
-
-See [docs/pruning.md](docs/pruning.md) for complete pruning research details,
-hyperparameter auto-detection, ResNet results, and transformer findings.
+See [docs/pruning.md](docs/pruning.md) for complete pruning research,
+ResNet results, and the bitter7 evolution story.
 
 ---
 
