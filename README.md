@@ -76,7 +76,8 @@ hyperparameter auto-detection, ResNet results, and transformer findings.
 knlp serves as a collaborative platform for ML architecture research:
 
 - **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables for zero-overhead pruning decisions during training
-- **[KV Cache Compression](docs/kvsplice.md)**: Multi-head Latent Attention (MLA) for 6x cache compression with ongoing R&D on compression limits
+- **[Reciprocal Attention](docs/ra.md)**: Learned alternation between Q@K.T and K@Q.T attention patterns for 5% better perplexity via flatter optimization geometry (12% speed cost)
+- **[KVSplice](docs/kvsplice/README.md)**: FIM-guided KV cache compression achieving 7.2x compression with 25% better quality than naive compression by protecting high-trace early layers
 - **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
 - **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
 - **[Mechanistic Interpretability](docs/mechint.md)**: Post-training circuit analysis
