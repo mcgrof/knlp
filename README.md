@@ -12,7 +12,7 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **⚡ KVSplice**: FIM-guided selective compression achieves **25% better perplexity** (63 vs 84 PPL) and **+7 points HellaSwag** compared to naive compression by protecting high-trace early layers. 7.2x total KV cache compression on B200x4.
+> **⚡ KVSplice**: FIM-guided compression adds **~20% extra compression on top of MLA** (7.2x vs 6x), shrinking MLA's KV cache by 17% while achieving **25% better perplexity** and **+7 HellaSwag** vs naive compression. B200x4.
 >
 > **⚡ Reciprocal Attention**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
 >
@@ -37,14 +37,17 @@ All results on GPT-2 124M with FineWebEdu dataset on NVIDIA B200x4.
 
 ### KVSplice: FIM-Guided KV Cache Compression
 
-FIM (Fisher Information Matrix) trace analysis reveals early layers do critical
-representational work (high trace) while late layers are safe compression targets
-(low trace). KVSplice applies learned compression selectively based on this insight.
+MLA (Multi-head Latent Attention) provides 6x KV cache compression. FIM-guided
+KVSplice adds ~20% extra compression on top of MLA (7.2x total), shrinking the
+MLA cache by an additional 17% (6 MB → 5 MB at 1024 tokens). FIM trace analysis
+guides which layers to compress: early layers (high trace) are protected while
+late layers (low trace) are safe compression targets.
 
-| Architecture | Val PPL | HellaSwag | KV Cache | Description |
+| Architecture | Val PPL | HellaSwag | KV Cache | Compression |
 |--------------|---------|-----------|----------|-------------|
-| MLA+KVSplice (all) | 83.85 | 24% | 3 MB | Naive 12x compression |
-| **MLA+KVSplice FIM** | **63.08** | **31%** | 5 MB | FIM-guided 7.2x compression |
+| MLA only | - | - | 6 MB | 6x baseline |
+| MLA+KVSplice (all) | 83.85 | 24% | 3 MB | 12x (naive) |
+| **MLA+KVSplice FIM** | **63.08** | **31%** | 5 MB | 7.2x (+20% over MLA) |
 
 ![KVSplice FIM Results](docs/kvsplice/kvsplice_fim_combined.png)
 *FIM-guided selective compression (green) achieves 25% better perplexity and
@@ -104,7 +107,7 @@ knlp serves as a collaborative platform for ML architecture research:
 
 - **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables for zero-overhead pruning decisions during training
 - **[Reciprocal Attention](docs/ra.md)**: Learned alternation between Q@K.T and K@Q.T attention patterns for 5% better perplexity via flatter optimization geometry (12% speed cost)
-- **[KVSplice](docs/kvsplice/README.md)**: FIM-guided KV cache compression achieving 7.2x compression with 25% better quality than naive compression by protecting high-trace early layers
+- **[KVSplice](docs/kvsplice/README.md)**: FIM-guided compression adds ~20% on top of MLA (7.2x vs 6x), shrinking MLA's cache by 17% with 25% better quality than naive compression
 - **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
 - **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
 - **[Mechanistic Interpretability](docs/mechint.md)**: Post-training circuit analysis
