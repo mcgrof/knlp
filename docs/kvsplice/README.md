@@ -3,14 +3,16 @@
 ## Overview
 
 KVSplice achieves KV cache compression through learned low-rank projection
-on top of MLA's latent representation. This compresses the MLA latent space
-(256 dims) to smaller dimensions (128 dims at 50% compression) using
-orthogonal linear transformations.
+on top of MLA's latent representation. MLA provides 6x compression; FIM-guided
+KVSplice adds ~20% extra compression (7.2x total), shrinking MLA's cache by
+an additional 17% (6 MB → 5 MB at 1024 tokens). This is achieved by compressing
+only the last 4 layers where FIM trace is lowest, protecting critical early layers.
 
 **Compression stack**:
-- Standard GPT-2: 1536 dims (full K+V per head)
-- MLA: 256 dims (6x compression via shared latent)
-- MLA + KVSplice: 128 dims (12x total compression)
+- Standard GPT-2: 1536 dims (full K+V per head) → 36 MB at 1024 tokens
+- MLA: 256 dims (6x compression via shared latent) → 6 MB
+- MLA + KVSplice FIM: 7.2x total (+20% over MLA) → 5 MB
+- MLA + KVSplice (all): 128 dims (12x compression, quality loss) → 3 MB
 
 ## Architecture
 
