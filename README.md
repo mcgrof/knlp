@@ -12,15 +12,15 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **⚡ Unified Signal**: [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — this equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering. See [Hierarchical Tiering](docs/hierarchical-tiering.md).
+> **⚡ [Unified Signal](docs/hierarchical-tiering.md)**: [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — this equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering.
 >
-> **⚡ FIM-Guided Quantization**: Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation. Upgrading 4 layers from Q3_K to Q6_K achieves **1.26% better perplexity** at only **1.8% size increase**. See [Mobile Weight Packing](docs/mobile-weight-packing.md).
+> **⚡ [FIM-Guided Quantization](docs/mobile-weight-packing.md)**: Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation. Upgrading 4 layers from Q3_K to Q6_K achieves **1.26% better perplexity** at only **1.8% size increase**.
 >
-> **⚡ KVSplice**: FIM-guided compression adds **~20% extra compression on top of MLA** (7.2x vs 6x), shrinking MLA's KV cache by 17% while achieving **25% better perplexity** and **+7 HellaSwag** vs naive compression. B200x4.
+> **⚡ [KVSplice](docs/kvsplice/README.md)**: FIM-guided compression adds **~20% extra compression on top of MLA** (7.2x vs 6x), shrinking MLA's KV cache by 17% while achieving **25% better perplexity** and **+7 HellaSwag** vs naive compression. B200x4.
 >
-> **⚡ Reciprocal Attention**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
+> **⚡ [Reciprocal Attention](docs/ra.md)**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
 >
-> **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring. B200 with torch.compile.
+> **⚡ [Adam State-Based Pruning](docs/adamwprune_variants.md)**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring. B200 with torch.compile.
 
 ## Development Philosophy
 
