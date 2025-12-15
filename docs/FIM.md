@@ -11,6 +11,73 @@ means small changes in parameters cause large changes in outputs (sensitive,
 hard to optimize). Low curvature means the landscape is flatter (stable, easier
 to optimize).
 
+## Key Discovery: FIM Diagonal ≈ Adam exp_avg_sq
+
+A fundamental result connects FIM to Adam optimizer state. The diagonal FIM
+approximation we use for quantization and compression is mathematically
+equivalent to Adam's second moment:
+
+```
+FIM_diag(θ) = E[(∂L/∂θ)²] = E[g²]
+Adam exp_avg_sq = β₂ · exp_avg_sq + (1-β₂) · g² ≈ E[g²]
+```
+
+This equivalence, validated by [Squisher (2025)](https://arxiv.org/abs/2507.18807),
+has profound implications for our R&D:
+
+| Application | Explicit FIM Cost | Adam State Cost | Savings |
+|-------------|-------------------|-----------------|---------|
+| Layer sensitivity | 100s of batches | Zero (free) | 100% |
+| Quantization guidance | Calibration pass | Zero (free) | 100% |
+| Pruning importance | Separate computation | Zero (free) | 100% |
+
+### Why This Matters
+
+**bitter7 pruning works because it directly uses FIM diagonal**:
+```python
+importance = |w| × (exp_avg_sq + ε)^0.25  # exp_avg_sq ≈ FIM diagonal
+```
+
+This explains the 15.6% improvement over magnitude pruning: bitter7 leverages
+the accumulated Fisher Information that Adam has already computed, identifying
+parameters with high gradient variance (sensitive to perturbation).
+
+**Mobile weight packing uses the same signal**:
+```python
+fim_score[tensor] = Σ (param.grad ** 2) / num_batches  # Explicit FIM diagonal
+```
+
+Both methods identify the same sensitive weights because they compute the
+same underlying quantity: E[g²].
+
+### Future Integration (Hypothesis)
+
+Currently, KVSplice and Reciprocal Attention use **post-training FIM trace
+analysis** on calibration data with frozen weights. The FIM-Adam equivalence
+*suggests* we might extract importance from Adam state:
+
+```python
+# Hypothetical (needs validation):
+def get_layer_importance_from_adam(optimizer, layer_name):
+    """Extract FIM approximation from Adam state (zero extra cost)."""
+    for param in get_layer_params(layer_name):
+        state = optimizer.state[param]
+        if 'exp_avg_sq' in state:
+            return state['exp_avg_sq'].mean().item()  # ≈ FIM diagonal
+    return 0.0
+```
+
+**Important caveat**: This is **unvalidated** for KVSplice/RA. Key differences:
+- Adam exp_avg_sq accumulates **during training** as the model changes
+- Post-training FIM is computed on **frozen weights** with calibration data
+- Layer rankings may differ due to timing and distribution differences
+
+Before using exp_avg_sq for KVSplice/RA layer selection, we must empirically
+verify that training-time accumulation correlates with post-training analysis.
+
+See [docs/hierarchical-tiering.md](hierarchical-tiering.md) for how this
+unifies our compression, pruning, and tiering research.
+
 ## Why We Care About FIM in Attention
 
 The SPDA paper ("Scaled Dot-Product Attention as One-Sided Entropic Optimal

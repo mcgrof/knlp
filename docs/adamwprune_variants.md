@@ -102,6 +102,42 @@ AdamWPrune implements several pruning variants following the "bitter lesson" phi
   - Most stable pruning signal for long-term low activity detection
   - Successfully validates Adam state-based pruning hypothesis
 
+#### Why bitter7 Works: The FIM Connection
+
+A key discovery explains bitter7's effectiveness: **Adam's exp_avg_sq
+approximates the Fisher Information Matrix diagonal**.
+
+```
+FIM_diag(θ) = E[(∂L/∂θ)²] = E[g²]
+Adam exp_avg_sq = β₂ · exp_avg_sq + (1-β₂) · g² ≈ E[g²]
+```
+
+This equivalence, validated by [Squisher (2025)](https://arxiv.org/abs/2507.18807),
+means bitter7 is directly leveraging Fisher Information for pruning:
+
+- **High exp_avg_sq** = high FIM = parameter is sensitive to perturbation
+- **Low exp_avg_sq** = low FIM = parameter is stable, safe to prune
+
+The fourth root (`^0.25`) dampens extreme values while preserving the
+ranking, ensuring stable pruning decisions.
+
+This also explains why bitter7 outperforms magnitude pruning so
+significantly: magnitude ignores gradient history entirely, while
+bitter7 uses the accumulated Fisher Information that Adam has already
+computed during training.
+
+**Related FIM applications** (with different computation methods):
+- **Mobile weight packing**: Explicit g² computation for quantization (validated)
+- **KVSplice**: Post-training FIM trace analysis for layer selection
+- **Reciprocal Attention**: Post-training FIM trace for layer strategy
+
+Note: KVSplice and RA use post-training FIM on calibration data, which may
+differ from training-time exp_avg_sq. Whether exp_avg_sq can replace
+post-training FIM for these applications is not yet validated.
+
+See [docs/FIM.md](FIM.md) and [docs/hierarchical-tiering.md](hierarchical-tiering.md)
+for how this unifies our compression, pruning, and tiering research.
+
 #### Why Beta2 Matters for bitter7
 
 The choice of beta2=0.999 (variance) over beta1=0.9 (momentum) is crucial for stable pruning:
