@@ -12,11 +12,15 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
+> **⚡ Unified Signal**: [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — this equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering. See [Hierarchical Tiering](docs/hierarchical-tiering.md).
+>
+> **⚡ FIM-Guided Quantization**: Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation. Upgrading 4 layers from Q3_K to Q6_K achieves **1.26% better perplexity** at only **1.8% size increase**. See [Mobile Weight Packing](docs/mobile-weight-packing.md).
+>
 > **⚡ KVSplice**: FIM-guided compression adds **~20% extra compression on top of MLA** (7.2x vs 6x), shrinking MLA's KV cache by 17% while achieving **25% better perplexity** and **+7 HellaSwag** vs naive compression. B200x4.
 >
 > **⚡ Reciprocal Attention**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
 >
-> **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), validating that Adam's gradient statistics enable superior pruning decisions. B200 with torch.compile.
+> **⚡ Adam State-Based Pruning**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring. B200 with torch.compile.
 
 ## Development Philosophy
 
@@ -105,9 +109,11 @@ ResNet results, and the bitter7 evolution story.
 
 knlp serves as a collaborative platform for ML architecture research:
 
-- **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables for zero-overhead pruning decisions during training
+- **[Hierarchical Tiering](docs/hierarchical-tiering.md)**: Unified framework connecting FIM diagonal ≈ Adam exp_avg_sq across compression, pruning, and memory tiering — the theoretical foundation linking all our R&D
+- **[AdamWPrune](docs/pruning.md)**: State-based pruning leveraging Adam optimizer state variables (exp_avg_sq ≈ FIM diagonal) for superior pruning decisions during training
 - **[Reciprocal Attention](docs/ra.md)**: Learned alternation between Q@K.T and K@Q.T attention patterns for 5% better perplexity via flatter optimization geometry (12% speed cost)
 - **[KVSplice](docs/kvsplice/README.md)**: FIM-guided compression adds ~20% on top of MLA (7.2x vs 6x), shrinking MLA's cache by 17% with 25% better quality than naive compression
+- **[Mobile Weight Packing](docs/mobile-weight-packing.md)**: FIM-guided quantization for GGUF models, achieving 1.26% better perplexity at 1.8% size increase
 - **[Weight Tying](docs/weight-tying.md)**: Parameter reduction through strategic sharing
 - **[KV Tying](docs/kv-tying.md)**: Attention projection parameter reduction
 - **[Mechanistic Interpretability](docs/mechint.md)**: Post-training circuit analysis
