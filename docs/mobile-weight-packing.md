@@ -63,11 +63,28 @@ This provides optimal layout AND quantization in one step.
 Since GGUF layout is already optimal, we investigated improving GGUF
 quality through FIM-guided mixed-precision quantization.
 
-### Approach
+### What is g² (Squared Gradient)?
 
-FIM (Fisher Information Matrix) identifies which layers are most sensitive
-to quantization error. We use diagonal FIM approximation (E[g^2]) to score
-layer importance, then allocate higher precision to critical layers.
+FIM uses the squared gradient to measure weight importance. The core idea:
+
+![Understanding g² (Squared Gradient)](mobile-weight-packing/fig6_g_squared.png)
+
+The diagonal Fisher Information Matrix approximation:
+
+```
+FIM_diag(θ) = E[(∂L/∂θ)²]
+```
+
+Weights with high g² values:
+- **Sensitivity**: Small changes cause large loss increases
+- **Importance**: Critical for model accuracy
+- **Precision Need**: Require more bits to preserve accuracy
+
+### FIM Computation Pipeline
+
+The FIM computation runs on calibration data to identify sensitive weights:
+
+![FIM Computation Pipeline](mobile-weight-packing/fig1_fim_pipeline.png)
 
 ```bash
 # FIM-guided quantization pipeline
@@ -76,6 +93,41 @@ scripts/plan_quant.py       # Select top-K% layers for upgrade
 scripts/emit_llama_quantize_cmd.py  # Generate llama-quantize commands
 scripts/run_eval.py         # Evaluate perplexity
 ```
+
+### Tensor Sensitivity Ranking
+
+Different tensor types show different sensitivity to quantization error:
+
+![Tensor Group FIM Sensitivity Ranking](mobile-weight-packing/fig3_tensor_sensitivity.png)
+
+Key findings:
+- **ffn_down** is most critical (referenced in llama.cpp #12741)
+- **ffn_gate/ffn_up** and **attn_v** are highly sensitive
+- **token_emb** and **attn_k** can tolerate aggressive compression
+
+### FIM Score → Quantization Mapping
+
+Use FIM scores to select appropriate quantization precision:
+
+![FIM Score to Quantization Decision Tree](mobile-weight-packing/fig4_fim_quant_mapping.png)
+
+### GGUF K-Quantization Types
+
+GGUF provides multiple quantization levels with different quality/size tradeoffs:
+
+![GGUF K-Quantization Types](mobile-weight-packing/fig2_gguf_quant_types.png)
+
+The `_M` (Medium) variants already apply mixed precision to critical tensors,
+which is why FIM-guided improvements are largest for aggressive `_S` variants.
+
+### Uniform vs FIM-Guided Mixed Precision
+
+The key insight: allocate precision budget based on FIM scores:
+
+![Mixed Precision Comparison](mobile-weight-packing/fig5_mixed_precision.png)
+
+- **Uniform (Q3_K_S)**: All tensors get Q3_K → smaller but lower quality
+- **FIM-guided (Q3_K_M)**: Critical tensors upgraded → 2x better PPL delta
 
 ### Results: Qwen2.5-1.5B
 
