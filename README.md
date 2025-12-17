@@ -12,7 +12,7 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
-> **⚡ [Unified Signal](docs/hierarchical-tiering.md)**: [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — this equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering.
+> **⚡ [Unified Signal](docs/hierarchical-tiering.md)**: [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — this equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering. ([interactive demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fisher_adam_visualization.html))
 >
 > **⚡ [FIM-Guided Quantization](docs/mobile-weight-packing.md)**: Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation. Upgrading 4 layers from Q3_K to Q6_K achieves **1.26% better perplexity** at only **1.8% size increase**.
 >
