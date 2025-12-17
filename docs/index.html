@@ -48,7 +48,7 @@
         </a>
         <a href="fisher_adam_visualization.html"
            class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">
-          Interactive Demo
+          FIM-Adam Demo
         </a>
       </div>
     </header>
@@ -198,18 +198,23 @@
                 <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
                 <td class="py-3 px-4 text-green-400">11% better PPL</td>
               </tr>
-              <tr>
+              <tr class="border-b border-gray-800">
                 <td class="py-3 px-4"><a href="ra_visualization.html" class="text-cyan-400 hover:underline">Reciprocal Attention</a></td>
                 <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
                 <td class="py-3 px-4 text-green-400">82% better PPL</td>
+              </tr>
+              <tr>
+                <td class="py-3 px-4"><a href="tiering_visualization.html" class="text-emerald-400 hover:underline">Memory Tiering</a></td>
+                <td class="py-3 px-4 font-mono text-xs">exp_avg_sq rank</td>
+                <td class="py-3 px-4 text-green-400">Optimal placement</td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="mt-4 text-center">
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/hierarchical-tiering.md"
-             class="text-sm text-blue-400 hover:underline">
-            Learn more about the unified framework →
+          <a href="tiering_visualization.html"
+             class="text-sm text-emerald-400 hover:underline">
+            Explore hierarchical tiering →
           </a>
         </div>
       </div>
