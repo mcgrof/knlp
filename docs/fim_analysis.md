@@ -97,7 +97,7 @@ Per-run analysis with interpretations:
 
 **Effective rank:** Smallest k where energy_rk ≥ 0.9
 
-## Brilliant W&B Visualization
+## W&B Visualization
 
 ### Single-Number Insights (Scalars)
 

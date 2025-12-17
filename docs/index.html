@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>knlp: Kernel-Style Machine Learning</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      border-color: #3b82f6;
+      transform: translateY(-2px);
+      box-shadow: 0 10px 40px -10px rgba(59, 130, 246, 0.3);
+    }
+    .highlight-card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border-left: 4px solid;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <!-- Header -->
+    <header class="text-center mb-16">
+      <h1 class="text-5xl font-bold mb-4">
+        <span class="gradient-text">knlp</span>
+      </h1>
+      <p class="text-xl text-gray-400 mb-2">Kernel-Style Machine Learning</p>
+      <p class="text-gray-500 max-w-2xl mx-auto">
+        Rapid prototyping and automation for open source ML R&D using Linux kernel development methodologies
+      </p>
+      <div class="mt-6 flex justify-center gap-4">
+        <a href="https://github.com/mcgrof/knlp"
+           class="px-6 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
+          GitHub Repository
+        </a>
+        <a href="fisher_adam_visualization.html"
+           class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">
+          Interactive Demo
+        </a>
+      </div>
+    </header>
+
+    <!-- Key Discovery Banner -->
+    <section class="mb-12">
+      <div class="card rounded-xl p-6 text-center">
+        <div class="text-sm text-blue-400 font-medium mb-2">KEY DISCOVERY</div>
+        <h2 class="text-2xl font-bold mb-3">FIM Diagonal ≈ Adam exp_avg_sq</h2>
+        <p class="text-gray-400 mb-4 max-w-2xl mx-auto">
+          <a href="https://arxiv.org/abs/2507.18807" class="text-blue-400 hover:underline">Squisher (2025)</a>
+          proves that Adam's second moment approximates the Fisher Information Matrix diagonal.
+          This equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering.
+        </p>
+        <code class="block bg-gray-900 rounded-lg p-4 text-sm font-mono max-w-xl mx-auto">
+          <span class="text-blue-400">FIM_diag(θ)</span> = E[(∂L/∂θ)²] = E[g²] ≈ <span class="text-orange-400">exp_avg_sq</span>
+        </code>
+        <a href="fisher_adam_visualization.html"
+           class="inline-block mt-4 text-blue-400 hover:text-blue-300 text-sm">
+          Explore Interactive Visualization →
+        </a>
+      </div>
+    </section>
+
+    <!-- Research Highlights -->
+    <section class="mb-12">
+      <h2 class="text-2xl font-bold mb-6 text-center">Research Highlights</h2>
+      <div class="grid gap-4">
+
+        <!-- Adam State-Based Pruning -->
+        <div class="highlight-card border-green-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-green-400 mb-2">Adam State-Based Pruning</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                bitter7 achieves <strong class="text-white">15.6% better perplexity</strong> than magnitude baseline
+                (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring.
+              </p>
+              <code class="text-xs bg-gray-900 px-2 py-1 rounded text-gray-300">
+                importance = |w| × (exp_avg_sq + ε)^0.25
+              </code>
+            </div>
+            <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded">B200x4</span>
+          </div>
+          <div class="mt-3 flex gap-3 text-xs">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/adamwprune_variants.md" class="text-blue-400 hover:underline">Documentation</a>
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/bitter7_math.md" class="text-blue-400 hover:underline">Math Foundations</a>
+          </div>
+        </div>
+
+        <!-- FIM-Guided Quantization -->
+        <div class="highlight-card border-purple-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-purple-400 mb-2">FIM-Guided Quantization</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation.
+                Upgrading 4 layers from Q3_K to Q6_K achieves <strong class="text-white">1.26% better perplexity</strong>
+                at only <strong class="text-white">1.8% size increase</strong>.
+              </p>
+            </div>
+            <span class="text-xs bg-purple-900 text-purple-300 px-2 py-1 rounded">Mobile</span>
+          </div>
+          <div class="mt-3">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/mobile-weight-packing.md" class="text-xs text-blue-400 hover:underline">Documentation</a>
+          </div>
+        </div>
+
+        <!-- KVSplice -->
+        <div class="highlight-card border-orange-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-orange-400 mb-2">KVSplice</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                FIM-guided compression adds <strong class="text-white">~20% extra compression on top of MLA</strong> (7.2x vs 6x),
+                shrinking MLA's KV cache by 17% while achieving <strong class="text-white">25% better perplexity</strong>
+                and <strong class="text-white">+7 HellaSwag</strong> vs naive compression.
+              </p>
+            </div>
+            <span class="text-xs bg-orange-900 text-orange-300 px-2 py-1 rounded">B200x4</span>
+          </div>
+          <div class="mt-3">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/kvsplice/README.md" class="text-xs text-blue-400 hover:underline">Documentation</a>
+          </div>
+        </div>
+
+        <!-- Reciprocal Attention -->
+        <div class="highlight-card border-cyan-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-cyan-400 mb-2">Reciprocal Attention</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                Learned Q@K.T ↔ K@Q.T alternation achieves <strong class="text-white">5% better perplexity</strong>
+                and <strong class="text-white">+2 points HellaSwag</strong> via flatter optimization geometry.
+                Applied to middle layers based on FIM trace analysis.
+              </p>
+            </div>
+            <span class="text-xs bg-cyan-900 text-cyan-300 px-2 py-1 rounded">B200x4</span>
+          </div>
+          <div class="mt-3">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md" class="text-xs text-blue-400 hover:underline">Documentation</a>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Unified Framework -->
+    <section class="mb-12">
+      <div class="card rounded-xl p-6">
+        <h2 class="text-xl font-bold mb-4 text-center">Unified FIM Framework</h2>
+        <p class="text-gray-400 text-sm text-center mb-6 max-w-2xl mx-auto">
+          All applications leverage the same underlying signal: E[g²]
+        </p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-700">
+                <th class="text-left py-3 px-4 text-gray-400 font-medium">Application</th>
+                <th class="text-left py-3 px-4 text-gray-400 font-medium">FIM Signal</th>
+                <th class="text-left py-3 px-4 text-gray-400 font-medium">Result</th>
+              </tr>
+            </thead>
+            <tbody class="text-gray-300">
+              <tr class="border-b border-gray-800">
+                <td class="py-3 px-4">bitter7 pruning</td>
+                <td class="py-3 px-4 font-mono text-xs">exp_avg_sq^0.25</td>
+                <td class="py-3 px-4 text-green-400">15.6% better PPL</td>
+              </tr>
+              <tr class="border-b border-gray-800">
+                <td class="py-3 px-4">Mobile quantization</td>
+                <td class="py-3 px-4 font-mono text-xs">Σg² per tensor</td>
+                <td class="py-3 px-4 text-green-400">1.26% better PPL</td>
+              </tr>
+              <tr class="border-b border-gray-800">
+                <td class="py-3 px-4">KVSplice layers</td>
+                <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
+                <td class="py-3 px-4 text-green-400">25% better PPL</td>
+              </tr>
+              <tr>
+                <td class="py-3 px-4">Reciprocal Attention</td>
+                <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
+                <td class="py-3 px-4 text-green-400">5% better PPL</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-4 text-center">
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/hierarchical-tiering.md"
+             class="text-sm text-blue-400 hover:underline">
+            Learn more about the unified framework →
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Documentation Links -->
+    <section class="mb-12">
+      <h2 class="text-2xl font-bold mb-6 text-center">Documentation</h2>
+      <div class="grid md:grid-cols-3 gap-4">
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/quickstart.md" class="card rounded-lg p-4 block">
+          <h3 class="font-semibold text-blue-400 mb-2">Quick Start</h3>
+          <p class="text-gray-500 text-sm">Get up and running with knlp</p>
+        </a>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/architecture.md" class="card rounded-lg p-4 block">
+          <h3 class="font-semibold text-blue-400 mb-2">Architecture</h3>
+          <p class="text-gray-500 text-sm">Kernel-inspired infrastructure</p>
+        </a>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/FIM.md" class="card rounded-lg p-4 block">
+          <h3 class="font-semibold text-blue-400 mb-2">FIM Analysis</h3>
+          <p class="text-gray-500 text-sm">Fisher Information metrics</p>
+        </a>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="text-center text-gray-600 text-sm border-t border-gray-800 pt-8">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-gray-400">GitHub</a>
+        <span class="mx-2">·</span>
+        <a href="https://arxiv.org/abs/2507.18807" class="hover:text-gray-400">Squisher Paper</a>
+        <span class="mx-2">·</span>
+        <a href="fisher_adam_visualization.html" class="hover:text-gray-400">Interactive Demo</a>
+      </p>
+      <p>MIT License · Luis Chamberlain and contributors</p>
+    </footer>
+
+  </div>
+</body>
+</html>
