@@ -138,6 +138,9 @@ post-training FIM for these applications is not yet validated.
 See [docs/FIM.md](FIM.md) and [docs/hierarchical-tiering.md](hierarchical-tiering.md)
 for how this unifies our compression, pruning, and tiering research.
 
+**Interactive visualization**: [FIM ≈ Adam exp_avg_sq](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fisher_adam_visualization.html)
+demonstrates EMA dynamics and the Fisher-Adam equivalence.
+
 #### Why Beta2 Matters for bitter7
 
 The choice of beta2=0.999 (variance) over beta1=0.9 (momentum) is crucial for stable pruning:
