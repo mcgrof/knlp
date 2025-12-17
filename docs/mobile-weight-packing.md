@@ -63,6 +63,9 @@ This provides optimal layout AND quantization in one step.
 Since GGUF layout is already optimal, we investigated improving GGUF
 quality through FIM-guided mixed-precision quantization.
 
+**Interactive visualization**: [FIM-Guided Quantization Demo](https://mcgrof.github.io/knlp/fim_quantization_visualization.html)
+shows how g² identifies sensitive weights and guides precision allocation.
+
 ### What is g² (Squared Gradient)?
 
 FIM uses the squared gradient to measure weight importance. The core idea:
