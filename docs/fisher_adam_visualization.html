@@ -47,7 +47,7 @@
 
   <script type="text/babel" data-presets="react">
     const { useState, useMemo } = React;
-    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart } = Recharts;
+    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart, BarChart, Bar, Cell } = Recharts;
 
     function ComprehensiveEMAAnalysis() {
       const [activeSection, setActiveSection] = useState(0);
@@ -63,7 +63,8 @@
         'Normal Training (Why β₂=0.999 Works)',
         'Early Training Warmup',
         'The Noise Spike Problem',
-        'Fisher vs Adam Comparison'
+        'Fisher vs Adam Comparison',
+        'B200 Results'
       ];
 
       // Generate realistic training gradients (smooth decay + noise) with loss
@@ -775,9 +776,138 @@
               </div>
             )}
 
+            {/* Section 5: B200 Results */}
+            {activeSection === 5 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gradient-to-r from-green-900/50 to-blue-900/50 border border-green-500 rounded-lg">
+                  <h2 className="text-xl font-semibold text-green-400 mb-3">
+                    B200×4 Results: bitter7 Achieves 15.6% Better Perplexity
+                  </h2>
+                  <p className="text-gray-300 mb-4">
+                    Training GPT-2 124M on FineWebEdu for 50% sparsity pruning. Hardware: 4× NVIDIA B200 GPUs.
+                    bitter7 leverages Adam's exp_avg_sq (≈ FIM diagonal) to identify which parameters matter most.
+                  </p>
+
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart
+                      data={[
+                        { name: 'Magnitude\n(baseline)', ppl: 44.15, color: '#EF4444', improvement: 0 },
+                        { name: 'bitter7\n(FIM-guided)', ppl: 37.28, color: '#10B981', improvement: 15.6 },
+                        { name: 'bitter8', ppl: 40.94, color: '#3B82F6', improvement: 7.3 },
+                        { name: 'bitter9', ppl: 40.93, color: '#8B5CF6', improvement: 7.3 },
+                      ]}
+                      layout="vertical"
+                      margin={{ top: 20, right: 80, left: 100, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis type="number" stroke="#9CA3AF" domain={[0, 50]} />
+                      <YAxis type="category" dataKey="name" stroke="#9CA3AF" width={90} tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                        formatter={(v, name) => [v.toFixed(2), name === 'ppl' ? 'Perplexity' : name]}
+                      />
+                      <Bar dataKey="ppl" name="Perplexity" radius={[0, 4, 4, 0]}>
+                        {[
+                          { color: '#EF4444' },
+                          { color: '#10B981' },
+                          { color: '#3B82F6' },
+                          { color: '#8B5CF6' },
+                        ].map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="grid grid-cols-4 gap-4">
+                  <div className="p-4 bg-red-900/30 border border-red-500 rounded-lg text-center">
+                    <h4 className="font-semibold text-red-400 mb-1">Magnitude</h4>
+                    <p className="text-3xl font-bold text-white">44.15</p>
+                    <p className="text-sm text-gray-400">PPL (baseline)</p>
+                    <p className="text-xs text-gray-500 mt-2 font-mono">importance = |w|</p>
+                  </div>
+                  <div className="p-4 bg-green-900/30 border-2 border-green-500 rounded-lg text-center">
+                    <h4 className="font-semibold text-green-400 mb-1">bitter7</h4>
+                    <p className="text-3xl font-bold text-green-400">37.28</p>
+                    <p className="text-sm text-gray-400">PPL <span className="text-green-400">(-15.6%)</span></p>
+                    <p className="text-xs text-gray-500 mt-2 font-mono">|w| × v<sup>0.25</sup></p>
+                  </div>
+                  <div className="p-4 bg-blue-900/30 border border-blue-500 rounded-lg text-center">
+                    <h4 className="font-semibold text-blue-400 mb-1">bitter8</h4>
+                    <p className="text-3xl font-bold text-white">40.94</p>
+                    <p className="text-sm text-gray-400">PPL <span className="text-blue-400">(-7.3%)</span></p>
+                    <p className="text-xs text-gray-500 mt-2 font-mono">|w| × v<sup>0.125</sup></p>
+                  </div>
+                  <div className="p-4 bg-purple-900/30 border border-purple-500 rounded-lg text-center">
+                    <h4 className="font-semibold text-purple-400 mb-1">bitter9</h4>
+                    <p className="text-3xl font-bold text-white">40.93</p>
+                    <p className="text-sm text-gray-400">PPL <span className="text-purple-400">(-7.3%)</span></p>
+                    <p className="text-xs text-gray-500 mt-2 font-mono">|w| × (v + m²)<sup>0.25</sup></p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h3 className="font-semibold text-yellow-400 mb-3">Why bitter7 Wins</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-300 mb-2">
+                        <strong className="text-green-400">bitter7</strong> uses the 4th root (v<sup>0.25</sup>) which
+                        compresses the dynamic range of FIM estimates optimally: a 10× difference in v becomes
+                        ~1.78× in the importance score.
+                      </p>
+                      <p className="text-gray-400 text-xs">
+                        This balances magnitude (what the model learned) with sensitivity (how much the loss cares).
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-gray-300 mb-2">
+                        <strong className="text-blue-400">bitter8</strong> uses v<sup>0.125</sup> (8th root), which
+                        over-compresses FIM information. <strong className="text-purple-400">bitter9</strong> adds
+                        momentum (m²) which introduces noise from the gradient direction.
+                      </p>
+                      <p className="text-gray-400 text-xs">
+                        Both still beat magnitude pruning, confirming FIM guidance helps regardless of exact formula.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-blue-900/30 border border-blue-600 rounded-lg">
+                  <h3 className="font-semibold text-blue-400 mb-2">Experimental Setup</h3>
+                  <div className="grid grid-cols-3 gap-4 text-sm text-gray-300">
+                    <div>
+                      <p className="text-gray-500">Model</p>
+                      <p>GPT-2 124M</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Dataset</p>
+                      <p>FineWebEdu</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Sparsity</p>
+                      <p>50%</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Hardware</p>
+                      <p>4× NVIDIA B200</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Training Time</p>
+                      <p>4 hours</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Optimizer</p>
+                      <p>AdamWPrune</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Navigation */}
             <div className="mt-6 text-center text-gray-500 text-sm">
-              {activeSection < 4 ? (
+              {activeSection < 5 ? (
                 <button
                   onClick={() => setActiveSection(activeSection + 1)}
                   className="text-blue-400 hover:text-blue-300"
