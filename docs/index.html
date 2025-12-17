@@ -57,17 +57,23 @@
     <section class="mb-12">
       <div class="card rounded-xl p-6 text-center">
         <div class="text-sm text-blue-400 font-medium mb-2">KEY DISCOVERY</div>
-        <h2 class="text-2xl font-bold mb-3">FIM Diagonal ≈ Adam exp_avg_sq</h2>
+        <h2 class="text-2xl font-bold mb-3">FIM Trace: Universal Signal for Parameter Importance</h2>
         <p class="text-gray-400 mb-4 max-w-2xl mx-auto">
           <a href="https://arxiv.org/abs/2507.18807" class="text-blue-400 hover:underline">Squisher (2025)</a>
-          proves that Adam's second moment approximates the Fisher Information Matrix diagonal.
-          This equivalence explains why our Adam state-based methods work and unifies compression, pruning, and tiering.
+          proves FIM diagonal ≈ Adam exp_avg_sq. Higher FIM trace indicates parameters doing more work.
+          This unifies two phenomena: <strong class="text-orange-400">better compression</strong> AND
+          <strong class="text-cyan-400">better attention</strong> both increase FIM trace.
         </p>
-        <code class="block bg-gray-900 rounded-lg p-4 text-sm font-mono max-w-xl mx-auto">
-          <span class="text-blue-400">FIM_diag(θ)</span> = E[(∂L/∂θ)²] = E[g²] ≈ <span class="text-orange-400">exp_avg_sq</span>
-        </code>
+        <div class="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto mb-4">
+          <code class="bg-gray-900 rounded-lg p-3 text-sm font-mono">
+            <span class="text-orange-400">More Compression</span> → <span class="text-white">↑ FIM Trace</span>
+          </code>
+          <code class="bg-gray-900 rounded-lg p-3 text-sm font-mono">
+            <span class="text-cyan-400">Better Attention</span> → <span class="text-white">↑ FIM Trace</span>
+          </code>
+        </div>
         <a href="fisher_adam_visualization.html"
-           class="inline-block mt-4 text-blue-400 hover:text-blue-300 text-sm">
+           class="inline-block mt-2 text-blue-400 hover:text-blue-300 text-sm">
           Explore Interactive Visualization →
         </a>
       </div>
@@ -125,14 +131,15 @@
               <h3 class="font-semibold text-lg text-orange-400 mb-2">KVSplice</h3>
               <p class="text-gray-400 text-sm mb-3">
                 FIM-guided compression adds <strong class="text-white">~20% extra compression on top of MLA</strong> (7.2x vs 6x),
-                shrinking MLA's KV cache by 17% while achieving <strong class="text-white">25% better perplexity</strong>
-                and <strong class="text-white">+7 HellaSwag</strong> vs naive compression.
+                achieving <strong class="text-white">11% better perplexity</strong> (63 vs 71 PPL)
+                and <strong class="text-white">+1 HellaSwag</strong> vs MLA baseline.
               </p>
             </div>
             <span class="text-xs bg-orange-900 text-orange-300 px-2 py-1 rounded">B200x4</span>
           </div>
-          <div class="mt-3">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/kvsplice/README.md" class="text-xs text-blue-400 hover:underline">Documentation</a>
+          <div class="mt-3 flex gap-3 text-xs">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/kvsplice/README.md" class="text-blue-400 hover:underline">Documentation</a>
+            <a href="kvsplice_visualization.html" class="text-orange-400 hover:underline">Interactive Demo</a>
           </div>
         </div>
 
@@ -142,15 +149,17 @@
             <div>
               <h3 class="font-semibold text-lg text-cyan-400 mb-2">Reciprocal Attention</h3>
               <p class="text-gray-400 text-sm mb-3">
-                Learned Q@K.T ↔ K@Q.T alternation achieves <strong class="text-white">5% better perplexity</strong>
-                and <strong class="text-white">+2 points HellaSwag</strong> via flatter optimization geometry.
-                Applied to middle layers based on FIM trace analysis.
+                Learned Q@K.T ↔ K@Q.T alternation achieves <strong class="text-white">82% better perplexity</strong>
+                (50.5 vs 282 PPL) vs baseline. Outperforms
+                <a href="https://arxiv.org/abs/2505.06708" class="text-purple-400 hover:underline">Qwen's SDPA G1 gate</a>
+                by 77%. FIM trace guides layer selection.
               </p>
             </div>
             <span class="text-xs bg-cyan-900 text-cyan-300 px-2 py-1 rounded">B200x4</span>
           </div>
-          <div class="mt-3">
-            <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md" class="text-xs text-blue-400 hover:underline">Documentation</a>
+          <div class="mt-3 flex gap-3 text-xs">
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md" class="text-blue-400 hover:underline">Documentation</a>
+            <a href="ra_visualization.html" class="text-cyan-400 hover:underline">Interactive Demo</a>
           </div>
         </div>
 
@@ -185,14 +194,14 @@
                 <td class="py-3 px-4 text-green-400">1.26% better PPL</td>
               </tr>
               <tr class="border-b border-gray-800">
-                <td class="py-3 px-4">KVSplice layers</td>
+                <td class="py-3 px-4"><a href="kvsplice_visualization.html" class="text-orange-400 hover:underline">KVSplice layers</a></td>
                 <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
-                <td class="py-3 px-4 text-green-400">25% better PPL</td>
+                <td class="py-3 px-4 text-green-400">11% better PPL</td>
               </tr>
               <tr>
-                <td class="py-3 px-4">Reciprocal Attention</td>
+                <td class="py-3 px-4"><a href="ra_visualization.html" class="text-cyan-400 hover:underline">Reciprocal Attention</a></td>
                 <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
-                <td class="py-3 px-4 text-green-400">5% better PPL</td>
+                <td class="py-3 px-4 text-green-400">82% better PPL</td>
               </tr>
             </tbody>
           </table>

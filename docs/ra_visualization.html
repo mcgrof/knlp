@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reciprocal Attention: FIM-Guided Layer Selection</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #06b6d4, #0891b2);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, ComposedChart, Area } = Recharts;
+
+    // Real W&B data from gpt2-ra-sdpa-ablation
+    const WANDB_DATA = {
+      baseline: {
+        name: "GPT-2 Baseline",
+        global_trace: 0.767,
+        val_perplexity: 282.1,
+        per_layer: {
+          0: { avg: 0.788, heads: [0.804, 0.809, 0.899, 0.888, 0.730, 0.782, 0.874, 0.869, 0.496, 0.573, 0.924, 0.810] },
+          6: { avg: 0.698, heads: [0.735, 0.890, 0.457, 0.818, 0.704, 0.798, 0.626, 0.852, 0.636, 0.754, 0.571, 0.542] },
+          11: { avg: 0.815, heads: [0.864, 0.867, 0.824, 0.882, 0.877, 0.765, 0.779, 0.829, 0.851, 0.785, 0.701, 0.757] }
+        }
+      },
+      sdpa_gate: {
+        name: "SDPA + G1 Gate (Qwen)",
+        global_trace: 0.786,
+        val_perplexity: 223.7,
+        per_layer: {
+          0: { avg: 0.797, heads: [0.733, 0.880, 0.757, 0.649, 0.691, 0.873, 0.760, 0.765, 0.868, 0.871, 0.837, 0.876] },
+          6: { avg: 0.728, heads: [0.811, 0.589, 0.892, 0.911, 0.823, 0.540, 0.652, 0.531, 0.752, 0.875, 0.652, 0.707] },
+          11: { avg: 0.834, heads: [0.864, 0.696, 0.694, 0.874, 0.781, 0.814, 0.884, 0.890, 0.871, 0.936, 0.802, 0.901] }
+        }
+      },
+      ra: {
+        name: "Reciprocal Attention",
+        global_trace: 0.870,
+        val_perplexity: 50.5,
+        per_layer: {
+          0: { avg: 0.951, heads: [0.933, 0.943, 0.964, 0.967, 0.939, 0.969, 0.951, 0.962, 0.954, 0.964, 0.956, 0.912] },
+          6: { avg: 0.737, heads: [0.739, 0.866, 0.869, 0.759, 0.813, 0.353, 0.223, 0.883, 0.727, 0.859, 0.873, 0.875] },
+          11: { avg: 0.924, heads: [0.876, 0.915, 0.924, 0.959, 0.936, 0.967, 0.877, 0.944, 0.926, 0.955, 0.934, 0.870] }
+        }
+      }
+    };
+
+    // Section 0: Key Discovery
+    function KeyDiscoverySection() {
+      const comparisonData = [
+        { name: 'GPT-2\nBaseline', trace: 0.767, ppl: 282, color: '#6b7280' },
+        { name: 'SDPA+G1\n(Qwen)', trace: 0.786, ppl: 224, color: '#8b5cf6' },
+        { name: 'Reciprocal\nAttention', trace: 0.870, ppl: 50, color: '#06b6d4' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">The Key Insight: Better Attention → Higher FIM Trace</h2>
+          <p className="text-gray-400 mb-4">
+            Better attention mechanisms extract more information per parameter, leading to higher FIM trace.
+            This is the same signal that guides compression decisions: important parameters have high trace.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Attention Quality vs FIM Trace</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <ComposedChart data={comparisonData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="name" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis yAxisId="left" stroke="#9ca3af" domain={[0, 300]} label={{ value: 'Perplexity ↓', angle: -90, position: 'insideLeft', fill: '#9ca3af' }} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#9ca3af" domain={[0.7, 0.9]} label={{ value: 'FIM Trace ↑', angle: 90, position: 'insideRight', fill: '#9ca3af' }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar yAxisId="left" dataKey="ppl" name="Perplexity" fill="#ef4444" opacity={0.6}>
+                    {comparisonData.map((entry, index) => (
+                      <Cell key={index} fill={entry.color} opacity={0.4} />
+                    ))}
+                  </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="trace" name="FIM Trace" stroke="#06b6d4" strokeWidth={3} dot={{ fill: '#06b6d4', r: 6 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Unified Principle</h3>
+              <div className="bg-gray-900 rounded-lg p-4 mb-4">
+                <div className="text-center mb-3">
+                  <code className="text-lg">
+                    <span className="text-cyan-400">Better Attention</span> → <span className="text-orange-400">Higher FIM Trace</span>
+                  </code>
+                </div>
+                <div className="text-center">
+                  <code className="text-lg">
+                    <span className="text-orange-400">More Compression</span> → <span className="text-orange-400">Higher FIM Trace</span>
+                  </code>
+                </div>
+              </div>
+              <p className="text-sm text-gray-400">
+                Both better attention AND more compression lead to higher FIM trace because:
+                remaining/improved parameters must carry more representational work.
+                FIM trace is the universal signal for parameter importance.
+              </p>
+              <div className="mt-3 p-3 bg-purple-900/30 border border-purple-700 rounded-lg">
+                <div className="text-purple-400 font-semibold text-sm">SDPA G1 Gate</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  The G1 gate from <a href="https://arxiv.org/abs/2505.06708" className="text-purple-400 hover:underline">Qwen's Gated Attention paper</a> adds
+                  a head-specific sigmoid gate after SDPA. This improves quality but RA goes further with learned Q@K.T ↔ K@Q.T alternation.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 1: Per-Layer Trace Comparison
+    function LayerTraceSection() {
+      const layerData = [
+        {
+          layer: 'Layer 0\n(Early)',
+          baseline: WANDB_DATA.baseline.per_layer[0].avg,
+          sdpa_gate: WANDB_DATA.sdpa_gate.per_layer[0].avg,
+          ra: WANDB_DATA.ra.per_layer[0].avg,
+        },
+        {
+          layer: 'Layer 6\n(Middle)',
+          baseline: WANDB_DATA.baseline.per_layer[6].avg,
+          sdpa_gate: WANDB_DATA.sdpa_gate.per_layer[6].avg,
+          ra: WANDB_DATA.ra.per_layer[6].avg,
+        },
+        {
+          layer: 'Layer 11\n(Late)',
+          baseline: WANDB_DATA.baseline.per_layer[11].avg,
+          sdpa_gate: WANDB_DATA.sdpa_gate.per_layer[11].avg,
+          ra: WANDB_DATA.ra.per_layer[11].avg,
+        }
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 1: Where RA Has Most Impact</h2>
+          <p className="text-gray-400 mb-4">
+            FIM trace reveals which layers benefit most from improved attention.
+            RA dramatically increases trace in early (layer 0) and late (layer 11) layers,
+            while middle layers (layer 6) show more variance - these are compression targets.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Layer-wise Average Trace</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={layerData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" domain={[0, 1]} />
+                  <YAxis type="category" dataKey="layer" stroke="#9ca3af" width={80} tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Legend />
+                  <Bar dataKey="baseline" name="Baseline" fill="#6b7280" />
+                  <Bar dataKey="sdpa_gate" name="SDPA+G1" fill="#8b5cf6" />
+                  <Bar dataKey="ra" name="RA" fill="#06b6d4" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Layer Selection Strategy</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-cyan-400">Layer 0 (Early)</span>
+                    <span className="text-xs bg-cyan-900 text-cyan-300 px-2 py-1 rounded">+21% trace</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    RA trace: 0.951 vs baseline 0.788. Early layers establish token representations.
+                    High trace = critical for downstream processing.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-yellow-400">Layer 6 (Middle)</span>
+                    <span className="text-xs bg-yellow-900 text-yellow-300 px-2 py-1 rounded">+6% trace</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    RA trace: 0.737 vs baseline 0.698. Middle layers have high variance (0.22-0.88).
+                    Lower trace heads are compression targets.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-cyan-400">Layer 11 (Late)</span>
+                    <span className="text-xs bg-cyan-900 text-cyan-300 px-2 py-1 rounded">+13% trace</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    RA trace: 0.924 vs baseline 0.815. Late layers refine final representations.
+                    High trace = critical for output quality.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 2: Per-Head Heatmap
+    function HeadHeatmapSection() {
+      const [selectedLayer, setSelectedLayer] = React.useState(6);
+      const [selectedMethod, setSelectedMethod] = React.useState('ra');
+
+      const methods = [
+        { key: 'baseline', name: 'Baseline', color: '#6b7280' },
+        { key: 'sdpa_gate', name: 'SDPA+G1', color: '#8b5cf6' },
+        { key: 'ra', name: 'RA', color: '#06b6d4' },
+      ];
+
+      const getColor = (val) => {
+        if (val > 0.95) return '#dc2626';
+        if (val > 0.85) return '#f97316';
+        if (val > 0.70) return '#eab308';
+        if (val > 0.50) return '#22c55e';
+        return '#10b981';
+      };
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 2: Per-Head FIM Trace</h2>
+          <p className="text-gray-400 mb-4">
+            Each attention head contributes differently. Green heads (low trace) are compression targets.
+            Red/orange heads (high trace) are critical and should be protected.
+          </p>
+
+          <div className="flex gap-4 mb-4">
+            <div>
+              <span className="text-xs text-gray-500 mr-2">Layer:</span>
+              {[0, 6, 11].map(layer => (
+                <button
+                  key={layer}
+                  onClick={() => setSelectedLayer(layer)}
+                  className={`px-3 py-1 rounded-lg font-medium transition-colors mr-2 ${
+                    selectedLayer === layer
+                      ? 'bg-cyan-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  }`}
+                >
+                  {layer}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            {methods.map(method => (
+              <div key={method.key}>
+                <h3 className="text-sm font-semibold mb-2" style={{ color: method.color }}>{method.name}</h3>
+                <div className="grid grid-cols-6 gap-1">
+                  {WANDB_DATA[method.key].per_layer[selectedLayer].heads.map((val, idx) => (
+                    <div
+                      key={idx}
+                      className="aspect-square rounded flex items-center justify-center text-xs font-mono text-white"
+                      style={{ backgroundColor: getColor(val) }}
+                      title={`Head ${idx}: ${val.toFixed(3)}`}
+                    >
+                      {val.toFixed(2)}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Avg: {WANDB_DATA[method.key].per_layer[selectedLayer].avg.toFixed(3)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 flex items-center gap-4 text-xs">
+            <span className="text-gray-400">Trace scale:</span>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 rounded bg-emerald-500"></div>
+              <span className="text-gray-400">&lt;0.50</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 rounded bg-green-500"></div>
+              <span className="text-gray-400">0.50-0.70</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 rounded bg-yellow-500"></div>
+              <span className="text-gray-400">0.70-0.85</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 rounded bg-orange-500"></div>
+              <span className="text-gray-400">0.85-0.95</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 rounded bg-red-600"></div>
+              <span className="text-gray-400">&gt;0.95 (critical)</span>
+            </div>
+          </div>
+
+          <div className="mt-4 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg">
+            <div className="text-cyan-400 font-semibold text-sm">Key Observation: Layer 6</div>
+            <div className="text-xs text-gray-400 mt-1">
+              In Layer 6, RA shows heads 5 and 6 with very low trace (0.35, 0.22) - these are natural
+              compression targets. Meanwhile early/late layers have uniformly high trace, indicating
+              all heads are critical there.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 3: Results
+    function ResultsSection() {
+      const resultsData = [
+        { method: 'Baseline', ppl: 282.1, trace: 0.767 },
+        { method: 'SDPA+G1', ppl: 223.7, trace: 0.786 },
+        { method: 'RA', ppl: 50.5, trace: 0.870 },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 3: Results</h2>
+          <p className="text-gray-400 mb-4">
+            Real results from B200x4 1-hour training runs on FineWebEdu dataset.
+            RA achieves 82% better perplexity than baseline with learned Q@K.T ↔ K@Q.T alternation.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Perplexity Comparison</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={resultsData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="method" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="ppl" name="Perplexity">
+                    <Cell fill="#6b7280" />
+                    <Cell fill="#8b5cf6" />
+                    <Cell fill="#06b6d4" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Summary</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Baseline → SDPA+G1</span>
+                    <span className="text-purple-400">-21% PPL</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    G1 gate adds head-specific sigmoid after SDPA
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Baseline → RA</span>
+                    <span className="text-cyan-400 font-bold">-82% PPL</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Learned alternation between Q@K.T and K@Q.T
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">SDPA+G1 → RA</span>
+                    <span className="text-cyan-400">-77% PPL</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    RA significantly outperforms Qwen's gating approach
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 bg-cyan-900/30 border border-cyan-700 rounded-lg p-3">
+                <div className="text-cyan-400 font-semibold">FIM Trace Correlation</div>
+                <div className="text-sm text-gray-300 mt-1">
+                  Global trace: 0.767 → 0.786 → <strong>0.870</strong>
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  Higher trace correlates with better attention quality.
+                  RA's 13% higher trace vs baseline explains the quality gains.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 4: How RA Works
+    function HowItWorksSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 4: How Reciprocal Attention Works</h2>
+          <p className="text-gray-400 mb-4">
+            Standard attention uses Q@K.T. Reciprocal Attention learns when to use K@Q.T instead,
+            providing complementary information flow.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Attention Variants</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-4">
+                  <div className="text-gray-400 font-mono text-sm mb-2">Standard Attention:</div>
+                  <code className="text-white">Attn(Q,K,V) = softmax(Q @ K.T / √d) @ V</code>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4">
+                  <div className="text-purple-400 font-mono text-sm mb-2">SDPA + G1 Gate (Qwen):</div>
+                  <code className="text-white">Attn_g1 = σ(gate) ⊙ softmax(Q @ K.T / √d) @ V</code>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Per-head sigmoid gate modulates attention output
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4">
+                  <div className="text-cyan-400 font-mono text-sm mb-2">Reciprocal Attention:</div>
+                  <code className="text-white">Attn_RA = α·(Q@K.T) + (1-α)·(K@Q.T)</code>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Learned α per head alternates between forward and reciprocal
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Why RA Works Better</h3>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">1</div>
+                  <div>
+                    <div className="font-semibold text-gray-200">Complementary Information</div>
+                    <div className="text-sm text-gray-400">K@Q.T captures "which keys attend to this query" vs "which queries attend to this key"</div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">2</div>
+                  <div>
+                    <div className="font-semibold text-gray-200">Flatter Optimization</div>
+                    <div className="text-sm text-gray-400">Higher FIM trace indicates the model finds flatter minima with better generalization</div>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">3</div>
+                  <div>
+                    <div className="font-semibold text-gray-200">Layer-Adaptive</div>
+                    <div className="text-sm text-gray-400">FIM trace identifies which layers benefit most from RA (early + late layers)</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 p-3 bg-purple-900/30 border border-purple-700 rounded-lg">
+                <div className="text-purple-400 font-semibold text-sm">Reference: Qwen Gated Attention</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  <a href="https://arxiv.org/abs/2505.06708" className="text-purple-400 hover:underline">arXiv:2505.06708</a> -
+                  "Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free"
+                  (NeurIPS 2025 Oral, top 1.5% of submissions)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Main App
+    function App() {
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <header className="text-center mb-12">
+            <h1 className="text-4xl font-bold mb-4">
+              <span className="gradient-text">Reciprocal Attention</span>
+              <span className="text-gray-400 text-2xl ml-3">FIM-Guided Layer Selection</span>
+            </h1>
+            <p className="text-gray-400 max-w-2xl mx-auto">
+              Interactive visualization showing how FIM trace reveals which layers benefit most from
+              improved attention mechanisms. Real data from W&B comparing baseline, SDPA+G1 (Qwen), and RA.
+            </p>
+            <div className="mt-4 flex justify-center gap-4">
+              <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md"
+                 className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
+                Documentation
+              </a>
+              <a href="https://arxiv.org/abs/2505.06708"
+                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors">
+                Qwen Paper
+              </a>
+            </div>
+          </header>
+
+          <KeyDiscoverySection />
+          <LayerTraceSection />
+          <HeadHeatmapSection />
+          <ResultsSection />
+          <HowItWorksSection />
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
+            <p>
+              Part of <a href="index.html" className="text-blue-400 hover:underline">knlp</a> · MIT License
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
