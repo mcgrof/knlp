@@ -874,7 +874,7 @@
                 </div>
 
                 <div className="p-4 bg-blue-900/30 border border-blue-600 rounded-lg">
-                  <h3 className="font-semibold text-blue-400 mb-2">Experimental Setup</h3>
+                  <h3 className="font-semibold text-blue-400 mb-2">GPT-2 Experimental Setup</h3>
                   <div className="grid grid-cols-3 gap-4 text-sm text-gray-300">
                     <div>
                       <p className="text-gray-500">Model</p>
@@ -901,6 +901,82 @@
                       <p>AdamWPrune</p>
                     </div>
                   </div>
+                </div>
+
+                {/* Multi-Model Results */}
+                <div className="p-4 bg-gradient-to-r from-purple-900/40 to-cyan-900/40 border border-purple-500 rounded-lg">
+                  <h3 className="font-semibold text-purple-400 mb-3">Cross-Architecture Validation</h3>
+                  <p className="text-gray-400 text-sm mb-4">
+                    Adam state-based pruning validated across language models and computer vision:
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-4">
+                    {/* ResNet-50 */}
+                    <div className="p-3 bg-gray-800 rounded-lg">
+                      <h4 className="font-semibold text-cyan-400 mb-2">ResNet-50</h4>
+                      <p className="text-xs text-gray-500 mb-2">CIFAR-100 · 25.6M params</p>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">AdamWPrune</span>
+                          <span className="text-green-400 font-mono">74.68%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">SGD</span>
+                          <span className="text-gray-300 font-mono">73.41%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">AdamW</span>
+                          <span className="text-gray-300 font-mono">71.11%</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-green-400 mt-2">
+                        +1.27% vs SGD, +3.57% vs AdamW @ 50% sparsity
+                      </p>
+                    </div>
+
+                    {/* GPT-2 Summary */}
+                    <div className="p-3 bg-gray-800 rounded-lg border border-green-600">
+                      <h4 className="font-semibold text-green-400 mb-2">GPT-2 124M</h4>
+                      <p className="text-xs text-gray-500 mb-2">FineWebEdu · Language</p>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">bitter7</span>
+                          <span className="text-green-400 font-mono">37.28 PPL</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Magnitude</span>
+                          <span className="text-gray-300 font-mono">44.15 PPL</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-green-400 mt-2">
+                        15.6% better perplexity @ 50% sparsity
+                      </p>
+                    </div>
+
+                    {/* LeNet-5 */}
+                    <div className="p-3 bg-gray-800 rounded-lg">
+                      <h4 className="font-semibold text-yellow-400 mb-2">LeNet-5</h4>
+                      <p className="text-xs text-gray-500 mb-2">MNIST · 62K params</p>
+                      <div className="space-y-1 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">bitter7</span>
+                          <span className="text-gray-300 font-mono">98.96%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Magnitude</span>
+                          <span className="text-gray-300 font-mono">98.99%</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-yellow-400 mt-2">
+                        MNIST too simple to differentiate methods
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-gray-500 mt-3">
+                    FIM-guided pruning shows strongest gains on complex models (GPT-2, ResNet-50)
+                    where gradient statistics contain more information than simple magnitude.
+                  </p>
                 </div>
               </div>
             )}
