@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hierarchical Memory Tiering: FIM-Guided Placement</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, PieChart, Pie, LineChart, Line, ComposedChart, Area } = Recharts;
+
+    // Simulated layer data - normal model vs lean model
+    const generateModelData = (isLean) => {
+      const baseTraces = [0.95, 0.88, 0.72, 0.65, 0.78, 0.45, 0.52, 0.81, 0.69, 0.74, 0.92, 0.97];
+      const leanOffset = isLean ? 0.15 : 0;
+      return baseTraces.map((t, i) => ({
+        layer: `L${i}`,
+        trace: Math.min(0.99, t + leanOffset),
+        rank: 0, // Will be computed
+      })).map((item, _, arr) => {
+        // Compute rank (1 = highest trace)
+        const sorted = [...arr].sort((a, b) => b.trace - a.trace);
+        item.rank = sorted.findIndex(x => x.layer === item.layer) + 1;
+        return item;
+      });
+    };
+
+    // Section 0: Key Insight - Relative Ranking
+    function RelativeRankingSection() {
+      const [isLean, setIsLean] = React.useState(false);
+      const data = generateModelData(isLean);
+
+      // Assign tiers based on percentile ranking
+      const assignTier = (rank, total) => {
+        const percentile = rank / total;
+        if (percentile <= 0.3) return { tier: 'HBM', color: '#10b981' };
+        if (percentile <= 0.8) return { tier: 'CPU', color: '#3b82f6' };
+        return { tier: 'SSD', color: '#f59e0b' };
+      };
+
+      const chartData = data.map(d => ({
+        ...d,
+        ...assignTier(d.rank, data.length),
+      }));
+
+      const globalAvg = (data.reduce((s, d) => s + d.trace, 0) / data.length).toFixed(3);
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">The Key Insight: Relative Ranking, Not Absolute Thresholds</h2>
+          <p className="text-gray-400 mb-4">
+            FIM-based tiering works even on super lean models because we use <strong className="text-white">relative ranking</strong>,
+            not absolute thresholds. Toggle between normal and lean model to see: tier assignments stay stable
+            even though absolute trace values shift up.
+          </p>
+
+          <div className="flex items-center gap-4 mb-4">
+            <button
+              onClick={() => setIsLean(false)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                !isLean ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              Normal Model
+            </button>
+            <button
+              onClick={() => setIsLean(true)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                isLean ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              Lean Model (Compressed)
+            </button>
+            <span className="text-sm text-gray-500 ml-4">
+              Global avg trace: <span className="text-white font-mono">{globalAvg}</span>
+            </span>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">FIM Trace by Layer (colored by tier)</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="layer" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" domain={[0, 1]} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }}
+                    formatter={(value, name) => [value.toFixed(3), name]}
+                  />
+                  <Bar dataKey="trace" name="FIM Trace">
+                    {chartData.map((entry, index) => (
+                      <Cell key={index} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Why Relative Ranking Works</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-4 h-4 rounded bg-emerald-500"></div>
+                    <span className="font-semibold text-emerald-400">HBM (Top 30%)</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    Highest relative trace → most critical → fastest memory (800 GB/s)
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Layers: {chartData.filter(d => d.tier === 'HBM').map(d => d.layer).join(', ')}
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-4 h-4 rounded bg-blue-500"></div>
+                    <span className="font-semibold text-blue-400">CPU (Next 50%)</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    Medium relative trace → important but not critical → DRAM (150 GB/s)
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Layers: {chartData.filter(d => d.tier === 'CPU').map(d => d.layer).join(', ')}
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-4 h-4 rounded bg-amber-500"></div>
+                    <span className="font-semibold text-amber-400">SSD (Bottom 20%)</span>
+                  </div>
+                  <div className="text-sm text-gray-400">
+                    Lowest relative trace → most compressible → NVMe (10 GB/s)
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Layers: {chartData.filter(d => d.tier === 'SSD').map(d => d.layer).join(', ')}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-sm">
+                <strong className="text-emerald-400">Notice:</strong> Same layers get same tier assignments
+                regardless of model compression level. L5, L6 always go to SSD because they have the
+                <em> lowest relative</em> trace, even if their absolute trace is 0.60+ in the lean model.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 1: Unified FIM Signal
+    function UnifiedSignalSection() {
+      const applications = [
+        { name: 'bitter7\nPruning', signal: 'exp_avg_sq^0.25', result: '15.6% better PPL', color: '#22c55e' },
+        { name: 'Mobile\nQuantization', signal: 'Σg² per tensor', result: '1.26% better PPL', color: '#a855f7' },
+        { name: 'KVSplice\nCompression', signal: 'FIM trace', result: '11% better PPL', color: '#f97316' },
+        { name: 'Reciprocal\nAttention', signal: 'FIM trace', result: '82% better PPL', color: '#06b6d4' },
+        { name: 'Memory\nTiering', signal: 'exp_avg_sq rank', result: 'Optimal placement', color: '#10b981' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Section 1: One Signal, Many Applications</h2>
+          <p className="text-gray-400 mb-4">
+            All our techniques use the same underlying signal: <code className="bg-gray-800 px-2 py-1 rounded">FIM_diag ≈ E[g²] ≈ exp_avg_sq</code>.
+            Memory tiering is the natural extension: place important parameters in fast memory.
+          </p>
+
+          <div className="bg-gray-900 rounded-lg p-4 mb-6">
+            <div className="text-center mb-4">
+              <code className="text-lg">
+                <span className="text-blue-400">FIM_diag(θ)</span> = E[(∂L/∂θ)²] = E[g²] ≈ <span className="text-orange-400">Adam exp_avg_sq</span>
+              </code>
+            </div>
+            <div className="text-center text-sm text-gray-400">
+              Validated by <a href="https://arxiv.org/abs/2507.18807" className="text-blue-400 hover:underline">Squisher (2025)</a>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-5 gap-3">
+            {applications.map((app, idx) => (
+              <div key={idx} className="bg-gray-900 rounded-lg p-3 text-center">
+                <div className="text-xs font-semibold mb-2 whitespace-pre-line" style={{ color: app.color }}>
+                  {app.name}
+                </div>
+                <div className="text-xs text-gray-500 mb-2 font-mono">{app.signal}</div>
+                <div className="text-xs text-gray-300">{app.result}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 text-center text-sm text-gray-500">
+            ↑ All derived from the same FIM diagonal signal ↑
+          </div>
+        </div>
+      );
+    }
+
+    // Section 2: Hardware Tiers
+    function HardwareTiersSection() {
+      const [showFuture, setShowFuture] = React.useState(false);
+
+      const currentTiers = [
+        { name: 'HBM', bandwidth: 800, latency: 1, capacity: '80 GB', color: '#10b981', example: 'A100/H100/B200' },
+        { name: 'CPU DRAM', bandwidth: 150, latency: 5, capacity: '512 GB', color: '#3b82f6', example: 'DDR5 + PCIe 4.0' },
+        { name: 'NVMe SSD', bandwidth: 10, latency: 30, capacity: '8 TB', color: '#f59e0b', example: 'Gen4 NVMe' },
+      ];
+
+      const futureTiers = [
+        { name: 'HBM3e', bandwidth: 1200, latency: 0.8, capacity: '192 GB', color: '#10b981', example: 'B200/GB300' },
+        { name: 'CXL.mem', bandwidth: 400, latency: 2, capacity: '2 TB', color: '#8b5cf6', example: 'CXL 2.0 pooled' },
+        { name: 'CPU DRAM', bandwidth: 200, latency: 4, capacity: '1 TB', color: '#3b82f6', example: 'DDR5-6400' },
+        { name: 'NVMe SSD', bandwidth: 14, latency: 20, capacity: '16 TB', color: '#f59e0b', example: 'Gen5 NVMe' },
+      ];
+
+      const tiers = showFuture ? futureTiers : currentTiers;
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Section 2: Hardware Memory Tiers</h2>
+          <p className="text-gray-400 mb-4">
+            Modern systems have multiple memory tiers with different bandwidth/latency/capacity tradeoffs.
+            FIM-guided tiering places critical parameters in fast memory, cold parameters in slow/cheap memory.
+          </p>
+
+          <div className="flex items-center gap-4 mb-4">
+            <button
+              onClick={() => setShowFuture(false)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                !showFuture ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              Current Hardware (2024)
+            </button>
+            <button
+              onClick={() => setShowFuture(true)}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                showFuture ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              Future Hardware (2026+)
+            </button>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Bandwidth Comparison (GB/s)</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={tiers} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" />
+                  <YAxis type="category" dataKey="name" stroke="#9ca3af" width={80} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="bandwidth" name="Bandwidth (GB/s)">
+                    {tiers.map((entry, index) => (
+                      <Cell key={index} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Tier Specifications</h3>
+              <div className="space-y-2">
+                {tiers.map((tier, idx) => (
+                  <div key={idx} className="bg-gray-900 rounded-lg p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-3 h-3 rounded" style={{ backgroundColor: tier.color }}></div>
+                      <div>
+                        <div className="font-semibold text-sm" style={{ color: tier.color }}>{tier.name}</div>
+                        <div className="text-xs text-gray-500">{tier.example}</div>
+                      </div>
+                    </div>
+                    <div className="text-right text-xs">
+                      <div className="text-gray-300">{tier.bandwidth} GB/s</div>
+                      <div className="text-gray-500">{tier.latency}μs · {tier.capacity}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {showFuture && (
+                <div className="mt-3 p-3 bg-purple-900/30 border border-purple-700 rounded-lg text-sm">
+                  <strong className="text-purple-400">CXL.mem:</strong> Compute Express Link enables
+                  pooled memory across hosts with near-DRAM latency. Perfect intermediate tier for
+                  warm parameters.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 3: Interactive Tiering Simulator
+    function TieringSimulatorSection() {
+      const [hbmThreshold, setHbmThreshold] = React.useState(0.3);
+      const [cpuThreshold, setCpuThreshold] = React.useState(0.8);
+
+      // Real data from our experiments (combined)
+      const layerData = [
+        { name: 'L0 (Early)', trace: 0.951, type: 'attention' },
+        { name: 'L1', trace: 0.89, type: 'mlp' },
+        { name: 'L2', trace: 0.82, type: 'attention' },
+        { name: 'L3', trace: 0.78, type: 'mlp' },
+        { name: 'L4', trace: 0.74, type: 'attention' },
+        { name: 'L5', trace: 0.69, type: 'mlp' },
+        { name: 'L6 (Middle)', trace: 0.737, type: 'attention' },
+        { name: 'L7', trace: 0.72, type: 'mlp' },
+        { name: 'L8', trace: 0.76, type: 'attention' },
+        { name: 'L9', trace: 0.81, type: 'mlp' },
+        { name: 'L10', trace: 0.88, type: 'attention' },
+        { name: 'L11 (Late)', trace: 0.924, type: 'mlp' },
+      ].sort((a, b) => b.trace - a.trace);
+
+      const assignTier = (rank, total) => {
+        const percentile = rank / total;
+        if (percentile <= hbmThreshold) return 'HBM';
+        if (percentile <= cpuThreshold) return 'CPU';
+        return 'SSD';
+      };
+
+      const tieredData = layerData.map((d, idx) => ({
+        ...d,
+        rank: idx + 1,
+        tier: assignTier(idx + 1, layerData.length),
+      }));
+
+      const tierCounts = {
+        HBM: tieredData.filter(d => d.tier === 'HBM').length,
+        CPU: tieredData.filter(d => d.tier === 'CPU').length,
+        SSD: tieredData.filter(d => d.tier === 'SSD').length,
+      };
+
+      const tierColors = { HBM: '#10b981', CPU: '#3b82f6', SSD: '#f59e0b' };
+
+      // Estimate latency impact
+      const baseLatency = 12.0; // ms baseline
+      const tierLatencies = { HBM: 0, CPU: 0.5, SSD: 2.0 };
+      const avgLatencyOverhead = tieredData.reduce((s, d) => s + tierLatencies[d.tier], 0) / tieredData.length;
+      const estimatedLatency = (baseLatency + avgLatencyOverhead).toFixed(2);
+      const latencyOverhead = ((avgLatencyOverhead / baseLatency) * 100).toFixed(1);
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Section 3: Interactive Tiering Simulator</h2>
+          <p className="text-gray-400 mb-4">
+            Adjust thresholds to see how tier assignments change. Layers are ranked by FIM trace and
+            assigned to tiers by percentile. Lower HBM threshold = more offloading = higher latency but lower memory.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Threshold Controls</h3>
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-emerald-400">HBM Threshold (Top %)</span>
+                    <span className="text-white font-mono">{(hbmThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.5"
+                    step="0.05"
+                    value={hbmThreshold}
+                    onChange={(e) => setHbmThreshold(parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-blue-400">CPU Threshold (Top %)</span>
+                    <span className="text-white font-mono">{(cpuThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="0.95"
+                    step="0.05"
+                    value={cpuThreshold}
+                    onChange={(e) => setCpuThreshold(parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="bg-emerald-900/30 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-emerald-400">{tierCounts.HBM}</div>
+                  <div className="text-xs text-gray-400">HBM layers</div>
+                </div>
+                <div className="bg-blue-900/30 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-blue-400">{tierCounts.CPU}</div>
+                  <div className="text-xs text-gray-400">CPU layers</div>
+                </div>
+                <div className="bg-amber-900/30 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-amber-400">{tierCounts.SSD}</div>
+                  <div className="text-xs text-gray-400">SSD layers</div>
+                </div>
+              </div>
+
+              <div className="mt-4 bg-gray-900 rounded-lg p-3">
+                <div className="text-sm text-gray-400 mb-1">Estimated Inference Latency</div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-white">{estimatedLatency}</span>
+                  <span className="text-gray-400">ms</span>
+                  <span className={`text-sm ${parseFloat(latencyOverhead) > 10 ? 'text-red-400' : 'text-green-400'}`}>
+                    (+{latencyOverhead}% overhead)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Tier Assignments (sorted by trace)</h3>
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {tieredData.map((layer, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between bg-gray-900 rounded px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 w-6">#{layer.rank}</span>
+                      <span className="text-sm text-gray-300">{layer.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-gray-400">{layer.trace.toFixed(3)}</span>
+                      <span
+                        className="text-xs px-2 py-1 rounded font-medium"
+                        style={{ backgroundColor: tierColors[layer.tier] + '33', color: tierColors[layer.tier] }}
+                      >
+                        {layer.tier}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 4: Applicability Projections
+    function ApplicabilitySection() {
+      const projections = [
+        {
+          scenario: 'Training (GPT-2 124M)',
+          description: 'Offload cold optimizer states to CPU',
+          savings: '40% HBM reduction',
+          overhead: '~5% throughput',
+          status: 'validated',
+        },
+        {
+          scenario: 'Inference (7B model)',
+          description: 'Tier weights by layer FIM trace',
+          savings: '60% HBM reduction',
+          overhead: '~8% latency',
+          status: 'projected',
+        },
+        {
+          scenario: 'Long Context (128K)',
+          description: 'Tier KV cache by attention FIM',
+          savings: '70% KV memory',
+          overhead: '~3% quality',
+          status: 'projected',
+        },
+        {
+          scenario: 'MoE (8x7B)',
+          description: 'Cold experts to CXL.mem pool',
+          savings: '5x capacity',
+          overhead: '~10% latency',
+          status: 'future',
+        },
+      ];
+
+      const statusColors = {
+        validated: '#22c55e',
+        projected: '#3b82f6',
+        future: '#8b5cf6',
+      };
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Section 4: Applicability Projections</h2>
+          <p className="text-gray-400 mb-4">
+            FIM-guided tiering applies across training, inference, and emerging architectures.
+            The same signal (exp_avg_sq ≈ FIM diagonal) drives all placement decisions.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            {projections.map((proj, idx) => (
+              <div key={idx} className="bg-gray-900 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="font-semibold text-gray-200">{proj.scenario}</h3>
+                  <span
+                    className="text-xs px-2 py-1 rounded"
+                    style={{ backgroundColor: statusColors[proj.status] + '33', color: statusColors[proj.status] }}
+                  >
+                    {proj.status}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-400 mb-3">{proj.description}</p>
+                <div className="flex gap-4 text-xs">
+                  <div>
+                    <span className="text-gray-500">Savings:</span>
+                    <span className="text-green-400 ml-1">{proj.savings}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Overhead:</span>
+                    <span className="text-amber-400 ml-1">{proj.overhead}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-6 p-4 bg-gray-900 rounded-lg">
+            <h3 className="font-semibold text-gray-200 mb-3">Unified Tiering Pipeline</h3>
+            <div className="flex items-center justify-between text-sm">
+              <div className="text-center">
+                <div className="w-20 h-20 rounded-full bg-blue-900/50 flex items-center justify-center mb-2 mx-auto">
+                  <span className="text-blue-400 text-xs">Training</span>
+                </div>
+                <div className="text-gray-500 text-xs">Accumulate<br/>exp_avg_sq</div>
+              </div>
+              <div className="text-gray-600">→</div>
+              <div className="text-center">
+                <div className="w-20 h-20 rounded-full bg-purple-900/50 flex items-center justify-center mb-2 mx-auto">
+                  <span className="text-purple-400 text-xs">Analyze</span>
+                </div>
+                <div className="text-gray-500 text-xs">Rank by<br/>FIM signal</div>
+              </div>
+              <div className="text-gray-600">→</div>
+              <div className="text-center">
+                <div className="w-20 h-20 rounded-full bg-emerald-900/50 flex items-center justify-center mb-2 mx-auto">
+                  <span className="text-emerald-400 text-xs">Tier</span>
+                </div>
+                <div className="text-gray-500 text-xs">Assign to<br/>HBM/CPU/SSD</div>
+              </div>
+              <div className="text-gray-600">→</div>
+              <div className="text-center">
+                <div className="w-20 h-20 rounded-full bg-orange-900/50 flex items-center justify-center mb-2 mx-auto">
+                  <span className="text-orange-400 text-xs">Deploy</span>
+                </div>
+                <div className="text-gray-500 text-xs">Offload<br/>cold weights</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Section 5: Additional FIM Metrics
+    function AdditionalMetricsSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Section 5: Beyond Trace - Additional FIM Metrics</h2>
+          <p className="text-gray-400 mb-4">
+            When trace is uniformly high (lean models), other FIM metrics provide additional tiering signal.
+          </p>
+
+          <div className="grid md:grid-cols-3 gap-4">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-cyan-400 mb-2">Condition Number</h3>
+              <div className="text-sm text-gray-400 mb-2">
+                eigmax / eigmin = anisotropy measure
+              </div>
+              <div className="text-xs text-gray-500 mb-3">
+                High condition → strong low-rank structure → good compression target even with high trace
+              </div>
+              <div className="bg-gray-800 rounded p-2 text-xs font-mono">
+                <div className="text-gray-400">If cond {'>'} 1e6:</div>
+                <div className="text-cyan-400 ml-2">→ Can project to rank-8</div>
+              </div>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-purple-400 mb-2">Energy Metrics</h3>
+              <div className="text-sm text-gray-400 mb-2">
+                energy_r8 = Σ(top 8 eigs) / Σ(all eigs)
+              </div>
+              <div className="text-xs text-gray-500 mb-3">
+                High energy_r8 → most information in few directions → low effective rank
+              </div>
+              <div className="bg-gray-800 rounded p-2 text-xs font-mono">
+                <div className="text-gray-400">If energy_r8 {'>'} 0.95:</div>
+                <div className="text-purple-400 ml-2">→ Safe to compress</div>
+              </div>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-amber-400 mb-2">Per-Head Variance</h3>
+              <div className="text-sm text-gray-400 mb-2">
+                Variance across heads within layer
+              </div>
+              <div className="text-xs text-gray-500 mb-3">
+                High variance → some heads compressible even if layer avg is high
+              </div>
+              <div className="bg-gray-800 rounded p-2 text-xs font-mono">
+                <div className="text-gray-400">If head_i.trace {'<'} 0.5:</div>
+                <div className="text-amber-400 ml-2">→ Offload that head</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg">
+            <strong className="text-emerald-400">Key Point:</strong> For super lean models with uniformly high trace,
+            use condition number and energy metrics to identify compression targets. The layer with trace=0.92
+            but cond=1e7 is a better offload candidate than trace=0.90 but cond=1e3.
+          </div>
+        </div>
+      );
+    }
+
+    // Main App
+    function App() {
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <header className="text-center mb-12">
+            <h1 className="text-4xl font-bold mb-4">
+              <span className="gradient-text">Hierarchical Memory Tiering</span>
+              <span className="text-gray-400 text-2xl ml-3">FIM-Guided Placement</span>
+            </h1>
+            <p className="text-gray-400 max-w-2xl mx-auto">
+              Interactive visualization of how FIM trace guides memory tier placement.
+              Works on any model - lean or dense - because tiering uses relative ranking, not absolute thresholds.
+            </p>
+            <div className="mt-4 flex justify-center gap-4">
+              <a href="https://github.com/mcgrof/knlp/blob/main/docs/hierarchical-tiering.md"
+                 className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
+                Documentation
+              </a>
+              <a href="https://arxiv.org/abs/2507.18807"
+                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors">
+                Squisher Paper
+              </a>
+            </div>
+          </header>
+
+          <RelativeRankingSection />
+          <UnifiedSignalSection />
+          <HardwareTiersSection />
+          <TieringSimulatorSection />
+          <ApplicabilitySection />
+          <AdditionalMetricsSection />
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
+            <p>
+              Part of <a href="index.html" className="text-blue-400 hover:underline">knlp</a> · MIT License
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
