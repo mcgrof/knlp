@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIM ≈ Adam exp_avg_sq: Why bitter7 Works</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      corePlugins: {
+        preflight: true,
+      }
+    }
+  </script>
+  <style type="text/tailwindcss">
+    @layer base {
+      body { background: #111827; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="error" style="color: red; padding: 20px; font-family: monospace;"></div>
+
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      document.getElementById('error').innerHTML = 'Error: ' + msg + '<br>Line: ' + line;
+      return false;
+    };
+    // Check if libraries loaded
+    window.onload = function() {
+      var missing = [];
+      if (typeof React === 'undefined') missing.push('React');
+      if (typeof ReactDOM === 'undefined') missing.push('ReactDOM');
+      if (typeof PropTypes === 'undefined') missing.push('PropTypes');
+      if (typeof Recharts === 'undefined') missing.push('Recharts');
+      if (missing.length > 0) {
+        document.getElementById('error').innerHTML = 'Missing libraries: ' + missing.join(', ');
+      }
+    };
+  </script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useMemo } = React;
+    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, ComposedChart } = Recharts;
+
+    function ComprehensiveEMAAnalysis() {
+      const [activeSection, setActiveSection] = useState(0);
+      const [beta2, setBeta2] = useState(0.999);
+      const [spikeIntensity, setSpikeIntensity] = useState(5);
+      const [showRootTransform, setShowRootTransform] = useState(true);
+      const [rootPower, setRootPower] = useState(4);
+      const [showRawGradient, setShowRawGradient] = useState(true);
+      const [showLoss, setShowLoss] = useState(true);
+      
+      const sections = [
+        'The Key Discovery',
+        'Normal Training (Why β₂=0.999 Works)',
+        'Early Training Warmup',
+        'The Noise Spike Problem',
+        'Fisher vs Adam Comparison'
+      ];
+
+      // Generate realistic training gradients (smooth decay + noise) with loss
+      // Calibrated to real GPT-2 training: starts ~9-10, decays to ~4-6
+      const normalTrainingData = useMemo(() => {
+        const data = [];
+        const rng = (seed) => {
+          let x = Math.sin(seed * 12.9898) * 43758.5453;
+          return x - Math.floor(x);
+        };
+        
+        const betas = [0.8, 0.9, 0.95, 0.99, 0.999];
+        const emaStates = betas.map(() => 0);
+        
+        for (let t = 0; t < 1000; t++) {
+          const baseLoss = 5.5 + 4.0 * Math.exp(-t / 150) + 0.5 * Math.exp(-t / 400);
+          const lossNoise = 0.08 * (rng(t * 1.7) - 0.5) * (1 + 2 * Math.exp(-t / 100));
+          const loss = baseLoss + lossNoise;
+          
+          const baseGradient = 0.008 * (loss / 6) * Math.exp(-t / 500);
+          const noise = baseGradient * 0.4 * (rng(t * 1.1) - 0.5);
+          const rawGrad = Math.max(0.0001, baseGradient + noise);
+          
+          const point = { step: t, loss, rawGradient: rawGrad };
+          
+          betas.forEach((b, i) => {
+            emaStates[i] = b * emaStates[i] + (1 - b) * rawGrad;
+            const corrected = emaStates[i] / (1 - Math.pow(b, t + 1));
+            point[`ema_${b}`] = corrected;
+          });
+          
+          if (t % 2 === 0) data.push(point);
+        }
+        return data;
+      }, []);
+
+      const earlyTrainingData = useMemo(() => {
+        return normalTrainingData.filter(d => d.step <= 200);
+      }, [normalTrainingData]);
+
+      // Generate data with noise spike (including loss) - calibrated to real GPT-2 training
+      const noiseSpikeData = useMemo(() => {
+        const data = [];
+        const rng = (seed) => {
+          let x = Math.sin(seed * 12.9898) * 43758.5453;
+          return x - Math.floor(x);
+        };
+        
+        const betas = [0.9, 0.99, 0.999];
+        const emaStates = betas.map(() => 0);
+        
+        for (let t = 0; t < 3000; t++) {
+          let baseLoss = 5.5 + 4.0 * Math.exp(-t / 400) + 0.5 * Math.exp(-t / 1000);
+          let lossNoise = 0.06 * (rng(t * 1.7) - 0.5);
+          
+          let baseGradient = 0.006 * (baseLoss / 6) * Math.exp(-t / 800);
+          let gradNoise = baseGradient * 0.3 * (rng(t * 1.1) - 0.5);
+          
+          if (t >= 800 && t < 950) {
+            const spikePhase = Math.sin((t - 800) * 0.04) * Math.exp(-(t - 800) / 100);
+            lossNoise += 0.15 * spikeIntensity * spikePhase;
+            gradNoise += spikeIntensity * 0.8 * baseGradient * (rng(t * 2.3) - 0.2) * Math.abs(spikePhase);
+          }
+          
+          if (t >= 1800 && t < 2100) {
+            const spikePhase = Math.sin((t - 1800) * 0.03) * Math.exp(-(t - 1800) / 150);
+            lossNoise += 0.2 * spikeIntensity * spikePhase;
+            gradNoise += spikeIntensity * 1.2 * baseGradient * (rng(t * 2.7) - 0.15) * Math.abs(spikePhase);
+          }
+          
+          const loss = baseLoss + lossNoise;
+          const rawGrad = Math.max(0.0001, baseGradient + gradNoise);
+          
+          const point = {
+            step: t, loss, rawGradient: rawGrad,
+            inSpike: (t >= 800 && t < 950) || (t >= 1800 && t < 2100),
+          };
+          
+          betas.forEach((b, i) => {
+            emaStates[i] = b * emaStates[i] + (1 - b) * rawGrad;
+            const corrected = emaStates[i] / (1 - Math.pow(b, t + 1));
+            point[`ema_${b}`] = corrected;
+          });
+          
+          if (t % 5 === 0) data.push(point);
+        }
+        return data;
+      }, [spikeIntensity]);
+
+      // Fisher vs Adam comparison with spike
+      const fisherVsAdamData = useMemo(() => {
+        const data = [];
+        const rng = (seed) => {
+          let x = Math.sin(seed * 12.9898) * 43758.5453;
+          return x - Math.floor(x);
+        };
+        
+        let fisherSum = 0;
+        let adamV = 0;
+        const b2 = beta2;
+        
+        for (let t = 0; t < 3500; t++) {
+          let baseLoss = 5.5 + 4.0 * Math.exp(-t / 500) + 0.5 * Math.exp(-t / 1200);
+          let lossNoise = 0.05 * (rng(t * 1.7) - 0.5);
+          
+          let baseGradient = 0.006 * (baseLoss / 6) * Math.exp(-t / 1000);
+          let gradNoise = baseGradient * 0.25 * (rng(t * 1.1) - 0.5);
+          
+          if (t >= 1000 && t < 1200) {
+            const spikePhase = Math.sin((t - 1000) * 0.04) * Math.exp(-(t - 1000) / 120);
+            lossNoise += 0.12 * spikeIntensity * spikePhase;
+            gradNoise += spikeIntensity * 0.7 * baseGradient * (rng(t * 2.3) - 0.15) * Math.abs(spikePhase);
+          }
+          
+          if (t >= 2200 && t < 2500) {
+            const spikePhase = Math.sin((t - 2200) * 0.03) * Math.exp(-(t - 2200) / 180);
+            lossNoise += 0.18 * spikeIntensity * spikePhase;
+            gradNoise += spikeIntensity * 1.0 * baseGradient * (rng(t * 2.7) - 0.1) * Math.abs(spikePhase);
+          }
+          
+          const loss = baseLoss + lossNoise;
+          const g = Math.max(0.0001, baseGradient + gradNoise);
+          const gSq = g * g;
+          
+          fisherSum += gSq;
+          const fisherDiag = fisherSum / (t + 1);
+          
+          adamV = b2 * adamV + (1 - b2) * gSq;
+          const vCorrected = adamV / (1 - Math.pow(b2, t + 1));
+          
+          if (t % 6 === 0) {
+            data.push({
+              step: t, loss, rawGradient: g, rawGradientSq: gSq,
+              fisherDiag, adamV: vCorrected,
+              inSpike: (t >= 1000 && t < 1200) || (t >= 2200 && t < 2500),
+            });
+          }
+        }
+        return data;
+      }, [beta2, spikeIntensity]);
+
+      const transformedFisherAdamData = useMemo(() => {
+        return fisherVsAdamData.map(d => ({
+          ...d,
+          fisherRoot: Math.pow(d.fisherDiag, 1 / rootPower),
+          adamRoot: Math.pow(d.adamV, 1 / rootPower),
+        }));
+      }, [fisherVsAdamData, rootPower]);
+
+      const betaColors = {
+        '0.8': '#EF4444', '0.9': '#3B82F6', '0.95': '#10B981',
+        '0.99': '#F59E0B', '0.999': '#8B5CF6',
+      };
+
+      const formatTick = (v) => v >= 1000 ? `${v/1000}k` : v;
+
+      return (
+        <div className="min-h-screen bg-gray-900 text-white p-4">
+          <div className="max-w-7xl mx-auto">
+            <h1 className="text-2xl font-bold mb-2">
+              FIM Diagonal ≈ Adam exp_avg_sq: The Math Behind bitter7
+            </h1>
+            <p className="text-gray-400 mb-2">
+              <a href="https://arxiv.org/abs/2507.18807" target="_blank" className="text-blue-400 hover:underline">Squisher (2025)</a> proves that Adam's second moment approximates the Fisher Information Matrix diagonal.
+              This explains why bitter7 achieves <span className="text-green-400 font-semibold">15.6% better perplexity</span> than magnitude pruning.
+            </p>
+            <div className="mb-4 p-3 bg-gray-800 rounded-lg font-mono text-sm">
+              <span className="text-blue-400">FIM_diag(θ)</span> = E[(∂L/∂θ)²] = E[g²] ≈ β₂·exp_avg_sq + (1-β₂)·g² = <span className="text-orange-400">exp_avg_sq</span>
+            </div>
+
+            {/* Section Navigation */}
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {sections.map((section, i) => (
+                <button
+                  key={i}
+                  onClick={() => setActiveSection(i)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    activeSection === i 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {i + 1}. {section}
+                </button>
+              ))}
+            </div>
+
+            {/* Section 0: The Key Discovery */}
+            {activeSection === 0 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gradient-to-r from-blue-900/50 to-purple-900/50 border border-blue-500 rounded-lg">
+                  <h2 className="text-xl font-semibold text-blue-400 mb-3">
+                    The Fundamental Insight: FIM ≈ Adam exp_avg_sq
+                  </h2>
+                  <p className="text-gray-300 mb-4">
+                    The <a href="https://arxiv.org/abs/2507.18807" target="_blank" className="text-blue-400 hover:underline">Squisher paper (2025)</a> proves
+                    that Adam's second moment estimate (<code className="bg-gray-800 px-1 rounded">exp_avg_sq</code>) approximates the
+                    diagonal of the Fisher Information Matrix (FIM). This has profound implications for pruning.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="p-3 bg-gray-800 rounded-lg">
+                      <h4 className="font-semibold text-blue-400 mb-2">Fisher Information Matrix</h4>
+                      <p className="font-mono text-sm mb-2">FIM_diag(θ) = E[(∂L/∂θ)²] = E[g²]</p>
+                      <p className="text-xs text-gray-400">
+                        Measures how sensitive the loss is to parameter perturbations.
+                        High FIM = important parameter. Low FIM = safe to prune.
+                      </p>
+                    </div>
+                    <div className="p-3 bg-gray-800 rounded-lg">
+                      <h4 className="font-semibold text-orange-400 mb-2">Adam's exp_avg_sq</h4>
+                      <p className="font-mono text-sm mb-2">v_t = β₂·v_{'{t-1}'} + (1-β₂)·g²</p>
+                      <p className="text-xs text-gray-400">
+                        Exponential moving average of squared gradients.
+                        Adam already computes this for adaptive learning rates!
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-green-900/30 border border-green-600 rounded-lg">
+                    <h4 className="font-semibold text-green-400 mb-2">bitter7: Pruning with Free FIM</h4>
+                    <p className="font-mono text-sm mb-2">
+                      importance = |w| × (exp_avg_sq + ε)<sup>0.25</sup>
+                    </p>
+                    <p className="text-sm text-gray-300">
+                      bitter7 uses Adam's exp_avg_sq (≈ FIM diagonal) to identify which parameters are sensitive.
+                      <strong className="text-green-400"> Result: 15.6% better perplexity than magnitude pruning</strong> (37.28 vs 44.15 PPL on GPT-2).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold text-red-400">Magnitude Pruning</h4>
+                    <p className="font-mono text-xs mb-1">importance = |w|</p>
+                    <p className="text-xs text-gray-400">
+                      Ignores gradient history entirely. A weight with |w|=0.01 gets same score
+                      whether gradients are 0.001 or 100.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold text-yellow-400">Movement Pruning</h4>
+                    <p className="font-mono text-xs mb-1">importance = |w_final| - |w_init|</p>
+                    <p className="text-xs text-gray-400">
+                      Tracks weight change, not gradient magnitude. Different information than FIM.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg border border-green-500">
+                    <h4 className="font-semibold text-green-400">bitter7 (FIM-guided)</h4>
+                    <p className="font-mono text-xs mb-1">importance = |w| × v<sup>0.25</sup></p>
+                    <p className="text-xs text-gray-400">
+                      Uses accumulated Fisher Information. Zero extra cost—Adam computes v anyway!
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h3 className="font-semibold text-purple-400 mb-2">Why This Visualization Matters</h3>
+                  <p className="text-sm text-gray-300 mb-2">
+                    The following sections explore the dynamics of EMA-based gradient tracking:
+                  </p>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    <li>• <strong>Normal Training</strong>: Why β₂=0.999 gives stable FIM estimates</li>
+                    <li>• <strong>Warmup</strong>: Why you can't prune during early training (biased estimates)</li>
+                    <li>• <strong>Noise Spikes</strong>: How gradient anomalies affect importance scores</li>
+                    <li>• <strong>Fisher vs Adam</strong>: Why exp_avg_sq is better than cumulative Fisher</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* Section 1: Normal Training */}
+            {activeSection === 1 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h2 className="text-xl font-semibold text-green-400 mb-2">
+                    ✓ Normal Training: β₂=0.999 Works Beautifully
+                  </h2>
+                  <p className="text-gray-300 text-sm mb-4">
+                    During typical training, gradients follow a smooth decay pattern with noise. 
+                    Higher β values (like 0.999) provide excellent smoothing without losing the underlying trend.
+                  </p>
+                  
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-1">Training Loss (GPT-2 style)</p>
+                    <ResponsiveContainer width="100%" height={100}>
+                      <LineChart data={normalTrainingData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#6B7280" tickFormatter={formatTick} hide />
+                        <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} />
+                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} />
+                        <Line type="monotone" dataKey="loss" stroke="#10B981" strokeWidth={2} dot={false} name="Loss" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Gradient Magnitude (log scale)</p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <ComposedChart data={normalTrainingData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#9CA3AF" tickFormatter={formatTick} />
+                        <YAxis stroke="#9CA3AF" scale="log" domain={['auto', 'auto']} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                          formatter={(v) => v.toExponential(3)}
+                        />
+                        <Legend />
+                        <Line type="monotone" dataKey="rawGradient" stroke="#6B7280" strokeWidth={1} dot={false} name="Raw gradient" opacity={0.5} />
+                        <Line type="monotone" dataKey="ema_0.8" stroke={betaColors['0.8']} strokeWidth={2} dot={false} name="β=0.8" />
+                        <Line type="monotone" dataKey="ema_0.9" stroke={betaColors['0.9']} strokeWidth={2} dot={false} name="β=0.9" />
+                        <Line type="monotone" dataKey="ema_0.95" stroke={betaColors['0.95']} strokeWidth={2} dot={false} name="β=0.95" />
+                        <Line type="monotone" dataKey="ema_0.99" stroke={betaColors['0.99']} strokeWidth={2} dot={false} name="β=0.99" />
+                        <Line type="monotone" dataKey="ema_0.999" stroke={betaColors['0.999']} strokeWidth={2.5} dot={false} name="β=0.999" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Loss decreases smoothly → gradients decay → EMA tracks the trend. All β values converge to similar estimates.
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold text-purple-400">β=0.999 (default)</h4>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Window: ~1000 steps. Maximum smoothing. Tracks slow trends perfectly.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold text-orange-400">β=0.99</h4>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Window: ~100 steps. Good balance. Responds faster to changes.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold text-red-400">β=0.8-0.9</h4>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Window: 5-10 steps. Responsive but noisy.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Section 2: Early Training Warmup */}
+            {activeSection === 2 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h2 className="text-xl font-semibold text-yellow-400 mb-2">
+                    ⚠️ Early Training: The Warmup Period
+                  </h2>
+                  <p className="text-gray-300 text-sm mb-4">
+                    In the first ~200 steps, higher β values show significant warmup lag. 
+                    The purple β=0.999 line stays nearly flat while lower β values track the gradient.
+                    <span className="text-yellow-400 font-medium"> This is why pruning before warmup completes gives garbage importance scores.</span>
+                  </p>
+                  
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-1">Training Loss (early phase)</p>
+                    <ResponsiveContainer width="100%" height={100}>
+                      <LineChart data={earlyTrainingData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#6B7280" hide />
+                        <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} />
+                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} />
+                        <Line type="monotone" dataKey="loss" stroke="#10B981" strokeWidth={2} dot={false} name="Loss" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Gradient Magnitude (linear scale)</p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <ComposedChart data={earlyTrainingData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#9CA3AF" />
+                        <YAxis stroke="#9CA3AF" domain={[0, 'auto']} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                          formatter={(v) => v.toFixed(5)}
+                        />
+                        <Legend />
+                        <Line type="monotone" dataKey="rawGradient" stroke="#6B7280" strokeWidth={1} dot={false} name="Raw gradient" />
+                        <Line type="monotone" dataKey="ema_0.8" stroke={betaColors['0.8']} strokeWidth={2} dot={false} name="β=0.8" />
+                        <Line type="monotone" dataKey="ema_0.9" stroke={betaColors['0.9']} strokeWidth={2} dot={false} name="β=0.9" />
+                        <Line type="monotone" dataKey="ema_0.95" stroke={betaColors['0.95']} strokeWidth={2} dot={false} name="β=0.95" />
+                        <Line type="monotone" dataKey="ema_0.99" stroke={betaColors['0.99']} strokeWidth={2} dot={false} name="β=0.99" />
+                        <Line type="monotone" dataKey="ema_0.999" stroke={betaColors['0.999']} strokeWidth={2.5} dot={false} name="β=0.999" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+                
+                <div className="p-4 bg-yellow-900/30 border border-yellow-600 rounded-lg">
+                  <h3 className="font-semibold text-yellow-400 mb-2">Warmup Steps by β Value</h3>
+                  <div className="grid grid-cols-5 gap-2 text-sm">
+                    {[0.8, 0.9, 0.95, 0.99, 0.999].map(b => (
+                      <div key={b} className="text-center">
+                        <div className="font-mono" style={{color: betaColors[b.toString()]}}>β={b}</div>
+                        <div className="text-gray-400">{Math.round(-Math.log(0.01) / (1 - b))} steps</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-3">
+                    Formula: steps ≈ -ln(0.01) / (1-β) for 99% of true value
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Section 3: Noise Spike Problem */}
+            {activeSection === 3 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h2 className="text-xl font-semibold text-red-400 mb-2">
+                    ✗ The Noise Spike Problem: When β₂=0.999 Fails
+                  </h2>
+                  <p className="text-gray-300 text-sm mb-2">
+                    Real training isn't always smooth. Distribution shifts, learning rate changes, or data anomalies 
+                    can cause temporary gradient spikes. Watch how different β values respond.
+                  </p>
+                  
+                  <div className="flex items-center gap-4 mb-4">
+                    <label className="text-sm text-gray-400">Spike Intensity:</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="15"
+                      value={spikeIntensity}
+                      onChange={(e) => setSpikeIntensity(parseInt(e.target.value))}
+                      className="w-48"
+                    />
+                    <span className="font-mono text-orange-400">{spikeIntensity}×</span>
+                  </div>
+
+                  <div className="mb-2">
+                    <p className="text-xs text-gray-500 mb-1">Training Loss (spike regions highlighted)</p>
+                    <ResponsiveContainer width="100%" height={100}>
+                      <LineChart data={noiseSpikeData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#6B7280" tickFormatter={formatTick} hide />
+                        <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} />
+                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} />
+                        <ReferenceLine x={800} stroke="#EF4444" strokeDasharray="5 5" />
+                        <ReferenceLine x={950} stroke="#EF4444" strokeDasharray="5 5" />
+                        <ReferenceLine x={1800} stroke="#F59E0B" strokeDasharray="5 5" />
+                        <ReferenceLine x={2100} stroke="#F59E0B" strokeDasharray="5 5" />
+                        <Line type="monotone" dataKey="loss" stroke="#10B981" strokeWidth={2} dot={false} name="Loss" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Gradient Magnitude</p>
+                    <ResponsiveContainer width="100%" height={280}>
+                      <ComposedChart data={noiseSpikeData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#9CA3AF" tickFormatter={formatTick} />
+                        <YAxis stroke="#9CA3AF" />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                          formatter={(v) => v.toFixed(5)}
+                        />
+                        <Legend />
+                        <ReferenceLine x={800} stroke="#EF4444" strokeDasharray="5 5" />
+                        <ReferenceLine x={950} stroke="#EF4444" strokeDasharray="5 5" />
+                        <ReferenceLine x={1800} stroke="#F59E0B" strokeDasharray="5 5" />
+                        <ReferenceLine x={2100} stroke="#F59E0B" strokeDasharray="5 5" />
+                        <Line type="monotone" dataKey="rawGradient" stroke="#6B7280" strokeWidth={1} dot={false} name="Raw gradient" opacity={0.6} />
+                        <Line type="monotone" dataKey="ema_0.9" stroke={betaColors['0.9']} strokeWidth={2} dot={false} name="β=0.9" />
+                        <Line type="monotone" dataKey="ema_0.99" stroke={betaColors['0.99']} strokeWidth={2} dot={false} name="β=0.99" />
+                        <Line type="monotone" dataKey="ema_0.999" stroke={betaColors['0.999']} strokeWidth={2.5} dot={false} name="β=0.999" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 bg-blue-900/30 border border-blue-500 rounded-lg">
+                    <h3 className="font-semibold text-blue-400 mb-2">β=0.9: Fast Recovery</h3>
+                    <p className="text-sm text-gray-300">
+                      Responds quickly to the spike, but also <strong>recovers quickly</strong> once 
+                      normal gradients resume. ~10 step effective window means the spike is 
+                      mostly forgotten after ~50 steps.
+                    </p>
+                  </div>
+                  <div className="p-4 bg-purple-900/30 border border-purple-500 rounded-lg">
+                    <h3 className="font-semibold text-purple-400 mb-2">β=0.999: Slow Recovery</h3>
+                    <p className="text-sm text-gray-300">
+                      The spike contaminates the EMA for <strong>~1000+ steps</strong> afterward.
+                      If you're using this for pruning importance, those spiky parameters 
+                      will be incorrectly marked as important long after the spike ends.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Section 4: Fisher vs Adam */}
+            {activeSection === 4 && (
+              <div className="space-y-4">
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <h2 className="text-xl font-semibold mb-2">
+                    {showRootTransform 
+                      ? `${rootPower === 2 ? '√' : rootPower === 3 ? '∛' : rootPower === 4 ? '⁴√' : `${rootPower}√`} Pruning Importance: Fisher vs Adam` 
+                      : "Raw Second Moments: Fisher vs Adam"
+                    }
+                  </h2>
+                  
+                  <div className="flex gap-4 mb-4 items-center flex-wrap">
+                    <div>
+                      <label className="text-sm text-gray-400">β₂:</label>
+                      <select
+                        value={beta2}
+                        onChange={(e) => setBeta2(parseFloat(e.target.value))}
+                        className="ml-2 bg-gray-700 rounded px-2 py-1"
+                      >
+                        <option value={0.9}>0.9</option>
+                        <option value={0.99}>0.99</option>
+                        <option value={0.999}>0.999</option>
+                        <option value={0.9999}>0.9999</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-400">Spike:</label>
+                      <input
+                        type="range"
+                        min="1"
+                        max="15"
+                        value={spikeIntensity}
+                        onChange={(e) => setSpikeIntensity(parseInt(e.target.value))}
+                        className="ml-2 w-24"
+                      />
+                      <span className="ml-2 font-mono text-orange-400">{spikeIntensity}×</span>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-400">Root:</label>
+                      <select
+                        value={rootPower}
+                        onChange={(e) => setRootPower(parseInt(e.target.value))}
+                        className="ml-2 bg-gray-700 rounded px-2 py-1"
+                      >
+                        <option value={2}>√ (2nd)</option>
+                        <option value={3}>∛ (3rd)</option>
+                        <option value={4}>⁴√ (4th)</option>
+                        <option value={6}>⁶√ (6th)</option>
+                        <option value={8}>⁸√ (8th)</option>
+                      </select>
+                    </div>
+                    <button
+                      onClick={() => setShowRootTransform(!showRootTransform)}
+                      className={`px-3 py-1.5 rounded-lg font-medium text-sm ${
+                        showRootTransform ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      {rootPower}√: {showRootTransform ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      onClick={() => setShowRawGradient(!showRawGradient)}
+                      className={`px-3 py-1.5 rounded-lg font-medium text-sm ${
+                        showRawGradient ? 'bg-purple-600 text-white' : 'bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      Gradient: {showRawGradient ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      onClick={() => setShowLoss(!showLoss)}
+                      className={`px-3 py-1.5 rounded-lg font-medium text-sm ${
+                        showLoss ? 'bg-emerald-600 text-white' : 'bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      Loss: {showLoss ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                  
+                  {showLoss && (
+                    <div className="mb-2">
+                      <p className="text-xs text-gray-500 mb-1">Training Loss</p>
+                      <ResponsiveContainer width="100%" height={80}>
+                        <LineChart data={transformedFisherAdamData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                          <XAxis dataKey="step" stroke="#6B7280" tickFormatter={formatTick} hide />
+                          <YAxis stroke="#9CA3AF" domain={['auto', 'auto']} />
+                          <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} formatter={(v) => v.toFixed(3)} />
+                          <ReferenceLine x={1000} stroke="#EF4444" strokeDasharray="5 5" />
+                          <ReferenceLine x={1200} stroke="#EF4444" strokeDasharray="5 5" />
+                          <ReferenceLine x={2200} stroke="#F59E0B" strokeDasharray="5 5" />
+                          <ReferenceLine x={2500} stroke="#F59E0B" strokeDasharray="5 5" />
+                          <Line type="monotone" dataKey="loss" stroke="#10B981" strokeWidth={2} dot={false} name="Loss" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">
+                      {showRootTransform ? `${rootPower}√ Second Moment` : 'Raw E[g²]'}
+                      {showRawGradient && ' + Raw gradient (right axis)'}
+                    </p>
+                    <ResponsiveContainer width="100%" height={showLoss ? 300 : 350}>
+                      <ComposedChart data={transformedFisherAdamData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis dataKey="step" stroke="#9CA3AF" tickFormatter={formatTick} />
+                        <YAxis yAxisId="main" stroke="#9CA3AF" orientation="left" />
+                        {showRawGradient && (
+                          <YAxis yAxisId="gradient" stroke="#6B7280" orientation="right" tickFormatter={(v) => v.toFixed(3)} />
+                        )}
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                          formatter={(v, name) => [name === 'Raw gradient' ? v.toFixed(5) : (showRootTransform ? v.toFixed(4) : v.toExponential(3)), name]}
+                        />
+                        <Legend />
+                        <ReferenceLine x={1000} stroke="#EF4444" strokeDasharray="5 5" yAxisId="main" />
+                        <ReferenceLine x={1200} stroke="#EF4444" strokeDasharray="5 5" yAxisId="main" />
+                        <ReferenceLine x={2200} stroke="#F59E0B" strokeDasharray="5 5" yAxisId="main" />
+                        <ReferenceLine x={2500} stroke="#F59E0B" strokeDasharray="5 5" yAxisId="main" />
+                        {showRawGradient && (
+                          <Line type="monotone" dataKey="rawGradient" stroke="#6B7280" strokeWidth={1} dot={false} name="Raw gradient" yAxisId="gradient" opacity={0.7} />
+                        )}
+                        <Line 
+                          type="monotone" 
+                          dataKey={showRootTransform ? "fisherRoot" : "fisherDiag"} 
+                          stroke="#3B82F6" strokeWidth={2.5} dot={false} 
+                          name={showRootTransform ? `${rootPower}√Fisher` : "Fisher (Σg²/n)"} 
+                          yAxisId="main"
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey={showRootTransform ? "adamRoot" : "adamV"} 
+                          stroke="#F97316" strokeWidth={2.5} dot={false} 
+                          name={showRootTransform ? `${rootPower}√Adam` : `Adam v_t`} 
+                          yAxisId="main"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 bg-blue-900/40 border border-blue-500 rounded-lg">
+                    <h3 className="font-semibold text-blue-400 mb-2">Fisher: Σ(g²)/n</h3>
+                    <p className="text-sm text-gray-300 mb-2">
+                      The spike <strong>permanently raises</strong> the Fisher estimate. 
+                      Every squared gradient contributes equally to the cumulative mean.
+                    </p>
+                    <p className="text-xs text-red-400">
+                      ⚠️ Spikes at 1k-1.2k and 2.2k-2.5k will pollute importance scores forever.
+                    </p>
+                  </div>
+                  <div className="p-4 bg-orange-900/40 border border-orange-500 rounded-lg">
+                    <h3 className="font-semibold text-orange-400 mb-2">Adam: EMA(g²)</h3>
+                    <p className="text-sm text-gray-300 mb-2">
+                      The spike raises estimates temporarily, then <strong>exponentially decays</strong> 
+                      back toward the true gradient statistics.
+                    </p>
+                    <p className="text-xs text-green-400">
+                      ✓ After ~{Math.round(1/(1-beta2))} steps post-spike, contamination is mostly gone.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-green-900/30 border border-green-600 rounded-lg">
+                  <h3 className="font-semibold text-green-400 mb-3">Why {rootPower}√ Transform for Pruning?</h3>
+                  <div className="grid grid-cols-5 gap-2 text-sm mb-3">
+                    {[2, 3, 4, 6, 8].map(r => {
+                      const compression = Math.pow(10, 2/r).toFixed(2);
+                      const isSelected = r === rootPower;
+                      return (
+                        <div 
+                          key={r} 
+                          className={`p-2 bg-gray-800 rounded text-center cursor-pointer transition-all ${isSelected ? 'border-2 border-green-500 scale-105' : 'border border-gray-700 opacity-70 hover:opacity-100'}`}
+                          onClick={() => setRootPower(r)}
+                        >
+                          <p className={`font-mono ${isSelected ? 'text-green-400' : 'text-gray-400'}`}>
+                            {r === 2 ? '√' : r === 3 ? '∛' : `${r}√`}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">10× → {compression}×</p>
+                          <p className={`text-xs ${r === 4 ? 'text-green-400' : r < 4 ? 'text-yellow-400' : 'text-blue-400'}`}>
+                            {r === 2 ? 'Linear' : r === 3 ? 'Moderate' : r === 4 ? 'Sweet spot' : r === 6 ? 'Heavy' : 'Extreme'}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-4 bg-gray-800 rounded-lg font-mono text-sm">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-blue-400"># Fisher (permanent memory)</p>
+                      <p className="text-gray-300">F_ii = (1/T) Σₜ gₜ²</p>
+                    </div>
+                    <div>
+                      <p className="text-orange-400"># Adam (exponential forgetting)</p>
+                      <p className="text-gray-300">vₜ = β₂·vₜ₋₁ + (1-β₂)·gₜ²</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-gray-700">
+                    <p className="text-green-400"># Your importance score</p>
+                    <p className="text-gray-300">importance(θ) = (vₜ / (1 - β₂ᵗ))^(1/{rootPower})</p>
+                    <p className="text-gray-500 text-xs mt-1">
+                      β₂={beta2} | Window ≈ {Math.round(1/(1-beta2)).toLocaleString()} steps | 
+                      Warmup ≈ {Math.round(-Math.log(0.01)/(1-beta2)).toLocaleString()} steps |
+                      Compression: 10× → {Math.pow(10, 2/rootPower).toFixed(2)}×
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Navigation */}
+            <div className="mt-6 text-center text-gray-500 text-sm">
+              {activeSection < 4 ? (
+                <button
+                  onClick={() => setActiveSection(activeSection + 1)}
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  Next: {sections[activeSection + 1]} →
+                </button>
+              ) : (
+                <button
+                  onClick={() => setActiveSection(0)}
+                  className="text-blue-400 hover:text-blue-300"
+                >
+                  ← Back to start
+                </button>
+              )}
+            </div>
+
+            {/* Footer with related links */}
+            <div className="mt-8 pt-6 border-t border-gray-700">
+              <h3 className="text-sm font-semibold text-gray-400 mb-3">Related Documentation</h3>
+              <div className="flex flex-wrap gap-3 text-sm">
+                <a href="https://github.com/mcgrof/knlp/blob/main/docs/bitter7_math.md" target="_blank"
+                   className="px-3 py-1 bg-gray-800 rounded-lg text-blue-400 hover:bg-gray-700">
+                  bitter7 Math Foundations
+                </a>
+                <a href="https://github.com/mcgrof/knlp/blob/main/docs/adamwprune_variants.md" target="_blank"
+                   className="px-3 py-1 bg-gray-800 rounded-lg text-blue-400 hover:bg-gray-700">
+                  AdamWPrune Variants
+                </a>
+                <a href="https://github.com/mcgrof/knlp/blob/main/docs/hierarchical-tiering.md" target="_blank"
+                   className="px-3 py-1 bg-gray-800 rounded-lg text-blue-400 hover:bg-gray-700">
+                  Unified FIM Framework
+                </a>
+                <a href="https://github.com/mcgrof/knlp/blob/main/docs/FIM.md" target="_blank"
+                   className="px-3 py-1 bg-gray-800 rounded-lg text-blue-400 hover:bg-gray-700">
+                  FIM Analysis
+                </a>
+                <a href="https://arxiv.org/abs/2507.18807" target="_blank"
+                   className="px-3 py-1 bg-purple-900 rounded-lg text-purple-300 hover:bg-purple-800">
+                  Squisher Paper (arXiv)
+                </a>
+              </div>
+              <p className="mt-4 text-xs text-gray-600">
+                Part of the <a href="https://github.com/mcgrof/knlp" target="_blank" className="text-gray-500 hover:text-gray-400">knlp</a> project — Kernel-Style Machine Learning
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<ComprehensiveEMAAnalysis />, document.getElementById('root'));
+  </script>
+</body>
+</html>

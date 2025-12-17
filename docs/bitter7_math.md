@@ -38,6 +38,9 @@ ensuring stable pruning decisions without overweighting outliers.
 See [docs/hierarchical-tiering.md](hierarchical-tiering.md) for how this
 discovery unifies our compression, pruning, and tiering research.
 
+**Interactive visualization**: [FIM ≈ Adam exp_avg_sq](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fisher_adam_visualization.html)
+demonstrates these dynamics with adjustable parameters.
+
 ---
 
 ## 1. Mathematical Foundations
