@@ -226,10 +226,10 @@
                           formatter={(v) => v.toFixed(4)}
                         />
                         <Legend />
-                        <Line type="monotone" dataKey="criticalGSq" stroke="#ef4444" strokeWidth={1} dot={false} name="Critical g² (instant)" opacity={0.4} />
-                        <Line type="monotone" dataKey="normalGSq" stroke="#3b82f6" strokeWidth={1} dot={false} name="Normal g² (instant)" opacity={0.4} />
-                        <Line type="monotone" dataKey="criticalFIM" stroke="#ef4444" strokeWidth={2.5} dot={false} name="Critical FIM (accumulated)" />
-                        <Line type="monotone" dataKey="normalFIM" stroke="#3b82f6" strokeWidth={2.5} dot={false} name="Normal FIM (accumulated)" />
+                        <Line type="monotone" dataKey="criticalGSq" stroke="#fca5a5" strokeWidth={1} dot={false} name="Critical g² (noisy)" opacity={0.6} strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="normalGSq" stroke="#93c5fd" strokeWidth={1} dot={false} name="Normal g² (noisy)" opacity={0.6} strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="criticalFIM" stroke="#ef4444" strokeWidth={3} dot={false} name="Critical FIM = E[g²]" />
+                        <Line type="monotone" dataKey="normalFIM" stroke="#3b82f6" strokeWidth={3} dot={false} name="Normal FIM = E[g²]" />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
