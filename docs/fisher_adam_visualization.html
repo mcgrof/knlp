@@ -57,7 +57,7 @@
       const [rootPower, setRootPower] = useState(4);
       const [showRawGradient, setShowRawGradient] = useState(true);
       const [showLoss, setShowLoss] = useState(true);
-      
+
       const sections = [
         'The Key Discovery',
         'Normal Training (Why β₂=0.999 Works)',
@@ -74,27 +74,27 @@
           let x = Math.sin(seed * 12.9898) * 43758.5453;
           return x - Math.floor(x);
         };
-        
+
         const betas = [0.8, 0.9, 0.95, 0.99, 0.999];
         const emaStates = betas.map(() => 0);
-        
+
         for (let t = 0; t < 1000; t++) {
           const baseLoss = 5.5 + 4.0 * Math.exp(-t / 150) + 0.5 * Math.exp(-t / 400);
           const lossNoise = 0.08 * (rng(t * 1.7) - 0.5) * (1 + 2 * Math.exp(-t / 100));
           const loss = baseLoss + lossNoise;
-          
+
           const baseGradient = 0.008 * (loss / 6) * Math.exp(-t / 500);
           const noise = baseGradient * 0.4 * (rng(t * 1.1) - 0.5);
           const rawGrad = Math.max(0.0001, baseGradient + noise);
-          
+
           const point = { step: t, loss, rawGradient: rawGrad };
-          
+
           betas.forEach((b, i) => {
             emaStates[i] = b * emaStates[i] + (1 - b) * rawGrad;
             const corrected = emaStates[i] / (1 - Math.pow(b, t + 1));
             point[`ema_${b}`] = corrected;
           });
-          
+
           if (t % 2 === 0) data.push(point);
         }
         return data;
@@ -111,43 +111,43 @@
           let x = Math.sin(seed * 12.9898) * 43758.5453;
           return x - Math.floor(x);
         };
-        
+
         const betas = [0.9, 0.99, 0.999];
         const emaStates = betas.map(() => 0);
-        
+
         for (let t = 0; t < 3000; t++) {
           let baseLoss = 5.5 + 4.0 * Math.exp(-t / 400) + 0.5 * Math.exp(-t / 1000);
           let lossNoise = 0.06 * (rng(t * 1.7) - 0.5);
-          
+
           let baseGradient = 0.006 * (baseLoss / 6) * Math.exp(-t / 800);
           let gradNoise = baseGradient * 0.3 * (rng(t * 1.1) - 0.5);
-          
+
           if (t >= 800 && t < 950) {
             const spikePhase = Math.sin((t - 800) * 0.04) * Math.exp(-(t - 800) / 100);
             lossNoise += 0.15 * spikeIntensity * spikePhase;
             gradNoise += spikeIntensity * 0.8 * baseGradient * (rng(t * 2.3) - 0.2) * Math.abs(spikePhase);
           }
-          
+
           if (t >= 1800 && t < 2100) {
             const spikePhase = Math.sin((t - 1800) * 0.03) * Math.exp(-(t - 1800) / 150);
             lossNoise += 0.2 * spikeIntensity * spikePhase;
             gradNoise += spikeIntensity * 1.2 * baseGradient * (rng(t * 2.7) - 0.15) * Math.abs(spikePhase);
           }
-          
+
           const loss = baseLoss + lossNoise;
           const rawGrad = Math.max(0.0001, baseGradient + gradNoise);
-          
+
           const point = {
             step: t, loss, rawGradient: rawGrad,
             inSpike: (t >= 800 && t < 950) || (t >= 1800 && t < 2100),
           };
-          
+
           betas.forEach((b, i) => {
             emaStates[i] = b * emaStates[i] + (1 - b) * rawGrad;
             const corrected = emaStates[i] / (1 - Math.pow(b, t + 1));
             point[`ema_${b}`] = corrected;
           });
-          
+
           if (t % 5 === 0) data.push(point);
         }
         return data;
@@ -160,40 +160,40 @@
           let x = Math.sin(seed * 12.9898) * 43758.5453;
           return x - Math.floor(x);
         };
-        
+
         let fisherSum = 0;
         let adamV = 0;
         const b2 = beta2;
-        
+
         for (let t = 0; t < 3500; t++) {
           let baseLoss = 5.5 + 4.0 * Math.exp(-t / 500) + 0.5 * Math.exp(-t / 1200);
           let lossNoise = 0.05 * (rng(t * 1.7) - 0.5);
-          
+
           let baseGradient = 0.006 * (baseLoss / 6) * Math.exp(-t / 1000);
           let gradNoise = baseGradient * 0.25 * (rng(t * 1.1) - 0.5);
-          
+
           if (t >= 1000 && t < 1200) {
             const spikePhase = Math.sin((t - 1000) * 0.04) * Math.exp(-(t - 1000) / 120);
             lossNoise += 0.12 * spikeIntensity * spikePhase;
             gradNoise += spikeIntensity * 0.7 * baseGradient * (rng(t * 2.3) - 0.15) * Math.abs(spikePhase);
           }
-          
+
           if (t >= 2200 && t < 2500) {
             const spikePhase = Math.sin((t - 2200) * 0.03) * Math.exp(-(t - 2200) / 180);
             lossNoise += 0.18 * spikeIntensity * spikePhase;
             gradNoise += spikeIntensity * 1.0 * baseGradient * (rng(t * 2.7) - 0.1) * Math.abs(spikePhase);
           }
-          
+
           const loss = baseLoss + lossNoise;
           const g = Math.max(0.0001, baseGradient + gradNoise);
           const gSq = g * g;
-          
+
           fisherSum += gSq;
           const fisherDiag = fisherSum / (t + 1);
-          
+
           adamV = b2 * adamV + (1 - b2) * gSq;
           const vCorrected = adamV / (1 - Math.pow(b2, t + 1));
-          
+
           if (t % 6 === 0) {
             data.push({
               step: t, loss, rawGradient: g, rawGradientSq: gSq,
@@ -241,8 +241,8 @@
                   key={i}
                   onClick={() => setActiveSection(i)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    activeSection === i 
-                      ? 'bg-blue-600 text-white' 
+                    activeSection === i
+                      ? 'bg-blue-600 text-white'
                       : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
                 >
@@ -343,10 +343,10 @@
                     ✓ Normal Training: β₂=0.999 Works Beautifully
                   </h2>
                   <p className="text-gray-300 text-sm mb-4">
-                    During typical training, gradients follow a smooth decay pattern with noise. 
+                    During typical training, gradients follow a smooth decay pattern with noise.
                     Higher β values (like 0.999) provide excellent smoothing without losing the underlying trend.
                   </p>
-                  
+
                   <div className="mb-2">
                     <p className="text-xs text-gray-500 mb-1">Training Loss (GPT-2 style)</p>
                     <ResponsiveContainer width="100%" height={100}>
@@ -359,7 +359,7 @@
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                  
+
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Gradient Magnitude (log scale)</p>
                     <ResponsiveContainer width="100%" height={280}>
@@ -367,7 +367,7 @@
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                         <XAxis dataKey="step" stroke="#9CA3AF" tickFormatter={formatTick} />
                         <YAxis stroke="#9CA3AF" scale="log" domain={['auto', 'auto']} />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
                           formatter={(v) => v.toExponential(3)}
                         />
@@ -385,7 +385,7 @@
                     Loss decreases smoothly → gradients decay → EMA tracks the trend. All β values converge to similar estimates.
                   </p>
                 </div>
-                
+
                 <div className="grid grid-cols-3 gap-4">
                   <div className="p-3 bg-gray-800 rounded-lg">
                     <h4 className="font-semibold text-purple-400">β=0.999 (default)</h4>
@@ -417,11 +417,11 @@
                     ⚠️ Early Training: The Warmup Period
                   </h2>
                   <p className="text-gray-300 text-sm mb-4">
-                    In the first ~200 steps, higher β values show significant warmup lag. 
+                    In the first ~200 steps, higher β values show significant warmup lag.
                     The purple β=0.999 line stays nearly flat while lower β values track the gradient.
                     <span className="text-yellow-400 font-medium"> This is why pruning before warmup completes gives garbage importance scores.</span>
                   </p>
-                  
+
                   <div className="mb-2">
                     <p className="text-xs text-gray-500 mb-1">Training Loss (early phase)</p>
                     <ResponsiveContainer width="100%" height={100}>
@@ -434,7 +434,7 @@
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                  
+
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Gradient Magnitude (linear scale)</p>
                     <ResponsiveContainer width="100%" height={280}>
@@ -442,7 +442,7 @@
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                         <XAxis dataKey="step" stroke="#9CA3AF" />
                         <YAxis stroke="#9CA3AF" domain={[0, 'auto']} />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
                           formatter={(v) => v.toFixed(5)}
                         />
@@ -457,7 +457,7 @@
                     </ResponsiveContainer>
                   </div>
                 </div>
-                
+
                 <div className="p-4 bg-yellow-900/30 border border-yellow-600 rounded-lg">
                   <h3 className="font-semibold text-yellow-400 mb-2">Warmup Steps by β Value</h3>
                   <div className="grid grid-cols-5 gap-2 text-sm">
@@ -483,10 +483,10 @@
                     ✗ The Noise Spike Problem: When β₂=0.999 Fails
                   </h2>
                   <p className="text-gray-300 text-sm mb-2">
-                    Real training isn't always smooth. Distribution shifts, learning rate changes, or data anomalies 
+                    Real training isn't always smooth. Distribution shifts, learning rate changes, or data anomalies
                     can cause temporary gradient spikes. Watch how different β values respond.
                   </p>
-                  
+
                   <div className="flex items-center gap-4 mb-4">
                     <label className="text-sm text-gray-400">Spike Intensity:</label>
                     <input
@@ -524,7 +524,7 @@
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                         <XAxis dataKey="step" stroke="#9CA3AF" tickFormatter={formatTick} />
                         <YAxis stroke="#9CA3AF" />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
                           formatter={(v) => v.toFixed(5)}
                         />
@@ -546,8 +546,8 @@
                   <div className="p-4 bg-blue-900/30 border border-blue-500 rounded-lg">
                     <h3 className="font-semibold text-blue-400 mb-2">β=0.9: Fast Recovery</h3>
                     <p className="text-sm text-gray-300">
-                      Responds quickly to the spike, but also <strong>recovers quickly</strong> once 
-                      normal gradients resume. ~10 step effective window means the spike is 
+                      Responds quickly to the spike, but also <strong>recovers quickly</strong> once
+                      normal gradients resume. ~10 step effective window means the spike is
                       mostly forgotten after ~50 steps.
                     </p>
                   </div>
@@ -555,7 +555,7 @@
                     <h3 className="font-semibold text-purple-400 mb-2">β=0.999: Slow Recovery</h3>
                     <p className="text-sm text-gray-300">
                       The spike contaminates the EMA for <strong>~1000+ steps</strong> afterward.
-                      If you're using this for pruning importance, those spiky parameters 
+                      If you're using this for pruning importance, those spiky parameters
                       will be incorrectly marked as important long after the spike ends.
                     </p>
                   </div>
@@ -568,12 +568,12 @@
               <div className="space-y-4">
                 <div className="p-4 bg-gray-800 rounded-lg">
                   <h2 className="text-xl font-semibold mb-2">
-                    {showRootTransform 
-                      ? `${rootPower === 2 ? '√' : rootPower === 3 ? '∛' : rootPower === 4 ? '⁴√' : `${rootPower}√`} Pruning Importance: Fisher vs Adam` 
+                    {showRootTransform
+                      ? `${rootPower === 2 ? '√' : rootPower === 3 ? '∛' : rootPower === 4 ? '⁴√' : `${rootPower}√`} Pruning Importance: Fisher vs Adam`
                       : "Raw Second Moments: Fisher vs Adam"
                     }
                   </h2>
-                  
+
                   <div className="flex gap-4 mb-4 items-center flex-wrap">
                     <div>
                       <label className="text-sm text-gray-400">β₂:</label>
@@ -639,7 +639,7 @@
                       Loss: {showLoss ? 'ON' : 'OFF'}
                     </button>
                   </div>
-                  
+
                   {showLoss && (
                     <div className="mb-2">
                       <p className="text-xs text-gray-500 mb-1">Training Loss</p>
@@ -672,7 +672,7 @@
                         {showRawGradient && (
                           <YAxis yAxisId="gradient" stroke="#6B7280" orientation="right" tickFormatter={(v) => v.toFixed(3)} />
                         )}
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
                           formatter={(v, name) => [name === 'Raw gradient' ? v.toFixed(5) : (showRootTransform ? v.toFixed(4) : v.toExponential(3)), name]}
                         />
@@ -684,18 +684,18 @@
                         {showRawGradient && (
                           <Line type="monotone" dataKey="rawGradient" stroke="#6B7280" strokeWidth={1} dot={false} name="Raw gradient" yAxisId="gradient" opacity={0.7} />
                         )}
-                        <Line 
-                          type="monotone" 
-                          dataKey={showRootTransform ? "fisherRoot" : "fisherDiag"} 
-                          stroke="#3B82F6" strokeWidth={2.5} dot={false} 
-                          name={showRootTransform ? `${rootPower}√Fisher` : "Fisher (Σg²/n)"} 
+                        <Line
+                          type="monotone"
+                          dataKey={showRootTransform ? "fisherRoot" : "fisherDiag"}
+                          stroke="#3B82F6" strokeWidth={2.5} dot={false}
+                          name={showRootTransform ? `${rootPower}√Fisher` : "Fisher (Σg²/n)"}
                           yAxisId="main"
                         />
-                        <Line 
-                          type="monotone" 
-                          dataKey={showRootTransform ? "adamRoot" : "adamV"} 
-                          stroke="#F97316" strokeWidth={2.5} dot={false} 
-                          name={showRootTransform ? `${rootPower}√Adam` : `Adam v_t`} 
+                        <Line
+                          type="monotone"
+                          dataKey={showRootTransform ? "adamRoot" : "adamV"}
+                          stroke="#F97316" strokeWidth={2.5} dot={false}
+                          name={showRootTransform ? `${rootPower}√Adam` : `Adam v_t`}
                           yAxisId="main"
                         />
                       </ComposedChart>
@@ -707,7 +707,7 @@
                   <div className="p-4 bg-blue-900/40 border border-blue-500 rounded-lg">
                     <h3 className="font-semibold text-blue-400 mb-2">Fisher: Σ(g²)/n</h3>
                     <p className="text-sm text-gray-300 mb-2">
-                      The spike <strong>permanently raises</strong> the Fisher estimate. 
+                      The spike <strong>permanently raises</strong> the Fisher estimate.
                       Every squared gradient contributes equally to the cumulative mean.
                     </p>
                     <p className="text-xs text-red-400">
@@ -717,7 +717,7 @@
                   <div className="p-4 bg-orange-900/40 border border-orange-500 rounded-lg">
                     <h3 className="font-semibold text-orange-400 mb-2">Adam: EMA(g²)</h3>
                     <p className="text-sm text-gray-300 mb-2">
-                      The spike raises estimates temporarily, then <strong>exponentially decays</strong> 
+                      The spike raises estimates temporarily, then <strong>exponentially decays</strong>
                       back toward the true gradient statistics.
                     </p>
                     <p className="text-xs text-green-400">
@@ -733,8 +733,8 @@
                       const compression = Math.pow(10, 2/r).toFixed(2);
                       const isSelected = r === rootPower;
                       return (
-                        <div 
-                          key={r} 
+                        <div
+                          key={r}
                           className={`p-2 bg-gray-800 rounded text-center cursor-pointer transition-all ${isSelected ? 'border-2 border-green-500 scale-105' : 'border border-gray-700 opacity-70 hover:opacity-100'}`}
                           onClick={() => setRootPower(r)}
                         >
@@ -766,7 +766,7 @@
                     <p className="text-green-400"># Your importance score</p>
                     <p className="text-gray-300">importance(θ) = (vₜ / (1 - β₂ᵗ))^(1/{rootPower})</p>
                     <p className="text-gray-500 text-xs mt-1">
-                      β₂={beta2} | Window ≈ {Math.round(1/(1-beta2)).toLocaleString()} steps | 
+                      β₂={beta2} | Window ≈ {Math.round(1/(1-beta2)).toLocaleString()} steps |
                       Warmup ≈ {Math.round(-Math.log(0.01)/(1-beta2)).toLocaleString()} steps |
                       Compression: 10× → {Math.pow(10, 2/rootPower).toFixed(2)}×
                     </p>
@@ -820,7 +820,9 @@
                 </a>
               </div>
               <p className="mt-4 text-xs text-gray-600">
-                Part of the <a href="https://github.com/mcgrof/knlp" target="_blank" className="text-gray-500 hover:text-gray-400">knlp</a> project — Kernel-Style Machine Learning
+                <a href="index.html" className="text-blue-400 hover:text-blue-300">← Back to knlp</a>
+                <span className="mx-2">·</span>
+                Part of the <a href="https://github.com/mcgrof/knlp" target="_blank" className="text-gray-500 hover:text-gray-400">knlp</a> project
               </p>
             </div>
           </div>
