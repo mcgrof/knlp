@@ -58,7 +58,11 @@ defconfig:
 	fi; \
 	echo "Loading defconfig: $(DEFCONFIG) from $$found_config"; \
 	cp "$$found_config" $(CONFIG_FILE); \
-	$(PYCONF) $(KCONFIG) --olddefconfig --config=$(CONFIG_FILE)
+	if python3 -c "import kconfiglib" 2>/dev/null; then \
+		$(PYCONF) $(KCONFIG) --olddefconfig --config=$(CONFIG_FILE); \
+	else \
+		echo "Note: kconfiglib not installed, using defconfig as-is"; \
+	fi
 
 # Save current config as defconfig
 savedefconfig:
