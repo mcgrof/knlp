@@ -12,6 +12,12 @@
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
+<p align="center">
+  <a href="https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/index.html">
+    <strong>Browse Interactive Demos</strong>
+  </a>
+</p>
+
 ### Research Highlights
 
 | Area | Result | Docs | Demo |
