@@ -21,6 +21,19 @@ Applying Linux kernel development methodologies to machine learning research for
 > **⚡ [Reciprocal Attention](docs/ra.md)**: Learned Q@K.T ↔ K@Q.T alternation achieves **5% better perplexity** and **+2 points HellaSwag** via flatter optimization geometry. Applied to middle layers based on FIM trace analysis. B200x4.
 >
 > **⚡ [Adam State-Based Pruning](docs/adamwprune_variants.md)**: bitter7 achieves **15.6% better perplexity** than magnitude baseline (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring. B200 with torch.compile.
+>
+> **⚡ [Page-Aware GNN Training](gnn/docs/gnn-fraud.md)**: METIS partitioning + page-aware batching achieves **4× better I/O locality** (6.8× vs 28.5× read amplification) with **zero quality loss** on DGraphFin fraud detection. ([interactive demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/gnn_fraud_visualization.html))
+
+### Interactive Visualizations
+
+| Demo | Description |
+|------|-------------|
+| [FIM-Adam](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fisher_adam_visualization.html) | Why bitter7 pruning works — FIM ≈ Adam exp_avg_sq |
+| [Quantization](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fim_quantization_visualization.html) | FIM-guided precision allocation for mobile |
+| [KVSplice](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/kvsplice_visualization.html) | FIM-guided KV cache compression |
+| [Reciprocal Attention](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/ra_visualization.html) | Learned Q@K.T ↔ K@Q.T alternation |
+| [Memory Tiering](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/tiering_visualization.html) | FIM-guided hierarchical placement |
+| [GNN Fraud](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/gnn_fraud_visualization.html) | Page-aware training for fraud detection |
 
 ## Development Philosophy
 
