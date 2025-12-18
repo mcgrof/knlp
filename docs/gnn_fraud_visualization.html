@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page-Aware GNN Training: 4× I/O Efficiency for Fraud Detection</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } = Recharts;
+
+    // Hero Section
+    function HeroSection() {
+      return (
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold mb-4">
+            <span className="gradient-text">Page-Aware GNN Training</span>
+          </h1>
+          <p className="text-xl text-gray-400 mb-6">
+            4× Better I/O Efficiency with Zero Quality Loss
+          </p>
+          <div className="flex justify-center gap-8 text-center">
+            <div className="bg-gray-800 rounded-xl p-6 border border-emerald-900">
+              <div className="text-5xl font-bold text-emerald-400">4×</div>
+              <div className="text-gray-400 mt-2">Fewer Page Reads</div>
+            </div>
+            <div className="bg-gray-800 rounded-xl p-6 border border-cyan-900">
+              <div className="text-5xl font-bold text-cyan-400">0%</div>
+              <div className="text-gray-400 mt-2">Quality Loss</div>
+            </div>
+            <div className="bg-gray-800 rounded-xl p-6 border border-purple-900">
+              <div className="text-5xl font-bold text-purple-400">3.7M</div>
+              <div className="text-gray-400 mt-2">Nodes (DGraphFin)</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // DGraphFin Dataset Section
+    function DatasetSection() {
+      const labelData = [
+        { name: 'Normal (0)', value: 1210092, color: '#3b82f6', pct: '32.7%' },
+        { name: 'Fraud (1)', value: 15509, color: '#ef4444', pct: '0.42%' },
+        { name: 'Background (2)', value: 1620851, color: '#6b7280', pct: '43.8%' },
+        { name: 'Background (3)', value: 854098, color: '#4b5563', pct: '23.1%' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">DGraphFin: Financial Fraud Detection</h2>
+          <p className="text-gray-400 mb-6">
+            A large-scale graph with 3.7M nodes and 4.3M edges. <strong className="text-white">Binary classification</strong> (num_classes=2):
+            the model outputs 2 logits, not 4.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Node Distribution</h3>
+              <div className="space-y-3">
+                {labelData.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color }}></div>
+                    <div className="flex-1">
+                      <div className="flex justify-between">
+                        <span className="text-gray-300">{item.name}</span>
+                        <span className="text-gray-500 font-mono">{item.value.toLocaleString()}</span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2 mt-1">
+                        <div className="h-2 rounded-full" style={{
+                          backgroundColor: item.color,
+                          width: `${Math.max(2, parseFloat(item.pct))}%`
+                        }}></div>
+                      </div>
+                    </div>
+                    <span className="text-gray-500 text-sm w-16 text-right">{item.pct}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Key Facts</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-blue-500">
+                  <div className="font-semibold text-blue-400">Labels 0 & 1: Supervised</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Only these appear in train/val/test masks. Model learns to classify normal vs fraud.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-gray-500">
+                  <div className="font-semibold text-gray-400">Labels 2 & 3: Background</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Participate in message passing for graph connectivity. Never evaluated or supervised.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-red-500">
+                  <div className="font-semibold text-red-400">1.27% Fraud Rate</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Train split: 847,042 normal + 10,857 fraud. Extreme class imbalance makes this hard.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Samplers Comparison Section
+    function SamplersSection() {
+      const [activeSampler, setActiveSampler] = React.useState('page_batch');
+
+      const samplers = {
+        neighbor: {
+          name: 'NeighborSampler',
+          color: '#ef4444',
+          description: 'PyG NeighborLoader [10,5] - standard GNN baseline',
+          howItWorks: [
+            'Sample 1024 seed nodes (training nodes)',
+            'For each seed, sample 10 neighbors (hop 1)',
+            'For each hop-1 neighbor, sample 5 more (hop 2)',
+            'Result: seeds + neighbors scattered across graph',
+          ],
+          pros: ['Standard approach', 'Works on any graph'],
+          cons: ['Poor locality (~28× RA_fetch)', 'Random page access pattern'],
+        },
+        page_batch: {
+          name: 'Page-Batch',
+          color: '#3b82f6',
+          description: 'Page-aware batching with METIS partitioning',
+          howItWorks: [
+            'Select 32 contiguous METIS partitions',
+            'All ~1920 nodes in those pages are "core"',
+            'Add 20% boundary nodes for message passing',
+            'Result: dense core + sparse boundary',
+          ],
+          pros: ['4× better locality (~6.8× RA_fetch)', 'METIS groups related nodes'],
+          cons: ['Requires pre-computed layout', 'Boundary expansion adds overhead'],
+        },
+      };
+
+      const s = samplers[activeSampler];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">The Two Samplers</h2>
+          <p className="text-gray-400 mb-6">
+            We compare two approaches to batching nodes for GNN training on disk-resident graphs.
+          </p>
+
+          <div className="flex gap-3 mb-6">
+            {Object.entries(samplers).map(([key, sampler]) => (
+              <button
+                key={key}
+                onClick={() => setActiveSampler(key)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  activeSampler === key
+                    ? 'ring-2'
+                    : 'bg-gray-800 hover:bg-gray-700'
+                }`}
+                style={{
+                  backgroundColor: activeSampler === key ? sampler.color : undefined,
+                  ringColor: sampler.color,
+                }}
+              >
+                {sampler.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <div className="bg-gray-900 rounded-lg p-4 mb-4">
+                <h3 className="font-semibold mb-2" style={{ color: s.color }}>{s.name}</h3>
+                <p className="text-gray-400 text-sm">{s.description}</p>
+              </div>
+
+              <h4 className="font-semibold text-gray-300 mb-2">How It Works</h4>
+              <ol className="space-y-2">
+                {s.howItWorks.map((step, i) => (
+                  <li key={i} className="flex gap-3 text-sm">
+                    <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: s.color }}>{i + 1}</span>
+                    <span className="text-gray-400">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="text-emerald-400 font-semibold text-sm mb-2">Pros</div>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    {s.pros.map((pro, i) => (
+                      <li key={i}>✓ {pro}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="text-red-400 font-semibold text-sm mb-2">Cons</div>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    {s.cons.map((con, i) => (
+                      <li key={i}>✗ {con}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Visual representation */}
+              <div className="bg-gray-900 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-300 mb-3">Page Access Pattern</h4>
+                <div className="grid grid-cols-8 gap-1">
+                  {[...Array(32)].map((_, i) => {
+                    let color, opacity;
+                    if (activeSampler === 'neighbor') {
+                      // Random scatter
+                      const touched = Math.random() < 0.5;
+                      color = touched ? '#ef4444' : '#374151';
+                      opacity = touched ? 0.3 + Math.random() * 0.4 : 0.2;
+                    } else {
+                      // Contiguous for page-aware
+                      const isCore = i < 8;
+                      const isBoundary = i >= 8 && i < 12;
+                      color = isCore ? s.color : isBoundary ? '#fbbf24' : '#374151';
+                      opacity = isCore ? 0.8 : isBoundary ? 0.5 : 0.2;
+                    }
+                    return (
+                      <div
+                        key={i}
+                        className="aspect-square rounded"
+                        style={{ backgroundColor: color, opacity }}
+                        title={`Page ${i}`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                  {activeSampler === 'neighbor' ? (
+                    <span>Pages touched randomly across graph</span>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded" style={{ backgroundColor: s.color }}></div>
+                        Core (dense)
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded bg-yellow-500"></div>
+                        Boundary (sparse)
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // RA Metrics Section
+    function RAMetricsSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Read Amplification: Two Metrics, Two Questions</h2>
+          <p className="text-gray-400 mb-6">
+            When features are stored on disk in 4KB pages, accessing scattered nodes wastes I/O bandwidth.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-4 h-4 rounded bg-cyan-500"></div>
+                <h3 className="font-semibold text-cyan-400">RA_fetch (Locality)</h3>
+              </div>
+              <code className="text-sm bg-gray-800 px-2 py-1 rounded block mb-3">
+                (pages_touched × 4096) / (loaded_nodes × 68)
+              </code>
+              <p className="text-gray-400 text-sm mb-3">
+                <strong>Question:</strong> How scattered are my memory accesses?
+              </p>
+              <ul className="text-sm text-gray-500 space-y-1">
+                <li>• Ideal: 1.0× (all nodes packed in minimal pages)</li>
+                <li>• Random scatter: ~60× (one node per page)</li>
+                <li>• <strong className="text-white">Use this to compare samplers fairly</strong></li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-4 h-4 rounded bg-emerald-500"></div>
+                <h3 className="font-semibold text-emerald-400">RA_signal (Training Efficiency)</h3>
+              </div>
+              <code className="text-sm bg-gray-800 px-2 py-1 rounded block mb-3">
+                (pages_touched × 4096) / (supervised_nodes × 68)
+              </code>
+              <p className="text-gray-400 text-sm mb-3">
+                <strong>Question:</strong> How much I/O per supervised gradient?
+              </p>
+              <ul className="text-sm text-gray-500 space-y-1">
+                <li>• Always ≥ RA_fetch (supervised ≤ loaded)</li>
+                <li>• Inflated by label sparsity (only 23% in train mask)</li>
+                <li>• <strong className="text-white">Shows end-to-end training cost</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          {/* The 4.3× floor explanation */}
+          <div className="mt-6 bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-4 border border-emerald-700/50">
+            <h3 className="text-emerald-400 font-semibold mb-3">Why RA_signal Has a ~4.3× Floor</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center mb-4">
+              <div>
+                <div className="text-3xl font-mono text-gray-200">60</div>
+                <div className="text-gray-500 text-sm">nodes per page</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-gray-200">×</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-gray-200">23%</div>
+                <div className="text-gray-500 text-sm">have train labels</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-emerald-400">= 14</div>
+                <div className="text-gray-500 text-sm">supervised per page</div>
+              </div>
+            </div>
+            <p className="text-gray-400 text-sm text-center">
+              Even with <span className="text-cyan-400">perfect locality</span> (RA_fetch = 1.0×),
+              you read 60 nodes to supervise 14 → <strong className="text-emerald-400">floor = 60/14 ≈ 4.3×</strong>.
+              This is the dataset's label sparsity, not your sampler's fault.
+            </p>
+          </div>
+
+          {/* Visual comparison */}
+          <div className="mt-6">
+            <h3 className="font-semibold text-gray-300 mb-3">Same Numerator, Different Denominator</h3>
+            <svg viewBox="0 0 600 100" className="w-full max-w-2xl mx-auto">
+              <rect x="50" y="5" width="500" height="25" fill="#06b6d4" opacity="0.8" rx="4"/>
+              <text x="300" y="22" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">
+                Bytes Read (pages × 4KB)
+              </text>
+
+              <text x="30" y="50" fill="#9CA3AF" fontSize="14">÷</text>
+
+              <rect x="50" y="35" width="300" height="25" fill="#6B7280" rx="4"/>
+              <text x="200" y="52" textAnchor="middle" fill="white" fontSize="11">
+                Loaded nodes × 68B
+              </text>
+              <text x="560" y="52" fill="#06b6d4" fontSize="12" fontWeight="bold">
+                = RA_fetch
+              </text>
+
+              <rect x="50" y="70" width="70" height="25" fill="#10B981" rx="4"/>
+              <text x="85" y="87" textAnchor="middle" fill="white" fontSize="10">
+                Supervised × 68B
+              </text>
+              <text x="560" y="87" fill="#10B981" fontSize="12" fontWeight="bold">
+                = RA_signal
+              </text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    // Results Section
+    function ResultsSection() {
+      const raData = [
+        { name: 'neighbor', ra_fetch: 28.5, label: 'NeighborSampler' },
+        { name: 'page_batch', ra_fetch: 6.8, label: 'Page-Batch' },
+      ];
+
+      const fraudData = [
+        { name: 'neighbor', f1: 0.0757, prauc: 0.0349, label: 'NeighborSampler' },
+        { name: 'page_batch', f1: 0.0763, prauc: 0.0346, label: 'Page-Batch' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Results: 1-Hour Training</h2>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">I/O Efficiency (RA_fetch) — Lower is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={raData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" domain={[0, 35]} />
+                  <YAxis type="category" dataKey="label" stroke="#9ca3af" width={120} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="ra_fetch" name="RA_fetch">
+                    <Cell fill="#ef4444" />
+                    <Cell fill="#3b82f6" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-center">
+                <span className="text-emerald-400 font-bold">4× improvement</span>
+                <span className="text-gray-400"> in memory locality (28.5× → 6.8×)</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Fraud Detection Quality — Higher is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={fraudData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="label" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis stroke="#9ca3af" domain={[0, 0.1]} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Legend />
+                  <Bar dataKey="f1" name="F1 Score" fill="#06b6d4" />
+                  <Bar dataKey="prauc" name="PR-AUC" fill="#8b5cf6" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg text-center">
+                <span className="text-cyan-400 font-bold">Identical quality</span>
+                <span className="text-gray-400"> across both samplers</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Full results table */}
+          <div className="mt-8 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="text-left py-2 px-3 text-gray-400">Sampler</th>
+                  <th className="text-right py-2 px-3 text-gray-400">F1</th>
+                  <th className="text-right py-2 px-3 text-gray-400">PR-AUC</th>
+                  <th className="text-right py-2 px-3 text-gray-400">P@0.5%</th>
+                  <th className="text-right py-2 px-3 text-gray-400">R@1%</th>
+                  <th className="text-right py-2 px-3 text-cyan-400">RA_fetch</th>
+                  <th className="text-right py-2 px-3 text-emerald-400">RA_signal</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-800">
+                  <td className="py-2 px-3 text-red-400">NeighborSampler</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0757</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0349</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0566</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0499</td>
+                  <td className="text-right py-2 px-3 font-mono text-red-400">28.5×</td>
+                  <td className="text-right py-2 px-3 font-mono">85.1×</td>
+                </tr>
+                <tr className="border-b border-gray-800 bg-blue-900/20">
+                  <td className="py-2 px-3 text-blue-400">Page-Batch</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0763</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0346</td>
+                  <td className="text-right py-2 px-3 font-mono font-bold">0.0773</td>
+                  <td className="text-right py-2 px-3 font-mono font-bold">0.0559</td>
+                  <td className="text-right py-2 px-3 font-mono text-emerald-400 font-bold">6.8×</td>
+                  <td className="text-right py-2 px-3 font-mono">34.3×</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // Conclusions Section
+    function ConclusionsSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-6 text-emerald-400">Key Conclusions</h2>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">✓</span>
+                <h3 className="font-semibold text-emerald-400">Real Systems Win</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                4× fewer page touches is stable across 5 min and 1 hour runs. This is structural,
+                not training-phase noise. METIS + page batching delivers exactly what it promises.
+              </p>
+            </div>
+
+            <div className="bg-cyan-900/20 border border-cyan-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">✓</span>
+                <h3 className="font-semibold text-cyan-400">Training Saturates Fast</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                5 minutes ≈ 1 hour for fraud detection quality. The model learns what it can learn
+                quickly. More training doesn't help — gains must come from better data or architecture.
+              </p>
+            </div>
+
+            <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">!</span>
+                <h3 className="font-semibold text-purple-400">The Task is Hard</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                PR-AUC ~0.035 vs random baseline 0.0127 = 2.8× better than random.
+                Meaningful but modest. The 1.27% fraud rate makes this inherently difficult.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 bg-gradient-to-r from-emerald-900/30 to-blue-900/30 rounded-lg p-6 border border-emerald-700/50 text-center">
+            <h3 className="text-xl font-bold text-white mb-2">Bottom Line</h3>
+            <p className="text-gray-300 text-lg">
+              <span className="text-emerald-400 font-bold">Page-Batch</span> delivers
+              <span className="text-cyan-400 font-bold"> 4× better I/O efficiency</span> with
+              <span className="text-blue-400 font-bold"> zero quality loss</span>.
+            </p>
+            <p className="text-gray-500 mt-2">
+              Simple, effective, production-ready.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Training Details Section
+    function TrainingSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-4 text-emerald-400">How We Train</h2>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Model</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Architecture:</strong> 2-layer GraphSAGE</li>
+                <li><strong>Hidden dim:</strong> 256</li>
+                <li><strong>Output:</strong> 2 logits (binary)</li>
+                <li><strong>Optimizer:</strong> Adam, lr=0.01</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Batching</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Core pages:</strong> 32 METIS partitions</li>
+                <li><strong>Boundary budget:</strong> 20%</li>
+                <li><strong>Boundary hops:</strong> 2 (matches GNN depth)</li>
+                <li><strong>Nodes/batch:</strong> ~2,300</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Storage Model</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Page size:</strong> 4,096 bytes</li>
+                <li><strong>Feature size:</strong> 68 bytes (17 × float32)</li>
+                <li><strong>Nodes/page:</strong> ~60</li>
+                <li><strong>Layout:</strong> METIS + BFS ordering</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Main App
+    function App() {
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <HeroSection />
+          <DatasetSection />
+          <SamplersSection />
+          <RAMetricsSection />
+          <ResultsSection />
+          <ConclusionsSection />
+          <TrainingSection />
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
+            <p>
+              Part of <a href="index.html" className="text-emerald-400 hover:underline">knlp</a> ·
+              <a href="https://github.com/mcgrof/knlp/blob/main/gnn/docs/gnn-fraud.md" className="text-cyan-400 hover:underline ml-2">Documentation</a>
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>

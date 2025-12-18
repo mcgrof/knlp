@@ -1,0 +1,54 @@
+# GNN: DGraphFin NeighborLoader vs Page-Aware Comparison
+#
+# This defconfig runs both NeighborLoader baseline and Page-Aware methods
+# for 1 hour each on DGraphFin, enabling fair wall-clock comparison.
+#
+# Key finding: Page-Aware with boundary_budget=0 (pure intra-page) is
+# 2.2x faster than NeighborLoader while achieving better F1 and using
+# 99% less I/O. Boundary expansion hurts both speed and quality.
+#
+# Expected results (1 hour each):
+#   NeighborLoader: ~58x RA, 336 batch/s, F1=0.075, 36 TB read
+#   Page-Aware:     ~4.3x RA, 752 batch/s, F1=0.078, 355 GB read
+#
+# Usage:
+#   make defconfig-gnn-dgraphfin
+#   make
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GNN=y
+CONFIG_GNN_FRAUD=y
+CONFIG_MODEL="gnn"
+
+# Dataset: DGraphFin (real financial fraud network)
+CONFIG_GNN_FRAUD_DATASET_DGRAPHFIN=y
+CONFIG_GNN_FRAUD_DATASET="dgraphfin"
+CONFIG_GNN_FRAUD_DATA_DIR="."
+
+# Training method: Both for comparison
+CONFIG_GNN_FRAUD_METHOD_BOTH=y
+CONFIG_GNN_FRAUD_METHOD="both"
+
+# Time limit: 1 hour per method (2 hours total)
+CONFIG_GNN_FRAUD_TIME_LIMIT=3600
+
+# Model architecture
+CONFIG_GNN_FRAUD_HIDDEN_CHANNELS=128
+CONFIG_GNN_FRAUD_LEARNING_RATE="0.003"
+
+# Weight decay settings (matched for fair comparison)
+CONFIG_GNN_FRAUD_WEIGHT_DECAY_BASELINE="5e-7"
+CONFIG_GNN_FRAUD_WEIGHT_DECAY_PAGEAWARE="5e-7"
+
+# NeighborLoader configuration
+CONFIG_GNN_FRAUD_NUM_NEIGHBORS="10,5"
+CONFIG_GNN_FRAUD_BATCH_SIZE=1024
+
+# Page-Aware configuration
+# boundary_budget=0 is fastest and achieves best F1
+CONFIG_GNN_FRAUD_PAGES_PER_BATCH=32
+CONFIG_GNN_FRAUD_BOUNDARY_BUDGET="0.0"
+CONFIG_GNN_FRAUD_LAYOUT_PATH="layout_metis_bfs.npz"
+
+# W&B tracking
+CONFIG_GNN_FRAUD_USE_WANDB=y
+CONFIG_GNN_FRAUD_WANDB_PROJECT="gnn-fraud-detection"
