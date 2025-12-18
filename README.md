@@ -13,7 +13,7 @@
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
 
 <p align="center">
-  <a href="https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/index.html">
+  <a href="https://mcgrof.github.io/knlp/index.html">
     <strong>Browse Interactive Demos</strong>
   </a>
 </p>
@@ -22,12 +22,12 @@ Applying Linux kernel development methodologies to machine learning research for
 
 | Area | Result | Docs | Demo |
 |------|--------|------|------|
-| **Unified Signal** | [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — unifies compression, pruning, and tiering | [docs](docs/hierarchical-tiering.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fisher_adam_visualization.html) |
-| **FIM-Guided Quantization** | Diagonal Fisher identifies critical tensors. **1.26% better PPL** at **1.8% size increase** | [docs](docs/mobile-weight-packing.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/fim_quantization_visualization.html) |
-| **KVSplice** | **~20% extra compression on top of MLA** (7.2x vs 6x), **25% better PPL**, **+7 HellaSwag** | [docs](docs/kvsplice/README.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/kvsplice_visualization.html) |
-| **Reciprocal Attention** | Learned Q@K.T ↔ K@Q.T alternation. **5% better PPL**, **+2 HellaSwag** | [docs](docs/ra.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/ra_visualization.html) |
-| **Adam State-Based Pruning** | bitter7 achieves **15.6% better PPL** than magnitude baseline (37.28 vs 44.15) | [docs](docs/adamwprune_variants.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/tiering_visualization.html) |
-| **Page-Aware GNN Training** | **4× better I/O locality** (6.8× vs 28.5× RA) with **zero quality loss** on DGraphFin | [docs](gnn/docs/gnn-fraud.md) | [demo](https://htmlpreview.github.io/?https://github.com/mcgrof/knlp/blob/main/docs/gnn_fraud_visualization.html) |
+| **Unified Signal** | [FIM diagonal ≈ Adam exp_avg_sq](https://arxiv.org/abs/2507.18807) — unifies compression, pruning, and tiering | [docs](docs/hierarchical-tiering.md) | [demo](https://mcgrof.github.io/knlp/fisher_adam_visualization.html) |
+| **FIM-Guided Quantization** | Diagonal Fisher identifies critical tensors. **1.26% better PPL** at **1.8% size increase** | [docs](docs/mobile-weight-packing.md) | [demo](https://mcgrof.github.io/knlp/fim_quantization_visualization.html) |
+| **KVSplice** | **~20% extra compression on top of MLA** (7.2x vs 6x), **25% better PPL**, **+7 HellaSwag** | [docs](docs/kvsplice/README.md) | [demo](https://mcgrof.github.io/knlp/kvsplice_visualization.html) |
+| **Reciprocal Attention** | Learned Q@K.T ↔ K@Q.T alternation. **5% better PPL**, **+2 HellaSwag** | [docs](docs/ra.md) | [demo](https://mcgrof.github.io/knlp/ra_visualization.html) |
+| **Adam State-Based Pruning** | bitter7 achieves **15.6% better PPL** than magnitude baseline (37.28 vs 44.15) | [docs](docs/adamwprune_variants.md) | [demo](https://mcgrof.github.io/knlp/tiering_visualization.html) |
+| **Page-Aware GNN Training** | **4× better I/O locality** (6.8× vs 28.5× RA) with **zero quality loss** on DGraphFin | [docs](gnn/docs/gnn-fraud.md) | [demo](https://mcgrof.github.io/knlp/gnn_fraud_visualization.html) |
 
 ## Development Philosophy
 
