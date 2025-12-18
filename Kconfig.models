@@ -61,6 +61,13 @@ config MODEL_SELECT_GPT2
 	  Autoregressive language modeling on text datasets.
 	  Parameters: 124M (default GPT-2 size)
 
+config MODEL_SELECT_GNN
+	bool "GNN (Graph Neural Networks)"
+	help
+	  Graph Neural Network training with page-aware mini-batch sampling.
+	  Supports fraud detection (DGraphFin, YelpChi, Amazon, Elliptic)
+	  and general node classification (ogbn-products, ogbn-proteins).
+
 endchoice
 
 endif # MODEL_MODE_SINGLE
@@ -121,6 +128,11 @@ config MODEL_GPT2
 	default y if MODEL_MODE_MULTIPLE && MODEL_ENABLE_GPT2
 	default n
 
+config MODEL_GNN
+	bool
+	default y if MODEL_MODE_SINGLE && MODEL_SELECT_GNN
+	default n
+
 # Default model string
 config MODEL
 	string
@@ -128,6 +140,7 @@ config MODEL
 	default "resnet18" if MODEL_MODE_SINGLE && MODEL_SELECT_RESNET18
 	default "resnet50" if MODEL_MODE_SINGLE && MODEL_SELECT_RESNET50
 	default "gpt2" if MODEL_MODE_SINGLE && MODEL_SELECT_GPT2
+	default "gnn" if MODEL_MODE_SINGLE && MODEL_SELECT_GNN
 	default "lenet5" if MODEL_MODE_MULTIPLE
 
 # Test matrix model configuration (for backward compatibility)
@@ -173,6 +186,10 @@ endif
 
 if MODEL_GPT2 || TEST_MODEL_GPT2
 source "gpt2/Kconfig"
+endif
+
+if MODEL_GNN
+source "gnn/Kconfig"
 endif
 
 endmenu

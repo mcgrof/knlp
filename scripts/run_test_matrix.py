@@ -1983,6 +1983,108 @@ def copy_baseline_run_if_needed(config, verbose=True):
         return None
 
 
+def run_gnn_benchmark(config, args):
+    """Run GNN benchmark instead of test matrix.
+
+    GNN benchmarks have their own configuration and don't fit the
+    standard optimizer/pruning test matrix. This function extracts the
+    relevant config values and invokes the benchmark directly.
+    """
+    print("=" * 60)
+    print("GNN Benchmark")
+    print("=" * 60)
+
+    # Check if layout file exists, build if not
+    layout_path = str(config.get("GNN_FRAUD_LAYOUT_PATH", "layout_metis_bfs.npz")).strip('"')
+    # Data directory - check config or use current directory
+    data_dir = str(config.get("GNN_FRAUD_DATA_DIR", ".")).strip('"')
+    if not os.path.exists(layout_path):
+        print(f"Layout file not found: {layout_path}")
+        print("Building layout file (this may take a few minutes)...")
+        build_cmd = [
+            "python3", "gnn/scripts/build_graph_layout.py",
+            "--method", "metis",
+            "--output", layout_path,
+            "--data-dir", data_dir,
+        ]
+        print(f"Running: {' '.join(build_cmd)}")
+        if not args.dry_run:
+            result = subprocess.run(build_cmd)
+            if result.returncode != 0:
+                print("ERROR: Failed to build layout file")
+                sys.exit(result.returncode)
+        print()
+
+    # Build command from config
+    cmd = ["python3", "gnn/benchmark.py"]
+
+    # Time limit
+    time_limit = config.get("GNN_FRAUD_TIME_LIMIT", 3600)
+    cmd.extend(["--time", str(time_limit)])
+
+    # Method (neighborloader, pageaware, or both)
+    method = config.get("GNN_FRAUD_METHOD", "both")
+    if method == "neighborloader":
+        cmd.append("--only-baseline")
+    elif method == "pageaware":
+        cmd.append("--only-pageaware")
+    # "both" is the default, no flag needed
+
+    # Model architecture
+    if "GNN_FRAUD_HIDDEN_CHANNELS" in config:
+        cmd.extend(["--hidden-channels", str(config["GNN_FRAUD_HIDDEN_CHANNELS"])])
+
+    lr = config.get("GNN_FRAUD_LEARNING_RATE", "0.003")
+    cmd.extend(["--lr", str(lr).strip('"')])
+
+    # Weight decay
+    if "GNN_FRAUD_WEIGHT_DECAY_BASELINE" in config:
+        wd = str(config["GNN_FRAUD_WEIGHT_DECAY_BASELINE"]).strip('"')
+        cmd.extend(["--weight-decay-baseline", wd])
+    if "GNN_FRAUD_WEIGHT_DECAY_PAGEAWARE" in config:
+        wd = str(config["GNN_FRAUD_WEIGHT_DECAY_PAGEAWARE"]).strip('"')
+        cmd.extend(["--weight-decay-pageaware", wd])
+
+    # NeighborLoader settings
+    if "GNN_FRAUD_NUM_NEIGHBORS" in config:
+        neighbors = str(config["GNN_FRAUD_NUM_NEIGHBORS"]).strip('"')
+        cmd.append("--num-neighbors")
+        cmd.extend(neighbors.split(","))
+    if "GNN_FRAUD_BATCH_SIZE" in config:
+        cmd.extend(["--batch-size", str(config["GNN_FRAUD_BATCH_SIZE"])])
+
+    # Page-Aware settings
+    if "GNN_FRAUD_PAGES_PER_BATCH" in config:
+        cmd.extend(["--pages-per-batch", str(config["GNN_FRAUD_PAGES_PER_BATCH"])])
+    if "GNN_FRAUD_BOUNDARY_BUDGET" in config:
+        budget = str(config["GNN_FRAUD_BOUNDARY_BUDGET"]).strip('"')
+        cmd.extend(["--boundary-budget", budget])
+    if "GNN_FRAUD_LAYOUT_PATH" in config:
+        layout = str(config["GNN_FRAUD_LAYOUT_PATH"]).strip('"')
+        cmd.extend(["--layout", layout])
+
+    # Data directory
+    cmd.extend(["--data-dir", data_dir])
+
+    # W&B settings
+    if config.get("GNN_FRAUD_USE_WANDB") != "y":
+        cmd.append("--no-wandb")
+    if "GNN_FRAUD_WANDB_PROJECT" in config:
+        project = str(config["GNN_FRAUD_WANDB_PROJECT"]).strip('"')
+        cmd.extend(["--wandb-project", project])
+
+    print(f"Running: {' '.join(cmd)}")
+    print()
+
+    if args.dry_run:
+        print("Dry run - would execute the above command")
+        return
+
+    # Run the benchmark
+    result = subprocess.run(cmd)
+    sys.exit(result.returncode)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run test matrix for AdamWPrune training"
@@ -2512,6 +2614,15 @@ def main():
         else:
             config = parse_kconfig(args.config)
             config_source = args.config
+
+        # Check if this is a GNN benchmark - handle separately
+        if (
+            config.get("MODEL_SELECT_GNN") == "y"
+            or config.get("GNN_FRAUD") == "y"
+            or config.get("MODEL") == "gnn"
+        ):
+            run_gnn_benchmark(config, args)
+            return
 
         # Copy baseline run if BASELINE_RUN_ID is set
         copy_baseline_run_if_needed(config, verbose=True)
