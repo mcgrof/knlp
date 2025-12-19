@@ -19,6 +19,7 @@
 #include <numeric>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 
 
@@ -451,6 +452,146 @@ inline double get_time_ms() {
 }
 
 
+/**
+ * RelatedEntityLookup - Cross-entity retrieval for locality stress testing
+ *
+ * Simulates production patterns where each event requires fetching related
+ * entities' states (e.g., for risk aggregation, pattern detection).
+ *
+ * Uses a simple hash-based mapping to assign k related entities per entity.
+ * This exercises data locality without requiring actual relationship data.
+ */
+class RelatedEntityLookup {
+public:
+    RelatedEntityLookup(int64_t num_entities, int64_t k_related, int64_t seed = 42)
+        : num_entities_(num_entities),
+          k_related_(k_related) {
+
+        if (k_related <= 0) {
+            return;  // No related entities needed
+        }
+
+        // Pre-compute related entities for each entity using hash-based mapping
+        // This creates stable, reproducible relationships
+        related_.resize(num_entities);
+        std::mt19937_64 rng(seed);
+
+        for (int64_t i = 0; i < num_entities; i++) {
+            related_[i].reserve(k_related);
+
+            // Generate k unique related entities (excluding self)
+            std::unordered_set<int64_t> seen;
+            seen.insert(i);  // Exclude self
+
+            while (static_cast<int64_t>(related_[i].size()) < k_related) {
+                // Hash-based selection with RNG fallback
+                int64_t candidate = rng() % num_entities;
+                if (seen.find(candidate) == seen.end()) {
+                    related_[i].push_back(candidate);
+                    seen.insert(candidate);
+                }
+            }
+        }
+    }
+
+    /**
+     * Get related entity indices for a single entity.
+     * Returns tensor of shape [k_related].
+     */
+    torch::Tensor get_related(int64_t entity_idx) {
+        if (k_related_ <= 0 || entity_idx < 0 || entity_idx >= num_entities_) {
+            return torch::empty({0}, torch::TensorOptions().dtype(torch::kInt64));
+        }
+
+        auto result = torch::empty({k_related_},
+                                   torch::TensorOptions().dtype(torch::kInt64));
+        auto ptr = result.data_ptr<int64_t>();
+
+        for (int64_t i = 0; i < k_related_; i++) {
+            ptr[i] = related_[entity_idx][i];
+        }
+
+        return result;
+    }
+
+    /**
+     * Get related entity indices for a batch of entities.
+     * Returns tensor of shape [batch_size, k_related].
+     */
+    torch::Tensor get_batch_related(torch::Tensor entity_indices) {
+        entity_indices = entity_indices.to(torch::kCPU).to(torch::kInt64).contiguous();
+        int64_t batch_size = entity_indices.size(0);
+
+        if (k_related_ <= 0) {
+            return torch::empty({batch_size, 0},
+                               torch::TensorOptions().dtype(torch::kInt64));
+        }
+
+        auto idx_ptr = entity_indices.data_ptr<int64_t>();
+        auto result = torch::empty({batch_size, k_related_},
+                                   torch::TensorOptions().dtype(torch::kInt64));
+        auto result_ptr = result.data_ptr<int64_t>();
+
+        #pragma omp parallel for
+        for (int64_t i = 0; i < batch_size; i++) {
+            int64_t entity_idx = idx_ptr[i];
+            if (entity_idx >= 0 && entity_idx < num_entities_) {
+                for (int64_t j = 0; j < k_related_; j++) {
+                    result_ptr[i * k_related_ + j] = related_[entity_idx][j];
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get all unique related entities for a batch (for cache tracking).
+     * Returns flattened tensor of unique entity indices.
+     */
+    torch::Tensor get_unique_related(torch::Tensor entity_indices) {
+        entity_indices = entity_indices.to(torch::kCPU).to(torch::kInt64).contiguous();
+        int64_t batch_size = entity_indices.size(0);
+
+        if (k_related_ <= 0) {
+            return torch::empty({0}, torch::TensorOptions().dtype(torch::kInt64));
+        }
+
+        std::unordered_set<int64_t> unique_set;
+        auto idx_ptr = entity_indices.data_ptr<int64_t>();
+
+        for (int64_t i = 0; i < batch_size; i++) {
+            int64_t entity_idx = idx_ptr[i];
+            if (entity_idx >= 0 && entity_idx < num_entities_) {
+                for (int64_t j = 0; j < k_related_; j++) {
+                    unique_set.insert(related_[entity_idx][j]);
+                }
+            }
+        }
+
+        auto result = torch::empty({static_cast<int64_t>(unique_set.size())},
+                                   torch::TensorOptions().dtype(torch::kInt64));
+        auto ptr = result.data_ptr<int64_t>();
+
+        int64_t idx = 0;
+        for (int64_t entity : unique_set) {
+            ptr[idx++] = entity;
+        }
+
+        return result;
+    }
+
+    int64_t k_related() const { return k_related_; }
+    int64_t num_entities() const { return num_entities_; }
+
+private:
+    int64_t num_entities_;
+    int64_t k_related_;
+    std::vector<std::vector<int64_t>> related_;
+    std::unordered_set<int64_t> seen_;  // Temp for unique computation
+};
+
+
 // Python bindings
 PYBIND11_MODULE(amex_sampler_cpp, m) {
     m.doc() = "AMEX Credit-Default Streaming Benchmark - C++ Samplers";
@@ -511,6 +652,18 @@ PYBIND11_MODULE(amex_sampler_cpp, m) {
         .def("get_percentiles", &LatencyTracker::get_percentiles)
         .def("count", &LatencyTracker::count)
         .def("mean", &LatencyTracker::mean);
+
+    // RelatedEntityLookup
+    py::class_<RelatedEntityLookup>(m, "RelatedEntityLookup")
+        .def(py::init<int64_t, int64_t, int64_t>(),
+             py::arg("num_entities"),
+             py::arg("k_related"),
+             py::arg("seed") = 42)
+        .def("get_related", &RelatedEntityLookup::get_related)
+        .def("get_batch_related", &RelatedEntityLookup::get_batch_related)
+        .def("get_unique_related", &RelatedEntityLookup::get_unique_related)
+        .def("k_related", &RelatedEntityLookup::k_related)
+        .def("num_entities", &RelatedEntityLookup::num_entities);
 
     // Utility functions
     m.def("get_time_ms", &get_time_ms, "Get current time in milliseconds");
