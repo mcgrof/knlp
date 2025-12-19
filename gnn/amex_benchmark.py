@@ -843,6 +843,11 @@ class StreamingInferenceResult:
     cache_hit_rate: float
     bytes_per_event: float
 
+    # Cross-entity retrieval (k=0 means disabled)
+    k_related: int = 0
+    related_cache_hit_rate: float = 0.0
+    total_entities_fetched: int = 0
+
 
 def infer_stream(
     config: AMEXConfig,
@@ -850,17 +855,24 @@ def infer_stream(
     duration: int = 60,
     use_wandb: bool = True,
     use_cpp_sampler: bool = True,
+    k_related: int = 0,
 ) -> StreamingInferenceResult:
     """
     Streaming inference benchmark with TPS load generator.
 
     Measures end-to-end latency distribution under configurable load.
     Reports p50/p95/p99 latency and achieved throughput.
+
+    Args:
+        k_related: Number of related entities to fetch per event (0=disabled).
+                   Used for cross-entity retrieval locality stress testing.
+                   Higher k increases data locality pressure.
     """
     import time
 
     # Try to use C++ sampler for lower latency
     cpp_available = False
+    related_lookup = None
     if use_cpp_sampler:
         try:
             import sys
@@ -885,6 +897,24 @@ def infer_stream(
     ).to(device)
     model.eval()
 
+    # Setup related entity lookup for cross-entity retrieval
+    num_entities = len(dataset.customer_ids)
+    if k_related > 0:
+        if cpp_available:
+            related_lookup = cpp.RelatedEntityLookup(num_entities, k_related, seed=42)
+            print(f"Cross-entity retrieval: k={k_related} related entities per event")
+        else:
+            # Python fallback for related entity lookup
+            print(f"Cross-entity retrieval (Python): k={k_related}")
+            rng_related = random.Random(42)
+            related_mapping = {}
+            for i in range(num_entities):
+                candidates = list(range(num_entities))
+                candidates.remove(i)
+                related_mapping[i] = rng_related.sample(
+                    candidates, min(k_related, len(candidates))
+                )
+
     # Setup latency tracking
     if cpp_available:
         latency_tracker = cpp.LatencyTracker(duration * target_tps)
@@ -892,15 +922,20 @@ def infer_stream(
         latencies = []
 
     # Setup entity indices for streaming
-    entity_indices = list(range(len(dataset.customer_ids)))
+    entity_indices = list(range(num_entities))
     random.shuffle(entity_indices)
     entity_ptr = 0
 
-    # Cache tracking
+    # Cache tracking (primary entity)
     pages_seen = set()
     total_pages_accessed = 0
     cache_hits = 0
     total_bytes = 0
+
+    # Cache tracking (related entities)
+    related_entities_seen = set()
+    total_related_fetched = 0
+    related_cache_hits = 0
 
     # Event timing
     event_interval = 1.0 / target_tps  # seconds between events
@@ -931,7 +966,7 @@ def infer_stream(
             # Get features for this entity
             window = dataset.get_customer_window(customer_id, config.window_size)
 
-            # Track cache behavior
+            # Track cache behavior (primary entity)
             rows = dataset.customer_rows.get(customer_id, [])
             for r in rows[-config.window_size :]:
                 page = dataset.row_to_page[r]
@@ -941,6 +976,40 @@ def infer_stream(
                 else:
                     pages_seen.add(page)
             total_bytes += config.window_size * config.feature_bytes
+
+            # Cross-entity retrieval (if enabled)
+            if k_related > 0:
+                if cpp_available and related_lookup is not None:
+                    related_indices = related_lookup.get_related(entity_idx)
+                    related_list = related_indices.tolist()
+                else:
+                    related_list = related_mapping.get(entity_idx, [])
+
+                # Fetch related entity windows and track cache
+                for rel_idx in related_list:
+                    total_related_fetched += 1
+                    if rel_idx in related_entities_seen:
+                        related_cache_hits += 1
+                    else:
+                        related_entities_seen.add(rel_idx)
+
+                    # Actually fetch the related entity's window (simulates data access)
+                    rel_customer_id = dataset.customer_ids[rel_idx]
+                    rel_window = dataset.get_customer_window(
+                        rel_customer_id, config.window_size
+                    )
+
+                    # Track page accesses for related entities
+                    rel_rows = dataset.customer_rows.get(rel_customer_id, [])
+                    for r in rel_rows[-config.window_size :]:
+                        page = dataset.row_to_page[r]
+                        total_pages_accessed += 1
+                        if page in pages_seen:
+                            cache_hits += 1
+                        else:
+                            pages_seen.add(page)
+
+                    total_bytes += config.window_size * config.feature_bytes
 
             # Run inference
             x = torch.from_numpy(window).unsqueeze(0).to(device)
@@ -991,6 +1060,11 @@ def infer_stream(
     )
     bytes_per_event = total_bytes / events_processed if events_processed > 0 else 0
 
+    # Related entity cache metrics
+    related_hit_rate = (
+        related_cache_hits / total_related_fetched if total_related_fetched > 0 else 0
+    )
+
     result = StreamingInferenceResult(
         target_tps=target_tps,
         achieved_tps=achieved_tps,
@@ -1003,6 +1077,9 @@ def infer_stream(
         mean_latency=mean_lat,
         cache_hit_rate=cache_hit_rate,
         bytes_per_event=bytes_per_event,
+        k_related=k_related,
+        related_cache_hit_rate=related_hit_rate,
+        total_entities_fetched=total_related_fetched,
     )
 
     # Print results
@@ -1020,21 +1097,28 @@ def infer_stream(
     print(f"\nSystems:")
     print(f"  Cache hit rate: {cache_hit_rate:.2%}")
     print(f"  Bytes/event: {bytes_per_event:.0f}")
+    if k_related > 0:
+        print(f"\nCross-Entity Retrieval (k={k_related}):")
+        print(f"  Related entities fetched: {total_related_fetched:,}")
+        print(f"  Related cache hit rate: {related_hit_rate:.2%}")
 
     if use_wandb and HAS_WANDB:
-        wandb.log(
-            {
-                "infer/target_tps": target_tps,
-                "infer/achieved_tps": achieved_tps,
-                "infer/p50_latency_ms": p50,
-                "infer/p95_latency_ms": p95,
-                "infer/p99_latency_ms": p99,
-                "infer/max_latency_ms": max_lat,
-                "infer/mean_latency_ms": mean_lat,
-                "infer/cache_hit_rate": cache_hit_rate,
-                "infer/bytes_per_event": bytes_per_event,
-            }
-        )
+        log_dict = {
+            "infer/target_tps": target_tps,
+            "infer/achieved_tps": achieved_tps,
+            "infer/p50_latency_ms": p50,
+            "infer/p95_latency_ms": p95,
+            "infer/p99_latency_ms": p99,
+            "infer/max_latency_ms": max_lat,
+            "infer/mean_latency_ms": mean_lat,
+            "infer/cache_hit_rate": cache_hit_rate,
+            "infer/bytes_per_event": bytes_per_event,
+            "infer/k_related": k_related,
+        }
+        if k_related > 0:
+            log_dict["infer/related_cache_hit_rate"] = related_hit_rate
+            log_dict["infer/total_related_fetched"] = total_related_fetched
+        wandb.log(log_dict)
 
     return result
 
@@ -1085,6 +1169,20 @@ def main():
         help="Comma-separated TPS values to sweep (e.g., '1000,5000,10000,50000')",
     )
 
+    # Cross-entity retrieval settings
+    parser.add_argument(
+        "--k-related",
+        type=int,
+        default=0,
+        help="Number of related entities to fetch per event (0=disabled, try 8,16,32)",
+    )
+    parser.add_argument(
+        "--k-sweep",
+        type=str,
+        default=None,
+        help="Comma-separated k values to sweep (e.g., '0,8,16,32')",
+    )
+
     # Ablation and output settings
     parser.add_argument("--ablation", action="store_true", help="Run all samplers")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb")
@@ -1103,7 +1201,54 @@ def main():
 
     # Handle inference mode
     if args.mode == "infer":
-        if args.tps_sweep:
+        if args.k_sweep:
+            # Cross-entity retrieval sweep mode
+            k_values = [int(x.strip()) for x in args.k_sweep.split(",")]
+            results = []
+
+            for k in k_values:
+                print(f"\n{'='*60}")
+                print(f"Cross-entity retrieval: k={k} at {args.target_tps:,} TPS")
+                print(f"{'='*60}")
+
+                if use_wandb:
+                    init_wandb_with_system_metrics(
+                        project=args.wandb_project,
+                        name=f"infer-k{k}-{args.target_tps}tps-{args.time}s",
+                        config=vars(config),
+                        reinit=True,
+                    )
+
+                result = infer_stream(
+                    config,
+                    target_tps=args.target_tps,
+                    duration=args.time,
+                    use_wandb=use_wandb,
+                    k_related=k,
+                )
+                results.append(result)
+
+                if use_wandb:
+                    wandb.finish()
+
+            # Print comparison
+            print(f"\n{'='*60}")
+            print("CROSS-ENTITY RETRIEVAL SWEEP RESULTS")
+            print(f"{'='*60}")
+            print(
+                f"{'k':>4} {'TPS':>12} {'p50':>8} {'p95':>8} {'p99':>8} "
+                f"{'Cache':>8} {'Rel Cache':>10} {'Bytes/evt':>10}"
+            )
+            print("-" * 80)
+            for r in results:
+                print(
+                    f"{r.k_related:>4} {r.achieved_tps:>12,.0f} "
+                    f"{r.p50_latency:>8.3f} {r.p95_latency:>8.3f} {r.p99_latency:>8.3f} "
+                    f"{r.cache_hit_rate:>8.2%} {r.related_cache_hit_rate:>10.2%} "
+                    f"{r.bytes_per_event:>10.0f}"
+                )
+
+        elif args.tps_sweep:
             # TPS sweep mode
             tps_values = [int(x.strip()) for x in args.tps_sweep.split(",")]
             results = []
@@ -1126,6 +1271,7 @@ def main():
                     target_tps=tps,
                     duration=args.time,
                     use_wandb=use_wandb,
+                    k_related=args.k_related,
                 )
                 results.append(result)
 
@@ -1149,9 +1295,10 @@ def main():
         else:
             # Single TPS run
             if use_wandb:
+                k_suffix = f"-k{args.k_related}" if args.k_related > 0 else ""
                 init_wandb_with_system_metrics(
                     project=args.wandb_project,
-                    name=f"infer-{args.target_tps}tps-{args.time}s",
+                    name=f"infer-{args.target_tps}tps{k_suffix}-{args.time}s",
                     config=vars(config),
                 )
 
@@ -1160,6 +1307,7 @@ def main():
                 target_tps=args.target_tps,
                 duration=args.time,
                 use_wandb=use_wandb,
+                k_related=args.k_related,
             )
 
             if use_wandb:
