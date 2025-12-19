@@ -1,5 +1,5 @@
 """
-Build script for page-aware and page-batch sampler C++ extensions.
+Build script for C++ sampler extensions.
 
 Usage:
     cd cpp_extension
@@ -11,6 +11,7 @@ Or for development:
 Extensions:
     - page_aware_sampler_cpp: K-hop neighbor sampling with page priority
     - cpp_page_batch_sampler: Page-batch sampling (entire pages as batches)
+    - amex_sampler_cpp: AMEX credit-default streaming benchmark samplers
 """
 
 import os
@@ -45,6 +46,16 @@ def get_extensions():
         CppExtension(
             name='cpp_page_batch_sampler',
             sources=['page_batch_sampler.cpp'],
+            extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
+        )
+    )
+
+    # AMEX credit-default streaming benchmark samplers
+    extensions.append(
+        CppExtension(
+            name='amex_sampler_cpp',
+            sources=['amex_sampler.cpp'],
             extra_compile_args=extra_compile_args,
             extra_link_args=extra_link_args,
         )
