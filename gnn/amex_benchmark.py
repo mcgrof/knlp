@@ -819,27 +819,273 @@ def train(config: AMEXConfig, use_wandb: bool = True):
 
 
 # =============================================================================
+# Streaming Inference Benchmark
+# =============================================================================
+
+
+@dataclass
+class StreamingInferenceResult:
+    """Results from streaming inference benchmark."""
+
+    target_tps: int
+    achieved_tps: float
+    duration_sec: float
+    total_events: int
+
+    # Latency percentiles (ms)
+    p50_latency: float
+    p95_latency: float
+    p99_latency: float
+    max_latency: float
+    mean_latency: float
+
+    # Systems metrics
+    cache_hit_rate: float
+    bytes_per_event: float
+
+
+def infer_stream(
+    config: AMEXConfig,
+    target_tps: int = 10000,
+    duration: int = 60,
+    use_wandb: bool = True,
+    use_cpp_sampler: bool = True,
+) -> StreamingInferenceResult:
+    """
+    Streaming inference benchmark with TPS load generator.
+
+    Measures end-to-end latency distribution under configurable load.
+    Reports p50/p95/p99 latency and achieved throughput.
+    """
+    import time
+
+    # Try to use C++ sampler for lower latency
+    cpp_available = False
+    if use_cpp_sampler:
+        try:
+            import sys
+
+            sys.path.insert(0, "gnn/cpp_extension")
+            import amex_sampler_cpp as cpp
+
+            cpp_available = True
+            print("Using C++ samplers for lower latency")
+        except ImportError:
+            print("C++ samplers not available, using Python")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # Load data
+    dataset = AMEXDataset(config)
+
+    # Create model (inference only)
+    model = DefaultPredictor(
+        input_dim=dataset.num_features, hidden_dim=config.hidden_dim
+    ).to(device)
+    model.eval()
+
+    # Setup latency tracking
+    if cpp_available:
+        latency_tracker = cpp.LatencyTracker(duration * target_tps)
+    else:
+        latencies = []
+
+    # Setup entity indices for streaming
+    entity_indices = list(range(len(dataset.customer_ids)))
+    random.shuffle(entity_indices)
+    entity_ptr = 0
+
+    # Cache tracking
+    pages_seen = set()
+    total_pages_accessed = 0
+    cache_hits = 0
+    total_bytes = 0
+
+    # Event timing
+    event_interval = 1.0 / target_tps  # seconds between events
+    events_processed = 0
+
+    print(f"\nStreaming inference: target {target_tps} TPS for {duration}s...")
+    print(f"Expected events: {target_tps * duration:,}")
+
+    start_time = time.time()
+    next_event_time = start_time
+
+    with torch.no_grad():
+        while time.time() - start_time < duration:
+            # Rate limiting - wait for next event slot
+            current_time = time.time()
+            if current_time < next_event_time:
+                # Busy wait for accuracy (sleep has too much jitter)
+                while time.time() < next_event_time:
+                    pass
+
+            event_start = time.time()
+
+            # Get next entity (circular)
+            entity_idx = entity_indices[entity_ptr]
+            entity_ptr = (entity_ptr + 1) % len(entity_indices)
+            customer_id = dataset.customer_ids[entity_idx]
+
+            # Get features for this entity
+            window = dataset.get_customer_window(customer_id, config.window_size)
+
+            # Track cache behavior
+            rows = dataset.customer_rows.get(customer_id, [])
+            for r in rows[-config.window_size :]:
+                page = dataset.row_to_page[r]
+                total_pages_accessed += 1
+                if page in pages_seen:
+                    cache_hits += 1
+                else:
+                    pages_seen.add(page)
+            total_bytes += config.window_size * config.feature_bytes
+
+            # Run inference
+            x = torch.from_numpy(window).unsqueeze(0).to(device)
+            logits = model(x)
+            _ = torch.sigmoid(logits)
+
+            # Record latency
+            event_end = time.time()
+            latency_ms = (event_end - event_start) * 1000
+
+            if cpp_available:
+                latency_tracker.record(latency_ms)
+            else:
+                latencies.append(latency_ms)
+
+            events_processed += 1
+            next_event_time += event_interval
+
+            # Progress update
+            if events_processed % 10000 == 0:
+                elapsed = time.time() - start_time
+                actual_tps = events_processed / elapsed
+                print(f"  [{events_processed:,}] TPS={actual_tps:.0f}")
+
+    end_time = time.time()
+    actual_duration = end_time - start_time
+    achieved_tps = events_processed / actual_duration
+
+    # Compute latency percentiles
+    if cpp_available:
+        pcts = latency_tracker.get_percentiles()
+        p50 = pcts[0].item()
+        p95 = pcts[1].item()
+        p99 = pcts[2].item()
+        max_lat = pcts[3].item()
+        mean_lat = latency_tracker.mean()
+    else:
+        latencies.sort()
+        n = len(latencies)
+        p50 = latencies[n * 50 // 100] if n > 0 else 0
+        p95 = latencies[n * 95 // 100] if n > 0 else 0
+        p99 = latencies[n * 99 // 100] if n > 0 else 0
+        max_lat = latencies[-1] if n > 0 else 0
+        mean_lat = sum(latencies) / n if n > 0 else 0
+
+    cache_hit_rate = (
+        cache_hits / total_pages_accessed if total_pages_accessed > 0 else 0
+    )
+    bytes_per_event = total_bytes / events_processed if events_processed > 0 else 0
+
+    result = StreamingInferenceResult(
+        target_tps=target_tps,
+        achieved_tps=achieved_tps,
+        duration_sec=actual_duration,
+        total_events=events_processed,
+        p50_latency=p50,
+        p95_latency=p95,
+        p99_latency=p99,
+        max_latency=max_lat,
+        mean_latency=mean_lat,
+        cache_hit_rate=cache_hit_rate,
+        bytes_per_event=bytes_per_event,
+    )
+
+    # Print results
+    print(f"\n=== Streaming Inference Results ===")
+    print(f"Target TPS: {target_tps:,}")
+    print(f"Achieved TPS: {achieved_tps:,.0f}")
+    print(f"Duration: {actual_duration:.1f}s")
+    print(f"Total events: {events_processed:,}")
+    print(f"\nLatency (ms):")
+    print(f"  p50:  {p50:.3f}")
+    print(f"  p95:  {p95:.3f}")
+    print(f"  p99:  {p99:.3f}")
+    print(f"  max:  {max_lat:.3f}")
+    print(f"  mean: {mean_lat:.3f}")
+    print(f"\nSystems:")
+    print(f"  Cache hit rate: {cache_hit_rate:.2%}")
+    print(f"  Bytes/event: {bytes_per_event:.0f}")
+
+    if use_wandb and HAS_WANDB:
+        wandb.log(
+            {
+                "infer/target_tps": target_tps,
+                "infer/achieved_tps": achieved_tps,
+                "infer/p50_latency_ms": p50,
+                "infer/p95_latency_ms": p95,
+                "infer/p99_latency_ms": p99,
+                "infer/max_latency_ms": max_lat,
+                "infer/mean_latency_ms": mean_lat,
+                "infer/cache_hit_rate": cache_hit_rate,
+                "infer/bytes_per_event": bytes_per_event,
+            }
+        )
+
+    return result
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
 
 def main():
     parser = argparse.ArgumentParser(description="AMEX Streaming Locality Benchmark")
+
+    # Mode selection
+    parser.add_argument(
+        "--mode",
+        choices=["train", "infer"],
+        default="train",
+        help="Benchmark mode: train (throughput) or infer (latency)",
+    )
+
+    # Sampler settings
     parser.add_argument(
         "--sampler",
         choices=["random", "page_aware", "fim_importance"],
         default="random",
         help="Sampler type",
     )
-    parser.add_argument(
-        "--time", type=int, default=300, help="Max training time (seconds)"
-    )
+
+    # Time/duration settings
+    parser.add_argument("--time", type=int, default=300, help="Max time (seconds)")
+
+    # Batch and window settings
     parser.add_argument(
         "--batch-size", type=int, default=512, help="Customers per batch"
     )
     parser.add_argument(
         "--window-size", type=int, default=6, help="Statements per customer"
     )
+
+    # Inference-specific settings
+    parser.add_argument(
+        "--target-tps", type=int, default=10000, help="Target TPS for infer mode"
+    )
+    parser.add_argument(
+        "--tps-sweep",
+        type=str,
+        default=None,
+        help="Comma-separated TPS values to sweep (e.g., '1000,5000,10000,50000')",
+    )
+
+    # Ablation and output settings
     parser.add_argument("--ablation", action="store_true", help="Run all samplers")
     parser.add_argument("--no-wandb", action="store_true", help="Disable wandb")
     parser.add_argument("--wandb-project", default="amex-locality-benchmark")
@@ -855,8 +1101,72 @@ def main():
 
     use_wandb = not args.no_wandb and HAS_WANDB
 
-    if args.ablation:
-        # Run all samplers
+    # Handle inference mode
+    if args.mode == "infer":
+        if args.tps_sweep:
+            # TPS sweep mode
+            tps_values = [int(x.strip()) for x in args.tps_sweep.split(",")]
+            results = []
+
+            for tps in tps_values:
+                print(f"\n{'='*60}")
+                print(f"Streaming inference: target {tps:,} TPS")
+                print(f"{'='*60}")
+
+                if use_wandb:
+                    init_wandb_with_system_metrics(
+                        project=args.wandb_project,
+                        name=f"infer-{tps}tps-{args.time}s",
+                        config=vars(config),
+                        reinit=True,
+                    )
+
+                result = infer_stream(
+                    config,
+                    target_tps=tps,
+                    duration=args.time,
+                    use_wandb=use_wandb,
+                )
+                results.append(result)
+
+                if use_wandb:
+                    wandb.finish()
+
+            # Print comparison
+            print(f"\n{'='*60}")
+            print("TPS SWEEP RESULTS")
+            print(f"{'='*60}")
+            print(
+                f"{'Target TPS':>12} {'Achieved':>12} {'p50':>8} {'p95':>8} {'p99':>8} {'Cache Hit':>10}"
+            )
+            print("-" * 70)
+            for r in results:
+                print(
+                    f"{r.target_tps:>12,} {r.achieved_tps:>12,.0f} "
+                    f"{r.p50_latency:>8.3f} {r.p95_latency:>8.3f} {r.p99_latency:>8.3f} "
+                    f"{r.cache_hit_rate:>10.2%}"
+                )
+        else:
+            # Single TPS run
+            if use_wandb:
+                init_wandb_with_system_metrics(
+                    project=args.wandb_project,
+                    name=f"infer-{args.target_tps}tps-{args.time}s",
+                    config=vars(config),
+                )
+
+            infer_stream(
+                config,
+                target_tps=args.target_tps,
+                duration=args.time,
+                use_wandb=use_wandb,
+            )
+
+            if use_wandb:
+                wandb.finish()
+
+    elif args.ablation:
+        # Run all samplers (train mode)
         samplers = ["random", "page_aware", "fim_importance"]
         results = {}
 
@@ -895,7 +1205,7 @@ def main():
             )
 
     else:
-        # Single sampler run
+        # Single sampler run (train mode)
         if use_wandb:
             init_wandb_with_system_metrics(
                 project=args.wandb_project,
