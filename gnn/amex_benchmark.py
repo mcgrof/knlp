@@ -1124,6 +1124,597 @@ def infer_stream(
 
 
 # =============================================================================
+# Producer/Consumer Streaming Benchmark (Phase A + C)
+# =============================================================================
+
+
+@dataclass
+class CapacityResult:
+    """Results from capacity benchmark with producer/consumer model."""
+
+    target_tps: int
+    achieved_tps: float
+    duration_sec: float
+    total_events: int
+
+    # End-to-end latency percentiles (ms) - arrival to score
+    p50_latency: float
+    p95_latency: float
+    p99_latency: float
+    max_latency: float
+    mean_latency: float
+
+    # Queueing metrics
+    max_queue_depth: int
+    avg_queue_depth: float
+    drop_rate: float
+    total_dropped: int
+
+    # Systems metrics
+    cache_hit_rate: float
+    bytes_per_event: float
+
+    # Configuration
+    k_related: int
+    neighbor_mode: str  # "random" or "hotset"
+    hotset_size: int
+    microbatch_size: int
+
+    # Repeatability (from multiple runs)
+    p99_mean: float = 0.0
+    p99_std: float = 0.0
+    run_count: int = 1
+
+
+def infer_capacity(
+    config: "AMEXConfig",
+    target_tps: int = 10000,
+    duration: int = 60,
+    k_related: int = 0,
+    neighbor_mode: str = "random",
+    hotset_size: int = 10000,
+    microbatch_size: int = 1,
+    queue_size: int = 1000,
+    num_runs: int = 1,
+    use_wandb: bool = True,
+    use_gpu_sync: bool = True,
+) -> CapacityResult:
+    """
+    Producer/consumer streaming benchmark with true end-to-end latency.
+
+    Uses a bounded queue between producer (event generator) and consumer
+    (inference worker) to measure realistic latency under load.
+
+    Latency measurement:
+    - Arrival time: when event enters queue
+    - Completion time: after GPU sync (if use_gpu_sync) or CPU forward done
+    - E2E latency = completion - arrival
+
+    Args:
+        target_tps: Target events per second
+        duration: Duration in seconds
+        k_related: Number of related entities per event (0=disabled)
+        neighbor_mode: "random" (uniform spread) or "hotset" (bucket locality)
+        hotset_size: Size of locality bucket for hotset mode
+        microbatch_size: Events to batch before inference (1=no batching)
+        queue_size: Bounded queue capacity (drops when full)
+        num_runs: Number of runs for repeatability statistics
+        use_gpu_sync: Sync GPU before recording completion time
+    """
+    import threading
+    import queue
+    from collections import deque
+
+    # Try to use C++ extension
+    cpp_available = False
+    try:
+        import sys
+
+        sys.path.insert(0, "gnn/cpp_extension")
+        import amex_sampler_cpp as cpp
+
+        cpp_available = True
+        print("Using C++ feature extractor")
+    except ImportError:
+        print("C++ extension not available, using Python fallback")
+        return _infer_capacity_python_fallback(
+            config,
+            target_tps,
+            duration,
+            k_related,
+            neighbor_mode,
+            hotset_size,
+            microbatch_size,
+            queue_size,
+            num_runs,
+            use_wandb,
+        )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+    print(f"GPU sync for timing: {use_gpu_sync and device.type == 'cuda'}")
+
+    # Load data
+    dataset = AMEXDataset(config)
+    num_entities = len(dataset.customer_ids)
+
+    # Pre-compute entity windows for C++ extractor
+    print("Pre-computing entity windows for C++ extractor...")
+    entity_windows = torch.zeros(
+        num_entities, config.window_size, dataset.num_features, dtype=torch.float32
+    )
+    for i, cid in enumerate(dataset.customer_ids):
+        window = dataset.get_customer_window(cid, config.window_size)
+        entity_windows[i] = torch.from_numpy(window)
+
+    # Create C++ feature extractor
+    use_hotset = neighbor_mode == "hotset"
+    extractor = cpp.StreamingFeatureExtractor(
+        entity_windows,
+        k_related=k_related,
+        use_hotset=use_hotset,
+        hotset_size=hotset_size,
+        page_size=config.page_size,
+        feature_bytes=config.feature_bytes,
+        seed=42,
+    )
+    print(
+        f"Feature extractor: k={k_related}, mode={neighbor_mode}"
+        + (f", hotset_size={hotset_size}" if use_hotset else "")
+    )
+
+    # Create model
+    model = DefaultPredictor(
+        input_dim=dataset.num_features, hidden_dim=config.hidden_dim
+    ).to(device)
+    model.eval()
+
+    # Run multiple times for repeatability
+    all_p99 = []
+    final_result = None
+
+    for run_idx in range(num_runs):
+        if num_runs > 1:
+            print(f"\n--- Run {run_idx + 1}/{num_runs} ---")
+
+        # Reset extractor cache between runs
+        extractor.reset_cache()
+
+        # Create bounded queue for producer/consumer
+        event_queue = queue.Queue(maxsize=queue_size)
+
+        # Metrics tracking
+        latency_tracker = cpp.LatencyTracker(duration * target_tps + 10000)
+        queue_metrics = cpp.QueueingMetrics(duration * target_tps + 10000)
+        total_bytes = [0]
+        total_cache_hits = [0]
+        total_page_accesses = [0]
+
+        # Shared state
+        producer_done = threading.Event()
+        consumer_done = threading.Event()
+        events_processed = [0]
+
+        # Entity sequence (shuffled)
+        entity_indices = list(range(num_entities))
+        random.shuffle(entity_indices)
+
+        def producer_thread():
+            """Generate events at target TPS rate."""
+            event_interval = 1.0 / target_tps
+            start_time = time.time()
+            next_event_time = start_time
+            entity_ptr = 0
+
+            while time.time() - start_time < duration:
+                # Rate limiting
+                current = time.time()
+                if current < next_event_time:
+                    # Short sleep then busy wait for accuracy
+                    sleep_time = next_event_time - current - 0.0001
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    while time.time() < next_event_time:
+                        pass
+
+                arrival_time = time.time()
+                entity_idx = entity_indices[entity_ptr % num_entities]
+                entity_ptr += 1
+
+                # Try to enqueue (non-blocking)
+                try:
+                    event_queue.put_nowait((entity_idx, arrival_time))
+                    queue_metrics.record_enqueue(False)
+                except queue.Full:
+                    queue_metrics.record_enqueue(True)  # Dropped
+
+                queue_metrics.sample_queue_depth()
+                next_event_time += event_interval
+
+            producer_done.set()
+
+        def consumer_thread():
+            """Process events from queue, run inference."""
+            batch_buffer = []
+
+            while not (producer_done.is_set() and event_queue.empty()):
+                try:
+                    # Get event(s) from queue
+                    if microbatch_size > 1:
+                        # Collect microbatch
+                        batch_buffer.clear()
+                        try:
+                            while len(batch_buffer) < microbatch_size:
+                                item = event_queue.get(timeout=0.001)
+                                batch_buffer.append(item)
+                                queue_metrics.record_dequeue()
+                        except queue.Empty:
+                            pass
+
+                        if not batch_buffer:
+                            continue
+
+                        # Extract features for batch
+                        entity_ids = torch.tensor(
+                            [e[0] for e in batch_buffer], dtype=torch.int64
+                        )
+                        arrival_times = [e[1] for e in batch_buffer]
+
+                        entity_wins, related_wins, metrics = extractor.extract_batch(
+                            entity_ids
+                        )
+
+                        # Aggregate metrics
+                        metrics_sum = metrics.sum(dim=0)
+                        total_bytes[0] += int(metrics_sum[0].item())
+                        total_page_accesses[0] += int(metrics_sum[1].item()) + int(
+                            metrics_sum[2].item()
+                        )
+                        total_cache_hits[0] += int(metrics_sum[2].item())
+
+                        # Run inference
+                        with torch.no_grad():
+                            x = entity_wins.to(device)
+                            logits = model(x)
+                            _ = torch.sigmoid(logits)
+
+                            # GPU sync for accurate timing
+                            if use_gpu_sync and device.type == "cuda":
+                                torch.cuda.synchronize()
+
+                        completion_time = time.time()
+
+                        # Record latencies
+                        for arr_time in arrival_times:
+                            latency_ms = (completion_time - arr_time) * 1000
+                            latency_tracker.record(latency_ms)
+                            events_processed[0] += 1
+
+                    else:
+                        # Single event processing
+                        entity_idx, arrival_time = event_queue.get(timeout=0.01)
+                        queue_metrics.record_dequeue()
+
+                        # Extract features
+                        entity_win, related_wins, metrics = extractor.extract_single(
+                            entity_idx
+                        )
+
+                        total_bytes[0] += int(metrics[0].item())
+                        total_page_accesses[0] += int(metrics[1].item()) + int(
+                            metrics[2].item()
+                        )
+                        total_cache_hits[0] += int(metrics[2].item())
+
+                        # Run inference
+                        with torch.no_grad():
+                            x = entity_win.unsqueeze(0).to(device)
+                            logits = model(x)
+                            _ = torch.sigmoid(logits)
+
+                            # GPU sync for accurate timing
+                            if use_gpu_sync and device.type == "cuda":
+                                torch.cuda.synchronize()
+
+                        completion_time = time.time()
+                        latency_ms = (completion_time - arrival_time) * 1000
+                        latency_tracker.record(latency_ms)
+                        events_processed[0] += 1
+
+                except queue.Empty:
+                    continue
+
+            consumer_done.set()
+
+        # Run benchmark
+        print(f"\nCapacity benchmark: target {target_tps:,} TPS for {duration}s...")
+        start_time = time.time()
+
+        producer = threading.Thread(target=producer_thread)
+        consumer = threading.Thread(target=consumer_thread)
+
+        producer.start()
+        consumer.start()
+
+        # Progress updates
+        while not consumer_done.is_set():
+            time.sleep(1.0)
+            elapsed = time.time() - start_time
+            if elapsed > 0 and events_processed[0] > 0:
+                actual_tps = events_processed[0] / elapsed
+                print(
+                    f"  [{events_processed[0]:,}] TPS={actual_tps:.0f} queue={queue_metrics.current_depth()}"
+                )
+
+        producer.join()
+        consumer.join()
+
+        end_time = time.time()
+        actual_duration = end_time - start_time
+        achieved_tps = events_processed[0] / actual_duration
+
+        # Get latency percentiles
+        pcts = latency_tracker.get_percentiles()
+        p50 = pcts[0].item()
+        p95 = pcts[1].item()
+        p99 = pcts[2].item()
+        max_lat = pcts[3].item()
+        mean_lat = latency_tracker.mean()
+
+        all_p99.append(p99)
+
+        # Get queue summary
+        queue_summary = queue_metrics.get_summary()
+
+        cache_hit_rate = (
+            total_cache_hits[0] / total_page_accesses[0]
+            if total_page_accesses[0] > 0
+            else 0
+        )
+        bytes_per_event = (
+            total_bytes[0] / events_processed[0] if events_processed[0] > 0 else 0
+        )
+
+        result = CapacityResult(
+            target_tps=target_tps,
+            achieved_tps=achieved_tps,
+            duration_sec=actual_duration,
+            total_events=events_processed[0],
+            p50_latency=p50,
+            p95_latency=p95,
+            p99_latency=p99,
+            max_latency=max_lat,
+            mean_latency=mean_lat,
+            max_queue_depth=int(queue_summary[3].item()),
+            avg_queue_depth=queue_summary[4].item(),
+            drop_rate=queue_summary[5].item(),
+            total_dropped=int(queue_summary[2].item()),
+            cache_hit_rate=cache_hit_rate,
+            bytes_per_event=bytes_per_event,
+            k_related=k_related,
+            neighbor_mode=neighbor_mode,
+            hotset_size=hotset_size if use_hotset else 0,
+            microbatch_size=microbatch_size,
+        )
+        final_result = result
+
+    # Compute repeatability stats
+    if num_runs > 1:
+        final_result.p99_mean = np.mean(all_p99)
+        final_result.p99_std = np.std(all_p99)
+        final_result.run_count = num_runs
+
+    # Print results
+    print(f"\n=== Capacity Benchmark Results ===")
+    print(f"Target TPS: {target_tps:,}")
+    print(f"Achieved TPS: {final_result.achieved_tps:,.0f}")
+    print(f"Duration: {final_result.duration_sec:.1f}s")
+    print(f"Total events: {final_result.total_events:,}")
+    print(f"\nEnd-to-End Latency (ms):")
+    print(f"  p50:  {final_result.p50_latency:.3f}")
+    print(f"  p95:  {final_result.p95_latency:.3f}")
+    print(f"  p99:  {final_result.p99_latency:.3f}")
+    print(f"  max:  {final_result.max_latency:.3f}")
+    print(f"  mean: {final_result.mean_latency:.3f}")
+    if num_runs > 1:
+        print(
+            f"  p99 (mean±std over {num_runs} runs): {final_result.p99_mean:.3f}±{final_result.p99_std:.3f}"
+        )
+    print(f"\nQueueing:")
+    print(f"  Max queue depth: {final_result.max_queue_depth}")
+    print(f"  Avg queue depth: {final_result.avg_queue_depth:.1f}")
+    print(f"  Drop rate: {final_result.drop_rate:.2%}")
+    print(f"  Total dropped: {final_result.total_dropped:,}")
+    print(f"\nSystems:")
+    print(f"  Cache hit rate: {final_result.cache_hit_rate:.2%}")
+    print(f"  Bytes/event: {final_result.bytes_per_event:.0f}")
+    print(f"\nConfiguration:")
+    print(f"  k_related: {k_related}")
+    print(f"  neighbor_mode: {neighbor_mode}")
+    if neighbor_mode == "hotset":
+        print(f"  hotset_size: {hotset_size}")
+    print(f"  microbatch_size: {microbatch_size}")
+
+    if use_wandb and HAS_WANDB:
+        log_dict = {
+            "capacity/target_tps": target_tps,
+            "capacity/achieved_tps": final_result.achieved_tps,
+            "capacity/p50_latency_ms": final_result.p50_latency,
+            "capacity/p95_latency_ms": final_result.p95_latency,
+            "capacity/p99_latency_ms": final_result.p99_latency,
+            "capacity/max_latency_ms": final_result.max_latency,
+            "capacity/mean_latency_ms": final_result.mean_latency,
+            "capacity/max_queue_depth": final_result.max_queue_depth,
+            "capacity/avg_queue_depth": final_result.avg_queue_depth,
+            "capacity/drop_rate": final_result.drop_rate,
+            "capacity/cache_hit_rate": final_result.cache_hit_rate,
+            "capacity/bytes_per_event": final_result.bytes_per_event,
+            "capacity/k_related": k_related,
+            "capacity/neighbor_mode": neighbor_mode,
+            "capacity/microbatch_size": microbatch_size,
+        }
+        if num_runs > 1:
+            log_dict["capacity/p99_mean"] = final_result.p99_mean
+            log_dict["capacity/p99_std"] = final_result.p99_std
+        wandb.log(log_dict)
+
+    return final_result
+
+
+def _infer_capacity_python_fallback(*args, **kwargs):
+    """Python fallback when C++ extension not available."""
+    raise NotImplementedError(
+        "C++ extension required for capacity benchmark. "
+        "Build with: cd gnn/cpp_extension && pip install -e ."
+    )
+
+
+def run_capacity_sweep(
+    config: "AMEXConfig",
+    tps_values: List[int],
+    duration: int = 60,
+    k_related: int = 0,
+    neighbor_mode: str = "random",
+    hotset_size: int = 10000,
+    microbatch_size: int = 1,
+    num_runs: int = 1,
+    use_wandb: bool = True,
+) -> List[CapacityResult]:
+    """
+    Run capacity sweep across TPS values.
+    Produces capacity curves showing sustainable TPS under sub-ms constraint.
+    """
+    results = []
+
+    for tps in tps_values:
+        print(f"\n{'='*60}")
+        print(f"Capacity sweep: {tps:,} TPS, k={k_related}, mode={neighbor_mode}")
+        print(f"{'='*60}")
+
+        result = infer_capacity(
+            config,
+            target_tps=tps,
+            duration=duration,
+            k_related=k_related,
+            neighbor_mode=neighbor_mode,
+            hotset_size=hotset_size,
+            microbatch_size=microbatch_size,
+            num_runs=num_runs,
+            use_wandb=use_wandb,
+        )
+        results.append(result)
+
+    # Print capacity curve
+    print(f"\n{'='*70}")
+    print("CAPACITY CURVE")
+    print(f"{'='*70}")
+    print(
+        f"{'Target':>10} {'Achieved':>10} {'p50':>8} {'p95':>8} {'p99':>8} "
+        f"{'Drop%':>7} {'MaxQ':>6} {'Bytes':>8}"
+    )
+    print("-" * 70)
+
+    for r in results:
+        p99_ok = "✓" if r.p99_latency < 1.0 else "✗"
+        print(
+            f"{r.target_tps:>10,} {r.achieved_tps:>10,.0f} "
+            f"{r.p50_latency:>8.3f} {r.p95_latency:>8.3f} {r.p99_latency:>7.3f}{p99_ok} "
+            f"{r.drop_rate:>6.2%} {r.max_queue_depth:>6} {r.bytes_per_event:>8.0f}"
+        )
+
+    # Find max TPS with p99 < 1ms
+    sub_ms_results = [r for r in results if r.p99_latency < 1.0]
+    if sub_ms_results:
+        max_sub_ms = max(sub_ms_results, key=lambda r: r.achieved_tps)
+        print(f"\nMax TPS with p99 < 1ms: {max_sub_ms.achieved_tps:,.0f}")
+    else:
+        print(f"\nNo configuration achieved p99 < 1ms")
+
+    return results
+
+
+def run_locality_comparison(
+    config: "AMEXConfig",
+    target_tps: int = 5000,
+    duration: int = 30,
+    k_related: int = 16,
+    hotset_sizes: List[int] = None,
+    num_runs: int = 3,
+    use_wandb: bool = True,
+) -> Dict[str, CapacityResult]:
+    """
+    Compare random vs hotset neighbor modes at same k_related.
+    Shows that locality reduces p99 at same bytes/event via cache reuse.
+    """
+    if hotset_sizes is None:
+        hotset_sizes = [1000, 10000, 100000]
+
+    results = {}
+
+    # Random baseline
+    print(f"\n{'='*60}")
+    print(f"Locality comparison: random mode")
+    print(f"{'='*60}")
+
+    results["random"] = infer_capacity(
+        config,
+        target_tps=target_tps,
+        duration=duration,
+        k_related=k_related,
+        neighbor_mode="random",
+        num_runs=num_runs,
+        use_wandb=use_wandb,
+    )
+
+    # Hotset modes
+    for hs in hotset_sizes:
+        print(f"\n{'='*60}")
+        print(f"Locality comparison: hotset mode, size={hs}")
+        print(f"{'='*60}")
+
+        results[f"hotset_{hs}"] = infer_capacity(
+            config,
+            target_tps=target_tps,
+            duration=duration,
+            k_related=k_related,
+            neighbor_mode="hotset",
+            hotset_size=hs,
+            num_runs=num_runs,
+            use_wandb=use_wandb,
+        )
+
+    # Print comparison
+    print(f"\n{'='*70}")
+    print(f"LOCALITY COMPARISON (k={k_related}, TPS={target_tps})")
+    print(f"{'='*70}")
+    print(
+        f"{'Mode':<20} {'p99 (ms)':>10} {'p99 std':>10} {'Cache Hit':>10} {'Bytes/evt':>10}"
+    )
+    print("-" * 70)
+
+    for name, r in results.items():
+        print(
+            f"{name:<20} {r.p99_latency:>10.3f} {r.p99_std:>10.3f} "
+            f"{r.cache_hit_rate:>10.2%} {r.bytes_per_event:>10.0f}"
+        )
+
+    # Conclusion
+    random_p99 = results["random"].p99_latency
+    best_hotset = min(
+        [(k, v) for k, v in results.items() if k.startswith("hotset")],
+        key=lambda x: x[1].p99_latency,
+    )
+    improvement = (random_p99 - best_hotset[1].p99_latency) / random_p99 * 100
+
+    print(f"\nConclusion: {best_hotset[0]} reduces p99 by {improvement:.1f}% vs random")
+    print(
+        "Locality (hotset reuse) shifts the p99 curve right (higher sustainable TPS)."
+    )
+
+    return results
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -1134,9 +1725,10 @@ def main():
     # Mode selection
     parser.add_argument(
         "--mode",
-        choices=["train", "infer"],
+        choices=["train", "infer", "capacity", "locality"],
         default="train",
-        help="Benchmark mode: train (throughput) or infer (latency)",
+        help="Benchmark mode: train (throughput), infer (latency), "
+        "capacity (producer/consumer), locality (random vs hotset)",
     )
 
     # Sampler settings
@@ -1181,6 +1773,32 @@ def main():
         type=str,
         default=None,
         help="Comma-separated k values to sweep (e.g., '0,8,16,32')",
+    )
+
+    # Locality mode settings
+    parser.add_argument(
+        "--neighbor-mode",
+        choices=["random", "hotset"],
+        default="random",
+        help="Neighbor selection mode: random (uniform) or hotset (bucket locality)",
+    )
+    parser.add_argument(
+        "--hotset-size",
+        type=int,
+        default=10000,
+        help="Size of locality bucket for hotset mode",
+    )
+    parser.add_argument(
+        "--microbatch-size",
+        type=int,
+        default=1,
+        help="Events to batch before inference (1=no batching)",
+    )
+    parser.add_argument(
+        "--num-runs",
+        type=int,
+        default=1,
+        help="Number of runs for repeatability (reports mean±std p99)",
     )
 
     # Ablation and output settings
@@ -1312,6 +1930,79 @@ def main():
 
             if use_wandb:
                 wandb.finish()
+
+    elif args.mode == "capacity":
+        # Producer/consumer capacity benchmark
+        if args.tps_sweep:
+            # TPS sweep for capacity curves
+            tps_values = [int(x.strip()) for x in args.tps_sweep.split(",")]
+
+            if use_wandb:
+                init_wandb_with_system_metrics(
+                    project=args.wandb_project,
+                    name=f"capacity-sweep-k{args.k_related}-{args.neighbor_mode}",
+                    config=vars(config),
+                )
+
+            run_capacity_sweep(
+                config,
+                tps_values=tps_values,
+                duration=args.time,
+                k_related=args.k_related,
+                neighbor_mode=args.neighbor_mode,
+                hotset_size=args.hotset_size,
+                microbatch_size=args.microbatch_size,
+                num_runs=args.num_runs,
+                use_wandb=use_wandb,
+            )
+
+            if use_wandb:
+                wandb.finish()
+        else:
+            # Single TPS capacity run
+            if use_wandb:
+                init_wandb_with_system_metrics(
+                    project=args.wandb_project,
+                    name=f"capacity-{args.target_tps}tps-k{args.k_related}-{args.neighbor_mode}",
+                    config=vars(config),
+                )
+
+            infer_capacity(
+                config,
+                target_tps=args.target_tps,
+                duration=args.time,
+                k_related=args.k_related,
+                neighbor_mode=args.neighbor_mode,
+                hotset_size=args.hotset_size,
+                microbatch_size=args.microbatch_size,
+                num_runs=args.num_runs,
+                use_wandb=use_wandb,
+            )
+
+            if use_wandb:
+                wandb.finish()
+
+    elif args.mode == "locality":
+        # Locality comparison: random vs hotset at fixed TPS and k
+        if use_wandb:
+            init_wandb_with_system_metrics(
+                project=args.wandb_project,
+                name=f"locality-k{args.k_related}-{args.target_tps}tps",
+                config=vars(config),
+            )
+
+        run_locality_comparison(
+            config,
+            target_tps=args.target_tps,
+            duration=args.time,
+            k_related=args.k_related,
+            hotset_sizes=[1000, 10000, 100000],
+            num_runs=args.num_runs,
+            use_wandb=use_wandb,
+        )
+
+        if use_wandb:
+            wandb.finish()
 
     elif args.ablation:
         # Run all samplers (train mode)
