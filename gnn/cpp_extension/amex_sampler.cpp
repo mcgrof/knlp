@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <chrono>
@@ -592,6 +593,497 @@ private:
 };
 
 
+/**
+ * HotsetRelatedLookup - Locality-aware related entity lookup
+ *
+ * Maps entities to buckets and draws related entities from the same bucket.
+ * This creates high locality (cache reuse) for stress testing.
+ */
+class HotsetRelatedLookup {
+public:
+    HotsetRelatedLookup(int64_t num_entities, int64_t k_related,
+                        int64_t hotset_size, int64_t seed = 42)
+        : num_entities_(num_entities),
+          k_related_(k_related),
+          hotset_size_(hotset_size) {
+
+        if (k_related <= 0) {
+            return;
+        }
+
+        // Compute number of buckets
+        num_buckets_ = (num_entities + hotset_size - 1) / hotset_size;
+
+        // Pre-compute related entities for each entity from its bucket
+        related_.resize(num_entities);
+        std::mt19937_64 rng(seed);
+
+        for (int64_t i = 0; i < num_entities; i++) {
+            int64_t bucket = i / hotset_size;
+            int64_t bucket_start = bucket * hotset_size;
+            int64_t bucket_end = std::min(bucket_start + hotset_size, num_entities);
+            int64_t bucket_size = bucket_end - bucket_start;
+
+            related_[i].reserve(k_related);
+
+            // Generate k related entities from same bucket
+            std::unordered_set<int64_t> seen;
+            seen.insert(i);  // Exclude self
+
+            int64_t attempts = 0;
+            while (static_cast<int64_t>(related_[i].size()) < k_related && attempts < k_related * 10) {
+                attempts++;
+                int64_t candidate = bucket_start + (rng() % bucket_size);
+                if (seen.find(candidate) == seen.end()) {
+                    related_[i].push_back(candidate);
+                    seen.insert(candidate);
+                }
+            }
+
+            // If bucket too small, fill with repeated entities
+            while (static_cast<int64_t>(related_[i].size()) < k_related && bucket_size > 1) {
+                int64_t candidate = bucket_start + (rng() % bucket_size);
+                if (candidate != i) {
+                    related_[i].push_back(candidate);
+                }
+            }
+        }
+    }
+
+    torch::Tensor get_related(int64_t entity_idx) {
+        if (k_related_ <= 0 || entity_idx < 0 || entity_idx >= num_entities_) {
+            return torch::empty({0}, torch::TensorOptions().dtype(torch::kInt64));
+        }
+
+        int64_t actual_k = static_cast<int64_t>(related_[entity_idx].size());
+        auto result = torch::empty({actual_k},
+                                   torch::TensorOptions().dtype(torch::kInt64));
+        auto ptr = result.data_ptr<int64_t>();
+
+        for (int64_t i = 0; i < actual_k; i++) {
+            ptr[i] = related_[entity_idx][i];
+        }
+
+        return result;
+    }
+
+    torch::Tensor get_batch_related(torch::Tensor entity_indices) {
+        entity_indices = entity_indices.to(torch::kCPU).to(torch::kInt64).contiguous();
+        int64_t batch_size = entity_indices.size(0);
+
+        if (k_related_ <= 0) {
+            return torch::empty({batch_size, 0},
+                               torch::TensorOptions().dtype(torch::kInt64));
+        }
+
+        auto idx_ptr = entity_indices.data_ptr<int64_t>();
+        auto result = torch::empty({batch_size, k_related_},
+                                   torch::TensorOptions().dtype(torch::kInt64));
+        auto result_ptr = result.data_ptr<int64_t>();
+
+        #pragma omp parallel for
+        for (int64_t i = 0; i < batch_size; i++) {
+            int64_t entity_idx = idx_ptr[i];
+            if (entity_idx >= 0 && entity_idx < num_entities_) {
+                int64_t actual_k = static_cast<int64_t>(related_[entity_idx].size());
+                for (int64_t j = 0; j < k_related_; j++) {
+                    if (j < actual_k) {
+                        result_ptr[i * k_related_ + j] = related_[entity_idx][j];
+                    } else {
+                        result_ptr[i * k_related_ + j] = related_[entity_idx][j % actual_k];
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    int64_t k_related() const { return k_related_; }
+    int64_t num_entities() const { return num_entities_; }
+    int64_t hotset_size() const { return hotset_size_; }
+    int64_t num_buckets() const { return num_buckets_; }
+
+private:
+    int64_t num_entities_;
+    int64_t k_related_;
+    int64_t hotset_size_;
+    int64_t num_buckets_;
+    std::vector<std::vector<int64_t>> related_;
+};
+
+
+/**
+ * StreamingFeatureExtractor - C++ hot path for streaming inference
+ *
+ * Combines entity window lookup + related entity lookup + cache tracking
+ * into a single C++ call to minimize Python overhead.
+ */
+class StreamingFeatureExtractor {
+public:
+    StreamingFeatureExtractor(
+        torch::Tensor entity_windows,      // [num_entities, window_size, feature_dim]
+        int64_t k_related,
+        bool use_hotset,
+        int64_t hotset_size,
+        int64_t page_size,
+        int64_t feature_bytes,
+        int64_t seed = 42
+    ) : k_related_(k_related),
+        use_hotset_(use_hotset),
+        page_size_(page_size),
+        feature_bytes_(feature_bytes) {
+
+        // Store windows
+        windows_ = entity_windows.to(torch::kCPU).to(torch::kFloat32).contiguous();
+        num_entities_ = windows_.size(0);
+        window_size_ = windows_.size(1);
+        feature_dim_ = windows_.size(2);
+
+        // Compute rows per page
+        rows_per_page_ = std::max(1L, page_size / feature_bytes);
+
+        // Create related lookup
+        if (k_related > 0) {
+            if (use_hotset) {
+                hotset_lookup_ = std::make_unique<HotsetRelatedLookup>(
+                    num_entities_, k_related, hotset_size, seed);
+            } else {
+                random_lookup_ = std::make_unique<RelatedEntityLookup>(
+                    num_entities_, k_related, seed);
+            }
+        }
+
+        // Initialize cache tracking
+        pages_seen_.reserve(num_entities_ * window_size_ / rows_per_page_ + 1);
+    }
+
+    /**
+     * Extract features for a single event.
+     * Returns tuple: (entity_window, related_windows, metrics)
+     *
+     * Metrics tensor: [bytes_read, unique_pages, cache_hits, unique_related]
+     */
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+    extract_single(int64_t entity_idx) {
+        TORCH_CHECK(entity_idx >= 0 && entity_idx < num_entities_,
+                    "Entity index out of bounds");
+
+        // Get entity window
+        auto entity_window = windows_.index({entity_idx}).clone();
+
+        // Track pages for primary entity
+        int64_t bytes_read = 0;
+        int64_t unique_pages = 0;
+        int64_t cache_hits = 0;
+
+        for (int64_t row = 0; row < window_size_; row++) {
+            // Simulate row -> page mapping
+            int64_t global_row = entity_idx * window_size_ + row;
+            int64_t page = global_row / rows_per_page_;
+
+            if (pages_seen_.find(page) != pages_seen_.end()) {
+                cache_hits++;
+            } else {
+                pages_seen_.insert(page);
+                unique_pages++;
+            }
+        }
+        bytes_read += window_size_ * feature_bytes_;
+
+        // Get related entity windows
+        torch::Tensor related_windows;
+        int64_t unique_related = 0;
+
+        if (k_related_ > 0) {
+            torch::Tensor related_indices;
+            if (use_hotset_) {
+                related_indices = hotset_lookup_->get_related(entity_idx);
+            } else {
+                related_indices = random_lookup_->get_related(entity_idx);
+            }
+
+            int64_t actual_k = related_indices.size(0);
+            if (actual_k > 0) {
+                // Dedupe related entities
+                std::unordered_set<int64_t> unique_set;
+                auto rel_ptr = related_indices.data_ptr<int64_t>();
+                for (int64_t i = 0; i < actual_k; i++) {
+                    unique_set.insert(rel_ptr[i]);
+                }
+                unique_related = static_cast<int64_t>(unique_set.size());
+
+                // Extract related windows
+                related_windows = torch::empty({actual_k, window_size_, feature_dim_},
+                                               torch::TensorOptions().dtype(torch::kFloat32));
+
+                for (int64_t i = 0; i < actual_k; i++) {
+                    int64_t rel_idx = rel_ptr[i];
+                    related_windows.index({i}).copy_(windows_.index({rel_idx}));
+
+                    // Track pages for related entities
+                    for (int64_t row = 0; row < window_size_; row++) {
+                        int64_t global_row = rel_idx * window_size_ + row;
+                        int64_t page = global_row / rows_per_page_;
+
+                        if (pages_seen_.find(page) != pages_seen_.end()) {
+                            cache_hits++;
+                        } else {
+                            pages_seen_.insert(page);
+                            unique_pages++;
+                        }
+                    }
+                    bytes_read += window_size_ * feature_bytes_;
+                }
+            } else {
+                related_windows = torch::empty({0, window_size_, feature_dim_},
+                                               torch::TensorOptions().dtype(torch::kFloat32));
+            }
+        } else {
+            related_windows = torch::empty({0, window_size_, feature_dim_},
+                                           torch::TensorOptions().dtype(torch::kFloat32));
+        }
+
+        // Create metrics tensor
+        auto metrics = torch::tensor({
+            static_cast<double>(bytes_read),
+            static_cast<double>(unique_pages),
+            static_cast<double>(cache_hits),
+            static_cast<double>(unique_related)
+        }, torch::TensorOptions().dtype(torch::kFloat64));
+
+        return std::make_tuple(entity_window, related_windows, metrics);
+    }
+
+    /**
+     * Extract features for a batch of events (microbatch).
+     * Returns tuple: (entity_windows, related_windows, metrics)
+     *
+     * entity_windows: [batch_size, window_size, feature_dim]
+     * related_windows: [batch_size, k_related, window_size, feature_dim]
+     * metrics: [batch_size, 4] - per-event metrics
+     */
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
+    extract_batch(torch::Tensor entity_indices) {
+        entity_indices = entity_indices.to(torch::kCPU).to(torch::kInt64).contiguous();
+        int64_t batch_size = entity_indices.size(0);
+        auto idx_ptr = entity_indices.data_ptr<int64_t>();
+
+        // Allocate outputs
+        auto entity_windows = torch::empty({batch_size, window_size_, feature_dim_},
+                                           torch::TensorOptions().dtype(torch::kFloat32));
+        auto metrics = torch::zeros({batch_size, 4},
+                                    torch::TensorOptions().dtype(torch::kFloat64));
+
+        torch::Tensor related_windows;
+        if (k_related_ > 0) {
+            related_windows = torch::empty({batch_size, k_related_, window_size_, feature_dim_},
+                                           torch::TensorOptions().dtype(torch::kFloat32));
+        } else {
+            related_windows = torch::empty({batch_size, 0, window_size_, feature_dim_},
+                                           torch::TensorOptions().dtype(torch::kFloat32));
+        }
+
+        auto metrics_ptr = metrics.data_ptr<double>();
+
+        // Process each event (could parallelize, but cache tracking needs sync)
+        for (int64_t b = 0; b < batch_size; b++) {
+            int64_t entity_idx = idx_ptr[b];
+
+            // Copy entity window
+            entity_windows.index({b}).copy_(windows_.index({entity_idx}));
+
+            // Track pages for primary entity
+            int64_t bytes_read = 0;
+            int64_t unique_pages = 0;
+            int64_t cache_hits = 0;
+
+            for (int64_t row = 0; row < window_size_; row++) {
+                int64_t global_row = entity_idx * window_size_ + row;
+                int64_t page = global_row / rows_per_page_;
+
+                if (pages_seen_.find(page) != pages_seen_.end()) {
+                    cache_hits++;
+                } else {
+                    pages_seen_.insert(page);
+                    unique_pages++;
+                }
+            }
+            bytes_read += window_size_ * feature_bytes_;
+
+            // Get related entities
+            int64_t unique_related = 0;
+            if (k_related_ > 0) {
+                torch::Tensor related_indices;
+                if (use_hotset_) {
+                    related_indices = hotset_lookup_->get_related(entity_idx);
+                } else {
+                    related_indices = random_lookup_->get_related(entity_idx);
+                }
+
+                int64_t actual_k = related_indices.size(0);
+                auto rel_ptr = related_indices.data_ptr<int64_t>();
+
+                // Dedupe
+                std::unordered_set<int64_t> unique_set;
+                for (int64_t i = 0; i < actual_k; i++) {
+                    unique_set.insert(rel_ptr[i]);
+                }
+                unique_related = static_cast<int64_t>(unique_set.size());
+
+                // Copy related windows
+                for (int64_t i = 0; i < k_related_; i++) {
+                    int64_t rel_idx = (i < actual_k) ? rel_ptr[i] : rel_ptr[i % actual_k];
+                    related_windows.index({b, i}).copy_(windows_.index({rel_idx}));
+
+                    // Track pages
+                    for (int64_t row = 0; row < window_size_; row++) {
+                        int64_t global_row = rel_idx * window_size_ + row;
+                        int64_t page = global_row / rows_per_page_;
+
+                        if (pages_seen_.find(page) != pages_seen_.end()) {
+                            cache_hits++;
+                        } else {
+                            pages_seen_.insert(page);
+                            unique_pages++;
+                        }
+                    }
+                    bytes_read += window_size_ * feature_bytes_;
+                }
+            }
+
+            // Store metrics
+            metrics_ptr[b * 4 + 0] = static_cast<double>(bytes_read);
+            metrics_ptr[b * 4 + 1] = static_cast<double>(unique_pages);
+            metrics_ptr[b * 4 + 2] = static_cast<double>(cache_hits);
+            metrics_ptr[b * 4 + 3] = static_cast<double>(unique_related);
+        }
+
+        return std::make_tuple(entity_windows, related_windows, metrics);
+    }
+
+    void reset_cache() {
+        pages_seen_.clear();
+    }
+
+    int64_t get_total_pages_seen() const {
+        return static_cast<int64_t>(pages_seen_.size());
+    }
+
+    int64_t num_entities() const { return num_entities_; }
+    int64_t window_size() const { return window_size_; }
+    int64_t feature_dim() const { return feature_dim_; }
+    int64_t k_related() const { return k_related_; }
+    bool use_hotset() const { return use_hotset_; }
+
+private:
+    torch::Tensor windows_;
+    int64_t num_entities_;
+    int64_t window_size_;
+    int64_t feature_dim_;
+    int64_t k_related_;
+    bool use_hotset_;
+    int64_t page_size_;
+    int64_t feature_bytes_;
+    int64_t rows_per_page_;
+
+    std::unique_ptr<RelatedEntityLookup> random_lookup_;
+    std::unique_ptr<HotsetRelatedLookup> hotset_lookup_;
+    std::unordered_set<int64_t> pages_seen_;
+};
+
+
+/**
+ * QueueingMetrics - Track producer/consumer queue statistics
+ */
+class QueueingMetrics {
+public:
+    QueueingMetrics(int64_t capacity = 10000)
+        : capacity_(capacity),
+          total_enqueued_(0),
+          total_dequeued_(0),
+          total_dropped_(0),
+          max_queue_depth_(0),
+          current_depth_(0) {
+        queue_depth_samples_.reserve(capacity);
+    }
+
+    void record_enqueue(bool dropped) {
+        if (dropped) {
+            total_dropped_++;
+        } else {
+            total_enqueued_++;
+            current_depth_++;
+            if (current_depth_ > max_queue_depth_) {
+                max_queue_depth_ = current_depth_;
+            }
+        }
+    }
+
+    void record_dequeue() {
+        total_dequeued_++;
+        if (current_depth_ > 0) {
+            current_depth_--;
+        }
+    }
+
+    void sample_queue_depth() {
+        if (static_cast<int64_t>(queue_depth_samples_.size()) < capacity_) {
+            queue_depth_samples_.push_back(current_depth_);
+        }
+    }
+
+    torch::Tensor get_summary() {
+        // Returns: [enqueued, dequeued, dropped, max_depth, avg_depth, drop_rate]
+        double avg_depth = 0.0;
+        if (!queue_depth_samples_.empty()) {
+            double sum = 0.0;
+            for (int64_t d : queue_depth_samples_) {
+                sum += d;
+            }
+            avg_depth = sum / queue_depth_samples_.size();
+        }
+
+        double drop_rate = 0.0;
+        if (total_enqueued_ + total_dropped_ > 0) {
+            drop_rate = static_cast<double>(total_dropped_) /
+                       (total_enqueued_ + total_dropped_);
+        }
+
+        return torch::tensor({
+            static_cast<double>(total_enqueued_),
+            static_cast<double>(total_dequeued_),
+            static_cast<double>(total_dropped_),
+            static_cast<double>(max_queue_depth_),
+            avg_depth,
+            drop_rate
+        }, torch::TensorOptions().dtype(torch::kFloat64));
+    }
+
+    void reset() {
+        total_enqueued_ = 0;
+        total_dequeued_ = 0;
+        total_dropped_ = 0;
+        max_queue_depth_ = 0;
+        current_depth_ = 0;
+        queue_depth_samples_.clear();
+    }
+
+    int64_t current_depth() const { return current_depth_; }
+    int64_t max_queue_depth() const { return max_queue_depth_; }
+    int64_t total_dropped() const { return total_dropped_; }
+
+private:
+    int64_t capacity_;
+    int64_t total_enqueued_;
+    int64_t total_dequeued_;
+    int64_t total_dropped_;
+    int64_t max_queue_depth_;
+    int64_t current_depth_;
+    std::vector<int64_t> queue_depth_samples_;
+};
+
+
 // Python bindings
 PYBIND11_MODULE(amex_sampler_cpp, m) {
     m.doc() = "AMEX Credit-Default Streaming Benchmark - C++ Samplers";
@@ -664,6 +1156,53 @@ PYBIND11_MODULE(amex_sampler_cpp, m) {
         .def("get_unique_related", &RelatedEntityLookup::get_unique_related)
         .def("k_related", &RelatedEntityLookup::k_related)
         .def("num_entities", &RelatedEntityLookup::num_entities);
+
+    // HotsetRelatedLookup
+    py::class_<HotsetRelatedLookup>(m, "HotsetRelatedLookup")
+        .def(py::init<int64_t, int64_t, int64_t, int64_t>(),
+             py::arg("num_entities"),
+             py::arg("k_related"),
+             py::arg("hotset_size"),
+             py::arg("seed") = 42)
+        .def("get_related", &HotsetRelatedLookup::get_related)
+        .def("get_batch_related", &HotsetRelatedLookup::get_batch_related)
+        .def("k_related", &HotsetRelatedLookup::k_related)
+        .def("num_entities", &HotsetRelatedLookup::num_entities)
+        .def("hotset_size", &HotsetRelatedLookup::hotset_size)
+        .def("num_buckets", &HotsetRelatedLookup::num_buckets);
+
+    // StreamingFeatureExtractor
+    py::class_<StreamingFeatureExtractor>(m, "StreamingFeatureExtractor")
+        .def(py::init<torch::Tensor, int64_t, bool, int64_t, int64_t, int64_t, int64_t>(),
+             py::arg("entity_windows"),
+             py::arg("k_related"),
+             py::arg("use_hotset"),
+             py::arg("hotset_size"),
+             py::arg("page_size"),
+             py::arg("feature_bytes"),
+             py::arg("seed") = 42)
+        .def("extract_single", &StreamingFeatureExtractor::extract_single)
+        .def("extract_batch", &StreamingFeatureExtractor::extract_batch)
+        .def("reset_cache", &StreamingFeatureExtractor::reset_cache)
+        .def("get_total_pages_seen", &StreamingFeatureExtractor::get_total_pages_seen)
+        .def("num_entities", &StreamingFeatureExtractor::num_entities)
+        .def("window_size", &StreamingFeatureExtractor::window_size)
+        .def("feature_dim", &StreamingFeatureExtractor::feature_dim)
+        .def("k_related", &StreamingFeatureExtractor::k_related)
+        .def("use_hotset", &StreamingFeatureExtractor::use_hotset);
+
+    // QueueingMetrics
+    py::class_<QueueingMetrics>(m, "QueueingMetrics")
+        .def(py::init<int64_t>(),
+             py::arg("capacity") = 10000)
+        .def("record_enqueue", &QueueingMetrics::record_enqueue)
+        .def("record_dequeue", &QueueingMetrics::record_dequeue)
+        .def("sample_queue_depth", &QueueingMetrics::sample_queue_depth)
+        .def("get_summary", &QueueingMetrics::get_summary)
+        .def("reset", &QueueingMetrics::reset)
+        .def("current_depth", &QueueingMetrics::current_depth)
+        .def("max_queue_depth", &QueueingMetrics::max_queue_depth)
+        .def("total_dropped", &QueueingMetrics::total_dropped);
 
     // Utility functions
     m.def("get_time_ms", &get_time_ms, "Get current time in milliseconds");
