@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Page-Aware GNN Training: 4× I/O Efficiency for Fraud Detection</title>
+  <title>GNN Fraud Detection: Two Regimes, Two Strategies</title>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -48,24 +48,231 @@
       return (
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold mb-4">
-            <span className="gradient-text">Page-Aware GNN Training</span>
+            <span className="gradient-text">GNN Fraud Detection</span>
           </h1>
           <p className="text-xl text-gray-400 mb-6">
-            4× Better I/O Efficiency with Zero Quality Loss
+            Two Regimes, Two Optimization Strategies
           </p>
-          <div className="flex justify-center gap-8 text-center">
+          <div className="bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-4 border border-emerald-700/50 max-w-2xl mx-auto mb-8">
+            <p className="text-lg text-gray-300 italic">
+              "When data fits in cache, batching dominates throughput.<br/>
+              When data exceeds cache, locality dominates throughput."
+            </p>
+          </div>
+          <div className="flex justify-center gap-6 text-center flex-wrap">
             <div className="bg-gray-800 rounded-xl p-6 border border-emerald-900">
-              <div className="text-5xl font-bold text-emerald-400">4×</div>
+              <div className="text-4xl font-bold text-emerald-400">4×</div>
               <div className="text-gray-400 mt-2">Fewer Page Reads</div>
+              <div className="text-gray-600 text-sm">(DGraphFin)</div>
             </div>
             <div className="bg-gray-800 rounded-xl p-6 border border-cyan-900">
-              <div className="text-5xl font-bold text-cyan-400">0%</div>
-              <div className="text-gray-400 mt-2">Quality Loss</div>
+              <div className="text-4xl font-bold text-cyan-400">5k</div>
+              <div className="text-gray-400 mt-2">TPS Capacity</div>
+              <div className="text-gray-600 text-sm">(AMEX mb=4)</div>
             </div>
             <div className="bg-gray-800 rounded-xl p-6 border border-purple-900">
-              <div className="text-5xl font-bold text-purple-400">3.7M</div>
-              <div className="text-gray-400 mt-2">Nodes (DGraphFin)</div>
+              <div className="text-4xl font-bold text-purple-400">0%</div>
+              <div className="text-gray-400 mt-2">Quality Loss</div>
+              <div className="text-gray-600 text-sm">(Both)</div>
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Two Regimes Section
+    function TwoRegimesSection() {
+      const [activeRegime, setActiveRegime] = React.useState('amex');
+
+      const regimes = {
+        amex: {
+          name: 'AMEX (Cache-Resident)',
+          color: '#06b6d4',
+          dataset: '3.3GB tabular',
+          workingSet: 'Fits in GPU (48GB)',
+          bottleneck: 'Compute/Scheduling',
+          keyMetric: 'TPS Capacity',
+          optimization: 'Increase microbatch size',
+          findings: [
+            'mb=1: 2,000 TPS sustainable (p99 < 1ms)',
+            'mb=4: 5,000 TPS sustainable (p99 < 3ms)',
+            'Access pattern (random vs hotset) irrelevant',
+            'Hard capacity cliff at 10k TPS (66% drop rate)',
+          ],
+        },
+        dgraphfin: {
+          name: 'DGraphFin (Memory-Bound)',
+          color: '#10b981',
+          dataset: '3.7M nodes, 4.3M edges',
+          workingSet: 'Exceeds cache',
+          bottleneck: 'Memory/Storage',
+          keyMetric: 'Read Amplification',
+          optimization: 'METIS layout + page batching',
+          findings: [
+            'Page-batch: 6.8× RA_fetch (4× better)',
+            'Neighbor sampling: 28.5× RA_fetch',
+            'FIM-guided adds no benefit',
+            'Training saturates in 5 minutes',
+          ],
+        },
+      };
+
+      const r = regimes[activeRegime];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Two Regimes: When Does Locality Matter?</h2>
+          <p className="text-gray-400 mb-6">
+            The optimization strategy depends entirely on whether your working set fits in the memory hierarchy.
+          </p>
+
+          <div className="flex gap-3 mb-6">
+            {Object.entries(regimes).map(([key, regime]) => (
+              <button
+                key={key}
+                onClick={() => setActiveRegime(key)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  activeRegime === key
+                    ? 'ring-2'
+                    : 'bg-gray-800 hover:bg-gray-700'
+                }`}
+                style={{
+                  backgroundColor: activeRegime === key ? regime.color : undefined,
+                  ringColor: regime.color,
+                }}
+              >
+                {regime.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Dataset</span>
+                  <span className="text-white font-mono">{r.dataset}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Working Set</span>
+                  <span className="text-white font-mono">{r.workingSet}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Bottleneck</span>
+                  <span style={{ color: r.color }} className="font-mono">{r.bottleneck}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Key Metric</span>
+                  <span className="text-white font-mono">{r.keyMetric}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Optimization</span>
+                  <span style={{ color: r.color }} className="font-mono text-sm">{r.optimization}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-gray-300 mb-3">Key Findings</h4>
+              <ul className="space-y-2">
+                {r.findings.map((finding, i) => (
+                  <li key={i} className="flex gap-3 text-sm">
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: r.color }}>{i + 1}</span>
+                    <span className="text-gray-400">{finding}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // AMEX Capacity Section
+    function AMEXCapacitySection() {
+      const capacityData = [
+        { name: 'mb=1', sustainable: 2000, cliff: 5000, p99: 0.5, label: 'Microbatch 1' },
+        { name: 'mb=4', sustainable: 5000, cliff: 10000, p99: 2.0, label: 'Microbatch 4' },
+      ];
+
+      const tpsData = [
+        { tps: 500, mb1: 0.5, mb4: 1.4 },
+        { tps: 1000, mb1: 0.4, mb4: 3.3 },
+        { tps: 2000, mb1: 0.4, mb4: 1.8 },
+        { tps: 5000, mb1: 62, mb4: 0.95 },
+        { tps: 10000, mb1: 35000, mb4: 30000 },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">AMEX: Real-Time Inference Capacity</h2>
+          <p className="text-gray-400 mb-6">
+            When the dataset fits in GPU memory, batching is the only lever that matters.
+            Locality optimizations provide no benefit.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Capacity by Microbatch Size</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={capacityData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" domain={[0, 6000]} tickFormatter={v => `${v/1000}k`} />
+                  <YAxis type="category" dataKey="label" stroke="#9ca3af" width={100} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="sustainable" name="Sustainable TPS" fill="#06b6d4" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg text-center">
+                <span className="text-cyan-400 font-bold">2.5× capacity increase</span>
+                <span className="text-gray-400"> with mb=4 (2k → 5k TPS)</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">The Tradeoff</h3>
+              <div className="space-y-4">
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-cyan-500">
+                  <div className="font-semibold text-cyan-400">Microbatch = 1</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    p99 latency: <strong className="text-white">0.3-0.5ms</strong><br/>
+                    Capacity: <strong className="text-white">2,000 TPS</strong><br/>
+                    Best for: Ultra-low latency requirements
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-emerald-500">
+                  <div className="font-semibold text-emerald-400">Microbatch = 4</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    p99 latency: <strong className="text-white">1-3ms</strong><br/>
+                    Capacity: <strong className="text-white">5,000 TPS</strong><br/>
+                    Best for: Higher throughput with relaxed latency
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gradient-to-r from-cyan-900/30 to-purple-900/30 rounded-lg p-4 border border-cyan-700/50">
+            <h3 className="text-cyan-400 font-semibold mb-3">Why Locality Doesn't Help Here</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+              <div>
+                <div className="text-2xl font-mono text-gray-200">3.3GB</div>
+                <div className="text-gray-500 text-sm">Dataset size</div>
+              </div>
+              <div>
+                <div className="text-2xl font-mono text-gray-200">48GB</div>
+                <div className="text-gray-500 text-sm">GPU memory</div>
+              </div>
+              <div>
+                <div className="text-2xl font-mono text-cyan-400">68-95%</div>
+                <div className="text-gray-500 text-sm">Cache hit rate</div>
+              </div>
+            </div>
+            <p className="text-gray-400 text-sm text-center mt-3">
+              With 68-95% cache hit, data access is essentially free.
+              The bottleneck is <span className="text-cyan-400">GPU kernel launch overhead</span> and <span className="text-cyan-400">queue management</span>.
+            </p>
           </div>
         </div>
       );
@@ -506,46 +713,45 @@
             <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-2xl">✓</span>
-                <h3 className="font-semibold text-emerald-400">Real Systems Win</h3>
+                <h3 className="font-semibold text-emerald-400">Know Your Regime</h3>
               </div>
               <p className="text-gray-400 text-sm">
-                4× fewer page touches is stable across 5 min and 1 hour runs. This is structural,
-                not training-phase noise. METIS + page batching delivers exactly what it promises.
+                Cache-resident? Optimize batching. Memory-bound? Optimize locality.
+                Using the wrong strategy wastes engineering effort or leaves 4-10× on the table.
               </p>
             </div>
 
             <div className="bg-cyan-900/20 border border-cyan-700 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-2xl">✓</span>
-                <h3 className="font-semibold text-cyan-400">Training Saturates Fast</h3>
+                <h3 className="font-semibold text-cyan-400">Measure First</h3>
               </div>
               <p className="text-gray-400 text-sm">
-                5 minutes ≈ 1 hour for fraud detection quality. The model learns what it can learn
-                quickly. More training doesn't help — gains must come from better data or architecture.
+                Check cache hit rates before optimizing. AMEX shows 68-95% hit rate = no locality wins.
+                DGraphFin shows random traversal = 4× locality wins with METIS.
               </p>
             </div>
 
             <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-2xl">!</span>
-                <h3 className="font-semibold text-purple-400">The Task is Hard</h3>
+                <h3 className="font-semibold text-purple-400">Hard Capacity Cliffs</h3>
               </div>
               <p className="text-gray-400 text-sm">
-                PR-AUC ~0.035 vs random baseline 0.0127 = 2.8× better than random.
-                Meaningful but modest. The 1.27% fraud rate makes this inherently difficult.
+                Both workloads show sharp capacity limits, not graceful degradation.
+                AMEX: 10k TPS = 66% drop rate. DGraphFin: beyond 28× RA = I/O bound.
               </p>
             </div>
           </div>
 
-          <div className="mt-8 bg-gradient-to-r from-emerald-900/30 to-blue-900/30 rounded-lg p-6 border border-emerald-700/50 text-center">
-            <h3 className="text-xl font-bold text-white mb-2">Bottom Line</h3>
+          <div className="mt-8 bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-6 border border-emerald-700/50 text-center">
+            <h3 className="text-xl font-bold text-white mb-2">The Systems Insight</h3>
             <p className="text-gray-300 text-lg">
-              <span className="text-emerald-400 font-bold">Page-Batch</span> delivers
-              <span className="text-cyan-400 font-bold"> 4× better I/O efficiency</span> with
-              <span className="text-blue-400 font-bold"> zero quality loss</span>.
+              <span className="text-cyan-400 font-bold">When data fits</span>, batching dominates.
+              <span className="text-emerald-400 font-bold"> When data doesn't fit</span>, locality dominates.
             </p>
             <p className="text-gray-500 mt-2">
-              Simple, effective, production-ready.
+              Both optimizations are valid — in their respective regimes.
             </p>
           </div>
         </div>
@@ -598,6 +804,8 @@
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
           <HeroSection />
+          <TwoRegimesSection />
+          <AMEXCapacitySection />
           <DatasetSection />
           <SamplersSection />
           <RAMetricsSection />
@@ -608,7 +816,9 @@
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
             <p>
               Part of <a href="index.html" className="text-emerald-400 hover:underline">knlp</a> ·
-              <a href="https://github.com/mcgrof/knlp/blob/main/gnn/docs/gnn-fraud.md" className="text-cyan-400 hover:underline ml-2">Documentation</a>
+              <a href="gnn-fraud.md" className="text-cyan-400 hover:underline ml-2">Overview</a> ·
+              <a href="gnn-amex.md" className="text-emerald-400 hover:underline ml-2">AMEX</a> ·
+              <a href="gnn-dgraphfin.md" className="text-purple-400 hover:underline ml-2">DGraphFin</a>
             </p>
           </footer>
         </div>
