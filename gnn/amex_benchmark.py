@@ -1178,6 +1178,7 @@ def infer_capacity(
     num_runs: int = 1,
     use_wandb: bool = True,
     use_gpu_sync: bool = True,
+    warmup_seconds: float = 2.0,
 ) -> CapacityResult:
     """
     Producer/consumer streaming benchmark with true end-to-end latency.
@@ -1200,6 +1201,7 @@ def infer_capacity(
         queue_size: Bounded queue capacity (drops when full)
         num_runs: Number of runs for repeatability statistics
         use_gpu_sync: Sync GPU before recording completion time
+        warmup_seconds: Warmup period before measurement (GPU JIT, cache prime)
     """
     import threading
     import queue
@@ -1268,6 +1270,24 @@ def infer_capacity(
         input_dim=dataset.num_features, hidden_dim=config.hidden_dim
     ).to(device)
     model.eval()
+
+    # GPU warmup: run a few inference batches to trigger JIT compilation
+    if warmup_seconds > 0 and device.type == "cuda":
+        print(f"GPU warmup ({warmup_seconds}s)...")
+        warmup_start = time.time()
+        warmup_count = 0
+        with torch.no_grad():
+            while time.time() - warmup_start < warmup_seconds:
+                # Random entity for warmup
+                entity_idx = random.randint(0, num_entities - 1)
+                entity_win, _, _ = extractor.extract_single(entity_idx)
+                x = entity_win.unsqueeze(0).to(device)
+                _ = model(x)
+                if use_gpu_sync:
+                    torch.cuda.synchronize()
+                warmup_count += 1
+        extractor.reset_cache()  # Reset cache after warmup
+        print(f"  Warmup complete: {warmup_count} inferences")
 
     # Run multiple times for repeatability
     all_p99 = []
@@ -1633,6 +1653,894 @@ def run_capacity_sweep(
     return results
 
 
+def validate_gpu_sync_timing(
+    config: "AMEXConfig",
+    target_tps: int = 5000,
+    duration: int = 10,
+    k_related: int = 0,
+) -> Dict[str, float]:
+    """
+    V1 Validation: Compare latency measurement with GPU sync ON vs OFF.
+
+    Expected behavior:
+    - sync OFF looks artificially faster (misses GPU kernel completion)
+    - sync OFF has lower jitter (hides async execution variability)
+    - sync ON is the ground truth for end-to-end scoring latency
+
+    Returns dict with p99_sync_on, p99_sync_off, delta_ms, delta_pct.
+    Prints a WARNING if sync is OFF (e.g., CPU-only mode).
+    """
+    print("\n" + "=" * 70)
+    print("V1 VALIDATION: GPU Sync Timing Correctness")
+    print("=" * 70)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if device.type != "cuda":
+        print("WARNING: No GPU detected. GPU sync validation not applicable.")
+        print("         All timing is CPU-only (no async kernel execution).")
+        return {
+            "p99_sync_on": 0.0,
+            "p99_sync_off": 0.0,
+            "delta_ms": 0.0,
+            "delta_pct": 0.0,
+            "gpu_available": False,
+        }
+
+    print(f"Device: {device} ({torch.cuda.get_device_name(0)})")
+    print(f"Target TPS: {target_tps:,}, Duration: {duration}s, k={k_related}")
+
+    # Run with sync ON
+    print("\n--- GPU sync ON (ground truth) ---")
+    result_on = infer_capacity(
+        config,
+        target_tps=target_tps,
+        duration=duration,
+        k_related=k_related,
+        use_wandb=False,
+        use_gpu_sync=True,
+    )
+
+    # Run with sync OFF
+    print("\n--- GPU sync OFF (artificially fast) ---")
+    result_off = infer_capacity(
+        config,
+        target_tps=target_tps,
+        duration=duration,
+        k_related=k_related,
+        use_wandb=False,
+        use_gpu_sync=False,
+    )
+
+    # Compute delta
+    p99_on = result_on.p99_latency
+    p99_off = result_off.p99_latency
+    delta_ms = p99_on - p99_off
+    delta_pct = (delta_ms / p99_off * 100) if p99_off > 0 else 0
+
+    # Print results
+    print("\n" + "=" * 70)
+    print("GPU SYNC VALIDATION RESULTS")
+    print("=" * 70)
+    print(f"{'Metric':<25} {'Sync ON':>15} {'Sync OFF':>15} {'Delta':>15}")
+    print("-" * 70)
+    print(
+        f"{'p50 latency (ms)':<25} {result_on.p50_latency:>15.3f} "
+        f"{result_off.p50_latency:>15.3f} "
+        f"{result_on.p50_latency - result_off.p50_latency:>+15.3f}"
+    )
+    print(
+        f"{'p95 latency (ms)':<25} {result_on.p95_latency:>15.3f} "
+        f"{result_off.p95_latency:>15.3f} "
+        f"{result_on.p95_latency - result_off.p95_latency:>+15.3f}"
+    )
+    print(
+        f"{'p99 latency (ms)':<25} {p99_on:>15.3f} "
+        f"{p99_off:>15.3f} {delta_ms:>+15.3f}"
+    )
+    print(
+        f"{'max latency (ms)':<25} {result_on.max_latency:>15.3f} "
+        f"{result_off.max_latency:>15.3f} "
+        f"{result_on.max_latency - result_off.max_latency:>+15.3f}"
+    )
+
+    print(f"\nDelta: sync ON is {delta_ms:.3f}ms slower ({delta_pct:+.1f}%)")
+
+    if delta_ms > 0.01:
+        print("\n[PASS] GPU sync adds measurable latency (expected behavior)")
+        print("       sync ON captures actual GPU kernel completion time.")
+    elif delta_ms < -0.01:
+        print("\n[UNEXPECTED] Sync ON is faster than sync OFF.")
+        print("             This should not happen - investigate timing code.")
+    else:
+        print("\n[INFO] Delta is negligible (< 0.01ms).")
+        print("       Possible reasons: GPU kernels very fast, or CPU-bound.")
+
+    return {
+        "p99_sync_on": p99_on,
+        "p99_sync_off": p99_off,
+        "delta_ms": delta_ms,
+        "delta_pct": delta_pct,
+        "gpu_available": True,
+    }
+
+
+def validate_queueing_model(
+    config: "AMEXConfig",
+    sustainable_tps: int = 5000,
+    duration: int = 10,
+    queue_size: int = 100,
+) -> Dict[str, float]:
+    """
+    V2 Validation: Verify queueing model correctness under overload.
+
+    Run at 5x sustainable TPS and verify:
+    - max_queue hits the bound (queue_size)
+    - drops become nonzero
+    - avg_queue_depth > 0 (backpressure observed)
+
+    Returns dict with validation results.
+    """
+    print("\n" + "=" * 70)
+    print("V2 VALIDATION: Queueing Model Correctness")
+    print("=" * 70)
+
+    overload_tps = sustainable_tps * 5
+    print(f"Sustainable TPS estimate: {sustainable_tps:,}")
+    print(f"Overload TPS (5x): {overload_tps:,}")
+    print(f"Queue size bound: {queue_size}")
+    print(f"Duration: {duration}s")
+
+    result = infer_capacity(
+        config,
+        target_tps=overload_tps,
+        duration=duration,
+        queue_size=queue_size,
+        k_related=0,
+        use_wandb=False,
+        use_gpu_sync=True,
+    )
+
+    print("\n" + "=" * 70)
+    print("QUEUEING VALIDATION RESULTS")
+    print("=" * 70)
+
+    checks_passed = 0
+    total_checks = 3
+
+    # Check 1: max_queue hits bound
+    max_q = result.max_queue_depth
+    queue_hit_bound = max_q >= queue_size * 0.9  # 90% of bound counts as hit
+    print(f"\n1. Max queue depth: {max_q} (bound={queue_size})")
+    if queue_hit_bound:
+        print("   [PASS] Queue reached capacity under overload")
+        checks_passed += 1
+    else:
+        print(f"   [FAIL] Queue should hit bound at 5x overload (got {max_q})")
+
+    # Check 2: drops nonzero
+    drops = result.total_dropped
+    drop_rate = result.drop_rate
+    print(f"\n2. Drops: {drops:,} ({drop_rate:.2%})")
+    if drops > 0:
+        print("   [PASS] Drops occur under overload (expected)")
+        checks_passed += 1
+    else:
+        print("   [FAIL] No drops at 5x overload - queue or timing issue")
+
+    # Check 3: avg_queue_depth > 0
+    avg_q = result.avg_queue_depth
+    print(f"\n3. Avg queue depth: {avg_q:.1f}")
+    if avg_q > 0:
+        print("   [PASS] Backpressure observed (queue not always empty)")
+        checks_passed += 1
+    else:
+        print("   [FAIL] Avg queue depth is 0 - consumer too fast or bug")
+
+    print(f"\n{'='*70}")
+    print(f"Queueing validation: {checks_passed}/{total_checks} checks passed")
+
+    return {
+        "max_queue_depth": max_q,
+        "queue_size_bound": queue_size,
+        "queue_hit_bound": queue_hit_bound,
+        "total_dropped": drops,
+        "drop_rate": drop_rate,
+        "avg_queue_depth": avg_q,
+        "checks_passed": checks_passed,
+        "total_checks": total_checks,
+    }
+
+
+def validate_bytes_per_event(
+    config: "AMEXConfig",
+    target_tps: int = 2000,
+    duration: int = 10,
+    k_values: List[int] = None,
+) -> Dict[str, List[float]]:
+    """
+    V3 Validation: Verify bytes/event scales with k_related.
+
+    Under random mode, bytes/event should increase roughly linearly with k.
+    Each additional related entity adds window_size * feature_bytes.
+
+    Returns dict with k values and corresponding bytes/event.
+    """
+    if k_values is None:
+        k_values = [0, 4, 8, 16, 32]
+
+    print("\n" + "=" * 70)
+    print("V3 VALIDATION: Bytes/Event Scaling")
+    print("=" * 70)
+
+    expected_base = config.window_size * config.feature_bytes
+    print(
+        f"Expected base bytes (k=0): {expected_base} = {config.window_size} windows * {config.feature_bytes} bytes"
+    )
+    print(f"Expected increment per k: +{expected_base} bytes")
+    print(f"Target TPS: {target_tps:,}, Duration: {duration}s")
+
+    results = []
+    for k in k_values:
+        print(f"\n--- k={k} ---")
+        result = infer_capacity(
+            config,
+            target_tps=target_tps,
+            duration=duration,
+            k_related=k,
+            neighbor_mode="random",
+            use_wandb=False,
+            use_gpu_sync=True,
+        )
+        results.append(result)
+
+    print("\n" + "=" * 70)
+    print("BYTES/EVENT SCALING RESULTS")
+    print("=" * 70)
+    print(f"{'k':>4} {'Bytes/event':>12} {'Expected':>12} {'Ratio':>8} {'Status':>10}")
+    print("-" * 50)
+
+    checks_passed = 0
+    for k, r in zip(k_values, results):
+        expected = expected_base * (1 + k)
+        ratio = r.bytes_per_event / expected if expected > 0 else 0
+        # Allow 10% tolerance
+        ok = 0.9 <= ratio <= 1.1
+        status = "[PASS]" if ok else "[FAIL]"
+        if ok:
+            checks_passed += 1
+        print(
+            f"{k:>4} {r.bytes_per_event:>12.0f} {expected:>12} {ratio:>8.2f} {status:>10}"
+        )
+
+    print(f"\n{checks_passed}/{len(k_values)} k-values within 10% of expected")
+
+    # Check linearity
+    if len(k_values) >= 3:
+        bytes_vals = [r.bytes_per_event for r in results]
+        # Simple linear regression R^2
+        x = np.array(k_values, dtype=float)
+        y = np.array(bytes_vals)
+        x_mean, y_mean = x.mean(), y.mean()
+        ss_tot = ((y - y_mean) ** 2).sum()
+        ss_res = ((y - (y_mean + (x - x_mean) * expected_base)) ** 2).sum()
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+        print(f"\nLinearity check: R^2 = {r_squared:.4f}")
+        if r_squared > 0.95:
+            print("[PASS] Bytes/event scales linearly with k")
+        else:
+            print("[WARN] Linearity is weak (R^2 < 0.95)")
+
+    return {
+        "k_values": k_values,
+        "bytes_per_event": [r.bytes_per_event for r in results],
+        "expected_base": expected_base,
+        "checks_passed": checks_passed,
+    }
+
+
+def run_all_validations(
+    config: "AMEXConfig",
+    quick: bool = True,
+) -> Dict[str, Dict]:
+    """Run all V1, V2, V3 validations and return consolidated results.
+
+    Args:
+        quick: If True, use shorter durations (5s each) for faster validation.
+    """
+    print("\n" + "=" * 70)
+    print("RUNNING ALL VALIDATIONS" + (" (quick mode)" if quick else ""))
+    print("=" * 70)
+
+    duration = 5 if quick else 10
+    target_tps = 1000 if quick else 2000
+    k_vals = [0, 4, 8] if quick else [0, 4, 8, 16]
+
+    v1 = validate_gpu_sync_timing(config, target_tps=target_tps, duration=duration)
+    v2 = validate_queueing_model(
+        config, sustainable_tps=target_tps, duration=duration, queue_size=100
+    )
+    v3 = validate_bytes_per_event(
+        config, target_tps=target_tps // 2, duration=duration, k_values=k_vals
+    )
+
+    print("\n" + "=" * 70)
+    print("VALIDATION SUMMARY")
+    print("=" * 70)
+
+    # V1 summary
+    if v1.get("gpu_available", False):
+        print(
+            f"V1 GPU Sync: p99 delta = {v1['delta_ms']:+.3f}ms ({v1['delta_pct']:+.1f}%)"
+        )
+    else:
+        print("V1 GPU Sync: N/A (no GPU)")
+
+    # V2 summary
+    print(f"V2 Queueing: {v2['checks_passed']}/{v2['total_checks']} checks passed")
+
+    # V3 summary
+    print(
+        f"V3 Bytes/Event: {v3['checks_passed']}/{len(v3['k_values'])} k-values within tolerance"
+    )
+
+    return {"v1_gpu_sync": v1, "v2_queueing": v2, "v3_bytes_event": v3}
+
+
+def run_canonical_benchmark_matrix(
+    config: "AMEXConfig",
+    duration: int = 60,
+    num_runs: int = 5,
+    queue_size: int = 100000,
+    use_wandb: bool = True,
+) -> Dict[str, List[CapacityResult]]:
+    """
+    Run canonical benchmark matrix for publishable results.
+
+    Fixed knobs:
+    - GPU: W7900 (48GB) - detected automatically
+    - queue_size: 100k (large enough to not be limiting)
+    - duration: 60s per sweep point
+    - num_runs: 5 (for mean±std on p99)
+
+    Sweep knobs:
+    - neighbor_mode: random, hotset
+    - hotset_size: 1000, 10000, 100000 (when hotset mode)
+    - k_related: 0, 4, 8, 16, 32
+    - microbatch_size: 1, 4, 8
+    - TPS: logarithmic sweep 500, 1000, 2000, 5000, 10000, 20000
+
+    Returns dict of results grouped by configuration.
+    """
+    import json
+    from datetime import datetime
+
+    print("\n" + "=" * 70)
+    print("CANONICAL BENCHMARK MATRIX")
+    print("=" * 70)
+
+    # Log GPU info
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"GPU: {gpu_name}")
+    else:
+        gpu_name = "CPU"
+        print("WARNING: Running on CPU (no GPU detected)")
+
+    print(f"Duration per point: {duration}s")
+    print(f"Runs per point: {num_runs}")
+    print(f"Queue size: {queue_size:,}")
+
+    # Define sweep grid
+    tps_values = [500, 1000, 2000, 5000, 10000, 20000]
+    k_values = [0, 4, 8, 16, 32]
+    microbatch_values = [1, 4, 8]
+    neighbor_modes = ["random", "hotset"]
+    hotset_sizes = [1000, 10000, 100000]
+
+    all_results = {}
+    run_count = 0
+    total_runs = len(tps_values) * len(k_values) * len(microbatch_values) + len(
+        tps_values
+    ) * len(k_values) * len(hotset_sizes) * len(microbatch_values)
+    print(f"Total configurations: {total_runs}")
+    print(f"Estimated time: {total_runs * duration * num_runs / 60:.0f} minutes")
+
+    if use_wandb and HAS_WANDB:
+        init_wandb_with_system_metrics(
+            project="amex-canonical-benchmark",
+            name=f"matrix-{datetime.now().strftime('%Y%m%d-%H%M')}",
+            config={
+                "duration": duration,
+                "num_runs": num_runs,
+                "queue_size": queue_size,
+                "tps_values": tps_values,
+                "k_values": k_values,
+                "microbatch_values": microbatch_values,
+                "gpu": gpu_name,
+            },
+        )
+
+    # Random mode sweep
+    for k in k_values:
+        for mb in microbatch_values:
+            key = f"random_k{k}_mb{mb}"
+            results = []
+
+            for tps in tps_values:
+                run_count += 1
+                print(f"\n[{run_count}/{total_runs}] random k={k} mb={mb} TPS={tps:,}")
+
+                result = infer_capacity(
+                    config,
+                    target_tps=tps,
+                    duration=duration,
+                    k_related=k,
+                    neighbor_mode="random",
+                    microbatch_size=mb,
+                    queue_size=queue_size,
+                    num_runs=num_runs,
+                    use_wandb=False,
+                )
+                results.append(result)
+
+            all_results[key] = results
+
+    # Hotset mode sweep
+    for hs in hotset_sizes:
+        for k in k_values:
+            for mb in microbatch_values:
+                key = f"hotset{hs}_k{k}_mb{mb}"
+                results = []
+
+                for tps in tps_values:
+                    run_count += 1
+                    print(
+                        f"\n[{run_count}/{total_runs}] hotset={hs} k={k} mb={mb} TPS={tps:,}"
+                    )
+
+                    result = infer_capacity(
+                        config,
+                        target_tps=tps,
+                        duration=duration,
+                        k_related=k,
+                        neighbor_mode="hotset",
+                        hotset_size=hs,
+                        microbatch_size=mb,
+                        queue_size=queue_size,
+                        num_runs=num_runs,
+                        use_wandb=False,
+                    )
+                    results.append(result)
+
+                all_results[key] = results
+
+    # Save results to JSON
+    results_file = (
+        f"amex_benchmark_results_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    )
+    with open(results_file, "w") as f:
+        # Convert dataclass results to dict
+        json_results = {}
+        for key, results in all_results.items():
+            json_results[key] = [
+                {
+                    "target_tps": r.target_tps,
+                    "achieved_tps": r.achieved_tps,
+                    "p50_latency": r.p50_latency,
+                    "p95_latency": r.p95_latency,
+                    "p99_latency": r.p99_latency,
+                    "p99_mean": r.p99_mean,
+                    "p99_std": r.p99_std,
+                    "max_latency": r.max_latency,
+                    "drop_rate": r.drop_rate,
+                    "cache_hit_rate": r.cache_hit_rate,
+                    "bytes_per_event": r.bytes_per_event,
+                    "k_related": r.k_related,
+                    "neighbor_mode": r.neighbor_mode,
+                    "hotset_size": r.hotset_size,
+                    "microbatch_size": r.microbatch_size,
+                }
+                for r in results
+            ]
+        json.dump(json_results, f, indent=2)
+    print(f"\nResults saved to: {results_file}")
+
+    if use_wandb and HAS_WANDB:
+        wandb.save(results_file)
+        wandb.finish()
+
+    # Print summary table
+    print("\n" + "=" * 80)
+    print("BENCHMARK SUMMARY: Max TPS with p99 < 1ms")
+    print("=" * 80)
+    print(f"{'Config':<30} {'Max TPS':>10} {'p99 (ms)':>10} {'Cache':>8}")
+    print("-" * 60)
+
+    for key, results in all_results.items():
+        sub_ms = [r for r in results if r.p99_latency < 1.0]
+        if sub_ms:
+            best = max(sub_ms, key=lambda r: r.achieved_tps)
+            print(
+                f"{key:<30} {best.achieved_tps:>10,.0f} "
+                f"{best.p99_latency:>10.3f} {best.cache_hit_rate:>8.2%}"
+            )
+        else:
+            print(f"{key:<30} {'N/A':>10} {'>1.0':>10}")
+
+    return all_results
+
+
+def generate_benchmark_plots(
+    results_file: str,
+    output_dir: str = ".",
+) -> List[str]:
+    """
+    Generate publication-quality plots from benchmark results.
+
+    Generates:
+    1. Capacity curves: p99 latency vs TPS for different configurations
+    2. Bytes/event vs k: Shows linear scaling with k_related
+    3. Microbatch tradeoff: Throughput vs latency for different batch sizes
+
+    Returns list of generated plot file paths.
+    """
+    import json
+    import matplotlib.pyplot as plt
+
+    # Set publication-quality defaults
+    plt.rcParams.update(
+        {
+            "figure.dpi": 300,
+            "font.size": 10,
+            "axes.labelsize": 11,
+            "axes.titlesize": 12,
+            "legend.fontsize": 9,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+        }
+    )
+
+    # Load results
+    with open(results_file, "r") as f:
+        results = json.load(f)
+
+    generated_files = []
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    # Plot 1: Capacity curves (p99 vs TPS) for different k values
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Random mode capacity curves
+    ax = axes[0]
+    for k in [0, 4, 8, 16, 32]:
+        key = f"random_k{k}_mb1"
+        if key in results:
+            data = results[key]
+            tps = [r["target_tps"] for r in data]
+            p99 = [r["p99_latency"] for r in data]
+            ax.plot(tps, p99, "o-", label=f"k={k}", markersize=4)
+
+    ax.axhline(y=1.0, color="r", linestyle="--", alpha=0.5, label="1ms threshold")
+    ax.set_xlabel("Target TPS")
+    ax.set_ylabel("p99 Latency (ms)")
+    ax.set_title("Capacity Curves: Random Mode")
+    ax.set_xscale("log")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Hotset mode (best hotset size) capacity curves
+    ax = axes[1]
+    best_hs = 10000
+    for k in [0, 4, 8, 16, 32]:
+        key = f"hotset{best_hs}_k{k}_mb1"
+        if key in results:
+            data = results[key]
+            tps = [r["target_tps"] for r in data]
+            p99 = [r["p99_latency"] for r in data]
+            ax.plot(tps, p99, "o-", label=f"k={k}", markersize=4)
+
+    ax.axhline(y=1.0, color="r", linestyle="--", alpha=0.5, label="1ms threshold")
+    ax.set_xlabel("Target TPS")
+    ax.set_ylabel("p99 Latency (ms)")
+    ax.set_title(f"Capacity Curves: Hotset Mode (size={best_hs:,})")
+    ax.set_xscale("log")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plot_file = str(output_path / "amex_capacity_curves.png")
+    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.close()
+    generated_files.append(plot_file)
+    print(f"Generated: {plot_file}")
+
+    # Plot 2: Bytes/event vs k (should be linear)
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    # Extract bytes/event at moderate TPS (not overloaded)
+    target_tps = 2000
+    k_values = [0, 4, 8, 16, 32]
+    bytes_random = []
+    bytes_hotset = []
+
+    for k in k_values:
+        key = f"random_k{k}_mb1"
+        if key in results:
+            data = [r for r in results[key] if r["target_tps"] == target_tps]
+            if data:
+                bytes_random.append(data[0]["bytes_per_event"])
+            else:
+                bytes_random.append(None)
+        else:
+            bytes_random.append(None)
+
+        key = f"hotset10000_k{k}_mb1"
+        if key in results:
+            data = [r for r in results[key] if r["target_tps"] == target_tps]
+            if data:
+                bytes_hotset.append(data[0]["bytes_per_event"])
+            else:
+                bytes_hotset.append(None)
+        else:
+            bytes_hotset.append(None)
+
+    # Filter out None values
+    k_random = [k for k, b in zip(k_values, bytes_random) if b is not None]
+    bytes_random_clean = [b for b in bytes_random if b is not None]
+    k_hotset = [k for k, b in zip(k_values, bytes_hotset) if b is not None]
+    bytes_hotset_clean = [b for b in bytes_hotset if b is not None]
+
+    if bytes_random_clean:
+        ax.plot(k_random, bytes_random_clean, "o-", label="Random", markersize=6)
+    if bytes_hotset_clean:
+        ax.plot(k_hotset, bytes_hotset_clean, "s-", label="Hotset (10k)", markersize=6)
+
+    # Add theoretical line
+    if bytes_random_clean:
+        base = bytes_random_clean[0]
+        theoretical = [base * (1 + k) for k in k_values]
+        ax.plot(
+            k_values, theoretical, "--", color="gray", alpha=0.7, label="Theoretical"
+        )
+
+    ax.set_xlabel("k_related (related entities per event)")
+    ax.set_ylabel("Bytes/Event")
+    ax.set_title("Bytes per Event Scaling with k_related")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plot_file = str(output_path / "amex_bytes_per_event.png")
+    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.close()
+    generated_files.append(plot_file)
+    print(f"Generated: {plot_file}")
+
+    # Plot 3: Microbatch tradeoff
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Find max TPS with p99 < 1ms for each microbatch size
+    ax = axes[0]
+    mb_values = [1, 4, 8]
+    for k in [0, 8, 16]:
+        max_tps = []
+        for mb in mb_values:
+            key = f"random_k{k}_mb{mb}"
+            if key in results:
+                sub_ms = [r for r in results[key] if r["p99_latency"] < 1.0]
+                if sub_ms:
+                    max_tps.append(max(r["achieved_tps"] for r in sub_ms))
+                else:
+                    max_tps.append(0)
+            else:
+                max_tps.append(0)
+        ax.bar(
+            [x + 0.25 * ([0, 8, 16].index(k)) for x in range(len(mb_values))],
+            max_tps,
+            width=0.25,
+            label=f"k={k}",
+        )
+
+    ax.set_xlabel("Microbatch Size")
+    ax.set_ylabel("Max TPS (p99 < 1ms)")
+    ax.set_title("Throughput vs Microbatch Size")
+    ax.set_xticks(range(len(mb_values)))
+    ax.set_xticklabels(mb_values)
+    ax.legend()
+    ax.grid(True, alpha=0.3, axis="y")
+
+    # p99 at fixed TPS for different microbatch sizes
+    ax = axes[1]
+    fixed_tps = 5000
+    for k in [0, 8, 16]:
+        p99_vals = []
+        for mb in mb_values:
+            key = f"random_k{k}_mb{mb}"
+            if key in results:
+                data = [r for r in results[key] if r["target_tps"] == fixed_tps]
+                if data:
+                    p99_vals.append(data[0]["p99_latency"])
+                else:
+                    p99_vals.append(None)
+            else:
+                p99_vals.append(None)
+
+        mb_clean = [m for m, p in zip(mb_values, p99_vals) if p is not None]
+        p99_clean = [p for p in p99_vals if p is not None]
+        if p99_clean:
+            ax.plot(mb_clean, p99_clean, "o-", label=f"k={k}", markersize=6)
+
+    ax.axhline(y=1.0, color="r", linestyle="--", alpha=0.5, label="1ms threshold")
+    ax.set_xlabel("Microbatch Size")
+    ax.set_ylabel("p99 Latency (ms)")
+    ax.set_title(f"Latency vs Microbatch Size (TPS={fixed_tps:,})")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plot_file = str(output_path / "amex_microbatch_tradeoff.png")
+    plt.savefig(plot_file, dpi=300, bbox_inches="tight")
+    plt.close()
+    generated_files.append(plot_file)
+    print(f"Generated: {plot_file}")
+
+    return generated_files
+
+
+def generate_benchmark_report(
+    results_file: str,
+    output_file: str = "AMEX_BENCHMARK_REPORT.md",
+) -> str:
+    """
+    Generate markdown benchmark report from results.
+
+    Includes:
+    - Executive summary with key findings
+    - KPI table with max TPS @ p99 < 1ms
+    - Configuration details
+    - Recommendations
+    """
+    import json
+    from datetime import datetime
+
+    with open(results_file, "r") as f:
+        results = json.load(f)
+
+    lines = []
+    lines.append("# AMEX Credit-Default Streaming Benchmark Report")
+    lines.append("")
+    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("## Executive Summary")
+    lines.append("")
+    lines.append(
+        "This benchmark evaluates streaming inference performance for credit-default "
+        "risk prediction using the AMEX dataset. The focus is on **systems metrics** "
+        "(TPS, p99 latency, cache behavior) rather than ML accuracy."
+    )
+    lines.append("")
+    lines.append("### Key Findings")
+    lines.append("")
+
+    # Find best configurations
+    best_random = None
+    best_hotset = None
+    for key, data in results.items():
+        sub_ms = [r for r in data if r["p99_latency"] < 1.0]
+        if sub_ms:
+            best = max(sub_ms, key=lambda r: r["achieved_tps"])
+            if key.startswith("random") and (
+                best_random is None
+                or best["achieved_tps"] > best_random[1]["achieved_tps"]
+            ):
+                best_random = (key, best)
+            elif key.startswith("hotset") and (
+                best_hotset is None
+                or best["achieved_tps"] > best_hotset[1]["achieved_tps"]
+            ):
+                best_hotset = (key, best)
+
+    if best_random:
+        lines.append(
+            f"- **Random mode peak**: {best_random[1]['achieved_tps']:,.0f} TPS @ p99={best_random[1]['p99_latency']:.2f}ms "
+            f"({best_random[0]})"
+        )
+    if best_hotset:
+        lines.append(
+            f"- **Hotset mode peak**: {best_hotset[1]['achieved_tps']:,.0f} TPS @ p99={best_hotset[1]['p99_latency']:.2f}ms "
+            f"({best_hotset[0]})"
+        )
+        if best_random:
+            improvement = (
+                (best_hotset[1]["achieved_tps"] - best_random[1]["achieved_tps"])
+                / best_random[1]["achieved_tps"]
+                * 100
+            )
+            lines.append(
+                f"- **Locality benefit**: Hotset mode achieves {improvement:+.1f}% higher TPS at same p99 constraint"
+            )
+
+    lines.append("")
+    lines.append("## KPI Table: Max TPS with p99 < 1ms")
+    lines.append("")
+    lines.append("| Configuration | Max TPS | p99 (ms) | Cache Hit | Bytes/Event |")
+    lines.append("|---------------|---------|----------|-----------|-------------|")
+
+    # Sort by max TPS
+    sorted_results = []
+    for key, data in results.items():
+        sub_ms = [r for r in data if r["p99_latency"] < 1.0]
+        if sub_ms:
+            best = max(sub_ms, key=lambda r: r["achieved_tps"])
+            sorted_results.append((key, best))
+    sorted_results.sort(key=lambda x: x[1]["achieved_tps"], reverse=True)
+
+    for key, r in sorted_results[:20]:  # Top 20
+        lines.append(
+            f"| {key} | {r['achieved_tps']:,.0f} | {r['p99_latency']:.3f} | "
+            f"{r['cache_hit_rate']:.1%} | {r['bytes_per_event']:.0f} |"
+        )
+
+    lines.append("")
+    lines.append("## Insights")
+    lines.append("")
+    lines.append("### Effect of k_related")
+    lines.append("")
+    lines.append(
+        "Cross-entity retrieval (`k_related`) increases bytes/event linearly but "
+        "has non-linear impact on latency due to cache effects:"
+    )
+    lines.append("")
+
+    # Show k effect
+    for k in [0, 8, 16, 32]:
+        key = f"random_k{k}_mb1"
+        if key in results:
+            sub_ms = [r for r in results[key] if r["p99_latency"] < 1.0]
+            if sub_ms:
+                best = max(sub_ms, key=lambda r: r["achieved_tps"])
+                lines.append(
+                    f"- k={k}: {best['achieved_tps']:,.0f} TPS, {best['bytes_per_event']:.0f} bytes/event"
+                )
+
+    lines.append("")
+    lines.append("### Effect of Locality (Hotset Mode)")
+    lines.append("")
+    lines.append(
+        "Hotset mode groups related entities into buckets, improving cache reuse. "
+        "Smaller hotsets provide better locality but may miss useful relationships."
+    )
+    lines.append("")
+
+    lines.append("### Microbatch Tradeoff")
+    lines.append("")
+    lines.append(
+        "Larger microbatches amortize inference overhead but increase per-event latency. "
+        "Optimal batch size depends on TPS target and latency constraint."
+    )
+    lines.append("")
+
+    lines.append("## Configuration")
+    lines.append("")
+    lines.append("```")
+    lines.append(f"Dataset: AMEX Credit-Default Prediction")
+    lines.append(f"Task: Streaming inference benchmark")
+    lines.append(f"Metric: TPS @ p99 < 1ms")
+    lines.append("```")
+    lines.append("")
+
+    report_text = "\n".join(lines)
+
+    with open(output_file, "w") as f:
+        f.write(report_text)
+
+    print(f"Generated report: {output_file}")
+    return output_file
+
+
 def run_locality_comparison(
     config: "AMEXConfig",
     target_tps: int = 5000,
@@ -1725,10 +2633,20 @@ def main():
     # Mode selection
     parser.add_argument(
         "--mode",
-        choices=["train", "infer", "capacity", "locality"],
+        choices=[
+            "train",
+            "infer",
+            "capacity",
+            "locality",
+            "validate",
+            "benchmark",
+            "plots",
+        ],
         default="train",
         help="Benchmark mode: train (throughput), infer (latency), "
-        "capacity (producer/consumer), locality (random vs hotset)",
+        "capacity (producer/consumer), locality (random vs hotset), "
+        "validate (run V1/V2/V3 correctness checks), "
+        "benchmark (canonical result matrix), plots (generate from results)",
     )
 
     # Sampler settings
@@ -1799,6 +2717,20 @@ def main():
         type=int,
         default=1,
         help="Number of runs for repeatability (reports mean±std p99)",
+    )
+
+    # Results file for plots mode
+    parser.add_argument(
+        "--results-file",
+        type=str,
+        default=None,
+        help="JSON results file for plots/report mode",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=".",
+        help="Output directory for plots",
     )
 
     # Ablation and output settings
@@ -2003,6 +2935,31 @@ def main():
 
         if use_wandb:
             wandb.finish()
+
+    elif args.mode == "validate":
+        # Run V1, V2, V3 validation checks
+        run_all_validations(config)
+
+    elif args.mode == "benchmark":
+        # Run canonical benchmark matrix
+        run_canonical_benchmark_matrix(
+            config,
+            duration=args.time,
+            num_runs=args.num_runs,
+            use_wandb=use_wandb,
+        )
+
+    elif args.mode == "plots":
+        # Generate plots and report from results file
+        if not args.results_file:
+            print("ERROR: --results-file required for plots mode")
+            return
+
+        generate_benchmark_plots(args.results_file, args.output_dir)
+        generate_benchmark_report(
+            args.results_file,
+            output_file=str(Path(args.output_dir) / "AMEX_BENCHMARK_REPORT.md"),
+        )
 
     elif args.ablation:
         # Run all samplers (train mode)
