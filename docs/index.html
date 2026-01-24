@@ -188,11 +188,12 @@
         <div class="highlight-card border-rose-500 rounded-lg p-5">
           <div class="flex items-start justify-between">
             <div>
-              <h3 class="font-semibold text-lg text-rose-400 mb-2">Page-Aware GNN Training</h3>
+              <h3 class="font-semibold text-lg text-rose-400 mb-2">FIM-Guided GNN Fraud Detection</h3>
               <p class="text-gray-400 text-sm mb-3">
-                METIS partitioning + page-aware batching achieves <strong class="text-white">4× better I/O locality</strong>
-                (6.8× vs 28.5× RA_fetch) with <strong class="text-white">zero quality loss</strong> on DGraphFin fraud detection.
-                Training saturates in 5 minutes.
+                Reciprocal Attention transfers from transformers to GNNs. FIM-guided RA achieves
+                <strong class="text-white">+7% F1</strong> on DGraphFin by applying RA selectively to
+                uncertain nodes (bottom 33% by FIM trace). Page-aware batching provides
+                <strong class="text-white">4× better I/O locality</strong>.
               </p>
             </div>
             <span class="text-xs bg-rose-900 text-rose-300 px-2 py-1 rounded">GNN</span>
@@ -243,10 +244,15 @@
                 <td class="py-3 px-4 font-mono text-xs">FIM trace</td>
                 <td class="py-3 px-4 text-green-400">82% better PPL</td>
               </tr>
-              <tr>
+              <tr class="border-b border-gray-800">
                 <td class="py-3 px-4"><a href="tiering_visualization.html" class="text-emerald-400 hover:underline">Memory Tiering</a></td>
                 <td class="py-3 px-4 font-mono text-xs">exp_avg_sq rank</td>
                 <td class="py-3 px-4 text-green-400">Optimal placement</td>
+              </tr>
+              <tr>
+                <td class="py-3 px-4"><a href="gnn_fraud_visualization.html" class="text-rose-400 hover:underline">GNN Fraud Detection</a></td>
+                <td class="py-3 px-4 font-mono text-xs">FIM trace → nodes</td>
+                <td class="py-3 px-4 text-green-400">+7% F1</td>
               </tr>
             </tbody>
           </table>
