@@ -71,9 +71,9 @@
               <div className="text-gray-600 text-sm">(AMEX mb=4)</div>
             </div>
             <div className="bg-gray-800 rounded-xl p-6 border border-purple-900">
-              <div className="text-4xl font-bold text-purple-400">0%</div>
-              <div className="text-gray-400 mt-2">Quality Loss</div>
-              <div className="text-gray-600 text-sm">(Both)</div>
+              <div className="text-4xl font-bold text-purple-400">+7%</div>
+              <div className="text-gray-400 mt-2">F1 with FIM-RA</div>
+              <div className="text-gray-600 text-sm">(DGraphFin)</div>
             </div>
           </div>
         </div>
@@ -111,7 +111,7 @@
           findings: [
             'Page-batch: 6.8× RA_fetch (4× better)',
             'Neighbor sampling: 28.5× RA_fetch',
-            'FIM-guided adds no benefit',
+            'FIM-guided RA: +7% F1 vs baseline',
             'Training saturates in 5 minutes',
           ],
         },
@@ -703,6 +703,100 @@
       );
     }
 
+    // FIM-Guided RA Section
+    function FIMGuidedRASection() {
+      const raData = [
+        { name: 'Baseline', f1: 0.0782, prauc: 0.0361, color: '#6b7280' },
+        { name: 'RA + Var', f1: 0.0829, prauc: 0.0374, color: '#06b6d4' },
+        { name: 'FIM-guided', f1: 0.0837, prauc: 0.0379, color: '#10b981' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">FIM-Guided Reciprocal Attention for GNNs</h2>
+          <p className="text-gray-400 mb-6">
+            Reciprocal Attention (K@Q.T instead of Q@K.T) transfers from transformers to GNNs.
+            FIM guidance applies RA selectively to <strong className="text-white">uncertain nodes</strong> (bottom 33% by Fisher trace).
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Fraud Detection F1 — Higher is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={raData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="name" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis stroke="#9ca3af" domain={[0.07, 0.09]} tickFormatter={v => v.toFixed(2)} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="f1" name="Test F1">
+                    {raData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-center">
+                <span className="text-emerald-400 font-bold">+7% relative F1</span>
+                <span className="text-gray-400"> with FIM-guided RA vs baseline</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">How It Works</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-gray-500">
+                  <div className="font-semibold text-gray-400">Baseline GraphSAGE</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    Mean aggregation: msg = Σ h_neighbor / |N|
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-cyan-500">
+                  <div className="font-semibold text-cyan-400">RA + Variance</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Reciprocal attention (neighbors query center) + variance residual for all nodes
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-emerald-500">
+                  <div className="font-semibold text-emerald-400">FIM-Guided RA</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Same as RA+Var but <strong className="text-white">selective</strong>: only bottom 33% by FIM trace get RA treatment
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gradient-to-r from-cyan-900/30 to-emerald-900/30 rounded-lg p-4 border border-cyan-700/50">
+            <h3 className="text-cyan-400 font-semibold mb-3">The FIM Connection</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              This completes the FIM-guidance story across all our work:
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-xs">
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-blue-400 font-bold">Pruning</div>
+                <div className="text-gray-500">FIM → importance</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-purple-400 font-bold">Quantization</div>
+                <div className="text-gray-500">FIM → precision</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-orange-400 font-bold">KVSplice</div>
+                <div className="text-gray-500">FIM → compression</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-emerald-400 font-bold">GNN RA</div>
+                <div className="text-gray-500">FIM → node selection</div>
+              </div>
+            </div>
+            <p className="text-gray-500 text-sm text-center mt-3">
+              Low-FIM nodes are uncertain → they benefit most from enhanced attention mechanisms.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     // Conclusions Section
     function ConclusionsSection() {
       return (
@@ -810,6 +904,7 @@
           <SamplersSection />
           <RAMetricsSection />
           <ResultsSection />
+          <FIMGuidedRASection />
           <ConclusionsSection />
           <TrainingSection />
 
