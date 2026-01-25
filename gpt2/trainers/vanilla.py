@@ -558,6 +558,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     if knlp_metrics:
                         metrics_to_log.update(knlp_metrics)
 
+                    # Add RGSA routing metrics (teacher recall, load balance, etc.)
+                    rgsa_metrics = self._compute_rgsa_metrics()
+                    if rgsa_metrics:
+                        metrics_to_log.update(rgsa_metrics)
+
                     # Add pruning sensitivity analysis (test reconstruction error)
                     pruning_metrics = self._compute_pruning_sensitivity()
                     if pruning_metrics:
@@ -2274,3 +2279,57 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 print(f"  Gate weight std: {metrics['knlp/gate_weight_std']:.4f}")
 
         return metrics
+
+    def _compute_rgsa_metrics(self):
+        """
+        Compute RGSA routing diagnostics for W&B logging.
+
+        Metrics computed:
+            - Teacher top-k recall: fraction of dense attention's top chunks in retrieved set
+            - Candidate count distribution (mean, p50, p95, p99)
+            - Routing entropy: diversity of chunk selection
+            - Load balance score: how evenly chunks are selected
+            - Tokens per query: efficiency measure
+
+        These metrics help diagnose whether the router is learning to
+        retrieve the right chunks. If teacher recall is low, the router
+        isn't finding what dense attention would use.
+
+        Returns:
+            Dictionary with RGSA metrics or None if not applicable
+        """
+        raw_model = self.model.module if hasattr(self.model, "module") else self.model
+
+        # Check if this is a GPT2_RGSA model
+        if not isinstance(raw_model, GPT2_RGSA):
+            return None
+
+        # Need a sample batch to compute metrics
+        # Use validation data if available
+        try:
+            x, y = self.get_batch("val")
+        except Exception:
+            return None
+
+        # Compute metrics using the model's built-in method
+        try:
+            rgsa_metrics = raw_model.compute_rgsa_metrics(x, layer_idx=0)
+            metrics = rgsa_metrics.to_dict()
+
+            # Print summary at first eval
+            if self.master_process and self.iter_num == self.args.eval_interval:
+                print("\n--- RGSA Routing Diagnostics ---")
+                print(f"  Teacher top-k recall: {rgsa_metrics.teacher_topk_recall:.4f}")
+                print(f"  Candidates mean: {rgsa_metrics.candidates_mean:.1f}")
+                print(f"  Routing entropy: {rgsa_metrics.routing_entropy:.4f}")
+                print(f"  Load balance: {rgsa_metrics.load_balance_score:.4f}")
+                print(
+                    f"  Tokens/query: {rgsa_metrics.tokens_per_query_mean:.1f} "
+                    f"(max {rgsa_metrics.tokens_per_query_max:.1f})"
+                )
+
+            return metrics
+        except Exception as e:
+            if self.master_process:
+                print(f"Warning: Failed to compute RGSA metrics: {e}")
+            return None

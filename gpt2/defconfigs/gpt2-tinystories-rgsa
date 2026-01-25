@@ -16,8 +16,8 @@ CONFIG_GPT2_DATASET="tinystories"
 
 # Training parameters
 CONFIG_GPT2_BLOCK_SIZE=1024
-# 30 minute training run for quick comparison
-CONFIG_GPT2_MAX_TIME=1800
+# 60 minute training run to ensure eval is reached (v2)
+CONFIG_GPT2_MAX_TIME=3600
 CONFIG_GPT2_EVAL_INTERVAL=200
 CONFIG_GPT2_EVAL_SAMPLES=200
 CONFIG_GPT2_LOG_INTERVAL=10
