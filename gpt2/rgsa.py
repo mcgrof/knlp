@@ -24,12 +24,51 @@ Architecture:
 """
 
 import math
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Tuple, Dict, List
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+
+
+@dataclass
+class RGSAMetrics:
+    """Container for RGSA routing diagnostics."""
+
+    # Teacher top-k recall: what fraction of teacher's top-k are in retrieved set
+    teacher_topk_recall: float = 0.0
+
+    # Candidate count distribution
+    candidates_mean: float = 0.0
+    candidates_p50: float = 0.0
+    candidates_p95: float = 0.0
+    candidates_p99: float = 0.0
+
+    # Routing entropy and collapse detection
+    routing_entropy: float = 0.0
+    load_balance_score: float = 0.0  # 1.0 = perfect balance, 0.0 = collapsed
+
+    # Tokens attended per query (theoretical vs actual)
+    tokens_per_query_mean: float = 0.0
+    tokens_per_query_max: float = 0.0
+
+    # Chunk selection histogram (which chunks are selected most often)
+    chunk_selection_counts: Optional[torch.Tensor] = None
+
+    def to_dict(self) -> Dict[str, float]:
+        """Convert to dict for W&B logging."""
+        return {
+            "rgsa/teacher_topk_recall": self.teacher_topk_recall,
+            "rgsa/candidates_mean": self.candidates_mean,
+            "rgsa/candidates_p50": self.candidates_p50,
+            "rgsa/candidates_p95": self.candidates_p95,
+            "rgsa/candidates_p99": self.candidates_p99,
+            "rgsa/routing_entropy": self.routing_entropy,
+            "rgsa/load_balance_score": self.load_balance_score,
+            "rgsa/tokens_per_query_mean": self.tokens_per_query_mean,
+            "rgsa/tokens_per_query_max": self.tokens_per_query_max,
+        }
 
 
 @dataclass
@@ -583,6 +622,210 @@ class GPT2_RGSA(nn.Module):
         # Note: routing_info available via return_routing_info=True but not returned
         # to maintain compatibility with standard GPT-2 training loop
         return logits, loss
+
+    @torch.no_grad()
+    def compute_rgsa_metrics(
+        self,
+        idx: torch.Tensor,
+        layer_idx: int = 0,
+        teacher_topk: int = 16,
+    ) -> RGSAMetrics:
+        """
+        Compute RGSA routing diagnostics.
+
+        This method runs a forward pass and computes metrics comparing
+        the router's selections against what dense attention would choose.
+
+        Args:
+            idx: [B, T] input token indices
+            layer_idx: which layer to analyze (default: first layer)
+            teacher_topk: number of top chunks to consider from teacher
+
+        Returns:
+            RGSAMetrics with all diagnostic values
+        """
+        device = idx.device
+        B, T = idx.size()
+
+        # Get embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # Run through layers up to target layer
+        for i, block in enumerate(self.transformer.h):
+            if i < layer_idx:
+                x, _ = block(x, return_routing_info=False)
+            else:
+                # At target layer, get routing info and compute metrics
+                attn = block.attn
+                chunk_router = attn.chunk_router
+                retrieval_gate = attn.retrieval_gate
+
+                # Only compute metrics if sequence is long enough
+                if T <= attn.local_window + attn.chunk_size:
+                    return RGSAMetrics()
+
+                # Get routing embeddings and scores
+                routing_embeds, chunk_mask = chunk_router(block.ln_1(x))
+                chunk_indices, routing_scores = retrieval_gate(
+                    block.ln_1(x), routing_embeds, chunk_mask
+                )
+
+                # Compute QKV for dense attention analysis
+                qkv = attn.c_attn(block.ln_1(x))
+                q, k, v = qkv.split(attn.n_embd, dim=2)
+                q = q.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+                k = k.view(B, T, attn.n_head, attn.head_dim).transpose(1, 2)
+
+                # Compute dense attention scores (teacher)
+                scale = 1.0 / math.sqrt(attn.head_dim)
+                dense_scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+
+                # Apply causal mask
+                causal_mask = torch.triu(
+                    torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+                )
+                dense_scores = dense_scores.masked_fill(
+                    causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+                )
+                dense_attn = F.softmax(dense_scores, dim=-1)
+
+                # Aggregate attention per chunk (sum attention mass going to each chunk)
+                num_chunks = routing_embeds.size(1)
+                chunk_size = attn.chunk_size
+
+                # Compute attention mass per chunk for each query
+                # dense_attn: [B, H, T, T] -> chunk_attn: [B, T, num_chunks]
+                chunk_attn = torch.zeros(B, T, num_chunks, device=device)
+                for c in range(num_chunks):
+                    c_start = c * chunk_size
+                    c_end = min(c_start + chunk_size, T)
+                    if c_start < T:
+                        # Sum attention mass to this chunk across all heads
+                        chunk_attn[:, :, c] = dense_attn[:, :, :, c_start:c_end].sum(
+                            dim=(1, 3)
+                        )
+
+                # Get teacher's top-k chunks per query position
+                teacher_topk_actual = min(teacher_topk, num_chunks)
+                _, teacher_top_chunks = torch.topk(
+                    chunk_attn, k=teacher_topk_actual, dim=-1
+                )
+
+                # Compute recall: what fraction of teacher's top-k are in retrieved set
+                retrieved_set = chunk_indices  # [B, T, top_b]
+                top_b = retrieved_set.size(-1)
+
+                # For each query, check if teacher's top chunks are in retrieved set
+                recall_scores = []
+                for b in range(B):
+                    for t in range(attn.local_window + attn.chunk_size, T):
+                        teacher_chunks = set(teacher_top_chunks[b, t].tolist())
+                        retrieved_chunks = set(retrieved_set[b, t].tolist())
+                        if len(teacher_chunks) > 0:
+                            recall = len(teacher_chunks & retrieved_chunks) / len(
+                                teacher_chunks
+                            )
+                            recall_scores.append(recall)
+
+                teacher_recall = (
+                    sum(recall_scores) / len(recall_scores) if recall_scores else 0.0
+                )
+
+                # Compute candidate count statistics
+                # In current implementation, it's fixed at top_b * chunk_size + local_window
+                candidates_per_query = []
+                for t in range(attn.local_window + attn.chunk_size, T):
+                    local_count = min(attn.local_window, t)
+                    retrieved_count = top_b * chunk_size
+                    # Account for overlap between local and retrieved
+                    total = local_count + retrieved_count
+                    candidates_per_query.append(total)
+
+                if candidates_per_query:
+                    candidates_tensor = torch.tensor(
+                        candidates_per_query, dtype=torch.float, device=device
+                    )
+                    candidates_mean = candidates_tensor.mean().item()
+                    candidates_p50 = torch.quantile(candidates_tensor, 0.50).item()
+                    candidates_p95 = torch.quantile(candidates_tensor, 0.95).item()
+                    candidates_p99 = torch.quantile(candidates_tensor, 0.99).item()
+                else:
+                    candidates_mean = candidates_p50 = candidates_p95 = (
+                        candidates_p99
+                    ) = 0.0
+
+                # Compute routing entropy and load balance
+                # routing_scores: [B, T, num_chunks]
+                # Apply softmax to get selection probabilities
+                routing_probs = F.softmax(routing_scores, dim=-1)
+
+                # Entropy per query position
+                entropy = -(routing_probs * torch.log(routing_probs + 1e-10)).sum(
+                    dim=-1
+                )
+                avg_entropy = entropy.mean().item()
+
+                # Maximum possible entropy (uniform distribution)
+                max_entropy = math.log(num_chunks)
+                normalized_entropy = (
+                    avg_entropy / max_entropy if max_entropy > 0 else 0.0
+                )
+
+                # Load balance: how evenly are chunks selected?
+                # Count selections per chunk across all queries
+                chunk_selection_counts = torch.zeros(num_chunks, device=device)
+                for b in range(B):
+                    for t in range(T):
+                        for c in chunk_indices[b, t]:
+                            chunk_selection_counts[c.item()] += 1
+
+                # Ideal would be uniform selection
+                total_selections = chunk_selection_counts.sum()
+                if total_selections > 0:
+                    selection_probs = chunk_selection_counts / total_selections
+                    # Load balance score: 1 - CV (coefficient of variation)
+                    # CV = std / mean, so 0 CV = perfect balance
+                    cv = selection_probs.std() / (selection_probs.mean() + 1e-10)
+                    load_balance = max(0.0, 1.0 - cv.item())
+                else:
+                    load_balance = 0.0
+
+                # Tokens per query statistics
+                tokens_per_query = (
+                    top_b * chunk_size + attn.local_window
+                )  # theoretical max
+                tokens_per_query_actual = []
+                for t in range(attn.local_window + attn.chunk_size, T):
+                    local = min(attn.local_window, t)
+                    retrieved = top_b * chunk_size
+                    tokens_per_query_actual.append(local + retrieved)
+
+                if tokens_per_query_actual:
+                    tpq_tensor = torch.tensor(
+                        tokens_per_query_actual, dtype=torch.float
+                    )
+                    tpq_mean = tpq_tensor.mean().item()
+                    tpq_max = tpq_tensor.max().item()
+                else:
+                    tpq_mean = tpq_max = 0.0
+
+                return RGSAMetrics(
+                    teacher_topk_recall=teacher_recall,
+                    candidates_mean=candidates_mean,
+                    candidates_p50=candidates_p50,
+                    candidates_p95=candidates_p95,
+                    candidates_p99=candidates_p99,
+                    routing_entropy=normalized_entropy,
+                    load_balance_score=load_balance,
+                    tokens_per_query_mean=tpq_mean,
+                    tokens_per_query_max=tpq_max,
+                    chunk_selection_counts=chunk_selection_counts,
+                )
+
+        return RGSAMetrics()
 
     def compute_routing_loss(
         self,
