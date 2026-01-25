@@ -510,6 +510,70 @@ config KNLP_VARIANT
 	    sdpa_ra    - Both SDPA gating and RA
 	  Example: "baseline,sdpa_gate,ra"
 
+# RGSA (Retrieval-Gated Sparse Attention)
+config ENABLE_RGSA
+	bool "Enable GPT2_RGSA (Retrieval-Gated Sparse Attention)"
+	default n
+	help
+	  Enable RGSA: a retrieval-based sparse attention mechanism inspired
+	  by Meta's REGRAG paper. Instead of full O(n^2) attention, RGSA:
+	  1. Compresses context chunks into routing embeddings
+	  2. Retrieves only relevant chunks for each query position
+	  3. Runs attention on local window + retrieved chunks
+
+	  This provides memory and compute savings for long sequences
+	  while maintaining quality through learned chunk retrieval.
+
+config RGSA_CHUNK_SIZE
+	int "Chunk size (tokens per routing unit)"
+	default 64
+	range 16 256
+	depends on ENABLE_RGSA
+	help
+	  Number of tokens per chunk for routing embedding computation.
+	  Smaller chunks give finer retrieval granularity but more
+	  routing overhead. Recommended: 32-128.
+
+config RGSA_ROUTING_DIM
+	int "Routing embedding dimension"
+	default 32
+	range 8 128
+	depends on ENABLE_RGSA
+	help
+	  Dimension of routing embeddings for chunk similarity computation.
+	  Smaller = faster retrieval, larger = more expressive routing.
+	  Recommended: 16-64.
+
+config RGSA_TOP_B
+	int "Number of chunks to retrieve (top-B)"
+	default 8
+	range 1 64
+	depends on ENABLE_RGSA
+	help
+	  Number of top chunks to retrieve per query position.
+	  Higher values attend to more context but increase compute.
+	  Recommended: 4-16 for typical use cases.
+
+config RGSA_LOCAL_WINDOW
+	int "Local attention window size"
+	default 256
+	range 64 1024
+	depends on ENABLE_RGSA
+	help
+	  Size of local window that always receives attention.
+	  Recent tokens within this window are always attended to,
+	  providing guaranteed local context. Beyond this window,
+	  attention is controlled by chunk retrieval.
+
+config RGSA_ROUTING_LOSS_WEIGHT
+	string "Routing auxiliary loss weight"
+	default "0.1"
+	depends on ENABLE_RGSA
+	help
+	  Weight for auxiliary routing supervision loss.
+	  Trains routing embeddings to predict actual attention mass.
+	  Set to 0.0 to disable auxiliary loss.
+
 source "gpt2/Kconfig.mechint"
 
 endmenu
