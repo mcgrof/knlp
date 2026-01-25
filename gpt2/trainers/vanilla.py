@@ -23,6 +23,7 @@ sys.path.insert(0, parent_dir)
 from gpt2.model import GPT2, GPTConfig
 from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_KV_FIM, MLA_Config
 from gpt2.model_knlp import GPT2_KNLP, GPT2_KNLP_Config
+from gpt2.rgsa import GPT2_RGSA, RGSAConfig
 from lib.optimizers import create_optimizer
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer
@@ -153,83 +154,127 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             model.to(self.device)
 
         else:
-            # Check if KNLP variant is enabled
-            enable_knlp = getattr(self.config, "GPT2_KNLP", False)
-            knlp_variant = os.environ.get("CONFIG_KNLP_VARIANT") or getattr(
-                self.config, "KNLP_VARIANT", ""
-            )
+            # Check if RGSA is enabled via config or environment
+            enable_rgsa = getattr(self.config, "ENABLE_RGSA", False)
+            enable_rgsa = enable_rgsa in ("y", True)
 
-            if enable_knlp in ("y", True) or knlp_variant:
-                # Create GPT2_KNLP model
+            if enable_rgsa:
+                # Create RGSA model (Retrieval-Gated Sparse Attention)
                 if self.master_process:
-                    variant_name = knlp_variant or "default"
-                    print(f"Initializing GPT2_KNLP model: {variant_name}")
+                    print("Initializing GPT2_RGSA model")
 
-                # Parse KNLP variant for ablation
-                # Variants: "baseline", "sdpa_gate", "ra"
-                use_sdpa_gate = False
-                use_ra = False
-
-                if knlp_variant:
-                    variant_lower = knlp_variant.lower()
-                    if variant_lower == "sdpa_gate":
-                        use_sdpa_gate = True
-                    elif variant_lower == "ra":
-                        use_ra = True
-                    elif variant_lower == "sdpa_ra" or variant_lower == "both":
-                        use_sdpa_gate = True
-                        use_ra = True
-                    # "baseline" leaves both False
-                else:
-                    # Use config flags if no variant override
-                    use_sdpa_gate = getattr(self.config, "GPT2_KNLP_SDPA_GATE", False)
-                    use_sdpa_gate = use_sdpa_gate in ("y", True)
-                    use_ra = getattr(self.config, "GPT2_KNLP_RA", False)
-                    use_ra = use_ra in ("y", True)
-
-                # Get RA settings
-                n_ra_layers = int(getattr(self.config, "GPT2_KNLP_RA_LAYERS", 3))
-                n_ra_heads = int(getattr(self.config, "GPT2_KNLP_RA_HEADS", 1))
-
-                # Create base GPT config
+                # Get base model config
                 base_config = GPTConfig.from_name(self.args.model_name)
 
-                # Create KNLP config
-                config = GPT2_KNLP_Config(
+                # Get RGSA-specific parameters from config
+                chunk_size = int(getattr(self.config, "RGSA_CHUNK_SIZE", 64))
+                routing_dim = int(getattr(self.config, "RGSA_ROUTING_DIM", 32))
+                top_b = int(getattr(self.config, "RGSA_TOP_B", 8))
+                local_window = int(getattr(self.config, "RGSA_LOCAL_WINDOW", 256))
+
+                # Create RGSA config
+                config = RGSAConfig(
                     n_layer=base_config.n_layer,
                     n_head=base_config.n_head,
                     n_embd=base_config.n_embd,
                     block_size=self.args.block_size,
-                    bias=getattr(self.args, "bias", True),
                     vocab_size=base_config.vocab_size,
                     dropout=self.args.dropout,
-                    use_sdpa_gate=use_sdpa_gate,
-                    use_ra=use_ra,
-                    n_ra_layers=n_ra_layers,
-                    n_ra_heads=n_ra_heads,
+                    bias=getattr(self.args, "bias", True),
+                    chunk_size=chunk_size,
+                    routing_dim=routing_dim,
+                    top_b=top_b,
+                    local_window=local_window,
                 )
 
-                model = GPT2_KNLP(config)
+                model = GPT2_RGSA(config)
                 if self.master_process:
-                    print(f"  SDPA gating: {use_sdpa_gate}")
-                    print(f"  Reciprocal Attention: {use_ra}")
-                    if use_ra:
-                        print(f"    RA layers: {n_ra_layers}, RA heads: {n_ra_heads}")
+                    print(f"  RGSA: chunk_size={chunk_size}, routing_dim={routing_dim}")
+                    print(f"  RGSA: top_b={top_b}, local_window={local_window}")
                 model.to(self.device)
+
             else:
-                # Create standard GPT-2 model
-                if self.master_process:
-                    print(f"Initializing GPT-2 model: {self.args.model_name}")
+                # Check if KNLP variant is enabled
+                enable_knlp = getattr(self.config, "GPT2_KNLP", False)
+                knlp_variant = os.environ.get("CONFIG_KNLP_VARIANT") or getattr(
+                    self.config, "KNLP_VARIANT", ""
+                )
 
-                # Create GPT config
-                config = GPTConfig.from_name(self.args.model_name)
-                config.block_size = self.args.block_size
-                config.dropout = self.args.dropout
-                config.bias = getattr(self.args, "bias", True)
+                if enable_knlp in ("y", True) or knlp_variant:
+                    # Create GPT2_KNLP model
+                    if self.master_process:
+                        variant_name = knlp_variant or "default"
+                        print(f"Initializing GPT2_KNLP model: {variant_name}")
 
-                # Create model
-                model = GPT2(config)
-                model.to(self.device)
+                    # Parse KNLP variant for ablation
+                    # Variants: "baseline", "sdpa_gate", "ra"
+                    use_sdpa_gate = False
+                    use_ra = False
+
+                    if knlp_variant:
+                        variant_lower = knlp_variant.lower()
+                        if variant_lower == "sdpa_gate":
+                            use_sdpa_gate = True
+                        elif variant_lower == "ra":
+                            use_ra = True
+                        elif variant_lower == "sdpa_ra" or variant_lower == "both":
+                            use_sdpa_gate = True
+                            use_ra = True
+                        # "baseline" leaves both False
+                    else:
+                        # Use config flags if no variant override
+                        use_sdpa_gate = getattr(
+                            self.config, "GPT2_KNLP_SDPA_GATE", False
+                        )
+                        use_sdpa_gate = use_sdpa_gate in ("y", True)
+                        use_ra = getattr(self.config, "GPT2_KNLP_RA", False)
+                        use_ra = use_ra in ("y", True)
+
+                    # Get RA settings
+                    n_ra_layers = int(getattr(self.config, "GPT2_KNLP_RA_LAYERS", 3))
+                    n_ra_heads = int(getattr(self.config, "GPT2_KNLP_RA_HEADS", 1))
+
+                    # Create base GPT config
+                    base_config = GPTConfig.from_name(self.args.model_name)
+
+                    # Create KNLP config
+                    config = GPT2_KNLP_Config(
+                        n_layer=base_config.n_layer,
+                        n_head=base_config.n_head,
+                        n_embd=base_config.n_embd,
+                        block_size=self.args.block_size,
+                        bias=getattr(self.args, "bias", True),
+                        vocab_size=base_config.vocab_size,
+                        dropout=self.args.dropout,
+                        use_sdpa_gate=use_sdpa_gate,
+                        use_ra=use_ra,
+                        n_ra_layers=n_ra_layers,
+                        n_ra_heads=n_ra_heads,
+                    )
+
+                    model = GPT2_KNLP(config)
+                    if self.master_process:
+                        print(f"  SDPA gating: {use_sdpa_gate}")
+                        print(f"  Reciprocal Attention: {use_ra}")
+                        if use_ra:
+                            print(
+                                f"    RA layers: {n_ra_layers}, RA heads: {n_ra_heads}"
+                            )
+                    model.to(self.device)
+                else:
+                    # Create standard GPT-2 model
+                    if self.master_process:
+                        print(f"Initializing GPT-2 model: {self.args.model_name}")
+
+                    # Create GPT config
+                    config = GPTConfig.from_name(self.args.model_name)
+                    config.block_size = self.args.block_size
+                    config.dropout = self.args.dropout
+                    config.bias = getattr(self.args, "bias", True)
+
+                    # Create model
+                    model = GPT2(config)
+                    model.to(self.device)
 
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
