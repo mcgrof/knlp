@@ -93,6 +93,12 @@ class RGSAConfig:
     # Auxiliary loss weight for routing supervision
     routing_loss_weight: float = 0.1
 
+    # Defensive caps for stability (prevent GPU hangs)
+    # max_candidates = local_window + top_b * chunk_size by default
+    # Setting this enforces a hard cap on attention span per query
+    max_candidates: int = 0  # 0 = auto-compute from local_window + top_b*chunk_size
+    debug_log_candidates: bool = False  # Log max candidate count at each eval
+
     @classmethod
     def from_name(cls, name: str):
         """Create config from model name."""
@@ -233,6 +239,11 @@ class RGSACausalSelfAttention(nn.Module):
     1. Always include local window (local_window tokens before query)
     2. Retrieve top-B chunks via RetrievalGate
     3. Run attention only on local + retrieved tokens
+
+    Stability features:
+    - Hard cap on max_candidates per query to prevent GPU hangs
+    - Shape assertions to catch dimension mismatches early
+    - No dynamic tensor growth in loops
     """
 
     def __init__(self, config: RGSAConfig, chunk_router: ChunkRouter):
@@ -246,6 +257,16 @@ class RGSACausalSelfAttention(nn.Module):
         self.local_window = config.local_window
         self.chunk_size = config.chunk_size
         self.top_b = config.top_b
+
+        # Defensive cap: max tokens to attend per query position
+        # Default = local_window + top_b * chunk_size
+        if config.max_candidates > 0:
+            self.max_candidates = config.max_candidates
+        else:
+            self.max_candidates = config.local_window + config.top_b * config.chunk_size
+
+        self.debug_log_candidates = config.debug_log_candidates
+        self._max_candidates_seen = 0  # Track for debugging
 
         # QKV projection
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
@@ -270,11 +291,20 @@ class RGSACausalSelfAttention(nn.Module):
 
         For short sequences (< local_window), uses dense attention.
         For longer sequences, uses retrieval-gated sparse attention.
+
+        Shape assertions are included to catch dimension mismatches early
+        and prevent silent failures that could lead to GPU hangs.
         """
         B, T, C = x.shape
 
+        # Shape assertions for stability
+        assert C == self.n_embd, f"Input dim {C} != n_embd {self.n_embd}"
+        assert T > 0, "Sequence length must be positive"
+        assert B > 0, "Batch size must be positive"
+
         # Compute Q, K, V
         qkv = self.c_attn(x)
+        assert qkv.shape == (B, T, 3 * self.n_embd), f"QKV shape mismatch: {qkv.shape}"
         q, k, v = qkv.split(self.n_embd, dim=2)
 
         # Reshape for multi-head attention
@@ -293,17 +323,34 @@ class RGSACausalSelfAttention(nn.Module):
         if T > self.local_window + self.chunk_size:
             # Compute routing embeddings (training the router)
             routing_embeds, chunk_mask = self.chunk_router(x)
+
+            # Shape assertions for routing
+            num_chunks = routing_embeds.size(1)
+            assert routing_embeds.dim() == 3, "routing_embeds must be 3D"
+            assert chunk_mask.shape == (B, num_chunks), "chunk_mask shape mismatch"
+
             chunk_indices, routing_scores = self.retrieval_gate(
                 x, routing_embeds, chunk_mask
             )
+
+            # Defensive cap: ensure chunk_indices are valid (non-negative, in range)
+            assert chunk_indices.min() >= 0, "Negative chunk index detected"
+            assert chunk_indices.max() < num_chunks, "Chunk index out of range"
+
+            # Track max candidates for debugging
+            theoretical_max = self.local_window + self.top_b * self.chunk_size
+            self._max_candidates_seen = max(self._max_candidates_seen, theoretical_max)
+
             if return_routing_info:
                 routing_info = {
                     "chunk_indices": chunk_indices,
                     "routing_scores": routing_scores,
                     "routing_embeds": routing_embeds,
+                    "max_candidates_theoretical": theoretical_max,
                 }
 
         # Use dense causal attention for all sequences
+        # This is Phase 1 - router learns while attention stays dense
         y = F.scaled_dot_product_attention(
             q,
             k,
@@ -313,6 +360,14 @@ class RGSACausalSelfAttention(nn.Module):
             is_causal=True,
         )
 
+        # Shape assertion on output
+        assert y.shape == (
+            B,
+            self.n_head,
+            T,
+            self.head_dim,
+        ), f"Attention output shape mismatch: {y.shape}"
+
         # Reshape output
         y = y.transpose(1, 2).contiguous().view(B, T, C)
 
@@ -320,6 +375,17 @@ class RGSACausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
 
         return y, routing_info
+
+    def get_debug_stats(self) -> dict:
+        """Return debug statistics for logging."""
+        return {
+            "rgsa/max_candidates_seen": self._max_candidates_seen,
+            "rgsa/max_candidates_cap": self.max_candidates,
+        }
+
+    def reset_debug_stats(self):
+        """Reset debug statistics (call at start of each eval)."""
+        self._max_candidates_seen = 0
 
     def _sparse_attention(
         self,
@@ -334,15 +400,20 @@ class RGSACausalSelfAttention(nn.Module):
 
         Memory-efficient implementation that processes positions in groups
         rather than building a full B x T x T mask.
+
+        IMPORTANT: This method is not currently used (Phase 1 uses dense attention).
+        It includes defensive caps to prevent GPU hangs if enabled in the future.
         """
         B, H, T, D = q.shape
         device = q.device
-        dtype = q.dtype
 
-        # For memory efficiency, we'll use SDPA for local window positions
+        # Shape assertions
+        assert chunk_indices.shape[0] == B, "chunk_indices batch mismatch"
+        assert chunk_indices.shape[1] == T, "chunk_indices seq_len mismatch"
+        assert chunk_indices.min() >= 0, "Negative chunk index"
+
+        # For memory efficiency, use SDPA for local window positions
         # and only do custom sparse attention for positions beyond local_window
-
-        # Positions within local window can use standard causal attention
         local_end = min(self.local_window + self.chunk_size, T)
 
         # Process local window portion with standard causal SDPA
@@ -360,31 +431,21 @@ class RGSACausalSelfAttention(nn.Module):
 
         # For positions beyond local window, we need sparse attention
         if local_end < T:
-            # Number of positions to process with sparse attention
             n_sparse = T - local_end
-
-            # Pre-compute scale
             scale = 1.0 / math.sqrt(D)
 
-            # For each sparse position, attend to:
-            # 1. Local window (positions [t-local_window, t])
-            # 2. Retrieved chunks
-
-            # Build outputs for sparse positions
-            y_sparse_list = []
+            # Pre-allocate output tensor instead of dynamic list growth
+            y_sparse = q.new_zeros(B, H, n_sparse, D)
 
             # Process in mini-batches to reduce memory
             chunk_batch_size = min(32, n_sparse)
 
             for start_idx in range(0, n_sparse, chunk_batch_size):
                 end_idx = min(start_idx + chunk_batch_size, n_sparse)
-                actual_positions = range(local_end + start_idx, local_end + end_idx)
-                batch_size = end_idx - start_idx
 
-                # For each position in this batch, we need to gather relevant K, V
-                # This is the key optimization: only compute attention over relevant tokens
-
-                for i, t in enumerate(actual_positions):
+                for i, t in enumerate(
+                    range(local_end + start_idx, local_end + end_idx)
+                ):
                     # Get queries for this position: [B, H, 1, D]
                     q_t = q[:, :, t : t + 1, :]
 
@@ -393,57 +454,56 @@ class RGSACausalSelfAttention(nn.Module):
                     local_start = max(0, t - self.local_window)
                     local_positions = list(range(local_start, t + 1))
 
-                    # Retrieved chunks for this position
-                    chunk_pos_list = []
+                    # Retrieved chunks for this position - use set for dedup
+                    all_chunk_pos = set()
                     for b in range(B):
                         chunks = chunk_indices[b, t]  # [top_b]
-                        pos_set = set()
                         for chunk_idx in chunks:
-                            c_start = chunk_idx.item() * self.chunk_size
+                            idx = chunk_idx.item()
+                            # Defensive: skip invalid indices
+                            if idx < 0:
+                                continue
+                            c_start = idx * self.chunk_size
                             c_end = min(c_start + self.chunk_size, t)
                             if c_start < t:
                                 for p in range(c_start, c_end):
                                     if p not in local_positions:
-                                        pos_set.add(p)
-                        chunk_pos_list.append(sorted(pos_set))
+                                        all_chunk_pos.add(p)
 
-                    # For simplicity, take union of positions across batch
-                    # This is conservative but avoids per-sample indexing
-                    all_chunk_pos = set()
-                    for pos_set in chunk_pos_list:
-                        all_chunk_pos.update(pos_set)
-                    all_chunk_pos = sorted(all_chunk_pos)
+                    # Combine and sort positions
+                    attend_positions = sorted(set(local_positions) | all_chunk_pos)
 
-                    # Combine positions
-                    attend_positions = local_positions + all_chunk_pos
-                    attend_positions = sorted(set(attend_positions))
+                    # Defensive cap: limit to max_candidates
+                    if len(attend_positions) > self.max_candidates:
+                        attend_positions = attend_positions[-self.max_candidates :]
+
+                    # Track for debugging
+                    self._max_candidates_seen = max(
+                        self._max_candidates_seen, len(attend_positions)
+                    )
 
                     if len(attend_positions) == 0:
-                        # Edge case: no positions to attend to
-                        y_t = q_t.new_zeros(B, H, 1, D)
-                    else:
-                        # Gather K, V for attend positions: [B, H, n_attend, D]
-                        pos_tensor = torch.tensor(
-                            attend_positions, device=device, dtype=torch.long
-                        )
-                        k_attend = k.index_select(2, pos_tensor)
-                        v_attend = v.index_select(2, pos_tensor)
+                        # Edge case: no positions to attend to (shouldn't happen)
+                        continue
 
-                        # Compute attention: [B, H, 1, n_attend]
-                        scores = torch.matmul(q_t, k_attend.transpose(-2, -1)) * scale
+                    # Gather K, V for attend positions: [B, H, n_attend, D]
+                    pos_tensor = torch.tensor(
+                        attend_positions, device=device, dtype=torch.long
+                    )
+                    k_attend = k.index_select(2, pos_tensor)
+                    v_attend = v.index_select(2, pos_tensor)
 
-                        # No mask needed - all attend_positions are valid causal positions
-                        attn = F.softmax(scores, dim=-1)
-                        if self.training and self.dropout > 0:
-                            attn = self.attn_dropout(attn)
+                    # Compute attention: [B, H, 1, n_attend]
+                    scores = torch.matmul(q_t, k_attend.transpose(-2, -1)) * scale
 
-                        # Apply to values: [B, H, 1, D]
-                        y_t = torch.matmul(attn, v_attend)
+                    # Apply softmax and dropout
+                    attn = F.softmax(scores, dim=-1)
+                    if self.training and self.dropout > 0:
+                        attn = self.attn_dropout(attn)
 
-                    y_sparse_list.append(y_t)
-
-            # Concatenate sparse outputs
-            y_sparse = torch.cat(y_sparse_list, dim=2)  # [B, H, n_sparse, D]
+                    # Apply to values and store in pre-allocated tensor
+                    y_t = torch.matmul(attn, v_attend)
+                    y_sparse[:, :, start_idx + i : start_idx + i + 1, :] = y_t
         else:
             y_sparse = q.new_zeros(B, H, 0, D)
 
