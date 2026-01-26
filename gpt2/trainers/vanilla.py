@@ -481,9 +481,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 # Calculate sparsity
                 sparsity = self._get_sparsity()
 
+                # Calculate performance metrics
+                iter_time_sec = dt / self.args.log_interval
+                # tokens_per_iter = batch_size * seq_len * grad_acc
+                tokens_per_iter = (
+                    self.args.batch_size
+                    * self.args.block_size
+                    * self.args.gradient_accumulation
+                )
+                tokens_per_sec = (
+                    tokens_per_iter / iter_time_sec if iter_time_sec > 0 else 0
+                )
+
                 print(
                     f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
-                    f"lr {lr:.2e} | sparsity {sparsity:.1%} | {dt*1000/self.args.log_interval:.1f}ms/iter"
+                    f"lr {lr:.2e} | sparsity {sparsity:.1%} | {iter_time_sec*1000:.1f}ms/iter"
                 )
 
                 # Update metrics
@@ -493,13 +505,15 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 self.metrics["iterations"].append(self.iter_num)
                 self.metrics["timestamps"].append(time.time())
 
-                # Log to trackers
+                # Log to trackers (including perf metrics)
                 self.log_metrics(
                     {
                         "train_loss": avg_loss,
                         "train_perplexity": avg_ppl,
                         "learning_rate": lr,
                         "sparsity": sparsity,
+                        "perf/iter_time_sec": iter_time_sec,
+                        "perf/tokens_per_sec": tokens_per_sec,
                     }
                 )
 
@@ -2295,29 +2309,62 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         retrieve the right chunks. If teacher recall is low, the router
         isn't finding what dense attention would use.
 
+        For baseline (non-RGSA) models, returns zeros so plots align.
+
         Returns:
-            Dictionary with RGSA metrics or None if not applicable
+            Dictionary with RGSA metrics (zeros for baseline models)
         """
         raw_model = self.model.module if hasattr(self.model, "module") else self.model
 
+        # Define the metric keys that should always be logged
+        baseline_metrics = {
+            "rgsa/teacher_topk_recall": 0.0,
+            "rgsa/candidates_mean": 0.0,
+            "rgsa/candidates_p50": 0.0,
+            "rgsa/candidates_p95": 0.0,
+            "rgsa/candidates_p99": 0.0,
+            "rgsa/routing_entropy": 0.0,
+            "rgsa/load_balance_score": 0.0,
+            "rgsa/tokens_per_query_mean": 0.0,
+            "rgsa/tokens_per_query_max": 0.0,
+            "rgsa/is_rgsa_model": 0.0,  # 0 = baseline, 1 = RGSA
+        }
+
         # Check if this is a GPT2_RGSA model
         if not isinstance(raw_model, GPT2_RGSA):
-            return None
+            # Return zeros for baseline models so plots align
+            return baseline_metrics
 
         # Need a sample batch to compute metrics
         # Use validation data if available
         try:
             x, y = self.get_batch("val")
         except Exception:
-            return None
+            metrics = baseline_metrics.copy()
+            metrics["rgsa/is_rgsa_model"] = 1.0
+            return metrics
 
         # Compute metrics using the model's built-in method
         try:
             rgsa_metrics = raw_model.compute_rgsa_metrics(x, layer_idx=0)
             metrics = rgsa_metrics.to_dict()
+            metrics["rgsa/is_rgsa_model"] = 1.0  # Mark as RGSA model
 
-            # Print summary at first eval
-            if self.master_process and self.iter_num == self.args.eval_interval:
+            # Add debug stats from attention layers if available
+            if hasattr(raw_model, "transformer") and hasattr(
+                raw_model.transformer, "h"
+            ):
+                for i, block in enumerate(raw_model.transformer.h):
+                    if hasattr(block.attn, "get_debug_stats"):
+                        debug_stats = block.attn.get_debug_stats()
+                        for k, v in debug_stats.items():
+                            metrics[f"layer{i}/{k}"] = v
+                        # Reset for next eval
+                        block.attn.reset_debug_stats()
+                        break  # Only log first layer for brevity
+
+            # Print summary at each eval
+            if self.master_process:
                 print("\n--- RGSA Routing Diagnostics ---")
                 print(f"  Teacher top-k recall: {rgsa_metrics.teacher_topk_recall:.4f}")
                 print(f"  Candidates mean: {rgsa_metrics.candidates_mean:.1f}")
@@ -2332,4 +2379,6 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
         except Exception as e:
             if self.master_process:
                 print(f"Warning: Failed to compute RGSA metrics: {e}")
-            return None
+            metrics = baseline_metrics.copy()
+            metrics["rgsa/is_rgsa_model"] = 1.0
+            return metrics
