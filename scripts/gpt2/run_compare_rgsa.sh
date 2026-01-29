@@ -2,15 +2,15 @@
 # run_compare_rgsa.sh - Run multi-seed baseline vs RGSA comparison
 #
 # Usage:
-#   ./scripts/gpt2/run_compare_rgsa.sh [--seeds "1 2 3"] [--dry-run]
-#   ./scripts/gpt2/run_compare_rgsa.sh [--seeds "1 2 3"] [--ablations] [--dry-run]
+#   ./scripts/gpt2/run_compare_rgsa.sh [--track tinystories|finewebedu] [--seeds "1 2 3"] [--dry-run]
+#   ./scripts/gpt2/run_compare_rgsa.sh --track finewebedu --ablations [--dry-run]
 #
 # This script:
 # 1. Runs baseline GPT-2 and RGSA for each seed
 # 2. Optionally runs rgsa_dense and rgsa_random ablations
-# 3. Sets WANDB_GROUP for easy comparison in W&B UI
-# 4. Tags runs with model type and seed
-# 5. Saves results to timestamped directories
+# 3. On finewebedu track, includes dynamic chunking variants
+# 4. Sets WANDB_GROUP for easy comparison in W&B UI
+# 5. Tags runs with model type, dataset, and seed
 
 set -e
 
@@ -18,16 +18,17 @@ set -e
 SEEDS="1 2 3"
 DRY_RUN=""
 ABLATIONS=""
+TRACK="tinystories"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --seeds)
+        --seeds|--seed)
             SEEDS="$2"
             shift 2
             ;;
-        --seed)
-            SEEDS="$2"
+        --track)
+            TRACK="$2"
             shift 2
             ;;
         --ablations)
@@ -40,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--seeds \"1 2 3\"] [--ablations] [--dry-run]"
+            echo "Usage: $0 [--track tinystories|finewebedu] [--seeds \"1 2 3\"] [--ablations] [--dry-run]"
             exit 1
             ;;
     esac
@@ -48,14 +49,30 @@ done
 
 # Timestamp for this comparison run
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-WANDB_GROUP="tinystories-rgsa-compare-${TIMESTAMP}"
-OUTPUT_BASE="rgsa_compare_${TIMESTAMP}"
+WANDB_GROUP="${TRACK}-rgsa-compare-${TIMESTAMP}"
+OUTPUT_BASE="rgsa_compare_${TRACK}_${TIMESTAMP}"
 
-# Build list of configs to run
-CONFIGS="gpt2-tinystories-baseline:baseline gpt2-tinystories-rgsa:rgsa"
-if [ -n "${ABLATIONS}" ]; then
-    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dense:rgsa_dense"
-    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-random:rgsa_random"
+# Build list of configs to run based on dataset track
+if [ "${TRACK}" = "finewebedu" ]; then
+    CONFIGS="gpt2-finewebedu-baseline:baseline"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-static:rgsa_static"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a05:rgsa_dyn_a05"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a04:rgsa_dyn_a04"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a06:rgsa_dyn_a06"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-piecewise:rgsa_dyn_piecewise"
+    if [ -n "${ABLATIONS}" ]; then
+        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dense:rgsa_dense"
+        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-random:rgsa_random"
+    fi
+elif [ "${TRACK}" = "tinystories" ]; then
+    CONFIGS="gpt2-tinystories-baseline:baseline gpt2-tinystories-rgsa:rgsa"
+    if [ -n "${ABLATIONS}" ]; then
+        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dense:rgsa_dense"
+        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-random:rgsa_random"
+    fi
+else
+    echo "Unknown track: ${TRACK}. Choose tinystories or finewebedu."
+    exit 1
 fi
 
 # Count total runs
@@ -66,6 +83,7 @@ TOTAL_RUNS=$((SEED_COUNT * CONFIG_COUNT))
 echo "========================================"
 echo "RGSA Multi-Seed Comparison Run"
 echo "========================================"
+echo "Dataset track: ${TRACK}"
 echo "Timestamp: ${TIMESTAMP}"
 echo "Seeds: ${SEEDS}"
 echo "Configs: $(echo ${CONFIGS} | tr ' ' '\n' | cut -d: -f2 | tr '\n' ' ')"
@@ -108,10 +126,10 @@ run_config() {
     # Run training with specific run name
     if [ -n "${DRY_RUN}" ]; then
         echo "[DRY-RUN] Would run: make train"
-        echo "[DRY-RUN] With WANDB_TAGS=${model_tag},seed${seed},compare"
+        echo "[DRY-RUN] With WANDB_TAGS=${model_tag},seed${seed},${TRACK},compare"
     else
         # Set W&B tags for this run
-        export WANDB_TAGS="${model_tag},seed${seed},compare"
+        export WANDB_TAGS="${model_tag},seed${seed},${TRACK},compare"
 
         mkdir -p "${output_dir}"
 
@@ -141,6 +159,7 @@ done
 cat > "${OUTPUT_BASE}/metadata.json" << EOF
 {
     "timestamp": "${TIMESTAMP}",
+    "track": "${TRACK}",
     "seeds": [$(echo ${SEEDS} | sed 's/ /, /g')],
     "wandb_group": "${WANDB_GROUP}",
     "configs": [${CONFIG_NAMES}],
@@ -173,6 +192,7 @@ echo "Comparison Complete!"
 echo "========================================"
 echo "Results saved to: ${OUTPUT_BASE}/"
 echo "W&B Group: ${WANDB_GROUP}"
+echo "Dataset track: ${TRACK}"
 echo "Seeds: ${SEEDS}"
 echo "Total runs completed: ${TOTAL_RUNS}"
 echo ""
@@ -181,5 +201,5 @@ echo "  1. Go to https://wandb.ai"
 echo "  2. Filter by group: ${WANDB_GROUP}"
 echo ""
 echo "To generate analysis plots, run:"
-echo "  python scripts/gpt2/analyze_rgsa_compare.py --group ${WANDB_GROUP}"
+echo "  python scripts/gpt2/analyze_rgsa_compare.py --dir ${OUTPUT_BASE}"
 echo "========================================"
