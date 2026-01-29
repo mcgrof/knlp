@@ -46,24 +46,52 @@ except ImportError:
 MODEL_DISPLAY = {
     "baseline": "Baseline GPT-2",
     "rgsa": "RGSA",
+    "rgsa_static": "RGSA (static)",
     "rgsa_dense": "RGSA (dense ablation)",
     "rgsa_random": "RGSA (random routing)",
+    "rgsa_dyn_a04": "RGSA dyn a=0.4",
+    "rgsa_dyn_a05": "RGSA dyn a=0.5",
+    "rgsa_dyn_a06": "RGSA dyn a=0.6",
+    "rgsa_dyn_piecewise": "RGSA dyn piecewise",
 }
 
 # Colors for each model type
 MODEL_COLORS = {
     "baseline": "#3498db",
     "rgsa": "#e74c3c",
+    "rgsa_static": "#e74c3c",
     "rgsa_dense": "#2ecc71",
     "rgsa_random": "#9b59b6",
+    "rgsa_dyn_a04": "#f39c12",
+    "rgsa_dyn_a05": "#e67e22",
+    "rgsa_dyn_a06": "#d35400",
+    "rgsa_dyn_piecewise": "#1abc9c",
 }
 
 MODEL_MARKERS = {
     "baseline": "o",
     "rgsa": "s",
+    "rgsa_static": "s",
     "rgsa_dense": "^",
     "rgsa_random": "D",
+    "rgsa_dyn_a04": "v",
+    "rgsa_dyn_a05": "P",
+    "rgsa_dyn_a06": "*",
+    "rgsa_dyn_piecewise": "X",
 }
+
+# Ordered list of all known model tags for consistent plotting
+ALL_MODEL_TAGS = [
+    "baseline",
+    "rgsa",
+    "rgsa_static",
+    "rgsa_dyn_a04",
+    "rgsa_dyn_a05",
+    "rgsa_dyn_a06",
+    "rgsa_dyn_piecewise",
+    "rgsa_dense",
+    "rgsa_random",
+]
 
 
 def _extract_run_data(run) -> Dict:
@@ -157,6 +185,8 @@ def parse_log_file(log_path: Path) -> Dict:
         "routing_entropy": [],
         "load_balance": [],
         "candidates_mean": [],
+        "chunk_size_eff": [],
+        "n_chunks_eff": [],
     }
 
     text = log_path.read_text()
@@ -180,6 +210,11 @@ def parse_log_file(log_path: Path) -> Dict:
         data["load_balance"].append(float(m.group(1)))
     for m in re.finditer(r"Candidates mean: ([\d.]+)", text):
         data["candidates_mean"].append(float(m.group(1)))
+
+    # Parse dynamic chunking metrics
+    for m in re.finditer(r"Chunk size \(eff\): (\d+), n_chunks: (\d+)", text):
+        data["chunk_size_eff"].append(int(m.group(1)))
+        data["n_chunks_eff"].append(int(m.group(2)))
 
     return data
 
@@ -235,7 +270,7 @@ def plot_val_ppl_multiseed(by_model: Dict[str, List[Dict]], output_dir: str) -> 
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    for model_tag in ["baseline", "rgsa", "rgsa_dense", "rgsa_random"]:
+    for model_tag in ALL_MODEL_TAGS:
         runs = by_model.get(model_tag, [])
         if not runs:
             continue
@@ -448,9 +483,7 @@ def generate_report(by_model: Dict[str, List[Dict]], output_dir: str) -> None:
     )
 
     # Header
-    model_tags = [
-        t for t in ["baseline", "rgsa", "rgsa_dense", "rgsa_random"] if t in by_model
-    ]
+    model_tags = [t for t in ALL_MODEL_TAGS if t in by_model]
     header = "| Iteration |"
     separator = "|-----------|"
     for tag in model_tags:
@@ -585,6 +618,38 @@ def generate_report(by_model: Dict[str, List[Dict]], output_dir: str) -> None:
 
         lines.append("")
 
+    # Dynamic chunking stats
+    has_chunk_stats = False
+    for tag in ALL_MODEL_TAGS:
+        runs = by_model.get(tag, [])
+        for run in runs:
+            if run.get("chunk_size_eff"):
+                has_chunk_stats = True
+                break
+
+    if has_chunk_stats:
+        lines.extend(["## Dynamic Chunking Statistics", ""])
+        for tag in ALL_MODEL_TAGS:
+            runs = by_model.get(tag, [])
+            if not runs:
+                continue
+            all_cs = []
+            all_nc = []
+            for run in runs:
+                all_cs.extend(run.get("chunk_size_eff", []))
+                all_nc.extend(run.get("n_chunks_eff", []))
+            if all_cs:
+                display = MODEL_DISPLAY.get(tag, tag)
+                cs_arr = np.array(all_cs)
+                nc_arr = np.array(all_nc)
+                lines.append(
+                    f"- **{display}**: chunk_size_eff "
+                    f"mean={cs_arr.mean():.1f}, "
+                    f"min={cs_arr.min()}, max={cs_arr.max()}, "
+                    f"n_chunks mean={nc_arr.mean():.1f}"
+                )
+        lines.append("")
+
     # Routing diagnostics summary
     for tag in ["rgsa", "rgsa_random"]:
         runs = by_model.get(tag, [])
@@ -634,7 +699,9 @@ def main():
         description="Generate plots and report from RGSA comparison runs"
     )
     parser.add_argument("--group", help="W&B group name for comparison runs")
-    parser.add_argument("--local", help="Local output directory with training logs")
+    parser.add_argument(
+        "--local", "--dir", help="Local output directory with training logs"
+    )
     parser.add_argument(
         "--output",
         default="rgsa_analysis",
