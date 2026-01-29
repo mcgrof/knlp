@@ -93,6 +93,10 @@ class RGSAConfig:
     # Auxiliary loss weight for routing supervision
     routing_loss_weight: float = 0.1
 
+    # Ablation modes for scientific validation
+    dense_mode: bool = False  # Skip routing, keep router params (param count control)
+    random_routing: bool = False  # Random chunk selection instead of learned
+
     # Defensive caps for stability (prevent GPU hangs)
     # max_candidates = local_window + top_b * chunk_size by default
     # Setting this enforces a hard cap on attention span per query
@@ -193,6 +197,7 @@ class RetrievalGate(nn.Module):
         query_hidden: torch.Tensor,
         routing_embeds: torch.Tensor,
         chunk_mask: Optional[torch.Tensor] = None,
+        random_routing: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Retrieve top-B chunks for each query position.
@@ -201,6 +206,7 @@ class RetrievalGate(nn.Module):
             query_hidden: [B, T, C] query hidden states
             routing_embeds: [B, num_chunks, routing_dim] chunk routing embeddings
             chunk_mask: [B, num_chunks] mask for valid chunks
+            random_routing: if True, select random chunks instead of learned
 
         Returns:
             chunk_indices: [B, T, top_b] indices of selected chunks
@@ -226,7 +232,18 @@ class RetrievalGate(nn.Module):
 
         # Select top-B chunks: [B, T, top_b]
         top_b = min(self.top_b, num_chunks)
-        _, chunk_indices = torch.topk(routing_scores, k=top_b, dim=-1)
+
+        if random_routing:
+            # Random chunk selection: uniform random instead of learned
+            # Still uses same top_b count for fair comparison
+            chunk_indices = torch.stack(
+                [
+                    torch.randint(0, num_chunks, (T, top_b), device=query_hidden.device)
+                    for _ in range(B)
+                ]
+            )
+        else:
+            _, chunk_indices = torch.topk(routing_scores, k=top_b, dim=-1)
 
         return chunk_indices, routing_scores
 
@@ -267,6 +284,10 @@ class RGSACausalSelfAttention(nn.Module):
 
         self.debug_log_candidates = config.debug_log_candidates
         self._max_candidates_seen = 0  # Track for debugging
+
+        # Ablation modes
+        self.dense_mode = config.dense_mode
+        self.random_routing = config.random_routing
 
         # QKV projection
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
@@ -318,9 +339,10 @@ class RGSACausalSelfAttention(nn.Module):
         # The routing mechanism learns chunk embeddings but attention is dense
         # This validates the architecture before optimizing sparse attention
         #
-        # TODO: Implement efficient sparse attention kernel for long sequences
-        # For now, we still compute routing embeddings to train the router
-        if T > self.local_window + self.chunk_size:
+        # Ablation modes:
+        #   dense_mode: skip routing entirely (keep params for count control)
+        #   random_routing: random chunk selection instead of learned
+        if not self.dense_mode and T > self.local_window + self.chunk_size:
             # Compute routing embeddings (training the router)
             routing_embeds, chunk_mask = self.chunk_router(x)
 
@@ -330,7 +352,7 @@ class RGSACausalSelfAttention(nn.Module):
             assert chunk_mask.shape == (B, num_chunks), "chunk_mask shape mismatch"
 
             chunk_indices, routing_scores = self.retrieval_gate(
-                x, routing_embeds, chunk_mask
+                x, routing_embeds, chunk_mask, random_routing=self.random_routing
             )
 
             # Defensive cap: ensure chunk_indices are valid (non-negative, in range)

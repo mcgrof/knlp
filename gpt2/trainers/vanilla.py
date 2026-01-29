@@ -172,6 +172,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 top_b = int(getattr(self.config, "RGSA_TOP_B", 8))
                 local_window = int(getattr(self.config, "RGSA_LOCAL_WINDOW", 256))
 
+                # Get RGSA ablation flags
+                dense_mode = getattr(self.config, "RGSA_DENSE_MODE", False)
+                dense_mode = dense_mode in ("y", True)
+                random_routing = getattr(self.config, "RGSA_RANDOM_ROUTING", False)
+                random_routing = random_routing in ("y", True)
+
                 # Create RGSA config
                 config = RGSAConfig(
                     n_layer=base_config.n_layer,
@@ -185,12 +191,18 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     routing_dim=routing_dim,
                     top_b=top_b,
                     local_window=local_window,
+                    dense_mode=dense_mode,
+                    random_routing=random_routing,
                 )
 
                 model = GPT2_RGSA(config)
                 if self.master_process:
                     print(f"  RGSA: chunk_size={chunk_size}, routing_dim={routing_dim}")
                     print(f"  RGSA: top_b={top_b}, local_window={local_window}")
+                    if dense_mode:
+                        print("  RGSA: ABLATION dense_mode=True (routing disabled)")
+                    if random_routing:
+                        print("  RGSA: ABLATION random_routing=True (random chunks)")
                 model.to(self.device)
 
             else:
