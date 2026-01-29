@@ -1,0 +1,6 @@
+{
+    "timestamp": "20260128_065948",
+    "seed": 42,
+    "wandb_group": "tinystories-rgsa-compare-20260128_065948",
+    "configs": ["gpt2-tinystories-baseline", "gpt2-tinystories-rgsa"]
+}
