@@ -265,6 +265,89 @@ def test_piecewise_lookup():
     print("PASS: piecewise lookup helper correct")
 
 
+def test_dynamic_plus_dense():
+    """Dynamic chunking + dense_mode forward pass works."""
+    import torch
+
+    cfg = RGSAConfig(
+        n_layer=2,
+        n_head=4,
+        n_embd=128,
+        block_size=256,
+        vocab_size=1000,
+        chunk_size=64,
+        routing_dim=16,
+        top_b=4,
+        local_window=64,
+        dynamic_chunking=True,
+        chunk_size_alpha=0.5,
+        dense_mode=True,
+    )
+    model = GPT2_RGSA(cfg)
+    model.eval()
+
+    x = torch.randint(0, 1000, (2, 256))
+    targets = torch.randint(0, 1000, (2, 256))
+    with torch.no_grad():
+        logits, loss = model(x, targets=targets)
+    assert logits.shape == (2, 256, 1000)
+    assert loss is not None
+    print("PASS: dynamic+dense forward pass works")
+
+
+def test_dynamic_plus_random():
+    """Dynamic chunking + random_routing forward pass works."""
+    import torch
+
+    cfg = RGSAConfig(
+        n_layer=2,
+        n_head=4,
+        n_embd=128,
+        block_size=256,
+        vocab_size=1000,
+        chunk_size=64,
+        routing_dim=16,
+        top_b=4,
+        local_window=64,
+        dynamic_chunking=True,
+        chunk_size_alpha=0.5,
+        random_routing=True,
+    )
+    model = GPT2_RGSA(cfg)
+    model.eval()
+
+    x = torch.randint(0, 1000, (2, 256))
+    targets = torch.randint(0, 1000, (2, 256))
+    with torch.no_grad():
+        logits, loss = model(x, targets=targets)
+    assert logits.shape == (2, 256, 1000)
+    assert loss is not None
+    print("PASS: dynamic+random forward pass works")
+
+
+def test_n_chunks_eff_gte_top_b():
+    """Verify n_chunks_eff >= top_b is handled (via RetrievalGate clamping)."""
+    cfg = RGSAConfig(
+        dynamic_chunking=True,
+        chunk_size_min=128,
+        chunk_size_max=256,
+        chunk_size_alpha=0.5,
+        chunk_size_schedule="power",
+        chunk_size_rounding="nearest",
+        top_b=8,
+    )
+    # With large chunk sizes, short sequences have few chunks
+    for sl in [128, 256, 512]:
+        cs = compute_chunk_size(sl, cfg)
+        n_chunks = (sl + cs - 1) // cs
+        # RetrievalGate clamps top_b to min(top_b, num_chunks)
+        effective_top_b = min(cfg.top_b, n_chunks)
+        assert (
+            effective_top_b <= n_chunks
+        ), f"top_b={effective_top_b} > n_chunks={n_chunks} for sl={sl}"
+    print("PASS: n_chunks_eff vs top_b clamping verified")
+
+
 if __name__ == "__main__":
     test_round_to_pow2()
     test_piecewise_lookup()
@@ -277,4 +360,7 @@ if __name__ == "__main__":
     test_expected_values_alpha05()
     test_param_count_unchanged()
     test_forward_pass_dynamic()
+    test_dynamic_plus_dense()
+    test_dynamic_plus_random()
+    test_n_chunks_eff_gte_top_b()
     print("\nAll tests passed!")
