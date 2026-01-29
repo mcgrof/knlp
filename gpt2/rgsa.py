@@ -53,12 +53,16 @@ class RGSAMetrics:
     tokens_per_query_mean: float = 0.0
     tokens_per_query_max: float = 0.0
 
+    # Dynamic chunking observability
+    chunk_size_eff: int = 0
+    n_chunks_eff: int = 0
+
     # Chunk selection histogram (which chunks are selected most often)
     chunk_selection_counts: Optional[torch.Tensor] = None
 
     def to_dict(self) -> Dict[str, float]:
         """Convert to dict for W&B logging."""
-        return {
+        d = {
             "rgsa/teacher_topk_recall": self.teacher_topk_recall,
             "rgsa/candidates_mean": self.candidates_mean,
             "rgsa/candidates_p50": self.candidates_p50,
@@ -69,6 +73,10 @@ class RGSAMetrics:
             "rgsa/tokens_per_query_mean": self.tokens_per_query_mean,
             "rgsa/tokens_per_query_max": self.tokens_per_query_max,
         }
+        if self.chunk_size_eff > 0:
+            d["rgsa/chunk_size_eff"] = self.chunk_size_eff
+            d["rgsa/n_chunks_eff"] = self.n_chunks_eff
+        return d
 
 
 @dataclass
@@ -97,6 +105,16 @@ class RGSAConfig:
     dense_mode: bool = False  # Skip routing, keep router params (param count control)
     random_routing: bool = False  # Random chunk selection instead of learned
 
+    # Dynamic chunking (L2M-inspired): chunk_size varies with seq_len
+    dynamic_chunking: bool = False
+    chunk_size_min: int = 32
+    chunk_size_max: int = 256
+    chunk_size_alpha: float = 0.5  # exponent for power schedule
+    chunk_size_schedule: str = "power"  # "power" or "piecewise"
+    chunk_size_piecewise: str = ""  # e.g. "512:32,2048:64,8192:128"
+    chunk_size_rounding: str = "pow2"  # "pow2", "multiple_of_8", "nearest"
+    chunk_size_debug_log: bool = True  # log effective chunk size
+
     # Defensive caps for stability (prevent GPU hangs)
     # max_candidates = local_window + top_b * chunk_size by default
     # Setting this enforces a hard cap on attention span per query
@@ -120,6 +138,69 @@ class RGSAConfig:
         return cls(**configs[name])
 
 
+def _round_to_pow2(x: int) -> int:
+    """Round to nearest power of 2."""
+    if x <= 1:
+        return 1
+    # Find nearest power of 2
+    lo = 1 << (x - 1).bit_length() - 1
+    hi = 1 << (x - 1).bit_length()
+    return lo if (x - lo) <= (hi - x) else hi
+
+
+def _apply_rounding(x: int, mode: str) -> int:
+    """Apply rounding rule to chunk size."""
+    if mode == "pow2":
+        return _round_to_pow2(x)
+    elif mode == "multiple_of_8":
+        return max(8, round(x / 8) * 8)
+    elif mode == "nearest":
+        return x
+    else:
+        raise ValueError(f"Unknown rounding mode: {mode}")
+
+
+def _piecewise_lookup(seq_len: int, spec: str, default: int) -> int:
+    """Parse piecewise spec like '512:32,2048:64,8192:128'."""
+    if not spec:
+        return default
+    for entry in spec.split(","):
+        entry = entry.strip()
+        if ":" not in entry:
+            continue
+        threshold_str, size_str = entry.split(":", 1)
+        threshold = int(threshold_str)
+        size = int(size_str)
+        if seq_len <= threshold:
+            return size
+    return default
+
+
+def compute_chunk_size(seq_len: int, cfg: RGSAConfig) -> int:
+    """
+    Compute effective chunk size for a given sequence length.
+
+    In static mode (dynamic_chunking=False), returns cfg.chunk_size.
+    In dynamic mode, computes chunk size based on schedule:
+      - "power": chunk_size ~ seq_len^alpha, clamped to [min, max]
+      - "piecewise": threshold-based lookup from spec string
+    Result is rounded per cfg.chunk_size_rounding and clamped >= 1.
+    """
+    if not cfg.dynamic_chunking:
+        return cfg.chunk_size
+    if cfg.chunk_size_schedule == "power":
+        raw = int(round(seq_len**cfg.chunk_size_alpha))
+        cs = max(cfg.chunk_size_min, min(raw, cfg.chunk_size_max))
+    elif cfg.chunk_size_schedule == "piecewise":
+        cs = _piecewise_lookup(seq_len, cfg.chunk_size_piecewise, cfg.chunk_size_max)
+        cs = max(cfg.chunk_size_min, min(cs, cfg.chunk_size_max))
+    else:
+        raise ValueError(f"Unknown chunk_size_schedule: {cfg.chunk_size_schedule}")
+    cs = _apply_rounding(cs, cfg.chunk_size_rounding)
+    cs = max(1, cs)
+    return cs
+
+
 class ChunkRouter(nn.Module):
     """
     Computes routing embeddings for chunks of hidden states.
@@ -138,19 +219,24 @@ class ChunkRouter(nn.Module):
         # Project from hidden dim to routing dim
         self.proj = nn.Linear(config.n_embd, config.routing_dim, bias=config.bias)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        chunk_size_override: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Compute routing embeddings for each chunk.
 
         Args:
             x: [B, T, C] hidden states
+            chunk_size_override: if set, use this instead of self.chunk_size
 
         Returns:
             routing_embeds: [B, num_chunks, routing_dim] routing embeddings
             chunk_mask: [B, num_chunks] mask for valid chunks (True = valid)
         """
         B, T, C = x.shape
-        chunk_size = self.chunk_size
+        chunk_size = chunk_size_override if chunk_size_override else self.chunk_size
 
         # Pad sequence to be divisible by chunk_size
         pad_len = (chunk_size - T % chunk_size) % chunk_size
@@ -274,6 +360,7 @@ class RGSACausalSelfAttention(nn.Module):
         self.local_window = config.local_window
         self.chunk_size = config.chunk_size
         self.top_b = config.top_b
+        self.rgsa_config = config  # stored for compute_chunk_size()
 
         # Defensive cap: max tokens to attend per query position
         # Default = local_window + top_b * chunk_size
@@ -284,6 +371,10 @@ class RGSACausalSelfAttention(nn.Module):
 
         self.debug_log_candidates = config.debug_log_candidates
         self._max_candidates_seen = 0  # Track for debugging
+
+        # Dynamic chunking state (logged per forward pass)
+        self._chunk_size_eff = config.chunk_size
+        self._n_chunks_eff = 0
 
         # Ablation modes
         self.dense_mode = config.dense_mode
@@ -342,14 +433,24 @@ class RGSACausalSelfAttention(nn.Module):
         # Ablation modes:
         #   dense_mode: skip routing entirely (keep params for count control)
         #   random_routing: random chunk selection instead of learned
-        if not self.dense_mode and T > self.local_window + self.chunk_size:
+        # Compute effective chunk size (dynamic or static)
+        chunk_size_eff = compute_chunk_size(T, self.rgsa_config)
+        self._chunk_size_eff = chunk_size_eff
+        self._n_chunks_eff = (T + chunk_size_eff - 1) // chunk_size_eff
+
+        if not self.dense_mode and T > self.local_window + chunk_size_eff:
             # Compute routing embeddings (training the router)
-            routing_embeds, chunk_mask = self.chunk_router(x)
+            routing_embeds, chunk_mask = self.chunk_router(
+                x, chunk_size_override=chunk_size_eff
+            )
 
             # Shape assertions for routing
             num_chunks = routing_embeds.size(1)
             assert routing_embeds.dim() == 3, "routing_embeds must be 3D"
             assert chunk_mask.shape == (B, num_chunks), "chunk_mask shape mismatch"
+
+            # Clamp top_b if fewer chunks than requested
+            effective_top_b = min(self.top_b, num_chunks)
 
             chunk_indices, routing_scores = self.retrieval_gate(
                 x, routing_embeds, chunk_mask, random_routing=self.random_routing
@@ -360,7 +461,7 @@ class RGSACausalSelfAttention(nn.Module):
             assert chunk_indices.max() < num_chunks, "Chunk index out of range"
 
             # Track max candidates for debugging
-            theoretical_max = self.local_window + self.top_b * self.chunk_size
+            theoretical_max = self.local_window + effective_top_b * chunk_size_eff
             self._max_candidates_seen = max(self._max_candidates_seen, theoretical_max)
 
             if return_routing_info:
@@ -369,6 +470,8 @@ class RGSACausalSelfAttention(nn.Module):
                     "routing_scores": routing_scores,
                     "routing_embeds": routing_embeds,
                     "max_candidates_theoretical": theoretical_max,
+                    "chunk_size_eff": chunk_size_eff,
+                    "n_chunks_eff": self._n_chunks_eff,
                 }
 
         # Use dense causal attention for all sequences
@@ -400,10 +503,13 @@ class RGSACausalSelfAttention(nn.Module):
 
     def get_debug_stats(self) -> dict:
         """Return debug statistics for logging."""
-        return {
+        stats = {
             "rgsa/max_candidates_seen": self._max_candidates_seen,
             "rgsa/max_candidates_cap": self.max_candidates,
+            "rgsa/chunk_size_eff": self._chunk_size_eff,
+            "rgsa/n_chunks_eff": self._n_chunks_eff,
         }
+        return stats
 
     def reset_debug_stats(self):
         """Reset debug statistics (call at start of each eval)."""
@@ -636,6 +742,13 @@ class GPT2_RGSA(nn.Module):
             f"routing_dim={config.routing_dim}, top_b={config.top_b}, "
             f"local_window={config.local_window}"
         )
+        if config.dynamic_chunking:
+            print(
+                f"RGSA dynamic chunking: schedule={config.chunk_size_schedule}, "
+                f"alpha={config.chunk_size_alpha}, "
+                f"range=[{config.chunk_size_min}, {config.chunk_size_max}], "
+                f"rounding={config.chunk_size_rounding}"
+            )
 
     def get_num_params(self, non_embedding=True):
         n_params = sum(p.numel() for p in self.parameters())
@@ -745,12 +858,17 @@ class GPT2_RGSA(nn.Module):
                 chunk_router = attn.chunk_router
                 retrieval_gate = attn.retrieval_gate
 
+                # Compute effective chunk size for this seq_len
+                chunk_size_eff = compute_chunk_size(T, self.config)
+
                 # Only compute metrics if sequence is long enough
-                if T <= attn.local_window + attn.chunk_size:
+                if T <= attn.local_window + chunk_size_eff:
                     return RGSAMetrics()
 
                 # Get routing embeddings and scores
-                routing_embeds, chunk_mask = chunk_router(block.ln_1(x))
+                routing_embeds, chunk_mask = chunk_router(
+                    block.ln_1(x), chunk_size_override=chunk_size_eff
+                )
                 chunk_indices, routing_scores = retrieval_gate(
                     block.ln_1(x), routing_embeds, chunk_mask
                 )
@@ -776,7 +894,7 @@ class GPT2_RGSA(nn.Module):
 
                 # Aggregate attention per chunk (sum attention mass going to each chunk)
                 num_chunks = routing_embeds.size(1)
-                chunk_size = attn.chunk_size
+                chunk_size = chunk_size_eff
 
                 # Compute attention mass per chunk for each query
                 # dense_attn: [B, H, T, T] -> chunk_attn: [B, T, num_chunks]
@@ -803,7 +921,7 @@ class GPT2_RGSA(nn.Module):
                 # For each query, check if teacher's top chunks are in retrieved set
                 recall_scores = []
                 for b in range(B):
-                    for t in range(attn.local_window + attn.chunk_size, T):
+                    for t in range(attn.local_window + chunk_size_eff, T):
                         teacher_chunks = set(teacher_top_chunks[b, t].tolist())
                         retrieved_chunks = set(retrieved_set[b, t].tolist())
                         if len(teacher_chunks) > 0:
@@ -819,9 +937,9 @@ class GPT2_RGSA(nn.Module):
                 # Compute candidate count statistics
                 # In current implementation, it's fixed at top_b * chunk_size + local_window
                 candidates_per_query = []
-                for t in range(attn.local_window + attn.chunk_size, T):
+                for t in range(attn.local_window + chunk_size_eff, T):
                     local_count = min(attn.local_window, t)
-                    retrieved_count = top_b * chunk_size
+                    retrieved_count = top_b * chunk_size_eff
                     # Account for overlap between local and retrieved
                     total = local_count + retrieved_count
                     candidates_per_query.append(total)
@@ -877,12 +995,12 @@ class GPT2_RGSA(nn.Module):
 
                 # Tokens per query statistics
                 tokens_per_query = (
-                    top_b * chunk_size + attn.local_window
+                    top_b * chunk_size_eff + attn.local_window
                 )  # theoretical max
                 tokens_per_query_actual = []
-                for t in range(attn.local_window + attn.chunk_size, T):
+                for t in range(attn.local_window + chunk_size_eff, T):
                     local = min(attn.local_window, t)
-                    retrieved = top_b * chunk_size
+                    retrieved = top_b * chunk_size_eff
                     tokens_per_query_actual.append(local + retrieved)
 
                 if tokens_per_query_actual:
@@ -894,6 +1012,7 @@ class GPT2_RGSA(nn.Module):
                 else:
                     tpq_mean = tpq_max = 0.0
 
+                n_chunks_eff = (T + chunk_size_eff - 1) // chunk_size_eff
                 return RGSAMetrics(
                     teacher_topk_recall=teacher_recall,
                     candidates_mean=candidates_mean,
@@ -904,6 +1023,8 @@ class GPT2_RGSA(nn.Module):
                     load_balance_score=load_balance,
                     tokens_per_query_mean=tpq_mean,
                     tokens_per_query_max=tpq_max,
+                    chunk_size_eff=chunk_size_eff,
+                    n_chunks_eff=n_chunks_eff,
                     chunk_selection_counts=chunk_selection_counts,
                 )
 
