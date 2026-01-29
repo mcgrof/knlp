@@ -178,6 +178,29 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 random_routing = getattr(self.config, "RGSA_RANDOM_ROUTING", False)
                 random_routing = random_routing in ("y", True)
 
+                # Get RGSA dynamic chunking config
+                dynamic_chunking = getattr(self.config, "RGSA_DYNAMIC_CHUNKING", False)
+                dynamic_chunking = dynamic_chunking in ("y", True)
+                chunk_size_min = int(getattr(self.config, "RGSA_CHUNK_SIZE_MIN", 32))
+                chunk_size_max = int(getattr(self.config, "RGSA_CHUNK_SIZE_MAX", 256))
+                chunk_size_alpha = float(
+                    getattr(self.config, "RGSA_CHUNK_SIZE_ALPHA", "0.5")
+                )
+                chunk_size_schedule = str(
+                    getattr(self.config, "RGSA_CHUNK_SIZE_SCHEDULE", "power")
+                )
+                chunk_size_piecewise = str(
+                    getattr(self.config, "RGSA_CHUNK_SIZE_PIECEWISE", "")
+                )
+                chunk_size_rounding = str(
+                    getattr(self.config, "RGSA_CHUNK_SIZE_ROUNDING", "pow2")
+                )
+                chunk_size_debug_log = getattr(
+                    self.config, "RGSA_CHUNK_SIZE_DEBUG_LOG", True
+                )
+                if isinstance(chunk_size_debug_log, str):
+                    chunk_size_debug_log = chunk_size_debug_log in ("y", "True")
+
                 # Create RGSA config
                 config = RGSAConfig(
                     n_layer=base_config.n_layer,
@@ -193,6 +216,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     local_window=local_window,
                     dense_mode=dense_mode,
                     random_routing=random_routing,
+                    dynamic_chunking=dynamic_chunking,
+                    chunk_size_min=chunk_size_min,
+                    chunk_size_max=chunk_size_max,
+                    chunk_size_alpha=chunk_size_alpha,
+                    chunk_size_schedule=chunk_size_schedule,
+                    chunk_size_piecewise=chunk_size_piecewise,
+                    chunk_size_rounding=chunk_size_rounding,
+                    chunk_size_debug_log=chunk_size_debug_log,
                 )
 
                 model = GPT2_RGSA(config)
@@ -203,6 +234,12 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         print("  RGSA: ABLATION dense_mode=True (routing disabled)")
                     if random_routing:
                         print("  RGSA: ABLATION random_routing=True (random chunks)")
+                    if dynamic_chunking:
+                        print(
+                            f"  RGSA: dynamic_chunking={chunk_size_schedule}, "
+                            f"alpha={chunk_size_alpha}, "
+                            f"range=[{chunk_size_min},{chunk_size_max}]"
+                        )
                 model.to(self.device)
 
             else:
@@ -2386,6 +2423,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     f"  Tokens/query: {rgsa_metrics.tokens_per_query_mean:.1f} "
                     f"(max {rgsa_metrics.tokens_per_query_max:.1f})"
                 )
+                if rgsa_metrics.chunk_size_eff > 0:
+                    print(
+                        f"  Chunk size (eff): {rgsa_metrics.chunk_size_eff}, "
+                        f"n_chunks: {rgsa_metrics.n_chunks_eff}"
+                    )
 
             return metrics
         except Exception as e:
