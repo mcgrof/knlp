@@ -65,18 +65,18 @@ run_config() {
     echo "Output: ${output_dir}"
     echo "========================================"
 
-    # Load the defconfig
+    # Load the defconfig (this also generates config.py)
     make defconfig-${config_name}
 
-    # Update seed in .config if it exists
+    # Update seed in .config if needed
     if grep -q "CONFIG_SEED=" .config 2>/dev/null; then
         sed -i "s/CONFIG_SEED=.*/CONFIG_SEED=${SEED}/" .config
     else
         echo "CONFIG_SEED=${SEED}" >> .config
     fi
 
-    # Regenerate config.py with updated seed
-    make genconfig
+    # Regenerate config.py after seed update
+    python scripts/kconfig2py.py .config > config.py
 
     # Run training with specific run name
     if [ -n "${DRY_RUN}" ]; then
