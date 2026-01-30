@@ -574,6 +574,71 @@ config RGSA_ROUTING_LOSS_WEIGHT
 	  Trains routing embeddings to predict actual attention mass.
 	  Set to 0.0 to disable auxiliary loss.
 
+config RGSA_DYNAMIC_CHUNKING
+	bool "Enable dynamic chunk sizing"
+	default n
+	depends on ENABLE_RGSA
+	help
+	  When enabled, chunk size adapts to sequence length using a
+	  schedule (power or piecewise) instead of the fixed chunk_size.
+	  Inspired by L2M sublinear memory scaling.
+
+config RGSA_CHUNK_SIZE_MIN
+	int "Minimum dynamic chunk size"
+	default 32
+	range 8 512
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  Minimum chunk size for dynamic schedule clamping.
+
+config RGSA_CHUNK_SIZE_MAX
+	int "Maximum dynamic chunk size"
+	default 256
+	range 16 1024
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  Maximum chunk size for dynamic schedule clamping.
+
+config RGSA_CHUNK_SIZE_ALPHA
+	string "Power schedule exponent (alpha)"
+	default "0.5"
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  For the power schedule: chunk_size ~ seq_len^alpha.
+	  alpha=0.5 gives sublinear (sqrt) growth.
+
+config RGSA_CHUNK_SIZE_SCHEDULE
+	string "Dynamic chunk size schedule"
+	default "power"
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  Schedule type: "power" (seq_len^alpha) or "piecewise"
+	  (threshold-based lookup).
+
+config RGSA_CHUNK_SIZE_PIECEWISE
+	string "Piecewise schedule specification"
+	default ""
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  For piecewise schedule: comma-separated "threshold:size"
+	  pairs. Example: "512:32,2048:64,8192:128"
+
+config RGSA_CHUNK_SIZE_ROUNDING
+	string "Chunk size rounding mode"
+	default "pow2"
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  Rounding mode for computed chunk size: "pow2" (nearest
+	  power of 2), "multiple_of_8", or "nearest" (no rounding).
+
+config RGSA_CHUNK_SIZE_DEBUG_LOG
+	bool "Log dynamic chunk sizes"
+	default y
+	depends on RGSA_DYNAMIC_CHUNKING
+	help
+	  When enabled, prints effective chunk size and number of
+	  chunks during evaluation diagnostics.
+
 source "gpt2/Kconfig.mechint"
 
 endmenu
