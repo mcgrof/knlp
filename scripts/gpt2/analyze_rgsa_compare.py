@@ -53,6 +53,12 @@ MODEL_DISPLAY = {
     "rgsa_dyn_a05": "RGSA dyn a=0.5",
     "rgsa_dyn_a06": "RGSA dyn a=0.6",
     "rgsa_dyn_piecewise": "RGSA dyn piecewise",
+    "sweep_t4_w128": "top_b=4, win=128",
+    "sweep_t4_w256": "top_b=4, win=256",
+    "sweep_t8_w128": "top_b=8, win=128",
+    "sweep_t8_w256": "top_b=8, win=256",
+    "sweep_t16_w128": "top_b=16, win=128",
+    "sweep_t16_w256": "top_b=16, win=256",
 }
 
 # Colors for each model type
@@ -66,6 +72,12 @@ MODEL_COLORS = {
     "rgsa_dyn_a05": "#e67e22",
     "rgsa_dyn_a06": "#d35400",
     "rgsa_dyn_piecewise": "#1abc9c",
+    "sweep_t4_w128": "#e6194b",
+    "sweep_t4_w256": "#3cb44b",
+    "sweep_t8_w128": "#4363d8",
+    "sweep_t8_w256": "#f58231",
+    "sweep_t16_w128": "#911eb4",
+    "sweep_t16_w256": "#42d4f4",
 }
 
 MODEL_MARKERS = {
@@ -78,6 +90,12 @@ MODEL_MARKERS = {
     "rgsa_dyn_a05": "P",
     "rgsa_dyn_a06": "*",
     "rgsa_dyn_piecewise": "X",
+    "sweep_t4_w128": "v",
+    "sweep_t4_w256": "^",
+    "sweep_t8_w128": "<",
+    "sweep_t8_w256": ">",
+    "sweep_t16_w128": "p",
+    "sweep_t16_w256": "h",
 }
 
 # Ordered list of all known model tags for consistent plotting
@@ -91,7 +109,23 @@ ALL_MODEL_TAGS = [
     "rgsa_dyn_piecewise",
     "rgsa_dense",
     "rgsa_random",
+    "sweep_t4_w128",
+    "sweep_t4_w256",
+    "sweep_t8_w128",
+    "sweep_t8_w256",
+    "sweep_t16_w128",
+    "sweep_t16_w256",
 ]
+
+# Sweep configs: map model tag to (top_b, local_window) for Pareto plot
+SWEEP_PARAMS = {
+    "sweep_t4_w128": (4, 128),
+    "sweep_t4_w256": (4, 256),
+    "sweep_t8_w128": (8, 128),
+    "sweep_t8_w256": (8, 256),
+    "sweep_t16_w128": (16, 128),
+    "sweep_t16_w256": (16, 256),
+}
 
 
 def _extract_run_data(run) -> Dict:
@@ -124,7 +158,22 @@ def _identify_model_tag(run_data: Dict) -> str:
     tags = run_data.get("tags", [])
     name = run_data.get("name", "")
 
-    for tag in ["rgsa_random", "rgsa_dense", "rgsa", "baseline"]:
+    # Check sweep tags first (more specific)
+    for tag in SWEEP_PARAMS:
+        if tag in tags or tag in name:
+            return tag
+
+    for tag in [
+        "rgsa_random",
+        "rgsa_dense",
+        "rgsa_dyn_a04",
+        "rgsa_dyn_a05",
+        "rgsa_dyn_a06",
+        "rgsa_dyn_piecewise",
+        "rgsa_static",
+        "rgsa",
+        "baseline",
+    ]:
         if tag in tags or tag in name:
             return tag
     return "unknown"
@@ -187,6 +236,8 @@ def parse_log_file(log_path: Path) -> Dict:
         "candidates_mean": [],
         "chunk_size_eff": [],
         "n_chunks_eff": [],
+        "tokens_per_query": [],
+        "iter_time_ms": [],
     }
 
     text = log_path.read_text()
@@ -215,6 +266,14 @@ def parse_log_file(log_path: Path) -> Dict:
     for m in re.finditer(r"Chunk size \(eff\): (\d+), n_chunks: (\d+)", text):
         data["chunk_size_eff"].append(int(m.group(1)))
         data["n_chunks_eff"].append(int(m.group(2)))
+
+    # Parse tokens/query: "Tokens/query: 512.0 (max 768.0)"
+    for m in re.finditer(r"Tokens/query: ([\d.]+)", text):
+        data["tokens_per_query"].append(float(m.group(1)))
+
+    # Parse iter time: "123.45ms/iter" or "iter time: 123.45ms"
+    for m in re.finditer(r"([\d.]+)ms/iter", text):
+        data["iter_time_ms"].append(float(m.group(1)))
 
     return data
 
@@ -451,6 +510,144 @@ def plot_routing_diagnostics(by_model: Dict[str, List[Dict]], output_dir: str) -
 
     plt.tight_layout()
     output_path = Path(output_dir) / "compare_rgsa_diagnostics.png"
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def plot_pareto_curve(by_model: Dict[str, List[Dict]], output_dir: str) -> None:
+    """Plot Pareto frontier: val PPL vs tokens/query for sweep configs."""
+    if not HAS_MATPLOTLIB:
+        return
+
+    sweep_tags = [t for t in SWEEP_PARAMS if t in by_model]
+    if not sweep_tags and "baseline" not in by_model:
+        print("No sweep data available, skipping Pareto plot")
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    points = []  # (tokens_per_query, ppl_mean, ppl_std, label, color, marker)
+
+    # Baseline point (tokens/query = block_size = 1024 for dense attention)
+    if "baseline" in by_model:
+        runs = by_model["baseline"]
+        best_ppls = []
+        for run in runs:
+            if run["val_ppl"]:
+                best_ppls.append(min(run["val_ppl"]))
+        if best_ppls:
+            mean_ppl = np.mean(best_ppls)
+            std_ppl = np.std(best_ppls) if len(best_ppls) > 1 else 0
+            points.append(
+                (1024.0, mean_ppl, std_ppl, "Baseline (dense)", "#3498db", "o")
+            )
+
+    # Sweep points
+    for tag in sweep_tags:
+        runs = by_model[tag]
+        top_b, local_window = SWEEP_PARAMS[tag]
+
+        best_ppls = []
+        tpq_vals = []
+        for run in runs:
+            if run["val_ppl"]:
+                best_ppls.append(min(run["val_ppl"]))
+            tpq_vals.extend(run.get("tokens_per_query", []))
+
+        if not best_ppls:
+            continue
+
+        mean_ppl = np.mean(best_ppls)
+        std_ppl = np.std(best_ppls) if len(best_ppls) > 1 else 0
+
+        # Use measured tokens/query if available, else estimate
+        if tpq_vals:
+            tpq = np.mean(tpq_vals)
+        else:
+            # Estimate: top_b * chunk_size + local_window
+            tpq = top_b * 64 + local_window
+
+        color = MODEL_COLORS.get(tag, "gray")
+        marker = MODEL_MARKERS.get(tag, "o")
+        label = MODEL_DISPLAY.get(tag, tag)
+        points.append((tpq, mean_ppl, std_ppl, label, color, marker))
+
+    # Also include static/dynamic RGSA if present
+    for tag in ["rgsa_static", "rgsa_dyn_a05"]:
+        if tag not in by_model:
+            continue
+        runs = by_model[tag]
+        best_ppls = []
+        tpq_vals = []
+        for run in runs:
+            if run["val_ppl"]:
+                best_ppls.append(min(run["val_ppl"]))
+            tpq_vals.extend(run.get("tokens_per_query", []))
+        if not best_ppls:
+            continue
+        mean_ppl = np.mean(best_ppls)
+        std_ppl = np.std(best_ppls) if len(best_ppls) > 1 else 0
+        tpq = np.mean(tpq_vals) if tpq_vals else 768.0
+        color = MODEL_COLORS.get(tag, "gray")
+        marker = MODEL_MARKERS.get(tag, "o")
+        label = MODEL_DISPLAY.get(tag, tag)
+        points.append((tpq, mean_ppl, std_ppl, label, color, marker))
+
+    if not points:
+        print("No Pareto data, skipping plot")
+        return
+
+    # Plot each point
+    for tpq, ppl, std, label, color, marker in points:
+        ax.errorbar(
+            tpq,
+            ppl,
+            yerr=std if std > 0 else None,
+            fmt=marker,
+            color=color,
+            label=label,
+            markersize=10,
+            capsize=4,
+            linewidth=2,
+        )
+        ax.annotate(
+            label,
+            (tpq, ppl),
+            textcoords="offset points",
+            xytext=(8, 4),
+            fontsize=7,
+            color=color,
+        )
+
+    # Draw Pareto frontier
+    sorted_pts = sorted(points, key=lambda p: p[0])
+    frontier_x = []
+    frontier_y = []
+    best_ppl = float("inf")
+    for tpq, ppl, _, _, _, _ in sorted_pts:
+        if ppl <= best_ppl:
+            frontier_x.append(tpq)
+            frontier_y.append(ppl)
+            best_ppl = ppl
+    if len(frontier_x) > 1:
+        ax.plot(
+            frontier_x,
+            frontier_y,
+            "k--",
+            alpha=0.4,
+            linewidth=1.5,
+            label="Pareto frontier",
+        )
+
+    ax.set_xlabel("Tokens / Query", fontsize=12)
+    ax.set_ylabel("Best Val PPL", fontsize=12)
+    ax.set_title("Compute-Quality Pareto Frontier", fontsize=14)
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    output_path = Path(output_dir) / "pareto_compute_quality.png"
     plt.savefig(output_path, dpi=300)
     plt.close()
     print(f"Saved: {output_path}")
@@ -748,6 +945,7 @@ def main():
     print("\nGenerating plots...")
     plot_val_ppl_multiseed(by_model, args.output)
     plot_routing_diagnostics(by_model, args.output)
+    plot_pareto_curve(by_model, args.output)
 
     print("\nGenerating report...")
     generate_report(by_model, args.output)
