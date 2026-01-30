@@ -3,14 +3,17 @@
 #
 # Usage:
 #   ./scripts/gpt2/run_compare_rgsa.sh [--track tinystories|finewebedu] [--seeds "1 2 3"] [--dry-run]
-#   ./scripts/gpt2/run_compare_rgsa.sh --track finewebedu --ablations [--dry-run]
+#   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --ablations [--seeds "1 2 3"]
+#   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --sweep [--seeds "42"]
+#   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --time 7200 [--seeds "1 2 3"]
 #
 # This script:
 # 1. Runs baseline GPT-2 and RGSA for each seed
-# 2. Optionally runs rgsa_dense and rgsa_random ablations
-# 3. On finewebedu track, includes dynamic chunking variants
-# 4. Sets WANDB_GROUP for easy comparison in W&B UI
-# 5. Tags runs with model type, dataset, and seed
+# 2. Optionally runs rgsa_dense and rgsa_random ablations (--ablations)
+# 3. Optionally runs compute-quality sweep over top_b/local_window (--sweep)
+# 4. On finewebedu track, includes dynamic chunking variants
+# 5. Sets WANDB_GROUP for easy comparison in W&B UI
+# 6. Tags runs with model type, dataset, and seed
 
 set -e
 
@@ -18,7 +21,9 @@ set -e
 SEEDS="1 2 3"
 DRY_RUN=""
 ABLATIONS=""
+SWEEP=""
 TRACK="tinystories"
+MAX_TIME=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -35,13 +40,21 @@ while [[ $# -gt 0 ]]; do
             ABLATIONS="yes"
             shift
             ;;
+        --sweep)
+            SWEEP="yes"
+            shift
+            ;;
+        --time)
+            MAX_TIME="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN="yes"
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--track tinystories|finewebedu] [--seeds \"1 2 3\"] [--ablations] [--dry-run]"
+            echo "Usage: $0 [--track tinystories|finewebedu] [--seeds \"1 2 3\"] [--ablations] [--sweep] [--time SECS] [--dry-run]"
             exit 1
             ;;
     esac
@@ -49,23 +62,44 @@ done
 
 # Timestamp for this comparison run
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-WANDB_GROUP="${TRACK}-rgsa-compare-${TIMESTAMP}"
-OUTPUT_BASE="rgsa_compare_${TRACK}_${TIMESTAMP}"
 
-# Build list of configs to run based on dataset track
-if [ "${TRACK}" = "finewebedu" ]; then
+# Determine run mode suffix for grouping
+MODE_SUFFIX=""
+if [ -n "${SWEEP}" ]; then
+    MODE_SUFFIX="-sweep"
+elif [ -n "${ABLATIONS}" ]; then
+    MODE_SUFFIX="-ablation"
+fi
+
+WANDB_GROUP="${TRACK}-rgsa-compare${MODE_SUFFIX}-${TIMESTAMP}"
+OUTPUT_BASE="rgsa_compare_${TRACK}${MODE_SUFFIX}_${TIMESTAMP}"
+
+# Build list of configs to run based on dataset track and mode
+if [ -n "${SWEEP}" ]; then
+    # Part 3: Compute-quality sweep (top_b x local_window)
+    CONFIGS="gpt2-tinystories-baseline:baseline"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t4-w128:sweep_t4_w128"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t4-w256:sweep_t4_w256"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t8-w128:sweep_t8_w128"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t8-w256:sweep_t8_w256"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t16-w128:sweep_t16_w128"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t16-w256:sweep_t16_w256"
+elif [ "${TRACK}" = "finewebedu" ]; then
     CONFIGS="gpt2-finewebedu-baseline:baseline"
     CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-static:rgsa_static"
     CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a05:rgsa_dyn_a05"
-    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a04:rgsa_dyn_a04"
-    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a06:rgsa_dyn_a06"
-    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-piecewise:rgsa_dyn_piecewise"
     if [ -n "${ABLATIONS}" ]; then
-        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dense:rgsa_dense"
-        CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-random:rgsa_random"
+        CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dense:rgsa_dense"
+        CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-random:rgsa_random"
+    else
+        CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a04:rgsa_dyn_a04"
+        CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-a06:rgsa_dyn_a06"
+        CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-dynamic-piecewise:rgsa_dyn_piecewise"
     fi
 elif [ "${TRACK}" = "tinystories" ]; then
-    CONFIGS="gpt2-tinystories-baseline:baseline gpt2-tinystories-rgsa:rgsa"
+    CONFIGS="gpt2-tinystories-baseline:baseline"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa:rgsa_static"
+    CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dynamic:rgsa_dyn_a05"
     if [ -n "${ABLATIONS}" ]; then
         CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-dense:rgsa_dense"
         CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-random:rgsa_random"
@@ -84,9 +118,11 @@ echo "========================================"
 echo "RGSA Multi-Seed Comparison Run"
 echo "========================================"
 echo "Dataset track: ${TRACK}"
+echo "Mode: $([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard"))"
 echo "Timestamp: ${TIMESTAMP}"
 echo "Seeds: ${SEEDS}"
 echo "Configs: $(echo ${CONFIGS} | tr ' ' '\n' | cut -d: -f2 | tr '\n' ' ')"
+[ -n "${MAX_TIME}" ] && echo "Max time override: ${MAX_TIME}s"
 echo "Total runs: ${TOTAL_RUNS}"
 echo "WANDB_GROUP: ${WANDB_GROUP}"
 echo "Output base: ${OUTPUT_BASE}"
@@ -120,13 +156,23 @@ run_config() {
         echo "CONFIG_SEED=${seed}" >> .config
     fi
 
-    # Regenerate config.py after seed update
+    # Override max_time if specified
+    if [ -n "${MAX_TIME}" ]; then
+        if grep -q "CONFIG_GPT2_MAX_TIME=" .config 2>/dev/null; then
+            sed -i "s/CONFIG_GPT2_MAX_TIME=.*/CONFIG_GPT2_MAX_TIME=${MAX_TIME}/" .config
+        else
+            echo "CONFIG_GPT2_MAX_TIME=${MAX_TIME}" >> .config
+        fi
+    fi
+
+    # Regenerate config.py after updates
     python scripts/kconfig2py.py .config > config.py
 
     # Run training with specific run name
     if [ -n "${DRY_RUN}" ]; then
         echo "[DRY-RUN] Would run: make train"
         echo "[DRY-RUN] With WANDB_TAGS=${model_tag},seed${seed},${TRACK},compare"
+        echo "[DRY-RUN] Max time: $(grep CONFIG_GPT2_MAX_TIME .config)"
     else
         # Set W&B tags for this run
         export WANDB_TAGS="${model_tag},seed${seed},${TRACK},compare"
@@ -160,10 +206,13 @@ cat > "${OUTPUT_BASE}/metadata.json" << EOF
 {
     "timestamp": "${TIMESTAMP}",
     "track": "${TRACK}",
+    "mode": "$([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard"))",
     "seeds": [$(echo ${SEEDS} | sed 's/ /, /g')],
     "wandb_group": "${WANDB_GROUP}",
     "configs": [${CONFIG_NAMES}],
-    "ablations": $([ -n "${ABLATIONS}" ] && echo "true" || echo "false")
+    "ablations": $([ -n "${ABLATIONS}" ] && echo "true" || echo "false"),
+    "sweep": $([ -n "${SWEEP}" ] && echo "true" || echo "false"),
+    "max_time_override": $([ -n "${MAX_TIME}" ] && echo "${MAX_TIME}" || echo "null")
 }
 EOF
 
