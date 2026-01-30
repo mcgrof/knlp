@@ -574,6 +574,26 @@ config RGSA_ROUTING_LOSS_WEIGHT
 	  Trains routing embeddings to predict actual attention mass.
 	  Set to 0.0 to disable auxiliary loss.
 
+config RGSA_DENSE_MODE
+	bool "Ablation: disable retrieval gating (dense attention)"
+	default n
+	depends on ENABLE_RGSA
+	help
+	  When enabled, RGSA model keeps all router parameters but
+	  skips retrieval gating so attention is fully dense. Used
+	  to isolate whether gains come from learned routing or from
+	  extra parameters/regularization.
+
+config RGSA_RANDOM_ROUTING
+	bool "Ablation: random chunk selection"
+	default n
+	depends on ENABLE_RGSA
+	help
+	  When enabled, chunk selection uses uniform random indices
+	  instead of learned top-k routing. Router still trains but
+	  its selections are ignored. Used to prove that learned
+	  retrieval is necessary for quality gains.
+
 config RGSA_DYNAMIC_CHUNKING
 	bool "Enable dynamic chunk sizing"
 	default n
