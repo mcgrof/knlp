@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+
 def compute_fisher_metrics(
     attn_probs: torch.Tensor,
     layer_idx: int,
@@ -186,6 +187,47 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+        self._sdpa_backend_logged = False
+
+    @torch.no_grad()
+    def _log_sdpa_backend(self, q, k, v):
+        """Log which SDPA backend is available for our tensor shapes."""
+        backends = {
+            "flash_sdp": {
+                "enable_flash": True,
+                "enable_mem_efficient": False,
+                "enable_math": False,
+            },
+            "mem_efficient_sdp": {
+                "enable_flash": False,
+                "enable_mem_efficient": True,
+                "enable_math": False,
+            },
+            "math_sdp": {
+                "enable_flash": False,
+                "enable_mem_efficient": False,
+                "enable_math": True,
+            },
+        }
+        available = []
+        for name, kwargs in backends.items():
+            try:
+                with torch.backends.cuda.sdp_kernel(**kwargs):
+                    torch.nn.functional.scaled_dot_product_attention(
+                        q[:1, :, :8, :],
+                        k[:1, :, :8, :],
+                        v[:1, :, :8, :],
+                        attn_mask=None,
+                        dropout_p=0.0,
+                        is_causal=True,
+                    )
+                available.append(name)
+            except RuntimeError:
+                pass
+        print(
+            f"  Baseline SDPA backends available: {', '.join(available)} "
+            f"(Q={list(q.shape)}, dtype={q.dtype})"
+        )
 
     def forward(self, x, mechint_kv_mask=None):
         B, T, C = (
@@ -217,6 +259,12 @@ class CausalSelfAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0,
             is_causal=True,
         )
+
+        # One-time SDPA backend diagnostic
+        if not self._sdpa_backend_logged:
+            self._sdpa_backend_logged = True
+            self._log_sdpa_backend(q, k, v)
+
         y = (
             y.transpose(1, 2).contiguous().view(B, T, C)
         )  # re-assemble all head outputs side by side
