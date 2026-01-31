@@ -337,6 +337,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     model = GPT2(config)
                     model.to(self.device)
 
+        # Log SDPA backend availability (before compile to avoid graph breaks)
+        if self.master_process and hasattr(model, "log_sdpa_backends"):
+            model.log_sdpa_backends(device=self.device)
+
         # Compile if requested (must be before DDP)
         if getattr(self.args, "compile", False) and hasattr(torch, "compile"):
             if self.master_process:
