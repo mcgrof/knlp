@@ -178,6 +178,14 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     getattr(self.config, "RGSA_CACHE_ROUTING_LAYERS", 0)
                 )
 
+                # Get RGSA router gradient gating
+                router_update_stride = int(
+                    getattr(self.config, "RGSA_ROUTER_UPDATE_STRIDE", 0)
+                )
+                router_freeze_steps = int(
+                    getattr(self.config, "RGSA_ROUTER_FREEZE_STEPS", 0)
+                )
+
                 # Get RGSA ablation flags
                 dense_mode = getattr(self.config, "RGSA_DENSE_MODE", False)
                 dense_mode = dense_mode in ("y", True)
@@ -222,6 +230,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     local_window=local_window,
                     route_stride=route_stride,
                     cache_routing_layers=cache_routing_layers,
+                    router_update_stride=router_update_stride,
+                    router_freeze_steps=router_freeze_steps,
                     dense_mode=dense_mode,
                     random_routing=random_routing,
                     dynamic_chunking=dynamic_chunking,
@@ -252,6 +262,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             f"alpha={chunk_size_alpha}, "
                             f"range=[{chunk_size_min},{chunk_size_max}]"
                         )
+                    if router_update_stride > 0:
+                        print(f"  RGSA: router_update_stride={router_update_stride}")
+                    if router_freeze_steps > 0:
+                        print(f"  RGSA: router_freeze_steps={router_freeze_steps}")
                 model.to(self.device)
 
             else:
@@ -488,19 +502,44 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             else:
                 lr = self.args.learning_rate
 
+            # Update RGSA router gradient gating step counter
+            if hasattr(self.raw_model, "set_training_step"):
+                self.raw_model.set_training_step(self.iter_num)
+
+            # Per-phase timing accumulators (reset each iter)
+            _fwd_ms = 0.0
+            _bwd_ms = 0.0
+
             # Gradient accumulation
             for micro_step in range(self.args.gradient_accumulation):
                 X, Y = self.get_batch("train")
+
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
+                _t_fwd = time.perf_counter()
 
                 with self.ctx:
                     logits, loss = self.model(X, Y)
                     loss = loss / self.args.gradient_accumulation
 
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
+                _t_bwd = time.perf_counter()
+                _fwd_ms += (_t_bwd - _t_fwd) * 1000.0
+
                 # Backward
                 self.scaler.scale(loss).backward()
                 running_loss += loss.item()
 
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
+                _bwd_ms += (time.perf_counter() - _t_bwd) * 1000.0
+
             # Gradient processing
+            if self.device == "cuda":
+                torch.cuda.synchronize()
+            _t_opt = time.perf_counter()
+
             if self.args.optimizer != "sgd":
                 if self.device == "cuda":
                     self.scaler.unscale_(self.optimizer)
@@ -521,6 +560,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad(set_to_none=True)
+
+            if self.device == "cuda":
+                torch.cuda.synchronize()
+            _opt_ms = (time.perf_counter() - _t_opt) * 1000.0
 
             # Apply pruning masks
             if self.pruner is not None:
@@ -560,7 +603,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
                 print(
                     f"Iter {self.iter_num:5d} | loss {avg_loss:.4f} | ppl {avg_ppl:7.2f} | "
-                    f"lr {lr:.2e} | sparsity {sparsity:.1%} | {iter_time_sec*1000:.1f}ms/iter"
+                    f"lr {lr:.2e} | sparsity {sparsity:.1%} | {iter_time_sec*1000:.1f}ms/iter | "
+                    f"fwd {_fwd_ms:.0f} bwd {_bwd_ms:.0f} opt {_opt_ms:.0f}ms"
                 )
 
                 # Update metrics
@@ -579,6 +623,10 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         "sparsity": sparsity,
                         "perf/iter_time_sec": iter_time_sec,
                         "perf/tokens_per_sec": tokens_per_sec,
+                        "perf/forward_ms": _fwd_ms,
+                        "perf/backward_ms": _bwd_ms,
+                        "perf/opt_ms": _opt_ms,
+                        "perf/iter_ms": _fwd_ms + _bwd_ms + _opt_ms,
                     }
                 )
 
