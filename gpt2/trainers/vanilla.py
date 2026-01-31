@@ -2412,6 +2412,11 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         block.attn.reset_debug_stats()
                         break  # Only log first layer for brevity
 
+            # Collect per-phase profiling data (lightweight)
+            profile_metrics = self._collect_rgsa_profile(raw_model, x)
+            if profile_metrics:
+                metrics.update(profile_metrics)
+
             # Print summary at each eval
             if self.master_process:
                 print("\n--- RGSA Routing Diagnostics ---")
@@ -2436,3 +2441,45 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             metrics = baseline_metrics.copy()
             metrics["rgsa/is_rgsa_model"] = 1.0
             return metrics
+
+    @torch.no_grad()
+    def _collect_rgsa_profile(self, raw_model, sample_input):
+        """
+        Run a few forward passes with profiling enabled to measure
+        per-phase timing breakdown in RGSA attention layers.
+
+        Returns dict of perf/* metrics averaged across profiling passes.
+        """
+        if not isinstance(raw_model, GPT2_RGSA):
+            return {}
+
+        if not hasattr(raw_model, "transformer") or not hasattr(
+            raw_model.transformer, "h"
+        ):
+            return {}
+
+        # Enable profiling on layer 0 attention
+        attn = raw_model.transformer.h[0].attn
+        if not hasattr(attn, "enable_profiling"):
+            return {}
+
+        n_profile_passes = 5
+        attn.enable_profiling(True)
+
+        try:
+            for _ in range(n_profile_passes):
+                raw_model(sample_input)
+        except Exception:
+            attn.enable_profiling(False)
+            return {}
+
+        profile_stats = attn.get_profile_stats()
+        attn.enable_profiling(False)
+
+        if profile_stats and self.master_process:
+            print("\n--- RGSA Per-Phase Timing (layer 0 avg) ---")
+            for k, v in sorted(profile_stats.items()):
+                if k.endswith("_ms"):
+                    print(f"  {k}: {v:.3f} ms")
+
+        return profile_stats
