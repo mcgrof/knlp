@@ -24,6 +24,7 @@ Architecture:
 """
 
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Dict, List
 
@@ -393,6 +394,37 @@ class RGSACausalSelfAttention(nn.Module):
         self.chunk_router = chunk_router
         self.retrieval_gate = RetrievalGate(config)
 
+        # Lightweight profiling accumulators (CPU wall-clock, no sync overhead)
+        self._profile_enabled = False
+        self._profile_counts = 0
+        self._profile_accum = {
+            "qkv_proj": 0.0,
+            "router_embed": 0.0,
+            "similarity_topk": 0.0,
+            "attention": 0.0,
+            "output_proj": 0.0,
+        }
+
+    def enable_profiling(self, enabled: bool = True):
+        """Enable/disable lightweight per-phase timing."""
+        self._profile_enabled = enabled
+        if enabled:
+            self._profile_counts = 0
+            for k in self._profile_accum:
+                self._profile_accum[k] = 0.0
+
+    def get_profile_stats(self) -> Dict[str, float]:
+        """Return average timing per phase in milliseconds."""
+        if self._profile_counts == 0:
+            return {}
+        stats = {}
+        for k, v in self._profile_accum.items():
+            stats[f"perf/rgsa_{k}_ms"] = (v / self._profile_counts) * 1000.0
+        total = sum(self._profile_accum.values())
+        stats["perf/rgsa_total_ms"] = (total / self._profile_counts) * 1000.0
+        stats["perf/rgsa_profile_count"] = self._profile_counts
+        return stats
+
     def forward(
         self,
         x: torch.Tensor,
@@ -408,11 +440,16 @@ class RGSACausalSelfAttention(nn.Module):
         and prevent silent failures that could lead to GPU hangs.
         """
         B, T, C = x.shape
+        profiling = self._profile_enabled
 
         # Shape assertions for stability
         assert C == self.n_embd, f"Input dim {C} != n_embd {self.n_embd}"
         assert T > 0, "Sequence length must be positive"
         assert B > 0, "Batch size must be positive"
+
+        if profiling:
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
 
         # Compute Q, K, V
         qkv = self.c_attn(x)
@@ -423,6 +460,11 @@ class RGSACausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        if profiling:
+            torch.cuda.synchronize()
+            t1 = time.perf_counter()
+            self._profile_accum["qkv_proj"] += t1 - t0
 
         routing_info = None
 
@@ -439,10 +481,19 @@ class RGSACausalSelfAttention(nn.Module):
         self._n_chunks_eff = (T + chunk_size_eff - 1) // chunk_size_eff
 
         if not self.dense_mode and T > self.local_window + chunk_size_eff:
+            if profiling:
+                torch.cuda.synchronize()
+                tr0 = time.perf_counter()
+
             # Compute routing embeddings (training the router)
             routing_embeds, chunk_mask = self.chunk_router(
                 x, chunk_size_override=chunk_size_eff
             )
+
+            if profiling:
+                torch.cuda.synchronize()
+                tr1 = time.perf_counter()
+                self._profile_accum["router_embed"] += tr1 - tr0
 
             # Shape assertions for routing
             num_chunks = routing_embeds.size(1)
@@ -452,9 +503,18 @@ class RGSACausalSelfAttention(nn.Module):
             # Clamp top_b if fewer chunks than requested
             effective_top_b = min(self.top_b, num_chunks)
 
+            if profiling:
+                torch.cuda.synchronize()
+                ts0 = time.perf_counter()
+
             chunk_indices, routing_scores = self.retrieval_gate(
                 x, routing_embeds, chunk_mask, random_routing=self.random_routing
             )
+
+            if profiling:
+                torch.cuda.synchronize()
+                ts1 = time.perf_counter()
+                self._profile_accum["similarity_topk"] += ts1 - ts0
 
             # Defensive cap: ensure chunk_indices are valid (non-negative, in range)
             assert chunk_indices.min() >= 0, "Negative chunk index detected"
@@ -474,6 +534,10 @@ class RGSACausalSelfAttention(nn.Module):
                     "n_chunks_eff": self._n_chunks_eff,
                 }
 
+        if profiling:
+            torch.cuda.synchronize()
+            ta0 = time.perf_counter()
+
         # Use dense causal attention for all sequences
         # This is Phase 1 - router learns while attention stays dense
         y = F.scaled_dot_product_attention(
@@ -484,6 +548,11 @@ class RGSACausalSelfAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
             is_causal=True,
         )
+
+        if profiling:
+            torch.cuda.synchronize()
+            ta1 = time.perf_counter()
+            self._profile_accum["attention"] += ta1 - ta0
 
         # Shape assertion on output
         assert y.shape == (
@@ -496,8 +565,18 @@ class RGSACausalSelfAttention(nn.Module):
         # Reshape output
         y = y.transpose(1, 2).contiguous().view(B, T, C)
 
+        if profiling:
+            torch.cuda.synchronize()
+            tp0 = time.perf_counter()
+
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
+
+        if profiling:
+            torch.cuda.synchronize()
+            tp1 = time.perf_counter()
+            self._profile_accum["output_proj"] += tp1 - tp0
+            self._profile_counts += 1
 
         return y, routing_info
 
