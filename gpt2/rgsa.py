@@ -123,6 +123,13 @@ class RGSAConfig:
     chunk_size_rounding: str = "pow2"  # "pow2", "multiple_of_8", "nearest"
     chunk_size_debug_log: bool = True  # log effective chunk size
 
+    # Router gradient gating: reduce training overhead by updating
+    # router params less frequently than model params.
+    # router_update_stride=N: only backprop through router every N steps
+    # router_freeze_steps=K: freeze router params after K optimizer steps
+    router_update_stride: int = 0  # 0 = update every step (default)
+    router_freeze_steps: int = 0  # 0 = never freeze (default)
+
     # Defensive caps for stability (prevent GPU hangs)
     # max_candidates = local_window + top_b * chunk_size by default
     # Setting this enforces a hard cap on attention span per query
@@ -224,6 +231,9 @@ class ChunkRouter(nn.Module):
         self.chunk_size = config.chunk_size
         self.routing_dim = config.routing_dim
 
+        # Router gradient gating: when True, detach output embeddings
+        self._detach_output = False
+
         # Project from hidden dim to routing dim
         self.proj = nn.Linear(config.n_embd, config.routing_dim, bias=config.bias)
 
@@ -267,6 +277,10 @@ class ChunkRouter(nn.Module):
         chunk_mask = torch.zeros(B, num_chunks, dtype=torch.bool, device=x.device)
         chunk_mask[:, :num_valid_chunks] = True
 
+        # Detach routing embeddings when gradient gating is active
+        if self._detach_output:
+            routing_embeds = routing_embeds.detach()
+
         return routing_embeds, chunk_mask
 
 
@@ -282,6 +296,9 @@ class RetrievalGate(nn.Module):
         super().__init__()
         self.top_b = config.top_b
         self.routing_dim = config.routing_dim
+
+        # Router gradient gating: when True, detach query projection output
+        self._detach_output = False
 
         # Query projection (from hidden dim to routing dim)
         self.query_proj = nn.Linear(config.n_embd, config.routing_dim, bias=config.bias)
@@ -313,6 +330,8 @@ class RetrievalGate(nn.Module):
 
         # Project queries: [B, T, routing_dim]
         query_routing = self.query_proj(query_hidden)
+        if self._detach_output:
+            query_routing = query_routing.detach()
 
         # Strided routing: mean-pool queries into blocks, route once per block
         if route_stride > 0 and T > route_stride:
@@ -923,12 +942,21 @@ class GPT2_RGSA(nn.Module):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer)
                 )
 
+        # Router gradient gating state
+        self._training_step = 0
+        self._router_frozen = False
+
         print(f"RGSA model parameters: {self.get_num_params()/1e6:.2f}M")
         print(
             f"RGSA config: chunk_size={config.chunk_size}, "
             f"routing_dim={config.routing_dim}, top_b={config.top_b}, "
             f"local_window={config.local_window}"
         )
+        if config.router_update_stride > 0 or config.router_freeze_steps > 0:
+            print(
+                f"RGSA router gating: update_stride={config.router_update_stride}, "
+                f"freeze_steps={config.router_freeze_steps}"
+            )
         if config.dynamic_chunking:
             print(
                 f"RGSA dynamic chunking: schedule={config.chunk_size_schedule}, "
@@ -942,6 +970,47 @@ class GPT2_RGSA(nn.Module):
         if non_embedding:
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
+
+    def router_params(self):
+        """Yield all router parameters (ChunkRouter + RetrievalGates)."""
+        yield from self.chunk_router.parameters()
+        for block in self.transformer.h:
+            yield from block.attn.retrieval_gate.parameters()
+
+    def router_param_names(self):
+        """Return set of parameter names belonging to the router."""
+        names = set()
+        for n, _ in self.chunk_router.named_parameters():
+            names.add(f"chunk_router.{n}")
+        for i, block in enumerate(self.transformer.h):
+            for n, _ in block.attn.retrieval_gate.named_parameters():
+                names.add(f"transformer.h.{i}.attn.retrieval_gate.{n}")
+        return names
+
+    def set_training_step(self, step: int):
+        """Update the training step counter for router gradient gating."""
+        self._training_step = step
+        cfg = self.config
+
+        # Freeze router permanently after freeze_steps
+        if cfg.router_freeze_steps > 0 and step >= cfg.router_freeze_steps:
+            if not self._router_frozen:
+                self._router_frozen = True
+                for p in self.router_params():
+                    p.requires_grad_(False)
+                print(
+                    f"[RGSA] Router frozen at step {step} "
+                    f"(freeze_steps={cfg.router_freeze_steps})"
+                )
+
+    def _should_detach_routing(self) -> bool:
+        """Whether to detach routing embeddings this step."""
+        if self._router_frozen:
+            return True
+        stride = self.config.router_update_stride
+        if stride > 0 and self._training_step % stride != 0:
+            return True
+        return False
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -1017,6 +1086,12 @@ class GPT2_RGSA(nn.Module):
         all_routing_info = []
         cached_routing = None
         cache_every = self.config.cache_routing_layers
+        detach_routing = self._should_detach_routing()
+
+        # Propagate detach flag to router modules
+        self.chunk_router._detach_output = detach_routing
+        for block in self.transformer.h:
+            block.attn.retrieval_gate._detach_output = detach_routing
 
         for layer_idx, block in enumerate(self.transformer.h):
             # Compute or reuse cached routing embeddings
@@ -1030,6 +1105,10 @@ class GPT2_RGSA(nn.Module):
                         cached_routing = self.chunk_router(
                             x, chunk_size_override=chunk_size_eff
                         )
+                        # Detach routing to skip router gradients on non-update steps
+                        if detach_routing and cached_routing is not None:
+                            embeds, mask = cached_routing
+                            cached_routing = (embeds.detach(), mask)
                     else:
                         cached_routing = None
 
