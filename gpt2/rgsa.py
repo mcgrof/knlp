@@ -105,6 +105,10 @@ class RGSAConfig:
     # Performance: query routing stride (0 = per-token, >0 = per-block)
     route_stride: int = 0  # tokens per routing block (0 = route every token)
 
+    # Performance: cache chunk routing embeddings across layers
+    # 0 = recompute every layer (default), N = recompute every N layers
+    cache_routing_layers: int = 0
+
     # Ablation modes for scientific validation
     dense_mode: bool = False  # Skip routing, keep router params (param count control)
     random_routing: bool = False  # Random chunk selection instead of learned
@@ -476,12 +480,19 @@ class RGSACausalSelfAttention(nn.Module):
         self,
         x: torch.Tensor,
         return_routing_info: bool = False,
+        cached_routing: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, Optional[dict]]:
         """
         Forward pass with sparse attention.
 
         For short sequences (< local_window), uses dense attention.
         For longer sequences, uses retrieval-gated sparse attention.
+
+        Args:
+            x: [B, T, C] input hidden states
+            return_routing_info: whether to return routing info dict
+            cached_routing: optional (routing_embeds, chunk_mask) tuple
+                from a previous layer to avoid recomputing chunk embeddings
 
         Shape assertions are included to catch dimension mismatches early
         and prevent silent failures that could lead to GPU hangs.
@@ -532,10 +543,13 @@ class RGSACausalSelfAttention(nn.Module):
                 torch.cuda.synchronize()
                 tr0 = time.perf_counter()
 
-            # Compute routing embeddings (training the router)
-            routing_embeds, chunk_mask = self.chunk_router(
-                x, chunk_size_override=chunk_size_eff
-            )
+            # Use cached routing embeddings if available, else compute
+            if cached_routing is not None:
+                routing_embeds, chunk_mask = cached_routing
+            else:
+                routing_embeds, chunk_mask = self.chunk_router(
+                    x, chunk_size_override=chunk_size_eff
+                )
 
             if profiling:
                 torch.cuda.synchronize()
@@ -820,8 +834,11 @@ class RGSABlock(nn.Module):
         self,
         x: torch.Tensor,
         return_routing_info: bool = False,
+        cached_routing: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, Optional[dict]]:
-        attn_out, routing_info = self.attn(self.ln_1(x), return_routing_info)
+        attn_out, routing_info = self.attn(
+            self.ln_1(x), return_routing_info, cached_routing=cached_routing
+        )
         x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
         return x, routing_info
@@ -930,10 +947,29 @@ class GPT2_RGSA(nn.Module):
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
 
-        # Transformer blocks
+        # Transformer blocks with optional routing cache
         all_routing_info = []
-        for block in self.transformer.h:
-            x, routing_info = block(x, return_routing_info)
+        cached_routing = None
+        cache_every = self.config.cache_routing_layers
+
+        for layer_idx, block in enumerate(self.transformer.h):
+            # Compute or reuse cached routing embeddings
+            if cache_every > 0:
+                if layer_idx % cache_every == 0 or cached_routing is None:
+                    # Recompute routing embeddings from current hidden state
+                    chunk_size_eff = compute_chunk_size(T, self.config)
+                    if not self.config.dense_mode and T > (
+                        self.config.local_window + chunk_size_eff
+                    ):
+                        cached_routing = self.chunk_router(
+                            x, chunk_size_override=chunk_size_eff
+                        )
+                    else:
+                        cached_routing = None
+
+            x, routing_info = block(
+                x, return_routing_info, cached_routing=cached_routing
+            )
             if routing_info is not None:
                 all_routing_info.append(routing_info)
 
