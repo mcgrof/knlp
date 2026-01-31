@@ -440,6 +440,9 @@ class RGSACausalSelfAttention(nn.Module):
         self.chunk_router = chunk_router
         self.retrieval_gate = RetrievalGate(config)
 
+        # One-time SDPA backend diagnostic (logs on first forward)
+        self._sdpa_backend_logged = False
+
         # Lightweight profiling accumulators (CPU wall-clock, no sync overhead)
         self._profile_enabled = False
         self._profile_counts = 0
@@ -470,6 +473,46 @@ class RGSACausalSelfAttention(nn.Module):
         stats["perf/rgsa_total_ms"] = (total / self._profile_counts) * 1000.0
         stats["perf/rgsa_profile_count"] = self._profile_counts
         return stats
+
+    @torch.no_grad()
+    def _log_sdpa_backend(self, q, k, v):
+        """Log which SDPA backend is available for our tensor shapes."""
+        backends = {
+            "flash_sdp": {
+                "enable_flash": True,
+                "enable_mem_efficient": False,
+                "enable_math": False,
+            },
+            "mem_efficient_sdp": {
+                "enable_flash": False,
+                "enable_mem_efficient": True,
+                "enable_math": False,
+            },
+            "math_sdp": {
+                "enable_flash": False,
+                "enable_mem_efficient": False,
+                "enable_math": True,
+            },
+        }
+        available = []
+        for name, kwargs in backends.items():
+            try:
+                with torch.backends.cuda.sdp_kernel(**kwargs):
+                    F.scaled_dot_product_attention(
+                        q[:1, :, :8, :],
+                        k[:1, :, :8, :],
+                        v[:1, :, :8, :],
+                        attn_mask=None,
+                        dropout_p=0.0,
+                        is_causal=True,
+                    )
+                available.append(name)
+            except RuntimeError:
+                pass
+        print(
+            f"  RGSA SDPA backends available: {', '.join(available)} "
+            f"(Q={list(q.shape)}, dtype={q.dtype})"
+        )
 
     def forward(
         self,
@@ -608,6 +651,11 @@ class RGSACausalSelfAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
             is_causal=True,
         )
+
+        # One-time SDPA backend diagnostic
+        if not self._sdpa_backend_logged:
+            self._sdpa_backend_logged = True
+            self._log_sdpa_backend(q, k, v)
 
         if profiling:
             torch.cuda.synchronize()
