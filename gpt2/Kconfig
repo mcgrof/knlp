@@ -574,6 +574,17 @@ config RGSA_ROUTING_LOSS_WEIGHT
 	  Trains routing embeddings to predict actual attention mass.
 	  Set to 0.0 to disable auxiliary loss.
 
+config RGSA_CACHE_ROUTING_LAYERS
+	int "Cache routing embeddings across N layers"
+	default 0
+	depends on ENABLE_RGSA
+	help
+	  When > 0, routing embeddings are computed once and reused
+	  for N consecutive layers before recomputing. Reduces
+	  chunk router overhead by N-fold. Set to 0 to recompute
+	  per layer (original behavior). A value of 4 means compute
+	  at layers 0, 4, 8 and reuse for intermediate layers.
+
 config RGSA_ROUTE_STRIDE
 	int "Query routing stride (tokens per routing block)"
 	default 0
