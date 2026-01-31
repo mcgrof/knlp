@@ -187,7 +187,6 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
-        self._sdpa_backend_logged = False
 
     @torch.no_grad()
     def _log_sdpa_backend(self, q, k, v):
@@ -259,11 +258,6 @@ class CausalSelfAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0,
             is_causal=True,
         )
-
-        # One-time SDPA backend diagnostic
-        if not self._sdpa_backend_logged:
-            self._sdpa_backend_logged = True
-            self._log_sdpa_backend(q, k, v)
 
         y = (
             y.transpose(1, 2).contiguous().view(B, T, C)
@@ -398,6 +392,17 @@ class GPT2(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    @torch.no_grad()
+    def log_sdpa_backends(self, device="cuda", dtype=torch.bfloat16):
+        """Log SDPA backend availability. Call before torch.compile."""
+        attn = self.transformer.h[0].attn
+        head_dim = self.config.n_embd // self.config.n_head
+        attn._log_sdpa_backend(
+            torch.randn(1, self.config.n_head, 8, head_dim, device=device, dtype=dtype),
+            torch.randn(1, self.config.n_head, 8, head_dim, device=device, dtype=dtype),
+            torch.randn(1, self.config.n_head, 8, head_dim, device=device, dtype=dtype),
+        )
 
     def forward(self, idx, targets=None):
         device = idx.device
