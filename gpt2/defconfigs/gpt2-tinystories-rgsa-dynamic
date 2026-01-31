@@ -82,6 +82,13 @@ CONFIG_RGSA_CHUNK_SIZE_MAX=256
 CONFIG_RGSA_CHUNK_SIZE_ALPHA="0.5"
 CONFIG_RGSA_CHUNK_SIZE_SCHEDULE="power"
 CONFIG_RGSA_CHUNK_SIZE_ROUNDING="pow2"
+# Performance optimizations
+CONFIG_RGSA_ROUTE_STRIDE=32
+CONFIG_RGSA_CACHE_ROUTING_LAYERS=4
+# Router gradient gating: update router every N steps, freeze after K steps
+# 0 = disabled (default). Recommended: stride=4, freeze=1000
+CONFIG_RGSA_ROUTER_UPDATE_STRIDE=0
+CONFIG_RGSA_ROUTER_FREEZE_STEPS=0
 
 # Experiment Tracking - W&B enabled
 CONFIG_ENABLE_TRACKIO=n
