@@ -351,11 +351,11 @@ class RetrievalGate(nn.Module):
             # [B, n_blocks, top_b] -> [B, T, top_b]
             chunk_indices = block_indices.repeat_interleave(route_stride, dim=1)[
                 :, :T, :
-            ]
+            ].contiguous()
             # [B, n_blocks, num_chunks] -> [B, T, num_chunks]
             routing_scores = block_scores.repeat_interleave(route_stride, dim=1)[
                 :, :T, :
-            ]
+            ].contiguous()
         else:
             # Original per-token routing
             query_routing = F.normalize(query_routing, dim=-1)
@@ -371,13 +371,8 @@ class RetrievalGate(nn.Module):
             top_b = min(self.top_b, num_chunks)
 
             if random_routing:
-                chunk_indices = torch.stack(
-                    [
-                        torch.randint(
-                            0, num_chunks, (T, top_b), device=query_hidden.device
-                        )
-                        for _ in range(B)
-                    ]
+                chunk_indices = torch.randint(
+                    0, num_chunks, (B, T, top_b), device=query_hidden.device
                 )
             else:
                 _, chunk_indices = torch.topk(routing_scores, k=top_b, dim=-1)
