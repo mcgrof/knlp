@@ -440,9 +440,6 @@ class RGSACausalSelfAttention(nn.Module):
         self.chunk_router = chunk_router
         self.retrieval_gate = RetrievalGate(config)
 
-        # One-time SDPA backend diagnostic (logs on first forward)
-        self._sdpa_backend_logged = False
-
         # Lightweight profiling accumulators (CPU wall-clock, no sync overhead)
         self._profile_enabled = False
         self._profile_counts = 0
@@ -651,11 +648,6 @@ class RGSACausalSelfAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
             is_causal=True,
         )
-
-        # One-time SDPA backend diagnostic
-        if not self._sdpa_backend_logged:
-            self._sdpa_backend_logged = True
-            self._log_sdpa_backend(q, k, v)
 
         if profiling:
             torch.cuda.synchronize()
@@ -958,6 +950,37 @@ class GPT2_RGSA(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    @torch.no_grad()
+    def log_sdpa_backends(self, device="cuda", dtype=torch.bfloat16):
+        """Log SDPA backend availability. Call before torch.compile."""
+        attn = self.transformer.h[0].attn
+        attn._log_sdpa_backend(
+            torch.randn(
+                1,
+                self.config.n_head,
+                8,
+                self.config.n_embd // self.config.n_head,
+                device=device,
+                dtype=dtype,
+            ),
+            torch.randn(
+                1,
+                self.config.n_head,
+                8,
+                self.config.n_embd // self.config.n_head,
+                device=device,
+                dtype=dtype,
+            ),
+            torch.randn(
+                1,
+                self.config.n_head,
+                8,
+                self.config.n_embd // self.config.n_head,
+                device=device,
+                dtype=dtype,
+            ),
+        )
 
     def forward(
         self,
