@@ -574,6 +574,17 @@ config RGSA_ROUTING_LOSS_WEIGHT
 	  Trains routing embeddings to predict actual attention mass.
 	  Set to 0.0 to disable auxiliary loss.
 
+config RGSA_ROUTE_STRIDE
+	int "Query routing stride (tokens per routing block)"
+	default 0
+	depends on ENABLE_RGSA
+	help
+	  When > 0, routing is computed once per block of this many
+	  tokens instead of per token. Mean-pools queries in each
+	  block, runs topk once, and reuses selected chunks for all
+	  tokens in the block. Reduces routing cost by this factor.
+	  Set to 0 to route per token (original behavior).
+
 config RGSA_DENSE_MODE
 	bool "Ablation: disable retrieval gating (dense attention)"
 	default n

@@ -102,6 +102,9 @@ class RGSAConfig:
     # Auxiliary loss weight for routing supervision
     routing_loss_weight: float = 0.1
 
+    # Performance: query routing stride (0 = per-token, >0 = per-block)
+    route_stride: int = 0  # tokens per routing block (0 = route every token)
+
     # Ablation modes for scientific validation
     dense_mode: bool = False  # Skip routing, keep router params (param count control)
     random_routing: bool = False  # Random chunk selection instead of learned
@@ -285,6 +288,7 @@ class RetrievalGate(nn.Module):
         routing_embeds: torch.Tensor,
         chunk_mask: Optional[torch.Tensor] = None,
         random_routing: bool = False,
+        route_stride: int = 0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Retrieve top-B chunks for each query position.
@@ -294,6 +298,7 @@ class RetrievalGate(nn.Module):
             routing_embeds: [B, num_chunks, routing_dim] chunk routing embeddings
             chunk_mask: [B, num_chunks] mask for valid chunks
             random_routing: if True, select random chunks instead of learned
+            route_stride: if > 0, route per block of this many tokens
 
         Returns:
             chunk_indices: [B, T, top_b] indices of selected chunks
@@ -305,32 +310,73 @@ class RetrievalGate(nn.Module):
         # Project queries: [B, T, routing_dim]
         query_routing = self.query_proj(query_hidden)
 
-        # Compute similarity: [B, T, num_chunks]
-        # Normalize for stable dot product
-        query_routing = F.normalize(query_routing, dim=-1)
-        routing_embeds = F.normalize(routing_embeds, dim=-1)
-        routing_scores = torch.bmm(query_routing, routing_embeds.transpose(1, 2))
+        # Strided routing: mean-pool queries into blocks, route once per block
+        if route_stride > 0 and T > route_stride:
+            n_blocks = (T + route_stride - 1) // route_stride
+            # Pad to multiple of route_stride
+            pad_len = (route_stride - T % route_stride) % route_stride
+            if pad_len > 0:
+                qr_padded = F.pad(query_routing, (0, 0, 0, pad_len))
+            else:
+                qr_padded = query_routing
+            # [B, n_blocks, route_stride, routing_dim] -> mean -> [B, n_blocks, routing_dim]
+            block_queries = qr_padded.view(B, n_blocks, route_stride, -1).mean(dim=2)
 
-        # Mask invalid chunks
-        if chunk_mask is not None:
-            routing_scores = routing_scores.masked_fill(
-                ~chunk_mask.unsqueeze(1), float("-inf")
-            )
+            # Normalize and compute similarity at block level
+            block_queries = F.normalize(block_queries, dim=-1)
+            routing_embeds_norm = F.normalize(routing_embeds, dim=-1)
+            # [B, n_blocks, num_chunks]
+            block_scores = torch.bmm(block_queries, routing_embeds_norm.transpose(1, 2))
 
-        # Select top-B chunks: [B, T, top_b]
-        top_b = min(self.top_b, num_chunks)
+            # Mask invalid chunks
+            if chunk_mask is not None:
+                block_scores = block_scores.masked_fill(
+                    ~chunk_mask.unsqueeze(1), float("-inf")
+                )
 
-        if random_routing:
-            # Random chunk selection: uniform random instead of learned
-            # Still uses same top_b count for fair comparison
-            chunk_indices = torch.stack(
-                [
-                    torch.randint(0, num_chunks, (T, top_b), device=query_hidden.device)
-                    for _ in range(B)
-                ]
-            )
+            top_b = min(self.top_b, num_chunks)
+
+            if random_routing:
+                block_indices = torch.randint(
+                    0, num_chunks, (B, n_blocks, top_b), device=query_hidden.device
+                )
+            else:
+                _, block_indices = torch.topk(block_scores, k=top_b, dim=-1)
+
+            # Expand block-level results back to per-token
+            # [B, n_blocks, top_b] -> [B, T, top_b]
+            chunk_indices = block_indices.repeat_interleave(route_stride, dim=1)[
+                :, :T, :
+            ]
+            # [B, n_blocks, num_chunks] -> [B, T, num_chunks]
+            routing_scores = block_scores.repeat_interleave(route_stride, dim=1)[
+                :, :T, :
+            ]
         else:
-            _, chunk_indices = torch.topk(routing_scores, k=top_b, dim=-1)
+            # Original per-token routing
+            query_routing = F.normalize(query_routing, dim=-1)
+            routing_embeds = F.normalize(routing_embeds, dim=-1)
+            routing_scores = torch.bmm(query_routing, routing_embeds.transpose(1, 2))
+
+            # Mask invalid chunks
+            if chunk_mask is not None:
+                routing_scores = routing_scores.masked_fill(
+                    ~chunk_mask.unsqueeze(1), float("-inf")
+                )
+
+            top_b = min(self.top_b, num_chunks)
+
+            if random_routing:
+                chunk_indices = torch.stack(
+                    [
+                        torch.randint(
+                            0, num_chunks, (T, top_b), device=query_hidden.device
+                        )
+                        for _ in range(B)
+                    ]
+                )
+            else:
+                _, chunk_indices = torch.topk(routing_scores, k=top_b, dim=-1)
 
         return chunk_indices, routing_scores
 
@@ -380,6 +426,7 @@ class RGSACausalSelfAttention(nn.Module):
         # Ablation modes
         self.dense_mode = config.dense_mode
         self.random_routing = config.random_routing
+        self.route_stride = config.route_stride
 
         # QKV projection
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
@@ -508,7 +555,11 @@ class RGSACausalSelfAttention(nn.Module):
                 ts0 = time.perf_counter()
 
             chunk_indices, routing_scores = self.retrieval_gate(
-                x, routing_embeds, chunk_mask, random_routing=self.random_routing
+                x,
+                routing_embeds,
+                chunk_mask,
+                random_routing=self.random_routing,
+                route_stride=self.route_stride,
             )
 
             if profiling:
