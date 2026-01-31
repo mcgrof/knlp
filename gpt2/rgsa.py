@@ -652,29 +652,29 @@ class RGSACausalSelfAttention(nn.Module):
         v: torch.Tensor,
         chunk_indices: torch.Tensor,
         seq_len: int,
+        chunk_size_eff: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Compute sparse attention using local window + retrieved chunks.
 
-        Memory-efficient implementation that processes positions in groups
-        rather than building a full B x T x T mask.
+        Fully vectorized: builds a gather index tensor for each query
+        position, gathers K/V, computes attention with a validity mask.
+        No Python loops over tokens or batch elements.
 
-        IMPORTANT: This method is not currently used (Phase 1 uses dense attention).
-        It includes defensive caps to prevent GPU hangs if enabled in the future.
+        IMPORTANT: This method is not currently used (Phase 1 uses dense
+        attention). Prepared for Phase 2 activation.
         """
         B, H, T, D = q.shape
         device = q.device
+        cs = chunk_size_eff if chunk_size_eff else self.chunk_size
 
         # Shape assertions
         assert chunk_indices.shape[0] == B, "chunk_indices batch mismatch"
         assert chunk_indices.shape[1] == T, "chunk_indices seq_len mismatch"
-        assert chunk_indices.min() >= 0, "Negative chunk index"
 
-        # For memory efficiency, use SDPA for local window positions
-        # and only do custom sparse attention for positions beyond local_window
-        local_end = min(self.local_window + self.chunk_size, T)
+        # For early positions (< local_window + cs), use dense SDPA
+        local_end = min(self.local_window + cs, T)
 
-        # Process local window portion with standard causal SDPA
         if local_end > 0:
             y_local = F.scaled_dot_product_attention(
                 q[:, :, :local_end, :],
@@ -687,88 +687,93 @@ class RGSACausalSelfAttention(nn.Module):
         else:
             y_local = q.new_zeros(B, H, 0, D)
 
-        # For positions beyond local window, we need sparse attention
-        if local_end < T:
-            n_sparse = T - local_end
-            scale = 1.0 / math.sqrt(D)
+        if local_end >= T:
+            return y_local
 
-            # Pre-allocate output tensor instead of dynamic list growth
-            y_sparse = q.new_zeros(B, H, n_sparse, D)
+        n_sparse = T - local_end
+        top_b = chunk_indices.size(2)
 
-            # Process in mini-batches to reduce memory
-            chunk_batch_size = min(32, n_sparse)
+        # Max positions any query can attend to
+        n_local = self.local_window
+        n_retrieved = top_b * cs
+        max_attend = min(n_local + n_retrieved, self.max_candidates)
 
-            for start_idx in range(0, n_sparse, chunk_batch_size):
-                end_idx = min(start_idx + chunk_batch_size, n_sparse)
+        # Build gather indices: [B, n_sparse, max_attend]
+        # For each sparse query t (offset from local_end):
+        #   - local window: [t + local_end - n_local, ..., t + local_end]
+        #   - retrieved chunks: chunk_indices[b, t+local_end] * cs + offsets
 
-                for i, t in enumerate(
-                    range(local_end + start_idx, local_end + end_idx)
-                ):
-                    # Get queries for this position: [B, H, 1, D]
-                    q_t = q[:, :, t : t + 1, :]
+        # Local window indices (same for all batch elements)
+        # query positions: local_end, local_end+1, ..., T-1
+        query_pos = torch.arange(local_end, T, device=device)  # [n_sparse]
+        # local range: [t - n_local + 1, ..., t] for each t
+        local_offsets = torch.arange(n_local, device=device)  # [n_local]
+        # [n_sparse, n_local]: each row is the local window for that query
+        local_indices = (
+            query_pos.unsqueeze(1) - n_local + 1 + local_offsets.unsqueeze(0)
+        )
+        local_indices = local_indices.clamp(min=0)
+        # Expand to [B, n_sparse, n_local]
+        local_indices = local_indices.unsqueeze(0).expand(B, -1, -1)
 
-                    # Build list of positions to attend to
-                    # Local window: [max(0, t-local_window), t]
-                    local_start = max(0, t - self.local_window)
-                    local_positions = list(range(local_start, t + 1))
+        # Retrieved chunk indices -> token positions
+        # chunk_indices for sparse positions: [B, n_sparse, top_b]
+        sparse_chunk_indices = chunk_indices[:, local_end:, :]
+        # Expand each chunk to cs token positions
+        chunk_offsets = torch.arange(cs, device=device)  # [cs]
+        # [B, n_sparse, top_b, cs]
+        retrieved_positions = sparse_chunk_indices.unsqueeze(-1) * cs + chunk_offsets
+        # Reshape to [B, n_sparse, top_b * cs]
+        retrieved_positions = retrieved_positions.view(B, n_sparse, -1)
+        # Clamp to valid range and apply causality (can't attend to future)
+        retrieved_positions = retrieved_positions.clamp(min=0, max=T - 1)
 
-                    # Retrieved chunks for this position - use set for dedup
-                    all_chunk_pos = set()
-                    for b in range(B):
-                        chunks = chunk_indices[b, t]  # [top_b]
-                        for chunk_idx in chunks:
-                            idx = chunk_idx.item()
-                            # Defensive: skip invalid indices
-                            if idx < 0:
-                                continue
-                            c_start = idx * self.chunk_size
-                            c_end = min(c_start + self.chunk_size, t)
-                            if c_start < t:
-                                for p in range(c_start, c_end):
-                                    if p not in local_positions:
-                                        all_chunk_pos.add(p)
+        # Combine local + retrieved: [B, n_sparse, max_attend]
+        all_indices = torch.cat([local_indices, retrieved_positions], dim=2)[
+            :, :, :max_attend
+        ]
+        n_attend = all_indices.size(2)
 
-                    # Combine and sort positions
-                    attend_positions = sorted(set(local_positions) | all_chunk_pos)
+        # Build validity mask: position must be <= query position (causal)
+        # and >= 0 (not padding)
+        query_pos_expanded = query_pos.view(1, n_sparse, 1).expand(B, -1, n_attend)
+        valid_mask = all_indices <= query_pos_expanded  # [B, n_sparse, n_attend]
 
-                    # Defensive cap: limit to max_candidates
-                    if len(attend_positions) > self.max_candidates:
-                        attend_positions = attend_positions[-self.max_candidates :]
+        # Gather K, V using the indices
+        # all_indices: [B, n_sparse, n_attend] -> expand for heads and head_dim
+        # k, v: [B, H, T, D]
+        gather_idx = all_indices.clamp(0, T - 1)  # safety clamp
+        # [B, 1, n_sparse * n_attend, 1] for gather
+        flat_idx = gather_idx.view(B, 1, -1, 1).expand(-1, H, -1, D)
+        k_gathered = k.gather(2, flat_idx).view(B, H, n_sparse, n_attend, D)
+        v_gathered = v.gather(2, flat_idx).view(B, H, n_sparse, n_attend, D)
 
-                    # Track for debugging
-                    self._max_candidates_seen = max(
-                        self._max_candidates_seen, len(attend_positions)
-                    )
+        # Compute attention scores: [B, H, n_sparse, n_attend]
+        q_sparse = q[:, :, local_end:, :]  # [B, H, n_sparse, D]
+        scale = 1.0 / math.sqrt(D)
+        scores = (
+            torch.matmul(q_sparse.unsqueeze(3), k_gathered.transpose(-2, -1)).squeeze(3)
+            * scale
+        )
 
-                    if len(attend_positions) == 0:
-                        # Edge case: no positions to attend to (shouldn't happen)
-                        continue
+        # Apply validity mask (mask out invalid positions)
+        attn_mask = valid_mask.unsqueeze(1).expand(-1, H, -1, -1)
+        scores = scores.masked_fill(~attn_mask, float("-inf"))
 
-                    # Gather K, V for attend positions: [B, H, n_attend, D]
-                    pos_tensor = torch.tensor(
-                        attend_positions, device=device, dtype=torch.long
-                    )
-                    k_attend = k.index_select(2, pos_tensor)
-                    v_attend = v.index_select(2, pos_tensor)
+        attn = F.softmax(scores, dim=-1)
+        # Replace NaN from all-masked rows with 0
+        attn = attn.nan_to_num(0.0)
 
-                    # Compute attention: [B, H, 1, n_attend]
-                    scores = torch.matmul(q_t, k_attend.transpose(-2, -1)) * scale
+        if self.training and self.dropout > 0:
+            attn = self.attn_dropout(attn)
 
-                    # Apply softmax and dropout
-                    attn = F.softmax(scores, dim=-1)
-                    if self.training and self.dropout > 0:
-                        attn = self.attn_dropout(attn)
+        # Apply to values: [B, H, n_sparse, D]
+        y_sparse = torch.matmul(attn.unsqueeze(3), v_gathered).squeeze(3)
 
-                    # Apply to values and store in pre-allocated tensor
-                    y_t = torch.matmul(attn, v_attend)
-                    y_sparse[:, :, start_idx + i : start_idx + i + 1, :] = y_t
-        else:
-            y_sparse = q.new_zeros(B, H, 0, D)
+        # Track max candidates
+        self._max_candidates_seen = max(self._max_candidates_seen, n_attend)
 
-        # Combine local and sparse outputs
-        y = torch.cat([y_local, y_sparse], dim=2)
-
-        return y
+        return torch.cat([y_local, y_sparse], dim=2)
 
 
 class LayerNorm(nn.Module):
@@ -1028,15 +1033,14 @@ class GPT2_RGSA(nn.Module):
 
                 # Compute attention mass per chunk for each query
                 # dense_attn: [B, H, T, T] -> chunk_attn: [B, T, num_chunks]
-                chunk_attn = torch.zeros(B, T, num_chunks, device=device)
-                for c in range(num_chunks):
-                    c_start = c * chunk_size
-                    c_end = min(c_start + chunk_size, T)
-                    if c_start < T:
-                        # Sum attention mass to this chunk across all heads
-                        chunk_attn[:, :, c] = dense_attn[:, :, :, c_start:c_end].sum(
-                            dim=(1, 3)
-                        )
+                # Vectorized: sum attention across heads, reshape into chunks
+                attn_sum = dense_attn.sum(dim=1)  # [B, T, T]
+                # Pad T dimension to be divisible by chunk_size
+                pad_t = (chunk_size - T % chunk_size) % chunk_size
+                if pad_t > 0:
+                    attn_sum = F.pad(attn_sum, (0, pad_t))
+                # [B, T, num_chunks, chunk_size] -> sum over chunk_size
+                chunk_attn = attn_sum.view(B, T, num_chunks, -1).sum(dim=3)
 
                 # Get teacher's top-k chunks per query position
                 teacher_topk_actual = min(teacher_topk, num_chunks)
@@ -1048,21 +1052,23 @@ class GPT2_RGSA(nn.Module):
                 retrieved_set = chunk_indices  # [B, T, top_b]
                 top_b = retrieved_set.size(-1)
 
-                # For each query, check if teacher's top chunks are in retrieved set
-                recall_scores = []
-                for b in range(B):
-                    for t in range(attn.local_window + chunk_size_eff, T):
-                        teacher_chunks = set(teacher_top_chunks[b, t].tolist())
-                        retrieved_chunks = set(retrieved_set[b, t].tolist())
-                        if len(teacher_chunks) > 0:
-                            recall = len(teacher_chunks & retrieved_chunks) / len(
-                                teacher_chunks
-                            )
-                            recall_scores.append(recall)
-
-                teacher_recall = (
-                    sum(recall_scores) / len(recall_scores) if recall_scores else 0.0
-                )
+                # Vectorized recall: check intersection via broadcasting
+                # teacher_top_chunks: [B, T, teacher_topk_actual]
+                # retrieved_set: [B, T, top_b]
+                start_t = attn.local_window + chunk_size_eff
+                if start_t < T:
+                    teacher_slice = teacher_top_chunks[:, start_t:, :]  # [B, n, tk]
+                    retrieved_slice = retrieved_set[:, start_t:, :]  # [B, n, tb]
+                    # [B, n, tk, 1] == [B, n, 1, tb] -> [B, n, tk, tb]
+                    matches = teacher_slice.unsqueeze(-1) == retrieved_slice.unsqueeze(
+                        -2
+                    )
+                    # Any match across top_b for each teacher chunk
+                    per_query_hits = matches.any(dim=-1).float().sum(dim=-1)  # [B, n]
+                    per_query_recall = per_query_hits / teacher_topk_actual
+                    teacher_recall = per_query_recall.mean().item()
+                else:
+                    teacher_recall = 0.0
 
                 # Compute candidate count statistics
                 # In current implementation, it's fixed at top_b * chunk_size + local_window
@@ -1105,12 +1111,11 @@ class GPT2_RGSA(nn.Module):
                 )
 
                 # Load balance: how evenly are chunks selected?
-                # Count selections per chunk across all queries
-                chunk_selection_counts = torch.zeros(num_chunks, device=device)
-                for b in range(B):
-                    for t in range(T):
-                        for c in chunk_indices[b, t]:
-                            chunk_selection_counts[c.item()] += 1
+                # Vectorized: flatten indices and use bincount
+                flat_indices = chunk_indices.reshape(-1)
+                chunk_selection_counts = torch.bincount(
+                    flat_indices, minlength=num_chunks
+                ).float()
 
                 # Ideal would be uniform selection
                 total_selections = chunk_selection_counts.sum()
