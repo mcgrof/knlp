@@ -172,6 +172,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 top_b = int(getattr(self.config, "RGSA_TOP_B", 8))
                 local_window = int(getattr(self.config, "RGSA_LOCAL_WINDOW", 256))
 
+                # Get RGSA performance tuning
+                route_stride = int(getattr(self.config, "RGSA_ROUTE_STRIDE", 0))
+
                 # Get RGSA ablation flags
                 dense_mode = getattr(self.config, "RGSA_DENSE_MODE", False)
                 dense_mode = dense_mode in ("y", True)
@@ -214,6 +217,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     routing_dim=routing_dim,
                     top_b=top_b,
                     local_window=local_window,
+                    route_stride=route_stride,
                     dense_mode=dense_mode,
                     random_routing=random_routing,
                     dynamic_chunking=dynamic_chunking,
@@ -230,6 +234,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 if self.master_process:
                     print(f"  RGSA: chunk_size={chunk_size}, routing_dim={routing_dim}")
                     print(f"  RGSA: top_b={top_b}, local_window={local_window}")
+                    if route_stride > 0:
+                        print(f"  RGSA: route_stride={route_stride} (block routing)")
                     if dense_mode:
                         print("  RGSA: ABLATION dense_mode=True (routing disabled)")
                     if random_routing:
