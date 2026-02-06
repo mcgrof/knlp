@@ -5,13 +5,15 @@
 #   ./scripts/gpt2/run_compare_rgsa.sh [--track tinystories|finewebedu] [--seeds "1 2 3"] [--dry-run]
 #   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --ablations [--seeds "1 2 3"]
 #   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --sweep [--seeds "42"]
+#   ./scripts/gpt2/run_compare_rgsa.sh --track finewebedu --budget [--seeds "1 2 3"]
 #   ./scripts/gpt2/run_compare_rgsa.sh --track tinystories --time 7200 [--seeds "1 2 3"]
 #
 # This script:
 # 1. Runs baseline GPT-2 and RGSA for each seed
 # 2. Optionally runs rgsa_dense and rgsa_random ablations (--ablations)
 # 3. Optionally runs compute-quality sweep over top_b/local_window (--sweep)
-# 4. On finewebedu track, includes dynamic chunking variants
+# 4. Optionally runs L2M-guided budget schedule sweep (--budget) - Phase 2 v13
+# 5. On finewebedu track, includes dynamic chunking variants
 # 5. Sets WANDB_GROUP for easy comparison in W&B UI
 # 6. Tags runs with model type, dataset, and seed
 
@@ -22,6 +24,7 @@ SEEDS="1 2 3"
 DRY_RUN=""
 ABLATIONS=""
 SWEEP=""
+BUDGET=""
 TRACK="tinystories"
 MAX_TIME=""
 
@@ -44,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             SWEEP="yes"
             shift
             ;;
+        --budget)
+            BUDGET="yes"
+            shift
+            ;;
         --time)
             MAX_TIME="$2"
             shift 2
@@ -54,7 +61,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--track tinystories|finewebedu] [--seeds \"1 2 3\"] [--ablations] [--sweep] [--time SECS] [--dry-run]"
+            echo "Usage: $0 [--track tinystories|finewebedu] [--seeds \"1 2 3\"] [--ablations] [--sweep] [--budget] [--time SECS] [--dry-run]"
             exit 1
             ;;
     esac
@@ -67,6 +74,8 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODE_SUFFIX=""
 if [ -n "${SWEEP}" ]; then
     MODE_SUFFIX="-sweep"
+elif [ -n "${BUDGET}" ]; then
+    MODE_SUFFIX="-budget"
 elif [ -n "${ABLATIONS}" ]; then
     MODE_SUFFIX="-ablation"
 fi
@@ -84,6 +93,13 @@ if [ -n "${SWEEP}" ]; then
     CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t8-w256:sweep_t8_w256"
     CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t16-w128:sweep_t16_w128"
     CONFIGS="${CONFIGS} gpt2-tinystories-rgsa-sweep-t16-w256:sweep_t16_w256"
+elif [ -n "${BUDGET}" ]; then
+    # Phase 2 v13: L2M-guided budget schedule sweep
+    # Compares: baseline, low budget, med budget (static), high budget
+    CONFIGS="gpt2-finewebedu-baseline:baseline"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-budget-low:budget_low"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-static:budget_med"
+    CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-budget-high:budget_high"
 elif [ "${TRACK}" = "finewebedu" ]; then
     CONFIGS="gpt2-finewebedu-baseline:baseline"
     CONFIGS="${CONFIGS} gpt2-finewebedu-rgsa-static:rgsa_static"
@@ -118,7 +134,7 @@ echo "========================================"
 echo "RGSA Multi-Seed Comparison Run"
 echo "========================================"
 echo "Dataset track: ${TRACK}"
-echo "Mode: $([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard"))"
+echo "Mode: $([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${BUDGET}" ] && echo "budget" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard")))"
 echo "Timestamp: ${TIMESTAMP}"
 echo "Seeds: ${SEEDS}"
 echo "Configs: $(echo ${CONFIGS} | tr ' ' '\n' | cut -d: -f2 | tr '\n' ' ')"
@@ -206,12 +222,13 @@ cat > "${OUTPUT_BASE}/metadata.json" << EOF
 {
     "timestamp": "${TIMESTAMP}",
     "track": "${TRACK}",
-    "mode": "$([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard"))",
+    "mode": "$([ -n "${SWEEP}" ] && echo "sweep" || ([ -n "${BUDGET}" ] && echo "budget" || ([ -n "${ABLATIONS}" ] && echo "ablation" || echo "standard")))",
     "seeds": [$(echo ${SEEDS} | sed 's/ /, /g')],
     "wandb_group": "${WANDB_GROUP}",
     "configs": [${CONFIG_NAMES}],
     "ablations": $([ -n "${ABLATIONS}" ] && echo "true" || echo "false"),
     "sweep": $([ -n "${SWEEP}" ] && echo "true" || echo "false"),
+    "budget": $([ -n "${BUDGET}" ] && echo "true" || echo "false"),
     "max_time_override": $([ -n "${MAX_TIME}" ] && echo "${MAX_TIME}" || echo "null")
 }
 EOF
