@@ -264,6 +264,12 @@ def create_argument_parser():
         "--checkpoint-interval", type=int, default=1000, help="Checkpoint interval"
     )
     parser.add_argument(
+        "--save-sensitivity",
+        action="store_true",
+        default=False,
+        help="Save sensitivity data from optimizer (RGSA v14)",
+    )
+    parser.add_argument(
         "--output-dir", type=str, default="./output", help="Output directory"
     )
 
