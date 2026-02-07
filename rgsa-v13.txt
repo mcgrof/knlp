@@ -312,5 +312,68 @@ PHASE 2: L2M-Guided Budget Schedules COMPLETE
   - "Schedule should be stable across seeds" --> NOT MET (extreme variance)
 
   DECISION: Phase 2 budget schedules do NOT improve over baseline.
-  The fixed-budget approach is NOT providing the expected compute-quality tradeoff
+  The fixed-budget approach is NOT providing the expected compute-quality tradeoff.
+
+PHASE 3-5 ASSESSMENT AND EARLY TERMINATION DECISION
+
+  Based on Phases 1-2 findings:
+
+  1. Phase 1 confirmed: Learned routing ≈ random routing
+     - Effect size Cohen's d = -0.36 (small, not significant)
+     - Random wins 2/3 seeds
+     - DECISION: Stop treating routing as semantic retrieval
+
+  2. Phase 2 confirmed: Budget schedules fail to improve frontier
+     - All RGSA configs worse than baseline (when baseline is stable)
+     - Extreme seed variance in RGSA (std 25-54 vs baseline std 4)
+     - DECISION: Keep simplest config, don't pursue budget schedules
+
+  3. Key insight: RGSA is a regularizer, not a compute-quality optimizer
+     - Helps unstable training (Phase 1 baseline seed1: 308 PPL)
+     - Hurts stable training (Phase 2 baseline seed1: 123 PPL)
+     - The benefit comes from constraining attention, not intelligent routing
+
+  Per stopping rules:
+  - "If Phase 1 shows learned ≈ random, deprioritize router work" --> APPLIED
+  - "If Phase 2 schedules fail to improve frontier, keep simplest config" --> APPLIED
+
+  Recommendation: Skip Phases 3-4 and proceed directly to Phase 5 (final report).
+  The core hypothesis has been falsified: RGSA does not provide reliable
+  compute-quality tradeoff. It provides regularization for unstable training,
+  which is a valid but different use case.
+
+PHASE 5: Consolidation and Decision
+
+  Final verdict: Case 1 confirmed (learned routing ≈ random routing)
+
+  Conclusions:
+  1. The benefit of RGSA is constraint/regularization, NOT semantic retrieval
+  2. RGSA helps stabilize training when baseline is unstable
+  3. RGSA hurts quality when baseline is already stable
+  4. Production path: Use RGSA only for training stabilization, not for
+     compute-quality tradeoffs
+
+  Next phase (v14) recommendations:
+  1. Do NOT pursue learned routing improvements
+  2. Consider static/stochastic structured sparsity for training stabilization
+  3. Focus on understanding when baseline training is unstable
+  4. Drop RGSA for inference-time compute savings (sparse kernels not justified)
+
+  Artifacts produced:
+  - Phase 1: rgsa_compare_finewebedu-ablation_20260204_142911/
+  - Phase 2: rgsa_compare_tinystories-budget_20260205_204145/
+  - Tables: Phase 1 and Phase 2 results above
+  - Decision: Constraints-only path, not semantic routing path
+
+  What was proven:
+  - Learned routing does NOT beat random routing on FineWebEdu
+  - Budget schedules do NOT provide compute-quality frontier
+  - RGSA variance is higher than baseline
+
+  What was NOT proven:
+  - No sparse kernel speedup tested (correctly deferred)
+  - No inference-time FLOP wins demonstrated
+  - No production deployment validated
+
+END OF RGSA V13 - COMPLETE
 
