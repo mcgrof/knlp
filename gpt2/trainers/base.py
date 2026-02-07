@@ -33,6 +33,18 @@ sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT2, GPTConfig
 
+# Optional sensitivity extraction for RGSA v14
+try:
+    from utils.sensitivity import (
+        extract_sensitivity,
+        save_sensitivity_json,
+        log_sensitivity_to_wandb,
+    )
+
+    SENSITIVITY_AVAILABLE = True
+except ImportError:
+    SENSITIVITY_AVAILABLE = False
+
 
 class BaseGPT2Trainer:
     """
@@ -357,6 +369,45 @@ class BaseGPT2Trainer:
             checkpoint["scaler"] = self.scaler.state_dict()
 
         torch.save(checkpoint, checkpoint_path)
+
+        # Extract and save sensitivity data if enabled (RGSA v14)
+        if SENSITIVITY_AVAILABLE and getattr(self.args, "save_sensitivity", False):
+            self._save_sensitivity(checkpoint_path)
+
+    def _save_sensitivity(self, checkpoint_path: str):
+        """Extract and save sensitivity data from optimizer state."""
+        try:
+            # Get raw model (unwrap DDP/FSDP if needed)
+            raw_model = self.model
+            if hasattr(self.model, "module"):
+                raw_model = self.model.module
+
+            # Extract sensitivity
+            sensitivity = extract_sensitivity(raw_model, self.optimizer)
+
+            # Compute tokens seen
+            batch_size = getattr(self.args, "batch_size", 8)
+            grad_accum = getattr(self.args, "gradient_accumulation", 1)
+            block_size = getattr(self.args, "block_size", 1024)
+            tokens_seen = self.iter_num * batch_size * grad_accum * block_size
+
+            # Save JSON alongside checkpoint
+            sensitivity_path = checkpoint_path.replace(".pt", "_sensitivity.json")
+            save_sensitivity_json(
+                sensitivity,
+                sensitivity_path,
+                step=self.iter_num,
+                tokens_seen=tokens_seen,
+                extra_info={"checkpoint": checkpoint_path},
+            )
+
+            # Log to W&B
+            log_sensitivity_to_wandb(sensitivity, step=self.iter_num)
+
+            print(f"Saved sensitivity data: {sensitivity_path}")
+
+        except Exception as e:
+            print(f"Warning: Failed to save sensitivity data: {e}")
 
     def load_checkpoint(self, checkpoint_path: str):
         """
