@@ -270,6 +270,18 @@ def create_argument_parser():
         help="Save sensitivity data from optimizer (RGSA v14)",
     )
     parser.add_argument(
+        "--sensitivity-path",
+        type=str,
+        default="",
+        help="Path to sensitivity.json for variance-weighted allocation (RGSA v14)",
+    )
+    parser.add_argument(
+        "--variance-alpha",
+        type=float,
+        default=0.0,
+        help="Variance weighting exponent (0=uniform, 0.5=sqrt, 1=linear) (RGSA v14)",
+    )
+    parser.add_argument(
         "--output-dir", type=str, default="./output", help="Output directory"
     )
 
