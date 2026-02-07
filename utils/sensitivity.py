@@ -316,3 +316,39 @@ def load_sensitivity_json(filepath: str) -> Dict:
     # Convert S_layer back to tensor
     data["S_layer"] = torch.tensor(data["S_layer"], dtype=torch.float32)
     return data
+
+
+def compute_top_b_per_layer_from_file(
+    sensitivity_path: str,
+    top_b_base: int = 8,
+    alpha: float = 1.0,
+    top_b_min: int = 2,
+    top_b_max: int = 16,
+) -> List[int]:
+    """
+    Load sensitivity from file and compute per-layer top_b allocation.
+
+    Args:
+        sensitivity_path: Path to sensitivity.json file
+        top_b_base: Base top_b value (average across layers)
+        alpha: Variance weighting exponent (0=uniform, 1=linear)
+        top_b_min: Minimum top_b per layer
+        top_b_max: Maximum top_b per layer
+
+    Returns:
+        List of per-layer top_b values
+    """
+    data = load_sensitivity_json(sensitivity_path)
+    S_layer = data["S_layer"]
+    n_layer = data["n_layer"]
+
+    weights = compute_variance_weights(S_layer, alpha=alpha)
+    top_b_per_layer = compute_per_layer_top_b(
+        weights,
+        top_b_base=top_b_base,
+        n_layer=n_layer,
+        top_b_min=top_b_min,
+        top_b_max=top_b_max,
+    )
+
+    return top_b_per_layer

@@ -136,6 +136,14 @@ class RGSAConfig:
     max_candidates: int = 0  # 0 = auto-compute from local_window + top_b*chunk_size
     debug_log_candidates: bool = False  # Log max candidate count at each eval
 
+    # Variance-weighted budget allocation (RGSA v14)
+    # Per-layer top_b values computed from sensitivity S_layer
+    # If None, uses uniform top_b; otherwise uses top_b_per_layer[layer_idx]
+    top_b_per_layer: Optional[List[int]] = None
+    # Alpha exponent for variance weighting: w_l = S_l^alpha / sum(S^alpha)
+    # 0 = uniform, 0.5 = sqrt, 1.0 = linear
+    variance_alpha: float = 0.0
+
     @classmethod
     def from_name(cls, name: str):
         """Create config from model name."""
@@ -414,7 +422,9 @@ class RGSACausalSelfAttention(nn.Module):
     - No dynamic tensor growth in loops
     """
 
-    def __init__(self, config: RGSAConfig, chunk_router: ChunkRouter):
+    def __init__(
+        self, config: RGSAConfig, chunk_router: ChunkRouter, layer_idx: int = 0
+    ):
         super().__init__()
         assert config.n_embd % config.n_head == 0
 
@@ -424,8 +434,16 @@ class RGSACausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.local_window = config.local_window
         self.chunk_size = config.chunk_size
-        self.top_b = config.top_b
+        self.layer_idx = layer_idx
         self.rgsa_config = config  # stored for compute_chunk_size()
+
+        # Per-layer top_b (variance-weighted allocation, RGSA v14)
+        if config.top_b_per_layer is not None and layer_idx < len(
+            config.top_b_per_layer
+        ):
+            self.top_b = config.top_b_per_layer[layer_idx]
+        else:
+            self.top_b = config.top_b
 
         # Defensive cap: max tokens to attend per query position
         # Default = local_window + top_b * chunk_size
@@ -877,12 +895,15 @@ class MLP(nn.Module):
 class RGSABlock(nn.Module):
     """Transformer block with RGSA attention."""
 
-    def __init__(self, config: RGSAConfig, chunk_router: ChunkRouter):
+    def __init__(
+        self, config: RGSAConfig, chunk_router: ChunkRouter, layer_idx: int = 0
+    ):
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.attn = RGSACausalSelfAttention(config, chunk_router)
+        self.attn = RGSACausalSelfAttention(config, chunk_router, layer_idx=layer_idx)
         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
         self.mlp = MLP(config)
+        self.layer_idx = layer_idx
 
     def forward(
         self,
@@ -922,8 +943,8 @@ class GPT2_RGSA(nn.Module):
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList(
                     [
-                        RGSABlock(config, self.chunk_router)
-                        for _ in range(config.n_layer)
+                        RGSABlock(config, self.chunk_router, layer_idx=i)
+                        for i in range(config.n_layer)
                     ]
                 ),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
@@ -963,6 +984,11 @@ class GPT2_RGSA(nn.Module):
                 f"alpha={config.chunk_size_alpha}, "
                 f"range=[{config.chunk_size_min}, {config.chunk_size_max}], "
                 f"rounding={config.chunk_size_rounding}"
+            )
+        if config.top_b_per_layer is not None:
+            print(
+                f"RGSA variance-weighted allocation: alpha={config.variance_alpha}, "
+                f"top_b_per_layer={config.top_b_per_layer}"
             )
 
     def get_num_params(self, non_embedding=True):
