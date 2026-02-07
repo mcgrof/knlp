@@ -216,12 +216,17 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     chunk_size_debug_log = chunk_size_debug_log in ("y", "True")
 
                 # Get variance-weighted allocation config (RGSA v14)
-                variance_alpha = float(
-                    getattr(self.config, "RGSA_VARIANCE_ALPHA", "0.0")
-                )
-                sensitivity_path = str(
-                    getattr(self.config, "RGSA_SENSITIVITY_PATH", "")
-                )
+                # CLI args take precedence over config
+                variance_alpha = getattr(self.args, "variance_alpha", None)
+                if variance_alpha is None:
+                    variance_alpha = float(
+                        getattr(self.config, "RGSA_VARIANCE_ALPHA", "0.0")
+                    )
+                sensitivity_path = getattr(self.args, "sensitivity_path", None)
+                if not sensitivity_path:
+                    sensitivity_path = str(
+                        getattr(self.config, "RGSA_SENSITIVITY_PATH", "")
+                    )
                 top_b_min = int(getattr(self.config, "RGSA_TOP_B_MIN", 2))
                 top_b_max = int(getattr(self.config, "RGSA_TOP_B_MAX", 16))
 
