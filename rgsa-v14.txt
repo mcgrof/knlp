@@ -1,0 +1,322 @@
+
+Conclusion from previous work: rgsa-13-conclusion.txt
+
+And new work to focus on:
+
+```text
+rgsa-v14.txt — FineWebEdu RGSA v14: Variance-Weighted L²M + Sensitivity-Aware Budgeting (A2/A3) with KL-Drift Monitoring
+
+Context / Ground Truth So Far (v13 Recap)
+
+* Phase 1 (FineWebEdu): RGSA variants beat an unstable baseline; learned routing did not reliably beat random; static constraints were most stable.
+* Phase 2 (Budget schedules): Uniform budgeted RGSA variants performed WORSE than a stable baseline; seed variance exploded; no compute–quality frontier improvement.
+* Interpretation: “Uniform capacity reduction fails once training is stable.” The failure mode is likely misallocation (budget removed from critical subspaces), not just insufficient total budget.
+* New insight / goal: Use Adam variance (v̂, diagonal Fisher proxy per Squisher) as a static sensitivity prior to allocate attention capacity where it matters, and test whether this fixes the v13 failure mode.
+
+Primary Goals for v14
+
+1. Implement variance summaries S (per-layer, optionally per-head) derived from Adam exp_avg_sq (v̂) at checkpoints, and log them.
+2. Add two new ablations:
+   - A2: Variance-only allocation (fixed total budget, skew allocation by S)
+   - A3: Variance-weighted + L²M-style total budget schedule (skew allocation by S, scale total budget by L or simulated L)
+3. Determine whether variance-weighted allocation reduces KL drift / PPL degradation relative to uniform budgets, especially in stable-baseline regimes where v13 failed.
+4. Measure whether variance-weighting reduces tail risk (catastrophic seeds), not just mean PPL.
+5. Produce a clean report that reuses v13 as A0/A1 evidence and adds A2/A3 as the missing tests.
+
+Non-Goals
+
+* No new semantic routing training work (v13 falsified “router finds semantics” at this scale).
+* No custom CUDA kernels.
+* No new dataset research beyond FineWebEdu staging already implemented.
+
+Definitions / Hypothesis (New Framing)
+
+RGSA = Route-Gated Sparse Attention: group history, router scores groups, gate selects subset, sparse attention applied on subset.
+
+We test the two-level constraint:
+
+Macro (L²M): total effective routed history budget B(L) must grow with L at least sublinearly (power law).
+
+Micro (Variance prior): budget should be allocated non-uniformly across layers/heads using sensitivity S derived from Adam v̂.
+
+S is NOT “KV Fisher.” S is a static training-derived prior for which attention pathways are expensive to compress.
+
+Core v14 prediction at fixed memory:
+A3 (variance + macro scaling) should beat A1 (macro-only uniform) and A0 (fixed uniform), and should have lower tail risk than random routing.
+
+Ablation Taxonomy (Map to v13 + New v14)
+
+A0: Fixed RGSA (uniform budgets, fixed chunk/top_b/local)  -> already covered by v13 static configs
+A1: Macro-only RGSA (uniform budgets with schedules)        -> v13 Phase 2 (failure case)
+A2: Variance-only RGSA (fixed total budget, variance skew)  -> NEW in v14
+A3: Variance + Macro RGSA (total schedule + variance skew)  -> NEW in v14
+
+Expected ordering for KL stability at fixed memory:
+A3 > A2 > A1 > A0  (if variance signal is real; otherwise A2/A3 collapse to A1)
+
+Important: We keep learned vs random routing as a side diagnostic ONLY if needed; primary focus is allocation, not semantics.
+
+Global Experimental Settings
+
+* CONFIG_GPT2_COMPILE=y always.
+* Start with GPT-2 ~124M.
+* Use the same FineWebEdu shard/cap pipeline as v13 for comparability.
+* Seeds: 1,2,3 minimum; 1..5 for confirmation if variance helps.
+* Match runs by tokens_seen (not wall time) for comparisons.
+* Eval schedule: constant eval tokens or eval_interval fixed across runs.
+* Logging: train loss, val PPL, tokens/query stats, estimated attention FLOPs proxy, routing entropy/load-balance, and NEW variance metrics below.
+
+NEW: Variance (Sensitivity) Extraction and Storage
+
+Goal: compute static sensitivity summaries S from Adam optimizer exp_avg_sq (v̂) at checkpoint time.
+
+Implementation requirements:
+1) Add a utility to load optimizer state and extract exp_avg_sq for relevant parameters.
+2) Aggregate into:
+   - S_layer[l] = sum(exp_avg_sq) over attention projection params in layer l (Wq, Wk, Wv, Wo) and any RGSA router/gating params in that layer.
+   - Optionally S_head[l,h] if and only if head reshaping is unambiguous; otherwise stay per-layer first.
+3) Save to a tiny JSON alongside each checkpoint:
+   - sensitivity.json with fields: step, tokens_seen, S_layer[], (optional S_head[][]), summary stats (p50/p90/max), and the mapping assumptions used.
+4) Log S_layer (and optionally S_head) into W&B at checkpoint time:
+   - heatmap plot per run
+   - top-k most sensitive layers list
+
+If optimizer state is not saved for some runs, add a “save_optimizer_state” flag for the runs that matter.
+
+NEW: Variance-Weighted Budget Allocation Policy
+
+We need a way to operationalize “budget per layer” inside RGSA.
+
+Define:
+* Total budget in tokens/query: B_total = local_window + top_b * chunk_size
+* Per-layer budget multiplier: w_l = S_l^α / sum(S^α)
+
+Then implement one practical allocation mechanism (keep minimal code changes):
+Option 1 (preferred): Per-layer top_b scaling
+* top_b_l = clamp(round(top_b_base * w_l * L_mult), min=top_b_min, max=top_b_max)
+* Keep chunk_size fixed per run for simplicity.
+
+Option 2: Per-layer chunk_size scaling
+* chunk_l = choose from {32,64,128} by w_l quantiles; keep top_b fixed.
+
+Option 3: Per-layer “effective gating cap”
+* Same router scores, but cap number of selected chunks per layer by top_b_l.
+
+Start with Option 1 (per-layer top_b) because it’s the least invasive.
+
+Hyperparameters for variance policy:
+* α_var in {0.0, 0.5, 1.0} (0.0 is the uniform control)
+* top_b_min = 1 (or 2)
+* top_b_max = 16 (or existing safe cap)
+* Normalize w_l using median(S) if needed for numeric stability.
+
+Important: Keep total expected tokens/query approximately fixed when comparing methods.
+If per-layer allocation changes totals, renormalize by scaling top_b_base so sum(top_b_l) matches the uniform baseline.
+
+NEW: KL-Drift Monitoring (Optional but Strongly Recommended)
+
+We want a distributional drift proxy during training/eval without huge overhead.
+
+Add one of these:
+1) Logit KL on eval mini-batch:
+   - compute KL between baseline (full attention) logits and RGSA logits on the same eval inputs.
+   - Implementation: run baseline forward pass at eval time for a small eval subset (e.g., 1/10th eval iters) to control overhead.
+   - Metric: mean KL per token, plus p95 KL.
+
+If baseline forward pass is too expensive:
+2) Proxy drift metrics:
+   - cosine similarity of hidden states at final layer between baseline and RGSA
+   - attention mass distribution shift stats
+
+Preferred is (1) if feasible. It directly supports the “KL stability” claim.
+
+W&B logging additions:
+* val_logit_kl_mean, val_logit_kl_p95
+* sensitivity_alpha (α_var), per-layer budget histogram
+* tail metrics: p95/p99 val PPL across seeds once aggregated
+
+v14 Experimental Plan
+
+Phase 0: Plumbing Sanity (FAST)
+Runs: 1 seed, 15–30 minutes each on FineWebEdu cap
+
+* baseline (full attention)
+* rgsa_uniform (your best known stable RGSA config from v13)
+* rgsa_uniform + sensitivity extraction enabled
+
+Acceptance:
+* sensitivity.json produced
+* W&B shows S_layer heatmap
+* tokens/query and FLOPs proxies still logged correctly
+* no graph breaks, compile stays enabled
+
+Phase 1: A2 — Variance-Only Allocation (Fixed Total Budget)
+Objective: test whether variance-based allocation fixes the v13 macro-only failure mode at fixed budget.
+
+Setup:
+* Fix total tokens/query to the “budget_med” that was used in v13 Phase 2.
+* Use stable selection policy (if top-k was unstable, use the best stable policy v13 had; otherwise keep top-k).
+* Vary only α_var.
+
+Runs (seeds 1,2,3; 2 hours each or matched tokens):
+* baseline
+* rgsa_uniform_budget_med (α_var=0.0)  [control]
+* rgsa_var_budget_med (α_var=0.5)
+* rgsa_var_budget_med (α_var=1.0)
+
+Outputs:
+* Table: mean±std val PPL at matched tokens_seen
+* Table: mean±std logit KL (if enabled)
+* Tail risk: worst-seed PPL, p95 across seeds
+* Plot: per-layer allocated top_b_l vs S_layer (should correlate)
+
+Acceptance:
+* If α_var>0 reduces mean PPL and/or reduces KL drift vs α_var=0 at similar compute, variance helps.
+* If α_var>0 reduces catastrophic tail behavior even if mean is similar, variance still helps.
+
+Phase 2: A3 — Variance + Macro Budget Schedule (Simulated L²M)
+Objective: test combined macro schedule + variance allocation.
+
+Because varying L is expensive, simulate macro schedule at fixed L by varying B_total (low/med/high), then later do true L variation.
+
+Runs (seeds 1,2,3):
+For each budget in {low, med, high}:
+* rgsa_uniform (α_var=0)
+* rgsa_var (α_var=best from Phase 1)
+
+Outputs:
+* Pareto: val PPL vs tokens/query
+* Pareto: logit KL vs tokens/query (if enabled)
+* Stability: std and tail metrics
+
+Acceptance:
+* If variance-weighted curves dominate uniform curves (better PPL or KL at same tokens/query), A3 is supported.
+
+Phase 3: True L Variation (Stage C) (ONLY IF Phase 1/2 show signal)
+Objective: validate L²M scaling with actual context length changes.
+
+Runs:
+* L in {1024, 2048, 4096} if infra allows
+* Compare uniform vs variance-weighted at matched fractional budgets (e.g., 37.5%, 75%, 100% of L)
+* Keep α_var fixed at best value
+
+Outputs:
+* KL/PPL vs L at fixed fractional budget
+* Verify whether variance-weighting reduces divergence slope with L
+
+Stopping Rules (Don’t Loop Forever)
+
+* If Phase 1 shows α_var>0 gives no improvement and no tail reduction, stop variance work and write up “variance prior not predictive for RGSA.”
+* If Phase 1 shows benefit but Phase 2 shows no Pareto improvement, still write up as “variance improves stability but not frontier.”
+* Only proceed to Phase 3 if Phase 1/2 show consistent benefit across seeds.
+
+Required Final Artifacts (v14)
+
+Create rgsa_v14_final_report.md with:
+
+1) v13 recap mapped to A0/A1 (macro-only failure documented)
+2) v14 implementation notes for sensitivity extraction + allocation
+3) A2 results (variance-only at fixed budget): mean/std + tails + KL drift if available
+4) A3 results (variance + budget sweep): Pareto plots + stability
+5) If run: L variation results
+6) Explicit decision: does variance provide a usable signal? If yes, recommended α_var and policy; if no, close the door.
+
+Implementation Notes / Minimal Code Change Guidance
+
+* Keep variance extraction self-contained (utils/sensitivity.py or similar).
+* Don’t refactor RGSA core; inject per-layer top_b_l via config.
+* Ensure per-layer allocations are logged each run.
+* Keep baseline config unchanged.
+
+Weights & Biases Monitoring (NEW)
+
+Add dashboards / panels for:
+* S_layer heatmap per run (step vs layer)
+* Allocated top_b_l vs layer (overlay with S_layer)
+* val_logit_kl_mean and p95 (if enabled)
+* tokens/query p50/p95/p99
+* Cross-seed summary charts: mean±std val PPL and tail metrics
+
+Ralph Wiggum Loop Instructions (Claude Code Loop)
+
+You will now execute the plan above in small, verifiable steps. After each step, you MUST:
+1) state what you changed (files, functions, configs)
+2) run the smallest possible test to validate it
+3) paste the exact command used
+4) summarize results tersely (pass/fail + key numbers)
+5) decide the next step per the plan and stopping rules
+
+Repeat this loop until v14 is complete:
+
+Ralph Wiggum Loop:
+- “I’m learning!” -> implement one minimal change
+- “My cat’s breath smells like cat food.” -> run a tiny sanity check
+- “I’m in danger.” -> if results contradict assumptions, stop and diagnose before expanding runs
+- “That’s where I saw the leprechaun.” -> only then scale to the next phase
+
+End Condition:
+Stop looping only when:
+* Phase 0 plumbing passes
+* Phase 1 A2 results are produced and analyzed
+* Phase 2 A3 sweep is produced and analyzed
+* Final report directory exists with plots and tables
+* A clear go/no-go decision is written
+
+Start Now:
+1) Implement Phase 0 sensitivity extraction and JSON+W&B logging.
+2) Run Phase 0 sanity runs (single seed, short time).
+3) Proceed to Phase 1 A2 variance sweep (α_var = 0, 0.5, 1.0).
+```
+
+================================================================================
+PROGRESS LOG
+================================================================================
+
+## 2026-02-07: Phase 0 Complete
+
+### Implementation
+- Created `utils/sensitivity.py` with:
+  - `extract_sensitivity()`: Extracts per-layer S from Adam exp_avg_sq
+  - `compute_variance_weights()`: Computes w_l = S_l^alpha / sum(S^alpha)
+  - `compute_per_layer_top_b()`: Allocates per-layer budgets
+  - JSON save/load and W&B logging
+
+- Modified `gpt2/trainers/base.py` to save sensitivity on checkpoint
+- Added `--save-sensitivity` CLI flag to `gpt2/train.py`
+- Added `--variance-alpha` and `--sensitivity-path` CLI flags
+
+### Sanity Run Results
+Sensitivity from 100 iters on TinyStories:
+- Layer 0: S = 0.010555 (90x higher than min)
+- Layers 1-11: S ~ 0.0001-0.0005
+- Clear pattern: earlier layers more sensitive
+
+## 2026-02-07: Phase 1 (A2) Quick Sweep
+
+### Setup
+- Sensitivity: from 100-iter training on TinyStories
+- Runs: 200 iters on FineWebEdu, seed=1
+- Alphas: 0.0, 0.5, 1.0
+
+### Allocations (matched total budget ~96)
+- alpha=0.0: uniform [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+- alpha=0.5: [16, 12, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6]
+- alpha=1.0: [16, 16, 10, 8, 7, 7, 6, 6, 5, 5, 5, 5]
+
+### Results
+| Alpha | Val PPL | vs Uniform |
+|-------|---------|------------|
+| 0.0   | 552.32  | baseline   |
+| 0.5   | 532.34  | -3.6%      |
+| 1.0   | 893.47  | +62%       |
+
+### Interpretation
+- **alpha=0.5 HELPS**: Mild variance weighting improves quality
+- **alpha=1.0 HURTS**: Over-allocation to layer 0 degrades quality
+- Variance signal is real but needs moderation (sqrt better than linear)
+
+### TODO
+- [ ] Full sweep: 500 iters, seeds 1,2,3, alphas 0.0, 0.5
+- [ ] Phase 2 (A3): Vary total budget with variance weighting
+- [ ] Final report with go/no-go decision
+
