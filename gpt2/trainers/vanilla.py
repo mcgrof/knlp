@@ -215,6 +215,41 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 if isinstance(chunk_size_debug_log, str):
                     chunk_size_debug_log = chunk_size_debug_log in ("y", "True")
 
+                # Get variance-weighted allocation config (RGSA v14)
+                variance_alpha = float(
+                    getattr(self.config, "RGSA_VARIANCE_ALPHA", "0.0")
+                )
+                sensitivity_path = str(
+                    getattr(self.config, "RGSA_SENSITIVITY_PATH", "")
+                )
+                top_b_min = int(getattr(self.config, "RGSA_TOP_B_MIN", 2))
+                top_b_max = int(getattr(self.config, "RGSA_TOP_B_MAX", 16))
+
+                # Compute per-layer top_b from sensitivity if enabled
+                top_b_per_layer = None
+                if variance_alpha > 0 and sensitivity_path:
+                    try:
+                        from utils.sensitivity import compute_top_b_per_layer_from_file
+
+                        top_b_per_layer = compute_top_b_per_layer_from_file(
+                            sensitivity_path,
+                            top_b_base=top_b,
+                            alpha=variance_alpha,
+                            top_b_min=top_b_min,
+                            top_b_max=top_b_max,
+                        )
+                        if self.master_process:
+                            print(
+                                f"  RGSA v14: Loaded variance-weighted allocation "
+                                f"(alpha={variance_alpha})"
+                            )
+                            print(f"  RGSA v14: top_b_per_layer={top_b_per_layer}")
+                    except Exception as e:
+                        print(
+                            f"Warning: Failed to load sensitivity from {sensitivity_path}: {e}"
+                        )
+                        print("  Falling back to uniform top_b allocation")
+
                 # Create RGSA config
                 config = RGSAConfig(
                     n_layer=base_config.n_layer,
@@ -242,6 +277,8 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     chunk_size_piecewise=chunk_size_piecewise,
                     chunk_size_rounding=chunk_size_rounding,
                     chunk_size_debug_log=chunk_size_debug_log,
+                    top_b_per_layer=top_b_per_layer,
+                    variance_alpha=variance_alpha,
                 )
 
                 model = GPT2_RGSA(config)
