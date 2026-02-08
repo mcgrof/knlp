@@ -179,16 +179,20 @@ def compute_variance_weights(
     S_layer: torch.Tensor,
     alpha: float = 1.0,
     normalize_by_median: bool = True,
+    invert: bool = False,
 ) -> torch.Tensor:
     """
     Compute per-layer budget weights from sensitivity.
 
     w_l = S_l^alpha / sum(S^alpha)
 
+    If invert=True, uses 1/S instead (protect low-sensitivity layers).
+
     Args:
         S_layer: Per-layer sensitivity values
         alpha: Exponent for sensitivity weighting (0 = uniform, 1 = linear)
         normalize_by_median: If True, normalize S by median for numeric stability
+        invert: If True, use 1/S (allocate more to low-sensitivity layers)
 
     Returns:
         Tensor of weights summing to 1.0
@@ -207,6 +211,11 @@ def compute_variance_weights(
     else:
         # Clamp to avoid numerical issues
         S = S.clamp(min=1e-8)
+
+        # Invert if requested (protect low-sensitivity layers)
+        if invert:
+            S = 1.0 / S
+
         S_alpha = S.pow(alpha)
         weights = S_alpha / S_alpha.sum()
 
@@ -324,6 +333,7 @@ def compute_top_b_per_layer_from_file(
     alpha: float = 1.0,
     top_b_min: int = 2,
     top_b_max: int = 16,
+    invert: bool = False,
 ) -> List[int]:
     """
     Load sensitivity from file and compute per-layer top_b allocation.
@@ -334,6 +344,7 @@ def compute_top_b_per_layer_from_file(
         alpha: Variance weighting exponent (0=uniform, 1=linear)
         top_b_min: Minimum top_b per layer
         top_b_max: Maximum top_b per layer
+        invert: If True, use 1/S (allocate more to low-sensitivity layers)
 
     Returns:
         List of per-layer top_b values
@@ -342,7 +353,7 @@ def compute_top_b_per_layer_from_file(
     S_layer = data["S_layer"]
     n_layer = data["n_layer"]
 
-    weights = compute_variance_weights(S_layer, alpha=alpha)
+    weights = compute_variance_weights(S_layer, alpha=alpha, invert=invert)
     top_b_per_layer = compute_per_layer_top_b(
         weights,
         top_b_base=top_b_base,
