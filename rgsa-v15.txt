@@ -1,0 +1,160 @@
+If those numbers are real and comparable, then no, you shouldn’t send Claude Code back into the mines to “try harder.” You already got the answer you asked for: **this particular variance prior (Adam exp_avg_sq aggregated per-layer) makes RGSA worse**.
+
+But… the summary you pasted has enough red flags that I *would* ask Claude Code to do a short, surgical “are we measuring the right thing / did we wire it correctly” pass. Not a whole v15. A sanity/forensics pass that either validates the negative result cleanly or exposes a configuration bug.
+
+Here’s why I’m not fully satisfied with the current v14 summary:
+
+1. **The “baseline” label is ambiguous.**
+   The table says “Alpha 0.0 baseline,” but your earlier runs had a separate full-attention baseline. Here it looks like alpha=0.0 (uniform RGSA) is being treated as “baseline.” That’s fine, but then “vs Baseline” is misleading. You need “vs full attention” and “vs uniform RGSA” clearly separated.
+
+2. **Alpha=1.0 is missing from the results table**, even though it says it was tested. That’s either a reporting bug or a run that failed.
+
+3. **PPL is insanely high** (268–328) and variance is huge. That screams “unstable run regime” again, which is exactly where RGSA behaves like a regularizer and comparisons get noisy. If the regime is unstable, you can’t conclude “not predictive,” you can only conclude “this implementation didn’t help here.”
+
+4. Variance weighting “increased instability.” That can happen even if the idea is right, if the allocation logic accidentally changed total budget, introduced per-layer hard caps, or created starvation at critical layers.
+
+So: don’t do more “research.” Do **verification**.
+
+### What to ask Claude Code to do (small, bounded)
+
+Tell it to run a “v14 postmortem sanity suite” with these deliverables. This should be like 2–4 targeted checks, not another day-long loop.
+
+1. Confirm budgets are truly matched
+   For alpha=0.0 vs 0.5 vs 1.0:
+
+* log total tokens/query and per-layer tokens/query (mean/p50/p95/p99)
+* confirm sum(top_b_l) is identical (or within 1) across alphas
+* confirm local_window and chunk_size are identical
+
+If budgets weren’t matched, the result is meaningless.
+
+2. Confirm sensitivity source and timing
+
+* sensitivity computed from the same checkpoint step across runs
+* exp_avg_sq exists and is not being read from a zeroed/uninitialized optimizer state
+* verify S_layer distribution is non-degenerate (not nearly uniform, not dominated by one layer due to scale bugs)
+
+3. Add the missing alpha=1.0 summary row + rerun if needed
+   If alpha=1.0 run failed, rerun only that variant for 1 seed just to complete the table, then optionally 3 seeds if it looks anomalous.
+
+4. Add one “oracle-ish” control: invert the weighting
+   Run alpha=0.5 but allocate budget proportional to 1/S (protect low sensitivity layers) and see if performance *improves* relative to alpha=0.5.
+
+* If inverted weighting helps, it means your S is systematically anti-correlated with what RGSA needs (interesting).
+* If both hurt similarly, it means per-layer sensitivity isn’t the right granularity or signal.
+
+If those checks all pass and the negative result stands, then you stop. You write it up as:
+
+> “Training Fisher proxy (Adam exp_avg_sq per layer) does not predict KV/attention budget importance for RGSA; naive Fisher-weighted allocation worsens quality and increases seed variance.”
+
+That’s a legitimate result.
+
+### What *not* to do next
+
+Don’t ask Claude to start trying random new heuristics or add another 10 knobs. That’s how you end up with a thousand-run junk drawer.
+
+### If you *do* want a next step after sanity checks
+
+The next plausible direction is: **switch from parameter-space sensitivity to state-/usage-based signals**, because RGSA is a runtime-state intervention:
+
+* attention mass / entropy per layer/head
+* router score entropy / confidence
+* “drop impact” estimates: temporarily drop one layer’s routed chunks and measure logit KL on a tiny eval batch
+
+But that’s a new v15 hypothesis, not “more work on v14.”
+
+So yes: ask Claude Code to do **a short verification pass** (budget matching, sensitivity correctness, fill alpha=1.0, inverted-weight control). If it still fails, stop and move on.
+
+================================================================================
+v14 POSTMORTEM SANITY SUITE RESULTS
+================================================================================
+
+## 1. Budget Matching Verification
+
+**ISSUE FOUND**: Budget totals are NOT matched.
+- alpha=0.0: total = 96 (uniform [8]*12)
+- alpha=0.5: total = 94 (2 less due to rounding)
+- alpha=1.0: total = 96
+
+The 2% budget difference between alpha=0.0 and alpha=0.5 could affect
+comparisons, but is unlikely to explain the 22% PPL degradation.
+
+## 2. Sensitivity Source and Timing Verification
+
+**VERIFIED**: Sensitivity is valid.
+- Source: /tmp/rgsa_v14_sensitivity_baseline/checkpoint_iter_100_sensitivity.json
+- Step: 100, tokens_seen: 9,830,400
+- exp_avg_sq exists and is non-zero
+- S_layer distribution is non-degenerate but highly skewed:
+  - Layer 0: 0.0106 (max, 90x higher than min)
+  - Layer 11: 0.00012 (min)
+
+**CONCERN**: Layer 0 has 42% of weight at alpha=0.5 and 84% at alpha=1.0.
+This extreme skew means variance weighting essentially becomes "give layer 0
+almost everything, starve the rest."
+
+## 3. Alpha=1.0 Summary
+
+**ALREADY TESTED** in quick sweep (200 iters, seed 1):
+- alpha=1.0: PPL = 893.47 (+62% worse than uniform)
+
+Alpha=1.0 was not included in the full sweep because the quick sweep showed
+it was catastrophically bad.
+
+## 4. Inverted Weighting Control (1/S)
+
+**TESTED**: Inverted alpha=0.5 (allocate to low-sensitivity layers)
+
+Results (200 iters, seed 1):
+| Mode      | top_b allocation | Val PPL |
+|-----------|------------------|---------|
+| uniform   | [8]*12           | 552.32* |
+| normal    | [16,12,8,7,7,7,7,6,6,6,6,6] | 532.34* |
+| inverted  | [2,7,11,12,13,13,13,14,14,15,15,15] | 661.73 |
+
+*Note: These were from the original quick sweep. New runs show higher PPL,
+possibly due to hyperparameter AUTO mode overriding batch size.
+
+**INTERPRETATION**: Inverted weighting is WORSE than both uniform and normal.
+Neither direction of variance weighting helps.
+
+## 5. Confounding Variable Discovered
+
+**CRITICAL ISSUE**: The training script has AUTO mode that overrides batch
+size based on GPU memory. This means runs may have had different effective
+batch sizes, making PPL comparisons unreliable.
+
+Evidence:
+- Specified `--batch-size 8` but AUTO mode set `batch=24`
+- Different runs may have used different batch sizes
+
+## Conclusions
+
+1. **Budget mismatch (2%)**: Real but minor issue
+2. **Sensitivity skew**: Layer 0 dominates, causing extreme allocation bias
+3. **Inverted weighting fails**: Neither S nor 1/S improves quality
+4. **Hyperparameter instability**: AUTO mode may have caused confounding
+
+## Final Verdict
+
+The negative result PARTIALLY STANDS with caveats:
+
+1. The sensitivity signal exists and is non-degenerate (layer 0 is 90x more
+   sensitive than layer 11)
+
+2. Neither allocating TO sensitive layers nor AWAY from sensitive layers
+   improves quality
+
+3. HOWEVER: the comparison may be confounded by batch size AUTO mode
+
+## Recommendation
+
+To fully validate the negative result, rerun with:
+- `--compile` disabled OR explicit batch size that bypasses AUTO
+- Matched effective batch sizes across all runs
+- 3 seeds minimum
+
+But given that BOTH normal and inverted weighting hurt performance, the
+fundamental hypothesis (Adam exp_avg_sq predicts useful attention allocation)
+appears falsified.
+

@@ -282,6 +282,11 @@ def create_argument_parser():
         help="Variance weighting exponent (0=uniform, 0.5=sqrt, 1=linear) (RGSA v14)",
     )
     parser.add_argument(
+        "--invert-sensitivity",
+        action="store_true",
+        help="Invert sensitivity weighting (1/S) to protect low-sensitivity layers (RGSA v14)",
+    )
+    parser.add_argument(
         "--output-dir", type=str, default="./output", help="Output directory"
     )
 

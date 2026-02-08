@@ -1,0 +1,99 @@
+{
+  "timestamp": "2026-02-07T12:55:21.726367",
+  "sensitivity_path": "/tmp/rgsa_v14_sensitivity_baseline/checkpoint_iter_100_sensitivity.json",
+  "allocations": {
+    "0.0": {
+      "top_b_base": 8,
+      "top_b_per_layer": null,
+      "total": 96
+    },
+    "0.5": {
+      "top_b_base": 11,
+      "top_b_per_layer": [
+        16,
+        12,
+        8,
+        7,
+        7,
+        7,
+        7,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "total": 94
+    },
+    "1.0": {
+      "top_b_base": 45,
+      "top_b_per_layer": [
+        16,
+        16,
+        10,
+        8,
+        7,
+        7,
+        6,
+        6,
+        5,
+        5,
+        5,
+        5
+      ],
+      "total": 96
+    }
+  },
+  "results": [
+    {
+      "alpha": 0.0,
+      "seed": 1,
+      "val_ppl": 552.32,
+      "elapsed_seconds": 832.2897112369537,
+      "output_dir": "/tmp/rgsa_v14_a2_quick/rgsa_v14_a2_alpha0.0_seed1",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.5,
+      "seed": 1,
+      "val_ppl": 532.34,
+      "elapsed_seconds": 833.0287907123566,
+      "output_dir": "/tmp/rgsa_v14_a2_quick/rgsa_v14_a2_alpha0.5_seed1",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 1.0,
+      "seed": 1,
+      "val_ppl": 893.47,
+      "elapsed_seconds": 829.7231044769287,
+      "output_dir": "/tmp/rgsa_v14_a2_quick/rgsa_v14_a2_alpha1.0_seed1",
+      "success": true,
+      "stderr": ""
+    }
+  ],
+  "summary": {
+    "0.0": {
+      "mean_ppl": 552.32,
+      "std_ppl": 0,
+      "min_ppl": 552.32,
+      "max_ppl": 552.32,
+      "n_runs": 1
+    },
+    "0.5": {
+      "mean_ppl": 532.34,
+      "std_ppl": 0,
+      "min_ppl": 532.34,
+      "max_ppl": 532.34,
+      "n_runs": 1
+    },
+    "1.0": {
+      "mean_ppl": 893.47,
+      "std_ppl": 0,
+      "min_ppl": 893.47,
+      "max_ppl": 893.47,
+      "n_runs": 1
+    }
+  }
+}
