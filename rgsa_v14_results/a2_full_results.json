@@ -1,0 +1,119 @@
+{
+  "timestamp": "2026-02-07T16:18:47.662646",
+  "sensitivity_path": "/tmp/rgsa_v14_sensitivity_baseline/checkpoint_iter_100_sensitivity.json",
+  "allocations": {
+    "0.0": {
+      "top_b_base": 8,
+      "top_b_per_layer": null,
+      "total": 96
+    },
+    "0.5": {
+      "top_b_base": 11,
+      "top_b_per_layer": [
+        16,
+        12,
+        8,
+        7,
+        7,
+        7,
+        7,
+        6,
+        6,
+        6,
+        6,
+        6
+      ],
+      "total": 94
+    },
+    "1.0": {
+      "top_b_base": 45,
+      "top_b_per_layer": [
+        16,
+        16,
+        10,
+        8,
+        7,
+        7,
+        6,
+        6,
+        5,
+        5,
+        5,
+        5
+      ],
+      "total": 96
+    }
+  },
+  "results": [
+    {
+      "alpha": 0.0,
+      "seed": 1,
+      "val_ppl": 241.54,
+      "elapsed_seconds": 2034.8023722171783,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.0_seed1",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.0,
+      "seed": 2,
+      "val_ppl": 364.85,
+      "elapsed_seconds": 2029.043543100357,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.0_seed2",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.0,
+      "seed": 3,
+      "val_ppl": 200.19,
+      "elapsed_seconds": 2029.005921125412,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.0_seed3",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.5,
+      "seed": 1,
+      "val_ppl": 353.84,
+      "elapsed_seconds": 2027.1779396533966,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.5_seed1",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.5,
+      "seed": 2,
+      "val_ppl": 198.14,
+      "elapsed_seconds": 2029.9643182754517,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.5_seed2",
+      "success": true,
+      "stderr": ""
+    },
+    {
+      "alpha": 0.5,
+      "seed": 3,
+      "val_ppl": 431.85,
+      "elapsed_seconds": 2044.190622806549,
+      "output_dir": "/tmp/rgsa_v14_a2_full/rgsa_v14_a2_alpha0.5_seed3",
+      "success": false,
+      "stderr": " inline_container.cc:815] . PytorchStreamWriter failed writing file data/467: file write failed\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/data/knlp/gpt2/train.py\", line 448, in <module>\n    main()\n  File \"/data/knlp/gpt2/train.py\", line 442, in main\n    trainer.train()\n  File \"/data/knlp/gpt2/trainers/vanilla.py\", line 856, in train\n    self.save_checkpoint(final_path)\n  File \"/data/knlp/gpt2/trainers/base.py\", line 371, in save_checkpoint\n    torch.save(checkpoint, checkpoint_path)\n  File \"/home/mcgrof/envs/w7900-ml/lib/python3.12/site-packages/torch/serialization.py\", line 943, in save\n    with _open_zipfile_writer(f) as opened_zipfile:\n         ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/mcgrof/envs/w7900-ml/lib/python3.12/site-packages/torch/serialization.py\", line 784, in __exit__\n    self.file_like.write_end_of_file()\nRuntimeError: [enforce fail at inline_container.cc:626] . unexpected pos 1404966592 vs 1404966484\n"
+    }
+  ],
+  "summary": {
+    "0.0": {
+      "mean_ppl": 268.86,
+      "std_ppl": 85.66221862641665,
+      "min_ppl": 200.19,
+      "max_ppl": 364.85,
+      "n_runs": 3
+    },
+    "0.5": {
+      "mean_ppl": 275.99,
+      "std_ppl": 110.09652583074543,
+      "min_ppl": 198.14,
+      "max_ppl": 353.84,
+      "n_runs": 2
+    }
+  }
+}

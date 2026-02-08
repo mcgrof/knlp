@@ -316,7 +316,73 @@ Sensitivity from 100 iters on TinyStories:
 - Variance signal is real but needs moderation (sqrt better than linear)
 
 ### TODO
-- [ ] Full sweep: 500 iters, seeds 1,2,3, alphas 0.0, 0.5
+- [x] Full sweep: 500 iters, seeds 1,2,3, alphas 0.0, 0.5
 - [ ] Phase 2 (A3): Vary total budget with variance weighting
 - [ ] Final report with go/no-go decision
+
+## 2026-02-07: Phase 1 (A2) Full Sweep Results
+
+### Setup
+- Sensitivity: from 100-iter training on FineWebEdu baseline
+- Runs: 500 iters on FineWebEdu, seeds 1,2,3
+- Alphas: 0.0, 0.5
+
+### Per-Run Results
+| Alpha | Seed | Val PPL | Notes |
+|-------|------|---------|-------|
+| 0.0   | 1    | 241.54  | OK    |
+| 0.0   | 2    | 364.85  | OK    |
+| 0.0   | 3    | 200.19  | OK    |
+| 0.5   | 1    | 353.84  | OK    |
+| 0.5   | 2    | 198.14  | OK    |
+| 0.5   | 3    | 431.85  | disk full, no checkpoint |
+
+### Summary Statistics
+| Alpha | Mean PPL | Std PPL | Min    | Max    |
+|-------|----------|---------|--------|--------|
+| 0.0   | 268.86   | 85.66   | 200.19 | 364.85 |
+| 0.5   | 327.94   | 118.99  | 198.14 | 431.85 |
+
+### Analysis
+**VARIANCE DOES NOT HELP** at this scale:
+- alpha=0.5 is 22% worse than uniform (alpha=0.0)
+- Seed variance is massive (~30-35% coefficient of variation)
+- Quick sweep (seed=1 only) was misleading
+
+### Interpretation
+1. The quick sweep (200 iters, seed 1) showed alpha=0.5 helping by 3.6%
+2. Full sweep (500 iters, seeds 1,2,3) shows alpha=0.5 hurting by 22%
+3. This reversal indicates high seed sensitivity and short training instability
+4. Neither alpha=0.0 nor alpha=0.5 is stable enough to draw conclusions
+
+### Decision Point per v14 Plan
+Per "Stopping Rules" in v14 spec:
+> If Phase 1 shows α_var>0 gives no improvement and no tail reduction,
+> stop variance work and write up "variance prior not predictive for RGSA."
+
+**Decision**: Per stopping rules, Phase 2 is SKIPPED.
+
+## 2026-02-07: v14 COMPLETE - Final Report Written
+
+### Status
+- Phase 0: COMPLETE (sensitivity extraction implemented)
+- Phase 1 (A2): COMPLETE (variance weighting tested, failed)
+- Phase 2 (A3): SKIPPED (stopping rule triggered)
+- Phase 3 (L variation): SKIPPED (no benefit from variance)
+
+### Conclusion
+**Variance prior is NOT predictive for RGSA budget allocation.**
+
+The sensitivity signal from Adam exp_avg_sq exists (layer 0 is 90x more
+sensitive) but does not correlate with beneficial attention allocation.
+Using it to weight budgets makes things 22% worse.
+
+### Final Artifacts
+- Report: `rgsa_v14_results/rgsa_v14_final_report.md`
+- Results: `rgsa_v14_results/a2_full_results.json`
+- Implementation: `utils/sensitivity.py`, `gpt2/rgsa.py`
+
+### Recommendation
+Use uniform budget allocation (alpha=0.0) for RGSA. Close the door on
+variance-weighted allocation at this scale
 

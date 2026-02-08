@@ -232,6 +232,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
 
                 # Compute per-layer top_b from sensitivity if enabled
                 top_b_per_layer = None
+                invert_sensitivity = getattr(self.args, "invert_sensitivity", False)
                 if variance_alpha > 0 and sensitivity_path:
                     try:
                         from utils.sensitivity import compute_top_b_per_layer_from_file
@@ -242,11 +243,13 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                             alpha=variance_alpha,
                             top_b_min=top_b_min,
                             top_b_max=top_b_max,
+                            invert=invert_sensitivity,
                         )
+                        mode = "inverted (1/S)" if invert_sensitivity else "normal"
                         if self.master_process:
                             print(
                                 f"  RGSA v14: Loaded variance-weighted allocation "
-                                f"(alpha={variance_alpha})"
+                                f"(alpha={variance_alpha}, mode={mode})"
                             )
                             print(f"  RGSA v14: top_b_per_layer={top_b_per_layer}")
                     except Exception as e:
