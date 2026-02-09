@@ -359,6 +359,130 @@ def compute_per_layer_top_b_exact(
     return top_b
 
 
+def compute_per_head_top_b_exact(
+    weights: torch.Tensor,
+    total_budget: int,
+    n_layer: int,
+    n_head: int,
+    top_b_min: int = 0,
+    top_b_max: int = 16,
+) -> torch.Tensor:
+    """
+    Compute per-head top_b with EXACT budget matching for RGSA v18.
+
+    Given importance weights w[l,h], allocate integer top_b_{l,h} such that
+    sum(top_b_{l,h}) == total_budget exactly.
+
+    Algorithm:
+    1. Compute raw allocations a_{l,h} = w_{l,h} * total_budget
+    2. Take floor: top_b_{l,h} = floor(a_{l,h})
+    3. Distribute remaining tokens to heads with largest fractional remainders
+    4. Apply min/max caps and rebalance to preserve exact sum
+
+    Args:
+        weights: Per-head weights [n_layer, n_head] (should sum to 1.0)
+        total_budget: Exact total budget sum(top_b_{l,h}) must equal
+        n_layer: Number of layers
+        n_head: Number of heads per layer
+        top_b_min: Minimum top_b per head (default 0 = can drop far-context entirely)
+        top_b_max: Maximum top_b per head
+
+    Returns:
+        Tensor [n_layer, n_head] of integer top_b values with sum == total_budget
+    """
+    assert weights.shape == (n_layer, n_head), f"weights shape mismatch: {weights.shape}"
+
+    # Step 1: Compute raw allocations
+    raw_alloc = weights * total_budget  # [n_layer, n_head]
+
+    # Step 2: Take floor
+    top_b = raw_alloc.floor().int()
+    remainders = raw_alloc - top_b.float()
+
+    # Step 3: Distribute remaining budget to heads with largest remainders
+    remaining = total_budget - top_b.sum().item()
+    if remaining > 0:
+        # Flatten, sort by remainder descending, add 1 to top 'remaining' entries
+        flat_remainders = remainders.view(-1)
+        flat_top_b = top_b.view(-1)
+        _, sorted_indices = torch.sort(flat_remainders, descending=True)
+        for i in range(int(remaining)):
+            flat_top_b[sorted_indices[i]] += 1
+
+    # Step 4: Apply caps and rebalance
+    # First pass: apply caps
+    excess = 0
+    deficit = 0
+    for l in range(n_layer):
+        for h in range(n_head):
+            if top_b[l, h] < top_b_min:
+                deficit += top_b_min - top_b[l, h].item()
+                top_b[l, h] = top_b_min
+            elif top_b[l, h] > top_b_max:
+                excess += top_b[l, h].item() - top_b_max
+                top_b[l, h] = top_b_max
+
+    # Second pass: redistribute excess/deficit
+    if deficit > 0:
+        for l in range(n_layer):
+            for h in range(n_head):
+                if top_b[l, h] > top_b_min and deficit > 0:
+                    take = min(top_b[l, h].item() - top_b_min, deficit)
+                    top_b[l, h] -= take
+                    deficit -= take
+
+    if excess > 0:
+        for l in range(n_layer):
+            for h in range(n_head):
+                if top_b[l, h] < top_b_max and excess > 0:
+                    give = min(top_b_max - top_b[l, h].item(), excess)
+                    top_b[l, h] += give
+                    excess -= give
+
+    # Final check and fixup
+    actual_sum = top_b.sum().item()
+    diff = total_budget - actual_sum
+    if diff > 0:
+        for l in range(n_layer):
+            for h in range(n_head):
+                if top_b[l, h] < top_b_max and diff > 0:
+                    add = min(top_b_max - top_b[l, h].item(), diff)
+                    top_b[l, h] += add
+                    diff -= add
+    elif diff < 0:
+        diff = -diff
+        for l in range(n_layer):
+            for h in range(n_head):
+                if top_b[l, h] > top_b_min and diff > 0:
+                    remove = min(top_b[l, h].item() - top_b_min, diff)
+                    top_b[l, h] -= remove
+                    diff -= remove
+
+    return top_b
+
+
+def compute_head_weights_from_metrics(
+    metrics_tensor: torch.Tensor,
+    gamma: float = 1.0,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    Convert head-level metrics to allocation weights.
+
+    w[l,h] = (metrics[l,h] + eps)^gamma / sum((metrics + eps)^gamma)
+
+    Args:
+        metrics_tensor: Per-head metric values [n_layer, n_head]
+        gamma: Exponent (1.0 = linear, 0.5 = sqrt)
+        eps: Small constant for numerical stability
+
+    Returns:
+        Weights tensor [n_layer, n_head] summing to 1.0
+    """
+    m = (metrics_tensor + eps).pow(gamma)
+    return m / m.sum()
+
+
 def log_sensitivity_to_wandb(
     sensitivity: Dict,
     step: int,

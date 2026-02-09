@@ -81,6 +81,63 @@ class RGSAMetrics:
 
 
 @dataclass
+class HeadMetrics:
+    """Head-level usage metrics for RGSA v18 state-aligned importance signals.
+
+    These metrics are computed at evaluation time to discover which heads
+    rely heavily on far-context access.
+    """
+
+    # Far-attention mass: attention weight sum outside local_window / total
+    # Shape: [n_layer, n_head]
+    far_mass: Optional[torch.Tensor] = None
+
+    # Attention entropy (normalized by log(T)) per head
+    # Shape: [n_layer, n_head]
+    attn_entropy: Optional[torch.Tensor] = None
+
+    # Attention concentration: max attention weight per head
+    # Shape: [n_layer, n_head]
+    max_weight: Optional[torch.Tensor] = None
+
+    # Top-1 mass: sum of attention to top-1 position per query, averaged
+    # Shape: [n_layer, n_head]
+    top1_mass: Optional[torch.Tensor] = None
+
+    def to_dict(self, prefix: str = "head_metrics") -> Dict[str, float]:
+        """Convert to dict for W&B logging (summary stats only)."""
+        d = {}
+        if self.far_mass is not None:
+            d[f"{prefix}/far_mass_mean"] = self.far_mass.mean().item()
+            d[f"{prefix}/far_mass_std"] = self.far_mass.std().item()
+            d[f"{prefix}/far_mass_max"] = self.far_mass.max().item()
+            d[f"{prefix}/far_mass_min"] = self.far_mass.min().item()
+        if self.attn_entropy is not None:
+            d[f"{prefix}/attn_entropy_mean"] = self.attn_entropy.mean().item()
+            d[f"{prefix}/attn_entropy_std"] = self.attn_entropy.std().item()
+        if self.max_weight is not None:
+            d[f"{prefix}/max_weight_mean"] = self.max_weight.mean().item()
+            d[f"{prefix}/max_weight_std"] = self.max_weight.std().item()
+        if self.top1_mass is not None:
+            d[f"{prefix}/top1_mass_mean"] = self.top1_mass.mean().item()
+            d[f"{prefix}/top1_mass_std"] = self.top1_mass.std().item()
+        return d
+
+    def to_json_dict(self) -> Dict[str, List[List[float]]]:
+        """Convert to JSON-serializable dict with full tensors."""
+        d = {}
+        if self.far_mass is not None:
+            d["far_mass"] = self.far_mass.tolist()
+        if self.attn_entropy is not None:
+            d["attn_entropy"] = self.attn_entropy.tolist()
+        if self.max_weight is not None:
+            d["max_weight"] = self.max_weight.tolist()
+        if self.top1_mass is not None:
+            d["top1_mass"] = self.top1_mass.tolist()
+        return d
+
+
+@dataclass
 class RGSAConfig:
     """Configuration for RGSA model."""
 
@@ -1371,6 +1428,127 @@ class GPT2_RGSA(nn.Module):
                 )
 
         return RGSAMetrics()
+
+    @torch.no_grad()
+    def compute_head_metrics(
+        self,
+        idx: torch.Tensor,
+        local_window: Optional[int] = None,
+    ) -> HeadMetrics:
+        """
+        Compute head-level usage metrics for RGSA v18 state-aligned importance.
+
+        These metrics measure how each head uses far-context vs local attention:
+        - far_mass[l,h]: fraction of attention mass outside local_window
+        - attn_entropy[l,h]: normalized attention entropy
+        - max_weight[l,h]: maximum attention weight (concentration)
+        - top1_mass[l,h]: attention mass to top-1 position per query
+
+        Args:
+            idx: [B, T] input token indices
+            local_window: Window size for far/local split (default: config.local_window)
+
+        Returns:
+            HeadMetrics with all per-head measurements
+        """
+        device = idx.device
+        B, T = idx.size()
+
+        if local_window is None:
+            local_window = self.config.local_window
+
+        n_layer = self.config.n_layer
+        n_head = self.config.n_head
+        head_dim = self.config.n_embd // n_head
+
+        # Initialize output tensors
+        far_mass = torch.zeros(n_layer, n_head, device=device)
+        attn_entropy = torch.zeros(n_layer, n_head, device=device)
+        max_weight = torch.zeros(n_layer, n_head, device=device)
+        top1_mass = torch.zeros(n_layer, n_head, device=device)
+
+        # Get embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # Run through layers and compute metrics at each layer
+        for layer_idx, block in enumerate(self.transformer.h):
+            # Get pre-layernorm hidden state
+            h = block.ln_1(x)
+            attn = block.attn
+
+            # Compute Q, K
+            qkv = attn.c_attn(h)
+            q, k, v = qkv.split(attn.n_embd, dim=2)
+
+            # Reshape for multi-head: [B, H, T, D]
+            q = q.view(B, T, n_head, head_dim).transpose(1, 2)
+            k = k.view(B, T, n_head, head_dim).transpose(1, 2)
+
+            # Compute attention scores: [B, H, T, T]
+            scale = 1.0 / math.sqrt(head_dim)
+            scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+
+            # Apply causal mask
+            causal_mask = torch.triu(
+                torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+            )
+            scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+
+            # Softmax to get attention weights: [B, H, T, T]
+            attn_weights = F.softmax(scores, dim=-1)
+
+            # Compute per-head metrics (vectorized)
+            # attn_weights: [B, H, T, T]
+
+            # 1. Far-mass: fraction of attention outside local_window
+            # Create far-mask: True for positions outside local window
+            # For query t, local window is [max(0, t-local_window+1), t]
+            # So far positions are [0, t-local_window] (if t >= local_window)
+            query_idx = torch.arange(T, device=device).view(1, 1, T, 1)
+            key_idx = torch.arange(T, device=device).view(1, 1, 1, T)
+            # Position is "far" if key_idx < query_idx - local_window + 1
+            far_mask = key_idx < (query_idx - local_window + 1)
+            # Also need causal mask: key_idx <= query_idx
+            causal_valid = key_idx <= query_idx
+            far_mask = far_mask & causal_valid  # [1, 1, T, T]
+
+            # Sum far attention mass per head
+            far_sum = (attn_weights * far_mask.float()).sum(dim=(0, 2, 3))  # [H]
+            # Sum total attention mass per head (already 1.0 per query due to softmax)
+            total_sum = attn_weights.sum(dim=(0, 2, 3))  # [H]
+            far_mass[layer_idx] = far_sum / (total_sum + 1e-10)
+
+            # 2. Attention entropy (normalized)
+            eps = 1e-10
+            # Entropy per query: -sum(p * log(p))
+            entropy_per_query = -(attn_weights * torch.log(attn_weights + eps)).sum(dim=-1)  # [B, H, T]
+            # Max entropy for each query position: log(t+1), but clamp min to avoid div-by-zero
+            max_ent = torch.log(torch.arange(1, T + 1, dtype=torch.float, device=device).clamp(min=2))
+            # Normalize and average: [B, H, T] / [T] -> [B, H, T] -> mean over B, T -> [H]
+            normalized_ent = entropy_per_query / max_ent.view(1, 1, T)
+            attn_entropy[layer_idx] = normalized_ent.mean(dim=(0, 2))  # [H]
+
+            # 3. Max weight (concentration): max attention weight per query, averaged
+            max_w = attn_weights.max(dim=-1)[0].mean(dim=(0, 2))  # [H]
+            max_weight[layer_idx] = max_w
+
+            # 4. Top-1 mass (same as max_weight for single position)
+            top1_mass[layer_idx] = max_w
+
+            # Continue forward pass for next layer
+            attn_out, _ = block.attn(h, return_routing_info=False)
+            x = x + attn_out
+            x = x + block.mlp(block.ln_2(x))
+
+        return HeadMetrics(
+            far_mass=far_mass,
+            attn_entropy=attn_entropy,
+            max_weight=max_weight,
+            top1_mass=top1_mass,
+        )
 
     def compute_routing_loss(
         self,
