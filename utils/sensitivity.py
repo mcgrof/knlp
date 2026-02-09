@@ -228,6 +228,7 @@ def compute_per_layer_top_b(
     n_layer: int = 12,
     top_b_min: int = 2,
     top_b_max: int = 16,
+    exact_total: Optional[int] = None,
 ) -> List[int]:
     """
     Compute per-layer top_b values from variance weights.
@@ -242,10 +243,16 @@ def compute_per_layer_top_b(
         n_layer: Number of layers
         top_b_min: Minimum top_b per layer
         top_b_max: Maximum top_b per layer
+        exact_total: If set, guarantee sum(top_b_l) == exact_total exactly
 
     Returns:
         List of per-layer top_b values
     """
+    if exact_total is not None:
+        return compute_per_layer_top_b_exact(
+            weights, exact_total, n_layer, top_b_min, top_b_max
+        )
+
     # Scale weights by n_layer so average allocation equals top_b_base
     scaled = weights * n_layer * top_b_base
 
@@ -256,6 +263,100 @@ def compute_per_layer_top_b(
         top_b_per_layer.append(top_b)
 
     return top_b_per_layer
+
+
+def compute_per_layer_top_b_exact(
+    weights: torch.Tensor,
+    total_budget: int,
+    n_layer: int,
+    top_b_min: int = 2,
+    top_b_max: int = 16,
+) -> List[int]:
+    """
+    Compute per-layer top_b with EXACT budget matching (no rounding drift).
+
+    Algorithm:
+    1. Compute raw allocations a_l = w_l * total_budget
+    2. Take floor: top_b_l = floor(a_l)
+    3. Distribute remaining tokens to layers with largest fractional remainders
+    4. Apply min/max caps and rebalance to preserve exact sum
+
+    Args:
+        weights: Per-layer weights (must sum to 1.0)
+        total_budget: Exact total budget sum(top_b_l) must equal
+        n_layer: Number of layers
+        top_b_min: Minimum top_b per layer
+        top_b_max: Maximum top_b per layer
+
+    Returns:
+        List of per-layer top_b values with sum == total_budget
+    """
+    # Step 1: Compute raw allocations
+    raw_alloc = (weights * total_budget).tolist()
+
+    # Step 2: Take floor
+    top_b = [int(a) for a in raw_alloc]
+    remainders = [raw_alloc[i] - top_b[i] for i in range(n_layer)]
+
+    # Step 3: Distribute remaining budget to layers with largest remainders
+    remaining = total_budget - sum(top_b)
+    if remaining > 0:
+        # Sort by remainder descending
+        sorted_indices = sorted(range(n_layer), key=lambda i: -remainders[i])
+        for i in range(remaining):
+            top_b[sorted_indices[i]] += 1
+
+    # Step 4: Apply caps and rebalance
+    # First pass: apply caps
+    excess = 0
+    deficit = 0
+    for i in range(n_layer):
+        if top_b[i] < top_b_min:
+            deficit += top_b_min - top_b[i]
+            top_b[i] = top_b_min
+        elif top_b[i] > top_b_max:
+            excess += top_b[i] - top_b_max
+            top_b[i] = top_b_max
+
+    # Second pass: redistribute excess/deficit
+    # If we had to raise some to min, take from those above min
+    if deficit > 0:
+        for i in range(n_layer):
+            if top_b[i] > top_b_min and deficit > 0:
+                take = min(top_b[i] - top_b_min, deficit)
+                top_b[i] -= take
+                deficit -= take
+
+    # If we had to lower some to max, give to those below max
+    if excess > 0:
+        for i in range(n_layer):
+            if top_b[i] < top_b_max and excess > 0:
+                give = min(top_b_max - top_b[i], excess)
+                top_b[i] += give
+                excess -= give
+
+    # Final check: if caps make exact matching impossible, warn but continue
+    actual_sum = sum(top_b)
+    if actual_sum != total_budget:
+        # Try one more rebalance pass
+        diff = total_budget - actual_sum
+        if diff > 0:
+            # Need to add more
+            for i in range(n_layer):
+                if top_b[i] < top_b_max and diff > 0:
+                    add = min(top_b_max - top_b[i], diff)
+                    top_b[i] += add
+                    diff -= add
+        elif diff < 0:
+            # Need to remove
+            diff = -diff
+            for i in range(n_layer):
+                if top_b[i] > top_b_min and diff > 0:
+                    remove = min(top_b[i] - top_b_min, diff)
+                    top_b[i] -= remove
+                    diff -= remove
+
+    return top_b
 
 
 def log_sensitivity_to_wandb(

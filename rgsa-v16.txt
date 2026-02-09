@@ -1,0 +1,372 @@
+```text
+rgsa-v16.txt — RGSA v16: Variance Postmortem Cleanup + State-Based Importance (Drop-Impact KL) for Budget Allocation
+
+Context / Ground Truth (v13–v14)
+
+* v13: Learned routing ≈ random routing (no reliable semantic routing). Uniform L²M-style budget schedules failed in stable regimes. RGSA behaved like a training regularizer: it helped unstable training, hurt stable training.
+* v14: Tested Adam exp_avg_sq (diag Fisher proxy in parameter space) as a per-layer sensitivity prior for RGSA budget allocation (top_b per layer).
+  - Uniform allocation [8×12] won.
+  - Variance-weighted (alpha=0.5, 1.0) was worse; inverted (1/S) was also worse.
+  - Postmortem indicated minor confounds: small rounding mismatch (94 vs 96 total) and possible batch-size drift under AUTO mode.
+* Conclusion so far: Parameter-space variance (exp_avg_sq) does NOT predict runtime attention budget importance for RGSA, at least at per-layer granularity.
+
+v16 Mission
+
+Part A: CLEANUP R&D (make v14’s negative result bulletproof)
+Part B: NEXT FRONTIER (new objective): switch from parameter sensitivity to state/usage/impact signals aligned with RGSA’s actual intervention (runtime KV/state sparsification).
+
+We must not loop forever: implement small, verifiable changes, run minimal confirmations, then move on.
+
+Primary Goals (v16)
+
+A) Cleanup: remove confounds and confirm v14 negative result under perfectly matched conditions.
+B) New objective: define and test a new budget-allocation signal that is directly causal for RGSA quality:
+   - “Drop-Impact KL” (oracle-ish, but cheap) as a per-layer/per-head importance label.
+   - Compare impact-based allocation vs uniform allocation at fixed total budget.
+C) Establish whether “misallocation” is fixable with the right signal (state-based), or if uniform is near-optimal.
+
+Non-Goals
+
+* No more Adam exp_avg_sq allocation tuning. That door is closed unless the cleanup reruns contradict results.
+* No new semantic routing training work.
+* No custom kernels, no wall-clock claims beyond algorithmic proxies.
+
+Global Experimental Controls (MANDATORY)
+
+To prevent another human-grade experiment mess:
+
+1) Fix batch size and grad accumulation explicitly; DO NOT use AUTO for any comparison runs.
+2) Fix tokens_seen target per run (not time); terminate when tokens_seen reached.
+3) Fix dataset shard(s) and deterministic sample ordering:
+   - same shard list for all variants
+   - same dataloader seed
+   - same shuffling behavior
+4) Fix context length (start with L=1024).
+5) Log “effective budget” identically:
+   - total tokens/query (mean, p50, p95, p99)
+   - sum(top_b_l) and any renormalization factor
+6) Use the same evaluation schedule and eval set across variants.
+
+W&B must log:
+- val_ppl
+- tokens_seen
+- tokens/query stats (mean/p50/p95/p99)
+- estimated attention FLOPs proxy
+- allocation vector (top_b_l or top_b_{l,h})
+- (for drop-impact) KL metrics and computed importance scores
+
+-----------------------------------------
+PART A — Cleanup R&D: v14 Negative Result Confirmation
+-----------------------------------------
+
+Objective
+Remove confounds (budget mismatch, AUTO batch drift) and re-confirm:
+- variance-weighted allocation hurts
+- inverted allocation hurts
+- uniform wins
+under EXACT matched total budget and deterministic compute/data.
+
+A.1 Implement Exact Budget Matching (No Rounding Drift)
+
+Problem:
+- prior allocations differed by ~2% budget due to rounding (94 vs 96 total).
+- any mismatch weakens claims.
+
+Requirement:
+- implement a renormalization step that guarantees:
+  sum(top_b_l) == TOP_B_TOTAL exactly (for all allocations)
+
+Suggested method:
+1) Compute unnormalized weights w_l (or w_{l,h})
+2) Compute raw allocations a_l = w_l * TOP_B_TOTAL
+3) Take floor: top_b_l = floor(a_l)
+4) Distribute remaining tokens (TOP_B_TOTAL - sum(top_b_l)) to layers with largest fractional remainders
+5) Apply caps (min/max), then re-balance again to preserve exact sum
+
+Log:
+- top_b_l vector
+- sum(top_b_l)
+- any caps hit counts
+
+A.2 Freeze Batch/Compute/Data
+
+Ensure run scripts pin:
+- batch_size
+- grad_accum
+- max_tokens (tokens_seen target)
+- dataset shard list
+- dataloader seed
+- eval seed
+
+Add a single “run_manifest.json” emitted at run start:
+- git commit
+- config hash
+- shard list
+- seeds
+- batch/accum
+- TOP_B_TOTAL
+- chunk_size/local_window
+- tokens_seen target
+
+A.3 Minimal Confirmation Runs (do NOT re-run full grid)
+
+Runs:
+- 1 seed first (seed=1), tokens_seen small but enough for >= 4 eval points
+Configs:
+1) uniform alpha=0.0
+2) variance alpha=0.5
+3) inverted alpha=0.5
+
+Acceptance:
+- if both variance and inverted are still worse at matched budget, stop.
+Optional:
+- add seed=2 only if results are close (they won’t be).
+
+Deliverable:
+- short addendum in rgsa_v16_final_report.md:
+  “v14 negative result confirmed under exact matching and deterministic compute.”
+
+Stopping rule (Cleanup):
+- If cleanup results contradict v14 (variance helps), STOP everything and investigate wiring before proceeding.
+- Otherwise, proceed to Part B.
+
+-----------------------------------------
+PART B — Next Frontier: State-Based Importance (Drop-Impact KL)
+-----------------------------------------
+
+New Objective (based on v13–v14 findings)
+
+We hypothesize:
+- v13/v14 failures are primarily due to misallocation of budget across model pathways.
+- Parameter-space update magnitude (exp_avg_sq) is not the right importance proxy.
+- A correct importance proxy must be defined in terms of RGSA’s intervention: restricting access to past context.
+
+Therefore we will define a causal, state-aligned signal:
+
+DROP-IMPACT IMPORTANCE:
+“How much does output distribution shift if we remove far-context access for a given layer/head?”
+
+We use this to allocate RGSA budget.
+
+B.1 Define Baseline and RGSA Variants for Measurement
+
+We need a stable reference and a stable RGSA config.
+
+Reference:
+- full attention baseline model forward at eval time (teacher logits)
+
+RGSA candidate:
+- uniform RGSA (alpha=0.0) with fixed chunk/local/top_b_total, stable policy
+
+We will NOT train new routers; this is evaluation-time measurement + budget allocation.
+
+B.2 Implement Drop-Impact KL Measurement (Cheap Oracle Label)
+
+At evaluation on a small batch:
+
+For each layer l (start per-layer; head-level optional later):
+
+1) Compute teacher logits with full attention: logits_full
+2) Compute RGSA logits under uniform allocation: logits_rgsa_uniform
+3) Compute DROP variant:
+   - disable far-context retrieval for layer l only (or set top_b_l=0 for that layer, keep local_window)
+   - keep all other layers same as uniform RGSA
+   - compute logits_drop_l
+
+Then compute:
+- KL_full_vs_uniform = KL(softmax(logits_full) || softmax(logits_rgsa_uniform))
+- KL_uniform_vs_drop_l = KL(softmax(logits_rgsa_uniform) || softmax(logits_drop_l))  (or use full as reference consistently)
+
+Define importance score:
+- I_l = mean KL increase when dropping layer l’s far context
+Optionally also track p95 I_l.
+
+Important: Keep overhead bounded:
+- measure I_l only on a small eval subset (e.g., 32 sequences, 1 eval step every N evals)
+- optionally compute I_l for a subset of layers per step (round-robin) and accumulate EMA
+
+Log to W&B:
+- I_l heatmap
+- top-k layers by I_l
+
+B.3 Convert Importance into Budget Allocation
+
+Given fixed TOP_B_TOTAL, allocate per layer:
+
+w_l = I_l^γ / sum(I^γ)
+top_b_l = exact-budget-matching(w_l, TOP_B_TOTAL)
+
+Hyperparameter:
+- γ in {0.5, 1.0} (start with 1.0)
+- Always compare to uniform.
+
+This is the new “importance-weighted allocation,” but now importance is defined causally in state terms.
+
+B.4 Experiments (bounded)
+
+Phase B1: Measure-only validation (no allocation)
+- Run uniform RGSA and compute I_l
+Acceptance:
+- I_l should not be degenerate (not all equal, not random noise)
+- I_l should be at least moderately stable across nearby steps
+
+Phase B2: Allocation test (uniform vs impact-weighted)
+Runs (seeds 1,2,3; tokens_seen matched):
+1) uniform RGSA allocation
+2) impact-weighted allocation (I_l, γ=1.0)
+3) optional: smoothed impact allocation (EMA of I_l)
+
+Metrics:
+- val PPL mean/std
+- tail risk (worst-seed, p95)
+- KL drift vs teacher (if teacher logits are computed anyway, log KL(full || rgsa))
+- tokens/query distribution (must match)
+
+Acceptance:
+- if impact-weighted beats uniform (mean or tails) at fixed budget, misallocation is fixable and we proceed.
+- if it does not, conclude uniform is near-optimal for this RGSA family at this scale.
+
+B.5 Optional Extension (only if per-layer works)
+
+If per-layer impact-weight helps:
+- extend to per-head importance I_{l,h} by dropping head h’s far-context access within a layer.
+- allocate top_b_{l,h} similarly, with strict budget matching.
+- keep it bounded: only 2–3 layers or only top-k heads first.
+
+-----------------------------------------
+Deliverables (v16)
+
+Produce rgsa_v16_results/ with:
+
+- rgsa_v16_final_report.md
+  * Part A: v14 negative result confirmed under exact budget + deterministic compute
+  * Part B: importance definition, measurement method, stability of I_l
+  * Results: uniform vs impact-weighted allocation
+  * Clear go/no-go decision
+
+- a2_cleanup_results.json (Part A)
+- drop_impact_scores.json (I_l across checkpoints/steps)
+- run manifests for reproducibility
+- plots:
+  * I_l heatmap
+  * allocation vectors vs I_l
+  * PPL curves with bands
+  * KL(full||rgsa) curves (if enabled)
+
+-----------------------------------------
+Ralph Wiggum Loop (Claude Code Execution Loop)
+
+You will implement v16 in small steps. After each step you MUST:
+
+1) State exactly what changed (files + key functions)
+2) Run the smallest validation test (single seed, short tokens_seen)
+3) Paste the exact command used
+4) Summarize results tersely (pass/fail + key numbers)
+5) Choose next step per plan and stopping rules
+
+Ralph Wiggum script:
+- “I’m learning!” -> implement one minimal change
+- “My cat’s breath smells like cat food.” -> run tiny sanity check
+- “I’m in danger.” -> if results contradict assumptions, stop and debug
+- “That’s where I saw the leprechaun.” -> only then scale to the next phase
+
+Stop conditions:
+- Part A confirmed (or contradiction found and resolved)
+- Part B uniform vs impact-weighted tested with matched budgets
+- Final report written with explicit decision
+
+Start Now (Checklist)
+
+[ ] Implement exact top_b budget matching (no rounding drift)
+[ ] Remove AUTO mode from comparison scripts; pin batch/accum/shards/tokens_seen
+[ ] Run Part A minimal confirmation (uniform vs variance vs inverted) with exact match
+[ ] Implement drop-impact KL measurement for per-layer far-context disabling
+[ ] Validate I_l stability on a short run
+[ ] Run Part B2 allocation test (uniform vs impact-weighted) across seeds
+[ ] Write report and stop
+```
+
+================================================================================
+PROGRESS LOG
+================================================================================
+
+## 2026-02-08: Part A Cleanup - MAJOR FINDING
+
+### Task 1: Exact Budget Matching - COMPLETE
+
+Implemented `compute_per_layer_top_b_exact()` in utils/sensitivity.py that
+guarantees sum(top_b_l) == total_budget exactly using floor + remainder
+distribution.
+
+Old method had severe budget drift:
+- alpha=0.5: got 71 instead of 96 (-26%)
+- alpha=1.0: got 40 instead of 96 (-58%)
+
+### Task 2: Deterministic Hyperparameters - COMPLETE
+
+Added environment variable RGSA_TOP_B_PER_LAYER to pass explicit per-layer
+allocations, bypassing AUTO mode.
+
+### Task 3: Part A Confirmation Runs - CONTRADICTION FOUND!
+
+Run with exact budget matching (all sum to 96), 200 iters, seed 1:
+
+| Allocation | top_b_per_layer | PPL | vs Uniform |
+|------------|-----------------|-----|------------|
+| uniform | [8]*12 | 701.82 | baseline |
+| variance_0.5 | [16,16,16,12,5,5,5,5,4,4,4,4] | 733.92 | +4.6% (worse) |
+| **inverted_0.5** | [2,4,7,8,8,9,9,9,10,10,10,10] | **553.10** | **-21.2%** (better!) |
+
+### CRITICAL FINDING
+
+**The v14 "negative result" was WRONG due to budget mismatch!**
+
+With exact budget matching:
+- Variance weighting (more to early layers) is still slightly worse (+4.6%)
+- BUT inverted weighting (more to later layers) is **21% better**!
+
+This means:
+1. The sensitivity signal IS useful, but INVERTED
+2. Layer 0 being highly sensitive means it needs LESS routed attention, not more
+3. Later layers (lower sensitivity) benefit from more far-context routing
+
+### Interpretation
+
+The sensitivity (Adam exp_avg_sq) measures parameter update magnitude.
+High sensitivity at layer 0 may indicate:
+- Early layers are learning low-level features rapidly
+- They don't need far-context (works fine with local attention)
+- Later layers need far-context for semantic reasoning
+
+### SEED 2 RESULTS - CONTRADICTION REVERSED!
+
+| Allocation | Seed 1 PPL | Seed 2 PPL | Difference |
+|------------|------------|------------|------------|
+| uniform | 701.82 | 664.76 | 5.5% |
+| inverted_0.5 | 553.10 | 843.27 | **52%** |
+
+Seed 1 showed inverted 21% better, but Seed 2 shows inverted 27% WORSE!
+
+### FINAL CONCLUSION
+
+**Seed variance completely dominates allocation effects at 200 iters.**
+
+The v14 negative result STANDS:
+- Variance weighting doesn't reliably help
+- Inverted weighting doesn't reliably help either
+- The 52% swing across seeds means any single-seed result is unreliable
+
+### Part B: SKIPPED
+
+No point implementing drop-impact KL - the training noise would swamp any signal.
+
+## 2026-02-08: v16 COMPLETE
+
+### Deliverables
+- Report: `rgsa_v16_results/rgsa_v16_final_report.md`
+- Results: `rgsa_v16_results/cleanup_*.json`
+- Exact budget matching: `utils/sensitivity.py`
+
+### Decision
+Close the door on variance-weighted RGSA allocation. Use uniform allocation.
+
