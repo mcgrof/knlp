@@ -230,10 +230,24 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 top_b_min = int(getattr(self.config, "RGSA_TOP_B_MIN", 2))
                 top_b_max = int(getattr(self.config, "RGSA_TOP_B_MAX", 16))
 
-                # Compute per-layer top_b from sensitivity if enabled
+                # Compute per-layer top_b from sensitivity or environment
                 top_b_per_layer = None
                 invert_sensitivity = getattr(self.args, "invert_sensitivity", False)
-                if variance_alpha > 0 and sensitivity_path:
+
+                # v16: Check for explicit top_b_per_layer from environment (deterministic runs)
+                env_top_b = os.environ.get("RGSA_TOP_B_PER_LAYER", "")
+                if env_top_b:
+                    try:
+                        top_b_per_layer = [int(x) for x in env_top_b.split(",")]
+                        if self.master_process:
+                            print(f"  RGSA v16: Using explicit top_b_per_layer from env")
+                            print(f"  RGSA v16: top_b_per_layer={top_b_per_layer}")
+                            print(f"  RGSA v16: total={sum(top_b_per_layer)}")
+                    except Exception as e:
+                        print(f"Warning: Failed to parse RGSA_TOP_B_PER_LAYER: {e}")
+                        top_b_per_layer = None
+
+                if top_b_per_layer is None and variance_alpha > 0 and sensitivity_path:
                     try:
                         from utils.sensitivity import compute_top_b_per_layer_from_file
 
