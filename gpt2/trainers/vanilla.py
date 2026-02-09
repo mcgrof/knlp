@@ -2557,6 +2557,28 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         f"n_chunks: {rgsa_metrics.n_chunks_eff}"
                     )
 
+            # Compute head-level metrics for v18 state-aligned importance
+            try:
+                head_metrics = raw_model.compute_head_metrics(x)
+                head_dict = head_metrics.to_dict()
+                metrics.update(head_dict)
+
+                if self.master_process:
+                    print("--- Head-Level Usage Metrics ---")
+                    fm = head_metrics.far_mass
+                    print(
+                        f"  Far mass: mean={fm.mean():.4f}, "
+                        f"std={fm.std():.4f}, range=[{fm.min():.4f}, {fm.max():.4f}]"
+                    )
+                    ent = head_metrics.attn_entropy
+                    print(
+                        f"  Entropy: mean={ent.mean():.4f}, "
+                        f"std={ent.std():.4f}"
+                    )
+            except Exception as e:
+                if self.master_process:
+                    print(f"Warning: Failed to compute head metrics: {e}")
+
             return metrics
         except Exception as e:
             if self.master_process:
