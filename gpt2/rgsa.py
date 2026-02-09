@@ -138,6 +138,164 @@ class HeadMetrics:
 
 
 @dataclass
+class ImpactMetrics:
+    """Drop-impact KL metrics for RGSA v18 head importance measurement.
+
+    Measures how much output distribution shifts when we drop far-context
+    access for each head. High impact_kl means the head relies heavily on
+    far-context and should receive more RGSA budget.
+    """
+
+    # Drop-impact KL divergence: KL(p_uniform || p_drop_{l,h})
+    # Shape: [n_layer, n_head]
+    impact_kl: Optional[torch.Tensor] = None
+
+    # Number of measurements per head (for EMA tracking)
+    # Shape: [n_layer, n_head]
+    measurement_count: Optional[torch.Tensor] = None
+
+    # Heads measured in most recent pass (for round-robin tracking)
+    # List of (layer_idx, head_idx) tuples
+    measured_heads: Optional[List[Tuple[int, int]]] = None
+
+    def to_dict(self, prefix: str = "impact") -> Dict[str, float]:
+        """Convert to dict for W&B logging (summary stats only)."""
+        d = {}
+        if self.impact_kl is not None:
+            d[f"{prefix}/impact_kl_mean"] = self.impact_kl.mean().item()
+            d[f"{prefix}/impact_kl_std"] = self.impact_kl.std().item()
+            d[f"{prefix}/impact_kl_max"] = self.impact_kl.max().item()
+            d[f"{prefix}/impact_kl_min"] = self.impact_kl.min().item()
+            # Top-5 heads by impact
+            flat = self.impact_kl.view(-1)
+            top5_vals, top5_idx = torch.topk(flat, min(5, flat.numel()))
+            n_head = self.impact_kl.shape[1]
+            for i, (val, idx) in enumerate(zip(top5_vals, top5_idx)):
+                l, h = idx.item() // n_head, idx.item() % n_head
+                d[f"{prefix}/top{i + 1}_head"] = float(l * 100 + h)  # encode as L*100+H
+                d[f"{prefix}/top{i + 1}_kl"] = val.item()
+        return d
+
+    def to_json_dict(self) -> Dict:
+        """Convert to JSON-serializable dict with full tensors."""
+        d = {}
+        if self.impact_kl is not None:
+            d["impact_kl"] = self.impact_kl.tolist()
+        if self.measurement_count is not None:
+            d["measurement_count"] = self.measurement_count.tolist()
+        if self.measured_heads is not None:
+            d["measured_heads"] = self.measured_heads
+        return d
+
+
+class ImpactKLTracker:
+    """Tracker for drop-impact KL measurements with EMA and round-robin scheduling.
+
+    Used for RGSA v18 to efficiently measure head importance over training.
+    """
+
+    def __init__(
+        self,
+        n_layer: int,
+        n_head: int,
+        ema_alpha: float = 0.1,
+        heads_per_eval: int = 8,
+        device: str = "cpu",
+    ):
+        """
+        Initialize impact KL tracker.
+
+        Args:
+            n_layer: Number of layers
+            n_head: Number of heads per layer
+            ema_alpha: EMA smoothing factor (0.1 = slow update, 0.9 = fast)
+            heads_per_eval: Number of heads to measure per evaluation step
+            device: Device for tensors
+        """
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.ema_alpha = ema_alpha
+        self.heads_per_eval = heads_per_eval
+        self.device = device
+
+        # EMA of impact_kl values
+        self.impact_kl_ema = torch.zeros(n_layer, n_head, device=device)
+
+        # Count of measurements per head
+        self.measurement_count = torch.zeros(n_layer, n_head, device=device)
+
+        # Round-robin index for head selection
+        self._rr_index = 0
+        self._all_heads = [
+            (l, h) for l in range(n_layer) for h in range(n_head)
+        ]
+
+    def get_heads_to_measure(self) -> List[Tuple[int, int]]:
+        """Get next batch of heads to measure (round-robin)."""
+        n_total = len(self._all_heads)
+        heads = []
+        for i in range(self.heads_per_eval):
+            idx = (self._rr_index + i) % n_total
+            heads.append(self._all_heads[idx])
+        self._rr_index = (self._rr_index + self.heads_per_eval) % n_total
+        return heads
+
+    def update(self, impact_metrics: "ImpactMetrics"):
+        """Update EMA with new measurements."""
+        if impact_metrics.impact_kl is None:
+            return
+
+        # Move to correct device if needed
+        new_kl = impact_metrics.impact_kl.to(self.device)
+
+        # Update EMA for measured heads only
+        if impact_metrics.measured_heads:
+            for l, h in impact_metrics.measured_heads:
+                if self.measurement_count[l, h] == 0:
+                    # First measurement: use raw value
+                    self.impact_kl_ema[l, h] = new_kl[l, h]
+                else:
+                    # EMA update
+                    self.impact_kl_ema[l, h] = (
+                        self.ema_alpha * new_kl[l, h]
+                        + (1 - self.ema_alpha) * self.impact_kl_ema[l, h]
+                    )
+                self.measurement_count[l, h] += 1
+
+    def get_importance_weights(self, gamma: float = 1.0) -> torch.Tensor:
+        """Get normalized importance weights from EMA values."""
+        eps = 1e-8
+        m = (self.impact_kl_ema + eps).pow(gamma)
+        return m / m.sum()
+
+    def get_metrics(self) -> ImpactMetrics:
+        """Get current EMA values as ImpactMetrics."""
+        return ImpactMetrics(
+            impact_kl=self.impact_kl_ema.clone(),
+            measurement_count=self.measurement_count.clone(),
+            measured_heads=None,  # EMA covers all heads
+        )
+
+    def to_dict(self) -> Dict[str, float]:
+        """Get summary dict for W&B logging."""
+        return self.get_metrics().to_dict(prefix="impact_ema")
+
+    def state_dict(self) -> Dict:
+        """Save state for checkpointing."""
+        return {
+            "impact_kl_ema": self.impact_kl_ema.cpu(),
+            "measurement_count": self.measurement_count.cpu(),
+            "rr_index": self._rr_index,
+        }
+
+    def load_state_dict(self, state: Dict):
+        """Load state from checkpoint."""
+        self.impact_kl_ema = state["impact_kl_ema"].to(self.device)
+        self.measurement_count = state["measurement_count"].to(self.device)
+        self._rr_index = state["rr_index"]
+
+
+@dataclass
 class RGSAConfig:
     """Configuration for RGSA model."""
 
@@ -1549,6 +1707,175 @@ class GPT2_RGSA(nn.Module):
             max_weight=max_weight,
             top1_mass=top1_mass,
         )
+
+    @torch.no_grad()
+    def compute_drop_impact_kl(
+        self,
+        idx: torch.Tensor,
+        heads_to_measure: Optional[List[Tuple[int, int]]] = None,
+        local_window: Optional[int] = None,
+    ) -> ImpactMetrics:
+        """
+        Compute drop-impact KL for head importance measurement.
+
+        For each head (l,h) in heads_to_measure:
+        1. Compute logits with normal attention (baseline)
+        2. Compute logits with head (l,h) restricted to local_window only
+        3. impact_kl[l,h] = KL(softmax(baseline) || softmax(dropped))
+
+        This measures how much each head relies on far-context access.
+
+        Args:
+            idx: [B, T] input token indices
+            heads_to_measure: List of (layer_idx, head_idx) to measure.
+                If None, measures all heads (expensive!).
+            local_window: Window size for "dropped" attention.
+                Defaults to config.local_window.
+
+        Returns:
+            ImpactMetrics with impact_kl values for measured heads.
+        """
+        device = idx.device
+        B, T = idx.size()
+
+        if local_window is None:
+            local_window = self.config.local_window
+
+        n_layer = self.config.n_layer
+        n_head = self.config.n_head
+
+        # If no specific heads, measure all (expensive but complete)
+        if heads_to_measure is None:
+            heads_to_measure = [
+                (l, h) for l in range(n_layer) for h in range(n_head)
+            ]
+
+        # Initialize output
+        impact_kl = torch.zeros(n_layer, n_head, device=device)
+
+        # Step 1: Get baseline logits (full attention)
+        logits_baseline, _ = self.forward(idx)  # [B, T, vocab]
+        probs_baseline = F.softmax(logits_baseline, dim=-1)
+
+        # Step 2: For each head, compute dropped logits
+        # We need to modify attention to restrict that head to local window
+        # This requires a custom forward with per-head masking
+
+        for layer_idx, head_idx in heads_to_measure:
+            # Compute logits with this head restricted to local window
+            logits_dropped = self._forward_with_head_dropped(
+                idx, layer_idx, head_idx, local_window
+            )
+            probs_dropped = F.softmax(logits_dropped, dim=-1)
+
+            # KL divergence: KL(baseline || dropped)
+            # = sum(p_base * log(p_base / p_drop))
+            # = sum(p_base * (log(p_base) - log(p_drop)))
+            eps = 1e-10
+            kl = (
+                probs_baseline
+                * (torch.log(probs_baseline + eps) - torch.log(probs_dropped + eps))
+            ).sum(dim=-1)  # [B, T]
+
+            # Average over batch and sequence
+            impact_kl[layer_idx, head_idx] = kl.mean().item()
+
+        return ImpactMetrics(
+            impact_kl=impact_kl,
+            measurement_count=torch.ones(n_layer, n_head, device=device),
+            measured_heads=heads_to_measure,
+        )
+
+    def _forward_with_head_dropped(
+        self,
+        idx: torch.Tensor,
+        drop_layer: int,
+        drop_head: int,
+        local_window: int,
+    ) -> torch.Tensor:
+        """
+        Forward pass with one head restricted to local_window attention.
+
+        This is used for drop-impact KL measurement. The specified head
+        can only attend within local_window, simulating top_b=0 for that head.
+
+        Args:
+            idx: [B, T] input tokens
+            drop_layer: Layer index of head to drop
+            drop_head: Head index to drop
+            local_window: Attention window for dropped head
+
+        Returns:
+            logits: [B, T, vocab_size]
+        """
+        device = idx.device
+        B, T = idx.size()
+        n_head = self.config.n_head
+        head_dim = self.config.n_embd // n_head
+
+        # Create local-only attention mask for dropped head
+        # Mask is True for positions to MASK OUT (future + far past)
+        local_mask = torch.ones(T, T, dtype=torch.bool, device=device)
+        for t in range(T):
+            # Local window: [max(0, t-local_window+1), t]
+            start = max(0, t - local_window + 1)
+            local_mask[t, start : t + 1] = False  # Allow these positions
+
+        # Run forward with modified attention at drop_layer
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        for layer_idx, block in enumerate(self.transformer.h):
+            h = block.ln_1(x)
+            attn = block.attn
+
+            if layer_idx == drop_layer:
+                # Custom attention with head dropping
+                qkv = attn.c_attn(h)
+                q, k, v = qkv.split(attn.n_embd, dim=2)
+
+                # Reshape for multi-head: [B, H, T, D]
+                q = q.view(B, T, n_head, head_dim).transpose(1, 2)
+                k = k.view(B, T, n_head, head_dim).transpose(1, 2)
+                v = v.view(B, T, n_head, head_dim).transpose(1, 2)
+
+                # Compute attention scores
+                scale = 1.0 / math.sqrt(head_dim)
+                scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # [B, H, T, T]
+
+                # Apply causal mask to all heads
+                causal_mask = torch.triu(
+                    torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+                )
+                scores = scores.masked_fill(
+                    causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+                )
+
+                # Apply local-only mask to dropped head
+                # local_mask is True for positions to mask out
+                scores[:, drop_head] = scores[:, drop_head].masked_fill(
+                    local_mask.unsqueeze(0), float("-inf")
+                )
+
+                # Softmax and apply to values
+                attn_weights = F.softmax(scores, dim=-1)
+                attn_out = torch.matmul(attn_weights, v)  # [B, H, T, D]
+
+                # Reshape and project
+                attn_out = attn_out.transpose(1, 2).contiguous().view(B, T, -1)
+                attn_out = attn.resid_dropout(attn.c_proj(attn_out))
+            else:
+                # Normal attention
+                attn_out, _ = attn(h, return_routing_info=False)
+
+            x = x + attn_out
+            x = x + block.mlp(block.ln_2(x))
+
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)
+        return logits
 
     def compute_routing_loss(
         self,
