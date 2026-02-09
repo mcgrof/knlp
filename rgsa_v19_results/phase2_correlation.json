@@ -1,0 +1,44 @@
+{
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "n_seeds": 3,
+  "signal_stats": {
+    "query_norm": {
+      "mean_corr": -0.1359867763486813,
+      "std_corr": 0.0684647069951141,
+      "mean_auc": 0.37657021604938273,
+      "std_auc": 0.06107192029157129,
+      "sign_flip": false,
+      "stable": true
+    },
+    "boundary_pressure": {
+      "mean_corr": 0.5826204057657759,
+      "std_corr": 0.014988288497058752,
+      "mean_auc": 0.7085725308641976,
+      "std_auc": 0.023272535367519814,
+      "sign_flip": false,
+      "stable": true
+    },
+    "attn_variance": {
+      "mean_corr": -0.137592328760556,
+      "std_corr": 0.07150109366297028,
+      "mean_auc": 0.5352777777777779,
+      "std_auc": 0.017886731375139745,
+      "sign_flip": false,
+      "stable": true
+    },
+    "local_entropy": {
+      "mean_corr": 0.030172882731669407,
+      "std_corr": 0.035225485086734565,
+      "mean_auc": 0.5162268518518519,
+      "std_auc": 0.0379961474674093,
+      "sign_flip": true,
+      "stable": false
+    }
+  },
+  "best_stable_signal": "boundary_pressure",
+  "verdict": "VIABLE_SIGNAL"
+}
