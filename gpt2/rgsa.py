@@ -296,6 +296,228 @@ class ImpactKLTracker:
 
 
 @dataclass
+class ConditionalImpactMetrics:
+    """Query-conditional impact metrics for RGSA v19.
+
+    Unlike v18's static head importance, this tracks impact at specific
+    (position, head) combinations to detect conditional necessity.
+    """
+
+    # ΔKL values at sampled positions: [n_samples, 3] where 3 = (layer, head, kl)
+    sample_kls: Optional[torch.Tensor] = None
+
+    # Position bucket statistics: [n_layer, n_head, 3] for early/mid/late
+    bucket_kl_ema: Optional[torch.Tensor] = None
+
+    # Positions sampled in this measurement
+    sampled_positions: Optional[List[int]] = None
+
+    # Heads measured
+    measured_heads: Optional[List[Tuple[int, int]]] = None
+
+    def to_dict(self, prefix: str = "cond_impact") -> Dict[str, float]:
+        """Convert to dict for W&B logging."""
+        d = {}
+        if self.bucket_kl_ema is not None:
+            # Per-bucket stats
+            for bucket_idx, bucket_name in enumerate(["early", "mid", "late"]):
+                bucket_vals = self.bucket_kl_ema[:, :, bucket_idx]
+                d[f"{prefix}/{bucket_name}_mean"] = bucket_vals.mean().item()
+                d[f"{prefix}/{bucket_name}_std"] = bucket_vals.std().item()
+                d[f"{prefix}/{bucket_name}_max"] = bucket_vals.max().item()
+
+            # Cross-bucket variance (should be high if conditional)
+            across_bucket_var = self.bucket_kl_ema.var(dim=2).mean().item()
+            d[f"{prefix}/cross_bucket_variance"] = across_bucket_var
+        return d
+
+
+class ConditionalImpactTracker:
+    """Tracker for query-conditional impact KL measurements (RGSA v19).
+
+    Measures ΔKL(l,h | x,t) at specific positions to detect whether
+    head importance is fundamentally conditional or effectively uniform.
+    """
+
+    def __init__(
+        self,
+        n_layer: int,
+        n_head: int,
+        seq_len: int,
+        ema_alpha: float = 0.1,
+        heads_per_eval: int = 4,
+        positions_per_eval: int = 4,
+        n_buckets: int = 3,  # early, mid, late
+        device: str = "cpu",
+    ):
+        """
+        Initialize conditional impact tracker.
+
+        Args:
+            n_layer: Number of layers
+            n_head: Number of heads per layer
+            seq_len: Sequence length for bucket boundaries
+            ema_alpha: EMA smoothing factor
+            heads_per_eval: Heads to measure per eval step
+            positions_per_eval: Positions to sample per eval step
+            n_buckets: Number of position buckets (3 = early/mid/late)
+            device: Device for tensors
+        """
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.seq_len = seq_len
+        self.ema_alpha = ema_alpha
+        self.heads_per_eval = heads_per_eval
+        self.positions_per_eval = positions_per_eval
+        self.n_buckets = n_buckets
+        self.device = device
+
+        # EMA of impact_kl per (head, bucket)
+        # Shape: [n_layer, n_head, n_buckets]
+        self.bucket_kl_ema = torch.zeros(n_layer, n_head, n_buckets, device=device)
+
+        # Count of measurements per (head, bucket)
+        self.measurement_count = torch.zeros(n_layer, n_head, n_buckets, device=device)
+
+        # Raw samples for correlation analysis
+        # Store recent (position, layer, head, kl) tuples
+        self.sample_buffer: List[Tuple[int, int, int, float]] = []
+        self.max_samples = 1000
+
+        # Round-robin index for head selection
+        self._rr_index = 0
+        self._all_heads = [
+            (l, h) for l in range(n_layer) for h in range(n_head)
+        ]
+
+        # Bucket boundaries
+        self._bucket_bounds = self._compute_bucket_bounds()
+
+    def _compute_bucket_bounds(self) -> List[Tuple[int, int]]:
+        """Compute position ranges for each bucket."""
+        bucket_size = self.seq_len // self.n_buckets
+        bounds = []
+        for i in range(self.n_buckets):
+            start = i * bucket_size
+            end = (i + 1) * bucket_size if i < self.n_buckets - 1 else self.seq_len
+            bounds.append((start, end))
+        return bounds
+
+    def _position_to_bucket(self, pos: int) -> int:
+        """Map position to bucket index."""
+        for i, (start, end) in enumerate(self._bucket_bounds):
+            if start <= pos < end:
+                return i
+        return self.n_buckets - 1  # Default to last bucket
+
+    def get_heads_to_measure(self) -> List[Tuple[int, int]]:
+        """Get next batch of heads to measure (round-robin)."""
+        n_total = len(self._all_heads)
+        heads = []
+        for i in range(self.heads_per_eval):
+            idx = (self._rr_index + i) % n_total
+            heads.append(self._all_heads[idx])
+        self._rr_index = (self._rr_index + self.heads_per_eval) % n_total
+        return heads
+
+    def sample_positions(self, local_window: int) -> List[int]:
+        """Sample positions to measure, biased away from start."""
+        import random
+
+        # Sample from positions where far-context exists (t > local_window)
+        valid_start = min(local_window + 1, self.seq_len - 1)
+        valid_end = self.seq_len
+
+        if valid_end <= valid_start:
+            return [self.seq_len - 1]
+
+        # Sample uniformly from valid range
+        positions = random.sample(
+            range(valid_start, valid_end),
+            min(self.positions_per_eval, valid_end - valid_start),
+        )
+        return sorted(positions)
+
+    def update(
+        self,
+        position: int,
+        layer_idx: int,
+        head_idx: int,
+        delta_kl: float,
+    ):
+        """Update tracker with a single (position, head) measurement."""
+        bucket = self._position_to_bucket(position)
+
+        # EMA update
+        count = self.measurement_count[layer_idx, head_idx, bucket]
+        if count == 0:
+            self.bucket_kl_ema[layer_idx, head_idx, bucket] = delta_kl
+        else:
+            self.bucket_kl_ema[layer_idx, head_idx, bucket] = (
+                self.ema_alpha * delta_kl
+                + (1 - self.ema_alpha) * self.bucket_kl_ema[layer_idx, head_idx, bucket]
+            )
+        self.measurement_count[layer_idx, head_idx, bucket] += 1
+
+        # Store raw sample for correlation analysis
+        self.sample_buffer.append((position, layer_idx, head_idx, delta_kl))
+        if len(self.sample_buffer) > self.max_samples:
+            self.sample_buffer = self.sample_buffer[-self.max_samples :]
+
+    def get_metrics(self) -> ConditionalImpactMetrics:
+        """Get current metrics."""
+        return ConditionalImpactMetrics(
+            bucket_kl_ema=self.bucket_kl_ema.clone(),
+            sampled_positions=None,
+            measured_heads=None,
+        )
+
+    def get_bucket_statistics(self) -> Dict[str, torch.Tensor]:
+        """Get per-bucket statistics for analysis."""
+        stats = {}
+        bucket_names = ["early", "mid", "late"]
+        for i, name in enumerate(bucket_names):
+            bucket_vals = self.bucket_kl_ema[:, :, i]
+            stats[f"{name}_mean"] = bucket_vals.mean()
+            stats[f"{name}_std"] = bucket_vals.std()
+            stats[f"{name}_max"] = bucket_vals.max()
+        return stats
+
+    def is_conditional(self, threshold: float = 2.0) -> bool:
+        """
+        Test if impact is conditional (varies significantly by position).
+
+        Returns True if late bucket has significantly higher KL than early.
+        """
+        early_mean = self.bucket_kl_ema[:, :, 0].mean()
+        late_mean = self.bucket_kl_ema[:, :, -1].mean()
+        early_std = self.bucket_kl_ema[:, :, 0].std()
+
+        # Late should be significantly higher than early
+        return (late_mean - early_mean) > threshold * (early_std + 1e-8)
+
+    def to_dict(self) -> Dict[str, float]:
+        """Get summary dict for W&B logging."""
+        return self.get_metrics().to_dict()
+
+    def state_dict(self) -> Dict:
+        """Save state for checkpointing."""
+        return {
+            "bucket_kl_ema": self.bucket_kl_ema.cpu(),
+            "measurement_count": self.measurement_count.cpu(),
+            "rr_index": self._rr_index,
+            "sample_buffer": self.sample_buffer[-100:],  # Keep recent samples
+        }
+
+    def load_state_dict(self, state: Dict):
+        """Load state from checkpoint."""
+        self.bucket_kl_ema = state["bucket_kl_ema"].to(self.device)
+        self.measurement_count = state["measurement_count"].to(self.device)
+        self._rr_index = state["rr_index"]
+        self.sample_buffer = state.get("sample_buffer", [])
+
+
+@dataclass
 class RGSAConfig:
     """Configuration for RGSA model."""
 
@@ -1785,6 +2007,71 @@ class GPT2_RGSA(nn.Module):
             measurement_count=torch.ones(n_layer, n_head, device=device),
             measured_heads=heads_to_measure,
         )
+
+    @torch.no_grad()
+    def compute_conditional_impact_kl(
+        self,
+        idx: torch.Tensor,
+        positions: List[int],
+        heads_to_measure: List[Tuple[int, int]],
+        local_window: Optional[int] = None,
+    ) -> Dict[Tuple[int, int, int], float]:
+        """
+        Compute query-conditional ΔKL(l,h | x,t) at specific positions.
+
+        This is the Phase 0 oracle for RGSA v19. It measures how much
+        restricting head (l,h) to local_window affects the output distribution
+        at specific query positions.
+
+        Args:
+            idx: [B, T] input token indices
+            positions: List of position indices to measure
+            heads_to_measure: List of (layer_idx, head_idx) to measure
+            local_window: Window size for dropped attention
+
+        Returns:
+            Dict mapping (position, layer, head) -> delta_kl
+        """
+        device = idx.device
+        B, T = idx.size()
+
+        if local_window is None:
+            local_window = self.config.local_window
+
+        results = {}
+
+        # Step 1: Get baseline logits (full attention)
+        # Pass targets=idx to get full sequence logits (not just last token)
+        logits_baseline, _ = self.forward(idx, targets=idx)  # [B, T, vocab]
+        probs_baseline = F.softmax(logits_baseline, dim=-1)  # [B, T, vocab]
+
+        # Step 2: For each (position, head), compute ΔKL
+        for layer_idx, head_idx in heads_to_measure:
+            # Compute logits with this head restricted to local window
+            logits_dropped = self._forward_with_head_dropped(
+                idx, layer_idx, head_idx, local_window
+            )
+            probs_dropped = F.softmax(logits_dropped, dim=-1)  # [B, T, vocab]
+
+            # Compute KL at each requested position
+            eps = 1e-10
+            for pos in positions:
+                if pos >= T:
+                    continue
+
+                # KL(baseline[pos] || dropped[pos])
+                p_base = probs_baseline[:, pos, :]  # [B, vocab]
+                p_drop = probs_dropped[:, pos, :]  # [B, vocab]
+
+                kl = (
+                    p_base * (torch.log(p_base + eps) - torch.log(p_drop + eps))
+                ).sum(dim=-1)  # [B]
+
+                # Average over batch
+                delta_kl = kl.mean().item()
+                results[(pos, layer_idx, head_idx)] = delta_kl
+
+        return results
 
     def _forward_with_head_dropped(
         self,
