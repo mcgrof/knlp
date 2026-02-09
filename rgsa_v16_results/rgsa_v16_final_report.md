@@ -1,5 +1,64 @@
 # RGSA v16 Final Report: Variance Postmortem Cleanup
 
+## Why Variance / Fisher Priors Fail for RGSA
+
+The variance-weighted allocation hypothesis (v14-v16) tested whether Adam
+exp_avg_sq (a diagonal Fisher proxy in parameter space) could guide RGSA
+budget allocation. The hypothesis is now **closed** with a definitive
+negative result.
+
+### v14 Results (Budget Mismatch)
+
+Original v14 testing with allocation drift:
+
+| Allocation | Total Budget | PPL | vs Uniform |
+|------------|--------------|-----|------------|
+| uniform | 96 | baseline | - |
+| variance α=0.5 | 71 (-26%) | worse | confounded |
+| variance α=1.0 | 40 (-58%) | worse | confounded |
+| inverted | varies | worse | confounded |
+
+### v16 Results (Exact Budget Matching)
+
+With exact budget matching (all sum to 96):
+
+**Seed 1:**
+
+| Allocation | top_b_per_layer | PPL | vs Uniform |
+|------------|-----------------|-----|------------|
+| uniform | [8]*12 | 701.82 | baseline |
+| variance_0.5 | [16,16,16,12,5,5,5,5,4,4,4,4] | 733.92 | +4.6% |
+| inverted_0.5 | [2,4,7,8,8,9,9,9,10,10,10,10] | 553.10 | -21.2% |
+
+**Seed 2:**
+
+| Allocation | PPL | vs Uniform |
+|------------|-----|------------|
+| uniform | 664.76 | baseline |
+| inverted_0.5 | 843.27 | +26.9% |
+
+### The 52% Swing
+
+The direction of effect flips by seed:
+- Seed 1: inverted allocation 21% **better**
+- Seed 2: inverted allocation 27% **worse**
+- Cross-seed variance for inverted: **52%**
+
+Signal-to-noise is inverted. This hypothesis is closed.
+
+### Why Parameter-Space Signals Fail
+
+1. **Parameter-space sensitivity ≠ runtime attention importance**: Adam
+   exp_avg_sq measures update geometry during training, not the utility of
+   KV states for downstream attention.
+
+2. **Adam exp_avg_sq measures gradient magnitude, not state value**: High
+   sensitivity at layer 0 means parameters are changing rapidly, not that
+   the layer needs more far-context access.
+
+3. **Any apparent gains are unstable and non-causal**: The 21% improvement
+   in seed 1 was a statistical artifact that reversed completely in seed 2.
+
 ## Executive Summary
 
 **v14 negative result CONFIRMED under exact budget matching.**
@@ -24,24 +83,7 @@ Fixed the budget mismatch issue from v14:
 
 ### A.3 Confirmation Runs
 
-#### Seed 1 Results (200 iters)
-
-| Allocation | top_b_per_layer | PPL | vs Uniform |
-|------------|-----------------|-----|------------|
-| uniform | [8]*12 | 701.82 | baseline |
-| variance_0.5 | [16,16,16,12,5,5,5,5,4,4,4,4] | 733.92 | +4.6% |
-| inverted_0.5 | [2,4,7,8,8,9,9,9,10,10,10,10] | 553.10 | -21.2% |
-
-Initial interpretation: Inverted weighting is dramatically better!
-
-#### Seed 2 Results (200 iters)
-
-| Allocation | PPL | vs Uniform |
-|------------|-----|------------|
-| uniform | 664.76 | baseline |
-| inverted_0.5 | 843.27 | +26.9% |
-
-**CRITICAL**: Seed 2 shows inverted is WORSE, not better!
+See "v16 Results" section above for complete tables.
 
 ### A.4 Seed Variance Analysis
 
@@ -56,6 +98,24 @@ This 52% swing across seeds means any single-seed result is unreliable.
 Given that seed variance dominates allocation effects at 200 iters, there is
 no point implementing drop-impact KL measurement. The signal would be swamped
 by training noise.
+
+## Lessons Learned
+
+- **RGSA acts on runtime state; allocation signals must be state-aligned.**
+  Parameter-space sensitivity (gradients, Fisher) measures learning dynamics,
+  not the value of attending to far context at inference time.
+
+- **Uniform allocation is a strong baseline due to symmetry and stability.**
+  Without a reliable importance signal, equal distribution avoids the risk of
+  starving important layers.
+
+- **Seed stability is a first-class metric, not a secondary concern.** A
+  method that shows 21% improvement on one seed and 27% degradation on another
+  has zero practical value. Multi-seed validation should precede any claims.
+
+- **Negative results are valid outcomes and inform future design.** Closing
+  this hypothesis prevents future wasted effort on parameter-space priors for
+  RGSA allocation.
 
 ## Conclusions
 
@@ -87,6 +147,32 @@ by training noise.
    - State-based signals (attention patterns, not parameter updates)
 
 4. **Close the door** on variance-weighted RGSA allocation research.
+
+## Closed Hypotheses
+
+The following hypotheses have been tested and closed. They will not be
+revisited without fundamentally new evidence.
+
+| Version | Hypothesis | Outcome |
+|---------|------------|---------|
+| v13 | Learned routing captures semantics | Learned routing ≈ random routing |
+| v13 | L2M-style budget schedules | Failed in stable training regimes |
+| v14-v16 | Fisher/Adam variance allocation | Signal-to-noise inverted; 52% seed variance |
+
+## Next Viable Directions (Not Implemented)
+
+The following directions are noted for future exploration. No experiments or
+code changes are proposed here.
+
+- **State-based importance (drop-impact KL)**: Measure output distribution
+  shift when removing far-context access per layer. This aligns the importance
+  signal with RGSA's actual intervention.
+
+- **Usage-based signals**: Attention mass concentration, entropy of attention
+  patterns, or other runtime statistics that reflect how layers actually use
+  far context.
+
+These directions remain unexplored and may be revisited in future work.
 
 ## Files and Artifacts
 
