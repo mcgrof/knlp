@@ -1,0 +1,67 @@
+{
+  "iters": 200,
+  "seed": 1,
+  "total_budget": 96,
+  "allocations": {
+    "uniform": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8
+    ],
+    "variance_0.5": [
+      16,
+      16,
+      16,
+      12,
+      5,
+      5,
+      5,
+      5,
+      4,
+      4,
+      4,
+      4
+    ],
+    "inverted_0.5": [
+      2,
+      4,
+      7,
+      8,
+      8,
+      9,
+      9,
+      9,
+      10,
+      10,
+      10,
+      10
+    ]
+  },
+  "results": [
+    {
+      "name": "uniform",
+      "ppl": 701.82,
+      "vs_uniform": 0.0
+    },
+    {
+      "name": "variance_0.5",
+      "ppl": 733.92,
+      "vs_uniform": 4.6
+    },
+    {
+      "name": "inverted_0.5",
+      "ppl": 553.1,
+      "vs_uniform": -21.2
+    }
+  ],
+  "conclusion": "CONTRADICTION: inverted_0.5 beats uniform by 21.2% with exact budget matching"
+}

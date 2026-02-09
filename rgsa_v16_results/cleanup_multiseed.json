@@ -1,0 +1,11 @@
+{
+  "seed_1": {
+    "uniform": 701.82,
+    "variance_0.5": 733.92,
+    "inverted_0.5": 553.1
+  },
+  "seed_2": {
+    "uniform": 664.76,
+    "inverted_0.5": 843.27
+  }
+}
