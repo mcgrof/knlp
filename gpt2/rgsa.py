@@ -518,6 +518,180 @@ class ConditionalImpactTracker:
 
 
 @dataclass
+class ConditionalSignals:
+    """Cheap conditional signals for RGSA v19 Phase 1.
+
+    These signals are computable during forward pass, before paying
+    far-context cost. They are candidates for predicting when
+    far-context access materially affects output.
+    """
+
+    # Local-only logit entropy: high entropy -> uncertain -> might need far-context
+    # Shape: [B, T]
+    local_entropy: Optional[torch.Tensor] = None
+
+    # Query norm: high norm might indicate information-seeking queries
+    # Shape: [B, T]
+    query_norm: Optional[torch.Tensor] = None
+
+    # Query norm spike: ratio to EMA (high spike -> unusual query)
+    # Shape: [B, T]
+    query_spike: Optional[torch.Tensor] = None
+
+    # Attention score variance across heads (high var -> disagreement)
+    # Shape: [B, T]
+    attn_score_variance: Optional[torch.Tensor] = None
+
+    # Attention mass at local boundary (high -> wants to escape local)
+    # Shape: [B, T, n_head]
+    boundary_pressure: Optional[torch.Tensor] = None
+
+    # Per-head query-key dot product at boundary
+    # Shape: [B, T, n_head]
+    boundary_qk_score: Optional[torch.Tensor] = None
+
+    def to_dict(self, prefix: str = "cond_signal") -> Dict[str, float]:
+        """Convert to dict for W&B logging (summary stats)."""
+        d = {}
+        if self.local_entropy is not None:
+            d[f"{prefix}/local_entropy_mean"] = self.local_entropy.mean().item()
+            d[f"{prefix}/local_entropy_std"] = self.local_entropy.std().item()
+        if self.query_norm is not None:
+            d[f"{prefix}/query_norm_mean"] = self.query_norm.mean().item()
+        if self.query_spike is not None:
+            d[f"{prefix}/query_spike_mean"] = self.query_spike.mean().item()
+            d[f"{prefix}/query_spike_max"] = self.query_spike.max().item()
+        if self.attn_score_variance is not None:
+            d[f"{prefix}/attn_var_mean"] = self.attn_score_variance.mean().item()
+        if self.boundary_pressure is not None:
+            d[f"{prefix}/boundary_pressure_mean"] = self.boundary_pressure.mean().item()
+        return d
+
+
+class ConditionalSignalComputer:
+    """Computes cheap conditional signals for RGSA v19.
+
+    These signals predict when far-context access is necessary,
+    without actually performing far-context attention.
+    """
+
+    def __init__(self, n_layer: int, n_head: int, n_embd: int, device: str = "cpu"):
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.n_embd = n_embd
+        self.head_dim = n_embd // n_head
+        self.device = device
+
+        # EMA of query norms for spike detection
+        self.query_norm_ema = torch.ones(n_layer, device=device)
+        self.ema_alpha = 0.1
+
+    def compute_signals(
+        self,
+        hidden_states: torch.Tensor,
+        c_attn_weight: torch.Tensor,
+        c_attn_bias: Optional[torch.Tensor],
+        local_window: int,
+        layer_idx: int,
+    ) -> ConditionalSignals:
+        """
+        Compute conditional signals from hidden states.
+
+        Args:
+            hidden_states: [B, T, n_embd] hidden states before attention
+            c_attn_weight: [n_embd, 3*n_embd] attention projection weight
+            c_attn_bias: [3*n_embd] attention projection bias (optional)
+            local_window: Size of local attention window
+            layer_idx: Current layer index
+
+        Returns:
+            ConditionalSignals with computed values
+        """
+        B, T, _ = hidden_states.shape
+        device = hidden_states.device
+
+        # Project to Q, K, V
+        qkv = F.linear(hidden_states, c_attn_weight, c_attn_bias)
+        q, k, v = qkv.split(self.n_embd, dim=2)
+
+        # Reshape for multi-head: [B, H, T, D]
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        # 1. Query norm
+        query_norm = q.norm(dim=-1).mean(dim=1)  # [B, T]
+
+        # 2. Query spike (ratio to EMA)
+        ema_val = self.query_norm_ema[layer_idx]
+        query_spike = query_norm / (ema_val + 1e-8)
+
+        # Update EMA
+        with torch.no_grad():
+            self.query_norm_ema[layer_idx] = (
+                self.ema_alpha * query_norm.mean().item()
+                + (1 - self.ema_alpha) * self.query_norm_ema[layer_idx]
+            )
+
+        # 3. Attention score variance across heads
+        # Compute scores for local positions only
+        scale = 1.0 / math.sqrt(self.head_dim)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # [B, H, T, T]
+
+        # Causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        scores = scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+
+        # Variance across heads at each position
+        attn_probs = F.softmax(scores, dim=-1)  # [B, H, T, T]
+        attn_score_variance = attn_probs.var(dim=1).sum(dim=-1)  # [B, T]
+
+        # 4. Boundary pressure: attention mass trying to go beyond local_window
+        boundary_pressure = torch.zeros(B, T, self.n_head, device=device)
+        for t in range(local_window, T):
+            # Positions beyond local window: [0, t - local_window)
+            far_end = t - local_window
+            if far_end > 0:
+                # Sum of attention to far positions
+                boundary_pressure[:, t, :] = attn_probs[:, :, t, :far_end].sum(dim=-1)
+
+        # 5. Boundary Q-K score: score at local boundary position
+        boundary_qk_score = torch.zeros(B, T, self.n_head, device=device)
+        for t in range(local_window, T):
+            boundary_pos = t - local_window
+            if boundary_pos >= 0:
+                boundary_qk_score[:, t, :] = scores[:, :, t, boundary_pos]
+
+        return ConditionalSignals(
+            local_entropy=None,  # Requires full forward, skip for now
+            query_norm=query_norm,
+            query_spike=query_spike,
+            attn_score_variance=attn_score_variance,
+            boundary_pressure=boundary_pressure,
+            boundary_qk_score=boundary_qk_score,
+        )
+
+    def compute_local_entropy(
+        self,
+        logits: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute entropy of output distribution.
+
+        Args:
+            logits: [B, T, vocab] model output logits
+
+        Returns:
+            entropy: [B, T] entropy at each position
+        """
+        probs = F.softmax(logits, dim=-1)
+        log_probs = F.log_softmax(logits, dim=-1)
+        entropy = -(probs * log_probs).sum(dim=-1)
+        return entropy
+
+
+@dataclass
 class RGSAConfig:
     """Configuration for RGSA model."""
 
@@ -1929,6 +2103,121 @@ class GPT2_RGSA(nn.Module):
             max_weight=max_weight,
             top1_mass=top1_mass,
         )
+
+    @torch.no_grad()
+    def compute_conditional_signals(
+        self,
+        idx: torch.Tensor,
+        positions: Optional[List[int]] = None,
+        local_window: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute all conditional signals for Phase 1 analysis.
+
+        Returns per-position signals that might predict when far-context
+        attention is necessary.
+
+        Args:
+            idx: [B, T] input token indices
+            positions: Specific positions to return (None = all)
+            local_window: Local window size (default: config.local_window)
+
+        Returns:
+            Dict with signal tensors keyed by signal name:
+            - 'query_norm': [B, T, n_layer] query vector norms
+            - 'boundary_pressure': [B, T, n_layer, n_head] attention at boundary
+            - 'attn_variance': [B, T, n_layer] variance across heads
+            - 'local_entropy': [B, T] entropy of output distribution
+        """
+        device = idx.device
+        B, T = idx.size()
+
+        if local_window is None:
+            local_window = self.config.local_window
+
+        n_layer = self.config.n_layer
+        n_head = self.config.n_head
+        head_dim = self.config.n_embd // n_head
+
+        # Initialize accumulators
+        query_norms = torch.zeros(B, T, n_layer, device=device)
+        boundary_pressures = torch.zeros(B, T, n_layer, n_head, device=device)
+        attn_variances = torch.zeros(B, T, n_layer, device=device)
+
+        # Get embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.transformer.wte(idx)
+        pos_emb = self.transformer.wpe(pos)
+        x = self.transformer.drop(tok_emb + pos_emb)
+
+        # Run through layers
+        for layer_idx, block in enumerate(self.transformer.h):
+            h = block.ln_1(x)
+            attn = block.attn
+
+            # Compute Q, K
+            qkv = attn.c_attn(h)
+            q, k, v = qkv.split(attn.n_embd, dim=2)
+
+            # Reshape: [B, H, T, D]
+            q = q.view(B, T, n_head, head_dim).transpose(1, 2)
+            k = k.view(B, T, n_head, head_dim).transpose(1, 2)
+
+            # Query norms: average across heads
+            query_norms[:, :, layer_idx] = q.norm(dim=-1).mean(dim=1)  # [B, T]
+
+            # Attention scores
+            scale = 1.0 / math.sqrt(head_dim)
+            scores = torch.matmul(q, k.transpose(-2, -1)) * scale  # [B, H, T, T]
+
+            # Causal mask
+            causal_mask = torch.triu(
+                torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+            )
+            scores = scores.masked_fill(
+                causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+            )
+
+            # Softmax
+            attn_probs = F.softmax(scores, dim=-1)
+
+            # Attention variance across heads
+            attn_variances[:, :, layer_idx] = attn_probs.var(dim=1).sum(dim=-1)
+
+            # Boundary pressure: attention mass outside local_window
+            for t in range(local_window, T):
+                far_end = t - local_window
+                if far_end > 0:
+                    boundary_pressures[:, t, layer_idx, :] = attn_probs[
+                        :, :, t, :far_end
+                    ].sum(dim=-1)
+
+            # Continue forward
+            attn_out, _ = block.attn(h, return_routing_info=False)
+            x = x + attn_out
+            x = x + block.mlp(block.ln_2(x))
+
+        # Compute output entropy
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)  # [B, T, vocab]
+        probs = F.softmax(logits, dim=-1)
+        log_probs = F.log_softmax(logits, dim=-1)
+        local_entropy = -(probs * log_probs).sum(dim=-1)  # [B, T]
+
+        # Filter to specific positions if requested
+        if positions is not None:
+            positions = torch.tensor(positions, device=device)
+            query_norms = query_norms[:, positions, :]
+            boundary_pressures = boundary_pressures[:, positions, :, :]
+            attn_variances = attn_variances[:, positions, :]
+            local_entropy = local_entropy[:, positions]
+
+        return {
+            "query_norm": query_norms,
+            "boundary_pressure": boundary_pressures,
+            "attn_variance": attn_variances,
+            "local_entropy": local_entropy,
+        }
 
     @torch.no_grad()
     def compute_drop_impact_kl(
