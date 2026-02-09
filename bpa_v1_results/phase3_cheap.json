@@ -1,0 +1,27 @@
+{
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "n_seeds": 3,
+  "predictors": {
+    "local_boundary_gap": {
+      "mean_roc_auc": 0.504805965135781,
+      "std_roc_auc": 0.004951736079295224
+    },
+    "local_entropy": {
+      "mean_roc_auc": 0.45695320035204473,
+      "std_roc_auc": 0.006310335709708779
+    },
+    "escape_proxy": {
+      "mean_roc_auc": 0.05075240523726852,
+      "std_roc_auc": 0.009430423239357765
+    }
+  },
+  "best_predictor": {
+    "name": "local_boundary_gap",
+    "mean_roc_auc": 0.504805965135781,
+    "passes_threshold": false
+  }
+}
