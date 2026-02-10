@@ -139,7 +139,7 @@ def evaluate_gate(
     with torch.no_grad():
         x = torch.tensor(features, dtype=torch.float32)
         logits = model(x).numpy()
-        probs = 1.0 / (1.0 + np.exp(-logits))  # sigmoid
+        probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -500, 500)))  # sigmoid
 
     results = {}
 
