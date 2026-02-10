@@ -55,6 +55,25 @@ from utils.kv_accounting import compute_kv_accounting
 from utils.ra_value_tracker import RAValueTracker, load_surgical_heads
 
 
+def interpolate_pos_embed(wpe_weight: torch.Tensor, target_len: int) -> torch.Tensor:
+    """Interpolate position embeddings to target length.
+
+    Uses linear interpolation in embedding space. This is the standard
+    approach for extending GPT-2 beyond its trained context length
+    (similar to RoPE scaling but for absolute position embeddings).
+    """
+    src_len, d_model = wpe_weight.shape
+    if target_len <= src_len:
+        return wpe_weight[:target_len]
+
+    # Interpolate: map target positions back to source positions
+    wpe_float = wpe_weight.float().unsqueeze(0).permute(0, 2, 1)  # [1, d, src]
+    wpe_interp = F.interpolate(
+        wpe_float, size=target_len, mode="linear", align_corners=True
+    )
+    return wpe_interp.permute(0, 2, 1).squeeze(0).to(wpe_weight.dtype)
+
+
 @dataclass
 class V6RunMetrics:
     """Extended metrics for BPA v6 runs."""
@@ -619,6 +638,7 @@ def run_v6_grid(
 
             ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
             vocab_size = ckpt["model"]["transformer.wte.weight"].shape[0]
+            ckpt_block_size = ckpt["model"]["transformer.wpe.weight"].shape[0]
 
             cfg = BPAConfig(
                 n_layer=12,
@@ -634,6 +654,14 @@ def run_v6_grid(
             model_sd = {
                 k.replace("_orig_mod.", ""): v for k, v in ckpt["model"].items()
             }
+            # Interpolate position embeddings if needed
+            if seq_len > ckpt_block_size:
+                wpe_key = "transformer.wpe.weight"
+                model_sd[wpe_key] = interpolate_pos_embed(model_sd[wpe_key], seq_len)
+                print(
+                    f"  Position embedding interpolated: "
+                    f"{ckpt_block_size} -> {seq_len}"
+                )
             model.load_state_dict(model_sd, strict=False)
             model.eval()
             del ckpt
