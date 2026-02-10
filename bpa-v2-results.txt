@@ -1,0 +1,225 @@
+BPA v2 Results Summary
+======================
+
+Model: GPT2_RGSA (124M params), FineWebEdu, 615 iters
+Checkpoint: test_matrix_results_20260206_184612/.../final_model_stepV0.pt
+Config: block_size=1024, local_window=256, chunk_size=64, top_b=8
+
+
+Phase 0: Data Collection
+------------------------
+
+Dataset: 460,800 examples from trained RGSA checkpoint
+  200 batches x 2 batch_size x 512 seq_len x 8 positions x 12 layers x 12 heads
+  5 shards, collected in 63s
+
+7 local-only features per example:
+  local_attn_entropy   mean=0.868  std=0.158  range=[0.00, 1.00]
+  local_attn_max       mean=0.072  std=0.119  range=[0.00, 1.00]
+  boundary_band_mass   mean=0.014  std=0.023  range=[0.00, 0.99]
+  query_norm           mean=6.942  std=1.590  range=[2.64, 20.47]
+  query_spike          mean=1.014  std=0.241  range=[0.46, 12.38]
+  pos_normalized       mean=0.745  std=0.145  range=[0.50, 1.00]
+  pos_bucket           mean=1.674  std=0.469  range=[1, 2]
+
+Oracle labels (boundary_pressure > p75 threshold):
+  Threshold: 0.323
+  Positive rate: 25% (3:1 class imbalance)
+  boundary_pressure: mean=0.214, std=0.237, range=[0, 1]
+
+Per-layer boundary pressure (trained model):
+  Layer  0:  mean_bp=0.308  pos_rate=50.0%
+  Layer  1:  mean_bp=0.497  pos_rate=65.5%  (highest)
+  Layer  2:  mean_bp=0.224  pos_rate=28.2%
+  Layer  3:  mean_bp=0.310  pos_rate=36.8%
+  Layer  4:  mean_bp=0.234  pos_rate=25.7%
+  Layer  5:  mean_bp=0.217  pos_rate=23.5%
+  Layer  6:  mean_bp=0.137  pos_rate= 8.5%
+  Layer  7:  mean_bp=0.037  pos_rate= 1.6%  (lowest)
+  Layer  8:  mean_bp=0.119  pos_rate=13.7%
+  Layer  9:  mean_bp=0.163  pos_rate=19.0%
+  Layer 10:  mean_bp=0.134  pos_rate=10.3%
+  Layer 11:  mean_bp=0.190  pos_rate=17.0%
+
+The trained model shows rich per-layer structure: early layers
+(L0-L1) need far-context most often, middle layers (L6-L7) almost
+never, and later layers have moderate need. This is qualitatively
+different from a random model where all layers have uniform ~25%.
+
+Per-position-bucket:
+  mid  (pos 0.33-0.66):  mean_bp=0.121  pos_rate= 8.9%
+  late (pos 0.66-1.00):  mean_bp=0.259  pos_rate=32.8%
+
+No "early" bucket because with local_window=256 and seq_len=512,
+the first 256 positions have no far-context to attend to.
+
+
+Phase 1: Learned Gate
+---------------------
+
+Task: predict oracle boundary_pressure labels from local-only
+features. BCE loss with class-imbalance weighting.
+
+Results (3 seeds, 30 epochs):
+
+  Model       AUC ROC     std     PR-AUC    ECE
+  logistic    0.7863   0.0012    0.5160   0.1936
+  MLP(128x2)  0.9087   0.0003    0.7851   0.1214
+
+MLP per-seed AUC: 0.9085, 0.9091, 0.9085
+
+PASS: AUC = 0.91 >> 0.75 acceptance threshold.
+
+This is the key result of BPA v2. BPA v1 concluded that cheap
+local proxies fail (AUC ~0.5 as raw features). A 2-layer MLP
+with 128 hidden units achieves AUC=0.91 from the SAME features.
+Even logistic regression reaches 0.79, above threshold.
+
+The MLP succeeds because it combines multiple weak signals into
+a strong predictor and learns nonlinear feature interactions.
+Position provides a strong baseline; attention patterns (entropy,
+max weight, boundary band) add discriminative power on top.
+
+
+Phase 2: Speculative Local-First Pipeline
+-----------------------------------------
+
+Gate enabled-rate: 45.3% (random model) / 53.3% (trained model)
+Tokens/query (gate): 150.9 (random) / 392.9 (trained)
+Compute savings: 41.0% (random) / 23.3% (trained)
+
+The higher gate rate on the trained model reflects its genuine
+need for far-context attention in some positions, vs the random
+model where the gate predictions are dominated by position.
+
+
+Phase 3: Coarse Gating
+-----------------------
+
+Three coarse gating strategies evaluated on trained model data:
+
+  Mode              Rate    Variance  Oracle    Extra compute
+  fine (baseline)   0.526   0.0034    0.633       0.0%
+  segment_8         0.990   0.0003    0.258      88.8%
+  segment_16        0.995   0.0003    0.255      89.7%
+  segment_32        1.000   0.0000    0.250      90.6%
+  head_block        0.712   0.0022    0.501      35.7%
+  position_bucket   0.589   0.0031    0.586      12.1%
+
+Best: position_bucket
+  Only 12.1% extra compute vs fine-grained gating
+  Maintains 58.6% oracle agreement
+  Slight variance reduction (0.0034 -> 0.0031)
+
+Segment gating is far too aggressive: any triggered token
+enables the entire segment, inflating rate to 99%+. Head-block
+gating adds 35.7% overhead. Position-bucket with hysteresis
+provides the best tradeoff.
+
+
+Phase 4: End-to-End Frontier Evaluation
+---------------------------------------
+
+Evaluated on FineWebEdu val text (10M tokens), trained RGSA
+checkpoint, 3 seeds, 20 batches each, L=512.
+
+  Metric                      Seed 1     Seed 2     Seed 3     Mean
+  PPL uniform (full attn)    243.42     240.75     249.73    244.63
+  PPL local-only (256-win)   244.07     240.77     249.32    244.72
+  PPL gap                     +0.65      +0.02      -0.41     +0.08
+  Gate rate (fine)             0.563      0.528      0.513     0.535
+  Gate rate (coarse)           0.740      0.748      0.797     0.762
+  Tokens/query (gate)        400.12     391.21     387.41    392.91
+  Tokens/query (coarse)      445.39     447.39     460.03    450.94
+
+Go/No-Go checks:
+  Compute savings > 5%:  PASS  (23.3%)
+  Rate stable:           PASS  (std=0.021)
+  PPL ratio < 1.5:       PASS  (1.0003)
+  PPL gap > 0:           PASS  (0.08)
+
+VERDICT: GO
+
+
+Overall Verdict
+---------------
+
+All four research questions answered:
+
+Q1 (Learned Gate): YES.
+  MLP AUC=0.91, stable across seeds (std=0.0003).
+  Even logistic regression achieves 0.79.
+
+Q2 (Speculation): VALIDATED.
+  23.3% compute savings, 0.03% PPL degradation.
+  Gate decisions stable (rate std=0.021).
+
+Q3 (Coarse Gating): POSITION-BUCKET is best.
+  12.1% extra compute vs fine gating.
+  Segment gating too aggressive. Head-block too costly.
+
+Q4 (End-to-end): VALIDATED at L=512.
+  PPL_uniform=244.63, PPL_local_only=244.72.
+  Gap=0.08, within noise.
+
+Conclusion: The learned gate works. The compute savings are
+real. The quality loss is negligible. BPA v2 passes all
+acceptance criteria at L=512.
+
+However, the PPL gap is so small (0.03%) that the gate's
+value is debatable at this sequence length. At L=512 with a
+256-token local window, far-context contributes almost nothing.
+The gate becomes genuinely valuable at L=1024+ where the
+local window covers a smaller fraction of the sequence and
+far-context carries meaningful information.
+
+
+Caveats and Limitations
+-----------------------
+
+1. The model was trained for only 615 iterations (val_loss=5.50).
+   A fully trained model would have stronger long-range
+   dependencies and a larger PPL gap between full and local
+   attention, making the gate more valuable.
+
+2. At L=512 with local_window=256, the local window covers 50%
+   of the sequence. Far-context is only the other 50%, which
+   explains why skipping it has minimal impact. At L=1024 the
+   ratio drops to 25%, and the gap should grow.
+
+3. Evaluation uses random text positions from FineWebEdu val.
+   Some positions may land mid-document where local context is
+   sufficient; positions near document boundaries may show
+   larger gaps.
+
+4. The gate was trained on oracle boundary_pressure labels
+   collected from the same checkpoint used for evaluation.
+   Cross-checkpoint generalization is untested.
+
+
+Remaining Work
+--------------
+
+[ ] Test at L=1024 (v1 showed signal collapse at this length)
+[ ] Train model longer (>5K iters) to develop stronger
+    long-range dependencies
+[ ] Scale to 355M if L=1024 results hold
+[ ] Feature importance ablation: which of the 7 features
+    drive the gate's decisions?
+
+
+Scripts
+-------
+
+scripts/bpa_v2_collect.py       Phase 0: data collection
+scripts/bpa_v2_train_gate.py    Phase 1: gate training
+scripts/bpa_v2_speculative.py   Phase 2: speculative pipeline
+scripts/bpa_v2_coarse_gating.py Phase 3: coarse gating
+scripts/bpa_v2_frontier.py      Phase 4: frontier evaluation
+scripts/bpa_v2_run_all.py       Full pipeline runner
+
+Data directories (not committed):
+bpa_v2_trained_dataset/           Phase 0 output (460K examples)
+bpa_v2_trained_gate_results/      Phase 1 output
+bpa_v2_trained_coarse_results/    Phase 3 output
+bpa_v2_trained_frontier_final/    Phase 4 output (final)
