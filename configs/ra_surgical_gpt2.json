@@ -1,0 +1,18 @@
+{
+  "model": "gpt2",
+  "n_layer": 12,
+  "n_head": 12,
+  "head_dim": 64,
+  "selection_method": "FIM-guided: middle layers (5-8) with high max_eigenvalue (concentrated attention patterns)",
+  "heads": [
+    {"layer": 5, "head": 2, "max_eigenvalue": 72.0, "category": "moderate"},
+    {"layer": 5, "head": 3, "max_eigenvalue": 87.7, "category": "moderate"},
+    {"layer": 5, "head": 4, "max_eigenvalue": 83.3, "category": "moderate"},
+    {"layer": 6, "head": 0, "max_eigenvalue": 84.9, "category": "moderate"},
+    {"layer": 6, "head": 8, "max_eigenvalue": 68.9, "category": "good"},
+    {"layer": 6, "head": 11, "max_eigenvalue": 85.7, "category": "moderate"},
+    {"layer": 7, "head": 0, "max_eigenvalue": 73.2, "category": "good"},
+    {"layer": 7, "head": 8, "max_eigenvalue": 58.5, "category": "good"}
+  ],
+  "rationale": "Selected 8 heads from layers 5-8 (middle layers with FIM trace 0.72-0.82). Heads chosen for high max_eigenvalue (>55), indicating concentrated attention patterns where inbound mass carries the most signal. Heads with high max_eigenvalue have dominant principal components, meaning their attention distributions are structured and the 'who attended to me' column-sum is most informative. Avoid early layers (0-3, FIM trace >0.85, critical for feature extraction) and very late layers (10-11, high trace under RA). Category 'moderate' indicates mid-range compressibility -- ideal for RA value extraction."
+}
