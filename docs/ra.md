@@ -229,6 +229,112 @@ geometry.
 - No quality degradation acceptable
 - Simplicity is paramount
 
+## Surgical Placement for GPT-2 (FIM-guided)
+
+RA is applied to a small subset of (layer, head) pairs selected using FIM
+trace analysis. The surgical set is defined in
+`configs/ra_surgical_gpt2.json`.
+
+### Selected heads
+
+Eight heads from layers 5-8, selected for high `max_eigenvalue` in the FIM
+spectrum (concentrated attention patterns where inbound mass is most
+informative):
+
+| Layer | Head | max_eigenvalue | Category |
+|-------|------|---------------|----------|
+| 5 | 2 | 72.0 | moderate |
+| 5 | 3 | 87.7 | moderate |
+| 5 | 4 | 83.3 | moderate |
+| 6 | 0 | 84.9 | moderate |
+| 6 | 8 | 68.9 | good |
+| 6 | 11 | 85.7 | moderate |
+| 7 | 0 | 73.2 | good |
+| 7 | 8 | 58.5 | good |
+
+### Selection rationale
+
+FIM trace analysis shows layers 0-3 have high trace (>0.85), indicating
+critical feature extraction that should not be disturbed. Layers 5-8 have
+moderate trace (0.72-0.82) and are safe targets. Within those layers, heads
+with high `max_eigenvalue` have concentrated attention distributions: a
+dominant principal component means the attention pattern is structured, so
+the column-sum "who attended to me" signal carries clear information about
+token importance.
+
+### No-double-compute constraint
+
+RA statistics must be computed from attention weights already produced in
+the forward pass. There is no second attention call. For causal attention
+with weight matrix `A[t,i]` (softmax output), the inbound mass for
+position `i` in head `(l,h)` is:
+
+```
+in_mass[l,h,i] = sum_{t > i} A[l,h,t,i]
+```
+
+This is a column sum of the lower-triangular attention matrix. It requires
+materializing attention weights for the surgical heads only (not using
+`F.scaled_dot_product_attention` which fuses and discards them). For 8 out
+of 144 total heads, this overhead is minimal.
+
+## RA Statistics
+
+### Token-level inbound mass
+
+For a surgical head `(l,h)` with causal attention probabilities
+`A[l,h,t,i]`, the inbound mass at position `i` measures how much later
+tokens attended to it:
+
+```
+in_mass[l,h,i] = sum_{t=i+1}^{T-1} A[l,h,t,i]
+```
+
+High inbound mass means position `i` is a key reference point for
+downstream predictions. Low inbound mass means position `i` is largely
+ignored by later tokens.
+
+### Chunk-level aggregation
+
+Map each position `i` to its chunk `c = i // chunk_size`:
+
+```
+chunk_mass[l,h,c] = sum_{i in chunk c} in_mass[l,h,i]
+```
+
+### Aggregate across surgical set
+
+Average across all surgical heads:
+
+```
+RA_value_chunk[c] = mean_{(l,h) in S} chunk_mass[l,h,c]
+```
+
+### EMA smoothing
+
+For streaming applications, maintain an exponential moving average:
+
+```
+RA_value_chunk = (1 - gamma) * RA_value_chunk_prev + gamma * current
+```
+
+## When RA Is Meaningful
+
+RA is defined relative to standard causal attention. The Q@K.T vs K@Q.T
+distinction matters when queries and keys play asymmetric roles (as in
+causal attention where each token queries all previous tokens).
+
+In symmetric setups where attention is already bidirectional, swapping Q
+and K is a no-op and RA provides no additional information. The "surgical"
+RA approach avoids this by collecting only the inbound mass statistic
+(column sum of A), which is well-defined for any causal attention matrix
+regardless of whether the underlying mechanism uses RA alternation.
+
+The inbound mass signal is useful as a "value" or "retention" signal for
+cache management: chunks with high inbound mass are frequently referenced
+by later tokens and should be retained; chunks with low inbound mass are
+rarely attended and can be evicted with minimal quality loss.
+
 ## References
 
 - Qwen3 SDPA Gating: "Gated Attention for Large Language Models" (NeurIPS 2025 Oral)
@@ -236,3 +342,4 @@ geometry.
 - FIM Analysis: `docs/FIM.md`
 - Implementation: `gpt2/model_knlp.py`
 - Pseudocode: `docs/gpt2_ra_pseudocode.md`
+- Surgical head set: `configs/ra_surgical_gpt2.json`
