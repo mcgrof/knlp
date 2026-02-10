@@ -76,8 +76,13 @@ def load_v4_gate(gate_dir: str, seed: int = 1):
     else:
         n_features = 7
 
-    gate = V4Gate(n_features, hidden=256, n_layers=3)
-    gate.load_state_dict(torch.load(ckpt_path, map_location="cpu", weights_only=True))
+    # Detect architecture from checkpoint
+    ckpt_sd = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+    first_weight = ckpt_sd["net.0.weight"]
+    hidden = first_weight.shape[0]
+    n_layers_gate = sum(1 for k in ckpt_sd if k.endswith(".weight")) - 1
+    gate = V4Gate(n_features, hidden=hidden, n_layers=n_layers_gate)
+    gate.load_state_dict(ckpt_sd)
     gate.eval()
 
     stats = np.load(stats_path)
