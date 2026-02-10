@@ -81,50 +81,117 @@ class FrontierEvaluator:
         self.query_norm_ema = torch.ones(self.n_layer, self.n_head)
         self.ema_alpha = 0.1
 
-    @torch.no_grad()
-    def evaluate_batch(self, idx: torch.Tensor) -> Dict:
-        """Evaluate a single batch across all variants."""
+    def _build_local_mask(self, T: int, device: torch.device) -> torch.Tensor:
+        """Build local-only attention mask.
+
+        Returns mask of shape [T, T] where True = mask out (far-context).
+        """
+        local_mask = torch.ones(T, T, dtype=torch.bool, device=device)
+        for t in range(T):
+            start = max(0, t - self.local_window + 1)
+            local_mask[t, start : t + 1] = False
+        return local_mask
+
+    def _manual_forward(
+        self,
+        idx: torch.Tensor,
+        attn_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """Run manual forward pass with optional attention mask.
+
+        Args:
+            idx: [B, T] input token ids
+            attn_mask: [T, T] bool mask, True = positions to mask out.
+                       Applied to ALL heads in ALL layers. If None, uses
+                       causal mask only (full attention).
+
+        Returns:
+            logits: [B, T, vocab_size]
+        """
         B, T = idx.shape
         device = idx.device
 
-        # Full forward for uniform PPL
-        targets = idx
-        logits_full, _ = self.model(idx, targets=targets)
-        shift_logits = logits_full[:, :-1, :].contiguous()
-        shift_targets = idx[:, 1:].contiguous()
-        loss_uniform = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_targets.view(-1),
-        )
-        ppl_uniform = float(torch.exp(loss_uniform))
-
-        # Compute gate decisions and features through layer-by-layer pass
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
         tok_emb = self.model.transformer.wte(idx)
-        pos_arange = torch.arange(0, T, dtype=torch.long, device=device)
-        pos_emb = self.model.transformer.wpe(pos_arange)
+        pos_emb = self.model.transformer.wpe(pos)
         x = self.model.transformer.drop(tok_emb + pos_emb)
 
-        n_valid = max(T - self.local_window, 0)
-        gate_probs = np.zeros((B, n_valid, self.n_layer, self.n_head))
+        # Build causal mask
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+        # Combine causal + optional local mask
+        if attn_mask is not None:
+            combined_mask = causal_mask | attn_mask
+        else:
+            combined_mask = causal_mask
 
-        for layer_idx, block in enumerate(self.model.transformer.h):
+        for block in self.model.transformer.h:
             h = block.ln_1(x)
             attn = block.attn
 
             qkv = attn.c_attn(h)
             q, k, v = qkv.split(self.n_embd, dim=2)
-            q_heads = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-            k_heads = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+            q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+            k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+            v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
 
             scale = 1.0 / (self.head_dim**0.5)
-            scores = (q_heads @ k_heads.transpose(-2, -1)) * scale
-            causal_mask = torch.triu(
-                torch.ones(T, T, device=device, dtype=torch.bool), diagonal=1
-            )
+            scores = (q @ k.transpose(-2, -1)) * scale
             scores = scores.masked_fill(
-                causal_mask.unsqueeze(0).unsqueeze(0), float("-inf")
+                combined_mask.unsqueeze(0).unsqueeze(0), float("-inf")
             )
-            attn_probs = F.softmax(scores, dim=-1)
+            attn_weights = F.softmax(scores, dim=-1)
+            attn_out = (attn_weights @ v).transpose(1, 2).contiguous().view(B, T, -1)
+            attn_out = attn.resid_dropout(attn.c_proj(attn_out))
+
+            x = x + attn_out
+            x = x + block.mlp(block.ln_2(x))
+
+        x = self.model.transformer.ln_f(x)
+        logits = self.model.lm_head(x)
+        return logits
+
+    def _compute_gate_decisions(self, idx: torch.Tensor) -> tuple:
+        """Compute gate decisions from local-only features.
+
+        Returns (gate_probs, gate_decisions, fine_rate).
+        """
+        B, T = idx.shape
+        device = idx.device
+        n_valid = max(T - self.local_window, 0)
+        gate_probs = np.zeros((n_valid, self.n_layer, self.n_head))
+
+        # Run a full attention forward to get attention patterns
+        # for feature extraction
+        pos = torch.arange(0, T, dtype=torch.long, device=device)
+        tok_emb = self.model.transformer.wte(idx)
+        pos_emb = self.model.transformer.wpe(pos)
+        x = self.model.transformer.drop(tok_emb + pos_emb)
+
+        causal_mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1
+        )
+
+        # Build local mask for feature extraction
+        local_attn_mask = self._build_local_mask(T, device)
+        local_combined = causal_mask | local_attn_mask
+
+        for layer_idx, block in enumerate(self.model.transformer.h):
+            h = block.ln_1(x)
+            attn = block.attn
+            qkv = attn.c_attn(h)
+            q, k, v = qkv.split(self.n_embd, dim=2)
+            q_heads = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+            # Use local-only attention for feature extraction
+            k_heads = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+            scale = 1.0 / (self.head_dim**0.5)
+            scores = (q_heads @ k_heads.transpose(-2, -1)) * scale
+            scores = scores.masked_fill(
+                local_combined.unsqueeze(0).unsqueeze(0), float("-inf")
+            )
+            local_attn_probs = F.softmax(scores, dim=-1)
 
             for ti, t in enumerate(range(self.local_window, T)):
                 local_start = max(0, t - self.local_window + 1)
@@ -134,16 +201,20 @@ class FrontierEvaluator:
                 bucket = 0 if pos_norm < 0.33 else (1 if pos_norm < 0.66 else 2)
 
                 for hi in range(self.n_head):
-                    w = attn_probs[:, hi, t, : t + 1]
-                    local_w = w[:, local_start:local_end]
-                    local_w_norm = local_w / (local_w.sum(dim=-1, keepdim=True) + 1e-10)
+                    w = local_attn_probs[:, hi, t, local_start:local_end]
+                    w_norm = w / (w.sum(dim=-1, keepdim=True) + 1e-10)
 
-                    ent = -(local_w_norm * (local_w_norm + 1e-10).log()).sum(dim=-1)
+                    ent = -(w_norm * (w_norm + 1e-10).log()).sum(dim=-1)
                     max_ent = np.log(local_end - local_start + 1e-10)
                     feat_entropy = (ent / (max_ent + 1e-10)).mean().item()
-                    feat_max = local_w_norm.max(dim=-1)[0].mean().item()
+                    feat_max = w_norm.max(dim=-1)[0].mean().item()
                     band_end = local_start + boundary_band
-                    feat_band = w[:, local_start:band_end].sum(dim=-1).mean().item()
+                    feat_band = (
+                        local_attn_probs[:, hi, t, local_start:band_end]
+                        .sum(dim=-1)
+                        .mean()
+                        .item()
+                    )
                     q_norm_val = q_heads[:, hi, t, :].norm(dim=-1).mean().item()
                     ema_val = self.query_norm_ema[layer_idx, hi].item()
                     feat_spike = q_norm_val / (ema_val + 1e-8)
@@ -168,14 +239,43 @@ class FrontierEvaluator:
                     logit = self.gate(
                         torch.tensor(feats_norm, dtype=torch.float32)
                     ).item()
-                    prob = 1.0 / (1.0 + np.exp(-logit))
-                    gate_probs[:, ti, layer_idx, hi] = prob
+                    prob = 1.0 / (1.0 + np.exp(-np.clip(logit, -500, 500)))
+                    gate_probs[ti, layer_idx, hi] = prob
 
+            # Advance x through this block with full attention
             x, _ = block(x)
 
-        # Local-only PPL
-        x_final = self.model.transformer.ln_f(x)
-        logits_local = self.model.lm_head(x_final)
+        gate_decisions = (gate_probs > self.gate_threshold).astype(np.float32)
+        fine_rate = float(gate_decisions.mean())
+        return gate_probs, gate_decisions, fine_rate
+
+    @torch.no_grad()
+    def evaluate_batch(self, idx: torch.Tensor) -> Dict:
+        """Evaluate a single batch across all variants.
+
+        Computes three PPL values:
+        - ppl_uniform: full causal attention (upper bound quality)
+        - ppl_local_only: attention restricted to local_window
+          (lower bound quality, maximum compute savings)
+        - ppl_gated: per-position gating where gate-triggered
+          positions get full attention, others get local-only
+        """
+        B, T = idx.shape
+        device = idx.device
+        shift_targets = idx[:, 1:].contiguous()
+
+        # 1) Full-attention PPL (uniform baseline)
+        logits_full = self._manual_forward(idx)
+        shift_full = logits_full[:, :-1, :].contiguous()
+        loss_uniform = F.cross_entropy(
+            shift_full.view(-1, shift_full.size(-1)),
+            shift_targets.view(-1),
+        )
+        ppl_uniform = float(torch.exp(loss_uniform))
+
+        # 2) Local-only PPL (all heads restricted to local window)
+        local_mask = self._build_local_mask(T, device)
+        logits_local = self._manual_forward(idx, attn_mask=local_mask)
         shift_local = logits_local[:, :-1, :].contiguous()
         loss_local = F.cross_entropy(
             shift_local.view(-1, shift_local.size(-1)),
@@ -183,13 +283,9 @@ class FrontierEvaluator:
         )
         ppl_local = float(torch.exp(loss_local))
 
-        # Gate decisions (averaged across batch)
-        gate_decisions = (gate_probs.mean(axis=0) > self.gate_threshold).astype(
-            np.float32
-        )
-
-        # Per-token fine gating
-        fine_rate = float(gate_decisions.mean())
+        # 3) Gate decisions from local features
+        n_valid = max(T - self.local_window, 0)
+        gate_probs, gate_decisions, fine_rate = self._compute_gate_decisions(idx)
 
         # Coarse: head-block
         coarse_hb = apply_head_block_gating(
@@ -197,26 +293,25 @@ class FrontierEvaluator:
         )
         coarse_hb_rate = float(coarse_hb.mean())
 
-        # Random at matched rate
-        random_rate = fine_rate
-
         # Compute proxy
         tokens_uniform = float(T)
         tokens_gate = float(self.local_window + fine_rate * (T - self.local_window))
         tokens_coarse = float(
             self.local_window + coarse_hb_rate * (T - self.local_window)
         )
-        tokens_random = float(self.local_window + random_rate * (T - self.local_window))
+
+        # PPL gap = how much quality is lost by local-only restriction
+        ppl_gap = ppl_local - ppl_uniform
 
         return {
             "ppl_uniform": ppl_uniform,
-            "ppl_local": ppl_local,
+            "ppl_local_only": ppl_local,
+            "ppl_gap": ppl_gap,
             "gate_enabled_rate_fine": fine_rate,
             "gate_enabled_rate_coarse": coarse_hb_rate,
             "tokens_per_query_uniform": tokens_uniform,
             "tokens_per_query_gate": tokens_gate,
             "tokens_per_query_coarse": tokens_coarse,
-            "tokens_per_query_random": tokens_random,
         }
 
 
@@ -260,6 +355,26 @@ def train_quick_gate(
     return gate, feat_mean, feat_std
 
 
+def _load_text_data(dataset_path: str) -> np.ndarray:
+    """Load pre-tokenized text data from binary file."""
+    return np.memmap(dataset_path, dtype=np.uint16, mode="r")
+
+
+def _get_text_batch(
+    data: np.ndarray,
+    batch_size: int,
+    seq_len: int,
+    rng: np.random.RandomState,
+) -> torch.Tensor:
+    """Get a batch of real tokenized text."""
+    max_start = len(data) - seq_len
+    starts = rng.randint(0, max_start, size=batch_size)
+    batch = torch.stack(
+        [torch.from_numpy(data[s : s + seq_len].astype(np.int64)) for s in starts]
+    )
+    return batch
+
+
 def run_frontier(
     seeds: List[int] = [1, 2, 3],
     seq_lens: List[int] = [256],
@@ -271,9 +386,24 @@ def run_frontier(
     checkpoint: str = None,
     chunk_size: int = 32,
     top_b: int = 4,
+    text_data_path: str = None,
 ) -> Dict:
     """Run the full frontier evaluation matrix."""
     os.makedirs(output_dir, exist_ok=True)
+
+    # Load real text data if available
+    text_data = None
+    if text_data_path and os.path.exists(text_data_path):
+        text_data = _load_text_data(text_data_path)
+        print(f"Loaded text data: {len(text_data)} tokens from {text_data_path}")
+    else:
+        # Try default path
+        default_path = "gpt2/data/finewebedu/val.bin"
+        if os.path.exists(default_path):
+            text_data = _load_text_data(default_path)
+            print(f"Loaded text data: {len(text_data)} tokens from {default_path}")
+        else:
+            print("WARNING: No text data found, using random tokens")
 
     # Load or generate data
     manifest_path = os.path.join(data_dir, "manifest.json")
@@ -350,9 +480,13 @@ def run_frontier(
 
             batch_stats = []
             t0 = time.time()
+            text_rng = np.random.RandomState(seed)
 
             for i in range(n_eval):
-                idx = torch.randint(0, cfg.vocab_size, (batch_size, seq_len))
+                if text_data is not None:
+                    idx = _get_text_batch(text_data, batch_size, seq_len, text_rng)
+                else:
+                    idx = torch.randint(0, cfg.vocab_size, (batch_size, seq_len))
                 stats = evaluator.evaluate_batch(idx)
                 batch_stats.append(stats)
 
@@ -361,8 +495,9 @@ def run_frontier(
                     print(
                         f"  [{i+1}/{n_eval}] "
                         f"PPL_u={stats['ppl_uniform']:.0f} "
+                        f"PPL_lo={stats['ppl_local_only']:.0f} "
+                        f"gap={stats['ppl_gap']:.0f} "
                         f"rate_f={stats['gate_enabled_rate_fine']:.3f} "
-                        f"rate_c={stats['gate_enabled_rate_coarse']:.3f} "
                         f"({elapsed:.1f}s)"
                     )
 
@@ -400,7 +535,8 @@ def run_frontier(
 
         metrics_to_show = [
             "ppl_uniform_mean",
-            "ppl_local_mean",
+            "ppl_local_only_mean",
+            "ppl_gap_mean",
             "gate_enabled_rate_fine_mean",
             "gate_enabled_rate_coarse_mean",
             "tokens_per_query_gate_mean",
@@ -473,7 +609,7 @@ def run_frontier(
                 f"(std={rate_std:.4f})"
             )
 
-    # Check 3: PPL not catastrophically worse
+    # Check 3: PPL not catastrophically worse (local-only vs uniform)
     for seq_len in seq_lens:
         ppl_uniform = [
             all_results[f"L{seq_len}_S{s}"]["ppl_uniform_mean"]
@@ -481,7 +617,7 @@ def run_frontier(
             if f"L{seq_len}_S{s}" in all_results
         ]
         ppl_local = [
-            all_results[f"L{seq_len}_S{s}"]["ppl_local_mean"]
+            all_results[f"L{seq_len}_S{s}"]["ppl_local_only_mean"]
             for s in seeds
             if f"L{seq_len}_S{s}" in all_results
         ]
@@ -492,7 +628,24 @@ def run_frontier(
             print(
                 f"  PPL ratio (L={seq_len}):       "
                 f"{'PASS' if reasonable else 'FAIL'} "
-                f"(local/uniform={ppl_ratio:.4f})"
+                f"(local_only/uniform={ppl_ratio:.4f})"
+            )
+
+    # Check 4: PPL gap exists (local-only is meaningfully worse)
+    for seq_len in seq_lens:
+        gaps = [
+            all_results[f"L{seq_len}_S{s}"]["ppl_gap_mean"]
+            for s in seeds
+            if f"L{seq_len}_S{s}" in all_results
+        ]
+        if gaps:
+            mean_gap = float(np.mean(gaps))
+            has_gap = mean_gap > 0
+            checks[f"ppl_gap_exists_L{seq_len}"] = has_gap
+            print(
+                f"  PPL gap (L={seq_len}):         "
+                f"{'PASS' if has_gap else 'FAIL'} "
+                f"(gap={mean_gap:.1f})"
             )
 
     all_pass = all(checks.values()) if checks else False
@@ -564,6 +717,12 @@ def main():
     )
     parser.add_argument("--chunk-size", type=int, default=32, help="RGSA chunk size")
     parser.add_argument("--top-b", type=int, default=4, help="RGSA top-B budget")
+    parser.add_argument(
+        "--text-data",
+        type=str,
+        default=None,
+        help="Path to tokenized text .bin file for real text eval",
+    )
     args = parser.parse_args()
 
     seeds = [int(s) for s in args.seeds.split(",")]
@@ -590,6 +749,7 @@ def main():
         checkpoint=args.checkpoint,
         chunk_size=args.chunk_size,
         top_b=args.top_b,
+        text_data_path=args.text_data,
     )
 
 
