@@ -268,6 +268,9 @@ def run_frontier(
     local_window: int = 64,
     data_dir: str = "bpa_v2_gate_dataset",
     output_dir: str = "bpa_v2_frontier_results",
+    checkpoint: str = None,
+    chunk_size: int = 32,
+    top_b: int = 4,
 ) -> Dict:
     """Run the full frontier evaluation matrix."""
     os.makedirs(output_dir, exist_ok=True)
@@ -303,19 +306,36 @@ def run_frontier(
             print(f"SEQ_LEN={seq_len}, SEED={seed}")
             print(f"{'='*60}")
 
+            # Determine block_size from checkpoint or seq_len
+            block_size = seq_len
+            if checkpoint is not None:
+                ckpt_probe = torch.load(
+                    checkpoint, map_location="cpu", weights_only=False
+                )
+                wpe_size = ckpt_probe["model"]["transformer.wpe.weight"].shape[0]
+                block_size = max(seq_len, wpe_size)
+                del ckpt_probe
+
             cfg = BPAConfig(
-                block_size=seq_len,
+                block_size=block_size,
                 vocab_size=50304,
                 n_layer=12,
                 n_head=12,
                 n_embd=768,
                 local_window=local_window,
-                chunk_size=32,
-                top_b=4,
+                chunk_size=chunk_size,
+                top_b=top_b,
             )
 
             torch.manual_seed(seed)
             model = GPT2_BPA(cfg)
+
+            if checkpoint is not None:
+                ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+                model.load_state_dict(ckpt["model"])
+                print(f"  Loaded checkpoint (iter={ckpt.get('iter_num', '?')})")
+                del ckpt
+
             model.eval()
 
             gate, feat_mean, feat_std = train_quick_gate(features, labels, seed)
@@ -539,6 +559,11 @@ def main():
         default="bpa_v2_frontier_results",
         help="Output directory",
     )
+    parser.add_argument(
+        "--checkpoint", type=str, default=None, help="Trained model checkpoint"
+    )
+    parser.add_argument("--chunk-size", type=int, default=32, help="RGSA chunk size")
+    parser.add_argument("--top-b", type=int, default=4, help="RGSA top-B budget")
     args = parser.parse_args()
 
     seeds = [int(s) for s in args.seeds.split(",")]
@@ -552,6 +577,7 @@ def main():
     print(f"  Seq lens:   {seq_lens}")
     print(f"  n_eval:     {args.n_eval}")
     print(f"  batch_size: {args.batch_size}")
+    print(f"  checkpoint: {args.checkpoint or '(none, random weights)'}")
 
     run_frontier(
         seeds=seeds,
@@ -561,6 +587,9 @@ def main():
         local_window=args.local_window,
         data_dir=args.data_dir,
         output_dir=args.output_dir,
+        checkpoint=args.checkpoint,
+        chunk_size=args.chunk_size,
+        top_b=args.top_b,
     )
 
 
