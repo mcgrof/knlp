@@ -424,11 +424,121 @@ bpa_v2_coarse_results/         - Phase 3 output
 bpa_v2_frontier_results/       - Phase 4 output
 
 =====================================
-TODO (Next Steps)
+TRAINED MODEL RESULTS (REAL VALIDATION)
 =====================================
 
-[ ] Train a BPA model checkpoint on real data
-[ ] Re-run Phase 0 with trained checkpoint
-[ ] Re-run Phases 1-4 and evaluate go/no-go on real data
-[ ] If AUC >= 0.75 on trained model, scale to 355M + L=1024
-[ ] If AUC < 0.65, document conclusion (same as v1)
+Re-ran all phases using a trained RGSA checkpoint:
+  test_matrix_results_20260206_184612/.../final_model_stepV0.pt
+  FineWebEdu, 615 iters, val_loss=5.50, 124M params
+
+--- Phase 0 (Trained) ---
+Command: python scripts/bpa_v2_collect.py --checkpoint <ckpt>
+  --seq-len 512 --local-window 256 --chunk-size 64 --top-b 8
+Dataset: 460,800 examples in 5 shards
+
+KEY FINDING: Trained model has dramatically different
+boundary_pressure distribution vs random:
+  Per-layer positive rates: 1.6% (L7) to 65.5% (L1)
+  (Random model had uniform ~25% across all layers)
+  Features now span full range: entropy [0, 0.99],
+  max_weight [0.005, 1.0], boundary_pressure [0, 1]
+
+--- Phase 1 (Trained) ---
+Command: python scripts/bpa_v2_train_gate.py --data-dir trained
+  --seeds 1,2,3 --epochs 30
+
+Model            Mean AUC  Std AUC  PR-AUC   ECE
+logistic         0.7863    0.0012   0.5160   0.1936
+mlp              0.9087    0.0003   0.7851   0.1214
+
+VERDICT: PASS (AUC=0.91 >> 0.75 threshold)
+
+THIS IS THE KEY RESULT OF BPA v2.
+
+BPA v1 concluded that "cheap local proxies fail (AUC~0.5)."
+That was true for RAW features as direct predictors. But a
+LEARNED MLP achieves AUC=0.91 from the same features, stable
+across 3 seeds (std=0.0003). Even logistic regression achieves
+0.79, above the 0.75 threshold.
+
+The learned gate succeeds because:
+- It combines multiple weak signals into a strong predictor
+- Position features provide strong baseline (different positions
+  have systematically different far-context needs)
+- Local attention patterns (entropy, max weight, boundary band)
+  add discriminative power on top of position
+- The MLP learns nonlinear interactions between features
+
+--- Phase 3 (Trained) ---
+Command: python scripts/bpa_v2_coarse_gating.py --data-dir trained
+
+Mode             Rate    Var       Oracle    Extra
+fine             0.526   0.0034    0.633     0.0%
+segment_8        0.990   0.0003    0.258     88.8%
+head_block       0.712   0.0022    0.501     35.7%
+position_bucket  0.589   0.0031    0.586     12.1%
+
+Best coarse mode: position_bucket
+  Only 12.1% extra compute vs fine gating
+  Reduces rate variance from 0.0034 to 0.0031
+  Maintains 58.6% oracle agreement
+
+Segment gating is too aggressive (99%+ enabled).
+Head-block adds too much overhead (35.7%).
+
+--- Phase 4 (Trained) ---
+Command: python scripts/bpa_v2_frontier.py --data-dir trained
+
+L=512, 3 seeds:
+  Gate rate (fine):   0.677 +/- 0.004
+  Tokens/query gate:  429.29
+  Compute savings:    16.2%
+  Rate stable:        PASS (std=0.004)
+
+Note: PPL gap = 0 in this eval because frontier creates
+fresh random models (not loading trained checkpoint). The
+compute savings estimate (16.2%) is valid but PPL validation
+requires modifying the frontier eval to load checkpoints.
+
+=====================================
+FINAL VERDICT
+=====================================
+
+Q1 (Learned Gate): YES. MLP AUC=0.91 on trained model.
+  Even logistic regression achieves 0.79.
+  Stable across seeds (std=0.0003).
+
+Q2 (Speculation): PARTIALLY VALIDATED.
+  Gate makes stable decisions (rate std=0.004).
+  Compute savings: 16-41% depending on gating granularity.
+  PPL impact NOT YET measured with trained weights in the
+  speculative pipeline (requires checkpoint integration
+  in frontier eval).
+
+Q3 (Coarse Gating): POSITION-BUCKET is best.
+  12.1% extra compute, reduced variance, reasonable oracle
+  agreement. Segment gating is too aggressive.
+
+Q4 (End-to-end): PARTIALLY VALIDATED.
+  Infrastructure works. Compute savings are real. PPL
+  validation with trained model remains to be done.
+
+OVERALL: CONDITIONAL GO
+
+The learned gate works (AUC=0.91). The compute savings are
+real (16-41%). The remaining risk is whether the gate's
+decisions actually preserve PPL quality when far-context
+is withheld. This requires integrating checkpoint loading
+into the frontier evaluator and measuring PPL_gated vs
+PPL_uniform on the trained model.
+
+=====================================
+TODO (Remaining)
+=====================================
+
+[ ] Modify frontier.py to load trained checkpoints
+[ ] Measure PPL_gated vs PPL_uniform on trained model
+[ ] Test at L=1024 (where v1 showed signal collapse)
+[ ] Scale to 355M if L=512 results hold
+[ ] Investigate which features drive gate decisions
+    (feature importance / ablation)
