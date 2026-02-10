@@ -231,6 +231,9 @@ def run_collection(
     seed: int = 1,
     output_dir: str = "bpa_v2_gate_dataset",
     shard_size: int = 100000,
+    checkpoint: Optional[str] = None,
+    chunk_size: int = 32,
+    top_b: int = 4,
 ) -> Dict:
     """
     Run the full collection pipeline.
@@ -244,23 +247,46 @@ def run_collection(
         seed: Random seed
         output_dir: Output directory for shards
         shard_size: Max examples per shard file
+        checkpoint: Path to trained model checkpoint (.pt)
+        chunk_size: RGSA chunk size
+        top_b: RGSA top-B budget
     """
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+    # Use checkpoint's block_size if loading trained weights, otherwise seq_len
+    block_size = seq_len
+    if checkpoint is not None:
+        ckpt_probe = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        ckpt_wpe_shape = ckpt_probe["model"]["transformer.wpe.weight"].shape[0]
+        block_size = max(seq_len, ckpt_wpe_shape)
+        del ckpt_probe
+
     cfg = BPAConfig(
-        block_size=seq_len,
+        block_size=block_size,
         vocab_size=50304,
         n_layer=12,
         n_head=12,
         n_embd=768,
         local_window=local_window,
-        chunk_size=32,
-        top_b=4,
+        chunk_size=chunk_size,
+        top_b=top_b,
     )
 
-    print(f"Creating BPA model (124M, seq_len={seq_len})...")
+    print(f"Creating BPA model (124M, block_size={block_size}, seq_len={seq_len})...")
     model = GPT2_BPA(cfg)
+
+    if checkpoint is not None:
+        print(f"  Loading checkpoint: {checkpoint}")
+        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["model"])
+        print(
+            f"  Loaded (iter={ckpt.get('iter_num', '?')}, "
+            f"val_loss={ckpt.get('best_val_loss', '?'):.4f})"
+        )
+    else:
+        print("  Using random weights (no checkpoint)")
+
     model.eval()
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  Parameters: {n_params / 1e6:.1f}M")
@@ -603,6 +629,11 @@ def main():
     parser.add_argument(
         "--shard-size", type=int, default=100000, help="Examples per shard"
     )
+    parser.add_argument(
+        "--checkpoint", type=str, default=None, help="Trained model checkpoint"
+    )
+    parser.add_argument("--chunk-size", type=int, default=32, help="RGSA chunk size")
+    parser.add_argument("--top-b", type=int, default=4, help="RGSA top-B budget")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -616,6 +647,7 @@ def main():
     print(f"  local_window: {args.local_window}")
     print(f"  seed:         {args.seed}")
     print(f"  output_dir:   {args.output_dir}")
+    print(f"  checkpoint:   {args.checkpoint or '(none, random weights)'}")
 
     report = run_collection(
         n_samples=args.n_samples,
@@ -626,6 +658,9 @@ def main():
         seed=args.seed,
         output_dir=args.output_dir,
         shard_size=args.shard_size,
+        checkpoint=args.checkpoint,
+        chunk_size=args.chunk_size,
+        top_b=args.top_b,
     )
 
     if report["all_checks_pass"]:
