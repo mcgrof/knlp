@@ -1,0 +1,23 @@
+{
+  "L": 512,
+  "tol_pct": 3.0,
+  "dense_ppl": 26184.9580078125,
+  "ppl_limit": 26970.506748046875,
+  "status": "PASS",
+  "params": {
+    "W_min": 64,
+    "W_max": 512,
+    "W_pressure_thresh": 0.5370788699586624,
+    "W_decay": 0.95,
+    "gate_every_k": 4,
+    "B_far_target": 2.0,
+    "B_far_max": 8
+  },
+  "metrics": {
+    "ppl": 25332.833984375,
+    "ppl_delta_pct": -3.2542501049009194,
+    "decode_p50_ms": 4.774569068104029,
+    "kv_bytes_per_token": 7299072.0,
+    "kv_kept_mean": 198.0
+  }
+}

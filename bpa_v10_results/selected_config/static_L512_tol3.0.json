@@ -1,0 +1,7 @@
+{
+  "L": 512,
+  "tol_pct": 3.0,
+  "method": "static_sparse",
+  "status": "FAIL",
+  "quality_failed": true
+}

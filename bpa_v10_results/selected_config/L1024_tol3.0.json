@@ -1,0 +1,22 @@
+{
+  "L": 1024,
+  "tol_pct": 3.0,
+  "dense_ppl": 24473.384765625,
+  "ppl_limit": 25207.58630859375,
+  "status": "FAIL",
+  "quality_failed": true,
+  "best_effort_params": {
+    "W_min": 64,
+    "W_max": 128,
+    "W_pressure_thresh": 0.5370788853748341,
+    "W_decay": 0.95,
+    "gate_every_k": 4,
+    "B_far_target": 2.0,
+    "B_far_max": 8
+  },
+  "best_effort_metrics": {
+    "ppl": 25816.4755859375,
+    "ppl_delta_pct": 5.487965122825952,
+    "decode_p50_ms": 5.137198604643345
+  }
+}
