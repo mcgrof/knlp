@@ -1131,32 +1131,33 @@ def run_tuning(
     thresholds = auto_thresholds(model, token_data, seq_len, device_str)
     print(f"  Auto thresholds for L={seq_len}: {thresholds}")
 
-    # Build search space — scale W_max relative to seq_len
-    w_max_candidates = [w for w in TUNE_SPACE["W_max"] if w < seq_len]
-    if not w_max_candidates:
-        w_max_candidates = [seq_len // 2]
+    # Build search space — scale W relative to seq_len
+    # W_min fractions of L: keep at least this many recent tokens
+    w_min_fracs = [0.05, 0.1, 0.2, 0.3]
+    # W_max fractions of L: never keep more than this
+    w_max_fracs = [0.3, 0.5, 0.7, 0.9]
 
     combos = []
-    for W_min in TUNE_SPACE["W_min"]:
-        for W_max in w_max_candidates:
+    for w_min_f in w_min_fracs:
+        W_min = max(32, int(seq_len * w_min_f))
+        for w_max_f in w_max_fracs:
+            W_max = max(64, int(seq_len * w_max_f))
             if W_max <= W_min:
                 continue
             for thresh in thresholds:
-                for decay in [0.95]:
-                    for gate_k in [4]:
-                        for B_target in [2.0]:
-                            for B_max in [8]:
-                                combos.append(
-                                    {
-                                        "W_min": W_min,
-                                        "W_max": W_max,
-                                        "W_pressure_thresh": thresh,
-                                        "W_decay": decay,
-                                        "gate_every_k": gate_k,
-                                        "B_far_target": B_target,
-                                        "B_far_max": B_max,
-                                    }
-                                )
+                for B_target in [2.0, 4.0]:
+                    for B_max in [8, 16]:
+                        combos.append(
+                            {
+                                "W_min": W_min,
+                                "W_max": W_max,
+                                "W_pressure_thresh": thresh,
+                                "W_decay": 0.95,
+                                "gate_every_k": 4,
+                                "B_far_target": B_target,
+                                "B_far_max": B_max,
+                            }
+                        )
 
     print(f"  Search space: {len(combos)} configurations")
     ppl_limit = dense_ppl * (1 + tol_pct / 100.0)
@@ -1294,7 +1295,11 @@ def tune_static_sparse(
     far_budget = max(1, int(round(bpa_k_far_mean)))
 
     best = None
-    for W in [64, 128, 256, 384, 512, 768, 1024]:
+    # Scale W candidates with L
+    w_candidates = sorted(
+        set([max(64, int(seq_len * f)) for f in [0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9]])
+    )
+    for W in w_candidates:
         if W >= seq_len:
             continue
         r = run_static_sparse_decode(
@@ -1442,6 +1447,9 @@ def cmd_bench(args):
                         batch_size=batch_size,
                     )
                 elif method == "bpa_v11":
+                    # Scale W with L for reasonable defaults
+                    W_min_default = max(64, L // 4)
+                    W_max_default = max(128, int(L * 0.75))
                     r = run_bpa_decode(
                         model,
                         token_data,
@@ -1451,9 +1459,15 @@ def cmd_bench(args):
                         device_str,
                         model_config,
                         max_ctx,
+                        W_min=W_min_default,
+                        W_max=W_max_default,
+                        B_far_target=4.0,
+                        B_far_max=16,
                         batch_size=batch_size,
                     )
                 elif method == "static_sparse":
+                    # Static sparse uses half the L as window
+                    static_W = max(128, L // 2)
                     r = run_static_sparse_decode(
                         model,
                         token_data,
@@ -1463,6 +1477,8 @@ def cmd_bench(args):
                         device_str,
                         model_config,
                         max_ctx,
+                        local_window=static_W,
+                        far_budget=4,
                         batch_size=batch_size,
                     )
                 else:
