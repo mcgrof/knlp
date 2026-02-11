@@ -170,14 +170,14 @@ class AdaptiveController:
         W_pressure_thresh=0.45,
         B_far_max=8,
         B_far_target=2.0,
-        B_far_scale=5.0,
+        B_far_scale=8.0,
         B_far_bias=0.0,
-        ema_alpha=0.1,
+        ema_alpha=0.2,
         hysteresis=0.3,
         gate_every_k=4,
-        pi_kp=0.5,
-        pi_ki=0.05,
-        hyst_persist=3,
+        pi_kp=0.02,
+        pi_ki=0.002,
+        hyst_persist=2,
     ):
         self.W_min = W_min
         self.W_max = W_max
@@ -267,10 +267,12 @@ class AdaptiveController:
         W_int = int(round(self.W_current))
         W_int = max(self.W_min, min(self.W_max, W_int))
 
-        # Adaptive B_far: continuous signal
-        raw_B = self.B_far_scale * self.pressure_ema + self.B_far_bias
+        # Adaptive B_far: use raw pressure (not EMA) for faster response
+        raw_B = self.B_far_scale * pressure + self.B_far_bias
         raw_B = max(0.0, min(float(self.B_far_max), raw_B))
-        self.B_far_raw = self.ema_alpha * raw_B + (1 - self.ema_alpha) * self.B_far_raw
+        # Light EMA on the B_far signal itself (alpha=0.4 for fast tracking)
+        b_alpha = 0.4
+        self.B_far_raw = b_alpha * raw_B + (1 - b_alpha) * self.B_far_raw
 
         # PI governor: keep mean k_far near target
         self.n_steps += 1
