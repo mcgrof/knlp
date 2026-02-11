@@ -101,7 +101,7 @@ def build_run_meta(device_str):
         meta["gpu"] = torch.cuda.get_device_name(0)
         meta["gpu_count"] = torch.cuda.device_count()
         meta["gpu_mem_gb"] = round(
-            torch.cuda.get_device_properties(0).total_mem / 1e9, 1
+            torch.cuda.get_device_properties(0).total_memory / 1e9, 1
         )
     return meta
 
@@ -1157,7 +1157,7 @@ def run_tuning(
             if W_max <= W_min:
                 continue
             for thresh in thresholds:
-                for decay in TUNE_SPACE["W_decay"]:
+                for decay in [0.95]:  # fix decay to reduce space
                     for gate_k in [4]:  # fix gate_k to reduce space
                         for B_target in [2.0]:  # fix B_target
                             for B_max in [8]:  # fix B_max
@@ -1179,39 +1179,56 @@ def run_tuning(
     results = []
     feasible = []
 
+    eval_seeds = [1, 2]
     for i, params in enumerate(combos):
         if (i + 1) % 10 == 0:
             print(f"    [{i+1}/{len(combos)}] feasible so far: {len(feasible)}")
 
-        r = run_bpa_v10_decode(
-            model,
-            text_data,
-            seq_len,
-            decode_steps,
-            seed=1,
-            device_str=device_str,
-            surgical_heads=surgical_heads,
-            chunk_size=64,
-            strategy="ra_value",
-            **params,
-        )
-        r.ppl_delta_pct = (r.ppl - dense_ppl) / dense_ppl * 100
+        # Average over 2 seeds for robust PPL estimate
+        seed_ppls = []
+        seed_p50s = []
+        seed_kv = []
+        seed_kept = []
+        seed_W = []
+        seed_kfar = []
+        for s in eval_seeds:
+            r = run_bpa_v10_decode(
+                model,
+                text_data,
+                seq_len,
+                decode_steps,
+                seed=s,
+                device_str=device_str,
+                surgical_heads=surgical_heads,
+                chunk_size=64,
+                strategy="ra_value",
+                **params,
+            )
+            seed_ppls.append(r.ppl)
+            seed_p50s.append(r.decode_per_token_ms)
+            seed_kv.append(r.kv_bytes_read_per_token)
+            seed_kept.append(r.kv_kept_mean)
+            seed_W.append(r.W_mean)
+            seed_kfar.append(r.k_far_mean)
+
+        avg_ppl = float(np.mean(seed_ppls))
+        ppl_delta = (avg_ppl - dense_ppl) / dense_ppl * 100
 
         entry = {
             **params,
-            "ppl": r.ppl,
-            "ppl_delta_pct": r.ppl_delta_pct,
-            "decode_p50_ms": r.decode_per_token_ms,
-            "decode_p95_ms": r.decode_p95_ms,
-            "kv_bytes_per_token": r.kv_bytes_read_per_token,
-            "kv_kept_mean": r.kv_kept_mean,
-            "W_mean": r.W_mean,
-            "k_far_mean": r.k_far_mean,
-            "feasible": r.ppl <= ppl_limit,
+            "ppl": avg_ppl,
+            "ppl_delta_pct": ppl_delta,
+            "decode_p50_ms": float(np.mean(seed_p50s)),
+            "decode_p95_ms": float(np.mean(seed_p50s)),
+            "kv_bytes_per_token": float(np.mean(seed_kv)),
+            "kv_kept_mean": float(np.mean(seed_kept)),
+            "W_mean": float(np.mean(seed_W)),
+            "k_far_mean": float(np.mean(seed_kfar)),
+            "feasible": avg_ppl <= ppl_limit,
         }
         results.append(entry)
 
-        if r.ppl <= ppl_limit:
+        if avg_ppl <= ppl_limit:
             feasible.append((entry, r))
 
     # Save search results
