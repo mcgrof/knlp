@@ -41,6 +41,7 @@ import psutil
 import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.cache_utils import DynamicCache
 
 # ============================================================
 # Constants
@@ -205,8 +206,10 @@ def load_validation_tokens(tokenizer, n_tokens=500000):
         ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="validation")
         text = "\n\n".join(ds["text"])
         tokens = tokenizer.encode(text)
-        if len(tokens) >= n_tokens:
-            return np.array(tokens[:n_tokens], dtype=np.int64)
+        if len(tokens) >= 10000:  # need at least 10K tokens
+            arr = np.array(tokens[:n_tokens], dtype=np.int64)
+            print(f"  Loaded wikitext: {len(arr)} tokens")
+            return arr
     except Exception:
         pass
 
@@ -232,11 +235,12 @@ def get_text_batch(token_data, batch_size, seq_len, rng):
 
 
 def kv_cache_len(past_key_values):
-    """Get sequence length from past_key_values."""
+    """Get sequence length from past_key_values (DynamicCache or tuple)."""
     if past_key_values is None:
         return 0
-    # past_key_values is tuple of (key, value) per layer
-    # key shape: [batch, n_kv_heads, seq_len, head_dim]
+    if hasattr(past_key_values, "get_seq_length"):
+        return past_key_values.get_seq_length()
+    # Legacy tuple format
     return past_key_values[0][0].shape[2]
 
 
@@ -244,21 +248,21 @@ def evict_kv_cache(past_key_values, keep_mask):
     """Evict KV cache entries not in keep_mask.
 
     Args:
-        past_key_values: tuple of (key, value) per layer
+        past_key_values: DynamicCache or tuple of (key, value) per layer
         keep_mask: bool tensor [seq_len] of positions to keep
 
     Returns:
-        new past_key_values with evicted entries removed
+        new DynamicCache with evicted entries removed
     """
-    # keep_mask is [seq_len], expand to [1, 1, seq_len, 1] for gather
     indices = keep_mask.nonzero(as_tuple=True)[0]  # [n_kept]
-    new_past = []
-    for k, v in past_key_values:
+    new_cache = DynamicCache()
+    for layer_idx in range(len(past_key_values)):
+        k, v = past_key_values[layer_idx]
         # k, v: [batch, n_kv_heads, seq_len, head_dim]
         k_new = k[:, :, indices, :]
         v_new = v[:, :, indices, :]
-        new_past.append((k_new, v_new))
-    return tuple(new_past)
+        new_cache.update(k_new, v_new, layer_idx)
+    return new_cache
 
 
 def build_keep_mask(total_len, local_window, far_chunks, chunk_size):
