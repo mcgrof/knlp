@@ -792,6 +792,8 @@ def run_bpa_decode(
 
     W_t = controller.W_log[-1]
     k_far_t = controller.k_far_log[-1]
+    actual_pos = seq_len  # track true position for RoPE
+    has_evicted = False  # only pass position_ids after first eviction
 
     for step in range(decode_steps):
         next_token = continuation[:, step : step + 1]
@@ -813,6 +815,7 @@ def run_bpa_decode(
                 keep_mask = build_keep_mask(cache_len, W_t, far_chunks, chunk_size)
                 keep_mask = keep_mask.to(device_str)
                 past = evict_kv_cache(past, keep_mask)
+                has_evicted = True
 
             gpu_sync(device_str)
             gate_dt = (time.perf_counter() - t_gate) * 1000
@@ -820,15 +823,26 @@ def run_bpa_decode(
 
         kept_tokens_log.append(kv_cache_len(past))
 
-        # Decode step
+        # Decode step — pass explicit position_ids after eviction
+        # so RoPE encoding matches the true token position
+        pos_ids = None
+        if has_evicted:
+            pos_ids = torch.tensor([[actual_pos]], device=device_str, dtype=torch.long)
+
         gpu_sync(device_str)
         t0 = time.perf_counter()
-        out = model(next_token, past_key_values=past, use_cache=True)
+        out = model(
+            next_token,
+            past_key_values=past,
+            use_cache=True,
+            position_ids=pos_ids,
+        )
         gpu_sync(device_str)
         dt = (time.perf_counter() - t0) * 1000
         decode_latencies.append(dt)
         past = out.past_key_values
         all_logits.append(out.logits)
+        actual_pos += 1
 
         # Update pressure
         logits_t = out.logits[:, -1, :]
@@ -982,11 +996,13 @@ def run_static_sparse_decode(
     kept_tokens_log = []
     all_logits = [out.logits[:, -1:, :]]
     sel_rng = np.random.RandomState(seed + 2000)
+    actual_pos = seq_len
+    has_evicted = False
 
     for step in range(decode_steps):
         next_token = continuation[:, step : step + 1]
 
-        # Evict every gate_every_k steps (fixed allocation)
+        # Evict every 4 steps (fixed allocation)
         if step % 4 == 0:
             cache_len = kv_cache_len(past)
             if cache_len > local_window:
@@ -1000,17 +1016,28 @@ def run_static_sparse_decode(
                 )
                 keep_mask = keep_mask.to(device_str)
                 past = evict_kv_cache(past, keep_mask)
+                has_evicted = True
 
         kept_tokens_log.append(kv_cache_len(past))
 
+        pos_ids = None
+        if has_evicted:
+            pos_ids = torch.tensor([[actual_pos]], device=device_str, dtype=torch.long)
+
         gpu_sync(device_str)
         t0 = time.perf_counter()
-        out = model(next_token, past_key_values=past, use_cache=True)
+        out = model(
+            next_token,
+            past_key_values=past,
+            use_cache=True,
+            position_ids=pos_ids,
+        )
         gpu_sync(device_str)
         dt = (time.perf_counter() - t0) * 1000
         decode_latencies.append(dt)
         past = out.past_key_values
         all_logits.append(out.logits)
+        actual_pos += 1
 
     all_logits_cat = torch.cat(all_logits, dim=1)
     ppl = compute_ppl(all_logits_cat[:, :-1, :], continuation)
