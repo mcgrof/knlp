@@ -1160,9 +1160,9 @@ def run_tuning(
 
     # Build search space — scale W relative to seq_len
     # W_min fractions of L: keep at least this many recent tokens
-    w_min_fracs = [0.05, 0.1, 0.2, 0.3]
+    w_min_fracs = [0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 0.9]
     # W_max fractions of L: never keep more than this
-    w_max_fracs = [0.3, 0.5, 0.7, 0.9]
+    w_max_fracs = [0.5, 0.7, 0.8, 0.9, 0.95]
 
     combos = []
     for w_min_f in w_min_fracs:
@@ -1173,18 +1173,17 @@ def run_tuning(
                 continue
             for thresh in thresholds:
                 for B_target in [2.0, 4.0]:
-                    for B_max in [8, 16]:
-                        combos.append(
-                            {
-                                "W_min": W_min,
-                                "W_max": W_max,
-                                "W_pressure_thresh": thresh,
-                                "W_decay": 0.95,
-                                "gate_every_k": 4,
-                                "B_far_target": B_target,
-                                "B_far_max": B_max,
-                            }
-                        )
+                    combos.append(
+                        {
+                            "W_min": W_min,
+                            "W_max": W_max,
+                            "W_pressure_thresh": thresh,
+                            "W_decay": 0.95,
+                            "gate_every_k": 4,
+                            "B_far_target": B_target,
+                            "B_far_max": 8,
+                        }
+                    )
 
     print(f"  Search space: {len(combos)} configurations")
     ppl_limit = dense_ppl * (1 + tol_pct / 100.0)
