@@ -1,0 +1,11 @@
+{
+  "L": 1024,
+  "tol_pct": 3.0,
+  "method": "static_sparse",
+  "status": "PASS",
+  "metrics": {
+    "ppl": 15.491512769733813,
+    "decode_p50_ms": 9.704944677650928,
+    "kv_kept_mean": 973.5
+  }
+}
