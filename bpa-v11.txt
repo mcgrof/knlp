@@ -1,0 +1,244 @@
+BPA v11: “Stop testing at the cliff edge.” Move to a >1024 max_ctx model that fits a W7900, then re-run BPA with real in-range headroom and build a branch tree so we don’t waste cycles.
+
+You have ~12 hours. This is not “plumbing.” This is: pick the right model + make the experiment non-bogus + produce decision-ready evidence.
+
+HARD CONSTRAINTS
+- Target GPU: AMD Radeon PRO W7900 48GB (ROCm).
+- Headline results must be IN-RANGE (L <= model.max_ctx) and include multiple L: 512, 1024, 2048, 4096 (and 8192 if model supports and fits).
+- No mixed regime tables. Extrapolated is appendix only.
+- Matched-quality comparisons only (tol=1% and tol=3% vs dense at same L).
+
+DELIVERABLES (must exist at end)
+1) MODEL_SELECTION.md: what model(s) were tried, what worked, what failed, and why (OOM, ROCm kernel issues, throughput too low, etc).
+2) decode_results_v11.json + tuning_summary_v11.json + search_results_v11/*.csv + selected_config_v11/*.json
+3) bpa_v11_final_report.md: defensible headline tables + clear go/no-go paths for next iteration.
+4) A “branch tree” artifact: bpa_v11_branch_tree.md describing outcomes + next steps.
+
+========================================================
+PHASE 0 (30–45 min): Preflight and guardrails
+========================================================
+0.1 Add a strict GPU preflight at program start (fail fast):
+- Print/log:
+  torch.__version__
+  torch.version.hip (must be non-None)
+  torch.cuda.is_available() (should be True on ROCm builds)
+  torch.cuda.get_device_name(0)
+  torch.cuda.get_device_properties(0)
+- Shell checks logged:
+  rocminfo | head -n 80
+  rocm-smi --showproductname --showuse --showmemuse
+If any fail, stop.
+
+0.2 Add “max_ctx” detection for ANY model you load:
+- For HF: check config.n_positions / config.max_position_embeddings / rope_scaling / model_max_length
+- For custom: store in run_meta.
+Log context_regime = in_range / extrapolated.
+
+0.3 Make bench_decode.py refuse to run “headline mode” if device != GPU.
+
+========================================================
+PHASE 1 (2–3 hours): Model choice pipeline (the real work)
+========================================================
+Goal: pick a model with max_ctx > 1024 that actually exercises memory/bandwidth enough to show latency sensitivity.
+
+Implement model_probe.py that:
+- Takes a list of candidates and tries to:
+  (a) load on GPU,
+  (b) run a tiny prefill+decode smoke test at L=4096,
+  (c) record: peak_gpu_alloc_mb/reserved_mb, tok/s, any errors.
+- Writes model_probe_results.json + a ranked table.
+
+Candidate set strategy (do NOT overthink; try a small handful):
+A) Off-the-shelf long-context small models (preferred, fastest):
+- A ~350M–1.5B class model with RoPE and >=4k context.
+- Must be loadable on ROCm with your attention backend.
+
+B) Fallback if off-the-shelf is annoying:
+- Train/continue-train a GPT2-ish model (125M–350M) with RoPE and max_ctx=4096 using a small dataset and a short schedule.
+- The goal is not SOTA; it’s “in-range long context” for controlled experiments.
+
+Practical constraints for W7900:
+- 124M is compute-bound; too small to show bandwidth wins.
+- Aim for 350M–1.3B if it fits; if it doesn’t, quantize weights for inference runs (NOT for training) or reduce batch.
+- Keep kv-cache dtype fp16/bf16 if supported.
+
+Decision rule:
+- If any off-the-shelf model loads and runs L=4096 reliably with reasonable speed, choose it.
+- Only train a new model if ALL candidates are broken or unusably slow.
+
+Output:
+- MODEL_SELECTION.md must explain what you picked and why.
+
+========================================================
+PHASE 2 (3–5 hours): Establish “dense baselines” in-range across L
+========================================================
+For the chosen model:
+- Run DENSE decode benchmarks at L in {512,1024,2048,4096} (and 8192 if supported):
+  - fixed decode steps >= 256 (64 is too tiny and hides overheads)
+  - repeat each run 3 times for stability
+- Log: p50/p95 per-token latency, tok/s, peak memory, and KV proxy.
+
+This produces ppl_dense(L) for each L and anchors matched-quality tuning.
+
+========================================================
+PHASE 3 (3–5 hours): BPA v11 tuning + “real” adaptivity validation
+========================================================
+3.1 Matched-quality tuning (same as v10 but now meaningful):
+For each L and tol in {1%,3%}:
+- Dense run -> ppl_dense
+- Run tuner to find BPA configs meeting ppl <= ppl_dense*(1+tol)
+- Select best feasible by:
+  primary: lowest decode p50
+  tie-break: lowest KV proxy bytes/token
+- Save:
+  search_results_v11/<L>_<tol>.csv
+  selected_config_v11/<L>_<tol>.json
+If fail: record FAIL explicitly.
+
+3.2 Far budget controller must actually spike, not wobble 2→3 forever:
+- Instrument k_far(t) and B_far_raw(t).
+- Add/modify a stress test that requires retrieving >W_max-away with distractors.
+- Define hard/easy spans deterministically and log region-wise metrics:
+  span_ppl, span_kv_proxy, span_W_mean, span_k_far_mean, span_latency
+- Acceptance for “adaptive far budget works”:
+  k_far_max_obs >= 2x baseline in hard spans (example: baseline 2, spike to >=4)
+  and returns near baseline outside hard span.
+
+3.3 Make W adaptation more than “slam to W_max and stay there”
+- Add a penalty term / governor:
+  - Encourage returning to W_min when pressure drops (stronger decay/hysteresis).
+- Log “W duty cycle” (% of tokens at each W value).
+- The win is not just spikes; it’s spending less W overall without losing quality.
+
+========================================================
+PHASE 4 (1–2 hours): Bandwidth sensitivity check (make latency wins possible)
+========================================================
+On 124M, latency won’t move much. On a bigger model, it might.
+
+Do two regimes for the chosen model:
+- Regime R1: single-sample decode (batch=1) standard
+- Regime R2: bandwidth-stressed decode
+  Options:
+  - increase batch size modestly (2–8) without OOM
+  - or increase layers/heads via chosen model size
+  - or run multiple sequences in parallel (micro-batching)
+Goal: make KV traffic matter.
+
+Report both regimes. Headline claims require R2 showing “KV down and latency not worse” at matched quality.
+
+========================================================
+PHASE 5 (1 hour): bpa_v11_branch_tree.md (think ahead, don’t improvise later)
+========================================================
+Write a branch tree that maps what the results imply and what v12 should do.
+
+Template (fill with actual observed outcomes):
+BRANCH 1: Matched-quality PASS for all L up to 4096 AND latency improves in R2
+- Next: push “sublinear scaling” claims carefully:
+  - measure effective kept tokens vs L
+  - fit exponent only within in-range regime
+  - show mechanism: budget spikes aligned with entropy spikes
+- Engineering: optimize gate update frequency and scoring kernels.
+
+BRANCH 2: Matched-quality PASS but latency flat (KV down, time same)
+- Next: prove it’s compute-bound:
+  - profile attention kernel time vs gate time vs other ops
+  - test larger model or higher batch until bandwidth-bound
+  - consider fused KV gather/scatter or flash-attn path improvements on ROCm.
+
+BRANCH 3: Matched-quality FAIL at higher L (e.g., 4096 fails)
+- Next: diagnose what breaks:
+  - Is far selection missing crucial tokens? (increase retrieval pool, improve score)
+  - Is W too small? (allow adaptive W_l by layer)
+  - Add “two-stage”: cheap retrieve then refine retrieve on hard spans only.
+
+BRANCH 4: Far budget does not spike even on adversarial stress
+- Next: your pressure signal is not state-aligned:
+  - add a second pressure feature (entropy + disagreement)
+  - change hard span generator to ensure true far dependency
+  - add supervision: label hard tokens and train a tiny controller.
+
+BRANCH 5: Everything works but memory peaks too high / OOM at 8192
+- Next: memory tiering experiments:
+  - chunked KV, paged KV, offload options, kv quantization for cache only
+  - report peak vs L and practical max L on W7900.
+
+========================================================
+PHASE 6 (1 hour): Final report (tight, not vibes)
+========================================================
+bpa_v11_final_report.md must include:
+- Model selection summary + max_ctx
+- Hardware and ROCm details
+- Headline tables (IN-RANGE ONLY) at tol=1% and tol=3%:
+  L, method, ppl, ppl_delta%, prefill_ms, decode_ms_p50, decode_ms_p95, tok/s,
+  KV_proxy_bytes/token, KV_kept_tokens, peak_gpu_alloc_mb, peak_gpu_reserved_mb, peak_cpu_rss_mb, gate_overhead%
+- Adaptivity proof table/figure: hard vs easy spans with k_far and W behavior
+- Explicit FAIL rows
+
+DONE CONDITIONS
+- Picked model has max_ctx >= 4096 and runs stably on W7900.
+- Matched-quality comparisons exist for multiple L in-range (>=3 different L values), or explicit FAIL.
+- Far budget adaptation is either proven (meaningful spikes) or explicitly shown not to work (and why).
+- At least one regime shows KV proxy reduction without decode latency regression at matched quality.
+
+Work in commits. Leave one-command reproduction:
+- python model_probe.py
+- python bench_decode.py --method dense ...
+- python tune_bpa.py ...
+- python summarize.py ...
+
+========================================================
+EXECUTION LOG
+========================================================
+
+Phase 0: GPU preflight — DONE
+  torch 2.6.0+rocm6.2.4, HIP 6.2, W7900 48GB
+
+Phase 1: Model selection — DONE
+  Chose Qwen/Qwen2.5-0.5B (494M params, max_ctx=32768)
+  Stronger latency-vs-L scaling than Llama-3.2-1B (2.3x vs 1.6x)
+
+Phase 2: Dense baselines — DONE
+  L=512: PPL=21.1, L=1024: PPL=15.1, L=2048: PPL=10.9, L=4096: PPL=16.3
+
+Phase 3: BPA tuning — DONE
+  All 8 configs PASS (4 L values x 2 tolerances)
+  Key: at L>=1024, BPA must keep 88-99% of tokens
+  Stress tests: far budget does NOT spike (k_far stays 3.0-3.6)
+  W duty cycle: effectively static at tuned configs
+
+Phase 4: Bandwidth sensitivity — DONE
+  Batch=4 latency gains comparable to batch=1 (0.9-5.2%)
+  Model not bandwidth-bound at these sizes
+
+Phase 5: Branch tree — DONE
+  Primary direction: test longer context (L=8192-32768) or
+  bigger model where KV cache dominates bandwidth
+
+Phase 6: Final report — DONE
+  Deliverables:
+  - bpa_v11_results/MODEL_SELECTION.md
+  - bpa_v11_results/decode_results_v11.json
+  - bpa_v11_results/tuning_summary_v11.json
+  - bpa_v11_results/search_results_v11/*.csv
+  - bpa_v11_results/selected_config_v11/*.json
+  - bpa_v11_results/bpa_v11_final_report.md
+  - bpa_v11_results/bpa_v11_branch_tree.md
+  - bpa_v11_results_stress/decode_results_v11.json
+  - bpa_v11_results_batch4/decode_results_v11.json
+
+Critical fixes during v11:
+1. DynamicCache API (HF transformers returns objects, not tuples)
+2. Wikitext threshold (262K tokens, not 500K)
+3. RoPE position tracking (must pass position_ids after eviction)
+4. Expanded search space (W_min/W_max fracs up to 0.9/0.95)
+
+Commits:
+  4a5e3c1 bpa_v11: add model probe and bench scripts
+  7cf701b bpa_v11_bench.py: fix DynamicCache and wikitext loading
+  2cddd1b bpa_v11_bench.py: scale BPA window with context length
+  2a32e99 bpa_v11_bench.py: fix RoPE position tracking after eviction
+  a95c11e bpa_v11_bench.py: expand tuning search to conservative configs
+  1d0a9e1 bpa_v11_results: add tuning results for all L and tolerances
+  2977afc bpa_v11_bench.py: add --tuned, --config-dir, fix method parsing
+  face33f bpa_v11_results: add bench, stress, and batch=4 results
+  76c159e bpa_v11_results: add branch tree and final report
