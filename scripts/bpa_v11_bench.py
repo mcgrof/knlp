@@ -1432,9 +1432,26 @@ def cmd_bench(args):
     seq_lens = [int(x) for x in args.L.split(",")]
     seeds = [int(x) for x in args.seeds.split(",")]
     methods = (
-        ["dense", "bpa_v11", "static_sparse"] if args.method == "all" else [args.method]
+        ["dense", "bpa_v11", "static_sparse"]
+        if args.method == "all"
+        else args.method.split(",")
     )
     batch_size = args.batch_size
+    use_tuned = getattr(args, "tuned", False)
+
+    # Load tuned configs if requested
+    tuned_configs = {}
+    if use_tuned:
+        base_dir = getattr(args, "config_dir", None) or args.output_dir
+        cfg_dir = os.path.join(base_dir, "selected_config_v11")
+        for L in seq_lens:
+            cfg_path = os.path.join(cfg_dir, f"L{L}_tol1.0.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path) as f:
+                    tuned_configs[L] = json.load(f)
+                print(f"  Loaded tuned config for L={L}")
+            else:
+                print(f"  No tuned config for L={L}, using defaults")
 
     print(f"Loading model {args.model}...")
     model, tokenizer, max_ctx, model_config = load_hf_model(args.model, device_str)
@@ -1473,9 +1490,24 @@ def cmd_bench(args):
                         batch_size=batch_size,
                     )
                 elif method == "bpa_v11":
-                    # Scale W with L for reasonable defaults
-                    W_min_default = max(64, L // 4)
-                    W_max_default = max(128, int(L * 0.75))
+                    if L in tuned_configs and tuned_configs[L].get("status") == "PASS":
+                        p = tuned_configs[L]["params"]
+                        bpa_kw = dict(
+                            W_min=p["W_min"],
+                            W_max=p["W_max"],
+                            W_pressure_thresh=p["W_pressure_thresh"],
+                            W_decay=p["W_decay"],
+                            gate_every_k=p["gate_every_k"],
+                            B_far_target=p["B_far_target"],
+                            B_far_max=p["B_far_max"],
+                        )
+                    else:
+                        bpa_kw = dict(
+                            W_min=max(64, L // 4),
+                            W_max=max(128, int(L * 0.75)),
+                            B_far_target=4.0,
+                            B_far_max=16,
+                        )
                     r = run_bpa_decode(
                         model,
                         token_data,
@@ -1485,11 +1517,8 @@ def cmd_bench(args):
                         device_str,
                         model_config,
                         max_ctx,
-                        W_min=W_min_default,
-                        W_max=W_max_default,
-                        B_far_target=4.0,
-                        B_far_max=16,
                         batch_size=batch_size,
+                        **bpa_kw,
                     )
                 elif method == "static_sparse":
                     # Static sparse uses half the L as window
@@ -1679,6 +1708,16 @@ def main():
     p_bench.add_argument("--device", default="cuda")
     p_bench.add_argument("--output-dir", default="bpa_v11_results")
     p_bench.add_argument("--batch-size", type=int, default=1)
+    p_bench.add_argument(
+        "--tuned",
+        action="store_true",
+        help="Load tuned BPA configs from selected_config_v11/",
+    )
+    p_bench.add_argument(
+        "--config-dir",
+        default=None,
+        help="Dir with selected_config_v11/ (defaults to --output-dir)",
+    )
 
     # Tune
     p_tune = sub.add_parser("tune")
