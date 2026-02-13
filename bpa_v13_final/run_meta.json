@@ -1,0 +1,15 @@
+{
+  "gpu": "AMD Radeon Pro W7900 48.3GB",
+  "torch": "2.6.0+rocm6.2.4",
+  "hip": "6.2.41134-65d174c3e",
+  "model": "Qwen/Qwen2.5-0.5B",
+  "model_params": "494M",
+  "max_ctx": 32768,
+  "decode_steps": 256,
+  "batch_size": 1,
+  "eval_data": "wikitext-103-raw-v1 validation",
+  "seeds": [
+    0
+  ],
+  "W_sink": 4
+}
