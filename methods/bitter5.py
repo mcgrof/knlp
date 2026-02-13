@@ -29,6 +29,7 @@ class Bitter5(BitterMethod):
         self.L = L
         self.mc = model_config
         self.W_min = kwargs.get("W_min", max(64, L // 8))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.K_hh = kwargs.get("K_hh", max(8, L // 32))
         self.segment_size = kwargs.get("segment_size", 4)
         self.gate_every = kwargs.get("gate_every", 8)
@@ -88,10 +89,11 @@ class Bitter5(BitterMethod):
                             far_scores, min(self.K_hh, len(far_scores))
                         )
 
-                        # Tokens to splice: far region minus heavy hitters
+                        # Tokens to splice: far region minus heavy hitters and sinks
                         hh_mask = torch.zeros(
                             recency_start, dtype=torch.bool, device=device_str
                         )
+                        hh_mask[: self.W_sink] = True
                         hh_mask[topk_idx] = True
                         splice_mask = ~hh_mask
 
@@ -123,6 +125,7 @@ class Bitter5(BitterMethod):
                             keep_mask = torch.zeros(
                                 cache_len, dtype=torch.bool, device=device_str
                             )
+                            keep_mask[: self.W_sink] = True
                             keep_mask[topk_idx] = True
                             keep_mask[recency_start:] = True
 
