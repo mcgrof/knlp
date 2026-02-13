@@ -86,6 +86,19 @@ def get_backend(name, kvsplice_checkpoint=None):
         backend = KVSpliceKLBackend()
         backend.checkpoint_path = kvsplice_checkpoint
         return backend
+    elif name.startswith("kvsplice_seg"):
+        seg = int(name.replace("kvsplice_seg", ""))
+        ckpt = f"kvsplice_trained/kvsplice_seg{seg}.pt"
+        if not os.path.exists(ckpt):
+            raise RuntimeError(
+                f"KVSplice checkpoint {ckpt} not found. "
+                f"Run: python scripts/train_kvsplice.py --segment_size {seg}"
+            )
+        from backends.kvsplice_kl import KVSpliceKLBackend
+
+        backend = KVSpliceKLBackend()
+        backend.checkpoint_path = ckpt
+        return backend
     else:
         raise ValueError(f"Unknown backend: {name}")
 

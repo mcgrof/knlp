@@ -12,6 +12,7 @@ Key design:
 - Plus value reconstruction loss
 """
 
+import os
 import time
 
 import torch
@@ -87,7 +88,8 @@ class KVSpliceKLBackend(CompressionBackend):
 
     @property
     def name(self):
-        return "kvsplice_kl"
+        seg = getattr(self, "segment_size", 4)
+        return f"kvsplice_seg{seg}"
 
     def configure(self, L, model_config, **kwargs):
         self.L = L
@@ -104,7 +106,12 @@ class KVSpliceKLBackend(CompressionBackend):
             self.compressor = None
 
     def calibrate(self, model, token_data, L, device_str, model_config):
-        """Train segment compressor with attention KL loss."""
+        """Load trained compressor from checkpoint or train inline."""
+        # If checkpoint provided, load it
+        checkpoint_path = getattr(self, "checkpoint_path", None)
+        if checkpoint_path and os.path.exists(checkpoint_path):
+            return self._load_checkpoint(checkpoint_path, device_str, model_config)
+
         from scripts.bpa_v11_bench import get_text_batch
 
         n_layers = model_config["n_layers"]
@@ -261,6 +268,25 @@ class KVSpliceKLBackend(CompressionBackend):
 
         del past, out
         torch.cuda.empty_cache()
+
+    def _load_checkpoint(self, path, device_str, model_config):
+        """Load trained compressor from checkpoint."""
+        ckpt = torch.load(path, map_location=device_str, weights_only=True)
+        head_dim = model_config["head_dim"]
+        n_kv_heads = model_config["n_kv_heads"]
+        seg = ckpt.get("segment_size", self.segment_size)
+        self.segment_size = seg
+
+        self.compressor = SegmentCompressor(
+            head_dim, seg, n_kv_heads, device_str, torch.float16
+        )
+        self.compressor.load_state_dict(ckpt["compressor_state"])
+        self.compressor.eval()
+        self.calibrated = True
+        print(
+            f"    kvsplice_kl loaded: {path} "
+            f"(seg={seg}, loss={ckpt.get('final_loss', '?')})"
+        )
 
     @torch.no_grad()
     def run_decode(self, model, prefix_ids, continuation_ids, device_str, max_ctx):
