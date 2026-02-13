@@ -100,8 +100,10 @@ class QuantBackend(CompressionBackend):
         self.W_sink = kwargs.get("W_sink", 4)
         self.default_bits = kwargs.get("default_bits", 8)
         self.block_size = kwargs.get("block_size", 32)
-        self.calibrated = False
-        self.layer_bits = None  # per-layer bitwidth
+        # Preserve calibration across configure calls
+        if not hasattr(self, "calibrated"):
+            self.calibrated = False
+            self.layer_bits = None
 
     def calibrate(self, model, token_data, L, device_str, model_config):
         """Calibrate per-layer bitwidth based on sensitivity."""
