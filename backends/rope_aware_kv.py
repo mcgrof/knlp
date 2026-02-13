@@ -437,8 +437,9 @@ class RoPEAwareKVBackend(CompressionBackend):
             # De-rotate
             k_derot = apply_inverse_rope(k_h, cos_T, sin_T)
 
-            # Low-rank project in canonical space
-            k_proj = (k_derot @ proj_k.T) @ proj_k
+            # Low-rank project in canonical space (float32 for precision)
+            proj_k_f = proj_k.float()
+            k_proj = (k_derot @ proj_k_f.T) @ proj_k_f
 
             # Re-rotate
             k_rerot = apply_rope(k_proj, cos_T, sin_T)
