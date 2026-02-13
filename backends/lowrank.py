@@ -28,6 +28,8 @@ class LowRankBackend(CompressionBackend):
 
     @property
     def name(self):
+        if getattr(self, "k_only", False):
+            return "lowrank_konly"
         return "lowrank"
 
     def configure(self, L, model_config, **kwargs):
@@ -40,6 +42,9 @@ class LowRankBackend(CompressionBackend):
             "max_rank", model_config["head_dim"] // 2
         )  # max rank per head
         self.min_rank = kwargs.get("min_rank", 4)
+        self.energy_threshold = kwargs.get("energy_threshold", 0.999)
+        if not hasattr(self, "k_only"):
+            self.k_only = kwargs.get("k_only", False)
         # Preserve calibration across configure calls
         if not hasattr(self, "calibrated"):
             self.calibrated = False
@@ -53,9 +58,9 @@ class LowRankBackend(CompressionBackend):
         n_kv_heads = model_config["n_kv_heads"]
         head_dim = model_config["head_dim"]
 
-        # Get calibration data
+        # Get calibration data — use full L to capture RoPE distribution
         rng = np.random.RandomState(42)
-        cal_len = min(L, 4096)
+        cal_len = L
         idx = get_text_batch(token_data, 1, cal_len, rng).to(device_str)
 
         # Run prefill to get KV cache
@@ -82,67 +87,55 @@ class LowRankBackend(CompressionBackend):
                 # SVD on V
                 U_v, S_v, Vh_v = torch.linalg.svd(v_h, full_matrices=False)
 
-                # Adaptive rank: find rank that captures target variance
-                # Use cumulative energy ratio
+                # Adaptive rank: K and V have very different spectra
+                # K is highly compressible (RoPE concentrates energy);
+                # V spreads energy broadly. Use separate ranks.
                 total_energy_k = (S_k**2).sum()
                 total_energy_v = (S_v**2).sum()
+                target_energy = self.energy_threshold
 
-                # Find rank for K
                 cum_energy_k = torch.cumsum(S_k**2, dim=0)
-                target_energy = 0.99  # keep 99% of energy
-                rank_k = max(
-                    self.min_rank,
-                    int(
-                        (cum_energy_k / total_energy_k >= target_energy)
-                        .float()
-                        .argmax()
-                        .item()
-                    )
-                    + 1,
-                )
-                rank_k = min(rank_k, self.max_rank)
+                mask_k = (cum_energy_k / total_energy_k >= target_energy).float()
+                if mask_k.sum() > 0:
+                    rank_k = int(mask_k.argmax().item()) + 1
+                else:
+                    rank_k = head_dim
+                rank_k = max(self.min_rank, min(rank_k, self.max_rank))
 
-                # Find rank for V
-                cum_energy_v = torch.cumsum(S_v**2, dim=0)
-                rank_v = max(
-                    self.min_rank,
-                    int(
-                        (cum_energy_v / total_energy_v >= target_energy)
-                        .float()
-                        .argmax()
-                        .item()
-                    )
-                    + 1,
-                )
-                rank_v = min(rank_v, self.max_rank)
+                if self.k_only:
+                    rank_v = head_dim  # keep V full
+                else:
+                    cum_energy_v = torch.cumsum(S_v**2, dim=0)
+                    mask_v = (cum_energy_v / total_energy_v >= target_energy).float()
+                    if mask_v.sum() > 0:
+                        rank_v = int(mask_v.argmax().item()) + 1
+                    else:
+                        rank_v = head_dim
+                    rank_v = max(self.min_rank, min(rank_v, head_dim - 1))
 
-                # Use max of k/v ranks for simplicity
-                rank = max(rank_k, rank_v)
-
-                # Store projection matrices: Vh[:rank, :] (right singular vectors)
-                # K_compressed = K @ Vh[:rank,:].T = U[:,:rank] @ diag(S[:rank])
-                # K_reconstructed = K_compressed @ Vh[:rank,:]
-                proj_k = Vh_k[:rank, :].to(k.dtype)  # [rank, head_dim]
-                proj_v = Vh_v[:rank, :].to(v.dtype)  # [rank, head_dim]
+                proj_k = Vh_k[:rank_k, :].to(k.dtype)
+                proj_v = Vh_v[:rank_v, :].to(v.dtype)
 
                 layer_projs.append(
                     {
                         "proj_k": proj_k,
                         "proj_v": proj_v,
-                        "rank": rank,
+                        "rank_k": rank_k,
+                        "rank_v": rank_v,
                     }
                 )
 
-                # Track compression
                 T = k_h.shape[0]
                 total_elements_full += 2 * T * head_dim
-                total_elements_compressed += 2 * T * rank
+                total_elements_compressed += T * rank_k + T * rank_v
 
             self.projections.append(layer_projs)
 
         self.actual_ratio = total_elements_compressed / max(total_elements_full, 1)
+        avg_rk = np.mean([[p["rank_k"] for p in lp] for lp in self.projections])
+        avg_rv = np.mean([[p["rank_v"] for p in lp] for lp in self.projections])
         print(
-            f"    lowrank calibrated: avg_rank={np.mean([[p['rank'] for p in lp] for lp in self.projections]):.1f} "
+            f"    lowrank calibrated: K_rank={avg_rk:.1f} V_rank={avg_rv:.1f} "
             f"ratio={self.actual_ratio:.3f}"
         )
 
@@ -204,10 +197,11 @@ class LowRankBackend(CompressionBackend):
 
             # Bytes accounting
             if self.calibrated:
-                avg_rank = np.mean([[p["rank"] for p in lp] for lp in self.projections])
+                avg_rk = np.mean([[p["rank_k"] for p in lp] for lp in self.projections])
+                avg_rv = np.mean([[p["rank_v"] for p in lp] for lp in self.projections])
                 bytes_full = n_full * bpt * n_layers
                 bytes_compressed = int(
-                    n_compressed * 2 * n_kv_heads * avg_rank * elem * n_layers
+                    n_compressed * n_kv_heads * (avg_rk + avg_rv) * elem * n_layers
                 )
             else:
                 bytes_full = cache_len * bpt * n_layers
@@ -266,19 +260,20 @@ class LowRankBackend(CompressionBackend):
 
             for hi in range(n_kv_heads):
                 proj = self.projections[li][hi]
-                proj_k = proj["proj_k"]  # [rank, head_dim]
-                proj_v = proj["proj_v"]
+                proj_k = proj["proj_k"]  # [rank_k, head_dim]
+                proj_v = proj["proj_v"]  # [rank_v, head_dim]
 
-                # Compress: [B, T_far, head_dim] @ [head_dim, rank] -> [B, T_far, rank]
-                k_h = k_far[:, hi : hi + 1, :, :]  # [B, 1, T_far, head_dim]
+                k_h = k_far[:, hi : hi + 1, :, :]
                 v_h = v_far[:, hi : hi + 1, :, :]
 
-                k_lat = k_h @ proj_k.T  # [B, 1, T_far, rank]
-                v_lat = v_h @ proj_v.T
+                # K: always compress via low-rank projection
+                k_hat = (k_h @ proj_k.T) @ proj_k
 
-                # Reconstruct: [B, T_far, rank] @ [rank, head_dim] -> [B, T_far, head_dim]
-                k_hat = k_lat @ proj_k  # [B, 1, T_far, head_dim]
-                v_hat = v_lat @ proj_v
+                # V: skip if rank_v == head_dim (k_only mode)
+                if proj["rank_v"] >= k_h.shape[-1]:
+                    v_hat = v_h
+                else:
+                    v_hat = (v_h @ proj_v.T) @ proj_v
 
                 k_parts.append(k_hat)
                 v_parts.append(v_hat)
@@ -310,6 +305,10 @@ class LowRankBackend(CompressionBackend):
 
     def description(self):
         if self.calibrated:
-            avg_rank = np.mean([[p["rank"] for p in lp] for lp in self.projections])
-            return f"lowrank (avg_rank={avg_rank:.0f}, ratio={self.actual_ratio:.3f})"
+            avg_rk = np.mean([[p["rank_k"] for p in lp] for lp in self.projections])
+            avg_rv = np.mean([[p["rank_v"] for p in lp] for lp in self.projections])
+            return (
+                f"lowrank (K_rank={avg_rk:.0f} V_rank={avg_rv:.0f}"
+                f" ratio={self.actual_ratio:.3f})"
+            )
         return f"lowrank (target_ratio={self.target_ratio})"

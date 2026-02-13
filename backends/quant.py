@@ -91,6 +91,8 @@ class QuantBackend(CompressionBackend):
 
     @property
     def name(self):
+        if getattr(self, "_force_int4", False):
+            return "quant_int4"
         return "quant"
 
     def configure(self, L, model_config, **kwargs):
@@ -144,15 +146,18 @@ class QuantBackend(CompressionBackend):
             err4 = ((k - k_hat4) ** 2).mean().item() + ((v - v_hat4) ** 2).mean().item()
             errors_int4.append(err4)
 
-        # Assign bitwidth: use INT4 for layers where error is tolerable
-        # Heuristic: if INT4 error < 2x median INT8 error, use INT4
-        med_err8 = np.median(errors_int8)
-        self.layer_bits = []
-        for li in range(n_layers):
-            if errors_int4[li] < 2.0 * med_err8:
-                self.layer_bits.append(4)
-            else:
-                self.layer_bits.append(8)
+        # Assign bitwidth per layer
+        if getattr(self, "_force_int4", False):
+            self.layer_bits = [4] * n_layers
+        else:
+            # Heuristic: INT4 where error < 2x median INT8 error
+            med_err8 = np.median(errors_int8)
+            self.layer_bits = []
+            for li in range(n_layers):
+                if errors_int4[li] < 2.0 * med_err8:
+                    self.layer_bits.append(4)
+                else:
+                    self.layer_bits.append(8)
 
         n_int4 = sum(1 for b in self.layer_bits if b == 4)
         n_int8 = sum(1 for b in self.layer_bits if b == 8)
