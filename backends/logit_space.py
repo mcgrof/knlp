@@ -56,7 +56,11 @@ class NystromBackend(CompressionBackend):
         self.W_sink = kwargs.get("W_sink", 4)
 
     def calibrate(self, model, token_data, L, device_str, model_config):
-        """Calibrate landmark selection using attention patterns."""
+        """Calibrate landmark selection using KV cache statistics.
+
+        Uses K norms as importance proxy rather than full attention
+        matrices (which OOM at L=32K).
+        """
         from scripts.bpa_v11_bench import get_text_batch
 
         n_layers = model_config["n_layers"]
@@ -67,24 +71,23 @@ class NystromBackend(CompressionBackend):
         idx = get_text_batch(token_data, 1, L, rng).to(device_str)
 
         with torch.no_grad():
-            out = model(idx, use_cache=True, output_attentions=True)
+            out = model(idx, use_cache=True)
             past = out.past_key_values
-            attentions = out.attentions  # tuple of [B, n_heads, T, T]
 
-        # Compute per-position importance across layers
-        # (average attention received across all query positions and layers)
+        # Use K norms as importance proxy (higher norm = more likely
+        # to receive attention mass via dot product)
         importance = torch.zeros(L, device=device_str)
-        for li, attn in enumerate(attentions):
-            # attn: [B, n_heads, T, T] - sum over query dim and heads
-            importance += attn[0].sum(dim=(0, 1))  # [T]
+        for li in range(n_layers):
+            k, v = past[li]  # [B, n_kv_heads, T, head_dim]
+            # Average K norm across KV heads
+            k_norms = k[0].norm(dim=-1).mean(dim=0)  # [T]
+            importance += k_norms
 
-        importance = importance / (n_layers * model_config["n_heads"])
-
-        # Store importance for landmark selection during compression
+        importance = importance / n_layers
         self.importance = importance.detach()
         self.calibrated = True
 
-        del past, out, attentions
+        del past, out
         torch.cuda.empty_cache()
         print(
             f"    nystrom calibrated: m={self.n_landmarks}"
