@@ -96,7 +96,8 @@ class KVSpliceKLBackend(CompressionBackend):
         self.mc = model_config
         self.W_min = kwargs.get("W_min", 1024)
         self.W_sink = kwargs.get("W_sink", 4)
-        self.segment_size = kwargs.get("segment_size", 4)
+        if not hasattr(self, "segment_size"):
+            self.segment_size = kwargs.get("segment_size", 4)
         self.train_steps = kwargs.get("train_steps", 2000)
         self.lr = kwargs.get("lr", 1e-3)
         self.temperature = kwargs.get("temperature", 1.0)
