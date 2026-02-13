@@ -854,7 +854,9 @@ def run_layer_adaptive_bpa_decode(
 ):
     """BPA decode with per-layer W_min/W_max.
 
-    Each layer gets its own local window size.
+    HF DynamicCache requires uniform seq_len across layers, so we
+    use the mean W as a uniform eviction target. The per-layer
+    schedule determines the average aggressiveness.
     """
     n_layers = model_config["n_layers"]
     rng = np.random.RandomState(seed)
@@ -864,6 +866,9 @@ def run_layer_adaptive_bpa_decode(
     continuation = idx[:, seq_len : seq_len + decode_steps]
 
     rss_before = get_cpu_rss_mb()
+
+    # Use mean W as uniform eviction target (HF cache constraint)
+    effective_W = int(np.mean(W_max_per_layer))
 
     # Warmup
     if device_str != "cpu":
@@ -890,42 +895,23 @@ def run_layer_adaptive_bpa_decode(
     for step in range(decode_steps):
         next_token = continuation[:, step : step + 1]
 
-        # Gate update with per-layer eviction
+        # Gate update: uniform eviction at effective_W
         if step % gate_every_k == 0:
             cache_len = kv_cache_len(past)
-
-            # Compute per-layer keep masks and evict
-            # Use the most aggressive layer's W to determine
-            # global eviction (since HF DynamicCache has same
-            # seq_len across layers, we use uniform cache len)
-            # We evict using the MINIMUM W across layers
-            min_W = min(W_max_per_layer)
-            if cache_len > min_W:
-                # Per-layer eviction: each layer keeps its own W
+            if cache_len > effective_W:
+                n_chunks = (cache_len + CHUNK_SIZE - 1) // CHUNK_SIZE
+                far_end = max(0, (cache_len - effective_W) // CHUNK_SIZE)
+                far_chunks = select_far_chunks_random(
+                    n_chunks, far_end, int(B_far_target), sel_rng
+                )
+                mask = build_keep_mask(cache_len, effective_W, far_chunks, CHUNK_SIZE)
+                indices = mask.to(device_str).nonzero(as_tuple=True)[0]
                 new_cache = DynamicCache()
                 for layer_idx in range(n_layers):
                     k, v = past[layer_idx]
-                    W_layer = W_max_per_layer[layer_idx]
-                    if cache_len > W_layer:
-                        # Keep last W_layer tokens + far chunks
-                        n_chunks = (cache_len + CHUNK_SIZE - 1) // CHUNK_SIZE
-                        far_end = max(0, (cache_len - W_layer) // CHUNK_SIZE)
-                        far_chunks = select_far_chunks_random(
-                            n_chunks,
-                            far_end,
-                            int(B_far_target),
-                            sel_rng,
-                        )
-                        mask = build_keep_mask(
-                            cache_len, W_layer, far_chunks, CHUNK_SIZE
-                        )
-                        indices = mask.to(device_str).nonzero(as_tuple=True)[0]
-                        k_new = k[:, :, indices, :]
-                        v_new = v[:, :, indices, :]
-                    else:
-                        k_new = k
-                        v_new = v
-                    new_cache.update(k_new, v_new, layer_idx)
+                    new_cache.update(
+                        k[:, :, indices, :], v[:, :, indices, :], layer_idx
+                    )
                 past = new_cache
                 has_evicted = True
 
