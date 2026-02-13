@@ -111,7 +111,7 @@ def gpu_preflight(device_str):
     assert torch.cuda.is_available(), "CUDA not available"
 
     props = torch.cuda.get_device_properties(0)
-    total_gb = props.total_mem / 1e9
+    total_gb = props.total_memory / 1e9
     print(f"GPU Preflight OK: {props.name} ({total_gb:.1f}GB)")
     print(f"  torch={torch.__version__} hip={torch.version.hip}")
     return {

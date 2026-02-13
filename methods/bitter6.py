@@ -36,6 +36,7 @@ class Bitter6(BitterMethod):
 
         # Distance bands scale with L
         self.W_near = kwargs.get("W_near", min(1024, max(64, L // 16)))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.W_mid = kwargs.get("W_mid", max(128, L // 4))
         # far = everything older than W_near + W_mid
 
@@ -92,17 +93,23 @@ class Bitter6(BitterMethod):
 
                 # Restructure: move old tokens to compressed tiers
                 # Boundary: near = last W_near, mid = next W_mid, far = rest
-                far_end = max(0, cache_len - self.W_near - self.W_mid)
-                mid_end = max(0, cache_len - self.W_near)
+                # Protect sink tokens from compression
+                far_start = self.W_sink
+                far_end = max(far_start, cache_len - self.W_near - self.W_mid)
+                mid_end = max(far_end, cache_len - self.W_near)
 
-                if far_end > self.segment_size:
+                if far_end - far_start > self.segment_size:
                     # Move far tokens to splice tier
                     for li in range(n_layers):
                         k, v = past[li]
 
-                        # Far region: [0, far_end)
-                        k_far = k[:, :, :far_end, :]
-                        v_far = v[:, :, :far_end, :]
+                        # Sink: [0, W_sink) — always full fidelity
+                        k_sink = k[:, :, :far_start, :]
+                        v_sink = v[:, :, :far_start, :]
+
+                        # Far region: [W_sink, far_end)
+                        k_far = k[:, :, far_start:far_end, :]
+                        v_far = v[:, :, far_start:far_end, :]
                         k_seg, v_seg = splicer.splice(k_far, v_far)
 
                         # Mid region: [far_end, mid_end)
@@ -114,12 +121,15 @@ class Bitter6(BitterMethod):
                         k_near = k[:, :, mid_end:, :]
                         v_near = v[:, :, mid_end:, :]
 
-                        # Reconstruct: splice_expanded + mla_expanded + near
-                        # Splice segments are already averaged K,V
+                        # Reconstruct: sink + splice + mla_expanded + near
                         k_mla_hat, v_mla_hat = mla.expand(k_lat, v_lat)
 
-                        k_combined = torch.cat([k_seg, k_mla_hat, k_near], dim=2)
-                        v_combined = torch.cat([v_seg, v_mla_hat, v_near], dim=2)
+                        k_combined = torch.cat(
+                            [k_sink, k_seg, k_mla_hat, k_near], dim=2
+                        )
+                        v_combined = torch.cat(
+                            [v_sink, v_seg, v_mla_hat, v_near], dim=2
+                        )
 
                         if li == 0:
                             new_cache = DynamicCache()
