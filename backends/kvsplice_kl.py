@@ -98,8 +98,10 @@ class KVSpliceKLBackend(CompressionBackend):
         self.train_steps = kwargs.get("train_steps", 2000)
         self.lr = kwargs.get("lr", 1e-3)
         self.temperature = kwargs.get("temperature", 1.0)
-        self.calibrated = False
-        self.compressor = None
+        # Preserve calibration across configure calls
+        if not hasattr(self, "calibrated"):
+            self.calibrated = False
+            self.compressor = None
 
     def calibrate(self, model, token_data, L, device_str, model_config):
         """Train segment compressor with attention KL loss."""
