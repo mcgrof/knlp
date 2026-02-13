@@ -347,82 +347,46 @@ def record_attention_traces(
         top2 = torch.topk(logits_t.float(), 2).values
         margin = (top2[0] - top2[1]).item()
 
+        # Additional cheap features
+        top5_vals = torch.topk(probs, 5).values
+        top5_mass = top5_vals.sum().item()
+        step_pos = step / max(decode_steps - 1, 1)
+
+        # Attention-derived features (need attn maps)
+        far_mass_std = float(np.std(far_mass_per_layer))
+        attn_entropy_std = float(np.std(attn_entropy_per_layer))
+
         feat = {
             "entropy": entropy,
             "resid_norm": resid_norm,
             "logit_margin": margin,
+            "top5_mass": top5_mass,
+            "step_pos": step_pos,
             "avg_attn_entropy": avg_attn_entropy,
+            "attn_entropy_std": attn_entropy_std,
             "avg_far_mass": avg_far_mass,
             "max_far_mass": max_far_mass,
+            "far_mass_std": far_mass_std,
         }
         features.append(feat)
 
-        # Label: retrieval required if far attention mass > threshold
-        retrieval_required = 1 if avg_far_mass > 0.2 else 0
-        labels.append(retrieval_required)
+        # Store raw mass; labeling done after collecting all
+        labels.append(avg_far_mass)
 
     return features, labels
 
 
-def train_retrieval_predictor(features_list, labels_list):
-    """Train a simple logistic regression retrieval predictor.
-
-    Args:
-        features_list: list of list of feature dicts
-        labels_list: list of list of 0/1 labels
-
-    Returns:
-        dict with weights, bias, metrics
-    """
-    # Flatten
-    X_rows = []
-    y_rows = []
-    for feats, labs in zip(features_list, labels_list):
-        for f, l in zip(feats, labs):
-            X_rows.append(
-                [
-                    f["entropy"],
-                    f["resid_norm"],
-                    f["logit_margin"],
-                    f["avg_attn_entropy"],
-                ]
-            )
-            y_rows.append(l)
-
-    X = np.array(X_rows, dtype=np.float32)
-    y = np.array(y_rows, dtype=np.float32)
-
-    n_pos = y.sum()
-    n_neg = len(y) - n_pos
-    print(
-        f"  Training data: {len(y)} samples, "
-        f"{int(n_pos)} positive ({100*n_pos/len(y):.1f}%), "
-        f"{int(n_neg)} negative"
-    )
-
-    if n_pos == 0 or n_neg == 0:
-        print("  WARNING: Only one class present — cannot train predictor")
-        return {
-            "status": "FAIL",
-            "reason": "single_class",
-            "n_pos": int(n_pos),
-            "n_neg": int(n_neg),
-            "roc_auc": 0.5,
-        }
-
-    # Standardize features
+def _fit_logreg(X, y, n_epochs=300, lr=0.1):
+    """Fit logistic regression and return AUC + confusion metrics."""
     X_mean = X.mean(axis=0)
     X_std = X.std(axis=0) + 1e-8
     X_norm = (X - X_mean) / X_std
 
-    # Train logistic regression with SGD
     n_features = X_norm.shape[1]
     w = np.zeros(n_features, dtype=np.float32)
     b = 0.0
-    lr = 0.1
-    n_epochs = 200
 
-    for epoch in range(n_epochs):
+    for _epoch in range(n_epochs):
         logits = X_norm @ w + b
         probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -30, 30)))
         grad_w = X_norm.T @ (probs - y) / len(y)
@@ -430,18 +394,18 @@ def train_retrieval_predictor(features_list, labels_list):
         w -= lr * grad_w
         b -= lr * grad_b
 
-    # Compute ROC-AUC
     logits = X_norm @ w + b
     probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -30, 30)))
 
-    # Sort by predicted probability descending
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+
+    # ROC-AUC via trapezoidal
     order = np.argsort(-probs)
     y_sorted = y[order]
-    tp = 0
-    fp = 0
+    tp = fp = 0
     auc = 0.0
-    tp_prev = 0
-    fp_prev = 0
+    tp_prev = fp_prev = 0
     for i in range(len(y_sorted)):
         if y_sorted[i] == 1:
             tp += 1
@@ -450,12 +414,9 @@ def train_retrieval_predictor(features_list, labels_list):
             auc += (tp + tp_prev) / 2.0
         tp_prev = tp
         fp_prev = fp
-    if n_pos > 0 and n_neg > 0:
-        auc /= n_pos * n_neg
-    else:
-        auc = 0.5
+    auc = auc / (n_pos * n_neg) if n_pos > 0 and n_neg > 0 else 0.5
 
-    # Confusion matrix at threshold 0.5
+    # Confusion at threshold=0.5
     preds = (probs > 0.5).astype(int)
     tp_cm = int(((preds == 1) & (y == 1)).sum())
     fp_cm = int(((preds == 1) & (y == 0)).sum())
@@ -464,35 +425,89 @@ def train_retrieval_predictor(features_list, labels_list):
     precision = tp_cm / (tp_cm + fp_cm) if (tp_cm + fp_cm) > 0 else 0
     recall = tp_cm / (tp_cm + fn_cm) if (tp_cm + fn_cm) > 0 else 0
 
-    print(f"  ROC-AUC: {auc:.4f}")
-    print(f"  Confusion: TP={tp_cm} FP={fp_cm} FN={fn_cm} TN={tn_cm}")
-    print(f"  Precision={precision:.3f} Recall={recall:.3f}")
-
     return {
-        "status": "OK",
-        "roc_auc": round(auc, 4),
-        "confusion": {
-            "tp": tp_cm,
-            "fp": fp_cm,
-            "fn": fn_cm,
-            "tn": tn_cm,
-        },
-        "precision": round(precision, 4),
-        "recall": round(recall, 4),
+        "roc_auc": round(float(auc), 4),
+        "confusion": {"tp": tp_cm, "fp": fp_cm, "fn": fn_cm, "tn": tn_cm},
+        "precision": round(float(precision), 4),
+        "recall": round(float(recall), 4),
         "weights": w.tolist(),
         "bias": float(b),
         "feature_mean": X_mean.tolist(),
         "feature_std": X_std.tolist(),
-        "feature_names": [
+    }
+
+
+def train_retrieval_predictor(features_list, labels_list):
+    """Train retrieval predictors with multiple feature sets.
+
+    Tests cheap-only features (no attention maps needed at runtime)
+    and all features (including attention-derived) to diagnose whether
+    the limitation is in features or the prediction task itself.
+
+    Returns dict with results for each feature set.
+    """
+    # Flatten all data
+    all_feats = []
+    y_rows = []
+    for feats, labs in zip(features_list, labels_list):
+        for f, l in zip(feats, labs):
+            all_feats.append(f)
+            y_rows.append(l)
+    y = np.array(y_rows, dtype=np.float32)
+
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    print(
+        f"  Training data: {len(y)} samples, "
+        f"{n_pos} positive ({100*n_pos/len(y):.1f}%), "
+        f"{n_neg} negative"
+    )
+
+    if n_pos == 0 or n_neg == 0:
+        print("  WARNING: Only one class present — cannot train predictor")
+        return {
+            "status": "FAIL",
+            "reason": "single_class",
+            "n_pos": n_pos,
+            "n_neg": n_neg,
+            "roc_auc": 0.5,
+        }
+
+    # Feature sets to test
+    feature_sets = {
+        "cheap": ["entropy", "resid_norm", "logit_margin", "top5_mass", "step_pos"],
+        "attn": ["avg_attn_entropy", "attn_entropy_std"],
+        "all": [
             "entropy",
             "resid_norm",
             "logit_margin",
+            "top5_mass",
+            "step_pos",
             "avg_attn_entropy",
+            "attn_entropy_std",
+            "far_mass_std",
         ],
-        "n_samples": len(y),
-        "n_pos": int(n_pos),
-        "n_neg": int(n_neg),
     }
+
+    results = {"n_samples": len(y), "n_pos": n_pos, "n_neg": n_neg}
+
+    for set_name, feat_keys in feature_sets.items():
+        X = np.array([[f[k] for k in feat_keys] for f in all_feats], dtype=np.float32)
+        res = _fit_logreg(X, y)
+        res["feature_names"] = feat_keys
+        results[set_name] = res
+        print(
+            f"  {set_name:6s} features ({len(feat_keys)}): "
+            f"AUC={res['roc_auc']:.4f} "
+            f"P={res['precision']:.3f} R={res['recall']:.3f}"
+        )
+
+    # Best AUC for summary
+    best_set = max(feature_sets.keys(), key=lambda k: results[k]["roc_auc"])
+    results["best_set"] = best_set
+    results["roc_auc"] = results[best_set]["roc_auc"]
+    results["status"] = "OK"
+    return results
 
 
 def cmd_phase2(args):
@@ -503,8 +518,37 @@ def cmd_phase2(args):
     seq_lens = [int(x) for x in args.L.split(",")]
     seeds = [int(x) for x in args.seeds.split(",")]
 
-    print(f"Loading model {args.model}...")
-    model, tokenizer, max_ctx, model_config = load_hf_model(args.model, device_str)
+    # Phase 2 needs eager attention to capture attention weights
+    print(f"Loading model {args.model} (eager attention)...")
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+    config = AutoConfig.from_pretrained(args.model)
+    max_ctx = getattr(config, "max_position_embeddings", None) or getattr(
+        config, "n_positions", 1024
+    )
+    n_layers = getattr(config, "num_hidden_layers", None)
+    hidden = getattr(config, "hidden_size", None)
+    n_heads = getattr(config, "num_attention_heads", None)
+    n_kv_heads = getattr(config, "num_key_value_heads", n_heads)
+    head_dim = hidden // n_heads if hidden and n_heads else None
+    model_config = {
+        "n_layers": n_layers,
+        "hidden_size": hidden,
+        "n_heads": n_heads,
+        "n_kv_heads": n_kv_heads,
+        "head_dim": head_dim,
+        "model_type": getattr(config, "model_type", "unknown"),
+        "vocab_size": getattr(config, "vocab_size", 50257),
+    }
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, dtype=DTYPE, attn_implementation="eager"
+    )
+    model = model.to(device_str)
+    model.eval()
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    print(
+        f"  max_ctx={max_ctx} layers={n_layers} heads={n_heads} kv_heads={n_kv_heads}"
+    )
 
     print("Loading validation data...")
     token_data = load_validation_tokens(tokenizer)
@@ -533,51 +577,90 @@ def cmd_phase2(args):
                 W_min=W_min,
             )
             all_features.append(feats)
-            all_labels.append(labs)
+            all_labels.append(labs)  # raw far_mass values
 
-            n_ret = sum(labs)
-            avg_far = np.mean([f["avg_far_mass"] for f in feats])
-            print(
-                f" retrieval={n_ret}/{len(labs)}"
-                f" ({100*n_ret/len(labs):.0f}%)"
-                f" avg_far_mass={avg_far:.3f}"
-            )
+            avg_far = np.mean(labs)
+            print(f" avg_far_mass={avg_far:.3f}")
             trace_results.append(
                 {
                     "L": L,
                     "seed": seed,
                     "n_steps": len(labs),
-                    "n_retrieval": n_ret,
-                    "pct_retrieval": round(100 * n_ret / len(labs), 1),
                     "avg_far_mass": round(avg_far, 4),
                 }
             )
 
+    # Apply threshold: use p75 of far_mass as threshold for "retrieval required"
+    all_masses = []
+    for labs in all_labels:
+        all_masses.extend(labs)
+    all_masses = np.array(all_masses)
+    threshold = float(np.percentile(all_masses, 75))
+    print(f"\n  Far mass threshold (p75): {threshold:.4f}")
+    print(
+        f"  Distribution: min={all_masses.min():.3f}"
+        f" p25={np.percentile(all_masses,25):.3f}"
+        f" p50={np.percentile(all_masses,50):.3f}"
+        f" p75={np.percentile(all_masses,75):.3f}"
+        f" max={all_masses.max():.3f}"
+    )
+
+    # Convert raw far_mass to binary labels
+    binary_labels = []
+    for labs in all_labels:
+        binary_labels.append([1 if m > threshold else 0 for m in labs])
+
+    n_pos = sum(sum(bl) for bl in binary_labels)
+    n_total = sum(len(bl) for bl in binary_labels)
+    print(f"  Positive: {n_pos}/{n_total}" f" ({100*n_pos/n_total:.1f}%)")
+
+    for tr, labs in zip(trace_results, binary_labels):
+        tr["n_retrieval"] = sum(labs)
+        tr["pct_retrieval"] = round(100 * sum(labs) / len(labs), 1)
+
     # Train predictor
     print("\n=== Training retrieval predictor ===")
-    predictor = train_retrieval_predictor(all_features, all_labels)
+    predictor = train_retrieval_predictor(all_features, binary_labels)
+    predictor["far_mass_threshold"] = round(threshold, 4)
+
+    def json_safe(obj):
+        """Convert numpy types to Python types for JSON serialization."""
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
+    class NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            val = json_safe(obj)
+            if val is not obj:
+                return val
+            return super().default(obj)
 
     ensure_dir(args.output_dir)
     pred_path = os.path.join(args.output_dir, "retrieval_predictor.json")
     with open(pred_path, "w") as f:
-        json.dump(predictor, f, indent=2)
+        json.dump(predictor, f, indent=2, cls=NumpyEncoder)
     print(f"Saved predictor: {pred_path}")
 
     traces_path = os.path.join(args.output_dir, "attention_traces.json")
     with open(traces_path, "w") as f:
-        json.dump(trace_results, f, indent=2)
+        json.dump(trace_results, f, indent=2, cls=NumpyEncoder)
     print(f"Saved traces: {traces_path}")
 
     # Also dump raw features for analysis
     raw_path = os.path.join(args.output_dir, "attention_features_raw.json")
     raw = []
-    for feats, labs in zip(all_features, all_labels):
+    for feats, labs in zip(all_features, binary_labels):
         for f, l in zip(feats, labs):
             row = dict(f)
-            row["retrieval_required"] = l
+            row["retrieval_required"] = int(l)
             raw.append(row)
     with open(raw_path, "w") as f:
-        json.dump(raw, f, indent=2)
+        json.dump(raw, f, indent=2, cls=NumpyEncoder)
     print(f"Saved raw features: {raw_path}")
 
 
