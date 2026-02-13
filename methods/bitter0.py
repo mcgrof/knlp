@@ -28,6 +28,7 @@ class Bitter0(BitterMethod):
         self.L = L
         self.mc = model_config
         self.W_min = kwargs.get("W_min", max(64, L // 8))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.K_hh = kwargs.get("K_hh", max(16, L // 16))
         self.hard_cap = kwargs.get("hard_cap", int(L * 1.5))
         self.gate_every = kwargs.get("gate_every", 8)
@@ -97,6 +98,7 @@ class Bitter0(BitterMethod):
                         keep_mask = torch.zeros(
                             cache_len, dtype=torch.bool, device=device_str
                         )
+                        keep_mask[: self.W_sink] = True  # sink tokens
                         keep_mask[recency_start:] = True  # recency
                         keep_mask[topk_idx] = True  # heavy hitters
 

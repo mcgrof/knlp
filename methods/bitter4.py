@@ -47,6 +47,7 @@ class Bitter4(BitterMethod):
         self.L = L
         self.mc = model_config
         self.W_min = kwargs.get("W_min", max(64, L // 8))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.budget = kwargs.get("budget", int(L * 0.9))
         self.gate_every = kwargs.get("gate_every", 8)
         self.calibration_steps = kwargs.get("calibration_steps", 200)
@@ -185,8 +186,9 @@ class Bitter4(BitterMethod):
                     X_norm = (feats - self.feat_mean) / self.feat_std
                     keep_probs = torch.sigmoid(self.router(X_norm).squeeze(-1))
 
-                    # Always keep recency window
+                    # Always keep sink + recency window
                     recency_start = max(0, cache_len - self.W_min)
+                    keep_probs[: self.W_sink] = 1.0
                     keep_probs[recency_start:] = 1.0
 
                     # Keep tokens above threshold

@@ -57,6 +57,7 @@ class Bitter7(BitterMethod):
         self.L = L
         self.mc = model_config
         self.W_min = kwargs.get("W_min", max(64, L // 8))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.gate_every = kwargs.get("gate_every", 8)
         self.alpha = kwargs.get("alpha", 0.001)  # bytes penalty
         self.beta = kwargs.get("beta", 0.0001)  # memory penalty
@@ -221,8 +222,9 @@ class Bitter7(BitterMethod):
                     tier_probs = self.router(X_norm, temperature=0.1)
                     tier_assign = tier_probs.argmax(dim=-1)
 
-                    # Force recency window to tier 0
+                    # Force sink + recency window to tier 0 (keep full)
                     recency_start = max(0, cache_len - self.W_min)
+                    tier_assign[: self.W_sink] = 0
                     tier_assign[recency_start:] = 0
 
                     # Apply tiering
