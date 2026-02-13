@@ -28,6 +28,7 @@ class Bitter1(BitterMethod):
         self.L = L
         self.mc = model_config
         self.W_min = kwargs.get("W_min", max(64, L // 8))
+        self.W_sink = kwargs.get("W_sink", 4)
         self.budget = kwargs.get("budget", int(L * 0.9))
         self.decay = kwargs.get("decay", 0.95)
         self.gate_every = kwargs.get("gate_every", 8)
@@ -83,6 +84,7 @@ class Bitter1(BitterMethod):
                             keep_mask = torch.zeros(
                                 cache_len, dtype=torch.bool, device=device_str
                             )
+                            keep_mask[: self.W_sink] = True
                             keep_mask[recency_start:] = True
                             keep_mask[topk_idx] = True
                         else:
@@ -93,6 +95,7 @@ class Bitter1(BitterMethod):
                         keep_mask = torch.zeros(
                             cache_len, dtype=torch.bool, device=device_str
                         )
+                        keep_mask[: self.W_sink] = True
                         keep_mask[-self.budget :] = True
 
                     indices = keep_mask.nonzero(as_tuple=True)[0]
