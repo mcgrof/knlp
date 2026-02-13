@@ -1,0 +1,11 @@
+{
+  "segment_size": 8,
+  "train_steps": 5000,
+  "best_loss": 0.9204440712928772,
+  "final_loss": 3.452659845352173,
+  "lr": 0.001,
+  "temperature": 1.0,
+  "elapsed_s": 7.5,
+  "n_cal_seqs": 4,
+  "cal_len": 8192
+}
