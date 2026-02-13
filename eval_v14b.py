@@ -98,6 +98,7 @@ def get_backend(name, kvsplice_checkpoint=None):
 
         backend = KVSpliceKLBackend()
         backend.checkpoint_path = ckpt
+        backend.segment_size = seg
         return backend
     else:
         raise ValueError(f"Unknown backend: {name}")
