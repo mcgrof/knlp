@@ -59,10 +59,22 @@ def get_backend(name, kvsplice_checkpoint=None):
         from backends.lowrank import LowRankBackend
 
         return LowRankBackend()
+    elif name == "lowrank_konly":
+        from backends.lowrank import LowRankBackend
+
+        b = LowRankBackend()
+        b.k_only = True
+        return b
     elif name == "quant":
         from backends.quant import QuantBackend
 
         return QuantBackend()
+    elif name == "quant_int4":
+        from backends.quant import QuantBackend
+
+        b = QuantBackend()
+        b._force_int4 = True
+        return b
     elif name == "kvsplice_trained":
         if kvsplice_checkpoint is None:
             raise RuntimeError(
@@ -410,8 +422,8 @@ def main():
             print(f"  SKIP: {e}")
             continue
 
-        # Calibrate on first L value
-        cal_L = valid_L[0]
+        # Calibrate on max L value (captures full RoPE distribution)
+        cal_L = max(valid_L)
         print(f"  Calibrating on L={cal_L}...")
         try:
             backend.configure(cal_L, model_config)
