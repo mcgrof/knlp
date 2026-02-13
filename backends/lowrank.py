@@ -40,8 +40,10 @@ class LowRankBackend(CompressionBackend):
             "max_rank", model_config["head_dim"] // 2
         )  # max rank per head
         self.min_rank = kwargs.get("min_rank", 4)
-        self.calibrated = False
-        self.projections = None  # per-layer per-head projection matrices
+        # Preserve calibration across configure calls
+        if not hasattr(self, "calibrated"):
+            self.calibrated = False
+            self.projections = None
 
     def calibrate(self, model, token_data, L, device_str, model_config):
         """Calibrate SVD projections on sample data."""
