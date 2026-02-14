@@ -581,6 +581,16 @@ class PhasePreservingKVSpliceBackend(PerLayerKVSpliceBackend):
     def name(self):
         return f"phase_splice_{self.segment_size}"
 
+    def calibrate(self, model, token_data, L, device_str, model_config):
+        """Load checkpoint or train phase-preserving compressor."""
+        ckpt_path = os.path.join(
+            self.checkpoint_dir,
+            f"phase_splice_seg{self.segment_size}.pt",
+        )
+        if os.path.exists(ckpt_path):
+            return self._load_checkpoint(ckpt_path, device_str, model_config)
+        self._train(model, token_data, L, device_str, model_config)
+
     def _train(self, model, token_data, L, device_str, model_config):
         """Train phase-preserving compressor."""
         from scripts.bpa_v11_bench import get_text_batch
@@ -795,6 +805,16 @@ class HeadClusteredKVSpliceBackend(PerLayerKVSpliceBackend):
     @property
     def name(self):
         return f"headcluster_splice_{self.segment_size}"
+
+    def calibrate(self, model, token_data, L, device_str, model_config):
+        """Load checkpoint or train head-clustered compressor."""
+        ckpt_path = os.path.join(
+            self.checkpoint_dir,
+            f"headcluster_seg{self.segment_size}.pt",
+        )
+        if os.path.exists(ckpt_path):
+            return self._load_checkpoint(ckpt_path, device_str, model_config)
+        self._train(model, token_data, L, device_str, model_config)
 
     def _train(self, model, token_data, L, device_str, model_config):
         """Train head-clustered compressor."""
