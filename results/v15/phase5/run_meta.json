@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-02-13T16:48:27.580595",
+  "model": "qwen05b",
+  "L_values": [
+    4096,
+    8192,
+    16384,
+    32768
+  ],
+  "decode_steps": 256,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "gpu_info": {
+    "device_name": "AMD Radeon Pro W7900",
+    "total_gb": 48.3,
+    "torch_version": "2.6.0+rocm6.2.4",
+    "hip_version": "6.2.41134-65d174c3e"
+  },
+  "version": "v15",
+  "phase": 5
+}
