@@ -1,0 +1,142 @@
+{
+  "8192": {
+    "L": 8192,
+    "dense_gpu_alloc_mb": 3634.6,
+    "dense_gpu_reserved_mb": 4051.7,
+    "kv_cache_bytes_dense": 100663296,
+    "kv_cache_bytes_int8": 51904512,
+    "kv_cache_bytes_int4": 28311552,
+    "kv_ratio_int8": 0.5156,
+    "kv_ratio_int4": 0.2812,
+    "kv_cache_mb_dense": 100.66,
+    "kv_cache_mb_int8": 51.9,
+    "kv_cache_mb_int4": 28.31,
+    "kv_cache_bytes_S1": 46006272,
+    "kv_ratio_S1": 0.457,
+    "kv_cache_mb_S1": 46.01,
+    "kv_cache_bytes_S2": 34209792,
+    "kv_ratio_S2": 0.3398,
+    "kv_cache_mb_S2": 34.21,
+    "kv_cache_bytes_S3": 36175872,
+    "kv_ratio_S3": 0.3594,
+    "kv_cache_mb_S3": 36.18,
+    "kv_cache_bytes_hybrid_r24_S1": 41877504,
+    "kv_ratio_hybrid_r24_S1": 0.416,
+    "kv_cache_mb_hybrid_r24_S1": 41.88,
+    "kv_cache_bytes_hybrid_r24_S2": 35979264,
+    "kv_ratio_hybrid_r24_S2": 0.3574,
+    "kv_cache_mb_hybrid_r24_S2": 35.98,
+    "kv_cache_bytes_hybrid_r24_S3": 36962304,
+    "kv_ratio_hybrid_r24_S3": 0.3672,
+    "kv_cache_mb_hybrid_r24_S3": 36.96
+  },
+  "16384": {
+    "L": 16384,
+    "dense_gpu_alloc_mb": 6250.1,
+    "dense_gpu_reserved_mb": 7121.9,
+    "kv_cache_bytes_dense": 201326592,
+    "kv_cache_bytes_int8": 103809024,
+    "kv_cache_bytes_int4": 56623104,
+    "kv_ratio_int8": 0.5156,
+    "kv_ratio_int4": 0.2812,
+    "kv_cache_mb_dense": 201.33,
+    "kv_cache_mb_int8": 103.81,
+    "kv_cache_mb_int4": 56.62,
+    "kv_cache_bytes_S1": 92012544,
+    "kv_ratio_S1": 0.457,
+    "kv_cache_mb_S1": 92.01,
+    "kv_cache_bytes_S2": 68419584,
+    "kv_ratio_S2": 0.3398,
+    "kv_cache_mb_S2": 68.42,
+    "kv_cache_bytes_S3": 72351744,
+    "kv_ratio_S3": 0.3594,
+    "kv_cache_mb_S3": 72.35,
+    "kv_cache_bytes_hybrid_r24_S1": 83755008,
+    "kv_ratio_hybrid_r24_S1": 0.416,
+    "kv_cache_mb_hybrid_r24_S1": 83.76,
+    "kv_cache_bytes_hybrid_r24_S2": 71958528,
+    "kv_ratio_hybrid_r24_S2": 0.3574,
+    "kv_cache_mb_hybrid_r24_S2": 71.96,
+    "kv_cache_bytes_hybrid_r24_S3": 73924608,
+    "kv_ratio_hybrid_r24_S3": 0.3672,
+    "kv_cache_mb_hybrid_r24_S3": 73.92
+  },
+  "32768": {
+    "L": 32768,
+    "dense_gpu_alloc_mb": 11470.4,
+    "dense_gpu_reserved_mb": 12910.1,
+    "kv_cache_bytes_dense": 402653184,
+    "kv_cache_bytes_int8": 207618048,
+    "kv_cache_bytes_int4": 113246208,
+    "kv_ratio_int8": 0.5156,
+    "kv_ratio_int4": 0.2812,
+    "kv_cache_mb_dense": 402.65,
+    "kv_cache_mb_int8": 207.62,
+    "kv_cache_mb_int4": 113.25,
+    "kv_cache_bytes_S1": 184025088,
+    "kv_ratio_S1": 0.457,
+    "kv_cache_mb_S1": 184.03,
+    "kv_cache_bytes_S2": 136839168,
+    "kv_ratio_S2": 0.3398,
+    "kv_cache_mb_S2": 136.84,
+    "kv_cache_bytes_S3": 144703488,
+    "kv_ratio_S3": 0.3594,
+    "kv_cache_mb_S3": 144.7,
+    "kv_cache_bytes_hybrid_r24_S1": 167510016,
+    "kv_ratio_hybrid_r24_S1": 0.416,
+    "kv_cache_mb_hybrid_r24_S1": 167.51,
+    "kv_cache_bytes_hybrid_r24_S2": 143917056,
+    "kv_ratio_hybrid_r24_S2": 0.3574,
+    "kv_cache_mb_hybrid_r24_S2": 143.92,
+    "kv_cache_bytes_hybrid_r24_S3": 147849216,
+    "kv_ratio_hybrid_r24_S3": 0.3672,
+    "kv_cache_mb_hybrid_r24_S3": 147.85
+  },
+  "latency": {
+    "dense": {
+      "total_ms": 9316.6,
+      "p50_per_tok_ms": 36.39,
+      "trials": [
+        9313.1,
+        9316.0,
+        9320.8
+      ]
+    },
+    "int8": {
+      "total_ms": 9346.5,
+      "p50_per_tok_ms": 36.51,
+      "trials": [
+        9341.3,
+        9349.1,
+        9349.1
+      ]
+    },
+    "rope_complex": {
+      "total_ms": 9353.9,
+      "p50_per_tok_ms": 36.54,
+      "trials": [
+        9354.9,
+        9360.9,
+        9345.9
+      ]
+    },
+    "mixed_S2": {
+      "total_ms": 9352.7,
+      "p50_per_tok_ms": 36.53,
+      "trials": [
+        9346.3,
+        9353.4,
+        9358.5
+      ]
+    },
+    "hybrid_r24_S2": {
+      "total_ms": 9364.9,
+      "p50_per_tok_ms": 36.58,
+      "trials": [
+        9372.7,
+        9356.0,
+        9366.1
+      ]
+    }
+  }
+}
