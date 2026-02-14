@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-02-13T21:05:46.741334",
+  "phase": 0,
+  "version": "v16",
+  "gpu_info": {
+    "device_name": "AMD Radeon Pro W7900",
+    "total_gb": 48.3,
+    "torch_version": "2.6.0+rocm6.2.4",
+    "hip_version": "6.2.41134-65d174c3e"
+  }
+}
