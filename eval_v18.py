@@ -71,9 +71,14 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
 
     Returns dict mapping layer_idx -> raw_vhat_score.
     """
-    # Convert to float32 for stable Adam training (avoids FP16 overflow)
     orig_dtype = next(model.parameters()).dtype
-    model.float()
+    # Try float32 conversion for small models; skip for large/multi-device
+    use_fp32 = True
+    try:
+        model.float()
+    except RuntimeError:
+        use_fp32 = False
+        print("  Float32 conversion failed (multi-device), using FP16+FP32 loss")
     model.train()
 
     # Only train KV projection parameters
@@ -103,9 +108,10 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
         labels = idx[:, 1 : seq_len + 1]
 
         outputs = model(input_ids)
-        logits = outputs.logits
+        logits = outputs.logits.float()
+        labels_dev = labels.to(logits.device)
         loss = torch.nn.functional.cross_entropy(
-            logits.view(-1, logits.size(-1)), labels.view(-1)
+            logits.view(-1, logits.size(-1)), labels_dev.view(-1)
         )
         loss.backward()
         optimizer.step()
@@ -151,7 +157,8 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
 
     model.eval()
     # Restore original dtype and reset requires_grad
-    model.to(orig_dtype)
+    if use_fp32:
+        model.to(orig_dtype)
     for p in model.parameters():
         p.requires_grad = False
 
@@ -601,12 +608,17 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     print("Phase 4: 7B/8B replication")
     print("=" * 60)
 
+    # Free 0.5B model to make room for 7B
+    del model
+    torch.cuda.empty_cache()
+
     # Check available GPU memory
     total_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
     print(f"  GPU memory: {total_mem:.1f}GB")
 
-    # Try loading Llama-3-8B or Qwen2.5-7B
+    # Try loading 7B/8B models (prefer cached instruct variants)
     large_models = [
+        ("Qwen/Qwen2.5-7B-Instruct", "qwen7b"),
         ("Qwen/Qwen2.5-7B", "qwen7b"),
         ("meta-llama/Meta-Llama-3-8B", "llama3_8b"),
     ]
@@ -623,9 +635,8 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
             m = AutoModelForCausalLM.from_pretrained(
                 mpath,
                 torch_dtype=torch.float16,
-                device_map="auto",
                 trust_remote_code=True,
-            )
+            ).to(args.device)
             model_8b = m
             model_name = mpath
             model_key = mkey
