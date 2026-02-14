@@ -932,9 +932,8 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
             kv_bytes += k.nelement() * k.element_size()
             kv_bytes += v.nelement() * v.element_size()
 
-        # INT8 simulated: same memory (dequantized back to float)
-        # but we can measure the quantized sizes
-        from backends.quant import quantize_int8_symmetric, quantize_int4_block
+        # Measure quantized sizes for uniform INT8 and INT4
+        from backends.quant import quantize_int4_block, quantize_int8_symmetric
 
         int8_bytes = 0
         int4_bytes = 0
@@ -951,7 +950,53 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
             int4_bytes += k_q4.nelement() // 2 + k_s4.nelement() * k_s4.element_size()
             int4_bytes += v_q4.nelement() // 2 + v_s4.nelement() * v_s4.element_size()
 
-        results[L] = {
+        # Mixed-precision schedules: per-layer INT8/INT4
+        schedules = build_schedules(args.sensitivity_path)
+        mixed_bytes = {}
+        for sname, sched in schedules.items():
+            mb = 0
+            for li in range(len(past)):
+                k, v = past[li]
+                bits = sched[li]
+                if bits == 8:
+                    kq, ks = quantize_int8_symmetric(k)
+                    vq, vs = quantize_int8_symmetric(v)
+                    mb += kq.nelement() * 1 + ks.nelement() * ks.element_size()
+                    mb += vq.nelement() * 1 + vs.nelement() * vs.element_size()
+                else:
+                    kq, ks = quantize_int4_block(k)
+                    vq, vs = quantize_int4_block(v)
+                    mb += kq.nelement() // 2 + ks.nelement() * ks.element_size()
+                    mb += vq.nelement() // 2 + vs.nelement() * vs.element_size()
+            mixed_bytes[sname] = mb
+
+        # Hybrid: rope_complex K (rank=24 SVD) + mixed V
+        # K storage: rank coefficients only (24 floats per head per token)
+        # V storage: per-layer quantized as in schedules
+        head_dim = model_config["head_dim"]
+        n_kv_heads = model_config["n_kv_heads"]
+        n_layers = model_config["n_layers"]
+        best_rank = 24
+        hybrid_bytes = {}
+        for sname, sched in schedules.items():
+            hb = 0
+            for li in range(len(past)):
+                k, v = past[li]
+                seq_len = k.shape[2]
+                # K: store rank coefficients (rank floats per head)
+                k_rank_bytes = seq_len * n_kv_heads * best_rank * 2
+                hb += k_rank_bytes
+                # V: per-layer quantized
+                bits = sched[li]
+                if bits == 8:
+                    vq, vs = quantize_int8_symmetric(v)
+                    hb += vq.nelement() * 1 + vs.nelement() * vs.element_size()
+                else:
+                    vq, vs = quantize_int4_block(v)
+                    hb += vq.nelement() // 2 + vs.nelement() * vs.element_size()
+            hybrid_bytes[f"hybrid_r{best_rank}_{sname}"] = hb
+
+        entry = {
             "L": L,
             "dense_gpu_alloc_mb": round(dense_alloc, 1),
             "dense_gpu_reserved_mb": round(dense_reserved, 1),
@@ -964,11 +1009,25 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
             "kv_cache_mb_int8": round(int8_bytes / 1e6, 2),
             "kv_cache_mb_int4": round(int4_bytes / 1e6, 2),
         }
+        for sname, mb in mixed_bytes.items():
+            entry[f"kv_cache_bytes_{sname}"] = mb
+            entry[f"kv_ratio_{sname}"] = round(mb / kv_bytes, 4)
+            entry[f"kv_cache_mb_{sname}"] = round(mb / 1e6, 2)
+        for hname, hb in hybrid_bytes.items():
+            entry[f"kv_cache_bytes_{hname}"] = hb
+            entry[f"kv_ratio_{hname}"] = round(hb / kv_bytes, 4)
+            entry[f"kv_cache_mb_{hname}"] = round(hb / 1e6, 2)
+
+        results[L] = entry
         print(
             f"  L={L}: dense={kv_bytes / 1e6:.1f}MB"
             f" INT8={int8_bytes / 1e6:.1f}MB ({int8_bytes / kv_bytes:.3f})"
             f" INT4={int4_bytes / 1e6:.1f}MB ({int4_bytes / kv_bytes:.3f})"
         )
+        for sname, mb in mixed_bytes.items():
+            print(f"    {sname}: {mb / 1e6:.1f}MB ({mb / kv_bytes:.3f})")
+        for hname, hb in hybrid_bytes.items():
+            print(f"    {hname}: {hb / 1e6:.1f}MB ({hb / kv_bytes:.3f})")
 
         del past, out
         torch.cuda.empty_cache()
@@ -999,11 +1058,29 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     rope_be.configure(L_test, model_config)
     rope_be.calibrate(model, token_data, L_test, args.device, model_config)
 
+    # Add best hybrid (r24 + S2) to latency test
+    schedules = build_schedules(args.sensitivity_path)
+    s2_sched = schedules["S2"]
+    mixed_s2_be = MixedPrecisionBackend(layer_bits=s2_sched)
+    mixed_s2_be._name = "S2"
+    mixed_s2_be.configure(L_test, model_config)
+    mixed_s2_be.calibrate(model, token_data, L_test, args.device, model_config)
+
+    hybrid_be = HybridRopeMixedBackend(
+        rank_frac=24 / model_config["head_dim"],
+        layer_bits=s2_sched,
+    )
+    hybrid_be._name = "hybrid_r24_S2"
+    hybrid_be.configure(L_test, model_config)
+    hybrid_be.calibrate(model, token_data, L_test, args.device, model_config)
+
     latency_results = {}
     for bname, be in [
         ("dense", dense_be),
         ("int8", int8_be),
         ("rope_complex", rope_be),
+        ("mixed_S2", mixed_s2_be),
+        ("hybrid_r24_S2", hybrid_be),
     ]:
         times = []
         for trial in range(3):
