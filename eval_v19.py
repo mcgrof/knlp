@@ -122,130 +122,154 @@ def _hook_kv_and_measure(
 
     noise_fn(k, v) -> (k_noisy, v_noisy)
     Returns scalar score (higher = more sensitive).
+
+    Strategy: hook k_proj and v_proj outputs to capture K/V tensors,
+    then also capture Q from q_proj. Qwen2 attention returns
+    (attn_output, attn_weights_or_None) with no past_kv in the tuple,
+    so we must intercept projections directly.
     """
     n_layers = model.config.num_hidden_layers
-    kl_values = []
+    head_dim = model.config.hidden_size // model.config.num_attention_heads
+    n_heads = model.config.num_attention_heads
+    n_kv_heads = getattr(model.config, "num_key_value_heads", n_heads)
+    repeat = n_heads // n_kv_heads
+    scale = head_dim**-0.5
 
-    # Storage for clean K/V from target layer
-    clean_kv = {}
-    noisy_kv = {}
+    # Storage for clean K, V, Q from target layer
+    captured = {}
 
-    def make_hook_clean(layer_idx):
-        def hook(module, args, kwargs, output):
-            if layer_idx != target_layer:
-                return
-            # output = (attn_output, attn_weights, past_kv)
-            # For Qwen2: output is tuple, past_kv at index 1
-            if isinstance(output, tuple) and len(output) >= 2:
-                attn_out = output[0]
-                past = output[1]
-                if isinstance(past, tuple) and len(past) == 2:
-                    clean_kv["k"] = past[0].detach().clone()
-                    clean_kv["v"] = past[1].detach().clone()
+    def make_proj_hook(layer_idx, proj_name):
+        def hook(module, input, output):
+            if layer_idx == target_layer:
+                captured[proj_name] = output.detach().clone()
 
         return hook
 
-    # First pass: get clean K/V and attention output
+    # First pass: capture clean K, V, Q projections
     hooks = []
-    for li in range(n_layers):
-        layer = model.model.layers[li]
-        h = layer.self_attn.register_forward_hook(make_hook_clean(li), with_kwargs=True)
-        hooks.append(h)
+    try:
+        layer = model.model.layers[target_layer]
+        hooks.append(
+            layer.self_attn.q_proj.register_forward_hook(
+                make_proj_hook(target_layer, "q")
+            )
+        )
+        hooks.append(
+            layer.self_attn.k_proj.register_forward_hook(
+                make_proj_hook(target_layer, "k")
+            )
+        )
+        hooks.append(
+            layer.self_attn.v_proj.register_forward_hook(
+                make_proj_hook(target_layer, "v")
+            )
+        )
 
-    with torch.no_grad():
-        outputs_clean = model(input_ids, output_attentions=True)
+        with torch.no_grad():
+            outputs_clean = model(input_ids)
+    finally:
+        for h in hooks:
+            h.remove()
 
-    for h in hooks:
-        h.remove()
-
-    if "k" not in clean_kv:
+    if "k" not in captured or "v" not in captured:
         return 0.0
 
+    # Reshape projections to [B, n_heads/n_kv_heads, T, head_dim]
+    B, T, _ = captured["k"].shape
+    k_clean = captured["k"].view(B, T, n_kv_heads, head_dim).transpose(1, 2)
+    v_clean = captured["v"].view(B, T, n_kv_heads, head_dim).transpose(1, 2)
+
     # Apply noise
-    k_clean, v_clean = clean_kv["k"], clean_kv["v"]
     k_noisy, v_noisy = noise_fn(k_clean, v_clean)
 
     if measure == "attn_kl":
-        # Compute attention KL: recompute attention with clean vs noisy K
-        # Get Q from the layer
-        layer = model.model.layers[target_layer]
-        attn = layer.self_attn
-        head_dim = model.config.hidden_size // model.config.num_attention_heads
-        scale = head_dim**-0.5
+        # Compute attention with clean vs noisy K/V using captured Q
+        q_raw = captured["q"].view(B, T, n_heads, head_dim).transpose(1, 2)  # [B,H,T,D]
 
-        # Use GQA repeat for Q matching KV heads
-        n_heads = model.config.num_attention_heads
-        n_kv_heads = getattr(model.config, "num_key_value_heads", n_heads)
-        repeat = n_heads // n_kv_heads
-
-        # Expand K/V to match Q heads for KL computation
+        # Expand KV for GQA
         k_clean_exp = k_clean.repeat_interleave(repeat, dim=1)
         k_noisy_exp = k_noisy.repeat_interleave(repeat, dim=1)
+        v_clean_exp = v_clean.repeat_interleave(repeat, dim=1)
+        v_noisy_exp = v_noisy.repeat_interleave(repeat, dim=1)
 
         # Sample query positions (last 8) to reduce cost
-        T = k_clean_exp.shape[2]
         q_positions = list(range(max(0, T - 8), T))
+        q_sampled = q_raw[:, :, q_positions, :]  # [B, H, 8, D]
 
-        # We need Q - extract from clean attention weights
-        # Use attention weights directly from clean pass
-        if outputs_clean.attentions is not None:
-            attn_clean = outputs_clean.attentions[target_layer]
-            # attn_clean: [B, n_heads, T, T]
-            attn_clean_sampled = attn_clean[:, :, q_positions, :T]
+        # Attention logits
+        logits_clean = (
+            torch.matmul(q_sampled.float(), k_clean_exp.float().transpose(-2, -1))
+            * scale
+        )
+        logits_noisy = (
+            torch.matmul(q_sampled.float(), k_noisy_exp.float().transpose(-2, -1))
+            * scale
+        )
 
-            # Compute noisy attention: Q @ K_noisy^T / sqrt(d)
-            # We don't have Q directly, so compute from attention weights
-            # attn_clean = softmax(Q K^T / sqrt(d))
-            # For noisy: compute logits_noisy = Q K_noisy^T / sqrt(d)
-            # We can get Q K^T from log(attn) * sqrt(d) (up to normalization)
-            # Better: re-derive from hidden states
+        # Softmax attention
+        attn_clean = F.softmax(logits_clean, dim=-1)
+        attn_noisy = F.softmax(logits_noisy, dim=-1)
 
-            # Simpler approach: measure output KL instead
-            # Compute V-weighted output difference
-            v_clean_exp = v_clean.repeat_interleave(repeat, dim=1)
-            v_noisy_exp = v_noisy.repeat_interleave(repeat, dim=1)
+        # Output MSE with clean/noisy attention and V
+        out_clean = torch.matmul(attn_clean, v_clean_exp[:, :, :T, :].float())
+        out_noisy = torch.matmul(attn_noisy, v_noisy_exp[:, :, :T, :].float())
 
-            out_clean = torch.matmul(
-                attn_clean_sampled.float(), v_clean_exp[:, :, :T, :].float()
-            )
-            out_noisy = torch.matmul(
-                attn_clean_sampled.float(), v_noisy_exp[:, :, :T, :].float()
-            )
-
-            # MSE as proxy for KL (monotonically related for small perturbations)
-            score = F.mse_loss(out_noisy, out_clean).item()
-            return score
+        score = F.mse_loss(out_noisy, out_clean).item()
+        return score
 
     elif measure == "logit_kl":
-        # Measure logit-level KL divergence
-        # Inject noisy K/V and run forward pass
+        # For logit KL: inject noisy K/V via hooks and do a second forward pass
         def make_inject_hook(layer_idx):
-            def hook(module, args, kwargs, output):
+            def hook(module, input, output):
                 if layer_idx != target_layer:
                     return
-                if isinstance(output, tuple) and len(output) >= 2:
-                    attn_out = output[0]
-                    past = output[1]
-                    if isinstance(past, tuple) and len(past) == 2:
-                        return (attn_out, (k_noisy, v_noisy)) + output[2:]
+                # output is projection output [B, T, kv_dim]
+                # Replace k_proj output with noisy version
+                return output  # placeholder, see below
+
+            return hook
+
+        # Simpler: hook self_attn to replace its output using
+        # a forward pass with modified hidden states is complex.
+        # Instead, compute logit KL from the attention output difference.
+        # Use the two-pass approach: measure clean logits vs logits
+        # when we perturb the KV at the target layer.
+
+        # We already have clean logits. For noisy: hook k_proj and v_proj
+        # to return noisy projections.
+        noisy_k_flat = k_noisy.transpose(1, 2).reshape(B, T, -1)
+        noisy_v_flat = v_noisy.transpose(1, 2).reshape(B, T, -1)
+
+        def make_replace_hook(layer_idx, proj_name):
+            def hook(module, input, output):
+                if layer_idx != target_layer:
+                    return
+                if proj_name == "k":
+                    return noisy_k_flat
+                elif proj_name == "v":
+                    return noisy_v_flat
 
             return hook
 
         hooks2 = []
-        for li in range(n_layers):
-            layer = model.model.layers[li]
-            h = layer.self_attn.register_forward_hook(
-                make_inject_hook(li), with_kwargs=True
+        try:
+            layer = model.model.layers[target_layer]
+            hooks2.append(
+                layer.self_attn.k_proj.register_forward_hook(
+                    make_replace_hook(target_layer, "k")
+                )
             )
-            hooks2.append(h)
+            hooks2.append(
+                layer.self_attn.v_proj.register_forward_hook(
+                    make_replace_hook(target_layer, "v")
+                )
+            )
+            with torch.no_grad():
+                outputs_noisy = model(input_ids)
+        finally:
+            for h in hooks2:
+                h.remove()
 
-        with torch.no_grad():
-            outputs_noisy = model(input_ids)
-
-        for h in hooks2:
-            h.remove()
-
-        # KL divergence on last-position logits
         logits_c = outputs_clean.logits[:, -1:, :].float()
         logits_n = outputs_noisy.logits[:, -1:, :].float()
         p = F.softmax(logits_c, dim=-1)
@@ -429,17 +453,43 @@ def signal_a6(model, token_data, device, n_layers, **kwargs):
 
 
 def _collect_attention_stats(model, batches, n_layers):
-    """Run forward passes collecting attention weights."""
+    """Run forward passes collecting attention weights.
+
+    SDPA does not return attention weights, so we temporarily switch
+    to eager attention implementation for this collection.
+    """
     all_attns = [[] for _ in range(n_layers)]
 
-    for input_ids in batches:
-        with torch.no_grad():
-            outputs = model(input_ids, output_attentions=True)
-        if outputs.attentions is not None:
-            for li in range(min(n_layers, len(outputs.attentions))):
-                # [B, n_heads, T, T]
-                attn_w = outputs.attentions[li].detach()
-                all_attns[li].append(attn_w)
+    # Force eager attention so we actually get attention weights
+    orig_impl = getattr(model.config, "_attn_implementation", "sdpa")
+    model.config._attn_implementation = "eager"
+    # Also set on each layer's self_attn
+    orig_layer_impls = []
+    for li in range(n_layers):
+        layer = model.model.layers[li]
+        impl = getattr(layer.self_attn, "config", None)
+        orig_layer_impls.append(
+            getattr(impl, "_attn_implementation", "sdpa") if impl else "sdpa"
+        )
+        if hasattr(layer.self_attn, "config"):
+            layer.self_attn.config._attn_implementation = "eager"
+
+    try:
+        for input_ids in batches:
+            with torch.no_grad():
+                outputs = model(input_ids, output_attentions=True)
+            if outputs.attentions is not None:
+                for li in range(min(n_layers, len(outputs.attentions))):
+                    # [B, n_heads, T, T]
+                    attn_w = outputs.attentions[li].detach()
+                    all_attns[li].append(attn_w)
+    finally:
+        # Restore original attention implementation
+        model.config._attn_implementation = orig_impl
+        for li in range(n_layers):
+            layer = model.model.layers[li]
+            if hasattr(layer.self_attn, "config"):
+                layer.self_attn.config._attn_implementation = orig_layer_impls[li]
 
     return all_attns
 
@@ -574,32 +624,39 @@ def _collect_kv_norms(model, batches, n_layers, device):
             return hook
 
         def make_layer_hook(layer_idx):
-            def hook(module, input, output):
+            def hook(module, input):
                 if isinstance(input, tuple):
                     kv_data[(layer_idx, "residual")] = input[0].detach()
 
             return hook
 
         hooks = []
-        for li in range(n_layers):
-            layer = model.model.layers[li]
-            hooks.append(
-                layer.self_attn.q_proj.register_forward_hook(make_proj_hook(li, "q"))
-            )
-            hooks.append(
-                layer.self_attn.k_proj.register_forward_hook(make_proj_hook(li, "k"))
-            )
-            hooks.append(
-                layer.self_attn.v_proj.register_forward_hook(make_proj_hook(li, "v"))
-            )
-            hooks.append(layer.self_attn.register_forward_hook(make_attn_hook(li)))
-            hooks.append(layer.register_forward_pre_hook(make_layer_hook(li)))
+        try:
+            for li in range(n_layers):
+                layer = model.model.layers[li]
+                hooks.append(
+                    layer.self_attn.q_proj.register_forward_hook(
+                        make_proj_hook(li, "q")
+                    )
+                )
+                hooks.append(
+                    layer.self_attn.k_proj.register_forward_hook(
+                        make_proj_hook(li, "k")
+                    )
+                )
+                hooks.append(
+                    layer.self_attn.v_proj.register_forward_hook(
+                        make_proj_hook(li, "v")
+                    )
+                )
+                hooks.append(layer.self_attn.register_forward_hook(make_attn_hook(li)))
+                hooks.append(layer.register_forward_pre_hook(make_layer_hook(li)))
 
-        with torch.no_grad():
-            _ = model(input_ids)
-
-        for h in hooks:
-            h.remove()
+            with torch.no_grad():
+                _ = model(input_ids)
+        finally:
+            for h in hooks:
+                h.remove()
 
         for li in range(n_layers):
             if (li, "k") in kv_data:
@@ -673,42 +730,61 @@ def signal_c3(model, token_data, device, n_layers, **kwargs):
 
 
 def _collect_kv_tensors(model, batches, n_layers, device):
-    """Collect raw K and V tensors from a forward pass."""
+    """Collect raw K and V tensors from a forward pass.
+
+    Hooks k_proj and v_proj outputs to capture K/V projections directly,
+    since Qwen2 attention does not return past_kv in its output tuple.
+    """
+    head_dim = model.config.hidden_size // model.config.num_attention_heads
+    n_kv_heads = getattr(
+        model.config, "num_key_value_heads", model.config.num_attention_heads
+    )
+
     k_all = [[] for _ in range(n_layers)]
     v_all = [[] for _ in range(n_layers)]
 
     for input_ids in batches:
         kv_data = {}
 
-        def make_hook(layer_idx):
-            def hook(module, args, kwargs, output):
-                if isinstance(output, tuple) and len(output) >= 2:
-                    past = output[1]
-                    if isinstance(past, tuple) and len(past) == 2:
-                        kv_data[layer_idx] = (
-                            past[0].detach().cpu(),
-                            past[1].detach().cpu(),
-                        )
+        def make_proj_hook(layer_idx, proj_name):
+            def hook(module, input, output):
+                kv_data[(layer_idx, proj_name)] = output.detach().cpu()
 
             return hook
 
         hooks = []
+        try:
+            for li in range(n_layers):
+                layer = model.model.layers[li]
+                hooks.append(
+                    layer.self_attn.k_proj.register_forward_hook(
+                        make_proj_hook(li, "k")
+                    )
+                )
+                hooks.append(
+                    layer.self_attn.v_proj.register_forward_hook(
+                        make_proj_hook(li, "v")
+                    )
+                )
+
+            with torch.no_grad():
+                _ = model(input_ids)
+        finally:
+            for h in hooks:
+                h.remove()
+
         for li in range(n_layers):
-            h = model.model.layers[li].self_attn.register_forward_hook(
-                make_hook(li), with_kwargs=True
-            )
-            hooks.append(h)
-
-        with torch.no_grad():
-            _ = model(input_ids, use_cache=True)
-
-        for h in hooks:
-            h.remove()
-
-        for li in range(n_layers):
-            if li in kv_data:
-                k_all[li].append(kv_data[li][0])
-                v_all[li].append(kv_data[li][1])
+            if (li, "k") in kv_data:
+                # Reshape from [B, T, kv_dim] to [B, n_kv_heads, T, head_dim]
+                k_flat = kv_data[(li, "k")]
+                B, T, _ = k_flat.shape
+                k_shaped = k_flat.view(B, T, n_kv_heads, head_dim).transpose(1, 2)
+                k_all[li].append(k_shaped)
+            if (li, "v") in kv_data:
+                v_flat = kv_data[(li, "v")]
+                B, T, _ = v_flat.shape
+                v_shaped = v_flat.view(B, T, n_kv_heads, head_dim).transpose(1, 2)
+                v_all[li].append(v_shaped)
 
     return k_all, v_all
 
@@ -1149,6 +1225,12 @@ def run_phase1(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
         print(f"\n  [{sig_info['category']}] {sig_name} (cost={sig_info['cost']})...")
         t0 = time.time()
         try:
+            # Ensure clean model state before each signal
+            model.eval()
+            for p in model.parameters():
+                p.requires_grad = False
+            torch.cuda.empty_cache()
+
             raw_scores = sig_info["fn"](
                 model,
                 token_data,
