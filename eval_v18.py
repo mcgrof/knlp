@@ -71,17 +71,21 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
 
     Returns dict mapping layer_idx -> raw_vhat_score.
     """
-    from transformers import get_linear_schedule_with_warmup
-
+    # Convert to float32 for stable Adam training (avoids FP16 overflow)
+    orig_dtype = next(model.parameters()).dtype
+    model.float()
     model.train()
+
     # Only train KV projection parameters
     kv_params = []
     kv_param_names = []
+    param_id_to_name = {}
     for name, p in model.named_parameters():
         if "k_proj" in name or "v_proj" in name:
             p.requires_grad = True
             kv_params.append(p)
             kv_param_names.append(name)
+            param_id_to_name[id(p)] = name
         else:
             p.requires_grad = False
 
@@ -121,9 +125,10 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
             if "exp_avg_sq" not in state:
                 continue
             vhat = state["exp_avg_sq"]
-            # Find which layer this param belongs to
-            idx_in_list = kv_params.index(p)
-            pname = kv_param_names[idx_in_list]
+            # Find which layer this param belongs to via id mapping
+            pname = param_id_to_name.get(id(p))
+            if pname is None:
+                continue
             # Parse layer index from name like model.layers.0.self_attn.k_proj.weight
             parts = pname.split(".")
             layer_idx = None
@@ -145,7 +150,8 @@ def extract_adam_vhat(model, token_data, device_str, n_steps=200, lr=1e-5):
         raw_scores[layer_idx] = np.mean(layer_vhat[layer_idx])
 
     model.eval()
-    # Reset requires_grad
+    # Restore original dtype and reset requires_grad
+    model.to(orig_dtype)
     for p in model.parameters():
         p.requires_grad = False
 
