@@ -1,0 +1,223 @@
+{
+  "timestamp": "2026-02-14T08:31:41.483404",
+  "phase": 1,
+  "version": "v19",
+  "gpu_info": {
+    "device_name": "AMD Radeon Pro W7900",
+    "total_gb": 48.3,
+    "torch_version": "2.6.0+rocm6.2.4",
+    "hip_version": "6.2.41134-65d174c3e"
+  },
+  "n_signals": 19,
+  "summary": {
+    "A1_attnKL_noise_K": {
+      "status": "OK",
+      "top5": [
+        23,
+        21,
+        11,
+        9,
+        22
+      ],
+      "compute_time_s": 3.2
+    },
+    "A2_attnKL_noise_V": {
+      "status": "OK",
+      "top5": [
+        16,
+        11,
+        9,
+        21,
+        13
+      ],
+      "compute_time_s": 3.0
+    },
+    "A3_attnKL_noise_KV": {
+      "status": "OK",
+      "top5": [
+        11,
+        16,
+        21,
+        9,
+        13
+      ],
+      "compute_time_s": 3.0
+    },
+    "A4_logitKL_noise": {
+      "status": "OK",
+      "top5": [
+        0,
+        7,
+        3,
+        2,
+        14
+      ],
+      "compute_time_s": 2.9
+    },
+    "A5_slope_attnKL": {
+      "status": "OK",
+      "top5": [
+        11,
+        16,
+        21,
+        9,
+        20
+      ],
+      "compute_time_s": 3.0
+    },
+    "A6_fakeQuant_attnKL": {
+      "status": "OK",
+      "top5": [
+        8,
+        2,
+        23,
+        21,
+        1
+      ],
+      "compute_time_s": 3.1
+    },
+    "B1_attn_entropy": {
+      "status": "OK",
+      "top5": [
+        16,
+        7,
+        9,
+        11,
+        18
+      ],
+      "compute_time_s": 0.4
+    },
+    "B2_attn_maxprob": {
+      "status": "OK",
+      "top5": [
+        16,
+        21,
+        9,
+        11,
+        7
+      ],
+      "compute_time_s": 0.3
+    },
+    "B3_attn_margin": {
+      "status": "OK",
+      "top5": [
+        16,
+        21,
+        11,
+        9,
+        17
+      ],
+      "compute_time_s": 0.4
+    },
+    "B4_late_binding": {
+      "status": "OK",
+      "top5": [
+        16,
+        21,
+        9,
+        11,
+        7
+      ],
+      "compute_time_s": 7.5
+    },
+    "C1_norm_QK": {
+      "status": "OK",
+      "top5": [
+        0,
+        8,
+        1,
+        2,
+        9
+      ],
+      "compute_time_s": 0.4
+    },
+    "C2_norm_V": {
+      "status": "OK",
+      "top5": [
+        21,
+        22,
+        23,
+        20,
+        16
+      ],
+      "compute_time_s": 0.4
+    },
+    "C3_residual_ratio": {
+      "status": "OK",
+      "top5": [
+        0,
+        1,
+        2,
+        23,
+        8
+      ],
+      "compute_time_s": 0.4
+    },
+    "D1_K_effective_rank": {
+      "status": "OK",
+      "top5": [
+        18,
+        7,
+        6,
+        19,
+        5
+      ],
+      "compute_time_s": 0.4
+    },
+    "D2_V_effective_rank": {
+      "status": "OK",
+      "top5": [
+        16,
+        21,
+        22,
+        23,
+        4
+      ],
+      "compute_time_s": 0.3
+    },
+    "D3_K_condnum": {
+      "status": "OK",
+      "top5": [
+        0,
+        8,
+        1,
+        2,
+        11
+      ],
+      "compute_time_s": 0.3
+    },
+    "E1_adam_vhat_KV": {
+      "status": "OK",
+      "top5": [
+        0,
+        1,
+        4,
+        3,
+        2
+      ],
+      "compute_time_s": 10.9
+    },
+    "E2_adam_vhat_allattn": {
+      "status": "OK",
+      "top5": [
+        0,
+        1,
+        4,
+        16,
+        3
+      ],
+      "compute_time_s": 11.9
+    },
+    "E3_gradnorm_KV": {
+      "status": "OK",
+      "top5": [
+        0,
+        16,
+        4,
+        11,
+        3
+      ],
+      "compute_time_s": 2.8
+    }
+  }
+}
