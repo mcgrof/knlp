@@ -541,6 +541,9 @@ def run_backend_sweep(
                         catastrophic=True,
                     )
 
+                # Override backend name with the tuple key so each
+                # distinct config gets a unique name in results.
+                r.backend = backend_name
                 all_results.append(r)
                 if r.error:
                     print(f" ERROR: {r.error[:60]}")
@@ -838,11 +841,17 @@ def run_phase3(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     if os.path.exists(phase1_path):
         with open(phase1_path) as f:
             p1_results = json.load(f)
-        # Find min rank that passes 3% across all seeds and L
+        # Find min rank that passes 3% across all seeds and L.
+        # Try backend name first (new format), then description
+        # (old format where all ranks share backend="rope_complex").
         best_rank = 32
         for rank in [8, 12, 16, 24, 32]:
             bname = f"rope_complex_r{rank}"
             br = [r for r in p1_results if r["backend"] == bname]
+            if not br:
+                # Fall back: match by description containing the rank
+                tag = f"K_rank={rank}/"
+                br = [r for r in p1_results if r.get("description", "").find(tag) >= 0]
             if br and all(
                 r.get("passed_3pct", False) or r.get("ppl_delta_pct", 99) <= 3.0
                 for r in br
