@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-02-14T07:23:44.355789",
+  "phase": 4,
+  "version": "v16",
+  "gpu_info": {
+    "device_name": "AMD Radeon Pro W7900",
+    "total_gb": 48.3,
+    "torch_version": "2.6.0+rocm6.2.4",
+    "hip_version": "6.2.41134-65d174c3e"
+  },
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "config": {
+    "n_layers": 28,
+    "n_heads": 28,
+    "n_kv_heads": 4,
+    "head_dim": 128,
+    "hidden_size": 3584
+  },
+  "best_k": 6,
+  "adam_schedule": [
+    8,
+    8,
+    8,
+    4,
+    8,
+    8,
+    8,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+  ]
+}
