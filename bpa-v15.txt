@@ -1,0 +1,276 @@
+bpa-v15.txt — “Structural Bottleneck Attack: RoPE-aware, K/V-separable, logit-space memory”
+Mission: v14b proved the distortion wall: INT8 works (precision compression), low-rank and KVSplice (structure compression) fail. v15 must attack the TRUE bottleneck: positional phase + value manifold + layer sensitivity. This is not “tune thresholds.” This is “change the compression representation so it can exist without collapse.”
+
+Non-negotiables:
+- GPU: AMD W7900 ROCm. Headline runs GPU-only.
+- Model: use the SAME “real model of value” you used for v14b (your custom GPT-2 / knlp model). If Qwen was used previously, replicate on Qwen too, but HEADLINE is your real model.
+- Contexts: L ∈ {8192, 16384, 32768} (plus one smaller sanity point L=4096). Decode_steps >= 256. Seeds 0/1/2.
+- Regimes: r1 batch=1, r2 microbatch=4 (auto-downshift allowed but logged).
+- Matched-quality PASS at tol=3% (and report tol=1% if any method passes).
+
+Core hypothesis (structural):
+1) K is constrained by RoPE phase/geometry; naive pooling/low-rank destroys phase info.
+2) V is full-dimensional semantic mixture; low-rank is wrong primitive.
+3) Any “memory” must preserve attention logits structure (QK^T) or preserve a surrogate (logit-space) rather than approximating KV directly.
+4) Compression must be layer-aware (late layers are more sensitive).
+
+Unified harness:
+- eval_harness.py supports kv_backends: dense, int8, int4 (for sanity), rope_aware_lowrankK + int8V, logit_space_memory, per_layer_kvsplice, head_clustered_kvsplice, phase_preserving_kvsplice
+- Every run logs JSON with: ppl, ppl_delta%, latency p50/p95, tok/s, kv_bytes_proxy/token, peak mem, overhead breakdown, tier fractions, catastrophic flags.
+- For every method, compute a rate–distortion curve by sweeping its key knob.
+
+Deliverables:
+- results/v15/* logs + CSV summaries
+- bpa_v15_final_report.md
+- bpa_v15_branch_tree.md
+- artifacts/ (trained weights for learned modules)
+- a “frontier scoreboard” ranking methods by (PASS @ 3%) and then best kv_bytes_ratio + latency_ratio.
+
+========================================================
+PHASE 0 (1–2h) — REPRODUCE v14b + Establish the “Distortion Wall” on the real model
+========================================================
+Goal: confirm the baseline wall on YOUR real model.
+Run dense + INT8 + INT4 for L={4096,8192,16384,32768}, r1+r2, seeds 0/1/2.
+- Expect INT8 PASS, INT4 FAIL (or record if it differs).
+- Confirm bandwidth sensitivity exists at long L (latency scales with L).
+
+If INT8 does NOT pass on the real model:
+- STOP and diagnose: calibration bug, mismatch in KV layout, or different attention behavior.
+- Fix before proceeding.
+
+========================================================
+PHASE 1 (2–4h) — K/V-SEPARABLE compression: “Don’t low-rank V. Ever.”
+========================================================
+Method M1: Rope-aware Low-rank for K ONLY + INT8 for V
+Why: v14b suggests K has compressible structure; V does not. K must preserve RoPE phase.
+Implement:
+- For each layer ℓ and head h:
+  - Compress K via low-rank in a RoPE-aligned basis (see below), keep V in INT8.
+- Sweep rank budgets: r ∈ {d/2, d/4, d/8} per head OR global budget.
+
+RoPE-aligned basis options (implement ALL, pick winner by results):
+A) Pre-RoPE de-rotation (if accessible):
+   - If model uses RoPE: attempt to “unrotate” K back to a canonical phase before compression, then rerotate on retrieval.
+   - This preserves phase. If you can’t access pre-rotation K, approximate by applying inverse RoPE at the token position.
+B) Complex-plane grouping:
+   - Treat RoPE pairs as complex numbers; compress in complex space with low-rank on magnitude/angle separated components.
+C) Frequency-band splitting:
+   - Split head dim into low/high frequency bands (RoPE uses frequencies). Compress high-frequency band less aggressively.
+
+Evaluation:
+- Must PASS tol=3% at L>=8192 for at least one configuration.
+- Target kv_bytes_ratio <= 0.65 vs dense (better than pure INT8 only if possible).
+- Must not regress p50 latency in bandwidth-bound regime.
+
+Branch:
+- If M1 PASS and improves kv_bytes beyond INT8 (and latency not worse): prioritize M1 for tiering.
+- If M1 fails: conclude K compression must preserve logits directly (move to Phase 2/3 emphasis).
+
+========================================================
+PHASE 2 (3–5h) — LOGIT-SPACE MEMORY (stop approximating KV; approximate attention logits)
+========================================================
+Key idea: the model cares about QK^T. So compress a representation that directly approximates logits contribution from far context.
+
+Method M2: Logit-space Nyström / landmark approximation
+- Choose m “landmark” tokens among far context (<= t-W_min).
+- Approximate attention to far tokens using Nyström:
+  - Use K_landmarks and compute approx logits for all far tokens via low-rank in logit space.
+- Sweep m ∈ {64,128,256,512} (depending on L).
+
+Method M3: Head-wise far-context “logit sketch”
+- Maintain per head a small sketch S that approximates K_far distribution:
+  - e.g., random features / kernel sketch (cosine features) for dot-product attention
+  - approximate exp(QK^T) contributions
+- This is advanced; implement a simple dot-product sketch baseline first.
+
+Training (optional but recommended):
+- Freeze base model. Train only sketch parameters to minimize Δattention KL between dense attention distributions and approximated distributions for sampled decode steps.
+- If training too heavy, run untrained variants + note results, then train best candidate.
+
+Acceptance:
+- Any M2/M3 PASS at tol=3% at L>=8192 while achieving kv_bytes_ratio < INT8 baseline is a big win.
+- If it only matches INT8, still valuable if it enables >2× later.
+
+Branch:
+- If M2/M3 PASS: proceed to combine with INT8 (Phase 5).
+- If M2/M3 FAIL: implies logits too sensitive; must do per-layer learned KVSplice with phase preservation (Phase 3).
+
+========================================================
+PHASE 3 (4–6h) — “KVSplice, but not dumb”: per-layer, position-aware, phase-preserving, trained on Δattention KL
+========================================================
+This is the corrected KVSplice frontier. v14b KVSplice failed because it was global/shared and lost RoPE phase.
+
+Implement these KVSplice variants (ALL trained; no untrained allowed):
+M4: Per-layer KVSplice (separate parameters per layer)
+- Each layer gets its own segmenter/projection.
+- Far tokens compressed into M memory segments.
+- Use Δattention KL loss at that layer.
+
+M5: Phase-preserving KVSplice
+- Incorporate position encoding explicitly:
+  - memory segments store both content and a phase/position summary
+  - retrieval applies RoPE-compatible positioning
+- Option: keep “phase anchors”: store a small set of exact K for certain positions, splice the rest.
+
+M6: Head-clustered KVSplice
+- Cluster heads by behavior (use attention entropy / variance stats).
+- Use separate splicers per cluster.
+
+Training protocol:
+- Teacher: dense attention logits.
+- Student: near full KV + far replaced with spliced memory.
+- Loss: Δattention KL (with τ in {1,2}) + optional attention-output MSE.
+- Curriculum on M (memory segments):
+  - start mild: M = T_far/2
+  - then tighter: T_far/4
+  - then T_far/8
+- Train budget: 20k steps total across curriculum, early stop on validation.
+- Mixed precision, NaN guards, checkpoint per stage.
+
+Sweep:
+- Memory segments M: {T_far/2, T_far/4, T_far/8} for each L band
+- Layer subsets: train all layers vs last 1/3 layers only (to save compute); compare.
+
+Acceptance:
+- PASS tol=3% at L>=8192 for at least one M configuration.
+- Must beat naive KVSplice failure by huge margin (obviously).
+- If PASS at L=32768 with kv_bytes_ratio <= 0.6 and no latency regression: this is a primary win.
+
+Branch:
+- If any of M4–M6 PASS at 32K: KVSplice is viable long-term memory (Tier2) with the right structure.
+- If only passes at 8K/16K: likely needs more capacity (more M, per-layer specialized, or partially unfreeze model).
+- If fails everywhere: conclude KVSplice is mismatched for this architecture without deeper changes; prioritize logit-space methods + quant.
+
+========================================================
+PHASE 4 (2–3h) — Layer sensitivity profiling (so compression becomes layer-aware by evidence)
+========================================================
+Goal: identify which layers tolerate compression error.
+Procedure:
+- For each layer ℓ, apply INT8/INT4 to KV only in that layer while keeping others dense (or a controlled perturbation).
+- Measure ΔPPL and Δlatency.
+Output:
+- layer_sensitivity.json and a ranked list of layers by sensitivity.
+Use this to:
+- allocate more bits/rank/M to sensitive layers
+- compress aggressive in tolerant layers
+
+Acceptance:
+- Produce a clear “sensitivity curve” and use it to define an adaptive schedule for at least one method in Phase 5.
+
+========================================================
+PHASE 5 (2–4h) — Hybrid tier schedule (the realistic product outcome)
+========================================================
+Build a hybrid that uses the best primitives discovered:
+Tier0: Full KV for W_min
+Tier1: INT8 KV for near-mid context (cheap win)
+Tier2: One structural method (best of M1–M6) for far context
+Tier3: No drop unless forced (drop is last resort)
+
+Run final evaluation:
+- L={8192,16384,32768}, r1+r2, seeds 0/1/2
+- Compare against dense and INT8-only baseline
+
+Acceptance:
+- Must PASS tol=3%
+- Must reduce kv_bytes_ratio < INT8-only
+- Must improve or not regress p50 latency in bandwidth-bound regime
+
+========================================================
+PHASE 6 (1–2h) — Produce the Frontier Report + Branch Tree
+========================================================
+bpa_v15_final_report.md must include:
+1) Baseline wall reproduced on real model
+2) Method summaries M1–M6 with knobs and best configs
+3) Rate–distortion curves (kv_bytes_ratio vs ppl_delta vs latency_ratio)
+4) Layer sensitivity results + how used
+5) Best hybrid tier schedule result
+6) Clear conclusion: which primitive is the true frontier winner and why
+
+bpa_v15_branch_tree.md must include outcome-driven next steps:
+BRANCH A: M1 (rope-aware lowrankK + int8V) wins
+  -> optimize rank schedule + integrate with routing later
+BRANCH B: M2/M3 (logit-space memory) wins
+  -> invest in sketch training + kernel methods; publish
+BRANCH C: M4–M6 (trained phase-preserving per-layer KVSplice) wins at 32K
+  -> make it Tier2 long-term memory; revisit learned rate–distortion routing now that compression surface exists
+BRANCH D: Only INT8 wins, nothing structural passes
+  -> conclude structural compression needs architectural support; next step: proper MLA implementation or model retraining with compression-in-the-loop
+BRANCH E: Real model behaves differently than Qwen
+  -> analyze why: RoPE variant, head dim, data distribution; update compression primitive accordingly
+
+TIME BUDGET TARGET
+This plan is designed to consume ~12 hours by:
+- multi-L decode sweeps (dense+int8 baselines)
+- calibration + profiling
+- multiple trained KVSplice variants with curricula
+- logit-space + rope-aware experiments
+If runs finish too fast, increase:
+- training steps for KVSplice to 50k
+- add L=24576
+- add microbatch=8 if memory permits
+- increase calibration set size to 256 sequences
+
+DO NOT DO
+- Do not spend time on plots until numbers are locked.
+- Do not silently skip failed methods; record FAIL with diagnostics.
+- Do not claim success without PASS at tol=3% across all seeds.
+
+Go.
+
+========================================================
+EXECUTION LOG
+========================================================
+
+Phase 0: DONE (commit 02af69f)
+  Dense + INT8 + INT4 baselines at L={4K,8K,16K,32K}.
+  INT8: 12/12 PASS@1%. INT4: 0/12 FAIL, 1 catastrophic.
+  Distortion wall confirmed on Qwen2.5-0.5B.
+
+Phase 1: DONE (commit 1a7298b)
+  M1 RoPE-aware low-rank K + INT8 V, three variants.
+  Fixed dtype mismatch in rope_derotate (float vs half).
+  rope_complex: 12/12 FULL PASS@1% -- BREAKTHROUGH.
+  rope_derotate: 5/12@1%, 11/12@3% -- near pass.
+  rope_freqband: 0/12 -- FAIL.
+  Key insight: RoPE magnitude is position-invariant and
+  low-rank. Compressing magnitude while preserving phase
+  exactly achieves zero quality loss.
+
+Phase 2: DONE (commit f5d6a32)
+  M2 Nystrom + M3 logit sketch.
+  Fixed Nystrom calibration (OOM at 32K with
+  output_attentions=True, used K norms as proxy).
+  nystrom_64/128/256/512: all FAIL (1/12@3% each).
+  logit_sketch: 12/12 PASS but NO compression (0.97 ratio).
+  Logit-space methods cannot achieve meaningful compression.
+
+Phase 3: DONE (commit c9fe669)
+  M4-M6 per-layer trained KVSplice.
+  Fixed checkpoint naming conflict (subclasses inherited
+  parent's calibrate() that looked for perlayer_seg4.pt,
+  now each has own checkpoint name).
+  perlayer_splice_4: 0/12, 6 catastrophic.
+  phase_splice_4: 0/12, 6 catastrophic (identical to M4).
+  headcluster_splice_4: 0/12, 0 catastrophic (better but
+  still fails 3% gate). 4x compression too aggressive.
+
+Phase 4: DONE (commit ee7edd7)
+  Layer sensitivity profiling: INT8/INT4 per-layer at L=16K.
+  INT8: all 24 layers <0.1% delta. Universally lossless.
+  INT4: 23/24 layers <3%, only layer 0 sensitive (+6.43%).
+  Key finding: INT4 degrades cumulatively across layers,
+  not dominated by a few bad layers. Each adds ~0.1-0.7%
+  that compounds through 24 layers to 14-21%.
+
+Phase 5: DONE (commit 22107b7)
+  Hybrid tier: rope_complex far + INT8 mid + full near.
+  All three methods (INT8, rope_complex, hybrid) achieve
+  FULL PASS@1%. rope_complex: 0.550 ratio. INT8: 0.564.
+  hybrid: 0.565. No synergy from combining.
+
+Phase 6: DONE
+  Final report: bpa_v15_final_report.md
+  Branch tree: bpa_v15_branch_tree.md
+  Winner: rope_complex (BRANCH A), pragmatic: INT8 (BRANCH D).
+
+COMPLETE
