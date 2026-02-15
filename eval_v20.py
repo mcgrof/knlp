@@ -412,12 +412,16 @@ class RescaledQuantBackend:
 
     def _rescale_to_match(self, x_hat, x_clean):
         """Rescale x_hat per-head to match x_clean mean/std."""
-        # Per-head stats across T dimension
-        clean_mean = x_clean.mean(dim=2, keepdim=True)
-        clean_std = x_clean.std(dim=2, keepdim=True).clamp(min=1e-6)
-        hat_mean = x_hat.mean(dim=2, keepdim=True)
-        hat_std = x_hat.std(dim=2, keepdim=True).clamp(min=1e-6)
-        return (x_hat - hat_mean) * (clean_std / hat_std) + clean_mean
+        # Compute stats in float32 to avoid bfloat16 NaN
+        orig_dtype = x_hat.dtype
+        x_hat_f = x_hat.float()
+        x_clean_f = x_clean.float()
+        clean_mean = x_clean_f.mean(dim=2, keepdim=True)
+        clean_std = x_clean_f.std(dim=2, keepdim=True).clamp(min=1e-6)
+        hat_mean = x_hat_f.mean(dim=2, keepdim=True)
+        hat_std = x_hat_f.std(dim=2, keepdim=True).clamp(min=1e-6)
+        result = (x_hat_f - hat_mean) * (clean_std / hat_std) + clean_mean
+        return result.to(orig_dtype)
 
     def run_decode(self, model, prefix_ids, continuation_ids, device_str, max_ctx):
         from transformers.cache_utils import DynamicCache
@@ -1348,7 +1352,7 @@ class NormClampBackend:
         """Clamp per-token norms to percentile threshold."""
         # x: [B, H, T, D]
         norms = x.norm(dim=-1, keepdim=True)  # [B, H, T, 1]
-        threshold = torch.quantile(norms.flatten(), self.clamp_pct)
+        threshold = torch.quantile(norms.flatten().float(), self.clamp_pct)
         scale = torch.where(
             norms > threshold,
             threshold / norms.clamp(min=1e-8),
