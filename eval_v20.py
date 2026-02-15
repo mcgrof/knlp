@@ -562,7 +562,7 @@ def eval_at_all_L(
                 model_config,
             )
             key = f"L{L}_s{seed}"
-            dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+            dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
             delta = (r.ppl - dense_ref) / dense_ref * 100 if dense_ref > 0 else 0
             results[key] = {
                 "ppl": round(r.ppl, 4),
@@ -654,7 +654,7 @@ def run_phase0(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                 max_ctx,
                 model_config,
             )
-            dense_ref = dense_ppls.get(f"8192_{seed}", r.ppl)
+            dense_ref = dense_ppls.get((8192, "r1", seed), r.ppl)
             delta = (r.ppl - dense_ref) / dense_ref * 100
             k_data["evals"][f"8K_s{seed}"] = {
                 "ppl": round(r.ppl, 4),
@@ -686,7 +686,7 @@ def run_phase0(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                         model_config,
                     )
                     Lk = f"{L // 1024}K"
-                    dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                    dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                     delta = (r.ppl - dense_ref) / dense_ref * 100
                     k_data["evals"][f"{Lk}_s{seed}"] = {
                         "ppl": round(r.ppl, 4),
@@ -1033,7 +1033,7 @@ def run_phase2(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                     model_config,
                 )
                 Lk = f"{L // 1024}K"
-                dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                 delta = (r.ppl - dense_ref) / dense_ref * 100
                 k_data["evals"][f"{Lk}_s{seed}"] = {
                     "ppl": round(r.ppl, 4),
@@ -1077,7 +1077,7 @@ def run_phase2(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                     model_config,
                 )
                 Lk = f"{L // 1024}K"
-                dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                 delta = (r.ppl - dense_ref) / dense_ref * 100
                 k_data["evals"][f"{Lk}_s{seed}"] = {
                     "ppl": round(r.ppl, 4),
@@ -1163,7 +1163,7 @@ def run_phase3(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                         model_config,
                     )
                     Lk = f"{L // 1024}K"
-                    dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                    dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                     delta = (r.ppl - dense_ref) / dense_ref * 100
                     k_data["evals"][f"{Lk}_s{seed}"] = {
                         "ppl": round(r.ppl, 4),
@@ -1246,7 +1246,7 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                     model_config,
                 )
                 Lk = f"{L // 1024}K"
-                dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                 delta = (r.ppl - dense_ref) / dense_ref * 100
                 k_data["evals"][f"{Lk}_s{seed}"] = {
                     "ppl": round(r.ppl, 4),
@@ -1287,7 +1287,7 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                     model_config,
                 )
                 Lk = f"{L // 1024}K"
-                dense_ref = dense_ppls.get(f"{L}_{seed}", r.ppl)
+                dense_ref = dense_ppls.get((L, "r1", seed), r.ppl)
                 delta = (r.ppl - dense_ref) / dense_ref * 100
                 k_data["evals"][f"{Lk}_s{seed}"] = {
                     "ppl": round(r.ppl, 4),
