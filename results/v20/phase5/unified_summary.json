@@ -1,0 +1,47 @@
+{
+  "methods": {
+    "A3_vonly_int8": {
+      "path": "A",
+      "k_star_3pct": ">max_tested",
+      "k_star_1pct": ">max_tested"
+    },
+    "A2_tight_group": {
+      "path": "A",
+      "k_star_3pct": 4,
+      "k_star_1pct": ">max_tested"
+    },
+    "B2_g8": {
+      "path": "B",
+      "k_star_3pct": 4,
+      "k_star_1pct": ">max_tested"
+    },
+    "B2_g16": {
+      "path": "B",
+      "k_star_3pct": ">max_tested",
+      "k_star_1pct": ">max_tested"
+    },
+    "B2_g32": {
+      "path": "B",
+      "k_star_3pct": 4,
+      "k_star_1pct": ">max_tested"
+    },
+    "C3_rescaled": {
+      "path": "C",
+      "k_star_3pct": ">max_tested",
+      "k_star_1pct": ">max_tested"
+    },
+    "C2_normclamp": {
+      "path": "C",
+      "k_star_3pct": 4,
+      "k_star_1pct": ">max_tested"
+    }
+  },
+  "baseline_k_star_3pct": 3,
+  "baseline_k_star_1pct": 3,
+  "theory": {
+    "predicted_k_3pct": 5,
+    "predicted_k_1pct": 6,
+    "alpha": 26.6505,
+    "beta": -186.5985
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "model": "Qwen2.5-0.5B",
+  "experiment": "BPA v20: Break the k-floor",
+  "baselines": {
+    "dense": {"kv_ratio": 1.0, "pass_1pct": "9/9", "pass_3pct": "9/9"},
+    "INT8": {"kv_ratio": 0.546, "pass_1pct": "9/9", "pass_3pct": "9/9"},
+    "S2_manual_k6": {"kv_ratio": 0.333, "pass_1pct": "9/9", "pass_3pct": "9/9"}
+  },
+  "k_sweep_oracle": {
+    "description": "Oracle ranking: top-k INT8, rest INT4 (block_size=32)",
+    "k_star_3pct_8K": 3,
+    "k_star_3pct_allL": 4,
+    "k_floor_note": "k=2 FAIL at 16K (+5.6%), k=3 not validated at 16K/32K, k=4 PASS at all L"
+  },
+  "theory": {
+    "alpha": 26.6505,
+    "beta": -186.5985,
+    "predicted_k_3pct": 5,
+    "observed_k_3pct_allL": 4,
+    "prediction_error": 1,
+    "layer_0_sigma4": 4.31,
+    "layer_8_sigma4": 2.41,
+    "int4_int8_noise_ratio": 12.1
+  },
+  "interventions": [
+    {
+      "method": "A3_vonly_int8",
+      "path": "A",
+      "description": "K stays INT4, V upgraded to INT8 on sensitive layers",
+      "k_star_3pct": ">8",
+      "verdict": "DEAD END",
+      "finding": "K quant noise dominates. Even V=INT8 on all 24 layers, K=INT4 gives +20-240%. V protection is useless."
+    },
+    {
+      "method": "A2_tight_group_g4",
+      "path": "A",
+      "description": "INT4 with group_size=4 instead of 32",
+      "k_star_3pct_allL": 4,
+      "max_delta_k4": "+1.70%",
+      "max_delta_k0": "+4.46%",
+      "verdict": "BEST INTERVENTION",
+      "finding": "Smaller group size reduces per-layer noise. k=4 PASS@3% at all L. k=0 nearly passes (max +4.5%). Future: combine g=4 with k=2 INT8."
+    },
+    {
+      "method": "B2_perchan_g8",
+      "path": "B",
+      "description": "Per-channel INT4 with group_size=8",
+      "k_star_3pct_allL": 4,
+      "max_delta_k4": "+2.38%",
+      "verdict": "MARGINAL",
+      "finding": "g=8 comparable to g=32 baseline. Not as good as g=4."
+    },
+    {
+      "method": "B2_perchan_g16",
+      "path": "B",
+      "description": "Per-channel INT4 with group_size=16",
+      "k_star_3pct": ">6",
+      "verdict": "PARADOXICALLY WORSE",
+      "finding": "g=16 worse than both g=8 and g=32. Non-monotonic interaction with head_dim=64."
+    },
+    {
+      "method": "B2_perchan_g32",
+      "path": "B",
+      "description": "Standard INT4 block_size=32 (control)",
+      "k_star_3pct_allL": 4,
+      "max_delta_k4": "+1.96%",
+      "verdict": "BASELINE",
+      "finding": "Same as Phase 0 oracle k-sweep. Confirms reproducibility."
+    },
+    {
+      "method": "C3_rescaled",
+      "path": "C",
+      "description": "Post-quant rescale to match clean mean/std per head",
+      "k_star_3pct": ">6",
+      "verdict": "DEAD END",
+      "finding": "Rescaling destroys position-dependent KV structure. +7-710% at all k."
+    },
+    {
+      "method": "C2_normclamp",
+      "path": "C",
+      "description": "Clamp K norms to 99th percentile before INT4",
+      "k_star_3pct_allL": 4,
+      "max_delta_k4": "+1.85%",
+      "verdict": "MARGINAL",
+      "finding": "Very slight improvement at k=4 (1.85% vs 1.96%). Does not reduce k*."
+    }
+  ],
+  "winner": {
+    "method": "A2_tight_group_g4",
+    "path": "A",
+    "k_star_3pct": 4,
+    "improvement_over_baseline": "Reduces per-layer INT4 noise by ~8x vs g=32. k=0 nearly passes (max +4.5% vs +429%).",
+    "next_step": "Combine g=4 with k=2 INT8 to potentially achieve kv_ratio < 0.33 with PASS."
+  }
+}
