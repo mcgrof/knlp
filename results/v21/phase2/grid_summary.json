@@ -1,0 +1,23 @@
+{
+  "survivors": [
+    "g32_k1",
+    "g32_k2",
+    "g32_k3",
+    "g32_k4",
+    "g32_k6",
+    "g8_k1",
+    "g8_k2",
+    "g8_k3",
+    "g8_k4",
+    "g8_k6",
+    "g4_k0",
+    "g4_k1",
+    "g4_k2",
+    "g4_k3",
+    "g4_k4",
+    "g4_k6"
+  ],
+  "best_pass_config": "g32_k4",
+  "best_kv_ratio": 0.320312,
+  "beats_s2": true
+}
