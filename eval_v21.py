@@ -952,12 +952,14 @@ def run_phase3(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     with open(grid_path) as f:
         grid_results = json.load(f)
 
-    # Identify failing k<4 configs with g=4 (the interesting ones)
+    # Identify ALL failing configs that were validated (have full_evals)
+    # Prioritize g=32 k<4 (these are the configs that could beat S2_k6)
     failing_configs = []
     for name, cfg in grid_results.items():
-        if cfg["g"] == 4 and cfg["k"] < 4:
-            if not cfg.get("pass_allL_3pct", False):
-                failing_configs.append(name)
+        if "full_evals" in cfg and not cfg.get("pass_allL_3pct", False):
+            failing_configs.append(name)
+    # Sort: g=32 first (most interesting), then by k ascending
+    failing_configs.sort(key=lambda n: (grid_results[n]["g"], grid_results[n]["k"]))
 
     if not failing_configs:
         print("  No failing g=4 k<4 configs found. Phase 3 skipped.")
