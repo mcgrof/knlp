@@ -1144,21 +1144,16 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
 
     results = {}
 
-    # Identify "close" configs: g=4, k<4, max_delta between 3.0-5.0%
+    # Identify "close" configs: any g, k<6, max_delta between 3.0-5.5%
+    # Focus on g=32 since those have viable kv_ratio
     close_configs = []
     for name, cfg in grid_results.items():
-        if cfg["g"] == 4 and cfg["k"] < 4:
+        if "full_evals" in cfg and not cfg.get("pass_allL_3pct", False):
             md = cfg.get("max_delta_allL", cfg.get("max_delta_8k", 100))
-            if 3.0 < md <= 5.0:
+            if 3.0 < md <= 5.5:
                 close_configs.append((name, cfg, md))
-
-    if not close_configs:
-        print("  No close configs found. Checking if any g=4 k<4 are worth trying.")
-        # Try the best g=4 k=3 anyway
-        for name, cfg in grid_results.items():
-            if cfg["g"] == 4 and cfg["k"] == 3:
-                md = cfg.get("max_delta_allL", cfg.get("max_delta_8k", 100))
-                close_configs.append((name, cfg, md))
+    # Sort by kv_ratio ascending (prefer configs with better compression)
+    close_configs.sort(key=lambda x: x[1].get("true_kv_ratio", 1.0) or 1.0)
 
     if not close_configs:
         print("  No g=4 k<4 configs to improve. Phase 4 skipped.")
@@ -1181,9 +1176,10 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
         # Try adding 1 or 2 more INT8 layers (full K+V)
         for extra in [1, 2]:
             k_new = k_base + extra
-            new_name = f"g4_k{k_new}_from_{config_name}"
+            base_g = cfg["g"]
+            new_name = f"g{base_g}_k{k_new}_from_{config_name}"
             schedule = build_k_schedule(theory_ranking, k_new)
-            be = GroupedMixedBackend(layer_bits=schedule, group_size=4)
+            be = GroupedMixedBackend(layer_bits=schedule, group_size=base_g)
 
             print(f"    Testing k={k_new} (adding {extra} more INT8 layers)")
             evals = eval_config(
@@ -1203,23 +1199,25 @@ def run_phase4(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
             p1 = check_pass(evals, 1.0)
             md = max_delta(evals)
 
-            # Get true kv_ratio
+            # Get true kv_ratio using the base config's group_size
             acct_path = os.path.join(art_dir, "kv_bytes_accounting.json")
             true_ratio = None
             if os.path.exists(acct_path):
                 with open(acct_path) as f:
                     acct = json.load(f)
-                acct_key = f"INT4_g4_k{k_new}"
+                acct_key = f"INT4_g{base_g}_k{k_new}"
                 if "configs" in acct and acct_key in acct["configs"]:
                     true_ratio = acct["configs"][acct_key]["kv_ratio"]
                 else:
-                    # Compute on the fly
-                    r = compute_kv_bytes_per_token(24, 2, 64, 4, 4, k_int8_layers=k_new)
+                    # Compute on the fly with correct group_size
+                    r = compute_kv_bytes_per_token(
+                        24, 2, 64, 4, base_g, k_int8_layers=k_new
+                    )
                     true_ratio = r["kv_ratio"]
 
             results[new_name] = {
                 "k": k_new,
-                "g": 4,
+                "g": base_g,
                 "base_config": config_name,
                 "evals": evals,
                 "pass_3pct": p3,
