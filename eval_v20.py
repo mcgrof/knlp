@@ -115,6 +115,9 @@ class VOnlyINT8Backend:
     def name(self):
         return self._name
 
+    def description(self):
+        return f"V-only INT8 on {len(self.v_int8_layers)} layers, K=INT4"
+
     def configure(self, L, model_config, **kwargs):
         self.L = L
         self.mc = model_config
@@ -131,12 +134,14 @@ class VOnlyINT8Backend:
 
         decode_steps = continuation_ids.shape[1]
         n_layers = self.mc["n_layers"]
-        elem = 2
 
-        out = model(prefix_ids, use_cache=True)
+        torch.cuda.empty_cache()
+        with torch.no_grad():
+            out = model(prefix_ids, use_cache=True)
         past = out.past_key_values
         dtype = past[0][0].dtype
         all_logits = [out.logits[:, -1:, :]]
+        del out
         step_stats = []
 
         actual_pos = prefix_ids.shape[1]
@@ -153,7 +158,6 @@ class VOnlyINT8Backend:
 
             if n_far > 0:
                 new_cache = DynamicCache()
-                total_bytes = 0
                 for li in range(n_layers):
                     k, v = past[li]
                     k_sink = k[:, :, : self.W_sink, :]
@@ -166,21 +170,16 @@ class VOnlyINT8Backend:
                     # K always INT4
                     k_q, k_s = quantize_int4_block(k_far, self.block_size)
                     k_hat = dequantize_int4_block(k_q, k_s, self.block_size).to(dtype)
-                    k_bytes = k_far.numel() // 2  # 4-bit
 
                     # V: INT8 for selected layers, INT4 otherwise
                     if li in self.v_int8_layers:
                         v_q, v_s = quantize_int8_symmetric(v_far)
                         v_hat = dequantize_int8_symmetric(v_q, v_s).to(dtype)
-                        v_bytes = v_far.numel()  # 8-bit
                     else:
                         v_q, v_s = quantize_int4_block(v_far, self.block_size)
                         v_hat = dequantize_int4_block(v_q, v_s, self.block_size).to(
                             dtype
                         )
-                        v_bytes = v_far.numel() // 2
-
-                    total_bytes += k_bytes + v_bytes
 
                     k_new = torch.cat([k_sink, k_hat, k_near], dim=2)
                     v_new = torch.cat([v_sink, v_hat, v_near], dim=2)
@@ -213,15 +212,10 @@ class VOnlyINT8Backend:
 
             step_stats.append(
                 V14StepStats(
-                    step=step,
-                    cache_len=n_full + n_compressed + step + 1,
+                    kv_kept=n_full + n_compressed + step + 1,
                     n_compressed=n_compressed,
                     n_full=n_full + step + 1,
                     compress_ms=compress_ms if step == 0 else 0,
-                    decode_ms=0,
-                    ppl_step=0,
-                    kv_bytes_ratio=0,
-                    peak_gpu_mb=0,
                 )
             )
 
@@ -245,6 +239,9 @@ class PerChannelINT4Backend:
     @property
     def name(self):
         return self._name
+
+    def description(self):
+        return f"Per-channel INT4 group_size={self.group_size}"
 
     def configure(self, L, model_config, **kwargs):
         self.L = L
@@ -287,10 +284,13 @@ class PerChannelINT4Backend:
         decode_steps = continuation_ids.shape[1]
         n_layers = self.mc["n_layers"]
 
-        out = model(prefix_ids, use_cache=True)
+        torch.cuda.empty_cache()
+        with torch.no_grad():
+            out = model(prefix_ids, use_cache=True)
         past = out.past_key_values
         dtype = past[0][0].dtype
         all_logits = [out.logits[:, -1:, :]]
+        del out
         step_stats = []
 
         actual_pos = prefix_ids.shape[1]
@@ -368,15 +368,10 @@ class PerChannelINT4Backend:
 
             step_stats.append(
                 V14StepStats(
-                    step=step,
-                    cache_len=n_full + n_compressed + step + 1,
+                    kv_kept=n_full + n_compressed + step + 1,
                     n_compressed=n_compressed,
                     n_full=n_full + step + 1,
                     compress_ms=compress_ms if step == 0 else 0,
-                    decode_ms=0,
-                    ppl_step=0,
-                    kv_bytes_ratio=0,
-                    peak_gpu_mb=0,
                 )
             )
 
@@ -400,6 +395,9 @@ class RescaledQuantBackend:
     @property
     def name(self):
         return self._name
+
+    def description(self):
+        return "INT4 with post-quant rescaling to match clean stats"
 
     def configure(self, L, model_config, **kwargs):
         self.L = L
@@ -427,10 +425,13 @@ class RescaledQuantBackend:
         decode_steps = continuation_ids.shape[1]
         n_layers = self.mc["n_layers"]
 
-        out = model(prefix_ids, use_cache=True)
+        torch.cuda.empty_cache()
+        with torch.no_grad():
+            out = model(prefix_ids, use_cache=True)
         past = out.past_key_values
         dtype = past[0][0].dtype
         all_logits = [out.logits[:, -1:, :]]
+        del out
         step_stats = []
 
         actual_pos = prefix_ids.shape[1]
@@ -506,15 +507,10 @@ class RescaledQuantBackend:
 
             step_stats.append(
                 V14StepStats(
-                    step=step,
-                    cache_len=n_full + n_compressed + step + 1,
+                    kv_kept=n_full + n_compressed + step + 1,
                     n_compressed=n_compressed,
                     n_full=n_full + step + 1,
                     compress_ms=compress_ms if step == 0 else 0,
-                    decode_ms=0,
-                    ppl_step=0,
-                    kv_bytes_ratio=0,
-                    peak_gpu_mb=0,
                 )
             )
 
@@ -1332,6 +1328,9 @@ class NormClampBackend:
     def name(self):
         return self._name
 
+    def description(self):
+        return f"Norm clamp p={self.clamp_pct} before INT4"
+
     def configure(self, L, model_config, **kwargs):
         self.L = L
         self.mc = model_config
@@ -1363,10 +1362,13 @@ class NormClampBackend:
         decode_steps = continuation_ids.shape[1]
         n_layers = self.mc["n_layers"]
 
-        out = model(prefix_ids, use_cache=True)
+        torch.cuda.empty_cache()
+        with torch.no_grad():
+            out = model(prefix_ids, use_cache=True)
         past = out.past_key_values
         dtype = past[0][0].dtype
         all_logits = [out.logits[:, -1:, :]]
+        del out
         step_stats = []
 
         actual_pos = prefix_ids.shape[1]
@@ -1442,15 +1444,10 @@ class NormClampBackend:
 
             step_stats.append(
                 V14StepStats(
-                    step=step,
-                    cache_len=n_full + n_compressed + step + 1,
+                    kv_kept=n_full + n_compressed + step + 1,
                     n_compressed=n_compressed,
                     n_full=n_full + step + 1,
                     compress_ms=compress_ms if step == 0 else 0,
-                    decode_ms=0,
-                    ppl_step=0,
-                    kv_bytes_ratio=0,
-                    peak_gpu_mb=0,
                 )
             )
 
