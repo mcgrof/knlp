@@ -1,0 +1,225 @@
+bpa-v22.txt — “Go where the wins are: scale-overhead engineering + bigger model scaling + bandwidth-bound proof”
+
+Context (what we now know, no cope):
+- k-floor is real at this model: for g=32, k=3 fails, k=4 passes. (structural accumulation)
+- You beat S2_k6 properly: g=32,k=4 reaches kv_ratio≈0.3203 and PASS@3% across all L.
+- g=4 is “quality great, bytes terrible” because fp16 scales dominate: kv_ratio≈0.50. Tight groups are dead unless scale metadata is amortized/compressed.
+- V-only INT8 is dead (K/RoPE fragility). Post-hoc rescaling is dead. Norm clamp is marginal.
+- Next frontier = (1) reduce scale overhead, (2) validate scaling to larger model where k/D shrinks, (3) show bandwidth-bound latency improvements in a regime that matters.
+
+Mission for v22:
+A) Engineer “small-group INT4 without paying scale tax” (scale amortization + scale compression).
+B) Replicate best schedule on a larger model and test the k/D hypothesis.
+C) Force bandwidth-bound regime and show latency/bandwidth wins from KV byte cuts.
+D) Keep everything under a single harness + honest byte accounting.
+
+Non-negotiables:
+- Real packed KV storage for headline.
+- Honest kv_bytes_ratio includes all metadata (scales, zeros, headers).
+- L ∈ {8192, 16384, 32768}; plus L=4096 sanity.
+- Seeds {0,1,2}. Decode_steps >= 256.
+- Regimes: r1 batch=1, r2 microbatch=4, r3 microbatch=8 if feasible.
+- Baselines ALWAYS: dense, INT8-all, S2_manual_k6, g32_k4 (current best).
+
+Deliverables:
+- bpa_v22_scoreboard.json
+- bpa_v22_final_report.md
+- bpa_v22_branch_tree.md
+- artifacts/v22/kv_bytes_accounting.json + .md
+- artifacts/v22/scale_overhead_study.json (quality vs bytes vs overhead)
+- artifacts/v22/bandwidth_bound_profile.json (kernel time %, ms/token)
+- artifacts/v22/larger_model_replication.json
+
+========================================================
+PHASE 0 — Lock Current Best + Quick Regression Guard (1–2h)
+========================================================
+Re-run with full seeds:
+- g=32,k=4 (best): PASS@3% all L; record kv_ratio and latency.
+- S2_manual_k6: PASS@3% all L; record.
+- INT8-all: PASS.
+
+If any of these regress, stop and debug before proceeding.
+
+========================================================
+PHASE 1 — Scale Overhead Engineering (core) (4–8h)
+========================================================
+Goal: get g=4-like noise behavior with g=32-like kv_ratio.
+
+We will test 3 scale-overhead strategies. Implement each as a switchable KV quant backend.
+
+Define groups:
+- payload group_size g ∈ {4, 8} (focus)
+Define scale representation and amortization:
+- scale dtype ∈ {fp16, fp8/e4m3 (if available), int8-logscale}
+- scale sharing window S ∈ {1, 2, 4, 8, 16} tokens (amortize across positions)
+
+Important: for K with RoPE, scales can be shared across short windows if computed on pre-RoPE or using norm-invariant scaling. Explore both (below).
+
+Strategy 1: Token-window scale sharing (amortize by S)
+1.1) Compute per-group scale on token t0, reuse for tokens t0..t0+S-1.
+1.2) Variants:
+- scales computed on K_postRoPE (naive, may drift)
+- scales computed on K_preRoPE (better stability) then apply after RoPE (preferred)
+- scales computed on |K| norms which are RoPE-invariant (best if feasible)
+1.3) Evaluate quality degradation vs S and measure kv_ratio improvement.
+
+Strategy 2: Scale quantization / compression
+2.1) Store scales in fp8 (or int8 with shared exponent) instead of fp16.
+2.2) Option: store log2(scale) quantized (int8), reconstruct scale = 2^(q/α).
+2.3) Measure effect on quality and bytes.
+
+Strategy 3: Shared scales across heads or channels (light sharing)
+3.1) Share scales across heads within a layer (reduce scale count by H factor).
+3.2) Share scales across head_dim blocks (reduce by 2x or 4x).
+3.3) This is riskier for quality; treat as ablation.
+
+For each strategy, build a byte model:
+- true kv_ratio = (int4 payload bytes + scale bytes after amortization/compression) / dense bytes
+Log it.
+
+Evaluation procedure:
+- Use k fixed at 4 (best protected layers) and compare:
+  A) g=32,k=4 baseline
+  B) g=4,k=4 with strategy variants
+  C) g=4,k=2 and k=3 (only for best strategy variants)
+- Quick screen at L=8192 (3 seeds).
+- Validate winners at L=16384 and L=32768 (3 seeds), r1+r2.
+
+Success criteria (Path A win):
+- PASS@3% all L with kv_ratio <= 0.30
+OR
+- PASS@3% all L with kv_ratio <= 0.32 but with k=3 (beat structural floor via σ4 reduction)
+
+Failure criteria:
+- If any method introduces RoPE drift causing spikes at 16K/32K, log it and move on.
+
+========================================================
+PHASE 2 — Larger Model Replication (k/D scaling) (4–8h, parallel if possible)
+========================================================
+Goal: test whether k* stays ~constant while D increases, improving kv_ratio.
+
+Pick one target model that fits W7900 reasonably:
+- Prefer ~1.5B–3B with long ctx support (or 7B if feasible with weight quantization).
+- Use the same harness; weights may be 4-bit if needed, but KV experiments must remain comparable.
+
+Runs (minimum):
+- INT8-all baseline
+- g32,k=4 schedule transferred (protect analogous early layers; if layers differ, protect top-4 by residual_ratio)
+- Recompute top-4 sensitive layers using residual_ratio proxy on this model (fast)
+- Validate at L=8192 and L=16384 (try 32768 only if stable and memory allows)
+
+Success:
+- PASS@3% with k<=6 and kv_ratio improved vs 0.3203 due to larger D (smaller INT8 fraction)
+- If 32768 possible: that’s headline.
+
+If larger model is infeasible on W7900:
+- Document why (OOM, runtime).
+- Mark “H100 required for A2 full replication + bandwidth-bound proof”.
+
+========================================================
+PHASE 3 — Bandwidth-bound Regime Proof (2–6h)
+========================================================
+Goal: show byte cuts move latency when attention is bandwidth-bound.
+
+Methods:
+- Increase microbatch to 8 (and 16 if possible) at L=16384.
+- Increase decode_steps to 512.
+- Profile attention kernel fraction and memory throughput.
+
+Compare at least:
+- INT8-all
+- g32,k=4 (best)
+- best scale-overhead-engineered g=4 variant (if any)
+
+Success:
+- Identify at least one regime where ms/token improves when kv_ratio drops.
+If still compute-bound:
+- Produce a clear profile summary showing why (kernel time breakdown).
+
+========================================================
+PHASE 4 — Theory Update (1–2h)
+========================================================
+Update the accumulation bound with measured sigma reductions:
+- Estimate effective sigma4 for:
+  - g=32 baseline
+  - g=4 naive
+  - best amortized/compressed-scale g=4
+Use these to predict k* changes and compare to observed k*.
+
+========================================================
+REPORT REQUIREMENTS
+========================================================
+bpa_v22_final_report.md must answer:
+1) Did we get kv_ratio < 0.30 with PASS@3%? If yes, which mechanism (S, scale dtype, pre/post RoPE)?
+2) If k* dropped below 4, show evidence and attribute to sigma reduction.
+3) Did larger model replication improve kv_ratio via k/D shrinkage?
+4) Are we bandwidth-bound anywhere? If yes, show latency gains. If no, show profile proof.
+5) Recommend v23:
+   - If scale amortization works: productize + fuse kernels.
+   - If only larger model helps: move to H100 and validate at 8B long ctx.
+   - If neither works: next is learned calibration on top layers (B3) or structural attention normalization.
+
+bpa_v22_branch_tree.md must include branches:
+A) Scale amortization wins (kv_ratio<=0.30 PASS):
+   -> v23: kernel optimization + per-head precision + 7B/8B replication.
+B) Scale amortization fails (RoPE drift):
+   -> v23: scale on pre-RoPE invariants + learned scale calibration.
+C) Larger model shows k/D shrinkage:
+   -> v23: move to 7B/8B and push bandwidth-bound story.
+D) Still compute-bound on W7900:
+   -> v23: H100 run for latency proof + fused int4 kernels.
+
+Stop conditions:
+- No simulated byte ratios.
+- No V-only hacks.
+- No rescaling hacks.
+- Don’t waste time on signals; focus on bytes/overhead and model scaling.
+
+Time budget:
+Designed to run 12h+:
+- many (S, scale_dtype) variants + long-L validation + larger model runs + profiling.
+
+========================================================
+EXECUTION LOG
+========================================================
+
+Phase 0 — Lock Current Best + Regression Guard [DONE] (commit 9291241)
+  Created eval_v22.py with three new backends (AmortizedScale,
+  ScaleQuant, SharedScale) and extended byte accounting. Ran
+  regression guard: g32_k4 (+2.30%), S2_k6 (+2.35%), INT8_all
+  (+0.69%) — all PASS.
+
+Phase 1 — Scale Overhead Engineering [DONE] (commit d0b3adf)
+  Tested 3 strategies across g={4,8} and S={1,2,4,8,16}.
+  Strategy 2 (ScaleQuant) crashed with dimension bug in
+  _quantize_int4_logscale (unsqueeze on already-5D tensor);
+  fixed. Strategy 3 (SharedScale) limited by only 2 KV heads.
+  Strategy 1 (Amortization) succeeds: amort_g8_S8_k4 achieves
+  kv_ratio=0.3073 PASS@3%, new Pareto-optimal. g=8 tolerates
+  S=8 amortization better than g=4 due to larger groups.
+
+Phase 2 — Larger Model Replication [DONE]
+  Tested Qwen2.5-1.5B (28 layers, head_dim=128). g32_k4
+  ratio improves to 0.3136. CRITICAL FINDING: residual_ratio
+  proxy catastrophically fails (+67960% PPL) because it ranks
+  layer 0 (attention sink) LAST. Transferred 0.5B ranking
+  [0,8,1,2] nearly passes (+3.42%). INT8_all passes (+0.26%).
+  No code changes; results in gitignored directory.
+
+Phase 3 — Bandwidth-bound Regime Proof [DONE]
+  Fixed numpy bool JSON serialization bug. Tested batch={1,4,8,16}
+  at L=16384. Still compute-bound: g32_k4 speedup 0.995-1.000x.
+  batch=16 OOM. Confirms v16-v21 finding.
+
+Phase 4 — Theory Update + Final Deliverables [DONE]
+  Measured per-layer sigma: g=4 reduces total sigma by 53.7%
+  vs g=32. Layer 0 drops from 4.31 to 1.70 (60.5% reduction).
+  Built scoreboard, wrote final report and branch tree.
+
+Winner: amort_g8_S8_k4 (g=8, S=8 token-window amortization, k=4)
+  kv_ratio=0.3073, max_delta=+2.43%, PASS@3% at all L.
+  Beats v21 best (g32_k4, 0.3203) by 4.1%.
+  Beats S2_k6 (0.333) by 7.7%.
+
+v23 recommendation: Port amort_g8_S8 + per-layer PPL sensitivity
+  sweep to 1.5B. Test L=32K/64K. Profile bandwidth on 1.5B.
