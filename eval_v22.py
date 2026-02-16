@@ -1711,7 +1711,7 @@ def run_phase3(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
                 "g32_vs_int8_speedup": (
                     round(int8_ms / g32_ms, 3) if g32_ms > 0 else None
                 ),
-                "bandwidth_bound": g32_ms < dense_ms * 0.95,
+                "bandwidth_bound": bool(g32_ms < dense_ms * 0.95),
             }
 
     print(f"\n  Speedup Analysis:")
