@@ -1,0 +1,234 @@
+bpa-v23.txt — “Max-out W7900: de-risk scaling, lock throughput story, and prep H100 plan (without needing it yet)”
+
+Context (v22 facts we must build on):
+- Best config: amort_g8_S8_k4 achieves kv_ratio≈0.3073 and PASS@3% (beats g32_k4 and S2_k6).
+- k* remains 4: scale amortization reduces bytes, not accumulation floor.
+- On W7900 we remain compute-bound: latency doesn’t improve even when kv_ratio drops.
+- 1.5B smoke test: transferred schedule nearly passes; residual_ratio proxy fails spectacularly (layer 0 sink).
+- Therefore v23 must:
+  (1) turn KV byte cuts into a throughput story on W7900,
+  (2) de-risk larger-model replication by doing the right sensitivity ranking (empirical) on 1.5B,
+  (3) harden the amortization method (RoPE-safe) and show robustness across L/batch,
+  (4) explicitly document what would change on a bandwidth-bound GPU (H100) later.
+
+Mission for v23:
+A) W7900-native headline: show throughput gains (tokens/sec, concurrent sequences) from reduced KV bytes, even if per-token latency is flat.
+B) Replicate and stabilize the method on the 1.5B model using an empirical sensitivity sweep (NOT residual proxies).
+C) Stress-test amortization knobs (S, g, pre/post RoPE scale) and find best Pareto points under real byte accounting.
+D) Produce an “H100 readiness dossier”: which experiments are blocked by compute-bound regime today, and exactly what to run when cloud credits appear.
+
+Non-negotiables:
+- Real packed KV storage for headline.
+- Honest kv_bytes_ratio includes scale metadata.
+- L ∈ {4096, 8192, 16384, 32768} where feasible.
+- Seeds {0,1,2}.
+- Regimes: batch=1 and microbatch=4 and microbatch=8 where feasible.
+- Baselines: dense, INT8-all, g32_k4, S2_k6, amort_g8_S8_k4 (v22 best).
+
+Deliverables:
+- bpa_v23_scoreboard.json
+- bpa_v23_final_report.md
+- bpa_v23_branch_tree.md
+- artifacts/v23/throughput_bench.json + .md
+- artifacts/v23/amortization_sweep.json
+- artifacts/v23/model_1p5b_sensitivity_oracle.json
+- artifacts/v23/h100_readiness.md
+
+========================================================
+PHASE 0 — Baseline lock + reproducibility (1–2h)
+========================================================
+Re-run full seeds:
+- INT8-all
+- g32_k4
+- S2_k6
+- amort_g8_S8_k4 (current best)
+
+At L ∈ {8192,16384,32768} (at least 8192+32768).
+Abort if these regress materially.
+
+========================================================
+PHASE 1 — Throughput benchmark suite (W7900 “value story”) (3–6h)
+========================================================
+Goal: show that KV byte cuts translate to higher throughput/capacity even when latency is compute-bound.
+
+Implement a throughput bench that measures:
+- tokens/sec (prefill + decode)
+- sequences/sec
+- max batch (or microbatch) before OOM at each L
+- peak VRAM and KV footprint breakdown
+
+Bench matrix:
+- Methods: INT8-all, g32_k4, amort_g8_S8_k4
+- L: 8192, 16384, 32768
+- microbatch: 1,4,8 (try 16 if possible)
+
+Outputs:
+- throughput_bench.json: per-method, per-L, per-batch:
+  {tokens_per_sec, sequences_per_sec, ms_per_token, peak_mem, kv_mem_bytes, model_mem_bytes}
+
+Success:
+- Demonstrate that amort method increases feasible microbatch or #concurrent sequences at same L.
+- If no throughput increase, document why (compute saturation prevents concurrency scaling).
+
+========================================================
+PHASE 2 — Amortization parameter sweep (RoPE-safe + bytes) (4–8h)
+========================================================
+Goal: map Pareto frontier: (PASS, kv_ratio, overhead) across amort knobs.
+
+Sweep:
+- group size g ∈ {8, 4}  (g=4 only if overhead is controlled)
+- window S ∈ {1,2,4,8,16}
+- scale compute mode:
+  M1: post-RoPE scale (naive)
+  M2: pre-RoPE scale (preferred)
+  M3: RoPE-invariant norm-based scale (if feasible)
+
+For each config:
+1) compute honest kv_ratio from accounting
+2) run quick eval L=8192 on seeds {0,1,2}
+3) keep survivors with tol<=3%
+4) validate top 3 configs at L=16384 and L=32768
+
+Target outcomes:
+- Find any PASS config with kv_ratio <= 0.30 on 0.5B.
+- If not possible due to k*=4 floor + overhead, identify best achievable and explain.
+
+Log to artifacts/v23/amortization_sweep.json and include:
+- PASS rates
+- kv_ratio
+- runtime overhead (ms/token)
+- any RoPE drift signatures (quality worsening with L)
+
+========================================================
+PHASE 3 — 1.5B replication done properly (oracle sensitivity) (6–12h, can run overnight)
+========================================================
+Goal: de-risk scaling without needing H100.
+
+Key insight: residual proxy is unreliable on 1.5B. Must do empirical oracle ranking.
+
+Steps:
+3.1) Baselines on 1.5B:
+- INT8-all
+- g32_k4 transferred schedule (current best transfer attempt)
+Evaluate at L=8192 and L=16384 (32768 if feasible).
+
+3.2) Oracle sensitivity ranking on 1.5B (reduced cost version):
+For each layer ℓ:
+- Apply INT4 quant to that layer’s KV only (keep others INT8)
+- Measure ΔPPL at L=8192 (primary) and optionally L=16384 (secondary)
+Compute oracle_score[ℓ] and rank.
+Store: artifacts/v23/model_1p5b_sensitivity_oracle.json
+
+(If full sweep is too slow, do a two-stage approach:
+- coarse screen with 1 seed + smaller prompt set,
+- then refine top-8 candidates with full 3 seeds.)
+
+3.3) k-sweep on 1.5B using oracle rank:
+k ∈ {2,3,4,6,8}
+Run: g32,k plus (optionally) amort_g8_S8,k if memory allows.
+Validate L=8192 and L=16384.
+If stable, try L=32768.
+
+Success:
+- Show k* (min k passing tol=3%) for 1.5B.
+- Show kv_ratio improvement from k/D shrinkage.
+- Produce a stable “S2-like” schedule for 1.5B.
+
+========================================================
+PHASE 4 — “H100 readiness dossier” (1–2h)
+========================================================
+Write artifacts/v23/h100_readiness.md covering:
+- What is compute-bound on W7900 (why latency doesn’t move)
+- Which experiments require bandwidth-bound GPU:
+  * real latency improvements from kv_ratio reduction
+  * fused int4 kernels for attention to reduce compute overhead
+  * 7B/8B long-context at larger batches
+- Exact run list when cloud credits exist:
+  1) repeat throughput/latency suite on H100
+  2) run 7B/8B with amort schedule and oracle ranking
+  3) measure memory BW and kernel breakdown
+  4) show cost-per-token improvements
+
+Include concrete acceptance criteria:
+- >=10% ms/token reduction in at least one bandwidth-bound regime
+- or >=20% throughput improvement at fixed latency.
+
+========================================================
+REPORT REQUIREMENTS
+========================================================
+bpa_v23_final_report.md must include:
+1) v22 recap and v23 goals
+2) Throughput results on W7900 (headline)
+3) Amortization Pareto frontier (kv_ratio vs quality vs overhead)
+4) 1.5B oracle ranking + k* and kv_ratio vs 0.5B
+5) “What remains blocked until H100” (clear, concrete)
+
+bpa_v23_scoreboard.json rows:
+{model, method, g, S, scale_mode, k, L, batch, seed,
+ ppl_delta, PASS_1%, PASS_3%, kv_ratio_true, kv_mem_bytes,
+ tokens_per_sec, sequences_per_sec, ms_per_token, peak_mem}
+
+bpa_v23_branch_tree.md branches:
+A) Found kv_ratio <=0.30 PASS on 0.5B:
+   -> v24: fuse kernels + per-head precision refinement.
+B) 1.5B shows k* ~4 but kv_ratio improves (k/D shrink):
+   -> v24: push to bigger model on cloud GPU; throughput story strengthens.
+C) 1.5B k* grows (bad news):
+   -> v24: learned calibration (B3) + structural normalization needed.
+D) Still compute-bound always:
+   -> v24: reframe success as capacity/throughput until H100.
+
+Stop conditions:
+- No proxy ranking for 1.5B except as a cheap prefilter.
+- No simulated kv_ratio in headline.
+- Don’t waste cycles on V-only or post-hoc rescaling (dead).
+- Prefer evidence-driven sweeps over inventing new knobs.
+
+Time budget:
+Designed to run 12h+ (amort sweep + throughput suite + 1.5B oracle ranking).
+
+========================================================
+EXECUTION LOG
+========================================================
+
+Phase 0 — Baseline Lock [DONE] (commit 14224a8)
+  Created eval_v23.py harness. All 4 baselines pass regression:
+  amort_g8_S8_k4 (+2.43%), g32_k4 (+2.30%), S2_k6 (+0.70%),
+  INT8_all (+0.69%) — all PASS@3%.
+
+Phase 1 — Throughput Benchmark [DONE]
+  W7900 compute-bound at all batch sizes (1-16) and all L.
+  amort_g8_S8_k4 is 8% slower per-token (Python quant overhead).
+  Capacity headline: 3.26x more concurrent sequences vs dense
+  (123 to 402 at L=32K). No latency improvement.
+
+Phase 2 — Amortization Parameter Sweep [DONE]
+  Swept 12 configs: g={8,4} × S={1,2,4,8,16} × scale_mode.
+  g8_S16 fails (+5.08%). Scale mode irrelevant for g=8.
+  g=4 shows RoPE drift at small S. CRITICAL FINDING:
+  amort_g8_S8_k3 achieves kv_ratio=0.2969 PASS@3% — breaks
+  the 0.30 wall on 0.5B. No RoPE drift (delta decreases with L).
+
+Phase 3 — 1.5B Oracle Sensitivity [DONE]
+  Empirical per-layer INT4 ablation on Qwen2.5-1.5B (28 layers).
+  Oracle ranking: [0, 15, 1, 19, 25, 23, 12, 9].
+  Layer 0: +824.6% (attention sink, extreme). Layer 15: +3.2%.
+  All other layers <0.8%. k* drops from 4 (0.5B) to 2 (1.5B).
+  g32_k2_oracle: kv_ratio=0.2974 PASS@3% (+1.05%). Sub-0.30
+  achieved on 1.5B with just 2 INT8 layers, no amortization.
+  k/D scaling confirmed: k/D=0.071 (1.5B) vs 0.167 (0.5B).
+
+Phase 4 — H100 Dossier + Final Deliverables [DONE]
+  Scoreboard, final report, branch tree, and H100 readiness
+  dossier written. Two sub-0.30 PASS configs achieved:
+  amort_g8_S8_k3 on 0.5B (0.2969) and g32_k2_oracle on 1.5B
+  (0.2974).
+
+Winners:
+  0.5B: amort_g8_S8_k3 (ratio=0.2969, +2.38%, PASS@3%)
+  1.5B: g32_k2_oracle (ratio=0.2974, +1.05%, PASS@3%)
+
+v24 recommendation: Replicate on 7B with oracle ranking (predict
+k*~2, ratio~0.28). Run on H100 for bandwidth-bound latency proof.
+Fuse INT4 attention kernel.
+
