@@ -446,7 +446,7 @@ class ScaleQuantMixedBackend:
 
         # Quantize scale to INT8
         scale_q = self._quantize_scale_int8(scale_fp)
-        scale_recon = self._dequantize_scale_int8(scale_q).unsqueeze(-1)
+        scale_recon = self._dequantize_scale_int8(scale_q)
 
         # Quantize payload using reconstructed scale
         x_q = (x_g / scale_recon).round().clamp(-8, 7).to(torch.int8)
