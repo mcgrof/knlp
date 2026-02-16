@@ -1,0 +1,206 @@
+{
+  "model": "Qwen2.5-0.5B",
+  "experiment": "BPA v23: Throughput + amort sweep + 1.5B oracle",
+  "baselines": {
+    "dense": {
+      "kv_ratio": 1.0,
+      "pass_3pct": "all"
+    },
+    "INT8_all": {
+      "kv_ratio": 0.5156,
+      "pass_3pct": "all"
+    },
+    "S2_k6": {
+      "kv_ratio": 0.333,
+      "pass_3pct": "all"
+    },
+    "g32_k4": {
+      "kv_ratio": 0.3203,
+      "pass_3pct": "all"
+    },
+    "amort_g8_S8_k4_v22": {
+      "kv_ratio": 0.3073,
+      "pass_3pct": "all"
+    }
+  },
+  "phase1_throughput": {
+    "L8192": {
+      "dense_max_seqs": 494,
+      "amort_g8_S8_k4_max_seqs": 1608,
+      "g32_k4_max_seqs": 1543,
+      "capacity_gain_vs_dense": 3.26,
+      "capacity_gain_vs_g32": 1.04
+    },
+    "L16384": {
+      "dense_max_seqs": 247,
+      "amort_g8_S8_k4_max_seqs": 804,
+      "g32_k4_max_seqs": 771,
+      "capacity_gain_vs_dense": 3.26,
+      "capacity_gain_vs_g32": 1.04
+    },
+    "L32768": {
+      "dense_max_seqs": 123,
+      "amort_g8_S8_k4_max_seqs": 402,
+      "g32_k4_max_seqs": 385,
+      "capacity_gain_vs_dense": 3.27,
+      "capacity_gain_vs_g32": 1.04
+    }
+  },
+  "phase2_amort_sweep": {
+    "amort_g8_S8_post_rope_k4": {
+      "kv_ratio": 0.307292,
+      "max_delta": 2.43,
+      "pass_3pct": true
+    },
+    "amort_g4_S16_post_rope_k4": {
+      "kv_ratio": 0.307292,
+      "max_delta": 3.89,
+      "pass_3pct": false
+    },
+    "amort_g8_S8_pre_rope_k4": {
+      "kv_ratio": 0.307292,
+      "max_delta": 2.43,
+      "pass_3pct": true
+    },
+    "amort_g8_S8_norm_invariant_k4": {
+      "kv_ratio": 0.307292,
+      "max_delta": 2.43,
+      "pass_3pct": true
+    },
+    "amort_g8_S4_post_rope_k4": {
+      "kv_ratio": 0.320312,
+      "max_delta": 2.06,
+      "pass_3pct": true
+    },
+    "amort_g4_S8_post_rope_k4": {
+      "kv_ratio": 0.320312,
+      "max_delta": 2.99,
+      "pass_3pct": true
+    },
+    "amort_g8_S2_post_rope_k4": {
+      "kv_ratio": 0.346354,
+      "max_delta": 1.63,
+      "pass_3pct": true
+    },
+    "amort_g4_S4_post_rope_k4": {
+      "kv_ratio": 0.346354,
+      "max_delta": 3.11,
+      "pass_3pct": false
+    },
+    "amort_g8_S1_post_rope_k4": {
+      "kv_ratio": 0.398438,
+      "max_delta": 1.9,
+      "pass_3pct": true
+    },
+    "amort_g4_S2_post_rope_k4": {
+      "kv_ratio": 0.398438,
+      "max_delta": 2.05,
+      "pass_3pct": true
+    },
+    "amort_g4_S1_post_rope_k4": {
+      "kv_ratio": 0.502604,
+      "max_delta": 2.27,
+      "pass_3pct": true
+    },
+    "amort_g8_S8_post_rope_k3": {
+      "kv_ratio": 0.296875,
+      "max_delta": 2.38,
+      "pass_3pct": true
+    },
+    "amort_g8_S8_pre_rope_k3": {
+      "kv_ratio": 0.296875,
+      "max_delta": 2.38,
+      "pass_3pct": true
+    },
+    "amort_g8_S8_norm_invariant_k3": {
+      "kv_ratio": 0.296875,
+      "max_delta": 2.38,
+      "pass_3pct": true
+    },
+    "amort_g8_S4_post_rope_k3": {
+      "kv_ratio": 0.310547,
+      "max_delta": 2.05,
+      "pass_3pct": true
+    },
+    "amort_g4_S8_post_rope_k3": {
+      "kv_ratio": 0.310547,
+      "max_delta": 3.07,
+      "pass_3pct": false
+    },
+    "amort_g8_S2_post_rope_k3": {
+      "kv_ratio": 0.337891,
+      "max_delta": 1.73,
+      "pass_3pct": true
+    },
+    "amort_g8_S1_post_rope_k3": {
+      "kv_ratio": 0.392578,
+      "max_delta": 1.72,
+      "pass_3pct": true
+    },
+    "amort_g4_S2_post_rope_k3": {
+      "kv_ratio": 0.392578,
+      "max_delta": 1.92,
+      "pass_3pct": true
+    },
+    "amort_g4_S1_post_rope_k3": {
+      "kv_ratio": 0.501953,
+      "max_delta": 2.19,
+      "pass_3pct": true
+    }
+  },
+  "phase3_1p5b": {
+    "g32_k2_oracle": {
+      "kv_ratio": 0.297433,
+      "max_delta": 1.05,
+      "pass_3pct": true,
+      "k": 2
+    },
+    "g32_k3_oracle": {
+      "kv_ratio": 0.305525,
+      "max_delta": 0.73,
+      "pass_3pct": true,
+      "k": 3
+    },
+    "g32_k4_oracle": {
+      "kv_ratio": 0.313616,
+      "max_delta": 0.47,
+      "pass_3pct": true,
+      "k": 4
+    },
+    "g32_k6_oracle": {
+      "kv_ratio": 0.329799,
+      "max_delta": 0.71,
+      "pass_3pct": true,
+      "k": 6
+    },
+    "g32_k8_oracle": {
+      "kv_ratio": 0.345982,
+      "max_delta": 0.82,
+      "pass_3pct": true,
+      "k": 8
+    },
+    "amort_g8_S8_k4_oracle": {
+      "kv_ratio": 0.300223,
+      "max_delta": 0.82,
+      "pass_3pct": true,
+      "k": 4
+    },
+    "amort_g8_S8_k6_oracle": {
+      "kv_ratio": 0.317522,
+      "max_delta": 1.05,
+      "pass_3pct": true,
+      "k": 6
+    },
+    "k_star": 2,
+    "oracle_ranking_top8": [
+      0,
+      15,
+      1,
+      19,
+      25,
+      23,
+      12,
+      9
+    ]
+  }
+}
