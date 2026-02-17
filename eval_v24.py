@@ -1175,11 +1175,35 @@ def run_phase5(args):
         json.dump(k_star_by_model, f, indent=2)
     print(f"  Written: k_star_by_model.json")
 
-    # Merge parameter estimates
+    # Merge parameter estimates and calibrate B(ε)
     merged_params = {}
     for mk, md in models.items():
         if "params" in md:
             p = md["params"].get("parameters", {})
+
+            # Calibrate B(ε) using actual k* from Phase 4
+            ksm = k_star_by_model.get(mk, {})
+            alpha = p.get("alpha_sorted", [])
+            if alpha and ksm.get("k_star_3pct") is not None:
+                k3 = ksm["k_star_3pct"]
+                # S(k*) = sum of tail (unprotected) alpha values
+                # This is the observed error budget at the PASS boundary
+                tail_sum_at_kstar = sum(alpha[k3:])
+                top_sum_at_kstar = sum(alpha[:k3])
+                p["B_eps3pct_calibrated"] = round(tail_sum_at_kstar, 4)
+                p["S_at_kstar_3pct"] = round(tail_sum_at_kstar, 4)
+                p["protected_sum_3pct"] = round(top_sum_at_kstar, 4)
+                print(
+                    f"  {mk}: B(3%) calibrated = {tail_sum_at_kstar:.4f}"
+                    f" (k*={k3}, protected_sum={top_sum_at_kstar:.2f})"
+                )
+
+            if alpha and ksm.get("k_star_1pct") is not None:
+                k1 = ksm["k_star_1pct"]
+                tail_sum_at_k1 = sum(alpha[k1:])
+                p["B_eps1pct_calibrated"] = round(tail_sum_at_k1, 4)
+                p["S_at_kstar_1pct"] = round(tail_sum_at_k1, 4)
+
             merged_params[mk] = p
 
     with open(os.path.join(art_dir, "parameter_estimates.json"), "w") as f:
