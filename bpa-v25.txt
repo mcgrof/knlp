@@ -1,0 +1,236 @@
+bpa-v25.txt — “Write the brutal, careful narrative: from L²M motivation → measurement reality → k(D,ε) bound → O(1) evidence → H100 plan”
+
+You are Claude Code running a Ralph Wiggum loop. Your mission in v25 is NOT to run new experiments first. Your mission is to produce a readable, declarative, technically precise document that a new reviewer can use to evaluate the entire BPA arc to date, including: what we set out to test (L²M motivation), how our analysis biases evolved under evidence, what the current mechanism is (k-protected layers + accumulation), why O(1) matters, and what the exact H100 test plan is.
+
+Use a declarative tone. No hype. No “we think.” Use “we measured,” “we observed,” “we derived,” and always specify the condition (model, D, L, ε, seeds).
+
+Hard requirements:
+- Output: docs/bpa_v25_technical_narrative.md (primary), plus artifacts/v25/v25_appendix.json (index of runs and pointers).
+- The narrative must be understandable to a new person with no context.
+- Every major claim must be tied to a table/figure and to a run artifact.
+- Must include a “What changed over time / bias evolution” section that candidly states where our early framing was wrong or incomplete.
+- Must include a “H100 readiness plan” section with concrete acceptance criteria and run matrix.
+- Must include a “Definitions” section that pins down k, k*, ε, kv_ratio, L, D, and PASS criteria exactly.
+
+You MUST use v24 as the formal foundation:
+- k*(3%) for 0.5B and 1.5B and O(1) verdict are already established. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1}
+- Branch tree already recommends the H100 path and why. :contentReference[oaicite:2]{index=2}
+
+========================================================
+PHASE 0 — Collect and index all prior outputs (1–2h)
+========================================================
+Goal: build an index so the narrative is auditable.
+
+0.1) Search the repo for:
+- bpa_v*_final_report.md
+- bpa_v*_scoreboard.json
+- branch trees
+- amortization/throughput/1.5B oracle artifacts
+- any scripts that generated kv_ratio accounting
+
+0.2) Create artifacts/v25/v25_appendix.json containing:
+- a list of each version v8..v24 (or as many as exist in tree)
+- for each version: {summary_file, scoreboard_file, branch_tree_file, key_artifacts[], model(s), L range, main conclusions}
+
+0.3) For v24 explicitly capture:
+- models: qwen05b D=24, qwen15b D=28
+- observed k*(3%) and k*(1%)
+- O(1) verdict
+- oracle sensitivity distributions (sink layers)
+This is the anchor. :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+
+========================================================
+PHASE 1 — Write the narrative (core deliverable) (4–8h)
+========================================================
+Write docs/bpa_v25_technical_narrative.md with this structure and content rules.
+
+1) Executive Summary (half page max)
+- What problem: long context KV cost explodes; want mechanisms that reduce effective KV usage / bytes while preserving quality.
+- What we found: structural floors exist; accumulation dominates; only O(1) “sink layers” need protection; kv_ratio trends to ~0.28–0.30 with INT4+small k; W7900 is compute-bound so benefits are capacity not latency; H100 is needed for bandwidth-bound latency proof.
+- Must include the v24 O(1) headline: k*(3%)=2 for D=24 and D=28 with k/D decreasing. :contentReference[oaicite:5]{index=5}
+
+2) Problem Statement and Original Hypothesis (L²M-motivated)
+- State the L²M / mutual-information motivation plainly:
+  “Predictive information grows sublinearly in L, so far-context needs should be conditional, not proportional to L.”
+- Define what we intended to measure: effective KV usage vs L; exponents after subtracting geometric floors.
+- Clarify what we mean by “sublinear”: exponent beta < 1 on effective KV bytes after floor removal.
+- Explicitly state the initial bias: we expected gating/budget adaptation alone could deliver sublinear scaling curves.
+
+3) Definitions and Metrics (no ambiguity)
+Define and stick to these:
+- L: context length, and which values used (e.g., 8K/16K/32K).
+- D: number of transformer layers.
+- kv_ratio: KV bytes per token vs dense baseline, including metadata (scales/zeros).
+- ε: relative PPL tolerance, PASS_ε meaning (PPL_q - PPL_dense)/PPL_dense <= ε.
+- k: number of protected layers at higher precision (INT8), chosen by ranking.
+- k*(ε): minimum k that passes PASS_ε across all seeds and L set.
+This section must exactly match v24 usage. :contentReference[oaicite:6]{index=6}
+
+4) Timeline of Empirical Discoveries (the “bias evolution” section)
+This is mandatory and must be blunt:
+- Early: “KV kept” metrics and prettier beta plots.
+- v8/v9: discovered local window (W) dominates and creates a geometric floor; chasing beta without subtracting floor is misleading.
+- Mid: discovered gate overhead and decode-time regimes matter (compute-bound vs bandwidth-bound).
+- Later: discovered quantization noise accumulation across depth creates a k-floor and dominates failure modes; V-only protection doesn’t work because K/RoPE dominates.
+- v21: discovered honest byte accounting and scale metadata overhead makes small quant groups expensive.
+- v22/v23: amortization reduces metadata overhead; throughput/capacity benefits observed; still compute-bound on W7900.
+- v24: formal accumulation model + k(D,ε) bound + O(1) evidence.
+For each bullet, cite a specific version report file and include one concrete numeric example where possible.
+
+5) The Accumulation Theory (formal section)
+This section must be written as a mini research note:
+- Present residual recursion and perturbation.
+- Present linearization leading to: ||e_D|| ≤ Σ α_ℓ σ_ℓ.
+- Explain meaning of α_ℓ (amplification/importance) and σ_ℓ (noise magnitude).
+- Explain why greedy top-k protection is optimal under this bound.
+- Explain O(1) condition: if α mass is concentrated in O(1) sink layers, then k* stays constant as D grows.
+Use v24 text as source of truth; paraphrase, do not invent. :contentReference[oaicite:7]{index=7}
+
+6) Empirical Evidence for O(1) (data-first)
+Include a table like v24’s:
+- qwen05b (D=24): k*(3%)=2, k*(1%)=None
+- qwen15b (D=28): k*(3%)=2, k*(1%)=3
+and explicit statement: k* unchanged while D increased → supports O(1). :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9}
+
+Also include the sink-layer evidence:
+- oracle sensitivity shows layer 0 dominates (0.5B +23%, 1.5B +824%).
+- tail fractions drop sharply with model scale (cite exact values from v24 report).
+Explain in one paragraph why sink layers plausibly arise in RoPE transformers (attention sink role), without overclaiming causality. :contentReference[oaicite:10]{index=10}
+
+7) What We Have Now (current mechanism, stated plainly)
+Describe the current “winning recipe” in generic terms:
+- Use INT4 KV for most layers.
+- Protect top-k layers (k small, ~2–4) at INT8, chosen by oracle sensitivity ranking.
+- This achieves kv_ratio ~0.28–0.30 at ε=3% for tested models.
+- On W7900 (compute-bound), primary benefit is capacity/throughput, not latency.
+Do not claim latency wins on W7900 unless you have a benchmark table proving it.
+
+8) The Gap to “information-theoretic lower bounds”
+Be honest and specific:
+- Our bound is an operational bound on error accumulation, not MI lower bound.
+- L²M informs expectation of conditional far-context needs, but the observed bottleneck is quantization noise accumulation and sink-layer sensitivity.
+- The gap now is: can we align conditional retrieval/gating with the O(1) sink-layer compression story to push beyond byte floors (~0.28)?
+List what remains unknown.
+
+9) Limitations and What Would Falsify the Story
+This section is mandatory:
+- O(1) is only supported on D=24 and D=28. Needs validation at larger D (7B/8B).
+- ε=1% can require higher k (seen at 1.5B).
+- Proxy rankings can fail (residual proxy explosion); oracle is expensive.
+- Scale metadata overhead can erase gains for small group sizes unless amortized.
+Include falsification criteria: if k* grows proportionally with D on 7B/8B, O(1) fails.
+
+10) H100 Test Plan (separate, concrete section)
+This is the final section and must be “runbook-like”:
+- Objectives:
+  (i) validate O(1) on 7B/8B (D~32+) at L=32K–64K
+  (ii) confirm kv_ratio improves toward ~0.27–0.28
+  (iii) demonstrate bandwidth-bound latency reduction in at least one regime
+- Experiment matrix:
+  Models: Llama-3-8B or equivalent long-context model; plus one 7B baseline if needed.
+  L: 16K, 32K, 64K (if supported)
+  batch: 1, 8, 16, 32 (aim for bandwidth bound)
+  k: {0,1,2,3,4,6,8}
+  method: INT8-all baseline, INT4 g=32 + top-k protection, (optional) amortization if it’s stable and implemented.
+- Ranking method:
+  Start with cheap 1-seed oracle sweep to rank layers, then 3-seed confirm on top candidates.
+- Acceptance criteria (must be numeric):
+  A) O(1): k*(3%) <= 4 at D>=32 and does not scale with D over tested models.
+  B) kv_ratio: <=0.28–0.30 at ε=3%.
+  C) latency: at least one bandwidth-bound regime shows >=10% ms/token reduction vs INT8 baseline.
+  D) throughput: >=20% more concurrent sequences at fixed latency OR fixed memory.
+Tie these directly to the v24 branch tree rationale. :contentReference[oaicite:11]{index=11}
+
+========================================================
+PHASE 2 — Produce “reviewer-friendly” tables/figures (2–6h)
+========================================================
+Generate figures (matplotlib or simple markdown tables are fine):
+- k* vs D (two points now, include error bars / “not measured” explicitly)
+- k/D vs D
+- oracle sensitivity distribution per model (bar chart or sorted curve)
+- kv_ratio vs k for each model and ε
+- a “decision graph” summarizing why W7900 shows capacity not latency (compute-bound note)
+
+All figures must be referenced from the narrative, with filenames under artifacts/v25/figures/.
+
+========================================================
+PHASE 3 — Final polish checklist
+========================================================
+Before finishing:
+- No missing definitions.
+- No unstated assumptions.
+- Every numeric claim is linked to a run artifact.
+- Tone is declarative and skeptical.
+- The H100 plan is executable (commands, config names, expected runtime ranges if known).
+- Add a short “FAQ” at the end for new readers:
+  “What is k?”, “Why does layer 0 matter?”, “Why W7900 shows no latency win?”, “What would change on H100?”
+
+Stop conditions:
+- Do not launch new experiments unless essential to fill a glaring hole in the narrative (and if you do, record them explicitly under v25 artifacts).
+- Do not invent MI claims. Keep L²M as motivation, and keep accumulation as measured reality.
+
+Primary anchor references you must quote/paraphrase correctly:
+- v24 O(1) evidence and k* table :contentReference[oaicite:12]{index=12} :contentReference[oaicite:13]{index=13}
+- v24 branch tree H100 memo :contentReference[oaicite:14]{index=14}
+
+========================================================
+EXECUTION LOG
+========================================================
+
+Phase 0 — Collect and index all prior outputs [DONE]
+  Searched repo for all bpa_v*_final_report.md, scoreboard.json,
+  branch_tree.md, and key artifacts across v8-v24. Created
+  artifacts/v25/v25_appendix.json indexing 12 versions (v8-v24)
+  with summary files, scoreboards, branch trees, models, L ranges,
+  and conclusions. v24 anchor data captured: k*(3%)=2 for both
+  models, O(1) verdict SUPPORTED, oracle rankings, sink layer
+  sensitivities, tail fractions, amplification factors, calibrated
+  B(ε) values.
+
+Phase 1 — Write the narrative [DONE]
+  Created docs/bpa_v25_technical_narrative.md (~660 lines) with
+  all 10 required sections plus FAQ and Artifact Index:
+  1) Executive Summary (half-page, O(1) headline)
+  2) Problem Statement (L²M motivation, initial bias)
+  3) Definitions (L, D, kv_ratio, ε, k, k*, PASS criteria)
+  4) Timeline of Empirical Discoveries (bias evolution, v8-v24)
+  5) Accumulation Theory (residual recursion, linearization,
+     norm bound, greedy optimality, O(1) condition)
+  6) Empirical Evidence for O(1) (k* table, sink-layer evidence,
+     tail fractions, RoPE attention sink explanation)
+  7) Current Mechanism (INT4 + top-k INT8, kv_ratio, capacity)
+  8) Gap to Information-Theoretic Lower Bounds (honest assessment)
+  9) Limitations and Falsification Criteria
+  10) H100 Test Plan (runbook with experiment matrix, acceptance
+      criteria A-D, ranking method, runtime estimates)
+  FAQ: 4 questions for new readers.
+  Artifact Index: pointers to all v8-v24 artifacts.
+
+Phase 2 — Produce reviewer-friendly figures [DONE]
+  Created scripts/generate_v25_figures.py. Generated 6 figures
+  under artifacts/v25/figures/:
+  - k_star_vs_D.png: k* vs model depth D (O(1) evidence)
+  - k_over_D_vs_D.png: protected fraction k*/D decreasing
+  - oracle_sensitivity_0.5B.png: per-layer sensitivity bar chart
+  - oracle_sensitivity_1.5B.png: per-layer sensitivity bar chart
+  - kv_ratio_vs_k.png: kv_ratio vs k for both models
+  - compute_bound_decision.png: latency flat + capacity 3.26x
+
+Phase 3 — Final polish checklist [DONE]
+  Verified all 9 checklist items via systematic review:
+  1) No missing definitions — PASS
+  2) No unstated assumptions — PASS
+  3) Every numeric claim linked to artifact — PASS
+  4) Tone declarative and skeptical — PASS
+  5) H100 plan executable — PASS
+  6) FAQ included — PASS
+  7) No L²M overclaims — PASS
+  8) Figures referenced from narrative — PASS
+  9) Appendix complete — PASS
+
+Deliverables:
+  - docs/bpa_v25_technical_narrative.md (primary narrative)
+  - artifacts/v25/v25_appendix.json (version index)
+  - scripts/generate_v25_figures.py (figure generation)
+  - artifacts/v25/figures/*.png (6 figures)
+
