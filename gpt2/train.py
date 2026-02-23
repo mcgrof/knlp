@@ -334,6 +334,65 @@ def create_argument_parser():
         help="Dry-run mode (architecture validation only)",
     )
 
+    # Per-layer LR scaling (Adam v / FIM proxy)
+    parser.add_argument(
+        "--layer-lr-fim",
+        action="store_true",
+        default=False,
+        help="Enable per-layer LR scaling from Adam v (4th-root signal)",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-power",
+        type=int,
+        default=1,
+        choices=[1, 2],
+        help="Exponent for LR multiplier: 1=gentle, 2=adam-consistent",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-stat",
+        type=str,
+        default="median",
+        choices=["median", "mean"],
+        help="Statistic over v within each layer",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-eps",
+        type=float,
+        default=1e-12,
+        help="Epsilon for numerical stability",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-ref",
+        type=str,
+        default="median",
+        choices=["median", "mean"],
+        help="Reference statistic across layers",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-clamp",
+        type=float,
+        default=4.0,
+        help="Clamp multiplier to [1/r, r]",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-update-every",
+        type=int,
+        default=50,
+        help="Recompute LR multipliers every N steps",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-warmup-steps",
+        type=int,
+        default=200,
+        help="Steps before applying per-layer LR (wait for v to form)",
+    )
+    parser.add_argument(
+        "--layer-lr-fim-log-jsonl",
+        type=str,
+        default="",
+        help="Path to JSONL log for per-layer LR multipliers",
+    )
+
     return parser
 
 

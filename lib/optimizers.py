@@ -4,8 +4,10 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
-from collections import deque
+from collections import deque, defaultdict
 import numpy as np
+import json
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -211,6 +213,211 @@ def param_groups_for_weight_decay(model, model_type="resnet"):
         {"params": decay, "weight_decay": default_wd},
         {"params": no_decay, "weight_decay": 0.0},
     ]
+
+
+def _get_layer_id(param_name):
+    """Extract layer_id from a fully-qualified parameter name.
+
+    For GPT-2: 'transformer.h.3.attn.c_attn.weight' -> 'h.3'
+    Embeddings: 'transformer.wte.weight' -> 'embed'
+    LM head: 'lm_head.weight' -> 'lm_head'
+    """
+    if "lm_head" in param_name:
+        return "lm_head"
+    # Match transformer block: h.N or blocks.N
+    for prefix in ["transformer.h.", "h.", "blocks."]:
+        if prefix in param_name:
+            rest = param_name.split(prefix, 1)[1]
+            block_num = rest.split(".")[0]
+            return f"h.{block_num}"
+    # Embeddings
+    for tok in ["wte", "wpe", "embed", "tok_emb", "pos_emb"]:
+        if tok in param_name:
+            return "embed"
+    # Final layernorm
+    if "ln_f" in param_name or "norm" in param_name:
+        return "ln_f"
+    return "other"
+
+
+def param_groups_for_layer_lr(model, model_type="gpt2"):
+    """Split parameters into (layer_id, decay/no_decay) groups.
+
+    Each group gets a 'layer_id' tag and 'base_lr' placeholder (set later).
+    This enables per-layer LR scaling while preserving weight decay separation.
+    """
+    # Collect (layer_id, decay_flag) -> param list
+    groups = defaultdict(list)
+    seen_params = set()
+
+    for mn, m in model.named_modules():
+        for pn, p in m.named_parameters(recurse=False):
+            if not p.requires_grad:
+                continue
+            param_id = id(p)
+            if param_id in seen_params:
+                continue
+            seen_params.add(param_id)
+
+            full = f"{mn}.{pn}" if mn else pn
+            layer_id = _get_layer_id(full)
+
+            is_no_decay = pn.endswith("bias") or isinstance(
+                m,
+                (
+                    nn.BatchNorm1d,
+                    nn.BatchNorm2d,
+                    nn.LayerNorm,
+                    nn.GroupNorm,
+                    nn.Embedding,
+                ),
+            )
+            key = (layer_id, is_no_decay)
+            groups[key].append(p)
+
+    if model_type == "lenet":
+        default_wd = 1e-4
+    elif model_type == "gpt2":
+        default_wd = 0.1
+    else:
+        default_wd = 5e-4
+
+    param_groups = []
+    for (layer_id, is_no_decay), params in sorted(groups.keys()):
+        wd = 0.0 if is_no_decay else default_wd
+        param_groups.append(
+            {
+                "params": groups[(layer_id, is_no_decay)],
+                "weight_decay": wd,
+                "layer_id": layer_id,
+            }
+        )
+    return param_groups
+
+
+@torch.no_grad()
+def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
+    """Compute and apply per-layer LR multipliers from Adam v (exp_avg_sq).
+
+    Called every args.layer_lr_fim_update_every steps after warmup.
+    Updates optimizer param_group['lr'] values in-place.
+
+    Args:
+        optimizer: AdamW optimizer with per-layer param groups
+        iter_num: current training step
+        args: namespace with layer_lr_fim_* settings
+        lr_mult_state: dict holding {'lr_mults': {layer_id: float}, ...}
+
+    Returns:
+        lr_mult_state (updated in-place)
+    """
+    update_every = getattr(args, "layer_lr_fim_update_every", 50)
+    warmup = getattr(args, "layer_lr_fim_warmup_steps", 200)
+    power = getattr(args, "layer_lr_fim_power", 1)
+    eps = getattr(args, "layer_lr_fim_eps", 1e-12)
+    clamp_r = getattr(args, "layer_lr_fim_clamp", 4.0)
+    stat_fn_name = getattr(args, "layer_lr_fim_stat", "median")
+    ref_fn_name = getattr(args, "layer_lr_fim_ref", "median")
+    log_path = getattr(args, "layer_lr_fim_log_jsonl", "")
+
+    if iter_num < warmup:
+        return lr_mult_state
+
+    if iter_num % update_every != 0:
+        # Apply existing multipliers (already computed) to groups
+        lr_mults = lr_mult_state.get("lr_mults", {})
+        if lr_mults:
+            for group in optimizer.param_groups:
+                lid = group.get("layer_id")
+                if lid and lid in lr_mults:
+                    group["lr"] = group.get("_base_lr", group["lr"]) * lr_mults[lid]
+        return lr_mult_state
+
+    # Collect v stats per layer
+    layer_v_stats = {}
+    for group in optimizer.param_groups:
+        lid = group.get("layer_id")
+        if lid is None:
+            continue
+        vs = []
+        for p in group["params"]:
+            state = optimizer.state.get(p, {})
+            v = state.get("exp_avg_sq")
+            if v is not None:
+                vs.append(v.flatten())
+        if vs:
+            all_v = torch.cat(vs)
+            if stat_fn_name == "mean":
+                stat_v = all_v.mean().item()
+            else:  # median
+                stat_v = all_v.median().item()
+            if lid in layer_v_stats:
+                # Merge multiple groups with same layer_id (decay + no_decay)
+                old = layer_v_stats[lid]
+                layer_v_stats[lid] = (old + stat_v) / 2.0
+            else:
+                layer_v_stats[lid] = stat_v
+
+    if not layer_v_stats:
+        return lr_mult_state
+
+    # Compute s_l = (stat_v + eps)^(1/4) per layer
+    s_vals = {}
+    for lid, sv in layer_v_stats.items():
+        s_vals[lid] = (sv + eps) ** 0.25
+
+    # Compute s_ref
+    s_list = list(s_vals.values())
+    if ref_fn_name == "mean":
+        s_ref = sum(s_list) / len(s_list)
+    else:
+        s_ref = float(np.median(s_list))
+
+    # Compute lr_mult per layer and clamp
+    lr_mults = {}
+    for lid, s_l in s_vals.items():
+        raw = (s_ref / (s_l + eps)) ** power
+        lr_mults[lid] = max(1.0 / clamp_r, min(clamp_r, raw))
+
+    # Apply to param groups
+    for group in optimizer.param_groups:
+        lid = group.get("layer_id")
+        if lid and lid in lr_mults:
+            base_lr = group.get("_base_lr", group["lr"])
+            group["lr"] = base_lr * lr_mults[lid]
+
+    # Store state
+    lr_mult_state["lr_mults"] = lr_mults
+    lr_mult_state["s_ref"] = s_ref
+    lr_mult_state["s_vals"] = s_vals
+
+    # Stdout logging
+    sorted_mults = sorted(lr_mults.items(), key=lambda x: x[1])
+    min_m = sorted_mults[0] if sorted_mults else ("?", 1.0)
+    max_m = sorted_mults[-1] if sorted_mults else ("?", 1.0)
+    top5_high = sorted_mults[-5:][::-1]
+    top5_low = sorted_mults[:5]
+    print(
+        f"[LayerLR] step={iter_num} s_ref={s_ref:.6f} "
+        f"min={min_m[0]}:{min_m[1]:.4f} max={max_m[0]}:{max_m[1]:.4f}"
+    )
+    print(f"  highest: {[(l, f'{m:.4f}') for l, m in top5_high]}")
+    print(f"  lowest:  {[(l, f'{m:.4f}') for l, m in top5_low]}")
+
+    # JSONL logging
+    if log_path:
+        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        entry = {
+            "step": iter_num,
+            "s_ref": round(s_ref, 8),
+            "power": power,
+            "clamp": clamp_r,
+            "layers": {k: round(v, 6) for k, v in lr_mults.items()},
+        }
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+
+    return lr_mult_state
 
 
 def resolve_weight_decay(optimizer_name, user_wd=None, model_type="resnet"):
