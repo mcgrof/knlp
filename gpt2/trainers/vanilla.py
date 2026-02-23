@@ -10,6 +10,7 @@ import sys
 import time
 import math
 from typing import Dict, Optional
+from collections import defaultdict
 
 import torch
 import numpy as np
@@ -24,7 +25,7 @@ from gpt2.model import GPT2, GPTConfig
 from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_KV_FIM, MLA_Config
 from gpt2.model_knlp import GPT2_KNLP, GPT2_KNLP_Config
 from gpt2.rgsa import GPT2_RGSA, RGSAConfig
-from lib.optimizers import create_optimizer
+from lib.optimizers import create_optimizer, layer_lr_fim_update
 from lib.pruning import create_pruner
 from .base import BaseGPT2Trainer
 
@@ -240,7 +241,9 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     try:
                         top_b_per_layer = [int(x) for x in env_top_b.split(",")]
                         if self.master_process:
-                            print(f"  RGSA v16: Using explicit top_b_per_layer from env")
+                            print(
+                                f"  RGSA v16: Using explicit top_b_per_layer from env"
+                            )
                             print(f"  RGSA v16: top_b_per_layer={top_b_per_layer}")
                             print(f"  RGSA v16: total={sum(top_b_per_layer)}")
                     except Exception as e:
@@ -468,7 +471,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                     )
 
         # Create optimizer using library function
-        return create_optimizer(
+        result = create_optimizer(
             model=self.model,
             optimizer_type=self.args.optimizer,
             learning_rate=self.args.learning_rate,
@@ -476,6 +479,57 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             args=self.args,
             model_type="gpt2",
         )
+        optimizer = result[0]
+
+        # If per-layer LR scaling is enabled, split param groups by layer_id
+        # and tag each group with layer_id + _base_lr for later updates
+        if getattr(self.args, "layer_lr_fim", False):
+            from lib.optimizers import _get_layer_id
+
+            # Build param -> layer_id mapping
+            param_to_layer = {}
+            for mn, m in self.model.named_modules():
+                for pn, p in m.named_parameters(recurse=False):
+                    if p.requires_grad:
+                        full = f"{mn}.{pn}" if mn else pn
+                        param_to_layer[id(p)] = _get_layer_id(full)
+
+            # Split existing groups by (layer_id, weight_decay)
+            new_groups = defaultdict(
+                lambda: {"params": [], "weight_decay": 0.0, "layer_id": ""}
+            )
+            for group in optimizer.param_groups:
+                wd = group["weight_decay"]
+                for p in group["params"]:
+                    lid = param_to_layer.get(id(p), "other")
+                    key = (lid, wd)
+                    if key not in new_groups:
+                        new_groups[key] = {
+                            "params": [],
+                            "weight_decay": wd,
+                            "layer_id": lid,
+                        }
+                    new_groups[key]["params"].append(p)
+
+            # Replace optimizer param_groups
+            optimizer.param_groups.clear()
+            for key in sorted(new_groups.keys()):
+                g = new_groups[key]
+                g["lr"] = self.args.learning_rate
+                g["_base_lr"] = self.args.learning_rate
+                optimizer.add_param_group(g)
+
+            # Initialize LR mult state
+            self._layer_lr_mult_state = {}
+            if self.master_process:
+                n_groups = len(optimizer.param_groups)
+                layer_ids = sorted(set(g["layer_id"] for g in optimizer.param_groups))
+                print(
+                    f"[LayerLR] Enabled: {n_groups} param groups, "
+                    f"{len(layer_ids)} layers: {layer_ids}"
+                )
+
+        return result
 
     def create_pruner(self):
         """Create pruner if pruning method is specified."""
@@ -558,8 +612,22 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 lr = self.get_lr(self.iter_num)
                 for param_group in self.optimizer.param_groups:
                     param_group["lr"] = lr
+                    # Store base_lr for layer LR scaling
+                    if getattr(self.args, "layer_lr_fim", False):
+                        param_group["_base_lr"] = lr
             else:
                 lr = self.args.learning_rate
+
+            # Apply per-layer LR scaling from Adam v
+            if getattr(self.args, "layer_lr_fim", False) and hasattr(
+                self, "_layer_lr_mult_state"
+            ):
+                self._layer_lr_mult_state = layer_lr_fim_update(
+                    self.optimizer,
+                    self.iter_num,
+                    self.args,
+                    self._layer_lr_mult_state,
+                )
 
             # Update RGSA router gradient gating step counter
             if hasattr(self.raw_model, "set_training_step"):
@@ -2571,10 +2639,7 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         f"std={fm.std():.4f}, range=[{fm.min():.4f}, {fm.max():.4f}]"
                     )
                     ent = head_metrics.attn_entropy
-                    print(
-                        f"  Entropy: mean={ent.mean():.4f}, "
-                        f"std={ent.std():.4f}"
-                    )
+                    print(f"  Entropy: mean={ent.mean():.4f}, " f"std={ent.std():.4f}")
             except Exception as e:
                 if self.master_process:
                     print(f"Warning: Failed to compute head metrics: {e}")
