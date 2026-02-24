@@ -607,6 +607,21 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                         )
                     break
 
+            # Check token budget
+            max_tokens = getattr(self.args, "max_tokens", 0)
+            if max_tokens > 0:
+                batch_size = getattr(self.args, "batch_size", 8)
+                grad_accum = getattr(self.args, "gradient_accumulation", 1)
+                block_size = getattr(self.args, "block_size", 1024)
+                tokens_so_far = self.iter_num * batch_size * grad_accum * block_size
+                if tokens_so_far >= max_tokens:
+                    if self.master_process:
+                        print(
+                            f"\nReached max token budget of {max_tokens:,} "
+                            f"({tokens_so_far:,} tokens processed)"
+                        )
+                    break
+
             # Update learning rate
             if getattr(self.args, "decay_lr", True):
                 lr = self.get_lr(self.iter_num)
@@ -622,6 +637,13 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
             if getattr(self.args, "layer_lr_fim", False) and hasattr(
                 self, "_layer_lr_mult_state"
             ):
+                # Track tokens for JSONL logging
+                batch_size = getattr(self.args, "batch_size", 8)
+                grad_accum = getattr(self.args, "gradient_accumulation", 1)
+                block_size = getattr(self.args, "block_size", 1024)
+                self.args._tokens_processed = (
+                    self.iter_num * batch_size * grad_accum * block_size
+                )
                 self._layer_lr_mult_state = layer_lr_fim_update(
                     self.optimizer,
                     self.iter_num,
