@@ -392,6 +392,25 @@ def create_argument_parser():
         default="",
         help="Path to JSONL log for per-layer LR multipliers",
     )
+    parser.add_argument(
+        "--layer-lr-mode",
+        type=str,
+        default="fisher",
+        choices=["fisher", "random_shuffle", "depth_ramp"],
+        help="Layer LR mode: fisher, random_shuffle (C1), depth_ramp (C2)",
+    )
+    parser.add_argument(
+        "--layer-lr-freeze-after-steps",
+        type=int,
+        default=0,
+        help="Freeze layer LR multipliers after N steps (0=never freeze)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        help="Stop training after this many tokens (0=no limit)",
+    )
 
     return parser
 

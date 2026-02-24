@@ -6,6 +6,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.optimizer import Optimizer
 from collections import deque, defaultdict
 import numpy as np
+import random
 import json
 import os
 import logging
@@ -295,45 +296,16 @@ def param_groups_for_layer_lr(model, model_type="gpt2"):
     return param_groups
 
 
-@torch.no_grad()
-def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
-    """Compute and apply per-layer LR multipliers from Adam v (exp_avg_sq).
+def _compute_fisher_lr_mults(optimizer, args, eps, clamp_r):
+    """Compute per-layer LR multipliers from Adam v (exp_avg_sq).
 
-    Called every args.layer_lr_fim_update_every steps after warmup.
-    Updates optimizer param_group['lr'] values in-place.
-
-    Args:
-        optimizer: AdamW optimizer with per-layer param groups
-        iter_num: current training step
-        args: namespace with layer_lr_fim_* settings
-        lr_mult_state: dict holding {'lr_mults': {layer_id: float}, ...}
-
-    Returns:
-        lr_mult_state (updated in-place)
+    Returns (lr_mults, s_ref, s_vals, layer_v_stats) or None if
+    no optimizer state is available yet.
     """
-    update_every = getattr(args, "layer_lr_fim_update_every", 50)
-    warmup = getattr(args, "layer_lr_fim_warmup_steps", 200)
-    power = getattr(args, "layer_lr_fim_power", 1)
-    eps = getattr(args, "layer_lr_fim_eps", 1e-12)
-    clamp_r = getattr(args, "layer_lr_fim_clamp", 4.0)
     stat_fn_name = getattr(args, "layer_lr_fim_stat", "median")
     ref_fn_name = getattr(args, "layer_lr_fim_ref", "median")
-    log_path = getattr(args, "layer_lr_fim_log_jsonl", "")
+    power = getattr(args, "layer_lr_fim_power", 1)
 
-    if iter_num < warmup:
-        return lr_mult_state
-
-    if iter_num % update_every != 0:
-        # Apply existing multipliers (already computed) to groups
-        lr_mults = lr_mult_state.get("lr_mults", {})
-        if lr_mults:
-            for group in optimizer.param_groups:
-                lid = group.get("layer_id")
-                if lid and lid in lr_mults:
-                    group["lr"] = group.get("_base_lr", group["lr"]) * lr_mults[lid]
-        return lr_mult_state
-
-    # Collect v stats per layer
     layer_v_stats = {}
     for group in optimizer.param_groups:
         lid = group.get("layer_id")
@@ -349,35 +321,137 @@ def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
             all_v = torch.cat(vs)
             if stat_fn_name == "mean":
                 stat_v = all_v.mean().item()
-            else:  # median
+            else:
                 stat_v = all_v.median().item()
             if lid in layer_v_stats:
-                # Merge multiple groups with same layer_id (decay + no_decay)
                 old = layer_v_stats[lid]
                 layer_v_stats[lid] = (old + stat_v) / 2.0
             else:
                 layer_v_stats[lid] = stat_v
 
     if not layer_v_stats:
-        return lr_mult_state
+        return None
 
-    # Compute s_l = (stat_v + eps)^(1/4) per layer
     s_vals = {}
     for lid, sv in layer_v_stats.items():
         s_vals[lid] = (sv + eps) ** 0.25
 
-    # Compute s_ref
     s_list = list(s_vals.values())
     if ref_fn_name == "mean":
         s_ref = sum(s_list) / len(s_list)
     else:
         s_ref = float(np.median(s_list))
 
-    # Compute lr_mult per layer and clamp
     lr_mults = {}
     for lid, s_l in s_vals.items():
         raw = (s_ref / (s_l + eps)) ** power
         lr_mults[lid] = max(1.0 / clamp_r, min(clamp_r, raw))
+
+    return lr_mults, s_ref, s_vals, layer_v_stats
+
+
+def _compute_depth_ramp_lr_mults(optimizer, clamp_r):
+    """Compute depth-based linear ramp LR multipliers (control C2).
+
+    Assigns LR multipliers linearly from 1/clamp_r (early layers)
+    to clamp_r (late layers), with embed at the low end and lm_head
+    at the high end.
+    """
+    import re
+
+    layer_ids = set()
+    for group in optimizer.param_groups:
+        lid = group.get("layer_id")
+        if lid:
+            layer_ids.add(lid)
+
+    if not layer_ids:
+        return {}
+
+    def sort_key(name):
+        m = re.match(r"h\.(\d+)", name)
+        if m:
+            return (1, int(m.group(1)))
+        if name == "embed":
+            return (0, 0)
+        if name == "ln_f":
+            return (2, 0)
+        if name == "lm_head":
+            return (3, 0)
+        return (4, 0)
+
+    sorted_ids = sorted(layer_ids, key=sort_key)
+    n = len(sorted_ids)
+    lr_mults = {}
+    for i, lid in enumerate(sorted_ids):
+        t = i / max(n - 1, 1)
+        lr_mults[lid] = (1.0 / clamp_r) + t * (clamp_r - 1.0 / clamp_r)
+    return lr_mults
+
+
+@torch.no_grad()
+def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
+    """Compute and apply per-layer LR multipliers.
+
+    Supports multiple modes:
+    - fisher: multipliers from Adam v (exp_avg_sq) [default]
+    - random_shuffle: Fisher multipliers randomly shuffled across layers
+    - depth_ramp: linear ramp from low to high by layer depth
+
+    Also supports freeze-after: compute Fisher multipliers for the first
+    N steps, then freeze them for the rest of training.
+
+    Called every args.layer_lr_fim_update_every steps after warmup.
+    Updates optimizer param_group['lr'] values in-place.
+    """
+    update_every = getattr(args, "layer_lr_fim_update_every", 50)
+    warmup = getattr(args, "layer_lr_fim_warmup_steps", 200)
+    eps = getattr(args, "layer_lr_fim_eps", 1e-12)
+    clamp_r = getattr(args, "layer_lr_fim_clamp", 4.0)
+    log_path = getattr(args, "layer_lr_fim_log_jsonl", "")
+    mode = getattr(args, "layer_lr_mode", "fisher")
+    freeze_after = getattr(args, "layer_lr_freeze_after_steps", 0)
+    tokens_processed = getattr(args, "_tokens_processed", 0)
+
+    if iter_num < warmup:
+        return lr_mult_state
+
+    # Check if frozen: if freeze_after > 0 and we're past it, use
+    # existing multipliers and don't recompute
+    is_frozen = freeze_after > 0 and iter_num > freeze_after
+    has_existing = bool(lr_mult_state.get("lr_mults"))
+
+    if iter_num % update_every != 0 or (is_frozen and has_existing):
+        lr_mults = lr_mult_state.get("lr_mults", {})
+        if lr_mults:
+            for group in optimizer.param_groups:
+                lid = group.get("layer_id")
+                if lid and lid in lr_mults:
+                    group["lr"] = group.get("_base_lr", group["lr"]) * lr_mults[lid]
+        return lr_mult_state
+
+    # Compute multipliers based on mode
+    s_ref = 0.0
+    s_vals = {}
+    layer_v_stats = {}
+    lr_mults = {}
+
+    if mode == "depth_ramp":
+        lr_mults = _compute_depth_ramp_lr_mults(optimizer, clamp_r)
+        s_ref = 0.0
+    else:
+        # fisher or random_shuffle: compute Fisher-based multipliers
+        result = _compute_fisher_lr_mults(optimizer, args, eps, clamp_r)
+        if result is None:
+            return lr_mult_state
+        lr_mults, s_ref, s_vals, layer_v_stats = result
+
+        if mode == "random_shuffle":
+            # Shuffle multiplier values across layer IDs
+            layer_ids = list(lr_mults.keys())
+            mult_vals = list(lr_mults.values())
+            random.shuffle(mult_vals)
+            lr_mults = dict(zip(layer_ids, mult_vals))
 
     # Apply to param groups
     for group in optimizer.param_groups:
@@ -397,9 +471,11 @@ def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
     max_m = sorted_mults[-1] if sorted_mults else ("?", 1.0)
     top5_high = sorted_mults[-5:][::-1]
     top5_low = sorted_mults[:5]
+    frozen_tag = " [FROZEN]" if is_frozen else ""
     print(
-        f"[LayerLR] step={iter_num} s_ref={s_ref:.6f} "
+        f"[LayerLR:{mode}] step={iter_num} s_ref={s_ref:.6f} "
         f"min={min_m[0]}:{min_m[1]:.4f} max={max_m[0]}:{max_m[1]:.4f}"
+        f"{frozen_tag}"
     )
     print(f"  highest: {[(l, f'{m:.4f}') for l, m in top5_high]}")
     print(f"  lowest:  {[(l, f'{m:.4f}') for l, m in top5_low]}")
@@ -407,13 +483,18 @@ def layer_lr_fim_update(optimizer, iter_num, args, lr_mult_state):
     # JSONL logging
     if log_path:
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        power = getattr(args, "layer_lr_fim_power", 1)
         entry = {
             "step": iter_num,
+            "tokens": tokens_processed,
+            "mode": mode,
             "s_ref": round(s_ref, 8),
             "power": power,
             "clamp": clamp_r,
             "layers": {k: round(v, 6) for k, v in lr_mults.items()},
         }
+        if layer_v_stats:
+            entry["stat_v"] = {k: round(v, 10) for k, v in layer_v_stats.items()}
         with open(log_path, "a") as f:
             f.write(json.dumps(entry) + "\n")
 
