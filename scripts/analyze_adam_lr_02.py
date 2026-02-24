@@ -74,20 +74,43 @@ def load_results(outdir):
     return results
 
 
-def load_stdout_trajectories(outdir):
-    """Parse stdout logs to extract val PPL trajectories with token counts."""
-    data = {}  # config -> seed -> {iters, tokens, val_ppls, train_losses}
+def load_trajectories(outdir):
+    """Load val PPL trajectories, preferring result.json over stdout parsing."""
+    data = {}  # config -> seed -> {val_iters, val_tokens, val_ppls, ...}
     for entry in sorted(os.listdir(outdir)):
-        path = os.path.join(outdir, entry, "stdout.log")
-        if not os.path.isfile(path):
+        entry_dir = os.path.join(outdir, entry)
+        if not os.path.isdir(entry_dir):
             continue
-
-        # Parse config name and seed
         m = re.match(r"(.+)_s(\d+)$", entry)
         if not m:
             continue
         config = m.group(1)
         seed = int(m.group(2))
+
+        # Try result.json first (has val_trajectory)
+        rp = os.path.join(entry_dir, "result.json")
+        if os.path.isfile(rp):
+            with open(rp) as f:
+                result = json.load(f)
+            vt = result.get("val_trajectory", [])
+            eb = result.get("effective_batch") or 240
+            if vt:
+                tpi = eb * 1024
+                data.setdefault(config, {})[seed] = {
+                    "val_iters": [e["iter"] for e in vt],
+                    "val_tokens": [e["iter"] * tpi for e in vt],
+                    "val_ppls": [e["val_ppl"] for e in vt],
+                    "train_iters": [e["iter"] for e in vt],
+                    "train_tokens": [e["iter"] * tpi for e in vt],
+                    "train_losses": [e["train_loss"] for e in vt],
+                    "effective_batch": eb,
+                }
+                continue
+
+        # Fallback: parse stdout.log
+        path = os.path.join(entry_dir, "stdout.log")
+        if not os.path.isfile(path):
+            continue
 
         effective_batch = None
         val_iters = []
@@ -104,7 +127,6 @@ def load_stdout_trajectories(outdir):
                     except (ValueError, IndexError):
                         pass
 
-                # Eval lines
                 em = re.match(
                     r"Eval @ iter (\d+): train ([\d.]+), val ([\d.]+), ppl ([\d.]+)",
                     line,
@@ -113,7 +135,6 @@ def load_stdout_trajectories(outdir):
                     val_iters.append(int(em.group(1)))
                     val_ppls.append(float(em.group(4)))
 
-                # Training log
                 tm = re.match(
                     r"Iter\s+(\d+)\s+\|\s+loss\s+([\d.]+)",
                     line,
@@ -126,17 +147,12 @@ def load_stdout_trajectories(outdir):
             continue
 
         tpi = (effective_batch or 240) * 1024
-        val_tokens = [it * tpi for it in val_iters]
-        train_tokens = [it * tpi for it in train_iters]
-
-        if config not in data:
-            data[config] = {}
-        data[config][seed] = {
+        data.setdefault(config, {})[seed] = {
             "val_iters": val_iters,
-            "val_tokens": val_tokens,
+            "val_tokens": [it * tpi for it in val_iters],
             "val_ppls": val_ppls,
             "train_iters": train_iters,
-            "train_tokens": train_tokens,
+            "train_tokens": [it * tpi for it in train_iters],
             "train_losses": train_losses,
             "effective_batch": effective_batch,
         }
@@ -438,7 +454,7 @@ def compute_auc(tokens, ppls, token_range=None):
     if len(tokens) < 2:
         return float("nan")
 
-    return np.trapz(log_ppls, tokens)
+    return np.trapezoid(log_ppls, tokens)
 
 
 def bootstrap_ci(values, n_bootstrap=10000, ci=0.95):
@@ -546,7 +562,7 @@ def write_stats(results, trajectories, outdir):
 
 
 def write_results(results, trajectories, outdir, phase):
-    """Write RESULTS.md with narrative."""
+    """Write RESULTS.md with narrative and decision gate."""
     results_path = os.path.join(outdir, "..", "RESULTS.md")
     config_order = [
         "R0_baseline",
@@ -557,10 +573,46 @@ def write_results(results, trajectories, outdir, phase):
         "C3_frozen_200",
     ]
 
+    # Collect per-config PPL data
+    ppl_data = {}
+    for config in config_order:
+        ppls = [
+            r["best_val_ppl"]
+            for r in results
+            if r["config"] == config and r.get("best_val_ppl") is not None
+        ]
+        if ppls:
+            ppl_data[config] = ppls
+
+    baseline_mean = np.mean(ppl_data.get("R0_baseline", [0]))
+    baseline_std = np.std(ppl_data.get("R0_baseline", [0]))
+
+    # Compute AUC per config
+    auc_data = {}
+    for config in config_order:
+        if config not in trajectories:
+            continue
+        aucs = []
+        for seed, s in trajectories[config].items():
+            auc = compute_auc(s["val_tokens"], s["val_ppls"])
+            if not np.isnan(auc):
+                aucs.append(auc)
+        if aucs:
+            auc_data[config] = aucs
+
     lines = [
         "# adam-lr-02: Per-Layer LR Scaling Falsification Study\n\n",
-        "## Summary\n\n",
     ]
+
+    # Summary
+    lines.append("## Summary\n\n")
+    lines.append(
+        "This experiment tests whether per-layer learning rate scaling\n"
+        "derived from Adam's second moment (diagonal Fisher proxy) provides\n"
+        "a genuine optimization benefit, or whether the gains can be\n"
+        "explained by simpler alternatives.\n\n"
+    )
+    lines.append(f"**Phase {phase}**: 250M tokens, 3 seeds, 6 configurations.\n\n")
 
     # Results table
     lines.append("## Results Table\n\n")
@@ -576,25 +628,14 @@ def write_results(results, trajectories, outdir, phase):
 
     # Mean table
     lines.append("\n### Mean over seeds\n\n")
-    lines.append("| Config | Mean Val PPL | StdDev | vs Baseline |\n")
-    lines.append("|--------|-------------|--------|-------------|\n")
+    lines.append("| Config | Mean Val PPL | StdDev | 95% CI | vs Baseline |\n")
+    lines.append("|--------|-------------|--------|--------|-------------|\n")
 
-    ppl_data = {}
-    for config in config_order:
-        ppls = [
-            r["best_val_ppl"]
-            for r in results
-            if r["config"] == config and r.get("best_val_ppl") is not None
-        ]
-        if ppls:
-            ppl_data[config] = ppls
-
-    baseline_mean = np.mean(ppl_data.get("R0_baseline", [0]))
     for config in config_order:
         if config not in ppl_data:
             continue
         vals = ppl_data[config]
-        mean = np.mean(vals)
+        mean, lo, hi = bootstrap_ci(vals)
         std = np.std(vals)
         improvement = "-"
         if baseline_mean and "baseline" not in config:
@@ -602,12 +643,124 @@ def write_results(results, trajectories, outdir, phase):
             improvement = f"{pct:+.1f}%"
         lines.append(
             f"| {LABELS.get(config, config)} | {mean:.2f} | {std:.2f} | "
-            f"{improvement} |\n"
+            f"[{lo:.2f}, {hi:.2f}] | {improvement} |\n"
         )
 
     # Decision gate
     lines.append("\n## Decision Gate\n\n")
-    lines.append("*To be filled after Phase A analysis.*\n\n")
+
+    # Evaluate gate criteria
+    fisher_configs = ["R1_fisher_p1", "R2_fisher_p2"]
+    control_configs = ["C1_random_shuffle", "C2_depth_ramp", "C3_frozen_200"]
+
+    best_fisher = None
+    best_fisher_mean = float("inf")
+    for fc in fisher_configs:
+        if fc in ppl_data:
+            m = np.mean(ppl_data[fc])
+            if m < best_fisher_mean:
+                best_fisher = fc
+                best_fisher_mean = m
+
+    best_control = None
+    best_control_mean = float("inf")
+    for cc in control_configs:
+        if cc in ppl_data:
+            m = np.mean(ppl_data[cc])
+            if m < best_control_mean:
+                best_control = cc
+                best_control_mean = m
+
+    if best_fisher and baseline_mean:
+        fisher_vs_base = (best_fisher_mean - baseline_mean) / baseline_mean * 100
+        lines.append(
+            f"Best Fisher config: **{LABELS.get(best_fisher, best_fisher)}** "
+            f"(mean PPL={best_fisher_mean:.2f}, {fisher_vs_base:+.1f}% vs baseline)\n\n"
+        )
+
+    if best_control:
+        control_vs_base = (best_control_mean - baseline_mean) / baseline_mean * 100
+        lines.append(
+            f"Best control: **{LABELS.get(best_control, best_control)}** "
+            f"(mean PPL={best_control_mean:.2f}, {control_vs_base:+.1f}% vs baseline)\n\n"
+        )
+
+    gate_pass = False
+    if best_fisher and best_control and baseline_mean:
+        fisher_beats_baseline = best_fisher_mean < baseline_mean
+        fisher_beats_controls = best_fisher_mean < best_control_mean
+
+        if fisher_beats_baseline and fisher_beats_controls:
+            lines.append(
+                "**GATE: PASS** - Fisher-LR beats both baseline and all controls.\n\n"
+            )
+            lines.append(
+                f"Proceed to Phase B with {LABELS.get(best_fisher, best_fisher)} "
+                f"vs baseline vs {LABELS.get(best_control, best_control)} "
+                f"at 1B tokens, 5 seeds.\n\n"
+            )
+            gate_pass = True
+        elif fisher_beats_baseline and not fisher_beats_controls:
+            lines.append(
+                "**GATE: PARTIAL** - Fisher-LR beats baseline but not all controls.\n\n"
+            )
+            lines.append(
+                "The improvement may be explained by LR heterogeneity alone, "
+                "not Fisher-specific information.\n\n"
+            )
+        else:
+            lines.append("**GATE: FAIL** - Fisher-LR does not beat baseline.\n\n")
+            lines.append("Effect may have been a confound in adam-lr-01.\n\n")
+
+    # Skeptic section
+    lines.append("## Addressing Skepticism\n\n")
+    lines.append("### Could random LR heterogeneity explain the gain?\n\n")
+    if "C1_random_shuffle" in ppl_data and best_fisher in ppl_data:
+        c1_mean = np.mean(ppl_data["C1_random_shuffle"])
+        delta = (c1_mean - best_fisher_mean) / best_fisher_mean * 100
+        if c1_mean > best_fisher_mean:
+            lines.append(
+                f"No. Random shuffle achieves PPL={c1_mean:.2f}, "
+                f"which is {delta:+.1f}% worse than Fisher. "
+                "The layer-assignment matters.\n\n"
+            )
+        else:
+            lines.append(
+                f"Possibly. Random shuffle achieves PPL={c1_mean:.2f}, "
+                f"competitive with Fisher ({best_fisher_mean:.2f}). "
+                "Fisher-specificity not confirmed.\n\n"
+            )
+
+    lines.append("### Could a simple depth heuristic suffice?\n\n")
+    if "C2_depth_ramp" in ppl_data and best_fisher in ppl_data:
+        c2_mean = np.mean(ppl_data["C2_depth_ramp"])
+        delta = (c2_mean - best_fisher_mean) / best_fisher_mean * 100
+        if c2_mean > best_fisher_mean:
+            lines.append(
+                f"No. Depth ramp achieves PPL={c2_mean:.2f}, "
+                f"{delta:+.1f}% worse than Fisher.\n\n"
+            )
+        else:
+            lines.append(
+                f"Yes. Depth ramp achieves PPL={c2_mean:.2f}, "
+                f"competitive with Fisher.\n\n"
+            )
+
+    lines.append("### Is dynamic adaptation necessary?\n\n")
+    if "C3_frozen_200" in ppl_data and best_fisher in ppl_data:
+        c3_mean = np.mean(ppl_data["C3_frozen_200"])
+        delta = (c3_mean - best_fisher_mean) / best_fisher_mean * 100
+        if c3_mean > best_fisher_mean * 1.02:
+            lines.append(
+                f"Yes. Frozen multipliers achieve PPL={c3_mean:.2f}, "
+                f"{delta:+.1f}% worse. Dynamic updates provide benefit.\n\n"
+            )
+        else:
+            lines.append(
+                f"No. Frozen multipliers achieve PPL={c3_mean:.2f}, "
+                f"within 2% of dynamic Fisher ({best_fisher_mean:.2f}). "
+                "Early snapshot may suffice.\n\n"
+            )
 
     lines.append("## Plots\n\n")
     lines.append("- `plots/val_ppl_vs_tokens.png`: Val PPL vs tokens\n")
@@ -618,6 +771,8 @@ def write_results(results, trajectories, outdir, phase):
     with open(results_path, "w") as f:
         f.writelines(lines)
     print(f"Saved: {results_path}")
+
+    return gate_pass
 
 
 def main():
@@ -641,7 +796,7 @@ def main():
 
     print(f"Found {len(results)} runs")
 
-    trajectories = load_stdout_trajectories(outdir)
+    trajectories = load_trajectories(outdir)
     layer_lr_data = load_layer_lr_jsonl(outdir)
 
     # Generate plots
@@ -656,9 +811,15 @@ def main():
 
     # Write reports
     write_stats(results, trajectories, outdir)
-    write_results(results, trajectories, outdir, args.phase)
+    gate_pass = write_results(results, trajectories, outdir, args.phase)
 
     print(f"\nAll outputs saved to {PLOT_DIR}/ and runs/adam-lr-02/")
+    if gate_pass:
+        print("\nDECISION GATE: PASS - proceed to Phase B")
+    elif gate_pass is False:
+        print("\nDECISION GATE: FAIL or PARTIAL - see RESULTS.md")
+    else:
+        print("\nDECISION GATE: insufficient data")
 
 
 if __name__ == "__main__":
