@@ -415,8 +415,18 @@
 #   AUC analysis confirms: Fisher p=1 has lowest AUC (1.27e9)
 #     and lowest variance, indicating stable convergence
 #
+# Step 9: Phase B launched - IN PROGRESS (2026-02-25 07:23 PST)
+#   ~/envs/w7900-ml/bin/python scripts/run_adam_lr_02.py --phase B
+#   PID: 1116805
+#   Output: runs/adam-lr-02/phaseB/
+#   Configs: R0_baseline, R1_fisher_p1, C1_random_shuffle
+#   Seeds: 0-4 (5 seeds per config = 15 runs)
+#   Token budget: 1B tokens per run
+#   Estimated: ~7.7h per run, ~115h total (~4.8 days)
+#   Expected completion: ~2026-03-02
+#
 # TODO:
-#   - Commit Phase A results + plots
-#   - Launch Phase B: 3 configs x 5 seeds at 1B tokens
 #   - Wait for Phase B (~5 days)
-#   - Run Phase B analysis and commit results
+#   - Run Phase B analysis: python scripts/analyze_adam_lr_02.py --phase B
+#   - Commit Phase B results and plots
+#   - If Phase B confirms: declare result robust, recommend defaults
