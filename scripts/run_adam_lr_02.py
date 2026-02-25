@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Experiment harness for adam-lr-02: Phase A (falsification controls).
+"""Experiment harness for adam-lr-02.
 
-Runs 6 configurations x 3 seeds = 18 runs, all token-budget matched
-at 250M tokens. Configurations:
+Phase A: 6 configs x 3 seeds = 18 runs at 250M tokens
+  R0: Baseline AdamW (no layer LR scaling)
+  R1: Fisher-LR power=1, warmup=200, update_every=50, clamp=4
+  R2: Fisher-LR power=2, warmup=200, update_every=50, clamp=2
+  C1: Random-shuffle (Fisher multipliers shuffled across layers)
+  C2: Depth-ramp heuristic (linear from low to high by depth)
+  C3: Fisher-LR power=1 frozen after 200 steps
 
-R0: Baseline AdamW (no layer LR scaling)
-R1: Fisher-LR power=1, warmup=200, update_every=50, clamp=4
-R2: Fisher-LR power=2, warmup=200, update_every=50, clamp=2
-C1: Random-shuffle (Fisher multipliers shuffled across layers)
-C2: Depth-ramp heuristic (linear from low to high by depth)
-C3: Fisher-LR power=1 frozen after 200 steps
+Phase B: 3 configs x 5 seeds = 15 runs at 1B tokens
+  R0: Baseline AdamW
+  R1: Fisher-LR power=1 (best Fisher from Phase A)
+  Best control from Phase A (determined by decision gate)
 
 All runs share identical: dataset (finewebedu), model (gpt2),
 optimizer (adamw), lr=6e-4, wd=0.1, warmup=200, min_lr=6e-5,
-eval cadence (every 50 iters), and token budget (250M).
+eval cadence (every 50 iters).
 
 Usage:
     python scripts/run_adam_lr_02.py [--phase A|B] [--dry-run]
@@ -359,6 +362,59 @@ def print_summary(results, phase):
         print(f"{name:<20s} {mean:>12.2f} {std:>8.2f} {len(vals):>3d}" f"{improvement}")
 
 
+def select_phase_b_configs():
+    """Select Phase B configs from Phase A results.
+
+    Per protocol: baseline + best Fisher + strongest control.
+    Reads Phase A experiment_results.json to determine the
+    best control automatically.
+    """
+    import numpy as np
+
+    results_path = os.path.join(OUTDIR_A, "experiment_results.json")
+    if not os.path.exists(results_path):
+        # Fallback: load individual result.json files
+        results = []
+        for entry in sorted(os.listdir(OUTDIR_A)):
+            rp = os.path.join(OUTDIR_A, entry, "result.json")
+            if os.path.isfile(rp):
+                with open(rp) as f:
+                    results.append(json.load(f))
+    else:
+        with open(results_path) as f:
+            results = json.load(f)
+
+    # Find best control
+    control_configs = ["C1_random_shuffle", "C2_depth_ramp", "C3_frozen_200"]
+    control_means = {}
+    for cc in control_configs:
+        ppls = [
+            r["best_val_ppl"]
+            for r in results
+            if r["config"] == cc and r.get("best_val_ppl") is not None
+        ]
+        if ppls:
+            control_means[cc] = np.mean(ppls)
+
+    if not control_means:
+        print("WARNING: No control results found in Phase A.")
+        print("Using C3_frozen_200 as default control for Phase B.")
+        best_control = "C3_frozen_200"
+    else:
+        best_control = min(control_means, key=control_means.get)
+        print(f"Phase B control selection from Phase A results:")
+        for cc, mean in sorted(control_means.items(), key=lambda x: x[1]):
+            marker = " <-- SELECTED" if cc == best_control else ""
+            print(f"  {cc}: mean PPL = {mean:.2f}{marker}")
+
+    configs = {
+        "R0_baseline": CONFIGS_A["R0_baseline"],
+        "R1_fisher_p1": CONFIGS_A["R1_fisher_p1"],
+        best_control: CONFIGS_A[best_control],
+    }
+    return configs
+
+
 def main():
     parser = argparse.ArgumentParser(description="adam-lr-02 experiment harness")
     parser.add_argument(
@@ -396,7 +452,7 @@ def main():
         outdir = OUTDIR_B
         token_budget = TOKEN_BUDGET_B
         seeds = SEEDS_B
-        configs = CONFIGS_A  # Same configs, more tokens/seeds
+        configs = select_phase_b_configs()
 
     os.makedirs(outdir, exist_ok=True)
 

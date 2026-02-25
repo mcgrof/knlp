@@ -612,7 +612,13 @@ def write_results(results, trajectories, outdir, phase):
         "a genuine optimization benefit, or whether the gains can be\n"
         "explained by simpler alternatives.\n\n"
     )
-    lines.append(f"**Phase {phase}**: 250M tokens, 3 seeds, 6 configurations.\n\n")
+    n_configs = len(ppl_data)
+    n_seeds = max(len(v) for v in ppl_data.values()) if ppl_data else 0
+    token_label = "250M" if phase == "A" else "1B"
+    lines.append(
+        f"**Phase {phase}**: {token_label} tokens, {n_seeds} seeds, "
+        f"{n_configs} configurations.\n\n"
+    )
 
     # Results table
     lines.append("## Results Table\n\n")
