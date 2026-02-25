@@ -1,0 +1,422 @@
+```text
+# adam-lr-02.txt
+# Scientist-mode protocol to “close the dispute” on per-layer LR scaling from Adam v (diag-Fisher proxy)
+# in knlp, GPT-2 family, FineWeb-Edu, AMD W7900 (ROCm). This is designed to generate robust,
+# defensible evidence, including controls that can falsify the hypothesis.
+#
+# You are Claude Code. Use the Ralph Wiggum loop, but behave like a careful experimentalist:
+# - prioritize clean comparisons, reproducibility, and falsification controls
+# - avoid “just run more” without fixing confounds
+# - if something is ambiguous, resolve it by measurement, not vibes
+#
+# -------------------------------------------------------------------
+# 0) Why we are doing this (inductive bias, stated cleanly)
+# -------------------------------------------------------------------
+# Observation: In adam-lr-01, per-layer LR multipliers derived from Adam’s exp_avg_sq (v)
+# dramatically improved early convergence on GPT-2 124M without throughput loss.
+#
+# Hypothesis (optimization geometry):
+#  - For NLL / cross-entropy losses, the Fisher Information Matrix (F) approximates the expected Hessian (E[H])
+#    near optimum under standard conditions. Adam’s v is an exponential moving average of g^2, which is a diagonal
+#    proxy for diag(F).
+#  - Adam already uses per-parameter preconditioning via 1/sqrt(v), but it does not equalize curvature
+#    differences across layers in a blockwise sense. A layerwise statistic of v provides a cheap proxy for
+#    “how curved / sensitive this layer is,” enabling a blockwise preconditioner.
+#  - Per-layer scaling thus approximates a *coarse* natural-gradient / Newton-like step where we invert
+#    curvature *at the block (layer) level* instead of full-matrix inversion.
+#
+# What “Newtonian introspection” means here:
+#  - We are not claiming full Newton’s method. We are testing whether a layerwise curvature proxy (from v)
+#    can reliably reweight step sizes to match curvature, producing faster optimization without harming
+#    generalization or late-stage convergence.
+#
+# What would convince a skeptic:
+#  - The effect persists across multiple seeds, longer training budgets, and model sizes.
+#  - The effect beats strong controls (random multipliers with same distribution, hand-tuned heuristics).
+#  - Improvements remain when evaluation is done correctly and consistently (same tokens, same data order, same metrics).
+#  - Late-stage performance and generalization are not worse, or there is a clear tradeoff curve.
+#
+# -------------------------------------------------------------------
+# 1) Non-negotiable invariants (to avoid accidental “wins”)
+# -------------------------------------------------------------------
+# For each comparison set, all runs MUST share:
+#  - identical code commit (except when explicitly testing implementation variants)
+#  - identical dataset version/shards, preprocessing, and data order
+#  - identical token budget (tokens processed), not “time budget” as primary comparator
+#  - identical model init distribution + seed usage (multiple seeds)
+#  - identical batch size, grad accumulation, sequence length, optimizer base LR, betas, eps, wd
+#  - identical scheduler behavior (warmup, cosine/linear, min_lr)
+#  - identical torch.compile setting (either all on or all off)
+#  - identical eval cadence, eval sample count, and eval data split
+#
+# If time limits vary due to system jitter, the primary axis is TOKENS, not wall time.
+#
+# -------------------------------------------------------------------
+# 2) Primary endpoints and metrics (what we will report)
+# -------------------------------------------------------------------
+# Primary outcome:
+#  - Validation perplexity vs tokens (curve), including AUC over a fixed token interval.
+#
+# Secondary outcomes:
+#  - Train loss vs tokens
+#  - Final validation perplexity at fixed token budgets
+#  - Convergence speed: tokens-to-reach target val ppl thresholds (e.g., 500, 400, 300, etc.)
+#  - Throughput: tokens/sec distribution (mean + std), and GPU utilization if available
+#  - Stability: NaNs, divergence, gradient explosion events, and frequency of clipping triggers
+#
+# Mechanistic introspection metrics (must log):
+#  - per-layer lr multiplier time series (min/median/max across layers)
+#  - per-layer update norm ||Δθ_l|| and gradient norm ||g_l|| at intervals
+#  - per-layer v statistic used (stat_v_l), and s_l=(stat_v_l+eps)^(1/4)
+#  - optional: correlation of lr_mult with layer depth, and with update norm
+#
+# Statistical treatment:
+#  - at least 5 seeds for the flagship comparison at one model size
+#  - report mean, std, and bootstrap 95% CI of AUC(val loss) or AUC(val ppl) across seeds
+#  - do not claim “unquestionable” without CI and strong controls
+#
+# -------------------------------------------------------------------
+# 3) Experiment design overview (phased, selective)
+# -------------------------------------------------------------------
+# We will not run “a month of compute” blindly. We will do three phases:
+#
+# Phase A (Integrity & falsification controls; cheap, days):
+#  - verify the effect survives strict token-budget matching and evaluation correctness
+#  - run strong controls that could explain the effect without Fisher meaning
+#
+# Phase B (Robustness; 1–2 weeks):
+#  - longer token budgets + more seeds for the best candidate setting
+#  - verify late-stage convergence and generalization
+#
+# Phase C (Scaling; remainder if needed):
+#  - extend to GPT-2 medium and/or larger; confirm the mechanism scales
+#
+# Exit criteria:
+#  - If controls match the improvement, the “Fisher-derived” story is likely wrong or incomplete.
+#  - If improvement persists and beats controls with clean stats, we declare it robust.
+#
+# -------------------------------------------------------------------
+# 4) Implementation checks (before any expensive runs)
+# -------------------------------------------------------------------
+# 4.1 Verify per-layer grouping is correct
+#  - confirm param-to-layer mapping matches module naming
+#  - confirm embeddings, lm_head, ln_f, and each block h.i are separated cleanly
+#  - confirm tied weights are handled (embedding/lm_head tie) consistently
+#
+# 4.2 Scheduler correctness
+#  - ensure group base_lr is preserved and schedule factor applies equally
+#  - ensure lr_mult multiplies the scheduled LR, not “double scheduling”
+#
+# 4.3 Confirm the statistic is computed from optimizer.state exp_avg_sq
+#  - confirm not accidentally using gradients from current step only
+#
+# 4.4 Confirm logging is consistent and complete
+#  - JSONL includes step, tokens processed, lr_mult dict, stat_v dict, s_ref
+#  - evaluation logs include tokens, train loss, val loss, val ppl
+#
+# Create a “repro manifest” per run:
+#  - commit, command line, seed, dataset hash/version, effective batch, seq len, tokens budget,
+#    rocM/pytorch versions, torch.compile status.
+#
+# -------------------------------------------------------------------
+# 5) Strong controls (must run, otherwise skeptics will laugh)
+# -------------------------------------------------------------------
+# Control C1: Random multipliers with same distribution (placebo)
+#  - Every update tick, sample lr_mult_l from the empirical distribution of Fisher-based lr_mult,
+#    then randomly assign to layers (shuffle layer labels).
+#  - Same clamp, same power, same warmup, same update frequency.
+#  - If C1 matches Fisher-based gains, then “just adding LR heterogeneity” explains it.
+#
+# Control C2: Static heuristic multipliers (depth-based)
+#  - e.g., linearly ramp LR from early layers to late layers, with same min/max clamp.
+#  - If this matches gains, it suggests a simple heuristic is enough.
+#
+# Control C3: Fisher-based but frozen after early phase
+#  - Compute lr_mult for first N steps (e.g., 200), then freeze for rest of run.
+#  - If frozen works as well, dynamic adaptation may be unnecessary, simplifying the method.
+#
+# Optional control C4 (if cheap):
+#  - Use mean instead of median for stat_v
+#  - If median is critical, it suggests outliers matter.
+#
+# -------------------------------------------------------------------
+# 6) Candidate settings (keep it tight, don’t explode combinatorics)
+# -------------------------------------------------------------------
+# Based on adam-lr-01, power=1 looked stable and didn’t saturate clamps as much.
+# We will test only:
+#  - Baseline: AdamW, no layer LR scaling
+#  - Fisher-LR: power=1, clamp=4, warmup=200 steps (NOT 20), update_every=50 (NOT 10)
+#  - Fisher-LR: power=2, clamp=2 (tighter), warmup=200, update_every=50
+#  - C1: random-shuffle control matching Fisher-LR power=1 distribution
+#  - C2: depth-ramp heuristic with same clamp bounds
+#  - C3: Fisher-LR power=1 but freeze after 200 steps
+#
+# Rationale for changes vs adam-lr-01:
+#  - warmup=20 and update_every=10 are aggressive and might amplify early noise.
+#  - for robust science, reduce adaptivity frequency and increase stabilization.
+#
+# -------------------------------------------------------------------
+# 7) Token budgets and seeds (what makes it “unquestionable”)
+# -------------------------------------------------------------------
+# Model sizes:
+#  - Stage 1: GPT-2 124M (current baseline)
+#  - Stage 2: GPT-2 Medium (if available in repo; else next size up that is stable)
+#
+# Token budgets (per run):
+#  - Budget B0 (sanity/control): 250M tokens
+#  - Budget B1 (robust): 1B tokens
+#  - Budget B2 (late-stage): 3B tokens (optional if B1 already decisive)
+#
+# Seeds:
+#  - For B0: 3 seeds (0,1,2)
+#  - For B1: 5 seeds (0..4) for baseline vs best Fisher-LR vs best control
+#  - For B2: 3 seeds (0,1,2) only for the final “winner vs baseline” showdown
+#
+# Note:
+#  - Do not run all conditions at B1/B2. Use Phase A to select the best Fisher setting and
+#    identify the strongest control, then only scale those.
+#
+# -------------------------------------------------------------------
+# 8) Execution plan (step-by-step)
+# -------------------------------------------------------------------
+# Phase A1: Reproduce adam-lr-01 under strict token budget
+#  - Run baseline and Fisher-LR power=1 for 250M tokens, seeds 0,1,2.
+#  - Confirm improvement still exists with tokens matched.
+#
+# Phase A2: Run strong controls at 250M tokens, seeds 0,1,2
+#  - Run C1 random-shuffle
+#  - Run C2 depth-ramp
+#  - Run C3 freeze-after-200
+#
+# Decision gate after Phase A:
+#  - If Fisher-LR beats baseline AND beats controls on mean and most seeds, proceed.
+#  - If Fisher-LR matches controls, revise hypothesis: likely LR heterogeneity or depth heuristic.
+#  - If effect disappears, investigate confounds (scheduler interaction, eval mismatch, compile).
+#
+# Phase B: 1B tokens, 5 seeds
+#  - Run baseline vs best Fisher-LR vs strongest surviving control (likely C1 or C2).
+#  - Compute AUC(val ppl) across tokens and bootstrap CI.
+#
+# Phase C: scale model size (if B is decisive)
+#  - Repeat baseline vs best Fisher-LR for GPT-2 medium, 1B tokens, 3 seeds.
+#  - If the effect scales, it is much harder to dismiss.
+#
+# -------------------------------------------------------------------
+# 9) Logging & artifacts (must be produced)
+# -------------------------------------------------------------------
+# For each run, store:
+#  - metrics.jsonl with: step, tokens, train_loss, val_loss, val_ppl, lr, grad_norm, clip_events
+#  - layer_lr.jsonl with: step, tokens, s_ref, layer->lr_mult, layer->stat_v
+#  - optional: layer_norms.jsonl with: step, tokens, layer->||g||, layer->||Δθ||
+#  - a manifest.yaml (or json) with all config + environment versions
+#
+# Create a top-level results folder:
+#  runs/adam-lr-02/
+#    phaseA/
+#    phaseB/
+#    phaseC/
+#    plots/
+#    RESULTS.md
+#    STATS.md
+#
+# Plots required:
+#  - val_ppl vs tokens (mean across seeds + shaded CI)
+#  - tokens-to-threshold plot (box/violin across seeds)
+#  - lr_mult vs layer depth at multiple checkpoints
+#  - update norm vs layer depth (baseline vs fisher)
+#  - throughput distribution
+#
+# -------------------------------------------------------------------
+# 10) Practical ROCm / W7900 considerations
+# -------------------------------------------------------------------
+# Keep torch.compile consistent across all runs. If compile introduces nondeterminism
+# or intermittent slowdowns, disable it for the entire study.
+#
+# Prefer long uninterrupted runs, but checkpointing must be enabled for month-scale:
+#  - add resume support if missing
+#  - checkpoint every fixed token interval, not time interval
+#
+# Ensure eval uses a fixed validation set and fixed number of tokens/samples each time.
+#
+# -------------------------------------------------------------------
+# 11) Required code changes (minimal)
+# -------------------------------------------------------------------
+# Add new mode flags for controls:
+#  --layer-lr-mode {none,fisher,random_shuffle,depth_ramp}
+#  --layer-lr-freeze-after-steps N (for C3; 0 disables)
+#
+# Implement random_shuffle:
+#  - compute fisher lr_mult as usual, then shuffle assignments across layer_ids.
+#
+# Implement depth_ramp:
+#  - define ordering: embed, h.0..h.n-1, ln_f, lm_head
+#  - set lr_mult linearly from low to high within clamp bounds
+#
+# Add a token-budget stop condition:
+#  - --max-tokens <int>
+#  - stop when tokens_processed >= max_tokens
+#
+# Add a script to launch batches of runs with seeds and configs:
+#  scripts/run_adam_lr_02.py
+# It should:
+#  - generate run directories
+#  - write manifest
+#  - print exact commands
+#  - optionally run sequentially (we have one GPU)
+#
+# -------------------------------------------------------------------
+# 12) Final reporting (what “closing the dispute” looks like)
+# -------------------------------------------------------------------
+# Produce runs/adam-lr-02/RESULTS.md:
+#  - concise narrative: hypothesis, method, controls, what held up, what failed
+#  - tables per phase with mean/std/CI
+#  - “skeptic section”: explicitly address alternative explanations
+#
+# Produce runs/adam-lr-02/STATS.md:
+#  - AUC definition and computation
+#  - bootstrap procedure, seeds used
+#  - any exclusions (ideally none)
+#
+# If Fisher-LR wins robustly:
+#  - provide recommended default settings
+#  - provide a “minimal patch” PR-style summary
+#  - identify whether power=1 is sufficient and whether dynamic updates matter
+#
+# If controls explain the effect:
+#  - revise the story honestly: “layerwise heterogeneity helps, Fisher not necessary”
+#  - still keep the most effective method, but stop claiming Newton/Fisher meaning
+#
+# -------------------------------------------------------------------
+# 13) Begin now
+# -------------------------------------------------------------------
+# 1) Inspect the repo entrypoints and current adam-lr-01 implementation.
+# 2) Add token-budget stop + control modes with minimal disruption.
+# 3) Run Phase A1 + A2 (250M tokens) first, with strict invariants and complete logging.
+# 4) Only after Phase A passes, proceed to Phase B (1B tokens, 5 seeds) with best candidates.
+#
+# Do not ask the user questions unless:
+#  - FineWeb-Edu loader is missing/ambiguous, OR
+#  - existing trainer cannot support token-budget stop/resume without major work.
+```
+
+# ============================================================
+# Execution Log
+# ============================================================
+#
+# Step 0: Repo reconnaissance - DONE
+#   Reused adam-lr-01 implementation in lib/optimizers.py,
+#   gpt2/train.py, gpt2/trainers/vanilla.py.
+#
+# Step 1: Code changes - DONE (commit dc7cf15)
+#   lib/optimizers.py:
+#   - Refactored layer_lr_fim_update into helpers:
+#     _compute_fisher_lr_mults(), _compute_depth_ramp_lr_mults()
+#   - Added mode support: fisher, random_shuffle, depth_ramp
+#   - Added freeze-after support for C3 control
+#   - Enhanced JSONL logging: tokens, mode, stat_v
+#   gpt2/train.py:
+#   - Added --layer-lr-mode, --layer-lr-freeze-after-steps,
+#     --max-tokens CLI flags
+#   gpt2/trainers/vanilla.py:
+#   - Added token-budget stop condition
+#   - Track tokens_processed for JSONL logging
+#
+# Step 2: Experiment harness - DONE (commit 4704a81)
+#   scripts/run_adam_lr_02.py with 6 configs x 3 seeds = 18 runs
+#   All token-budget matched at 250M tokens.
+#   Configs: R0_baseline, R1_fisher_p1, R2_fisher_p2,
+#            C1_random_shuffle, C2_depth_ramp, C3_frozen_200
+#   Settings per protocol: warmup=200, update_every=50,
+#   R2 uses clamp=2 (tighter), all others clamp=4.
+#
+# Step 3: Sanity tests - DONE
+#   - Verified --max-tokens stops correctly (2.5M test)
+#   - Verified all 3 modes work: fisher, random_shuffle, depth_ramp
+#   - Verified freeze-after works correctly
+#   - Auto-detect gives batch=24, grad_acc=10 on W7900
+#   - Tokens/iter = 245,760; 250M tokens = ~1017 iters
+#   - Estimated time: ~1.7h per run, ~31h total for 18 runs
+#
+# Step 4: Phase A running - IN PROGRESS
+#   Launched: ~/envs/w7900-ml/bin/python scripts/run_adam_lr_02.py --phase A
+#   Output: runs/adam-lr-02/phaseA/
+#   Log: runs/adam-lr-02/phaseA_run.log
+#   Started: 2026-02-23 20:40 PST
+#
+#   Intermediate results (6/18 done, 2026-02-24 08:15 PST):
+#     R0_baseline:    [86.95, 89.64, 71.20] mean=82.60 std=8.13
+#     R1_fisher_p1:   [54.15, 56.13, 59.90] mean=56.73 std=2.36
+#     Fisher p=1 vs baseline: -31.3% improvement
+#     Fisher has LOWER variance across seeds (std=2.36 vs 8.13)
+#     Running: R2_fisher_p2_s0 (12 more runs, ~23h remaining)
+#
+# Step 5: Analysis script updated - DONE (commit f11cae0)
+#   scripts/analyze_adam_lr_02.py:
+#   - Now loads from result.json (val_trajectory) instead of stdout
+#   - Added decision gate logic to RESULTS.md
+#   - Added skeptic section (random heterogeneity, depth heuristic,
+#     frozen multipliers)
+#   - Fixed deprecated np.trapz -> np.trapezoid
+#
+# Step 6: Phase B harness update - DONE (commit 8b57e7b)
+#   scripts/run_adam_lr_02.py:
+#   - Added select_phase_b_configs() to auto-select best control
+#     from Phase A results
+#   - Phase B now runs 3 configs x 5 seeds = 15 runs at 1B tokens
+#   - Configs: R0_baseline, R1_fisher_p1, + best control
+#   scripts/analyze_adam_lr_02.py:
+#   - Dynamic phase metadata in RESULTS.md header
+#
+#   Interim results (16/18 done, 2026-02-25 04:45 PST):
+#     R0_baseline:       [86.95, 89.64, 71.20] mean=82.60 std=8.13
+#     R1_fisher_p1:      [54.15, 56.13, 59.90] mean=56.73 std=2.39
+#     R2_fisher_p2:      [73.08, 56.80, 126.38] mean=85.42 std=29.72
+#     C1_random_shuffle: [62.34, 70.51, 66.40] mean=66.42 std=3.34
+#     C2_depth_ramp:     [59.02, 79.42, 81.26] mean=73.23 std=10.08
+#     C3_frozen_200:     [62.18, ?, ?] (1/3 seeds done)
+#
+#   PRELIMINARY DECISION GATE: PASS
+#     Fisher p=1 (56.73) beats baseline (82.60) by -31.3%
+#     Fisher p=1 (56.73) beats best control C3 (62.18) by -9.6%
+#     Fisher p=2 (85.42) UNSTABLE, one catastrophic seed (126.38)
+#     Random shuffle (-19.6%) shows LR heterogeneity helps,
+#       but Fisher-specific assignment adds further 17% gain
+#     Depth ramp (-11.3%) is weakest control
+#
+#   Phase B dry-run confirms: 15 runs, ~5 days GPU time
+#
+# Step 7: Phase A COMPLETE - 18/18 runs (2026-02-25 07:21 PST)
+#   C3_frozen_200: [62.18, 101.20, 61.87] mean=75.08 std=18.47
+#   Note: C3_s1 outlier (101.20) indicates frozen multipliers are
+#   seed-sensitive, likely because multipliers captured from an
+#   unlucky early snapshot.
+#
+# Step 8: Phase A analysis - DONE (2026-02-25 07:22 PST)
+#   Ran: python scripts/analyze_adam_lr_02.py --phase A
+#   Generated: RESULTS.md, STATS.md, 4 plots
+#
+#   FINAL PHASE A RESULTS:
+#     R0_baseline:       [86.95, 89.64, 71.20] mean=82.60 std=8.13
+#     R1_fisher_p1:      [54.15, 56.13, 59.90] mean=56.73 std=2.39
+#     R2_fisher_p2:      [73.08, 56.80, 126.38] mean=85.42 std=29.72
+#     C1_random_shuffle: [62.34, 70.51, 66.40] mean=66.42 std=3.34
+#     C2_depth_ramp:     [59.02, 79.42, 81.26] mean=73.23 std=10.08
+#     C3_frozen_200:     [62.18, 101.20, 61.87] mean=75.08 std=18.47
+#
+#   DECISION GATE: PASS
+#     Fisher p=1 (56.73) beats baseline (82.60) by -31.3%
+#     Fisher p=1 (56.73) beats best control C1 (66.42) by -14.6%
+#     Fisher p=2 UNSTABLE (one seed catastrophic at 126.38)
+#     Random shuffle C1 shows LR heterogeneity helps (-19.6%),
+#       but Fisher-specific assignment adds further -14.6%
+#     Frozen C3 high-variance (std=18.47), dynamic adaptation
+#       clearly beneficial
+#
+#   AUC analysis confirms: Fisher p=1 has lowest AUC (1.27e9)
+#     and lowest variance, indicating stable convergence
+#
+# TODO:
+#   - Commit Phase A results + plots
+#   - Launch Phase B: 3 configs x 5 seeds at 1B tokens
+#   - Wait for Phase B (~5 days)
+#   - Run Phase B analysis and commit results
