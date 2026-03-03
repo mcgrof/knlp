@@ -61,7 +61,6 @@ from eval_v15 import (
     V15Result,
     apply_quality_gating,
     build_scoreboard,
-    gpu_preflight,
     run_single_eval,
 )
 from eval_v16 import (
@@ -80,6 +79,193 @@ from eval_v21 import (
 )
 
 # ============================================================
+# GPU preflight — works on both CUDA (H100) and ROCm (W7900)
+# ============================================================
+
+
+def gpu_preflight(device_str):
+    """Verify GPU and log info."""
+    assert torch.cuda.is_available(), "CUDA not available"
+    props = torch.cuda.get_device_properties(0)
+    total_gb = props.total_memory / 1e9
+    hip = getattr(torch.version, "hip", None)
+    cuda_ver = getattr(torch.version, "cuda", None)
+    backend = f"hip={hip}" if hip else f"cuda={cuda_ver}"
+    print(f"GPU Preflight OK: {props.name} ({total_gb:.1f}GB)")
+    print(f"  torch={torch.__version__} {backend}")
+    return {
+        "device_name": props.name,
+        "total_gb": round(total_gb, 1),
+        "torch_version": torch.__version__,
+        "backend": backend,
+    }
+
+
+# ============================================================
+# DynamicCache compatibility for transformers 5.x
+# ============================================================
+
+
+def _cache_get_kv(past, layer_idx):
+    """Get (key, value) tensors from cache, compatible with old and new API."""
+    if hasattr(past, "layers"):
+        # transformers 5.x: DynamicCache with DynamicLayer objects
+        layer = past.layers[layer_idx]
+        return layer.keys, layer.values
+    else:
+        # transformers 4.x: tuple of (key, value) per layer
+        return past[layer_idx]
+
+
+def _cache_num_layers(past):
+    """Get number of layers in cache."""
+    if hasattr(past, "layers"):
+        return len(past.layers)
+    else:
+        return len(past)
+
+
+class DenseBackendV26(DenseBackend):
+    """Dense backend with transformers 5.x DynamicCache compatibility."""
+
+    @torch.no_grad()
+    def run_decode(self, model, prefix_ids, continuation_ids, device_str, max_ctx):
+        decode_steps = continuation_ids.shape[1]
+        n_layers = self.mc["n_layers"]
+        n_kv_heads = self.mc["n_kv_heads"]
+        head_dim = self.mc["head_dim"]
+        elem = 2  # fp16
+
+        out = model(prefix_ids, use_cache=True)
+        past = out.past_key_values
+        all_logits = [out.logits[:, -1:, :]]
+        step_stats = []
+
+        for step in range(decode_steps):
+            next_token = continuation_ids[:, step : step + 1]
+            out = model(next_token, past_key_values=past, use_cache=True)
+            past = out.past_key_values
+            all_logits.append(out.logits)
+
+            k0, _ = _cache_get_kv(past, 0)
+            cache_len = k0.shape[2]
+            bpt = 2 * n_kv_heads * head_dim * elem
+            total_bytes = cache_len * bpt * n_layers
+            step_stats.append(
+                V14StepStats(
+                    kv_kept=cache_len,
+                    kv_bytes_full=total_bytes,
+                    kv_bytes_compressed=0,
+                    kv_bytes_total=total_bytes,
+                    n_full=cache_len,
+                    n_compressed=0,
+                )
+            )
+
+        return torch.cat(all_logits, dim=1), step_stats
+
+
+class GroupedMixedBackendV26(GroupedMixedBackend):
+    """Subclass with transformers 5.x DynamicCache compatibility."""
+
+    def run_decode(self, model, prefix_ids, continuation_ids, device_str, max_ctx):
+        from transformers.cache_utils import DynamicCache
+
+        decode_steps = continuation_ids.shape[1]
+        n_layers = self.mc["n_layers"]
+
+        torch.cuda.empty_cache()
+        with torch.no_grad():
+            out = model(prefix_ids, use_cache=True)
+        past = out.past_key_values
+        k0, v0 = _cache_get_kv(past, 0)
+        dtype = k0.dtype
+        all_logits = [out.logits[:, -1:, :]]
+        del out
+        step_stats = []
+
+        actual_pos = prefix_ids.shape[1]
+        cache_len = k0.shape[2]
+
+        t0 = time.perf_counter()
+        has_compressed = False
+        n_full = cache_len
+        n_compressed = 0
+
+        if cache_len > self.W_min + self.W_sink:
+            far_end = cache_len - self.W_min
+            n_far = far_end - self.W_sink
+
+            if n_far > 0:
+                new_cache = DynamicCache()
+                for li in range(n_layers):
+                    k, v = _cache_get_kv(past, li)
+                    k_sink = k[:, :, : self.W_sink, :]
+                    v_sink = v[:, :, : self.W_sink, :]
+                    k_far = k[:, :, self.W_sink : far_end, :]
+                    v_far = v[:, :, self.W_sink : far_end, :]
+                    k_near = k[:, :, far_end:, :]
+                    v_near = v[:, :, far_end:, :]
+
+                    bits = self.layer_bits[li]
+                    if bits == 8:
+                        k_q, k_s = quantize_int8_symmetric(k_far)
+                        k_hat = dequantize_int8_symmetric(k_q, k_s).to(dtype)
+                        v_q, v_s = quantize_int8_symmetric(v_far)
+                        v_hat = dequantize_int8_symmetric(v_q, v_s).to(dtype)
+                    else:
+                        k_q, k_s, k_D = self._quantize_int4_grouped(
+                            k_far, self.group_size
+                        )
+                        k_hat = self._dequantize_int4_grouped(k_q, k_s, k_D).to(dtype)
+                        v_q, v_s, v_D = self._quantize_int4_grouped(
+                            v_far, self.group_size
+                        )
+                        v_hat = self._dequantize_int4_grouped(v_q, v_s, v_D).to(dtype)
+
+                    k_new = torch.cat([k_sink, k_hat, k_near], dim=2)
+                    v_new = torch.cat([v_sink, v_hat, v_near], dim=2)
+                    new_cache.update(k_new, v_new, li)
+
+                past = new_cache
+                has_compressed = True
+                n_full = self.W_sink + self.W_min
+                n_compressed = n_far
+
+        compress_ms = (time.perf_counter() - t0) * 1000
+
+        for step in range(decode_steps):
+            next_token = continuation_ids[:, step : step + 1]
+            pos_ids = None
+            if has_compressed:
+                pos_ids = torch.tensor(
+                    [[actual_pos]], device=device_str, dtype=torch.long
+                )
+            with torch.no_grad():
+                out = model(
+                    next_token,
+                    past_key_values=past,
+                    position_ids=pos_ids,
+                    use_cache=True,
+                )
+            past = out.past_key_values
+            all_logits.append(out.logits)
+            actual_pos += 1
+
+            step_stats.append(
+                V14StepStats(
+                    kv_kept=n_full + n_compressed + step + 1,
+                    n_compressed=n_compressed,
+                    n_full=n_full + step + 1,
+                    compress_ms=compress_ms if step == 0 else 0,
+                )
+            )
+
+        logits = torch.cat(all_logits, dim=1)
+        return logits, step_stats
+
+
+# ============================================================
 # Model registry — extended for 7B models
 # ============================================================
 
@@ -90,6 +276,42 @@ MODEL_REGISTRY = {
     "qwen7b": "Qwen/Qwen2.5-7B",
     "mistral7b": "mistralai/Mistral-7B-v0.1",
 }
+
+
+def run_dense_baselines_v26(
+    model, token_data, valid_L, decode_steps, seeds, device, max_ctx, model_config
+):
+    """Run dense baselines using V26 backend (transformers 5.x compatible)."""
+    print(f"\n{'=' * 60}")
+    print("Dense baselines")
+    print("=" * 60)
+
+    dense_be = DenseBackendV26()
+    results = []
+    dense_ppls = {}
+    for L in valid_L:
+        for seed in seeds:
+            print(f"  dense L={L} seed={seed}...", end="", flush=True)
+            dense_be.configure(L, model_config)
+            r = run_single_eval(
+                dense_be,
+                model,
+                token_data,
+                L,
+                decode_steps,
+                seed,
+                device,
+                max_ctx,
+                model_config,
+            )
+            r.ppl_dense = r.ppl
+            r.passed_1pct = True
+            r.passed_3pct = True
+            results.append(r)
+            dense_ppls[(L, "r1", seed)] = r.ppl
+            print(f" PPL={r.ppl:.1f} p50={r.p50_ms:.2f}ms")
+
+    return results, dense_ppls
 
 
 def load_model_v26(model_key, device_str):
@@ -152,7 +374,7 @@ def run_phase0(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     print(f"Phase 0: Dense Baselines ({model_name}, D={n_layers})")
     print("=" * 60)
 
-    dense_results, dense_ppls = run_dense_baselines(
+    dense_results, dense_ppls = run_dense_baselines_v26(
         model,
         token_data,
         valid_L,
@@ -169,7 +391,7 @@ def run_phase0(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
         print(f"    L={L} seed={seed}: PPL={ppl:.4f}")
 
     # INT8-all baseline
-    be_int8 = GroupedMixedBackend(layer_bits=[8] * n_layers, group_size=32)
+    be_int8 = GroupedMixedBackendV26(layer_bits=[8] * n_layers, group_size=32)
     int8_evals = eval_config(
         be_int8,
         model,
@@ -244,7 +466,7 @@ def measure_oracle_sensitivity(
     for li in range(n_layers):
         layer_bits = [8] * n_layers
         layer_bits[li] = 4
-        be = GroupedMixedBackend(layer_bits=layer_bits, group_size=32)
+        be = GroupedMixedBackendV26(layer_bits=layer_bits, group_size=32)
 
         evals = eval_config(
             be,
@@ -295,7 +517,7 @@ def run_phase1(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     # Dense baselines at oracle L
     oracle_L = 8192
     print(f"\n  Dense baselines at L={oracle_L}")
-    dense_results, dense_ppls = run_dense_baselines(
+    dense_results, dense_ppls = run_dense_baselines_v26(
         model,
         token_data,
         [oracle_L],
@@ -391,7 +613,7 @@ def run_phase2(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
 
     # Dense baselines at full L set
     print(f"\n  Dense baselines at L={valid_L}")
-    dense_results, dense_ppls = run_dense_baselines(
+    dense_results, dense_ppls = run_dense_baselines_v26(
         model,
         token_data,
         valid_L,
@@ -414,7 +636,7 @@ def run_phase2(args, model, token_data, valid_L, max_ctx, model_config, gpu_info
     k_results = OrderedDict()
     for k in k_values:
         sched = build_k_schedule(oracle_ranking, k, n_layers=n_layers)
-        be = GroupedMixedBackend(layer_bits=sched, group_size=32)
+        be = GroupedMixedBackendV26(layer_bits=sched, group_size=32)
         name = f"g32_k{k}"
 
         protected = oracle_ranking[:k] if k > 0 else []
@@ -554,7 +776,8 @@ def benchmark_latency(
 
                 try:
                     # Generate fake prefix tokens of length L
-                    tokens = get_text_batch(token_data, L + decode_steps, seed=0)
+                    rng = np.random.RandomState(0)
+                    tokens = get_text_batch(token_data, 1, L + decode_steps, rng)
                     if tokens.shape[1] < L + decode_steps:
                         print(" SKIP (not enough tokens)")
                         continue
@@ -568,10 +791,12 @@ def benchmark_latency(
 
                     if is_dense:
                         # Dense: just do prefill+decode
-                        be = DenseBackend()
+                        be = DenseBackendV26()
                         be.configure(L, model_config)
                     else:
-                        be = GroupedMixedBackend(layer_bits=layer_bits, group_size=32)
+                        be = GroupedMixedBackendV26(
+                            layer_bits=layer_bits, group_size=32
+                        )
 
                     be.configure(L, model_config)
                     be.calibrate(model, token_data, L, device_str, model_config)
