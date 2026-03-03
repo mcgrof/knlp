@@ -1,0 +1,214 @@
+{
+  "version": "v26",
+  "model": "mistral7b",
+  "n_layers": 32,
+  "oracle_L": 8192,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "oracle_ranking": [
+    0,
+    15,
+    16,
+    7,
+    12,
+    30,
+    13,
+    22,
+    2,
+    19,
+    31,
+    6,
+    8,
+    17,
+    21,
+    27,
+    10,
+    23,
+    26,
+    4,
+    14,
+    18,
+    24,
+    1,
+    5,
+    11,
+    29,
+    3,
+    9,
+    20,
+    25,
+    28
+  ],
+  "oracle_scores": [
+    {
+      "layer": 0,
+      "max_delta": 0.41,
+      "mean_delta": 0.16
+    },
+    {
+      "layer": 15,
+      "max_delta": 0.23,
+      "mean_delta": 0.1167
+    },
+    {
+      "layer": 16,
+      "max_delta": 0.23,
+      "mean_delta": 0.0933
+    },
+    {
+      "layer": 7,
+      "max_delta": 0.16,
+      "mean_delta": 0.1033
+    },
+    {
+      "layer": 12,
+      "max_delta": 0.16,
+      "mean_delta": 0.0767
+    },
+    {
+      "layer": 30,
+      "max_delta": 0.16,
+      "mean_delta": 0.0767
+    },
+    {
+      "layer": 13,
+      "max_delta": 0.12,
+      "mean_delta": 0.0667
+    },
+    {
+      "layer": 22,
+      "max_delta": 0.12,
+      "mean_delta": 0.06
+    },
+    {
+      "layer": 2,
+      "max_delta": 0.09,
+      "mean_delta": 0.0433
+    },
+    {
+      "layer": 19,
+      "max_delta": 0.09,
+      "mean_delta": 0.0533
+    },
+    {
+      "layer": 31,
+      "max_delta": 0.09,
+      "mean_delta": 0.05
+    },
+    {
+      "layer": 6,
+      "max_delta": 0.08,
+      "mean_delta": 0.05
+    },
+    {
+      "layer": 8,
+      "max_delta": 0.08,
+      "mean_delta": 0.0467
+    },
+    {
+      "layer": 17,
+      "max_delta": 0.08,
+      "mean_delta": 0.0567
+    },
+    {
+      "layer": 21,
+      "max_delta": 0.07,
+      "mean_delta": 0.05
+    },
+    {
+      "layer": 27,
+      "max_delta": 0.07,
+      "mean_delta": 0.0467
+    },
+    {
+      "layer": 10,
+      "max_delta": 0.06,
+      "mean_delta": 0.0533
+    },
+    {
+      "layer": 23,
+      "max_delta": 0.06,
+      "mean_delta": 0.0333
+    },
+    {
+      "layer": 26,
+      "max_delta": 0.06,
+      "mean_delta": 0.0367
+    },
+    {
+      "layer": 4,
+      "max_delta": 0.05,
+      "mean_delta": 0.02
+    },
+    {
+      "layer": 14,
+      "max_delta": 0.05,
+      "mean_delta": 0.04
+    },
+    {
+      "layer": 18,
+      "max_delta": 0.05,
+      "mean_delta": 0.0333
+    },
+    {
+      "layer": 24,
+      "max_delta": 0.05,
+      "mean_delta": 0.0367
+    },
+    {
+      "layer": 1,
+      "max_delta": 0.04,
+      "mean_delta": 0.0333
+    },
+    {
+      "layer": 5,
+      "max_delta": 0.04,
+      "mean_delta": 0.02
+    },
+    {
+      "layer": 11,
+      "max_delta": 0.04,
+      "mean_delta": 0.0167
+    },
+    {
+      "layer": 29,
+      "max_delta": 0.04,
+      "mean_delta": 0.0333
+    },
+    {
+      "layer": 3,
+      "max_delta": 0.03,
+      "mean_delta": 0.02
+    },
+    {
+      "layer": 9,
+      "max_delta": 0.03,
+      "mean_delta": 0.0267
+    },
+    {
+      "layer": 20,
+      "max_delta": 0.03,
+      "mean_delta": 0.0233
+    },
+    {
+      "layer": 25,
+      "max_delta": 0.03,
+      "mean_delta": 0.02
+    },
+    {
+      "layer": 28,
+      "max_delta": 0.03,
+      "mean_delta": 0.01
+    }
+  ],
+  "gpu_info": {
+    "device_name": "NVIDIA H100 80GB HBM3",
+    "total_gb": 85.0,
+    "torch_version": "2.10.0+cu126",
+    "backend": "cuda=12.6"
+  },
+  "timestamp": "2026-03-03T22:26:14.090477"
+}

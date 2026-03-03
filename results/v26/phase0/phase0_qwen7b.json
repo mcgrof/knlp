@@ -1,0 +1,77 @@
+{
+  "version": "v26",
+  "model": "qwen7b",
+  "n_layers": 28,
+  "head_dim": 128,
+  "n_kv_heads": 4,
+  "dense_ppls": {
+    "L8192_s0": 5.1352911034382425,
+    "L8192_s1": 4.895850287240571,
+    "L8192_s2": 4.208430105626696,
+    "L32768_s0": 7.446185395264041,
+    "L32768_s1": 8.491035044146674,
+    "L32768_s2": 5.013129785163739
+  },
+  "int8_all": {
+    "evals": {
+      "L8192_s0": {
+        "ppl": 5.1331,
+        "delta_pct": -0.04,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 17.45,
+        "kv_bytes_ratio": 1.0
+      },
+      "L8192_s1": {
+        "ppl": 4.899,
+        "delta_pct": 0.06,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 17.31,
+        "kv_bytes_ratio": 1.0
+      },
+      "L8192_s2": {
+        "ppl": 4.2213,
+        "delta_pct": 0.3,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 17.31,
+        "kv_bytes_ratio": 1.0
+      },
+      "L32768_s0": {
+        "ppl": 7.4748,
+        "delta_pct": 0.38,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 22.34,
+        "kv_bytes_ratio": 1.0
+      },
+      "L32768_s1": {
+        "ppl": 8.5045,
+        "delta_pct": 0.16,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 22.36,
+        "kv_bytes_ratio": 1.0
+      },
+      "L32768_s2": {
+        "ppl": 5.0101,
+        "delta_pct": -0.06,
+        "pass_1pct": true,
+        "pass_3pct": true,
+        "p50_ms": 22.39,
+        "kv_bytes_ratio": 1.0
+      }
+    },
+    "max_delta": 0.38,
+    "pass_1pct": true,
+    "pass_3pct": true
+  },
+  "gpu_info": {
+    "device_name": "NVIDIA H100 80GB HBM3",
+    "total_gb": 85.0,
+    "torch_version": "2.10.0+cu126",
+    "backend": "cuda=12.6"
+  },
+  "timestamp": "2026-03-03T21:54:01.581030"
+}
