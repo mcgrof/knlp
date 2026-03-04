@@ -1,0 +1,15 @@
+# Storage Medium: Mixed tmpfs + SFS
+# tmpfs holds hotter blocks, colder on SFS
+
+storage:
+  tier1_budget_blocks: 16
+  tier2_budget_blocks: 16
+  tier1_read_latency_us: null  # filled from microbench
+  tier2_read_latency_us: null  # filled from microbench
+  tier1_bandwidth_mb_s: null   # filled from microbench
+  tier2_bandwidth_mb_s: null   # filled from microbench
+
+description: >
+  Medium storage regime. Half the prefix blocks on tmpfs,
+  half on SFS. This is the primary test condition for
+  whether semantic routing is worth it.

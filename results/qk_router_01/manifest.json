@@ -1,0 +1,55 @@
+{
+  "project": "qk_router_01",
+  "version": "0.1.0",
+  "research_question": "Can decode-step Q_t scored against resident K-summary index predict which offloaded KV blocks to prefetch, beating recency-only baselines?",
+  "model": {
+    "name": "Qwen/Qwen2.5-0.5B",
+    "class": "AutoModelForCausalLM (HuggingFace)",
+    "params_M": 494,
+    "num_layers": 24,
+    "num_heads": 14,
+    "num_kv_heads": 2,
+    "hidden_size": 896,
+    "head_dim": 64,
+    "max_position_embeddings": 32768,
+    "cache_dir": "/mnt/SFS-hugging/hub"
+  },
+  "workload": {
+    "type": "long_prefix_generation",
+    "prefix_length": 4096,
+    "max_new_tokens": 64,
+    "num_requests": 64,
+    "block_size": 128,
+    "num_prefix_blocks": 32,
+    "decode_tail_tokens": 64,
+    "dataset": "wikitext-2-raw-v1"
+  },
+  "hardware": {
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "gpu_memory_gb": 85.0,
+    "driver": "580.126.09",
+    "cuda": "12.6",
+    "torch": "2.10.0+cu126",
+    "transformers": "5.2.0",
+    "flash_attn": false,
+    "python": "3.12.3"
+  },
+  "storage": {
+    "tier0_hot": "GPU HBM (K-summaries + decode tail)",
+    "tier1_warm": "/mnt/tmpfs (tmpfs, ~90GB)",
+    "tier2_cold": "/mnt/SFS-hugging/hub/qk_router_01 (NFS, ~200GB)",
+    "tier2_note": "SFS root not writable; using hub/ subdirectory"
+  },
+  "paths": {
+    "repo_root": "/mnt/tmpfs/knlp",
+    "run_root": "/mnt/tmpfs/knlp/results/qk_router_01",
+    "config_root": "/mnt/tmpfs/knlp/configs/qk_router",
+    "lib_root": "/mnt/tmpfs/knlp/lib/qk_router",
+    "doc_path": "/mnt/tmpfs/knlp/docs/qk_router_01.md",
+    "plot_root": "/mnt/tmpfs/knlp/plots/qk_router_01",
+    "tmpfs_store": "/mnt/tmpfs/qk_router_01",
+    "sfs_store": "/mnt/SFS-hugging/hub/qk_router_01"
+  },
+  "git_commit": "to_be_recorded_at_runtime",
+  "timestamp": "2026-03-03T23:00:00Z"
+}
