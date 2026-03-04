@@ -1,0 +1,89 @@
+{
+  "version": "v28",
+  "description": "Frozen canonical protocol for BPA headline results",
+
+  "evaluation": {
+    "dataset": "wikitext-103-raw-v1",
+    "split": "validation",
+    "n_tokens": 500000,
+    "text_join": "\\n\\n",
+    "tokenizer_encode": "tokenizer.encode(text)",
+    "decode_tokens": 64,
+    "batch_size": 1,
+    "L_set": [8192, 32768],
+    "L_set_note": "Use [L_max//2, L_max] if model max_position_embeddings < 32768+64",
+    "seeds": [0, 1, 2]
+  },
+
+  "quality": {
+    "epsilon": 0.03,
+    "pass_definition": "max(|delta_pct|) <= epsilon*100 across all (L, seed) pairs",
+    "delta_definition": "(ppl_quant - ppl_dense) / ppl_dense",
+    "ppl_computation": "exp(mean(cross_entropy(logits[:-1], targets)))",
+    "ppl_cap": 20,
+    "ppl_note": "Logits are shifted: logit at position t predicts token at position t+1"
+  },
+
+  "quantization": {
+    "scheme": "g32_INT4_INT8_symmetric",
+    "group_size": 32,
+    "int4": {
+      "range": "[-8, 7]",
+      "scale": "per_group_absmax / 7.0",
+      "dequant": "q * scale"
+    },
+    "int8": {
+      "range": "[-128, 127]",
+      "scale": "tensor_absmax / 127.0",
+      "dequant": "q * scale"
+    },
+    "storage": "simulate_quantize_dequantize_in_fp16"
+  },
+
+  "cache_regions": {
+    "W_sink": 4,
+    "W_min": 1024,
+    "far_region": "[W_sink : cache_len - W_min]",
+    "near_region": "[cache_len - W_min :]",
+    "sink_region": "[0 : W_sink]",
+    "sink_precision": "fp16",
+    "near_precision": "fp16",
+    "far_precision": "per_layer_INT4_or_INT8"
+  },
+
+  "ranking": {
+    "method": "oracle_per_layer_ablation",
+    "procedure": "For each layer i: set layer i to INT4, all others INT8. Measure max |delta| across seeds. Rank layers by sensitivity descending.",
+    "oracle_L": 8192,
+    "oracle_seeds_coarse": 1,
+    "oracle_seeds_refined": 3
+  },
+
+  "kv_ratio": {
+    "definition": "compressed_kv_bytes / dense_fp16_kv_bytes per token per layer, averaged over D layers",
+    "dense_bytes_per_token_per_layer": "2 * n_kv_heads * head_dim * 2",
+    "int4_bytes_per_token_per_layer": "2 * n_kv_heads * head_dim * 0.5 + 2 * n_kv_heads * ceil(head_dim/g) * 2",
+    "int8_bytes_per_token_per_layer": "2 * n_kv_heads * head_dim * 1 + 2 * n_kv_heads * 2",
+    "formula": "(k * int8_bpt + (D - k) * int4_bpt) / (D * dense_bpt)"
+  },
+
+  "hardware": {
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "host": "rqv",
+    "dtype": "torch.float16",
+    "model_loading": "AutoModelForCausalLM.from_pretrained(name, dtype=torch.float16, trust_remote_code=True).to('cuda').eval()"
+  },
+
+  "software": {
+    "torch_version": "2.10.0+cu126",
+    "transformers_version": "5.2.0",
+    "cuda_version": "12.6",
+    "cache_api": "DynamicCache (past.layers[i].keys/values)"
+  },
+
+  "text_sampling": {
+    "method": "random_contiguous_passage",
+    "procedure": "rng = RandomState(seed); start = rng.randint(0, n_tokens - seq_len); passage = tokens[start : start + seq_len]",
+    "note": "Single contiguous passage per (L, seed). Different from v24/v26 multi-sample batching but simpler and reproducible."
+  }
+}
