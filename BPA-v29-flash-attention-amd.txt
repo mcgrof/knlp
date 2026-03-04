@@ -1,0 +1,252 @@
+BPA-v29-flash-attention-amd.txt
+Goal: Determine whether a fused INT4 KV FlashAttention-style Triton kernel provides real system benefits on AMD W7900 compared to the current INT4→FP16→FlashAttention path.
+
+This version is NOT a full BPA experiment sweep.
+
+It is a tightly controlled engineering experiment with the sole question:
+
+    Is a quantized FlashAttention Triton kernel worth implementing?
+
+We answer this with strict A/B testing.
+
+------------------------------------------------------------
+Environment
+------------------------------------------------------------
+
+Hardware:
+- AMD Radeon Pro W7900 (ROCm)
+
+System:
+- local prune system
+
+Framework:
+- PyTorch with ROCm backend
+- Triton available and working
+
+Repository:
+- knlp (already present)
+
+All experiments must be reproducible and logged.
+
+------------------------------------------------------------
+Baseline Path (Control)
+------------------------------------------------------------
+
+Current implementation pipeline:
+
+INT4 KV cache
+→ Triton unpack kernel (or equivalent tensor ops)
+→ FP16 KV tensors
+→ FlashAttention / SDPA
+
+Call this:
+
+    pipeline_A = "dequant_then_attention"
+
+------------------------------------------------------------
+Experimental Path
+------------------------------------------------------------
+
+New Triton kernel:
+
+INT4 KV
+→ unpack in registers
+→ apply scale
+→ attention math (QKᵀ + softmax + PV)
+→ output
+
+Call this:
+
+    pipeline_B = "quantized_flash_attention"
+
+Important constraints:
+
+- No intermediate FP16 KV tensors written to memory.
+- INT4 unpack must remain register-resident.
+- Scales applied inside the tile.
+
+------------------------------------------------------------
+Kernel Requirements
+------------------------------------------------------------
+
+The Triton kernel must:
+
+1) Accept packed INT4 KV tensors
+2) Accept scale tensors
+3) Perform unpack + scale in registers
+4) Execute attention tile math
+5) Return the attention output
+
+Kernel signature example:
+
+    quant_flash_attention(Q, K_int4, V_int4, scale_k, scale_v)
+
+Where:
+
+- Q: fp16
+- K_int4, V_int4: packed int4
+- scale_k, scale_v: per-group scale
+
+Tile strategy:
+
+- block_m = query tile
+- block_n = key tile
+- head_dim tile consistent with Triton FlashAttention examples
+
+Memory policy:
+
+- INT4 loaded once per tile
+- unpack to registers
+- never materialize full fp16 KV tensors
+
+------------------------------------------------------------
+Experiment Scope
+------------------------------------------------------------
+
+We DO NOT test multiple architectures.
+
+We test one representative transformer workload.
+
+Recommended setup:
+
+Model:
+- the same small model used earlier in BPA experiments
+
+Context lengths:
+
+L ∈ {2048, 4096, 8192, 16384}
+
+Batch sizes:
+
+B ∈ {1, 4, 8}
+
+Heads and head_dim remain constant.
+
+------------------------------------------------------------
+Metrics to Measure
+------------------------------------------------------------
+
+For BOTH pipelines (A and B):
+
+1) latency
+   - ms/token
+   - total decode time
+
+2) throughput
+   - tokens/sec
+
+3) memory usage
+   - peak GPU memory
+   - KV cache bytes
+   - attention workspace bytes
+
+4) GPU memory bandwidth estimate
+   - approximate read/write volume per token
+
+5) kernel profile
+   - attention kernel time %
+   - unpack kernel time %
+
+All metrics must be written to:
+
+    artifacts/v29_flash/kernel_bench.json
+
+------------------------------------------------------------
+Memory Accounting (Mandatory)
+------------------------------------------------------------
+
+We must verify that the fused kernel actually reduces memory traffic.
+
+Record:
+
+- KV bytes loaded per token
+- intermediate tensor allocations
+- shared memory usage
+
+Compute:
+
+    effective_kv_bytes_per_token
+
+for both pipelines.
+
+------------------------------------------------------------
+A/B Test Methodology
+------------------------------------------------------------
+
+For each configuration (L, B):
+
+1) warmup runs
+2) run pipeline_A
+3) run pipeline_B
+4) repeat 3 times
+5) compute mean and variance
+
+Do not mix runs.
+
+Store results in:
+
+    artifacts/v29_flash/bench_results.csv
+
+------------------------------------------------------------
+Decision Criteria
+------------------------------------------------------------
+
+The Triton kernel is considered "worth it" if ANY of the following hold:
+
+1) latency improvement ≥ 5%
+2) throughput improvement ≥ 10%
+3) KV memory traffic reduced ≥ 20%
+
+If none of these occur:
+
+Conclusion:
+
+    "Fused INT4 FlashAttention not worth implementing for this hardware regime."
+
+------------------------------------------------------------
+Output Reports
+------------------------------------------------------------
+
+Claude must generate:
+
+docs/bpa_v29_flash_kernel_report.md
+
+Sections required:
+
+1) Problem statement
+2) Kernel design overview
+3) Benchmark methodology
+4) Results table
+5) Memory accounting comparison
+6) Decision conclusion
+
+Include plots:
+
+- latency vs L
+- throughput vs batch
+- KV bytes/token
+
+------------------------------------------------------------
+Important Discipline Rules
+------------------------------------------------------------
+
+Do not modify model architecture.
+Do not modify KV precision policy.
+Do not introduce new quantization schemes.
+
+The only variable is:
+
+    attention kernel implementation
+
+------------------------------------------------------------
+Success Outcome
+------------------------------------------------------------
+
+A clear answer to the question:
+
+    Is a fused INT4 attention kernel worth building on AMD W7900?
+
+This is the only goal of BPA-v29-flash-attention-amd.
+
+When ALL tasks are complete, output:                                                                                                                                                          
+<promise>COMPLETE</promise>  
