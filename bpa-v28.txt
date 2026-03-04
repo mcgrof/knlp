@@ -1,0 +1,242 @@
+bpa-v28.txt — “Tighten the paper, add one real depth point, and remove the Python tax”
+
+Mission:
+Do exactly three things and do them well:
+1) lock benchmark discipline so the paper has one canonical protocol and zero version drift,
+2) extend the depth range with one additional meaningful model point beyond D=32,
+3) replace the current Python-heavy INT4 attention path with a compiled INT4 KV attention path or the strongest near-equivalent compiled path you can get working.
+
+This is not a broad research sweep. It is a paper-tightening and systems-hardening pass.
+
+You are running on the Verda cloud H100 machine reachable as:
+
+  ssh rqv
+
+Use SSH to rqv for all headline work. The knlp repo path is already known to you there. Do not silently substitute local runs for headline results.
+
+Primary claim we are trying to strengthen:
+- k* remains bounded by a small constant under mixed-precision KV quantization across tested models and depths.
+- Effective KV ratio sits near ~0.28–0.30 at ε=3%.
+- The main remaining weaknesses are benchmark drift, limited depth range, and lack of a compiled INT4 attention path.
+
+Non-negotiables:
+- All headline tables must come from a single canonical protocol.
+- All headline runs must be executed on rqv.
+- Use real KV byte accounting including metadata.
+- Keep PASS definition fixed: ε = relative PPL increase tolerance, with headline at ε=3%.
+- Do not invent new quantization methods in v28.
+
+Deliverables:
+- docs/bpa_v28_main_report.md
+- docs/bpa_v28_protocol.md
+- docs/bpa_v28_kernel_report.md
+- docs/bpa_v28_h100_appendix.md
+- artifacts/v28/canonical_protocol.json
+- artifacts/v28/canonical_results_table.csv
+- artifacts/v28/depth_extension_results.json
+- artifacts/v28/kernel_benchmarks.json
+- artifacts/v28/version_lock_manifest.json
+
+========================================================
+PHASE 0 — Freeze benchmark discipline (must happen first) (2–4h)
+========================================================
+Goal:
+Make the paper auditable and stop protocol drift.
+
+Tasks:
+0.1) Create one canonical protocol file:
+- model identifier
+- tokenizer version
+- prompt/eval set identifier
+- seed set
+- L set
+- ε definition
+- PASS definition
+- kv_ratio definition
+- ranking procedure definition
+- batch/microbatch settings
+- exact code commit hash
+
+Write this to:
+- artifacts/v28/canonical_protocol.json
+- docs/bpa_v28_protocol.md
+
+0.2) Reconcile prior headline discrepancies.
+Specifically check:
+- any Qwen-7B mismatch between earlier and later reruns
+- any differences due to text batch mismatch, prompt ordering, seed mismatch, or ranking mismatch
+- any differences due to amortized-scale backend vs standard g32 backend
+
+0.3) Re-run the current canonical headline rows under the frozen protocol on rqv:
+- one Qwen-family result
+- one Mistral-family result
+- one Llama-family result if already present/available
+
+Output a single canonical table with:
+{model, architecture, D, GPU, quant scheme, ranking method, ε, k*, kv_ratio, max_delta, PASS}
+
+Success criteria:
+- one protocol
+- one canonical table
+- any mismatches explicitly explained
+- no unresolved “this number came from a different batch” drift left in headline text
+
+========================================================
+PHASE 1 — Extend depth range with one meaningful new point (6–12h)
+========================================================
+Goal:
+Add one new model with D > 32 so the O(1) story is harder to dismiss.
+
+Model selection rules:
+- Prefer a model with D > 32 that fits on a single H100 80GB with reasonable setup.
+- Prefer long-context support.
+- Prefer a mainstream architecture family if available.
+- Weight quantization is allowed for model weights if necessary, but KV experiments must remain comparable.
+
+Priority order:
+1) a 12B–14B class long-context model with D > 32
+2) otherwise the best available 13B-ish model with D > 32
+3) otherwise the strongest available model point above current max depth
+
+Do NOT spend half the day trying five impossible checkpoints.
+Pick one viable model and commit.
+
+Procedure:
+1. Quick feasibility check on rqv:
+   - load model
+   - confirm usable L at least 8K and ideally 32K
+2. Oracle sensitivity sweep:
+   - 1-seed coarse sweep over all layers at L=8K
+   - refine top 8 layers with 3 seeds
+3. Determine k* at ε=3% for L={8K, 32K} if feasible, else L={8K, 16K} with limitation documented
+4. Run kv_ratio accounting for the best passing configuration
+
+Required outputs:
+- artifacts/v28/depth_extension_results.json
+- updated canonical_results_table.csv
+- one plot/table showing k* vs D including the new point
+
+Success criteria:
+- one additional D>32 point under the canonical protocol
+- k* determined under ε=3%
+- kv_ratio determined under the same setup
+
+If the new point fails for logistical reasons:
+- document the exact blocker
+- do not pad with weak proxy-only evidence
+
+========================================================
+PHASE 2 — INT4 attention path: remove the Python tax (8–16h)
+========================================================
+Goal:
+Replace the current Python-level dequant/attention overhead with a compiled path that is worthy of a systems paper.
+
+Important constraint:
+Do not try to write a heroic production kernel from bare metal if an existing compiled path can be adapted. Prefer the shortest path to a credible compiled implementation.
+
+Acceptable solutions in order of preference:
+A) integrate/adapt an existing CUDA/Triton compiled INT4 KV attention path
+B) build a Triton kernel that fuses INT4 unpack + scale apply + attention-relevant load/dequant on GPU
+C) if true fusion is too much, build a compiled near-fused path that removes Python loops and demonstrates the overhead reduction clearly
+
+Unacceptable outcome:
+- another Python wrapper with a different name
+
+Tasks:
+2.1) Benchmark the current path first:
+- measure per-token latency and kernel breakdown for:
+  - INT8 baseline
+  - current g32 mixed precision path
+  - current amortized-scale path
+- identify where the overhead lives
+
+2.2) Implement the compiled INT4 path for at least one headline backend:
+- standard g32 mixed precision is the minimum target
+- amortized g8 S8 is a stretch target if feasible
+
+2.3) Validate correctness:
+- compare numerical output against current reference implementation on a fixed small batch
+- ensure quality metrics do not regress materially relative to the reference path
+
+2.4) Benchmark on rqv under the canonical protocol:
+- same model(s)
+- same L
+- same seeds
+
+Outputs:
+- docs/bpa_v28_kernel_report.md
+- artifacts/v28/kernel_benchmarks.json
+
+Success criteria:
+Minimum acceptable:
+- compiled path reduces the current Python overhead clearly
+- compiled INT4 path is no slower than the current Python path
+Strong success:
+- compiled path gets within ~2% of INT8 baseline latency or better in at least one tested regime
+Stretch:
+- compiled path exposes an actual latency gain in a bandwidth-stressed regime
+
+If compiled path cannot be completed:
+- document blocker precisely
+- do not bluff
+
+========================================================
+PHASE 3 — Final paper-tight report (3–6h)
+========================================================
+Write docs/bpa_v28_main_report.md with this exact focus:
+
+1. What changed in v28
+- benchmark protocol frozen
+- one new depth point added
+- compiled INT4 path status
+
+2. Canonical result table
+- only canonical rows
+- no mixed-definition numbers
+
+3. Updated O(1) evidence
+- measured support over tested D range
+- no asymptotic overclaiming
+
+4. Systems credibility update
+- what overhead was removed
+- what remains missing for a stronger systems submission
+
+5. Clear publishability assessment
+- what is conference-ready now
+- what still needs one more experiment
+
+Tone:
+- declarative
+- skeptical
+- reviewer-friendly
+- zero vibes
+
+========================================================
+PHASE 4 — Submission-facing cleanup (1–2h)
+========================================================
+Create:
+- artifacts/v28/version_lock_manifest.json
+listing:
+  - canonical files
+  - exact source logs used for headline tables
+  - commit hashes
+  - model identifiers
+  - GPU host used
+
+The goal is simple:
+If someone asks “where did this number come from?” there must be one answer.
+
+========================================================
+STOP CONDITIONS
+========================================================
+- Do not launch unrelated model families just because they are there.
+- Do not change ε halfway through.
+- Do not use proxy ranking as headline for the new depth point.
+- Do not let kernel work sprawl into a week-long side quest.
+- Do not silently switch off rqv for headline runs.
+
+This version is about tightening the science and removing the obvious reviewer attacks: sloppy protocol, too-short depth range, and a Python-slow attention path.
+
+When ALL tasks are complete, output:                                                                                                                                                          
+<promise>COMPLETE</promise>    

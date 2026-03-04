@@ -1,0 +1,128 @@
+{
+  "version": "v28",
+  "description": "BPA v28 version lock manifest. Every headline number traces to one of these files.",
+  "git_base_commit": "8896900668e27a6eb0a31082626fcf4e272a9aa3",
+  "gpu_host": {
+    "hostname": "rqv",
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "gpu_memory_mb": 81559,
+    "driver_version": "580.126.09"
+  },
+  "software": {
+    "python": "3.12",
+    "torch": "2.10.0+cu126",
+    "cuda": "12.6",
+    "triton": "3.6.0",
+    "transformers": "5.2.0"
+  },
+  "models": {
+    "qwen25_7b": {
+      "hf_name": "Qwen/Qwen2.5-7B",
+      "architecture": "Qwen2",
+      "D": 28,
+      "n_kv_heads": 4,
+      "head_dim": 128
+    },
+    "mistral_7b": {
+      "hf_name": "mistralai/Mistral-7B-v0.1",
+      "architecture": "Mistral",
+      "D": 32,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    },
+    "llama2_7b": {
+      "hf_name": "NousResearch/Llama-2-7b-hf",
+      "architecture": "Llama",
+      "D": 32,
+      "n_kv_heads": 32,
+      "head_dim": 128
+    },
+    "qwen25_14b": {
+      "hf_name": "Qwen/Qwen2.5-14B",
+      "architecture": "Qwen2",
+      "D": 48,
+      "n_kv_heads": 8,
+      "head_dim": 128
+    }
+  },
+  "canonical_files": {
+    "protocol": {
+      "path": "artifacts/v28/canonical_protocol.json",
+      "md5": "e8dfa2660f6d5aac489098e50ad40a58",
+      "description": "Frozen evaluation protocol specification"
+    },
+    "results_table": {
+      "path": "artifacts/v28/canonical_results_table.csv",
+      "md5": "aa60b19e2330d5a573f28a41e8c37bca",
+      "description": "Canonical results table (4 models)"
+    },
+    "qwen25_7b_results": {
+      "path": "artifacts/v28/canonical_qwen25_7b.json",
+      "md5": "ffee05110965b7fa8dd82b3c4da80412",
+      "description": "Qwen2.5-7B canonical evaluation (k*=5)"
+    },
+    "mistral_7b_results": {
+      "path": "artifacts/v28/canonical_mistral_7b.json",
+      "md5": "4f5abbe20c7e0c73aadce529e2d607b4",
+      "description": "Mistral-7B canonical evaluation (k*=0)"
+    },
+    "llama2_7b_results": {
+      "path": "artifacts/v28/canonical_llama2_7b.json",
+      "md5": "0d4ce79ca0692f7a32c58ade03497755",
+      "description": "Llama-2-7b canonical evaluation (k*=0)"
+    },
+    "depth_extension_results": {
+      "path": "artifacts/v28/depth_extension_results.json",
+      "md5": "379fb59358d6619096185ddcbdb2265e",
+      "description": "Qwen2.5-14B (D=48) depth extension (k*=0)"
+    },
+    "qwen7b_extended_ksweep": {
+      "path": "artifacts/v28/qwen7b_extended_ksweep.json",
+      "md5": "a697bd7517fb4a2f696fcd1ffe4712a9",
+      "description": "Qwen2.5-7B extended k-sweep (k=5..10)"
+    },
+    "kernel_benchmarks": {
+      "path": "artifacts/v28/kernel_benchmarks.json",
+      "md5": "b65df045273427441f46548f97a34965",
+      "description": "Combined kernel benchmark results"
+    },
+    "benchmark_current_path": {
+      "path": "artifacts/v28/benchmark_current_path.json",
+      "md5": "40d332f76f8b7da8aaa637200bc09468",
+      "description": "Current Python path decode latency benchmark"
+    },
+    "triton_benchmark": {
+      "path": "artifacts/v28/triton_int4_benchmark.json",
+      "md5": "64e2bfd2edc77f99ce782418543de999",
+      "description": "Triton compiled INT4/INT8 quantization benchmark"
+    }
+  },
+  "documentation": {
+    "main_report": {
+      "path": "docs/bpa_v28_main_report.md",
+      "md5": "c85794a8f4135bb3519319c07df8d23b"
+    },
+    "protocol": {
+      "path": "docs/bpa_v28_protocol.md",
+      "md5": "59f6499c84c47ac5af989eba64bdaf26"
+    },
+    "kernel_report": {
+      "path": "docs/bpa_v28_kernel_report.md",
+      "md5": "9dd08c97353a3eeaa7f94fb7834dea92"
+    },
+    "h100_appendix": {
+      "path": "docs/bpa_v28_h100_appendix.md",
+      "md5": "fee3a563ea9ec8d2737ce282491750c7"
+    }
+  },
+  "scripts": {
+    "canonical_eval": "scripts/v28_canonical_eval.py",
+    "depth_extension": "scripts/v28_depth_extension.py",
+    "benchmark_current_path": "scripts/v28_benchmark_current_path.py",
+    "triton_int4_dequant": "scripts/v28_triton_int4_dequant.py"
+  },
+  "source_logs": {
+    "rqv_results_dir": "/mnt/tmpfs/knlp/results/v28/",
+    "note": "All headline results were produced on rqv under the frozen protocol. Results were copied to artifacts/v28/ for local archival."
+  }
+}
