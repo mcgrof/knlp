@@ -1,0 +1,60 @@
+# QK Router Base Configuration
+# All storage regimes inherit from this.
+
+model:
+  name: "Qwen/Qwen2.5-0.5B"
+  cache_dir: "/mnt/SFS-hugging/hub"
+  dtype: "bfloat16"
+  device: "cuda"
+
+workload:
+  prefix_length: 4096
+  max_new_tokens: 64
+  num_requests: 64
+  dataset: "wikitext-2-raw-v1"
+  dataset_split: "train"
+  seed: 42
+
+blocking:
+  block_size: 128
+  decode_tail_tokens: 64
+
+trace:
+  attention_mass_threshold: 0.01
+  top_k_blocks: 8
+  save_per_layer: true
+
+k_summary:
+  default_mode: "direct_centroid"
+  modes:
+    - "direct_centroid"
+    - "random_summary"
+    - "first_k_real"
+    - "sampled_real_geometry"
+
+router:
+  score_fn: "cosine"
+  aggregation: "mean_across_layers"
+
+scheduler:
+  alpha: 1.0
+  beta: 0.5
+  gamma: 0.3
+  delta: 0.2
+  prefetch_budget: 2
+  exploration_slots: 1
+  exploration_range: [9, 32]
+
+replay:
+  policies:
+    - "no_prefetch"
+    - "recency_only_top_m"
+    - "semantic_top_m"
+    - "utility_aware"
+    - "utility_aware_plus_exploration"
+
+paths:
+  run_root: "/mnt/tmpfs/knlp/results/qk_router_01"
+  tmpfs_store: "/mnt/tmpfs/qk_router_01"
+  sfs_store: "/mnt/SFS-hugging/hub/qk_router_01"
+  plot_root: "/mnt/tmpfs/knlp/plots/qk_router_01"

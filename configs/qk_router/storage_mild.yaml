@@ -1,0 +1,15 @@
+# Storage Mild: Most payload from fast tmpfs
+# Generous tmpfs budget, little SFS dependency
+
+storage:
+  tier1_budget_blocks: 28
+  tier2_budget_blocks: 4
+  tier1_read_latency_us: null  # filled from microbench
+  tier2_read_latency_us: null  # filled from microbench
+  tier1_bandwidth_mb_s: null   # filled from microbench
+  tier2_bandwidth_mb_s: null   # filled from microbench
+
+description: >
+  Mild storage regime. 28 of 32 prefix blocks on tmpfs,
+  only 4 on SFS. This tests whether semantic routing helps
+  even when most blocks are fast to fetch.
