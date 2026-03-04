@@ -1,0 +1,316 @@
+bpa-v27.txt — "Tighten the claim, reconcile the arc, and push toward the L²M empirical lower boundary on H100"
+
+Mission:
+Turn BPA v24–v26 into a tight, publication-grade result with one clear central claim, one clear mechanism story, and one clear path toward the L²M empirical lower boundary.
+
+Starting point:
+We already have a strong summary result:
+
+Core claim:
+- The number of transformer layers requiring high-precision KV protection under mixed-precision KV quantization is bounded by a small constant k*, rather than growing with depth D.
+- Observed k* = {2,2,2,0} across D = {24,28,28,32}, spanning 4 models, 2 architectures, and 2 GPUs.
+- This yields kv_ratio around 0.28–0.30 and ~3.5x concurrent sequence capacity at <3% PPL cost.
+- Qwen exhibits sink-dominance behavior.
+- Mistral exhibits uniform robustness with k*=0.
+
+What is missing:
+- A single reconciled, canonical benchmark table across versions.
+- A precise definition of the "L²M empirical lower boundary" that is careful and not overclaimed.
+- One more polished H100 pass focused on confirmatory rather than exploratory experiments.
+- A trimmed, paper-ready technical narrative.
+
+This version is not for broad exploration. It is for tightening, reconciling, confirming, and packaging.
+
+========================================================
+REMOTE EXECUTION DISCIPLINE (MANDATORY)
+========================================================
+You are not to run headline work locally.
+Use SSH to the H100 system named:
+
+  ssh rqv
+
+The knlp repo path is already known to you on that system.
+Do all work there.
+If a needed artifact only exists locally, copy it or mark it missing explicitly.
+Do not silently substitute local runs for rqv runs.
+
+All v27 outputs must live under:
+- docs/bpa_v27_*
+- artifacts/v27/*
+- results/v27/*
+
+========================================================
+PHASE 0 — Reconcile definitions before touching the GPU (1–2h)
+========================================================
+Goal:
+Eliminate version drift and make the story internally consistent.
+
+Tasks:
+0.1) Build a canonical definitions table:
+- L = context length
+- D = number of transformer layers
+- ε = relative PPL tolerance
+- PASS_ε = pass criterion
+- k = number of protected high-precision layers
+- k*(ε) = minimal k passing across the defined seed/L set
+- kv_ratio = true KV bytes ratio including metadata
+- distinguish:
+  - standard g32 mixed precision
+  - amortized-scale variants
+  - oracle ranking
+  - transferred ranking
+  - proxy ranking
+
+0.2) Create one canonical benchmark schema:
+For every model/versioned result, map it into:
+{model, architecture, D, n_kv_heads, head_dim, GPU, L_set, ε, quant scheme, ranking method, k, k*, kv_ratio, max_delta, PASS}
+
+0.3) Identify and reconcile any apparent contradictions across versions.
+Examples to check:
+- Different k* under different quant backends
+- "k-floor" under standard INT4 vs amortized-scale variants
+- "O(1)" claim should be based on canonical, comparable definitions
+Do not hide inconsistencies. Explain them.
+
+Deliverable:
+- artifacts/v27/canonical_definitions.md
+- artifacts/v27/canonical_results_table.csv
+- artifacts/v27/version_reconciliation.md
+
+========================================================
+PHASE 1 — Define the central publishable claim precisely (2–4h)
+========================================================
+Goal:
+Make the main result maximally sharp and defensible.
+
+Tasks:
+1.1) State the central claim in final form:
+- k* remains O(1) over the tested depth range under mixed-precision KV quantization at ε=3%.
+- This is supported empirically, not asymptotically proven.
+- Distinguish clearly between:
+  - empirical support over tested D
+  - theoretical condition under which O(1) would continue
+
+1.2) Define the "L²M empirical lower boundary" carefully:
+This is NOT the information-theoretic lower bound itself.
+Define it as:
+- the lowest empirically achieved effective KV ratio under a fixed quality tolerance ε
+- within the tested family of mixed-precision/tiering mechanisms
+- after accounting for structural metadata overhead
+- and under a defined model, context, and ranking procedure
+
+Then explain the connection:
+- If k* remains bounded while D increases, the protected fraction k*/D goes to zero
+- therefore effective KV ratio approaches the quantization/storage floor
+- this is an empirical route toward the L²M-style lower-bound story, not the lower bound itself
+
+1.3) Produce one formal "claim box" and one "limitations box" for the report.
+No fluff.
+No hype.
+No "this proves transformers are optimal."
+Be precise.
+
+Deliverable:
+- docs/bpa_v27_claim_and_scope.md
+
+========================================================
+PHASE 2 — Recompute the paper-grade tables and figures from source artifacts (2–6h)
+========================================================
+Goal:
+Do not trust narrative summaries alone. Regenerate the key plots/tables from source logs.
+
+Required outputs:
+2.1) Table: canonical k* results across models
+Columns:
+{model, architecture, D, GPU, quant scheme, ranking method, ε, k*, kv_ratio_at_k*, max_delta}
+
+2.2) Plot: k* vs D
+- separate lines/markers by architecture or quant scheme
+- include k*/D as a second plot
+
+2.3) Plot: oracle sensitivity distributions
+- sorted layer sensitivities for each model
+- show sink-dominant vs uniform-robustness contrast
+
+2.4) Plot: kv_ratio vs k for each model
+- highlight k*
+- indicate dense / INT8 / best mixed precision baselines
+
+2.5) Plot: empirical lower boundary vs D
+- use the canonical best kv_ratio at ε=3%
+- include extrapolation band only if clearly labeled as extrapolation
+
+2.6) Table: capacity/throughput impact
+- concurrent sequences or memory-limited capacity at best passing config
+- separate from latency claims
+
+Deliverables:
+- artifacts/v27/figures/*
+- artifacts/v27/tables/*
+- all plots/scripts reproducible from source logs
+
+========================================================
+PHASE 3 — Tight H100 confirmatory pass only (4–10h)
+========================================================
+Goal:
+Use the H100 to strengthen the paper, not start a new research program.
+
+Priority order:
+A) confirm the existing central claim on the H100 data path
+B) fill the most important missing architecture/model gap if feasible
+C) document the exact H100 limitations and next-step runs
+
+Required H100 tasks:
+3.1) Re-run the headline configuration(s) on rqv H100 from source code and checkpoints to confirm:
+- k*
+- kv_ratio
+- PASS_3%
+- capacity/throughput metrics
+Use the exact canonical definitions from Phase 0.
+
+3.2) If already available in v26, verify and regenerate:
+- Qwen-family headline result
+- Mistral-family headline result
+- one concise table showing two distinct mechanisms:
+  - sink dominance
+  - uniform robustness
+
+3.3) One targeted additional architecture/model ONLY if feasible and already accessible:
+Preferred:
+- Llama-3.1-8B or equivalent 8B long-context model
+If unavailable:
+- use best available 7B/8B long-context model
+Procedure:
+- quick 1-seed oracle per-layer screen at L=8K
+- refine top candidate layers with 3 seeds
+- determine k* at ε=3% on L={8K,32K}
+Do not let this turn into an endless sweep.
+
+Success criterion for this step:
+- either add a third architecture/model point
+- or, if blocked, document the blocker clearly and stop
+
+3.4) H100 performance section:
+Because fused INT4 attention kernels are still missing, do not overclaim latency wins.
+Measure and report:
+- ms/token
+- tokens/sec
+- concurrent sequence capacity
+- whether the run appears bandwidth-limited or still overhead-limited
+If no latency improvement, state why.
+
+Deliverables:
+- results/v27/h100_confirmatory/*
+- artifacts/v27/h100_validation.md
+- updated canonical tables with H100-confirmed rows
+
+========================================================
+PHASE 4 — Write the paper-tight technical narrative (4–8h)
+========================================================
+Goal:
+Turn the whole arc into something a reviewer can read without hating us.
+
+Write:
+- docs/bpa_v27_main_report.md
+- docs/bpa_v27_paper_outline.md
+- docs/bpa_v27_submission_readiness.md
+
+The main report must have this structure:
+
+1. Executive summary
+2. Problem statement
+   - KV cache is the long-context bottleneck
+   - mixed precision is promising, but the open question is how many layers need protection
+3. Definitions
+   - k, k*, ε, kv_ratio, empirical lower boundary
+4. Experimental arc
+   - brief, honest summary of the v8–v26 evolution
+   - especially how earlier assumptions were falsified
+5. Main empirical result
+   - O(1) support for k* across tested D
+6. Mechanistic interpretation
+   - sink dominance in Qwen
+   - uniform robustness in Mistral
+   - why both still imply bounded k*
+7. Practical implication
+   - kv_ratio ~0.28–0.30
+   - capacity gain ~3.5x
+   - what is and is not proven for latency
+8. Relation to L²M
+   - what the empirical lower boundary means
+   - what it does not mean
+9. Limitations
+   - no fused kernel
+   - D range still modest
+   - architecture coverage still incomplete without Llama/13B+
+10. H100 next-step plan
+   - exact experiments
+   - acceptance criteria
+   - why they matter
+
+Style requirements:
+- Declarative tone
+- Readable to a new person
+- No architecture worship
+- No vague hand-waving
+- Every major claim anchored to a figure/table/run artifact
+- Explicitly separate "measured," "derived," and "projected"
+
+========================================================
+PHASE 5 — Publishability assessment and next-step memo (1–2h)
+========================================================
+Goal:
+End with a brutally honest assessment.
+
+Write docs/bpa_v27_submission_readiness.md containing:
+- What is publishable now
+- What is strong enough for arXiv immediately
+- What is missing for a stronger conference submission
+- Which single additional experiment would add the most credibility
+
+Include a venue-fit section:
+- ACL/EMNLP findings
+- MLSys
+- workshop / arXiv-first path
+
+Be candid:
+- If the result is ready as an empirical study with systems implications, say so
+- If lack of fused kernel weakens MLSys angle, say so
+- If lack of Llama/13B weakens generalization, say so
+
+========================================================
+PHASE 6 — H100 next-step runbook (final section, concrete) (1–2h)
+========================================================
+Produce artifacts/v27/h100_next_runbook.md with:
+- host: rqv
+- repo path
+- exact commands to launch the next critical runs
+- expected runtime
+- expected outputs
+- acceptance criteria
+
+Priority runbook order:
+1) 7B/8B architecture confirmation with oracle ranking
+2) larger-L run to test D-scaling + capacity
+3) bandwidth-bound profiling if a fused or lower-overhead kernel becomes available
+
+Acceptance criteria:
+A) O(1) support strengthens if a third architecture/model also yields k* <= 2 or 3 at ε=3%
+B) empirical lower boundary strengthens if kv_ratio <= 0.28–0.30 on 7B/8B
+C) latency claim requires >=10% ms/token improvement in a bandwidth-bound regime
+D) absent C, report capacity/throughput only
+
+========================================================
+STOP CONDITIONS
+========================================================
+- Do not launch broad exploratory sweeps.
+- Do not spend time inventing new quant methods.
+- Do not mix narrative claims with unmatched definitions from earlier versions.
+- Do not oversell the L²M connection.
+- Do not claim asymptotic proof from finite-D evidence.
+- Use rqv via ssh for all H100 headline work.
+
+This version is about tightening the science, reconciling the record, and leaving behind a paper-shaped result instead of a pile of clever logs.
+
+When ALL tasks are complete, output:
+<promise>COMPLETE</promise>
