@@ -1,0 +1,18 @@
+{
+  "recommendation": "NO-GO",
+  "reason": "Semantic routing delta vs recency: -0.3%. Geometry delta: -19.4%. Insufficient signal to justify further work.",
+  "router_recall_at_8": {
+    "direct_centroid": 0.14499994178659567,
+    "random_summary": 0.3393961091710742,
+    "first_k_real": 0.26864778350587004,
+    "sampled_real_geometry": 0.3338861033879868
+  },
+  "replay_medium": {
+    "no_prefetch": 0.03009398428452003,
+    "recency_only_top_m": 0.016764165867665846,
+    "semantic_top_m": 0.02106886559570878,
+    "utility_aware": 0.021538979497874863,
+    "utility_aware_plus_exploration": 0.019975538719698795
+  },
+  "timestamp": "2026-03-04T00:42:17.893162"
+}

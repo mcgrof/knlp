@@ -1,0 +1,71 @@
+{
+  "tmpfs": {
+    "sequential": {
+      "path": "/mnt/tmpfs/qk_router_01",
+      "block_bytes": 1572864,
+      "num_reads": 256,
+      "sequential": true,
+      "p50_us": 210.3554998029722,
+      "p95_us": 228.64499896968482,
+      "p99_us": 235.6929500820115,
+      "mean_us": 213.10846100419667,
+      "std_us": 65.40728225069559,
+      "min_us": 143.6299990018597,
+      "max_us": 934.8809999210062,
+      "throughput_mb_s": 7380.57978828455
+    },
+    "random": {
+      "path": "/mnt/tmpfs/qk_router_01",
+      "block_bytes": 1572864,
+      "num_reads": 256,
+      "sequential": false,
+      "p50_us": 213.7199999197037,
+      "p95_us": 229.2450003551494,
+      "p99_us": 245.24199961888357,
+      "mean_us": 196.8616093463993,
+      "std_us": 37.28549480561061,
+      "min_us": 109.94000149366912,
+      "max_us": 318.290998620796,
+      "throughput_mb_s": 7989.693903357133
+    }
+  },
+  "sfs": {
+    "sequential": {
+      "path": "/mnt/SFS-hugging/hub/qk_router_01",
+      "block_bytes": 1572864,
+      "num_reads": 256,
+      "sequential": true,
+      "p50_us": 778.495999838924,
+      "p95_us": 8687.054500569502,
+      "p99_us": 9454.49500068207,
+      "mean_us": 2406.831183506597,
+      "std_us": 3120.735353499894,
+      "min_us": 717.5000009738142,
+      "max_us": 11987.490001047263,
+      "throughput_mb_s": 653.4999258686848
+    },
+    "random": {
+      "path": "/mnt/SFS-hugging/hub/qk_router_01",
+      "block_bytes": 1572864,
+      "num_reads": 256,
+      "sequential": false,
+      "p50_us": 795.6805002322653,
+      "p95_us": 8614.332250544976,
+      "p99_us": 11787.759900016652,
+      "mean_us": 2349.866957054303,
+      "std_us": 3606.1495074350382,
+      "min_us": 640.2899998647626,
+      "max_us": 31712.156000139657,
+      "throughput_mb_s": 669.3417239126073
+    }
+  },
+  "block_config": {
+    "num_kv_heads": 2,
+    "head_dim": 64,
+    "block_size": 128,
+    "dtype_bytes": 2,
+    "num_layers": 24,
+    "bytes_per_layer": 65536,
+    "total_block_bytes": 1572864
+  }
+}
