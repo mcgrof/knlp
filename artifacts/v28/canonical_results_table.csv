@@ -1,0 +1,5 @@
+model,architecture,D,n_kv_heads,head_dim,GPU,quant_scheme,ranking_method,epsilon,k_star,k_star_over_D,kv_ratio,max_delta_pct,PASS_3pct,L_set
+Qwen/Qwen2.5-7B,Qwen2,28,4,128,NVIDIA H100 80GB HBM3,g32_INT4_INT8_symmetric,oracle_per_layer_ablation,3%,5,0.1786,0.321707,2.69,Y,"[8192, 32768]"
+mistralai/Mistral-7B-v0.1,Mistral,32,8,128,NVIDIA H100 80GB HBM3,g32_INT4_INT8_symmetric,oracle_per_layer_ablation,3%,0,0.0,0.28125,0.22,Y,"[8192, 32768]"
+NousResearch/Llama-2-7b-hf,Llama,32,32,128,NVIDIA H100 80GB HBM3,g32_INT4_INT8_symmetric,oracle_per_layer_ablation,3%,0,0.0,0.28125,1.76,Y,"[1984, 3968]"
+Qwen/Qwen2.5-14B,Qwen2,48,8,128,NVIDIA H100 80GB HBM3,g32_INT4_INT8_symmetric,oracle_per_layer_ablation,3%,0,0.0,0.28125,1.11,Y,"[8192, 32768]"

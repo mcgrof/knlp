@@ -1,0 +1,697 @@
+{
+  "version": "v28",
+  "phase": "2_kernel_benchmarks",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "torch_version": "2.10.0+cu126",
+  "triton_version": "3.6.0",
+  "current_path_benchmark": {
+    "model": "mistralai/Mistral-7B-v0.1",
+    "D": 32,
+    "benchmarks": {
+      "L8192": {
+        "dense_fp16": {
+          "label": "dense_fp16",
+          "L": 8192,
+          "prefill_ms": 603.1,
+          "quant_ms": 0.0,
+          "decode_p50_ms": 19.623,
+          "decode_p95_ms": 19.855,
+          "decode_mean_ms": 19.637,
+          "tokens_per_sec": 50.9,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 791.44,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.61,
+              "decode_p95_ms": 19.835,
+              "decode_mean_ms": 19.629,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 508.65,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.638,
+              "decode_p95_ms": 19.939,
+              "decode_mean_ms": 19.646,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 509.2,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.622,
+              "decode_p95_ms": 19.792,
+              "decode_mean_ms": 19.635,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "int8_all": {
+          "label": "int8_all",
+          "L": 8192,
+          "prefill_ms": 508.92,
+          "quant_ms": 14.77,
+          "decode_p50_ms": 19.61,
+          "decode_p95_ms": 19.807,
+          "decode_mean_ms": 19.613,
+          "tokens_per_sec": 51.0,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 507.57,
+              "quant_ms": 34.01,
+              "decode_p50_ms": 19.608,
+              "decode_p95_ms": 19.749,
+              "decode_mean_ms": 19.61,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 509.44,
+              "quant_ms": 5.18,
+              "decode_p50_ms": 19.62,
+              "decode_p95_ms": 19.816,
+              "decode_mean_ms": 19.614,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 509.76,
+              "quant_ms": 5.11,
+              "decode_p50_ms": 19.603,
+              "decode_p95_ms": 19.856,
+              "decode_mean_ms": 19.616,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "int4_all": {
+          "label": "int4_all",
+          "L": 8192,
+          "prefill_ms": 508.18,
+          "quant_ms": 6.69,
+          "decode_p50_ms": 19.632,
+          "decode_p95_ms": 19.828,
+          "decode_mean_ms": 19.637,
+          "tokens_per_sec": 50.9,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 506.14,
+              "quant_ms": 6.73,
+              "decode_p50_ms": 19.669,
+              "decode_p95_ms": 19.879,
+              "decode_mean_ms": 19.69,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 508.4,
+              "quant_ms": 6.61,
+              "decode_p50_ms": 19.621,
+              "decode_p95_ms": 19.826,
+              "decode_mean_ms": 19.607,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 510.0,
+              "quant_ms": 6.72,
+              "decode_p50_ms": 19.606,
+              "decode_p95_ms": 19.779,
+              "decode_mean_ms": 19.615,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "mixed_k2_oracle": {
+          "label": "mixed_k2_oracle",
+          "L": 8192,
+          "prefill_ms": 508.3,
+          "quant_ms": 6.54,
+          "decode_p50_ms": 19.65,
+          "decode_p95_ms": 19.878,
+          "decode_mean_ms": 19.669,
+          "tokens_per_sec": 50.8,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 504.68,
+              "quant_ms": 6.49,
+              "decode_p50_ms": 19.672,
+              "decode_p95_ms": 19.917,
+              "decode_mean_ms": 19.683,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 511.09,
+              "quant_ms": 6.58,
+              "decode_p50_ms": 19.656,
+              "decode_p95_ms": 19.905,
+              "decode_mean_ms": 19.69,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 509.12,
+              "quant_ms": 6.54,
+              "decode_p50_ms": 19.623,
+              "decode_p95_ms": 19.811,
+              "decode_mean_ms": 19.634,
+              "n_tokens": 59
+            }
+          ]
+        }
+      },
+      "L32768": {
+        "dense_fp16": {
+          "label": "dense_fp16",
+          "L": 32768,
+          "prefill_ms": 5303.39,
+          "quant_ms": 0.0,
+          "decode_p50_ms": 19.644,
+          "decode_p95_ms": 19.884,
+          "decode_mean_ms": 19.668,
+          "tokens_per_sec": 50.8,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 5303.03,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.653,
+              "decode_p95_ms": 19.849,
+              "decode_mean_ms": 19.674,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 5298.53,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.622,
+              "decode_p95_ms": 19.814,
+              "decode_mean_ms": 19.634,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 5308.61,
+              "quant_ms": 0.0,
+              "decode_p50_ms": 19.656,
+              "decode_p95_ms": 19.99,
+              "decode_mean_ms": 19.696,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "int8_all": {
+          "label": "int8_all",
+          "L": 32768,
+          "prefill_ms": 5310.12,
+          "quant_ms": 5.42,
+          "decode_p50_ms": 19.64,
+          "decode_p95_ms": 19.873,
+          "decode_mean_ms": 19.662,
+          "tokens_per_sec": 50.9,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 5311.29,
+              "quant_ms": 5.13,
+              "decode_p50_ms": 19.615,
+              "decode_p95_ms": 19.838,
+              "decode_mean_ms": 19.631,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 5309.48,
+              "quant_ms": 5.54,
+              "decode_p50_ms": 19.614,
+              "decode_p95_ms": 19.829,
+              "decode_mean_ms": 19.634,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 5309.58,
+              "quant_ms": 5.58,
+              "decode_p50_ms": 19.691,
+              "decode_p95_ms": 19.951,
+              "decode_mean_ms": 19.721,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "int4_all": {
+          "label": "int4_all",
+          "L": 32768,
+          "prefill_ms": 5307.32,
+          "quant_ms": 6.93,
+          "decode_p50_ms": 19.698,
+          "decode_p95_ms": 19.954,
+          "decode_mean_ms": 19.72,
+          "tokens_per_sec": 50.7,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 5309.37,
+              "quant_ms": 6.72,
+              "decode_p50_ms": 19.655,
+              "decode_p95_ms": 19.868,
+              "decode_mean_ms": 19.681,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 5302.08,
+              "quant_ms": 6.74,
+              "decode_p50_ms": 19.627,
+              "decode_p95_ms": 19.93,
+              "decode_mean_ms": 19.656,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 5310.52,
+              "quant_ms": 7.32,
+              "decode_p50_ms": 19.811,
+              "decode_p95_ms": 20.065,
+              "decode_mean_ms": 19.824,
+              "n_tokens": 59
+            }
+          ]
+        },
+        "mixed_k2_oracle": {
+          "label": "mixed_k2_oracle",
+          "L": 32768,
+          "prefill_ms": 5311.1,
+          "quant_ms": 7.25,
+          "decode_p50_ms": 19.697,
+          "decode_p95_ms": 20.304,
+          "decode_mean_ms": 19.774,
+          "tokens_per_sec": 50.6,
+          "runs": [
+            {
+              "iteration": 0,
+              "prefill_ms": 5307.11,
+              "quant_ms": 7.27,
+              "decode_p50_ms": 19.729,
+              "decode_p95_ms": 19.987,
+              "decode_mean_ms": 19.748,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 1,
+              "prefill_ms": 5314.18,
+              "quant_ms": 7.34,
+              "decode_p50_ms": 19.701,
+              "decode_p95_ms": 20.157,
+              "decode_mean_ms": 19.769,
+              "n_tokens": 59
+            },
+            {
+              "iteration": 2,
+              "prefill_ms": 5312.02,
+              "quant_ms": 7.13,
+              "decode_p50_ms": 19.66,
+              "decode_p95_ms": 20.767,
+              "decode_mean_ms": 19.805,
+              "n_tokens": 59
+            }
+          ]
+        }
+      }
+    },
+    "analysis": {
+      "quant_overhead_ms_L8K": 6.69,
+      "quant_overhead_ms_L32K": 6.93,
+      "decode_overhead_pct_L8K": 0.05,
+      "decode_overhead_pct_L32K": 0.27
+    }
+  },
+  "triton_compiled_benchmark": {
+    "results": {
+      "Mistral-7B_L8192_allINT4": {
+        "python_p50_ms": 12.83,
+        "triton_p50_ms": 13.583,
+        "speedup": 0.94,
+        "python_times": [
+          12.943,
+          12.808,
+          12.831,
+          12.828,
+          12.828,
+          12.825,
+          12.827,
+          12.858,
+          12.871,
+          12.865
+        ],
+        "triton_times": [
+          13.628,
+          13.638,
+          13.589,
+          13.584,
+          13.581,
+          13.576,
+          13.585,
+          13.581,
+          13.553,
+          13.545
+        ]
+      },
+      "Mistral-7B_L8192_mixed_k2": {
+        "python_p50_ms": 12.587,
+        "triton_p50_ms": 13.213,
+        "speedup": 0.95,
+        "python_times": [
+          12.665,
+          12.583,
+          12.587,
+          12.59,
+          12.573,
+          12.589,
+          12.587,
+          12.57,
+          12.59,
+          12.577
+        ],
+        "triton_times": [
+          13.27,
+          13.199,
+          13.218,
+          13.207,
+          13.203,
+          13.218,
+          13.224,
+          13.195,
+          13.197,
+          13.219
+        ]
+      },
+      "Mistral-7B_L32768_allINT4": {
+        "python_p50_ms": 54.31,
+        "triton_p50_ms": 57.301,
+        "speedup": 0.95,
+        "python_times": [
+          54.351,
+          54.313,
+          54.339,
+          54.27,
+          54.343,
+          54.306,
+          54.267,
+          54.354,
+          54.302,
+          54.294
+        ],
+        "triton_times": [
+          57.34,
+          57.292,
+          57.304,
+          57.292,
+          57.299,
+          57.294,
+          57.312,
+          57.305,
+          57.324,
+          57.297
+        ]
+      },
+      "Mistral-7B_L32768_mixed_k2": {
+        "python_p50_ms": 53.251,
+        "triton_p50_ms": 55.361,
+        "speedup": 0.96,
+        "python_times": [
+          53.354,
+          53.231,
+          53.221,
+          53.275,
+          53.221,
+          53.238,
+          53.296,
+          53.2,
+          53.263,
+          53.274
+        ],
+        "triton_times": [
+          55.352,
+          55.377,
+          55.374,
+          55.362,
+          55.384,
+          55.359,
+          55.351,
+          55.395,
+          55.346,
+          55.347
+        ]
+      },
+      "Qwen2.5-7B_L8192_allINT4": {
+        "python_p50_ms": 6.331,
+        "triton_p50_ms": 6.259,
+        "speedup": 1.01,
+        "python_times": [
+          6.415,
+          6.323,
+          6.35,
+          6.316,
+          6.329,
+          6.329,
+          6.332,
+          6.332,
+          6.327,
+          6.335
+        ],
+        "triton_times": [
+          6.307,
+          6.258,
+          6.272,
+          6.253,
+          6.261,
+          6.251,
+          6.255,
+          6.255,
+          6.265,
+          6.261
+        ]
+      },
+      "Qwen2.5-7B_L8192_mixed_k2": {
+        "python_p50_ms": 6.227,
+        "triton_p50_ms": 6.252,
+        "speedup": 1.0,
+        "python_times": [
+          6.265,
+          6.224,
+          6.229,
+          6.229,
+          6.217,
+          6.219,
+          6.24,
+          6.218,
+          6.225,
+          6.24
+        ],
+        "triton_times": [
+          6.311,
+          6.249,
+          6.271,
+          6.237,
+          6.256,
+          6.254,
+          6.23,
+          6.273,
+          6.25,
+          6.227
+        ]
+      },
+      "Qwen2.5-7B_L32768_allINT4": {
+        "python_p50_ms": 24.663,
+        "triton_p50_ms": 25.46,
+        "speedup": 0.97,
+        "python_times": [
+          24.771,
+          24.669,
+          24.654,
+          24.648,
+          24.656,
+          24.678,
+          24.69,
+          24.673,
+          24.649,
+          24.65
+        ],
+        "triton_times": [
+          25.487,
+          25.464,
+          25.455,
+          25.45,
+          25.459,
+          25.441,
+          25.45,
+          25.466,
+          25.46,
+          25.465
+        ]
+      },
+      "Qwen2.5-7B_L32768_mixed_k2": {
+        "python_p50_ms": 24.142,
+        "triton_p50_ms": 24.525,
+        "speedup": 0.98,
+        "python_times": [
+          24.28,
+          24.157,
+          24.141,
+          24.121,
+          24.131,
+          24.122,
+          24.159,
+          24.145,
+          24.144,
+          24.125
+        ],
+        "triton_times": [
+          24.554,
+          24.497,
+          24.525,
+          24.525,
+          24.531,
+          24.509,
+          24.53,
+          24.505,
+          24.518,
+          24.534
+        ]
+      },
+      "Qwen2.5-14B_L8192_allINT4": {
+        "python_p50_ms": 19.265,
+        "triton_p50_ms": 20.324,
+        "speedup": 0.95,
+        "python_times": [
+          19.337,
+          19.244,
+          19.258,
+          19.241,
+          19.255,
+          19.272,
+          19.285,
+          19.273,
+          19.291,
+          19.249
+        ],
+        "triton_times": [
+          20.351,
+          20.33,
+          20.32,
+          20.326,
+          20.323,
+          20.324,
+          20.318,
+          20.32,
+          20.326,
+          20.306
+        ]
+      },
+      "Qwen2.5-14B_L8192_mixed_k2": {
+        "python_p50_ms": 19.014,
+        "triton_p50_ms": 19.978,
+        "speedup": 0.95,
+        "python_times": [
+          19.13,
+          19.014,
+          19.013,
+          19.01,
+          19.014,
+          19.011,
+          19.015,
+          19.013,
+          19.021,
+          19.315
+        ],
+        "triton_times": [
+          20.053,
+          19.987,
+          19.958,
+          19.991,
+          19.951,
+          19.971,
+          19.985,
+          19.96,
+          19.986,
+          19.968
+        ]
+      },
+      "Qwen2.5-14B_L32768_allINT4": {
+        "python_p50_ms": 81.456,
+        "triton_p50_ms": 85.952,
+        "speedup": 0.95,
+        "python_times": [
+          81.457,
+          81.483,
+          81.363,
+          81.516,
+          81.404,
+          81.484,
+          81.422,
+          81.463,
+          81.454,
+          81.425
+        ],
+        "triton_times": [
+          85.978,
+          85.915,
+          85.97,
+          85.919,
+          85.957,
+          85.946,
+          85.946,
+          85.974,
+          85.936,
+          85.973
+        ]
+      },
+      "Qwen2.5-14B_L32768_mixed_k2": {
+        "python_p50_ms": 80.395,
+        "triton_p50_ms": 84.011,
+        "speedup": 0.96,
+        "python_times": [
+          80.444,
+          80.386,
+          80.384,
+          80.404,
+          80.332,
+          80.428,
+          80.31,
+          80.441,
+          80.308,
+          80.453
+        ],
+        "triton_times": [
+          83.985,
+          83.978,
+          84.013,
+          84.025,
+          84.009,
+          83.99,
+          84.042,
+          83.98,
+          84.025,
+          84.022
+        ]
+      }
+    }
+  },
+  "findings": {
+    "decode_overhead_from_quantization": "Negligible (0.05-0.27% on H100)",
+    "quantization_one_shot_cost_ms": {
+      "L8192_int4": 6.69,
+      "L32768_int4": 6.93
+    },
+    "triton_vs_python": "Triton 0.94-1.01x (no improvement). PyTorch vectorized ops already compile to optimized CUDA.",
+    "bottleneck": "H100 is compute-bound for 7B decode. Quantization overhead is in the noise.",
+    "conclusion": "The Python quantize/dequantize path is NOT the bottleneck. PyTorch ops are already compiled CUDA kernels. A fused attention+dequant kernel would be needed for actual speedup, but is not justified given negligible overhead."
+  }
+}
