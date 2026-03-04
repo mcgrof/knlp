@@ -1,0 +1,15 @@
+# Storage Harsh: Small tmpfs budget, heavy SFS dependency
+# Tests whether signal survives a slow backend
+
+storage:
+  tier1_budget_blocks: 4
+  tier2_budget_blocks: 28
+  tier1_read_latency_us: null  # filled from microbench
+  tier2_read_latency_us: null  # filled from microbench
+  tier1_bandwidth_mb_s: null   # filled from microbench
+  tier2_bandwidth_mb_s: null   # filled from microbench
+
+description: >
+  Harsh storage regime. Only 4 blocks on tmpfs, 28 on SFS.
+  Tests whether semantic routing provides meaningful benefit
+  when most fetches are slow.
