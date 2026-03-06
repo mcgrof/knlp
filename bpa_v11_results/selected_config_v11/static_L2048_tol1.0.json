@@ -1,6 +1,0 @@
-{
-  "L": 2048,
-  "tol_pct": 1.0,
-  "method": "static_sparse",
-  "status": "FAIL"
-}

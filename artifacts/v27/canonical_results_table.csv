@@ -1,6 +1,0 @@
-model,architecture,D,n_kv_heads,head_dim,GPU,L_set,eps,quant_scheme,ranking_method,k,k_star_3pct,k_star_1pct,kv_ratio_at_kstar3,max_delta_at_kstar3,PASS_3pct,PASS_1pct,layer0_sensitivity,tail_frac_C1,source_version
-Qwen2.5-0.5B,Qwen2,24,2,64,W7900,"8192;32768",3%,g32_INT4/INT8,oracle,2,2,N/A,0.3008,2.85,TRUE,FALSE,23.48%,0.336,v24
-Qwen2.5-1.5B,Qwen2,28,2,128,W7900,"8192;32768",3%,g32_INT4/INT8,oracle,2,2,3,0.2974,1.05,TRUE,TRUE,824.55%,0.009,v24
-Qwen2.5-7B,Qwen2,28,4,128,H100,"8192;32768",3%,g32_INT4/INT8,oracle,2,2,3,0.2974,1.05,TRUE,TRUE,140154.49%,0.0001,v26
-Mistral-7B-v0.1,Mistral,32,8,128,H100,"8192;32768",3%,g32_INT4/INT8,oracle,0,0,0,0.2812,0.48,TRUE,TRUE,0.41%,0.140,v26
-Llama-2-7b,Llama,32,32,128,H100,"2016;4032",3%,g32_INT4/INT8,oracle,0,0,2,0.2812,1.01,TRUE,FALSE,0.76%,0.406,v27
