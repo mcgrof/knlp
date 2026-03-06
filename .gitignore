@@ -46,6 +46,19 @@ resnet18/data/
 resnet50/*.png
 resnet50/data/
 
+# AI task instruction / conversation files
+bp-*.txt
+bpa-*.txt
+bpa_*.txt
+BPA-*.txt
+adam-lr-*.txt
+rgsa-*.txt
+rgsa.txt
+QK-router-*.txt
+chatgpt-*.txt
+claude-*.txt
+gnn-ra.txt
+
 # Temporary and backup files
 *_backup.py
 *.tmp
