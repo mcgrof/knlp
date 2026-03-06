@@ -24,6 +24,23 @@ Applying Linux kernel development methodologies to machine learning research for
 | **Reciprocal Attention** | Learned Q@K.T ↔ K@Q.T alternation. **5% better PPL**, **+2 HellaSwag** | [docs](docs/ra.md) | [demo](https://mcgrof.github.io/knlp/ra_visualization.html) |
 | **Adam State-Based Pruning** | bitter7 achieves **15.6% better PPL** than magnitude baseline (37.28 vs 44.15) | [docs](docs/adamwprune_variants.md) | [demo](https://mcgrof.github.io/knlp/tiering_visualization.html) |
 | **Page-Aware GNN Training** | **4× better I/O locality** (6.8× vs 28.5× RA) with **zero quality loss** on DGraphFin | [docs](gnn/docs/gnn-fraud.md) | [demo](https://mcgrof.github.io/knlp/gnn_fraud_visualization.html) |
+| **KV Bandwidth Scaling** | Decode governed by memory bandwidth across 3 GPU architectures (7.6× BW range). **384K context** on B200 | [docs](docs/bpa.md) | [demo](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) |
+
+## Research Tracks
+
+### Bandwidth-Proportional Attention (BPA)
+
+knlp explores bandwidth-aware transformer inference systems including
+KV cache scaling, compression, and selective memory access. Measurements
+across AMD RDNA 3, NVIDIA Hopper, and NVIDIA Blackwell confirm that
+autoregressive decode performance is governed by memory bandwidth, not
+compute capacity or model architecture. BPA investigates architectures
+where KV memory access per token scales with available bandwidth rather
+than full context length.
+
+See [docs/bpa.md](docs/bpa.md) for details, and the
+[KV Bandwidth visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
+for interactive experiment results.
 
 ## Development Philosophy
 
