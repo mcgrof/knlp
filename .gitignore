@@ -16,7 +16,7 @@ results/
 *.pth
 *.pt
 *.patch
-data/
+/data
 
 # Large checkpoint directories
 checkpoints_ra_mla/
@@ -39,6 +39,7 @@ model_*_metrics.json
 # Run 'make update-graphs' to regenerate from test results
 
 # Model-specific data directories
+gpt2/data/
 lenet5/data/
 lenet5/*.png
 resnet18/*.png
@@ -157,7 +158,7 @@ tsocial
 *.html
 !docs/*.html
 !docs/**/*.html
-kv_*.json
+/kv_*.json
 kv_*.png
 mla_*.json
 per_layer_*.json
