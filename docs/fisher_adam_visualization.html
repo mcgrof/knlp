@@ -1013,6 +1013,53 @@
               )}
             </div>
 
+            {/* Unified FIM Applications */}
+            <div className="mt-8 pt-6 border-t border-gray-700">
+              <h3 className="text-lg font-bold text-gray-200 mb-2">One Signal, Five Applications</h3>
+              <p className="text-sm text-gray-400 mb-4">
+                FIM diagonal (E[g&sup2;] &asymp; Adam exp_avg_sq) guides every optimization in knlp.
+                The same signal selects parameters for pruning, tensors for precision,
+                layers for compression, layers for attention enhancement, and graph nodes for fraud detection.
+              </p>
+              <div className="grid gap-2 text-sm mb-6">
+                <a href="fisher_adam_visualization.html" className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors">
+                  <div>
+                    <span className="text-green-400 font-semibold">bitter7 Pruning</span>
+                    <span className="text-gray-500 ml-2">|w| &times; v&sup1;&frasl;&sub4;</span>
+                  </div>
+                  <span className="text-green-400">15.6% better PPL</span>
+                </a>
+                <a href="fim_quantization_visualization.html" className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors">
+                  <div>
+                    <span className="text-purple-400 font-semibold">FIM-Guided Quantization</span>
+                    <span className="text-gray-500 ml-2">&Sigma;g&sup2; per tensor</span>
+                  </div>
+                  <span className="text-green-400">1.26% better PPL</span>
+                </a>
+                <a href="kvsplice_visualization.html" className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors">
+                  <div>
+                    <span className="text-orange-400 font-semibold">KVSplice Layers</span>
+                    <span className="text-gray-500 ml-2">FIM trace per layer</span>
+                  </div>
+                  <span className="text-green-400">11% better PPL</span>
+                </a>
+                <a href="ra_visualization.html" className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors">
+                  <div>
+                    <span className="text-cyan-400 font-semibold">Reciprocal Attention</span>
+                    <span className="text-gray-500 ml-2">FIM trace selects layers</span>
+                  </div>
+                  <span className="text-green-400">82% better PPL</span>
+                </a>
+                <a href="gnn_fraud_visualization.html" className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors border border-rose-500/30">
+                  <div>
+                    <span className="text-rose-400 font-semibold">GNN Fraud Detection</span>
+                    <span className="text-gray-500 ml-2">FIM trace selects nodes</span>
+                  </div>
+                  <span className="text-green-400">+7% F1</span>
+                </a>
+              </div>
+            </div>
+
             {/* Footer with related links */}
             <div className="mt-8 pt-6 border-t border-gray-700">
               <h3 className="text-sm font-semibold text-gray-400 mb-3">Related Documentation</h3>
