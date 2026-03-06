@@ -3,11 +3,7 @@
 **Rapid prototyping and automation for open source ML R&D**
 
 <p align="center">
-  <a href="https://xkcd.com/974/">
-    <img src="https://imgs.xkcd.com/comics/the_general_problem.png" alt="XKCD: The General Problem" width="400">
-  </a>
-  <br>
-  <em>Our approach to ML automation and the general problem</em>
+  <img src="images/knlp-logo.png" alt="knlp logo" width="400">
 </p>
 
 Applying Linux kernel development methodologies to machine learning research for rapid iteration and reproducible experimentation. Kconfig-driven configuration, defconfig presets, Makefile automation, and rigorous test matrices enable fast prototyping of transformer architectures, pruning algorithms, and optimization techniques while maintaining reproducibility and collaboration at scale.
