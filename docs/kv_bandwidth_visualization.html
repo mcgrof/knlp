@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KV Bandwidth Scaling: Memory Bandwidth Governs Decode Performance</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      border-color: #f59e0b;
+      box-shadow: 0 4px 20px -5px rgba(245, 158, 11, 0.2);
+    }
+    .tab-active {
+      background: #f59e0b;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    .tab-inactive {
+      background: #1e293b;
+      color: #94a3b8;
+      border: 1px solid #334155;
+    }
+    .tab-inactive:hover {
+      border-color: #f59e0b;
+      color: #f59e0b;
+    }
+    .stat-card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const {
+      LineChart, Line, BarChart, Bar, ScatterChart, Scatter,
+      XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+      ResponsiveContainer, ReferenceLine, Cell
+    } = Recharts;
+
+    const COLORS = {
+      b200: '#f59e0b',
+      h100: '#3b82f6',
+      w7900: '#10b981',
+      accent: '#ef4444',
+      gray: '#64748b'
+    };
+
+    // Embedded data from B200 campaign measurements
+    const DATA = {
+      bandwidth_scaling: [
+        {batch: 1, tokens_per_sec: 123.5, latency_ms: 8.094, kv_bw: 14.6},
+        {batch: 2, tokens_per_sec: 240.8, latency_ms: 8.306, kv_bw: 28.5},
+        {batch: 4, tokens_per_sec: 472.8, latency_ms: 8.461, kv_bw: 56.0},
+        {batch: 8, tokens_per_sec: 894.8, latency_ms: 8.941, kv_bw: 105.9},
+        {batch: 16, tokens_per_sec: 1698.6, latency_ms: 9.42, kv_bw: 201.0},
+        {batch: 32, tokens_per_sec: 3098.6, latency_ms: 10.327, kv_bw: 366.7},
+        {batch: 64, tokens_per_sec: 4666.0, latency_ms: 13.716, kv_bw: 552.3},
+        {batch: 128, tokens_per_sec: 6633.3, latency_ms: 19.296, kv_bw: 785.1}
+      ],
+      context_scaling: {
+        b1: [
+          {context: '1K', ctx_num: 1024, tps: 122.8, latency: 8.142, bw: 7.2},
+          {context: '2K', ctx_num: 2048, tps: 123.5, latency: 8.096, bw: 14.5},
+          {context: '4K', ctx_num: 4096, tps: 118.5, latency: 8.439, bw: 27.8},
+          {context: '8K', ctx_num: 8192, tps: 111.0, latency: 9.012, bw: 52.1},
+          {context: '16K', ctx_num: 16384, tps: 107.0, latency: 9.348, bw: 100.5},
+          {context: '32K', ctx_num: 32768, tps: 102.5, latency: 9.759, bw: 192.5},
+          {context: '64K', ctx_num: 65536, tps: 92.2, latency: 10.85, bw: 346.4}
+        ],
+        b8: [
+          {context: '1K', ctx_num: 1024, tps: 920.9, latency: 8.687, bw: 54.1},
+          {context: '2K', ctx_num: 2048, tps: 890.1, latency: 8.988, bw: 104.5},
+          {context: '4K', ctx_num: 4096, tps: 837.4, latency: 9.554, bw: 196.7},
+          {context: '8K', ctx_num: 8192, tps: 773.3, latency: 10.345, bw: 363.3},
+          {context: '16K', ctx_num: 16384, tps: 650.9, latency: 12.29, bw: 611.6},
+          {context: '32K', ctx_num: 32768, tps: 496.0, latency: 16.128, bw: 932.1}
+        ],
+        b32: [
+          {context: '1K', ctx_num: 1024, tps: 3296.8, latency: 9.707, bw: 193.6},
+          {context: '2K', ctx_num: 2048, tps: 2985.0, latency: 10.72, bw: 350.6},
+          {context: '4K', ctx_num: 4096, tps: 2603.9, latency: 12.289, bw: 611.6},
+          {context: '8K', ctx_num: 8192, tps: 1975.4, latency: 16.199, bw: 928.0}
+        ]
+      },
+      gpu_comparison: [
+        {gpu: 'W7900', memory: 48, peak_bw: 864, measured_bw: 54, tps_b1: 28.5, tps_b8: 210, max_ctx: 32, color: COLORS.w7900},
+        {gpu: 'H100', memory: 80, peak_bw: 3350, measured_bw: 850, tps_b1: 85, tps_b8: 620, max_ctx: 32, color: COLORS.h100},
+        {gpu: 'B200', memory: 178, peak_bw: 6550, measured_bw: 932, tps_b1: 123.5, tps_b8: 894.8, max_ctx: 384, color: COLORS.b200}
+      ],
+      extreme_context: [
+        {context_k: 64, latency: 10.97, tps: 91.13, memory: 36.7},
+        {context_k: 128, latency: 13.42, tps: 74.5, memory: 59.2},
+        {context_k: 192, latency: 14.56, tps: 68.66, memory: 81.7},
+        {context_k: 256, latency: 17.51, tps: 57.09, memory: 104.2},
+        {context_k: 384, latency: 20.45, tps: 48.89, memory: 149.2}
+      ],
+      quantization: [
+        {pipeline: 'FP16', ppl: 6.80, color: '#3b82f6'},
+        {pipeline: 'INT4 g=4', ppl: 82.9, color: '#f59e0b'},
+        {pipeline: 'INT4 g=8', ppl: 310.0, color: '#ef4444'},
+        {pipeline: 'INT4 g=32', ppl: 592.3, color: '#dc2626'}
+      ]
+    };
+
+    function StatCard({label, value, unit, sub}) {
+      return (
+        <div className="stat-card rounded-lg p-4 text-center">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold text-white">{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+
+    function CustomTooltip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          <div className="text-gray-400 mb-1">{label}</div>
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function BatchScalingChart() {
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-1">Decode Throughput vs Batch Size</h3>
+          <p className="text-gray-500 text-sm mb-4">NVIDIA B200, Qwen2.5-7B, T=2048. Hill saturation model: B_half=27, Smax=4699 tok/s</p>
+          <ResponsiveContainer width="100%" height={350}>
+            <LineChart data={DATA.bandwidth_scaling}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis dataKey="batch" stroke="#94a3b8" label={{value: 'Batch Size', position: 'bottom', fill: '#94a3b8'}} />
+              <YAxis stroke="#94a3b8" label={{value: 'Tokens/sec', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+              <Tooltip content={CustomTooltip} />
+              <Legend />
+              <Line type="monotone" dataKey="tokens_per_sec" name="Throughput (tok/s)" stroke={COLORS.b200} strokeWidth={3} dot={{r: 5, fill: COLORS.b200}} />
+              <Line type="monotone" dataKey="kv_bw" name="KV Bandwidth (GB/s)" stroke={COLORS.h100} strokeWidth={2} dot={{r: 4, fill: COLORS.h100}} yAxisId={0} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function ContextScalingChart() {
+      const [selectedBatch, setSelectedBatch] = useState('b8');
+      const batchOptions = {b1: 'B=1', b8: 'B=8', b32: 'B=32'};
+      const data = DATA.context_scaling[selectedBatch];
+
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <div className="flex justify-between items-center mb-1">
+            <h3 className="text-lg font-semibold">Latency vs Context Length</h3>
+            <div className="flex gap-2">
+              {Object.entries(batchOptions).map(([k, v]) => (
+                <button key={k}
+                  className={`px-3 py-1 rounded text-xs ${selectedBatch === k ? 'tab-active' : 'tab-inactive'}`}
+                  onClick={() => setSelectedBatch(k)}>{v}</button>
+              ))}
+            </div>
+          </div>
+          <p className="text-gray-500 text-sm mb-4">NVIDIA B200, Qwen2.5-7B. Latency scales linearly with context length.</p>
+          <ResponsiveContainer width="100%" height={350}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis dataKey="context" stroke="#94a3b8" label={{value: 'Context Length', position: 'bottom', fill: '#94a3b8'}} />
+              <YAxis stroke="#94a3b8" label={{value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+              <Tooltip content={CustomTooltip} />
+              <Legend />
+              <Line type="monotone" dataKey="latency" name="Decode Latency (ms)" stroke={COLORS.accent} strokeWidth={3} dot={{r: 5, fill: COLORS.accent}} />
+              <Line type="monotone" dataKey="bw" name="KV Bandwidth (GB/s)" stroke={COLORS.b200} strokeWidth={2} dot={{r: 4, fill: COLORS.b200}} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function GPUComparisonChart() {
+      const [metric, setMetric] = useState('throughput');
+
+      const throughputData = DATA.gpu_comparison.map(g => ({
+        gpu: g.gpu, 'B=1': g.tps_b1, 'B=8': g.tps_b8
+      }));
+
+      const bwData = DATA.gpu_comparison.map(g => ({
+        gpu: g.gpu, 'Peak': g.peak_bw, 'Measured': g.measured_bw
+      }));
+
+      const ctxData = DATA.gpu_comparison.map(g => ({
+        gpu: g.gpu, 'Max Context (K)': g.max_ctx
+      }));
+
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <div className="flex justify-between items-center mb-1">
+            <h3 className="text-lg font-semibold">Cross-GPU Comparison</h3>
+            <div className="flex gap-2">
+              {[['throughput', 'Throughput'], ['bandwidth', 'Bandwidth'], ['context', 'Max Context']].map(([k, v]) => (
+                <button key={k}
+                  className={`px-3 py-1 rounded text-xs ${metric === k ? 'tab-active' : 'tab-inactive'}`}
+                  onClick={() => setMetric(k)}>{v}</button>
+              ))}
+            </div>
+          </div>
+          <p className="text-gray-500 text-sm mb-4">
+            {metric === 'throughput' && 'Decode throughput scales with memory bandwidth, not compute capacity.'}
+            {metric === 'bandwidth' && 'Decode utilizes a fraction of peak bandwidth. All GPUs are memory-bound.'}
+            {metric === 'context' && 'B200 enables 12x longer context than H100/W7900 due to 178 GB HBM.'}
+          </p>
+          <ResponsiveContainer width="100%" height={350}>
+            {metric === 'throughput' ? (
+              <BarChart data={throughputData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="gpu" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" label={{value: 'Tokens/sec', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+                <Tooltip content={CustomTooltip} />
+                <Legend />
+                <Bar dataKey="B=1" fill={COLORS.h100} radius={[4,4,0,0]} />
+                <Bar dataKey="B=8" fill={COLORS.b200} radius={[4,4,0,0]} />
+              </BarChart>
+            ) : metric === 'bandwidth' ? (
+              <BarChart data={bwData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="gpu" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" label={{value: 'GB/s', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+                <Tooltip content={CustomTooltip} />
+                <Legend />
+                <Bar dataKey="Peak" fill="#334155" radius={[4,4,0,0]} />
+                <Bar dataKey="Measured" fill={COLORS.accent} radius={[4,4,0,0]} />
+              </BarChart>
+            ) : (
+              <BarChart data={ctxData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="gpu" stroke="#94a3b8" />
+                <YAxis stroke="#94a3b8" label={{value: 'Max Context (K tokens)', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+                <Tooltip content={CustomTooltip} />
+                <Bar dataKey="Max Context (K)" radius={[4,4,0,0]}>
+                  {ctxData.map((d, i) => (
+                    <Cell key={i} fill={DATA.gpu_comparison[i].color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function ExtremeContextChart() {
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-1">Extreme Context on B200 (B=1)</h3>
+          <p className="text-gray-500 text-sm mb-4">178 GB HBM enables 384K tokens. Memory scales at ~0.38 GB per 1K tokens of KV cache.</p>
+          <ResponsiveContainer width="100%" height={350}>
+            <LineChart data={DATA.extreme_context}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis dataKey="context_k" stroke="#94a3b8" label={{value: 'Context Length (K tokens)', position: 'bottom', fill: '#94a3b8'}} />
+              <YAxis yAxisId="left" stroke="#94a3b8" label={{value: 'GPU Memory (GB)', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
+              <YAxis yAxisId="right" orientation="right" stroke="#94a3b8" label={{value: 'Tokens/sec', angle: 90, position: 'insideRight', fill: '#94a3b8'}} />
+              <Tooltip content={CustomTooltip} />
+              <Legend />
+              <ReferenceLine yAxisId="left" y={178} stroke="#ef4444" strokeDasharray="5 5" label={{value: '178 GB HBM limit', fill: '#ef4444', position: 'right'}} />
+              <Line yAxisId="left" type="monotone" dataKey="memory" name="GPU Memory (GB)" stroke={COLORS.b200} strokeWidth={3} dot={{r: 5, fill: COLORS.b200}} />
+              <Line yAxisId="right" type="monotone" dataKey="tps" name="Throughput (tok/s)" stroke={COLORS.w7900} strokeWidth={2} dot={{r: 4, fill: COLORS.w7900}} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function QuantizationChart() {
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <h3 className="text-lg font-semibold mb-1">Quantization Effect on Perplexity</h3>
+          <p className="text-gray-500 text-sm mb-4">Naive INT4 across all layers is catastrophic. Selective tiering is essential. Qwen2.5-7B on B200.</p>
+          <ResponsiveContainer width="100%" height={350}>
+            <BarChart data={DATA.quantization} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <XAxis type="number" stroke="#94a3b8" label={{value: 'Perplexity (log scale)', position: 'bottom', fill: '#94a3b8'}} scale="log" domain={[1, 1000]} />
+              <YAxis type="category" dataKey="pipeline" stroke="#94a3b8" width={100} />
+              <Tooltip content={CustomTooltip} />
+              <Bar dataKey="ppl" name="Perplexity" radius={[0,4,4,0]}>
+                {DATA.quantization.map((d, i) => (
+                  <Cell key={i} fill={d.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function App() {
+      const [tab, setTab] = useState(0);
+      const tabs = ['Batch Scaling', 'Context Scaling', 'GPU Comparison', 'Extreme Context', 'Quantization'];
+
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <header className="text-center mb-12">
+            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <h1 className="text-4xl font-bold mb-3">
+              <span className="gradient-text">KV Bandwidth Scaling</span>
+            </h1>
+            <p className="text-gray-400 max-w-2xl mx-auto">
+              Memory bandwidth governs transformer decode performance across three accelerator architectures.
+              These measurements motivate bandwidth-proportional attention (BPA) as a research direction.
+            </p>
+          </header>
+
+          {/* Key stats */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+            <StatCard label="GPUs Tested" value="3" unit="" sub="W7900, H100, B200" />
+            <StatCard label="BW Range" value="7.6" unit="x" sub="864 - 6550 GB/s" />
+            <StatCard label="Max Context" value="384K" unit="tok" sub="B200 at B=1" />
+            <StatCard label="Peak Speedup" value="4.8" unit="x" sub="Fused INT4" />
+            <StatCard label="Models Tested" value="14" unit="" sub="0.5B - 24B" />
+          </div>
+
+          {/* Tab navigation */}
+          <div className="flex flex-wrap gap-2 mb-6 justify-center">
+            {tabs.map((t, i) => (
+              <button key={i}
+                className={`px-4 py-2 rounded-lg text-sm ${tab === i ? 'tab-active' : 'tab-inactive'}`}
+                onClick={() => setTab(i)}>{t}</button>
+            ))}
+          </div>
+
+          {/* Chart area */}
+          {tab === 0 && <BatchScalingChart />}
+          {tab === 1 && <ContextScalingChart />}
+          {tab === 2 && <GPUComparisonChart />}
+          {tab === 3 && <ExtremeContextChart />}
+          {tab === 4 && <QuantizationChart />}
+
+          {/* Insight cards */}
+          <div className="grid md:grid-cols-3 gap-4 mt-8">
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-amber-400 mb-2">Memory-Bound Regime</h4>
+              <p className="text-gray-400 text-sm">
+                All decode configurations operate well below the GPU ridge point.
+                Even B200 achieves only 14% of peak bandwidth during decode.
+                Performance is governed by KV memory traffic, not compute.
+              </p>
+            </div>
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-blue-400 mb-2">Hill Saturation Law</h4>
+              <p className="text-gray-400 text-sm">
+                Throughput follows S(B) = Smax * B^gamma / (B_half^gamma + B^gamma).
+                Architecture-independent: batch size alone explains 80% of variance
+                across 14 model architectures on H100.
+              </p>
+            </div>
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-red-400 mb-2">Fusion is Everything</h4>
+              <p className="text-gray-400 text-sm">
+                Non-fused INT4 (dequant to buffer then attend) is 2x slower than FP16.
+                Fused INT4 (dequant inside attention loop) achieves 2.7-4.8x speedup.
+                The benefit comes from eliminating intermediate memory writes.
+              </p>
+            </div>
+          </div>
+
+          {/* BPA motivation */}
+          <div className="card rounded-xl p-6 mt-8 text-center">
+            <h3 className="text-lg font-semibold mb-2">Motivation for Bandwidth-Proportional Attention</h3>
+            <p className="text-gray-400 text-sm max-w-3xl mx-auto mb-4">
+              These measurements show that decode latency scales linearly with KV cache size
+              and that compression alone cannot eliminate the bandwidth bottleneck.
+              BPA explores architectures where the number of KV entries accessed per token
+              is constrained by available memory bandwidth rather than full context length.
+            </p>
+            <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md"
+               className="text-amber-400 hover:text-amber-300 text-sm">
+              Read the BPA research documentation &rarr;
+            </a>
+          </div>
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
+            <p className="mb-2">
+              <a href="index.html" className="hover:text-gray-400">Home</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://github.com/mcgrof/knlp" className="hover:text-gray-400">GitHub</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" className="hover:text-gray-400">BPA Docs</a>
+            </p>
+            <p>Data: Qwen2.5-7B on AMD W7900, NVIDIA H100, NVIDIA B200</p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
