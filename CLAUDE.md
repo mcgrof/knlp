@@ -194,36 +194,108 @@ When optimizing PyTorch training for AMD GPUs:
 - Check for linting/formatting issues
 - Ensure no syntax errors
 
-## Experiment Workflow
+## R&D Phases and Workflow
 
-The standard workflow for running experiments:
+Research proceeds in two phases with different tooling:
+
+### Phase 1: Rapid R&D (current default)
+During active research, run scripts directly. Kconfig adds
+overhead that slows iteration. Write standalone Python scripts,
+eval harnesses, and benchmarks. Run them directly:
+```bash
+python3 scripts/my_experiment.py
+python3 eval_v28.py --phase 0
+```
+Results go to local directories. Once experiments converge and
+produce publishable results, move to Phase 2.
+
+### Phase 2: Reproducible Kconfig Workflow
+Once R&D stabilizes and we have results worth preserving, lock
+the experiment into the Kconfig build system for reproducibility:
 
 1. **Load configuration**: `make defconfig-<name>`
-   - Example: `make defconfig-gpt2-ratio-ablation`
-   - This loads the defconfig and generates config.py
-
 2. **Build and run**: `make`
-   - The build system automatically runs the configured
-     experiments
-   - For test matrix mode, this runs all ablation steps
-   - Results are saved to the configured output directory
+3. Results are saved to the configured output directory
 
-3. **NEVER manually invoke make targets or scripts**
-   - Never run `make train` directly
-   - Never run `scripts/run_test_matrix.py` directly
-   - The default `make` target handles everything automatically
-   - Manual target/script invocation is for debugging only
+The Kconfig system ensures exact reproducibility of finalized
+experiments. Do NOT use Kconfig during rapid iteration — it
+slows things down without adding value until the experiment
+design is stable.
 
-Example complete workflow:
+## Repository Layout
+
+### `/data/knlp/` — Code Repository (this repo)
+The main working tree. Contains bleeding-edge code, scripts,
+model implementations, eval harnesses, and configuration.
+Keep this repo slim. Do NOT commit large artifacts, result
+directories, checkpoints, plots, or bulk experimental output
+here.
+
+What belongs here:
+- Model code (`gpt2/`, `gnn/`)
+- Eval harnesses (`eval_v*.py`)
+- Scripts (`scripts/`)
+- Defconfigs and Kconfig files
+- Documentation (`docs/`)
+- Small CSV/JSON files that are actively used by scripts
+
+What does NOT belong here:
+- Result directories (`bpa_v*_results/`, `results/`)
+- Artifact directories (`artifacts/`)
+- Training checkpoints (`.pt`, `.pth`)
+- Generated plots and PNGs (except `images/` for README)
+- Final reports and scoreboards (archive to key-results)
+- Large experiment output
+
+### `/data/knlp-key-results/` — Artifact Archive
+Stores all historical results, artifacts, and bulk data.
+Commit freely here — size is not a concern. Organized by
+research area:
+
+- `bpa/` — BPA (Bit Precision Allocation) results v1-v28+,
+  artifacts, figures, scoreboards, reports, branch trees
+- `key_results/` — Training matrix results with W&B configs
+
+When an experiment version is complete, copy its artifacts:
 ```bash
-make defconfig-gpt2-ratio-ablation
-make
-# Results appear in test_matrix_results_ratio_ablation/
+cp -a results/v29/ /data/knlp-key-results/bpa/results/v29/
+cp bpa_v29_final_report.md /data/knlp-key-results/bpa/
+cd /data/knlp-key-results && git add bpa/ && git commit
 ```
 
-**CRITICAL**: Always use `make` (not `make train`) to run
-experiments. The default target adapts automatically based on
-configuration (single training vs test matrix mode).
+### `/data/paper-kv-scaling/` — Paper Repository (example)
+Each paper gets its own git repository. The paper repo
+contains LaTeX source, figures, and any data needed to
+reproduce the paper build. See "Paper Workflow" below.
+
+## Paper Workflow
+
+Each paper lives in a separate git tree (e.g.,
+`/data/paper-kv-scaling/`). The paper is written and built
+from the knlp working tree where all code and key-results
+are accessible.
+
+### Convention
+- Paper repos are independent git trees, one per paper
+- The paper repo must be self-contained for building: LaTeX,
+  figures, BibTeX, and any data referenced by the paper
+- Experiment scripts live in knlp, not the paper repo
+- When experiments produce figures or tables for the paper,
+  copy them into the paper repo and commit there
+- If the paper references specific data (CSV, JSON), copy
+  the relevant subset into the paper repo so `make` works
+  without external dependencies
+
+### Workflow
+1. Run experiments in knlp (Phase 1 rapid R&D)
+2. Archive results to knlp-key-results
+3. Copy figures/tables/data into the paper repo
+4. Write LaTeX in the paper repo
+5. Commit both the paper repo and knlp independently
+
+This ensures the paper repo can build on any machine with
+just a `git clone` and `make`, while knlp stays focused on
+code and knlp-key-results holds the full artifact history.
 
 ## Configuration System Internals
 
