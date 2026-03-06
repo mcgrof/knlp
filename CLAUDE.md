@@ -222,6 +222,58 @@ experiments. Do NOT use Kconfig during rapid iteration — it
 slows things down without adding value until the experiment
 design is stable.
 
+### Ralph Loop for Multi-Phase Tasks
+
+We use the Ralph Loop plugin (`ralph-loop` from
+`claude-plugins-official`) for large experiments that span
+multiple phases. The loop uses a Stop hook to prevent Claude
+from exiting — instead it feeds the same prompt back,
+creating a self-referential iteration loop where each pass
+sees the previous work in files and git history.
+
+**How it works:**
+1. User writes a task file (e.g., `BPA-v42.txt`) with
+   numbered phases and clear completion criteria
+2. User invokes `/ralph-loop` with the task and a
+   `--completion-promise` (typically `COMPLETE`)
+3. Claude reads the task file, executes phases in order,
+   commits results, and outputs
+   `<promise>COMPLETE</promise>` when genuinely done
+4. If Claude tries to exit before completion, the stop hook
+   blocks and re-feeds the prompt — Claude sees its own
+   prior work and continues from where it left off
+
+**Typical invocation:**
+```
+/ralph-loop Read BPA-v42.txt and execute all phases in order \
+  --completion-promise COMPLETE --max-iterations 2000
+```
+
+**Task file conventions (e.g., BPA-v42.txt):**
+- Number all phases/tasks clearly (Task 1, Task 2, ...)
+- Include concrete success criteria per phase
+- Specify what to commit and when
+- Include a final task that summarizes results
+- Keep tasks independent enough that resumption works if
+  context compresses mid-run
+
+**When to use Ralph Loop:**
+- BPA experiment versions (multi-phase GPU experiments)
+- Any task with >3 sequential phases
+- Tasks that may exceed a single context window
+- Overnight/unattended experiment runs
+
+**When NOT to use Ralph Loop:**
+- Quick one-shot edits or fixes
+- Interactive design discussions
+- Tasks requiring human judgment between steps
+
+**Monitoring:** `head -10 .claude/ralph-loop.local.md`
+shows current iteration count and state.
+
+**Cancelling:** `/cancel-ralph` removes the state file and
+stops the loop.
+
 ## Repository Layout
 
 ### `/data/knlp/` — Code Repository (this repo)
