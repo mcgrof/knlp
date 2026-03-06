@@ -87,3 +87,145 @@ wandb/
 gpt2/wandb/
 gpt2/outputs/
 adamw_*.png
+
+# BPA artifacts (migrated to /data/knlp-key-results/bpa/)
+bpa_v*_results*/
+bpa_v*_final_report.md
+bpa_v*_scoreboard.json
+bpa_v*_branch_tree.md
+artifacts/
+kvsplice_trained/
+plots/
+runs/
+
+# Misc BPA / research artifacts
+key_results/
+FINDINGS_*.md
+HF_LATENT_*.md
+PCA_*.md
+PHASE*_SUMMARY.md
+TODO_PHASE*.md
+Readme.md
+
+# BPA benchmark scripts (v30+)
+scripts/v[0-9]*_*.py
+
+# BPA docs reports (generated per-version)
+docs/bpa_v*_*.md
+docs/TODO_*.md
+docs/kv/
+docs/kvsplice/
+
+# Compression research artifacts
+compressed_*/
+compression_research/
+compression_results*/
+qwen25_*/
+fim_quant_*/
+fim_validation_*/
+
+# Debug and one-off scripts
+debug_*.py
+step[0-9]_*.py
+step[0-9]_*.json
+step[0-9]_*.png
+fix_*.py
+create_visualization.py
+run_chatgpt_experiments.py
+per_layer_rank_allocation.py
+rank_sweep_analysis.py
+phase6_reproduction_wrapper.py
+
+# One-off test scripts (not in tests/)
+test_*.py
+validate_*.py
+!tests/
+
+# Research data files
+*.npz
+*.zip
+dgraphfin.npz
+ieee-cis.npz
+layout_*.npz
+stuff
+tfinance
+tsocial
+
+# Result JSON/PNG at top level
+*_results.json
+*_results.png
+*.html
+!docs/*.html
+!docs/**/*.html
+kv_*.json
+kv_*.png
+mla_*.json
+per_layer_*.json
+per_layer_*.png
+ppl_vs_rank.png
+rank_sweep_results.json
+robustness_quick_test.json
+vonly_ablation_quick.json
+hidden_distortion_per_layer.png
+z_distortion_per_layer.png
+test_spline_smoother_viz.png
+test_fim_guided_config.json
+
+# RGSA compare directories
+rgsa_compare_*/
+rgsa_analysis*/
+
+# BPA text files with .text extension
+BPA-*.text
+
+# Claude analysis files
+claude-*.md
+
+# BPA v2/v13 result directories (old naming)
+bpa_v2_*/
+bpa_v13_*/
+
+# KV/kvsplice research artifacts at top level
+kvsplice_*.png
+layer_sensitivity_heatmap.png
+qwen25_*.png
+qwen25_*.md
+qwen25_*.json
+scaling_law.json
+
+# KV research docs
+docs/kv_*.md
+
+# GNN build artifacts
+gnn/cpp_extension/build/
+gnn/cpp_extension/*.egg-info/
+
+# Old results directories
+results-v*/
+
+# RGSA reports
+rgsa_v*_final_report.md
+
+# KV research scripts
+scripts/kv_*.py
+scripts/mla_*.py
+scripts/benchmark_*.py
+scripts/check_*.py
+scripts/compare_*.py
+scripts/egg_*.py
+scripts/extract_*.py
+scripts/generate_fim_*.py
+scripts/plot_*.py
+scripts/query_*.py
+scripts/analyze_fim_*.py
+
+# Test result directories at top level
+test_pca_*/
+test_results/
+
+# GPT2 compression experiments
+gpt2/compression/
+gpt2/mla.py.orig
+
+# KVSplice visualization script (one-off)
+scripts/visualize_kvsplice_strategy.py
