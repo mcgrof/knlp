@@ -1,0 +1,60 @@
+{
+  "bandwidth_scaling": [
+    {"batch": 1, "tokens_per_sec": 123.5, "latency_ms": 8.094, "kv_bw_gb_s": 14.6},
+    {"batch": 2, "tokens_per_sec": 240.8, "latency_ms": 8.306, "kv_bw_gb_s": 28.5},
+    {"batch": 4, "tokens_per_sec": 472.8, "latency_ms": 8.461, "kv_bw_gb_s": 56.0},
+    {"batch": 8, "tokens_per_sec": 894.8, "latency_ms": 8.941, "kv_bw_gb_s": 105.9},
+    {"batch": 16, "tokens_per_sec": 1698.6, "latency_ms": 9.42, "kv_bw_gb_s": 201.0},
+    {"batch": 32, "tokens_per_sec": 3098.6, "latency_ms": 10.327, "kv_bw_gb_s": 366.7},
+    {"batch": 64, "tokens_per_sec": 4666.0, "latency_ms": 13.716, "kv_bw_gb_s": 552.3},
+    {"batch": 128, "tokens_per_sec": 6633.3, "latency_ms": 19.296, "kv_bw_gb_s": 785.1}
+  ],
+  "context_scaling": [
+    {"batch": 1, "context": 1024, "tokens_per_sec": 122.8, "latency_ms": 8.142, "kv_bw_gb_s": 7.2},
+    {"batch": 1, "context": 2048, "tokens_per_sec": 123.5, "latency_ms": 8.096, "kv_bw_gb_s": 14.5},
+    {"batch": 1, "context": 4096, "tokens_per_sec": 118.5, "latency_ms": 8.439, "kv_bw_gb_s": 27.8},
+    {"batch": 1, "context": 8192, "tokens_per_sec": 111.0, "latency_ms": 9.012, "kv_bw_gb_s": 52.1},
+    {"batch": 1, "context": 16384, "tokens_per_sec": 107.0, "latency_ms": 9.348, "kv_bw_gb_s": 100.5},
+    {"batch": 1, "context": 32768, "tokens_per_sec": 102.5, "latency_ms": 9.759, "kv_bw_gb_s": 192.5},
+    {"batch": 1, "context": 65536, "tokens_per_sec": 92.2, "latency_ms": 10.85, "kv_bw_gb_s": 346.4},
+    {"batch": 8, "context": 1024, "tokens_per_sec": 920.9, "latency_ms": 8.687, "kv_bw_gb_s": 54.1},
+    {"batch": 8, "context": 2048, "tokens_per_sec": 890.1, "latency_ms": 8.988, "kv_bw_gb_s": 104.5},
+    {"batch": 8, "context": 4096, "tokens_per_sec": 837.4, "latency_ms": 9.554, "kv_bw_gb_s": 196.7},
+    {"batch": 8, "context": 8192, "tokens_per_sec": 773.3, "latency_ms": 10.345, "kv_bw_gb_s": 363.3},
+    {"batch": 8, "context": 16384, "tokens_per_sec": 650.9, "latency_ms": 12.29, "kv_bw_gb_s": 611.6},
+    {"batch": 8, "context": 32768, "tokens_per_sec": 496.0, "latency_ms": 16.128, "kv_bw_gb_s": 932.1},
+    {"batch": 16, "context": 1024, "tokens_per_sec": 1736.9, "latency_ms": 9.212, "kv_bw_gb_s": 102.0},
+    {"batch": 16, "context": 2048, "tokens_per_sec": 1648.0, "latency_ms": 9.709, "kv_bw_gb_s": 193.5},
+    {"batch": 16, "context": 4096, "tokens_per_sec": 1499.6, "latency_ms": 10.67, "kv_bw_gb_s": 352.2},
+    {"batch": 16, "context": 8192, "tokens_per_sec": 1317.4, "latency_ms": 12.146, "kv_bw_gb_s": 618.8},
+    {"batch": 16, "context": 16384, "tokens_per_sec": 991.6, "latency_ms": 16.136, "kv_bw_gb_s": 931.6},
+    {"batch": 32, "context": 1024, "tokens_per_sec": 3296.8, "latency_ms": 9.707, "kv_bw_gb_s": 193.6},
+    {"batch": 32, "context": 2048, "tokens_per_sec": 2985.0, "latency_ms": 10.72, "kv_bw_gb_s": 350.6},
+    {"batch": 32, "context": 4096, "tokens_per_sec": 2603.9, "latency_ms": 12.289, "kv_bw_gb_s": 611.6},
+    {"batch": 32, "context": 8192, "tokens_per_sec": 1975.4, "latency_ms": 16.199, "kv_bw_gb_s": 928.0}
+  ],
+  "gpu_comparison": {
+    "gpus": ["W7900", "H100", "B200"],
+    "memory_gb": [48, 80, 178],
+    "peak_bw_gb_s": [864, 3350, 6550],
+    "measured_bw_gb_s": [54, 850, 932],
+    "decode_b1_tps": [28.5, 85.0, 123.5],
+    "decode_b8_tps": [210.0, 620.0, 894.8],
+    "max_context_k": [32, 32, 384],
+    "batch_saturates": [false, true, true],
+    "b_half": [null, 16, 27]
+  },
+  "extreme_context": [
+    {"context_k": 64, "latency_ms": 10.97, "tokens_per_sec": 91.13, "memory_gb": 36.7},
+    {"context_k": 128, "latency_ms": 13.42, "tokens_per_sec": 74.5, "memory_gb": 59.2},
+    {"context_k": 192, "latency_ms": 14.56, "tokens_per_sec": 68.66, "memory_gb": 81.7},
+    {"context_k": 256, "latency_ms": 17.51, "tokens_per_sec": 57.09, "memory_gb": 104.2},
+    {"context_k": 384, "latency_ms": 20.45, "tokens_per_sec": 48.89, "memory_gb": 149.2}
+  ],
+  "quantization": [
+    {"pipeline": "FP16 baseline", "perplexity": 6.80, "group_size": null},
+    {"pipeline": "INT4 weight g=32", "perplexity": 592.3, "group_size": 32},
+    {"pipeline": "INT4 activation g=8", "perplexity": 310.0, "group_size": 8},
+    {"pipeline": "INT4 fused g=4", "perplexity": 82.9, "group_size": 4}
+  ]
+}
