@@ -320,6 +320,56 @@ Each paper gets its own git repository. The paper repo
 contains LaTeX source, figures, and any data needed to
 reproduce the paper build. See "Paper Workflow" below.
 
+## BPA Experiment Instructions
+
+Each BPA experiment version is defined in an instruction file
+(e.g., `BPA-v48.txt`) that specifies the experiment phases,
+models, metrics, and completion criteria. These files are given
+to Claude via the Ralph Loop plugin for autonomous execution.
+
+### Naming Convention
+- Use `BPA-vNN.txt` (all-caps prefix, dash, lowercase v, number)
+- Examples: `BPA-v46.txt`, `BPA-v47.txt`, `BPA-v48.txt`
+
+### Storage
+- During execution: instruction file lives in `/data/knlp/`
+- After completion: move to `/data/knlp-key-results/bpa-instructions/`
+- All historical instructions are archived there (v2 through v48+)
+
+### Result Collection Convention
+Each BPA experiment stores results in a versioned directory under
+`/data/knlp-key-results/bpaNNN/` with a consistent structure:
+
+```
+/data/knlp-key-results/bpa48/
+├── json/           # All metrics as JSON files
+├── plots/          # Generated PNG figures (300 DPI)
+├── logs/           # Execution logs
+├── models/         # Model checkpoints (if any)
+├── fim_maps/       # Fisher sensitivity maps
+├── interaction_maps/  # Cross-layer interaction data
+└── bpa48_summary.md   # Final summary report
+```
+
+Required conventions:
+- All metrics saved as JSON (machine-readable)
+- All plots saved as PNG at 300 DPI
+- Summary report in markdown with tables, plot references,
+  and interpretation
+- Execution script committed to `/data/knlp/scripts/` as
+  `bpa_vNN_w7900.py` (or appropriate GPU name)
+- Results committed to key-results repo separately from code
+
+### Script Pattern
+BPA experiment scripts follow a consistent pattern established
+in v46+:
+- Load model with `attn_implementation='eager'` and `.to('cuda')`
+- Use BF16 dtype (FP16 causes NaN with large-vocab models)
+- CPU-offload logits to avoid OOM during dual-pass evaluation
+- Cache prior results from JSON for incremental re-runs
+- OOM try/except handling around all GPU-intensive loops
+- Early collapse detection before full evaluation
+
 ## Paper Workflow
 
 Each paper lives in a separate git tree (e.g.,
