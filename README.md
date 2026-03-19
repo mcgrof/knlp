@@ -45,6 +45,8 @@ into BPA and then into fused KV quantization, and the
 for the current generic public explanation that decode is the issue.
 A complementary structural explainer is available at
 [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html).
+A first public writeup of the concrete fused-kernel result is available at
+[docs/fused_kv_quantization.md](docs/fused_kv_quantization.md).
 
 Paper-facing experiment scaffolding for the BPA KV scaling work lives in
 [`docs/paper/bpa/`](docs/paper/bpa/) and

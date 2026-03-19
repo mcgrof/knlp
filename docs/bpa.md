@@ -13,7 +13,7 @@ story connecting:
 3. **fused KV quantization** as the strongest current concrete systems result.
 
 For the historical lineage, see
-[docs/paper/bpa/evolution.md](paper/bpa/evolution.md).
+[RGSA → BPA → fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md).
 
 ## The Current Core Message
 
@@ -101,21 +101,29 @@ current public entrypoint for this story.
 
 ## Visualization and Data
 
-The current interactive visualizations are:
+The current public explainers are:
 
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) — structural explanation of why autoregressive decode rereads KV state every step
-- [KV Bandwidth Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
+- [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
+- [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md) — current public writeup of the fused-kernel result
 
-Together they serve as the current generic public explanation of the BPA
-systems diagnosis: **decode is the issue**. They are not yet the final
-paper-shaped storytelling artifacts.
+Together they explain the current BPA systems diagnosis: **decode is the issue**. They are not yet the final paper-shaped storytelling artifacts.
 
 ## Status
 
-BPA in `knlp` is an evolving narrative plus a set of concrete systems results.
+BPA in `knlp` is an active line of work with both concrete systems results and open research headroom.
 The cleanest stable public message today is:
 
 - decode is memory-bound,
 - fused quantization is a real win because it attacks memory traffic directly,
 - and future BPA-style work should be judged by whether it changes the real
   decode bottleneck rather than only changing abstract attention structure.
+
+## Research Headroom
+
+Fused KV quantization is the strongest concrete result right now, but it does
+not exhaust BPA as a research direction. Sparse and selective attention work
+continues to create room for bandwidth-aware decode ideas, and one plausible
+future direction is to combine BPA-style bandwidth constraints with FIM-guided
+allocation, such as different block sizes or protection policies by layer
+sensitivity.
