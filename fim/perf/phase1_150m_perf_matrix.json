@@ -1,0 +1,18 @@
+{
+  "version": "v1",
+  "phase": "phase1_150m_perf",
+  "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/perf",
+  "contexts": [1024, 4096, 8192, 16384],
+  "decode_batches": [1, 4, 8, 16, 32],
+  "variants": ["baseline", "best_isolated", "best_composed"],
+  "metrics": [
+    "train_wall_clock_s",
+    "step_time_s",
+    "prefill_latency_ms",
+    "decode_latency_ms",
+    "tokens_per_s",
+    "peak_memory_gb",
+    "kv_memory_mb",
+    "checkpoint_time_s"
+  ]
+}
