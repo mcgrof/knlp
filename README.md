@@ -105,3 +105,28 @@ This project is licensed under the **MIT License**.
 - **Documentation**: CC-BY-SA 4.0 (collaborative, share-alike)
 
 See LICENSE for details.
+# KNLP
+
+## BPA paper scaffolding
+
+Paper-oriented KV scaling scaffolding now lives under
+`scripts/paper/bpa_paper/` with supporting docs in `docs/paper/bpa/`.
+
+The scaffold provides:
+
+- a canonical `results/knlp-paper-kv-scaling/` tree with `raw/`, `derived/`,
+  `figures/`, `manifests/`, `logs/`, `system/`, and `reports/`
+- device configs for `a100`, `h100`, `b200`, and `w7900`
+- dry-run capable scripts for smoke validation, matrix planning, fit planning,
+  and public-subset packaging
+- lightweight manifest/config validation coverage in
+  `tests/test_bpa_paper_manifest.py`
+
+Example dry-run commands:
+
+```bash
+python -m scripts.paper.bpa_paper.run_smoke --dry-run
+python -m scripts.paper.bpa_paper.run_matrix --dry-run --devices a100 h100
+python -m scripts.paper.bpa_paper.fit_scaling --dry-run
+python -m scripts.paper.bpa_paper.package_results --dry-run
+```

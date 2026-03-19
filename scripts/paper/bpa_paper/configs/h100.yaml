@@ -1,0 +1,9 @@
+gpu: H100
+lane: reference
+lane_type: core
+model: Qwen2.5-7B
+batches: [1, 2, 4, 8, 16, 32, 64]
+contexts: [1024, 2048, 4096, 8192, 16384, 32768]
+warmup_iters: 10
+measure_iters: 30
+notes: Reference lane for cross-GPU comparison and fit stability.

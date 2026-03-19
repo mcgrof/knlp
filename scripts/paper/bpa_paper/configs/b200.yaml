@@ -1,0 +1,9 @@
+gpu: B200
+lane: provenance-and-long-context
+lane_type: core-plus-capacity
+model: Qwen2.5-7B
+batches: [1, 2, 4, 8, 16, 32, 64]
+contexts: [1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 393216]
+warmup_iters: 10
+measure_iters: 30
+notes: Rebuild B200 provenance and separate long-context capacity from core scaling.
