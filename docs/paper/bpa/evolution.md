@@ -67,7 +67,7 @@ The public `knlp` story should therefore look like this:
 
 - `docs/rgsa.md` = historical precursor / routing-era work
 - `docs/bpa.md` = current high-level BPA systems story
-- `docs/kv_bandwidth_visualization.html` = public-facing generic explanation
-  that decode is the issue
+- `docs/ar_decode_bottleneck.html` = structural explainer for why autoregressive decode rereads KV state every step
+- `docs/kv_bandwidth_visualization.html` = empirical decode-scaling / cross-GPU companion explainer
 - paper-specific narratives and figures can later tighten around the final paper
   once the experiments and framing are fully locked
