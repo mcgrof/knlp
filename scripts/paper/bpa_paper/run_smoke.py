@@ -45,7 +45,10 @@ def main() -> int:
     write_json(out, payload)
     print(f"wrote smoke plan to {out}")
     for point in smoke_points:
-        print(f"SMOKE {config.gpu} {config.lane} B={point[batch]} T={point[context]}")
+        print(
+            f"SMOKE {config.gpu} {config.lane} "
+            f"B={point['batch']} T={point['context']}"
+        )
     return 0
 
 
