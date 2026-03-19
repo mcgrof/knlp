@@ -297,11 +297,11 @@
       return (
         <div className="card rounded-xl p-6 mb-6">
           <h3 className="text-lg font-semibold mb-1">Quantization Effect on Perplexity</h3>
-          <p className="text-gray-500 text-sm mb-4">Naive INT4 across all layers is catastrophic. Selective tiering is essential. Qwen2.5-7B on B200.</p>
+          <p className="text-gray-500 text-sm mb-4">Naive INT4 across all layers is catastrophic. Selective tiering and fused execution matter. Qwen2.5-7B on B200.</p>
           <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={DATA.quantization} layout="vertical">
+            <BarChart data={DATA.quantization} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 24 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis type="number" stroke="#94a3b8" label={{value: 'Perplexity (log scale)', position: 'bottom', fill: '#94a3b8'}} scale="log" domain={[1, 1000]} />
+              <XAxis type="number" stroke="#94a3b8" height={50} tickMargin={8} label={{value: 'Perplexity (log scale)', position: 'insideBottom', offset: -4, fill: '#94a3b8'}} scale="log" domain={[1, 1000]} />
               <YAxis type="category" dataKey="pipeline" stroke="#94a3b8" width={100} />
               <Tooltip content={CustomTooltip} />
               <Bar dataKey="ppl" name="Perplexity" radius={[0,4,4,0]}>
