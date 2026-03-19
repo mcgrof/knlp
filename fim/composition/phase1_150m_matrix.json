@@ -1,0 +1,37 @@
+{
+  "version": "v1",
+  "phase": "phase1_150m_gap_closure",
+  "date": "2026-03-19",
+  "canonical_results_root": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m",
+  "families": {
+    "pruning": {
+      "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/pruning",
+      "variants": ["baseline_dense", "bitter1_s25", "bitter1_s50", "bitter1_s75", "bitter1_s90", "bitter7_s25", "bitter7_s50", "bitter7_s75", "bitter7_s90"],
+      "seeds": [1, 2, 3]
+    },
+    "kvsplice": {
+      "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/kvsplice",
+      "variants": ["baseline", "kvsplice_all", "kvsplice_fim", "kvsplice_fim_conservative"],
+      "seeds": [1, 2, 3]
+    },
+    "ra": {
+      "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/ra",
+      "variants": ["baseline", "mixed1", "mixed2", "mixed4", "mixed8", "head_identity", "editable_band_low", "editable_band_high"],
+      "seeds": [1, 2, 3]
+    },
+    "composition": {
+      "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/composition",
+      "variants": [
+        "staticfim_quality_oriented",
+        "recompute_after_pruning_quality_oriented",
+        "recompute_after_kvsplice_quality_oriented",
+        "staticfim_aggressive"
+      ],
+      "seeds": [1, 2]
+    },
+    "perf": {
+      "results_dir": "/home/mcgrof/devel/knlp-key-results/paper-fim/150m/perf",
+      "variants": ["baseline", "best_isolated", "best_composed"]
+    }
+  }
+}
