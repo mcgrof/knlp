@@ -61,7 +61,7 @@ The broader BPA questions remain open:
 
 ## Documentation Rule
 
-Keep the public `knlp` story ordered like this:
+Keep the `knlp` story ordered like this:
 
 - `docs/rgsa.md` = precursor routing-era work
 - `docs/bpa.md` = current BPA systems story

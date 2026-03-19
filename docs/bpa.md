@@ -19,7 +19,7 @@ That fact organizes the current BPA story:
 For the lineage, see
 [RGSA → BPA → fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md).
 
-## Core Message
+## Decode Bottleneck
 
 During autoregressive decode, the model rereads KV state for every new token.
 Decode cost therefore grows with the amount of KV state touched per step, which
@@ -96,7 +96,7 @@ BPA made that instinct measurable. The project moved from asking which chunks to
 route to, toward asking which memory traffic decode must actually pay for and
 which interventions reduce that bill in practice.
 
-Keep `docs/rgsa.md` as precursor work. Use BPA as the current public entrypoint.
+Keep `docs/rgsa.md` as precursor work. Use BPA as the main overview for this line of work.
 
 ## Current BPA Tracks in knlp
 
@@ -116,13 +116,13 @@ Keep `docs/rgsa.md` as precursor work. Use BPA as the current public entrypoint.
 - mixed-precision KV schemes
 - bounded-protection (`k*`) experiments
 
-## Public Explainers
+## Current References
 
 Use these three together:
 
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) — structural explanation of why autoregressive decode rereads KV state every step
 - [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
-- [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md) — current public writeup of the fused-kernel result
+- [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md) — fused-kernel overview and code pointers
 
 These explain the current BPA systems story. They are not yet the final
 paper-shaped artifacts.

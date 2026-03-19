@@ -1,12 +1,12 @@
 # Fused KV Quantization
 
-Fused KV quantization is the strongest concrete systems result currently exposed
-by the BPA line in `knlp`.
+Fused KV quantization is the strongest concrete systems result in the BPA line
+of work in `knlp`.
 
-The public message is intentionally simple:
+Start from the basic rule:
 
 - autoregressive decode is dominated by KV-memory traffic,
-- quantization only helps if it reduces that traffic in the real decode kernel,
+- quantization helps only if it reduces that traffic in the real decode kernel,
 - and **fusion is the difference between a real speedup and a fake one**.
 
 ## What "fused" means here
@@ -38,35 +38,30 @@ That is why the practical distinction is:
 - **non-fused quantization**: can be neutral or counterproductive
 - **fused quantization**: can translate compression into real decode speedup
 
-## Current public scope in knlp
+## Related Documentation
 
-At the moment `knlp` publicly exposes the story, kernels, and evolving docs for
-this work, while the paper framing and paper-specific artifact packaging are
-still being polished.
-
-Current public components include:
+Use these references together:
 
 - BPA overview: [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md)
 - BPA evolution: [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
 - structural decode explainer: [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
 - empirical decode explainer: [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
 
-## Kernels and open-source implementation
+## Implementation
 
-The open-source implementation lives in the `knlp` repository and includes the
-Triton-based work that the BPA / fused-KV story grew out of.
+The implementation lives in `knlp`. Start with these files:
 
-The exact kernel set and experimental harnesses are still being cleaned up and
-better documented, but the repository is the public home for:
+- Triton kernel module: [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
+- kernel microbenchmarks: [scripts/kv_triton_benchmark.py](https://github.com/mcgrof/knlp/blob/main/scripts/kv_triton_benchmark.py)
+- quantized KV benchmark: [scripts/benchmark_kv_quantized.py](https://github.com/mcgrof/knlp/blob/main/scripts/benchmark_kv_quantized.py)
+- earlier Triton INT4/INT8 experiment path: [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
 
-- Triton kernels,
-- decode experiments,
-- profiling / benchmarking infrastructure,
-- and the docs that explain the current systems story.
+Use these as the current code entry points for the Triton kernels, benchmarking,
+and fused KV experiments.
 
-## Ongoing experiments
+## Ongoing Experiments
 
-The current open story is still evolving in several directions:
+This work is still evolving in several directions:
 
 - broader cross-GPU decode validation,
 - long-context behavior under memory pressure,
@@ -74,8 +69,8 @@ The current open story is still evolving in several directions:
 - and follow-on BPA-style architectures that try to reduce the number of KV
   entries touched per decode step.
 
-So fused KV quantization should be read as the strongest current result, not as
-proof that BPA is finished as a research direction.
+Treat fused KV quantization as the strongest current result, not as proof that
+BPA is finished as a research direction.
 
 ## Where BPA may still go
 
@@ -95,6 +90,5 @@ That is not a finished claim here. It is a live research direction.
 
 ## Status
 
-This document is intentionally bland and stable. It gives the public open-source
-view of the fused KV quantization result while the paper and paper-specific
-narrative continue to be polished.
+Use this document as the stable overview of the fused KV quantization result
+while the paper and paper-specific narrative continue to be polished.
