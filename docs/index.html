@@ -70,7 +70,7 @@
         </a>
         <a href="kv_bandwidth_visualization.html"
            class="px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-sm font-medium transition-colors">
-          KV Bandwidth
+          Decode Bottleneck
         </a>
       </div>
     </header>
@@ -98,6 +98,26 @@
            class="inline-block mt-2 text-blue-400 hover:text-blue-300 text-sm">
           Explore Interactive Visualization →
         </a>
+      </div>
+    </section>
+
+    <!-- BPA Story Banner -->
+    <section class="mb-12">
+      <div class="card rounded-xl p-6">
+        <div class="text-sm text-amber-400 font-medium mb-2">EVOLVED BPA STORY</div>
+        <h2 class="text-2xl font-bold mb-3">Decode is the issue, boys and girls</h2>
+        <p class="text-gray-400 mb-4 max-w-3xl">
+          The `knlp` BPA line started with routing-era ideas like RGSA, then
+          sharpened into a cleaner systems diagnosis: autoregressive decode is
+          dominated by KV-memory traffic. The most concrete current result is
+          fused KV quantization, because it reduces real decode traffic instead
+          of only changing abstract attention structure.
+        </p>
+        <div class="flex flex-wrap gap-3 text-sm">
+          <a href="bpa.md" class="text-amber-400 hover:underline">Current BPA overview</a>
+          <a href="paper/bpa/evolution.md" class="text-blue-400 hover:underline">RGSA → BPA → fused quantization</a>
+          <a href="kv_bandwidth_visualization.html" class="text-amber-400 hover:underline">Decode bottleneck visualization</a>
+        </div>
       </div>
     </section>
 

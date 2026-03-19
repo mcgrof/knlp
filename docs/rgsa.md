@@ -1,20 +1,35 @@
 # RGSA: Retrieval-Gated Sparse Attention
 
-RGSA adds retrieval-based sparse attention to GPT-2. Context is
-chunked into blocks, each compressed to a routing embedding via
-mean-pooling + projection. A learned retrieval gate selects the
-top-B most relevant chunks per query position. Attention runs on
-the local window plus retrieved chunks.
+RGSA is earlier `knlp` work on retrieval-based sparse attention. It is useful to
+read it today as a **historical precursor** to BPA rather than as the current
+mainline story.
+
+The key RGSA instinct was correct: reading all context all the time is expensive
+and some form of selective access may be necessary. What BPA later added was a
+clearer systems diagnosis of why decode hurts in practice: repeated KV-memory
+traffic dominates autoregressive decode.
+
+If you are trying to understand the current BPA narrative, start with
+[docs/bpa.md](bpa.md) and
+[docs/paper/bpa/evolution.md](paper/bpa/evolution.md), then come back here for
+the older routing-specific details.
+
+## Original RGSA Idea
+
+RGSA adds retrieval-based sparse attention to GPT-2. Context is chunked into
+blocks, each compressed to a routing embedding via mean-pooling + projection. A
+learned retrieval gate selects the top-B most relevant chunks per query
+position. Attention runs on the local window plus retrieved chunks.
 
 ## Dynamic Chunking (L2M-inspired)
 
-By default RGSA uses a fixed `chunk_size` (typically 64). Dynamic
-chunking makes chunk granularity depend on sequence length:
+By default RGSA uses a fixed `chunk_size` (typically 64). Dynamic chunking makes
+chunk granularity depend on sequence length:
 
     chunk_size_eff = clamp(round(seq_len^alpha), min, max)
 
-With alpha=0.5 (default), chunk size grows as the square root of
-sequence length. This is configurable via RGSAConfig fields:
+With alpha=0.5 (default), chunk size grows as the square root of sequence
+length. This is configurable via RGSAConfig fields:
 
 | Field | Default | Description |
 |---|---|---|
@@ -26,8 +41,8 @@ sequence length. This is configurable via RGSAConfig fields:
 | `chunk_size_piecewise` | "" | Threshold spec, e.g. "512:32,2048:64" |
 | `chunk_size_rounding` | "pow2" | "pow2", "multiple_of_8", "nearest" |
 
-Dynamic chunking does not change parameter count. It only affects
-how tokens are partitioned into chunks at each forward pass.
+Dynamic chunking does not change parameter count. It only affects how tokens are
+partitioned into chunks at each forward pass.
 
 ### Expected chunk sizes (alpha=0.5, pow2 rounding)
 
@@ -101,5 +116,5 @@ The analyzer produces:
 python tests/test_rgsa_dynamic_chunking.py
 ```
 
-14 tests covering bounds, rounding, schedules, parameter count
-parity, forward passes, and ablation combos.
+14 tests covering bounds, rounding, schedules, parameter count parity, forward
+passes, and ablation combos.
