@@ -14,6 +14,15 @@ If you are trying to understand the current BPA narrative, start with
 [docs/paper/bpa/evolution.md](paper/bpa/evolution.md), then come back here for
 the older routing-specific details.
 
+RGSA was originally motivated by a more ambitious scaling question than the
+current doc structure makes obvious: **how do we scale attention toward billions
+of context tokens without paying full dense-attention cost everywhere?**
+
+That is why routing was central from the beginning. The idea was to enhance
+attention by spending compute and memory on the parts of context that mattered
+most, rather than treating all context equally at extreme scale. BPA later made
+that motivation more concrete by grounding it in decode-time KV-memory traffic.
+
 ## Original RGSA Idea
 
 RGSA adds retrieval-based sparse attention to GPT-2. Context is chunked into

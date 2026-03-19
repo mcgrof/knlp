@@ -36,6 +36,26 @@ That finding reframed the project. The question stopped being merely
 > if decode is memory-bound, what interventions actually buy us useful speedup or
 > useful quality preservation under a bandwidth budget?
 
+## Generic Attention Scaling Question
+
+One of the deeper motivations behind BPA is the generic scaling question for
+attention itself: **what can we do to make attention viable as context lengths
+approach billions of tokens?**
+
+Compression helps, but compression alone does not answer that question. As
+context grows, even compressed KV state can still overwhelm the memory system at
+decode time. That is why BPA should be read not only as a decode diagnosis, but
+also as a research outlet for bandwidth-aware approaches to scaling attention
+more generally.
+
+This keeps open a broader class of questions:
+
+- can attention spend bandwidth selectively instead of uniformly?
+- can different layers or regions use different access granularities?
+- can FIM-guided sensitivity decide where bandwidth should be spent?
+- can block size, routing policy, or protection level vary with layer
+  importance as context scales toward billion-token regimes?
+
 ## Where BPA Landed So Far
 
 ### 1. Decode is the issue
@@ -63,8 +83,8 @@ that is a capacity consequence layered on top of the same decode bottleneck.
 
 ### 4. Selective access and tiering remain open but motivated
 
-Earlier BPA questions about selective KV access, protected layers, and tiered
-precision still matter. They now sit on top of a clearer systems story rather
+Earlier BPA questions about selective KV access, protected layers, tiered
+precision, and generic attention scaling still matter. They now sit on top of a clearer systems story rather
 than being treated as isolated architectural ideas.
 
 ## How BPA Relates to RGSA
