@@ -1,0 +1,1835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autoregressive Decode Bottleneck — Structural Inevitability</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg:         #0a0c10;
+    --surface:    #0f1318;
+    --card:       #141920;
+    --border:     #1e2530;
+    --border2:    #2a3340;
+    --text:       #c8d4e0;
+    --muted:      #5a6a7a;
+    --accent:     #00d4aa;       /* teal */
+    --accent2:    #ff6b35;       /* orange */
+    --accent3:    #7c6eff;       /* purple */
+    --danger:     #ff3d3d;
+    --warn:       #ffd600;
+    --green:      #39e96e;
+    --mono:       'JetBrains Mono', monospace;
+    --sans:       'Space Grotesk', sans-serif;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* ── HEADER ───────────────────────────────────────────── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 28px 40px 22px;
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+  }
+
+  .header-badge {
+    background: var(--accent);
+    color: #000;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    padding: 4px 10px;
+    border-radius: 3px;
+    margin-top: 4px;
+    white-space: nowrap;
+  }
+
+  header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    color: #e8f0f8;
+    letter-spacing: -.02em;
+  }
+
+  header p {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .tag-row { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    border: 1px solid;
+  }
+  .tag-teal  { border-color: var(--accent);  color: var(--accent); }
+  .tag-orange{ border-color: var(--accent2); color: var(--accent2);}
+  .tag-purple{ border-color: var(--accent3); color: var(--accent3);}
+  .tag-red   { border-color: var(--danger);  color: var(--danger); }
+
+  /* ── MAIN LAYOUT ─────────────────────────────────────── */
+  main { padding: 24px 32px; max-width: 1440px; margin: 0 auto; }
+
+  /* ── CONTROL BAR ─────────────────────────────────────── */
+  .controls {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 24px;
+    margin-bottom: 24px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px 32px;
+  }
+
+  .ctrl-group label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: .08em;
+    margin-bottom: 6px;
+  }
+
+  .ctrl-group .val {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  input[type=range] {
+    width: 100%;
+    appearance: none;
+    height: 4px;
+    background: var(--border2);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+
+  /* ── GRID OF PANELS ──────────────────────────────────── */
+  .panel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .panel-teal::before   { background: var(--accent); }
+  .panel-orange::before { background: var(--accent2); }
+  .panel-purple::before { background: var(--accent3); }
+  .panel-red::before    { background: var(--danger); }
+  .panel-yellow::before { background: var(--warn); }
+
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    color: var(--muted);
+    margin-bottom: 14px;
+    text-transform: uppercase;
+  }
+
+  .panel-title .pnum {
+    color: var(--accent);
+    margin-right: 8px;
+  }
+
+  .panel-wide { grid-column: span 2; }
+  .panel-full { grid-column: span 3; }
+
+  /* ── PANEL 1: AR LOOP ────────────────────────────────── */
+  #ar-loop-svg {
+    width: 100%;
+    display: block;
+  }
+
+  /* ── PANEL 2: KV ACCESS SCALING ──────────────────────── */
+  #kv-scale-canvas {
+    width: 100%;
+    display: block;
+    border-radius: 4px;
+  }
+
+  /* ── PANEL 3: BANDWIDTH ──────────────────────────────── */
+  #bw-canvas {
+    width: 100%;
+    display: block;
+    border-radius: 4px;
+  }
+
+  /* ── HEATMAP PANEL ───────────────────────────────────── */
+  #heatmap-canvas {
+    width: 100%;
+    display: block;
+    border-radius: 4px;
+  }
+
+  /* ── ARCH COMPARISON ──────────────────────────────────── */
+  #arch-panel {
+    overflow-x: auto;
+  }
+
+  .arch-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .arch-table th {
+    text-align: left;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: .1em;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border2);
+  }
+
+  .arch-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .arch-table tr:hover td { background: rgba(255,255,255,.02); }
+
+  .arch-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .arch-bar {
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* ── REUSE NOTE PANEL ─────────────────────────────────── */
+  .reuse-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 4px;
+  }
+
+  .reuse-stat {
+    text-align: center;
+    padding: 16px;
+    background: rgba(255,255,255,.02);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  .reuse-stat .big {
+    font-size: 36px;
+    font-weight: 700;
+    font-family: var(--mono);
+    display: block;
+  }
+
+  .reuse-stat .sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* ── EQUATION BLOCK ──────────────────────────────────── */
+  .eq-block {
+    background: rgba(0,0,0,.35);
+    border: 1px solid var(--border2);
+    border-left: 3px solid var(--accent3);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin: 10px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: #c8d4e0;
+  }
+
+  .eq-block .comment { color: var(--muted); }
+
+  /* ── SOURCES BOX ──────────────────────────────────────── */
+  .sources-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warn);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-top: 16px;
+    font-size: 12px;
+  }
+
+  .sources-box h4 {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    color: var(--warn);
+    margin-bottom: 10px;
+  }
+
+  .sources-box a {
+    color: var(--accent);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  .sources-box a:hover { text-decoration: underline; }
+
+  .src-entry { margin-bottom: 8px; }
+  .src-entry .src-label { color: var(--text); display: block; margin-bottom: 2px; }
+
+  /* ── ANNOTATION ───────────────────────────────────────── */
+  .annotation {
+    font-size: 11px;
+    color: var(--muted);
+    font-style: italic;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .annotation strong { color: var(--text); font-style: normal; }
+
+  /* ── DOOM LABEL ───────────────────────────────────────── */
+  .doom-label {
+    position: absolute;
+    top: 12px; right: 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--danger);
+    letter-spacing: .1em;
+    opacity: .7;
+  }
+
+  /* ── TOOLTIP ──────────────────────────────────────────── */
+  #tooltip {
+    position: fixed;
+    background: #1a2030;
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+    pointer-events: none;
+    display: none;
+    z-index: 1000;
+    max-width: 220px;
+    line-height: 1.5;
+  }
+
+  /* ── STEP ANIM ────────────────────────────────────────── */
+  .step-highlight {
+    animation: stepPulse 0.5s ease forwards;
+  }
+  @keyframes stepPulse {
+    0%   { opacity: .3; }
+    50%  { opacity: 1; }
+    100% { opacity: .85; }
+  }
+
+  /* ── KEY MESSAGE ──────────────────────────────────────── */
+  .key-message {
+    background: linear-gradient(135deg, rgba(255,61,61,.07), rgba(255,214,0,.04));
+    border: 1px solid rgba(255,61,61,.3);
+    border-radius: 8px;
+    padding: 18px 24px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .key-message .icon { font-size: 28px; }
+  .key-message p { font-size: 14px; line-height: 1.7; }
+  .key-message strong { color: var(--danger); }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .panel-grid { grid-template-columns: 1fr 1fr; }
+    .panel-wide { grid-column: span 2; }
+    .panel-full { grid-column: span 2; }
+  }
+  @media (max-width: 700px) {
+    .panel-grid { grid-template-columns: 1fr; }
+    .panel-wide, .panel-full { grid-column: span 1; }
+    main { padding: 12px; }
+    header { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="tooltip"></div>
+
+<header>
+  <div class="header-badge">ATTENTION DECODE</div>
+  <div>
+    <h1>Attention-Side Decode Bottleneck</h1>
+    <p>Per-step KV reread pressure in dense causal attention. End-to-end dominance still depends on workload and serving architecture.</p>
+    <div class="tag-row">
+      <span class="tag tag-red">memory-bandwidth-bound</span>
+      <span class="tag tag-teal">KV cache rereads</span>
+      <span class="tag tag-orange">Total reads = G·C₀ + G(G−1)/2</span>
+      <span class="tag tag-purple">MHA · GQA · MLA</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="key-message">
+    <div class="icon">⚡</div>
+    <p>
+      In dense causal attention, <strong>each decode step forms one new query and reads all C₀ + (g−1) prior K/V positions</strong>
+      — the initial cached context plus every previously generated token.
+      This figure isolates that <em>attention-side</em> effect only.
+      Offloaded KV, PD disaggregation, and agentic cache reuse are separate system-level amplifiers treated in the appendix below.
+      Hardware characterization confirms decode attention kernels are <strong>memory-bandwidth bound</strong>
+      [<a href="https://arxiv.org/abs/2512.01644" target="_blank" style="color:var(--accent);text-decoration:none;">Wang et al. 2025 — arXiv:2512.01644</a>].
+    </p>
+  </div>
+
+  <!-- ── CONTROLS ─────────────────────────────────────── -->
+  <div class="controls">
+    <div class="ctrl-group">
+      <label>History tokens (H): <span class="val" id="lbl-H">4096</span></label>
+      <input type="range" id="sl-H" min="128" max="32768" step="128" value="4096">
+    </div>
+    <div class="ctrl-group">
+      <label>Append tokens (A): <span class="val" id="lbl-A">256</span></label>
+      <input type="range" id="sl-A" min="0" max="2048" step="64" value="256">
+    </div>
+    <div class="ctrl-group">
+      <label>Generated tokens (G): <span class="val" id="lbl-G">128</span></label>
+      <input type="range" id="sl-G" min="1" max="512" step="1" value="128">
+    </div>
+    <div class="ctrl-group">
+      <label>Highlight step (P1 & P2): <span class="val" id="lbl-step">0</span> <span style="color:var(--muted);font-size:10px">(click P1 to auto-play)</span></label>
+      <input type="range" id="sl-step" min="0" max="8" step="1" value="0">
+    </div>
+    <div class="ctrl-group" style="grid-column:span 2;background:rgba(0,212,170,0.05);border:1px solid var(--border2);border-radius:6px;padding:10px 14px;">
+      <span style="font-family:var(--mono);font-size:11px;color:var(--muted);">C₀ = H + A (initial cached context, already in HBM at decode start): </span>
+      <span class="val" style="font-size:13px;" id="lbl-C0">4352</span>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:12px;">Total read positions over G steps: </span>
+      <span style="color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:700;" id="lbl-total-reads">—</span>
+    </div>
+  </div>
+
+  <!-- ── PANELS ──────────────────────────────────────── -->
+  <div class="panel-grid">
+
+    <!-- P1: AR Loop -->
+    <div class="panel panel-teal" id="p1">
+      <div class="panel-title"><span class="pnum">P1</span>Autoregressive Decode Loop</div>
+      <svg id="ar-loop-svg" viewBox="0 0 320 440" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="annotation">
+        <strong>Attention over full prior KV each step.</strong>
+        Decode step g reads C₀ + (g−1) positions: the initial cached context C₀ = H+A
+        plus all previously generated tokens. The loop is causal — each step depends on all prior outputs.
+        <br><em><a href="https://arxiv.org/abs/2512.01644" target="_blank" style="color:var(--accent);text-decoration:none;">Wang et al. 2025 — A Systematic Characterization of LLM Inference on GPUs — arXiv:2512.01644</a></em>
+      </div>
+    </div>
+
+    <!-- P2: AR reads step-by-step -->
+    <div class="panel panel-orange" id="p2">
+      <div class="panel-title"><span class="pnum">P2</span>Autoregressive Reads — Toy Schematic (4 cached + 8 generated)</div>
+      <!-- token legend row -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);">
+          <div style="width:14px;height:14px;border-radius:3px;background:rgba(0,212,170,0.25);border:1.5px solid #00d4aa;"></div>
+          <span style="color:#00d4aa">initial cached C₀ KV (reread every step)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);">
+          <div style="width:14px;height:14px;border-radius:3px;background:rgba(255,107,53,0.35);border:1.5px solid #ff6b35;"></div>
+          <span style="color:#ff6b35">prior generated KV (reread)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);">
+          <div style="width:14px;height:14px;border-radius:3px;background:rgba(255,214,0,0.35);border:2px solid #ffd600;"></div>
+          <span style="color:#ffd600">Q_t — token being generated (no KV read of self)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);">
+          <div style="width:14px;height:14px;border-radius:3px;background:rgba(255,255,255,0.03);border:1px solid #2a3340;"></div>
+          <span style="color:#5a6a7a">future (not yet generated)</span>
+        </div>
+      </div>
+      <canvas id="ar-reads-canvas"></canvas>
+      <div class="eq-block" style="margin-top:10px;">
+        <div>Reads at step g (1-based): <span style="color:var(--accent)">C₀ + (g − 1)</span> &nbsp;·&nbsp; C₀ = H+A already in cache</div>
+        <div style="margin-top:5px;">Total read positions over G steps: <span style="color:var(--accent)">G·C₀ + G(G−1)/2</span> &nbsp;≡&nbsp; <span style="color:var(--accent3)">Θ(G·C₀ + G²)</span></div>
+        <div class="comment" style="margin-top:5px;">H = history &nbsp;·&nbsp; A = appended &nbsp;·&nbsp; G = generated &nbsp;·&nbsp; C₀ = H+A</div>
+        <div id="kv-live" style="color:var(--accent2);margin-top:8px;font-weight:700;"></div>
+      </div>
+      <div class="annotation">
+        Schematic shows 4 cached + 8 generated tokens. Live totals use slider values.
+        The last generated token (Q_g) forms a key/value only after output — it is <strong>not reread in the step that creates it</strong>.
+      </div>
+    </div>
+
+    <!-- P3: Bandwidth Pressure -->
+    <div class="panel panel-purple" id="p3">
+      <div class="panel-title"><span class="pnum">P3</span>HBM Bandwidth Demand vs Active Context (Attention-Side)</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+        <div class="ctrl-group" style="min-width:180px">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--muted);">KV bytes/token: <span class="val" id="lbl-kvbytes">128</span></label>
+          <input type="range" id="sl-kvbytes" min="32" max="512" step="32" value="128">
+        </div>
+        <div class="ctrl-group" style="min-width:180px">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--muted);">Target decode rate (tok/s): <span class="val" id="lbl-tokrate">50</span></label>
+          <input type="range" id="sl-tokrate" min="10" max="500" step="10" value="50">
+        </div>
+        <label style="font-family:var(--mono);font-size:10px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="chk-offload" style="cursor:pointer;">
+          show offloaded-KV tiers (PCIe / NVMe)
+        </label>
+      </div>
+      <canvas id="bw-canvas" height="200"></canvas>
+      <div class="annotation">
+        Required HBM bandwidth = activeContext × kvBytesPerToken × tokensPerSecond.
+        Active context at step g = C₀ + (g−1). Curve shown at representative step g=1 (lower bound); demand grows linearly through decode.
+        KV bytes/token depends on architecture, layers, head count, head dim, and dtype — use the slider to match your model.
+        <br><em><a href="https://arxiv.org/abs/2512.01644" target="_blank" style="color:var(--accent);text-decoration:none;">Wang et al. 2025 — arXiv:2512.01644</a> · HBM specs: A100 ~2 TB/s, H100 ~3.35 TB/s, H200 ~4.8 TB/s</em>
+      </div>
+    </div>
+
+    <!-- Heatmap — full width, three stacked sub-plots -->
+    <div class="panel panel-red panel-full" id="p-heatmap">
+      <div class="doom-label">▲ TRIANGULAR WEDGE OF DOOM</div>
+      <div class="panel-title"><span class="pnum">P4</span>KV Reread Frequency — Autoregressive Read Accumulation</div>
+
+      <!-- heatmap controls row -->
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px;flex-wrap:wrap;">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">log-scale:</span>
+        <div id="heatmap-colorbar" style="display:flex;align-items:center;gap:0;border-radius:3px;overflow:hidden;height:12px;width:140px;"></div>
+        <span style="font-family:var(--mono);font-size:10px;color:#1a4fa8">0</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--danger)">max</span>
+        <button id="btn-hm-play" style="margin-left:auto;background:rgba(255,61,61,.12);border:1px solid var(--danger);color:var(--danger);font-family:var(--mono);font-size:10px;padding:4px 12px;border-radius:3px;cursor:pointer;letter-spacing:.08em;">▶ ANIMATE</button>
+        <button id="btn-hm-zoom" style="background:rgba(0,212,170,.08);border:1px solid var(--accent);color:var(--accent);font-family:var(--mono);font-size:10px;padding:4px 12px;border-radius:3px;cursor:pointer;letter-spacing:.08em;">🔬 ZOOM EARLY</button>
+        <button id="btn-hm-contour" style="background:rgba(124,110,255,.08);border:1px solid var(--accent3);color:var(--accent3);font-family:var(--mono);font-size:10px;padding:4px 12px;border-radius:3px;cursor:pointer;letter-spacing:.08em;">≡ CONTOURS</button>
+        <span id="hm-live-reads" style="font-family:var(--mono);font-size:11px;color:var(--warn);font-weight:700;"></span>
+      </div>
+
+      <!-- main 2-D heatmap — X=step, Y=token -->
+      <canvas id="heatmap-canvas"></canvas>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px;">
+        <!-- companion: rereads per token position -->
+        <div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:.07em;">
+            TOTAL REREADS PER GENERATED TOKEN POSITION
+          </div>
+          <canvas id="reread-profile-canvas" height="110"></canvas>
+          <div style="font-size:11px;color:var(--muted);margin-top:5px;">
+            First generated token is reread <strong style="color:var(--danger)">G−1 times</strong>.
+            Last generated token is reread <strong style="color:var(--text)">0 times</strong>.
+            Each initial cached C₀ token is reread <strong style="color:var(--teal)">G times</strong> (shown as separate band above).
+          </div>
+        </div>
+        <!-- companion: bandwidth share per token -->
+        <div>
+          <div style="font-family:var(--mono);font-size:10px;color:var(--danger);margin-bottom:6px;letter-spacing:.07em;">
+            BANDWIDTH SHARE PER GENERATED TOKEN — THE BRUTAL PICTURE
+          </div>
+          <canvas id="bw-share-canvas" height="110"></canvas>
+          <div style="font-size:11px;color:var(--muted);margin-top:5px;">
+            First generated token consumes <strong style="color:var(--danger)">(G−1)× more bandwidth</strong> than the last.
+            The last generated token contributes <strong style="color:var(--text)">zero</strong> rereads — it is only ever written.
+            This is the graph that stops reviewers from arguing.
+          </div>
+        </div>
+      </div>
+
+      <div class="eq-block" style="margin-top:12px;">
+        Step g reads C₀ + (g−1) prior positions. &nbsp;·&nbsp;
+        Total read positions: <span style="color:var(--accent)">G·C₀ + G(G−1)/2</span> &nbsp;≡&nbsp; <span style="color:var(--accent3)">Θ(G·C₀ + G²)</span>.
+        The C₀ rectangle (initial cached context) dominates unless G ≈ C₀.
+      </div>
+      <div class="annotation">
+        <strong>Autoregressive KV reread region:</strong> rectangle for C₀ (every initial token read G times) plus strict lower triangle for generated-token rereads.
+        [<a href="https://arxiv.org/abs/2512.01644" target="_blank" style="color:var(--accent);text-decoration:none;">Wang et al. 2025 — arXiv:2512.01644</a>]
+      </div>
+    </div>
+
+    <!-- P5: Agentic appendix -->
+    <div class="panel panel-yellow" id="p-reuse">
+      <div class="panel-title"><span class="pnum">P5 — APPENDIX</span> Agentic / Disaggregated Serving: KV Reuse &amp; External Bandwidth</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.6;">
+        This panel covers <strong style="color:var(--text)">system-level amplifiers</strong> that are separate from the intrinsic causal attention bottleneck above.
+        Offloaded KV (PCIe/NVMe), agentic multi-turn reuse, and disaggregated prefill/decode (PD) are real workload effects —
+        but they sit on top of the structural mechanism in P1–P4, not inside it.
+      </div>
+      <div class="reuse-grid">
+        <div class="reuse-stat">
+          <span class="big" style="color:var(--green)">~95–98%</span>
+          <div class="sub">KV token reuse rate<br>in agentic multi-turn workloads<br>[Wu et al. 2026 — DualPath]</div>
+        </div>
+        <div class="reuse-stat">
+          <span class="big" style="color:var(--danger)" id="reuse-reads">∞</span>
+          <div class="sub">Total read positions<br>G·C₀ + G(G−1)/2<br>(live from sliders)</div>
+        </div>
+      </div>
+      <div class="eq-block" style="margin-top:12px;">
+        C₀ = H+A: <span id="ex-H">—</span>+<span id="ex-A">—</span> = <span id="lbl-C0b">—</span> &nbsp;·&nbsp; G: <span id="ex-G">128</span>
+        <br>
+        <span style="color:var(--accent2);">Total read positions = G·C₀ + G(G−1)/2 = <span id="ex-total">—</span></span>
+      </div>
+      <div class="annotation">
+        High reuse tells you the cache is <em>warm</em> and in HBM. It does not eliminate per-step KV reads in the attention kernel.
+        DualPath addresses <em>external storage I/O</em> bandwidth for agentic disaggregated serving — a separate bottleneck.
+        <br><em><a href="https://arxiv.org/abs/2602.21548" target="_blank" style="color:var(--accent);text-decoration:none;">Wu et al. 2026 — DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference — arXiv:2602.21548</a></em>
+      </div>
+    </div>
+
+    <!-- Arch comparison -->
+    <div class="panel panel-purple panel-full" id="p-arch">
+      <div class="panel-title"><span class="pnum">P6</span>Architecture Comparison: Same Autoregressive Loop, Different KV Compression</div>
+      <table class="arch-table">
+        <thead>
+          <tr>
+            <th>Architecture</th>
+            <th>Attention type</th>
+            <th>KV per token (relative)</th>
+            <th>KV compression ratio</th>
+            <th>Still autoregressive?</th>
+            <th>Bar (KV size)</th>
+          </tr>
+        </thead>
+        <tbody id="arch-tbody"></tbody>
+      </table>
+      <div style="margin-top:14px;font-size:12px;color:var(--muted);line-height:1.8;">
+        <strong style="color:var(--text);">Math note (all ratios illustrative / model-specific):</strong>
+        MHA stores K,V for every head: <span style="color:var(--accent);font-family:var(--mono);">KV_bytes = 2 × L × n_heads × d_head × C × sizeof(dtype)</span>.
+        GQA shares K,V across Q-head groups, reducing by <span style="color:var(--accent);font-family:var(--mono);">n_heads / n_kv_groups</span>.
+        MLA (DeepSeek-V2/V3) projects KV into a compressed latent <span style="color:var(--accent3);font-family:var(--mono);">c_KV ≪ d_model</span>
+        and up-projects at attention time; DeepSeek-V2 reports ~93.3% KV-cache reduction for that model family.
+        The autoregressive reread happens every step regardless — architecture only changes <em>how many bytes</em> are reread.
+      </div>
+      <div class="annotation">
+        The decode loop structure is <strong>identical</strong> across all architectures.
+        What varies is the KV payload per token.
+        Compression ratios shown are illustrative presets, not universal constants — verify against your model's config.
+        <br><em><a href="https://arxiv.org/abs/2405.04434" target="_blank" style="color:var(--accent);text-decoration:none;">DeepSeek-V2: arXiv:2405.04434</a> · <a href="https://arxiv.org/abs/2512.01644" target="_blank" style="color:var(--accent);text-decoration:none;">Wang et al. 2025: arXiv:2512.01644</a></em>
+      </div>
+    </div>
+
+  </div><!-- end panel-grid -->
+
+  <!-- Sources -->
+  <div class="sources-box">
+    <h4>▶ SOURCES</h4>
+    <div class="src-entry">
+      <span class="src-label">Wang et al. 2025 — "A Systematic Characterization of LLM Inference on GPUs" — attention decode kernels are memory-bandwidth bound; bottleneck dominance is workload- and context-dependent</span>
+      <a href="https://arxiv.org/pdf/2512.01644" target="_blank">https://arxiv.org/pdf/2512.01644</a>
+    </div>
+    <div class="src-entry">
+      <span class="src-label">Wu et al. 2026 — "DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference" — external KV-cache storage I/O in agentic disaggregated serving; ~95–98% token reuse rates</span>
+      <a href="https://arxiv.org/pdf/2602.21548" target="_blank">https://arxiv.org/pdf/2602.21548</a>
+    </div>
+    <div class="src-entry">
+      <span class="src-label">DeepSeek-V2 2024 — MLA (Multi-head Latent Attention) compression architecture; ~93.3% KV-cache reduction for DeepSeek-V2 model family (illustrative, model-specific)</span>
+      <a href="https://arxiv.org/abs/2405.04434" target="_blank">https://arxiv.org/abs/2405.04434</a>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ── STATE ────────────────────────────────────────────────
+const state = { H:4096, A:256, G:128, step:0, kvbytes:128, tokrate:50 };
+
+// ── SLIDERS ──────────────────────────────────────────────
+function bindSlider(id, key, lblId, fmt) {
+  const sl = document.getElementById(id);
+  const lbl= document.getElementById(lblId);
+  sl.addEventListener('input', () => {
+    state[key] = +sl.value;
+    lbl.textContent = fmt ? fmt(+sl.value) : sl.value;
+    renderAll();
+  });
+}
+
+function fmtK(v) { return v >= 1000 ? (v/1000).toFixed(1)+'k' : v; }
+
+function updateC0Display() {
+  const C0 = state.H + state.A;
+  const total = state.G * C0 + state.G * (state.G - 1) / 2;
+  document.getElementById('lbl-C0').textContent  = fmtK(C0);
+  const c0b = document.getElementById('lbl-C0b');
+  if (c0b) c0b.textContent = fmtK(C0);
+  document.getElementById('lbl-total-reads').textContent =
+    `G·C₀ + G(G−1)/2 = ${fmtK(state.G)}·${fmtK(C0)} + ${fmtK(state.G*(state.G-1)/2)} = ${fmtK(total)}`;
+}
+
+function bindSlider(id, key, lblId, fmt) {
+  const sl = document.getElementById(id);
+  const lbl= document.getElementById(lblId);
+  sl.addEventListener('input', () => {
+    state[key] = +sl.value;
+    lbl.textContent = fmt ? fmt(+sl.value) : sl.value;
+    updateC0Display();
+    renderAll();
+  });
+}
+
+bindSlider('sl-H','H','lbl-H', fmtK);
+bindSlider('sl-A','A','lbl-A', v=>v);
+bindSlider('sl-G','G','lbl-G', v=>v);
+bindSlider('sl-step','step','lbl-step', v=>v);
+
+// P3 sliders — live but don't need full renderAll
+['sl-kvbytes','sl-tokrate'].forEach(id => {
+  const key = id === 'sl-kvbytes' ? 'kvbytes' : 'tokrate';
+  const lbl = id === 'sl-kvbytes' ? 'lbl-kvbytes' : 'lbl-tokrate';
+  document.getElementById(id).addEventListener('input', function() {
+    state[key] = +this.value;
+    document.getElementById(lbl).textContent = this.value;
+    renderBandwidth();
+  });
+});
+document.getElementById('chk-offload').addEventListener('change', renderBandwidth);
+
+// ── COLORS ───────────────────────────────────────────────
+const C = {
+  bg:      '#0a0c10',
+  surface: '#0f1318',
+  card:    '#141920',
+  border:  '#1e2530',
+  text:    '#c8d4e0',
+  muted:   '#5a6a7a',
+  teal:    '#00d4aa',
+  orange:  '#ff6b35',
+  purple:  '#7c6eff',
+  danger:  '#ff3d3d',
+  warn:    '#ffd600',
+  green:   '#39e96e',
+};
+
+// ── PANEL 1: AR LOOP SVG ─────────────────────────────────
+function renderARLoop() {
+  const svg = document.getElementById('ar-loop-svg');
+  const {step, H, A, G} = state;
+
+  const C0          = H + A;
+  const priorTokens = C0 + Math.max(0, Math.min(step - 1, G - 1)); // tokens read THIS step
+  const cacheAfter  = C0 + Math.min(step, G);                        // cache length AFTER step
+  const kvActive    = step > 0;
+  const kvAlpha     = kvActive ? 1 : 0.28;
+
+  // Y positions — spaced to give the KV block room
+  const Y = { gen: 52, qT: 140, kv: 240, out: 355 };
+  const CX = 160; // center X
+
+  let s = `<defs>
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>`;
+
+  // ── helper: arrow down ────────────────────────────────
+  function arrow(y1, y2, col, dash) {
+    return `<line x1="${CX}" y1="${y1}" x2="${CX}" y2="${y2-8}"
+              stroke="${col}" stroke-width="1.5" opacity="0.65"
+              stroke-dasharray="${dash || 'none'}"/>
+            <polygon points="${CX},${y2} ${CX-5},${y2-9} ${CX+5},${y2-9}"
+              fill="${col}" opacity="0.65"/>`;
+  }
+
+  // ── helper: node box + label ──────────────────────────
+  function node(label, y, col, w, h, active) {
+    const alpha = active ? 1 : 0.28;
+    const fw    = active ? '700' : '400';
+    return `<rect x="${CX-w/2}" y="${y-h/2}" width="${w}" height="${h}" rx="6"
+              fill="${col}" fill-opacity="${active ? 0.14 : 0.04}"
+              stroke="${col}" stroke-opacity="${alpha}" stroke-width="1.5"/>
+            <text x="${CX}" y="${y+4}" text-anchor="middle"
+              font-family="JetBrains Mono,monospace" font-size="11"
+              fill="${col}" opacity="${alpha}" font-weight="${fw}">${label}</text>`;
+  }
+
+  // ── 1. Generate token t ───────────────────────────────
+  s += node('Generate token t', Y.gen, C.teal, 168, 30, true);
+
+  // ── arrow: gen → Q_t ─────────────────────────────────
+  s += arrow(Y.gen + 15, Y.qT - 15, C.border);
+
+  // ── 2. Compute Q_t ────────────────────────────────────
+  const qActive = step > 0;
+  s += node('Compute Q_t', Y.qT, C.teal, 136, 30, qActive);
+
+  // ── arrow: Q_t → KV block ─────────────────────────────
+  s += arrow(Y.qT + 15, Y.kv - 42, kvActive ? C.danger : C.border, '4 3');
+
+  // ── 3. KV cache block — the hero ──────────────────────
+  const bw  = 220;
+  const bh  = 80;
+  const bx  = CX - bw / 2;
+  const by  = Y.kv - bh / 2;
+  const filter = kvActive ? 'url(#glow2)' : 'none';
+
+  s += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"
+          fill="${C.danger}" fill-opacity="${kvActive ? 0.13 : 0.04}"
+          stroke="${C.danger}" stroke-opacity="${kvAlpha}" stroke-width="${kvActive ? 2 : 1}"
+          filter="${filter}"/>`;
+
+  // Title line
+  s += `<text x="${CX}" y="${by + 22}" text-anchor="middle"
+          font-family="JetBrains Mono,monospace" font-size="12" font-weight="700"
+          fill="${C.danger}" opacity="${kvAlpha}">Attend over ALL prior KV</text>`;
+
+  // Sub-line: token count
+  const countLabel = kvActive
+    ? `${fmtK(priorTokens)} positions read this step`
+    : 'C₀ + (g−1) positions read per step';
+  s += `<text x="${CX}" y="${by + 42}" text-anchor="middle"
+          font-family="JetBrains Mono,monospace" font-size="10"
+          fill="#c8d4e0" opacity="${kvActive ? 0.9 : 0.4}">${countLabel}</text>`;
+
+  // Sub-line: cache length note
+  const cacheLabel = kvActive
+    ? `cache after step: ${fmtK(cacheAfter)} tokens`
+    : '(cache grows by 1 each step)';
+  s += `<text x="${CX}" y="${by + 60}" text-anchor="middle"
+          font-family="JetBrains Mono,monospace" font-size="9"
+          fill="${C.warn}" opacity="${kvActive ? 0.75 : 0.3}">${cacheLabel}</text>`;
+
+  // ── arrow: KV → output ────────────────────────────────
+  s += arrow(Y.kv + bh/2, Y.out - 15, kvActive ? C.orange : C.border);
+
+  // ── 4. Output next token ──────────────────────────────
+  const outActive = step > 0;
+  s += node('Output next token', Y.out, C.orange, 162, 30, outActive);
+
+  // ── loop-back arrow ───────────────────────────────────
+  if (step > 0 && step < G) {
+    s += `<path d="M ${CX+81} ${Y.out} Q 295 ${Y.out} 295 ${Y.kv} Q 295 ${Y.gen} ${CX+84} ${Y.gen}"
+            stroke="${C.teal}" stroke-width="1.5" fill="none" stroke-dasharray="5 3" opacity="0.45"/>
+          <polygon points="${CX+84},${Y.gen} ${CX+76},${Y.gen-6} ${CX+76},${Y.gen+6}"
+            fill="${C.teal}" opacity="0.45"/>`;
+    s += `<text x="303" y="${(Y.gen+Y.out)/2+4}" text-anchor="middle"
+            font-family="JetBrains Mono,monospace" font-size="9"
+            fill="${C.teal}" opacity="0.5" transform="rotate(-90 303 ${(Y.gen+Y.out)/2})">repeat</text>`;
+  }
+
+  // ── step counter + progress bar ───────────────────────
+  const barY  = Y.out + 30;
+  const barW2 = 230;
+  const filled = G > 0 ? (step / G) * barW2 : 0;
+  s += `<text x="${CX}" y="${barY}" text-anchor="middle"
+          font-family="JetBrains Mono,monospace" font-size="10"
+          fill="${C.muted}">step ${step} / ${G}</text>
+        <rect x="${CX - barW2/2}" y="${barY+8}" width="${barW2}" height="5" rx="2.5" fill="${C.border}"/>
+        <rect x="${CX - barW2/2}" y="${barY+8}" width="${filled}" height="5" rx="2.5" fill="${C.teal}" opacity="0.8"/>
+        <text x="${CX - barW2/2}" y="${barY+24}" font-family="JetBrains Mono,monospace"
+          font-size="9" fill="${C.muted}">generated: ${step} tokens</text>`;
+
+  svg.setAttribute('viewBox', `0 0 320 ${barY + 32}`);
+  svg.innerHTML = s;
+}
+
+// ── PANEL 2: AR READS STEP-BY-STEP ──────────────────────
+function renderARReads() {
+  const canvas = document.getElementById('ar-reads-canvas');
+  const { G } = state;
+
+  // Fixed display constants — always show 4 prompt + 8 generated tokens
+  const N_PROMPT = 4;
+  const N_GEN    = 8;
+  const N_TOT    = N_PROMPT + N_GEN;
+
+  const W = canvas.parentElement.clientWidth - 40;
+  const CELL  = Math.max(26, Math.min(38, (W - 160) / N_TOT));
+  const ROW_H = CELL + 14;
+  const H2    = N_GEN * ROW_H + 52;
+
+  canvas.width  = W;
+  canvas.height = H2;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H2);
+
+  const PAD_L = 100;
+  const PAD_T = 32;
+
+  // Column header labels
+  for (let c = 0; c < N_TOT; c++) {
+    const x = PAD_L + c * CELL + CELL / 2;
+    ctx.fillStyle = c < N_PROMPT ? C.teal : C.muted;
+    ctx.font = '8px JetBrains Mono';
+    ctx.textAlign = 'center';
+    if (c < N_PROMPT) {
+      ctx.fillText('C' + (c + 1), x, PAD_T - 4);
+    } else {
+      ctx.fillText('T' + (c - N_PROMPT + 1), x, PAD_T - 4);
+    }
+  }
+
+  // Divider between prompt and generated columns
+  const divX = PAD_L + N_PROMPT * CELL;
+  ctx.strokeStyle = C.border2;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(divX, PAD_T - 14);
+  ctx.lineTo(divX, PAD_T + N_GEN * ROW_H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Section labels above columns
+  fillTextBG(ctx, 'C₀ cached (initial context)', PAD_L + (N_PROMPT * CELL) / 2, PAD_T - 16, {
+    font: '8px JetBrains Mono', textColor: C.teal, bgColor: 'rgba(0,40,30,0.88)',
+    borderColor: C.teal + '55', align: 'center', padding: { x: 5, y: 2 },
+  });
+  fillTextBG(ctx, 'generated tokens (G)', PAD_L + N_PROMPT * CELL + (N_GEN * CELL) / 2, PAD_T - 16, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.88)',
+    align: 'center', padding: { x: 5, y: 2 },
+  });
+
+  // Draw each row (decode step g = 1..8)
+  for (let g = 1; g <= N_GEN; g++) {
+    const rowY = PAD_T + (g - 1) * ROW_H;
+    const isCurrentStep = (g === state.step);
+
+    // Row label on left
+    const readsThisStep = N_PROMPT + (g - 1); // C0=N_PROMPT in toy schematic
+    fillTextBG(ctx, 'step ' + g, PAD_L - 8, rowY + CELL / 2 + 4, {
+      font: (isCurrentStep ? 'bold ' : '') + '9px JetBrains Mono',
+      textColor: isCurrentStep ? C.warn : C.muted,
+      bgColor: isCurrentStep ? 'rgba(40,30,0,0.9)' : 'rgba(8,10,14,0.85)',
+      borderColor: isCurrentStep ? C.warn + '88' : 'transparent',
+      align: 'right', padding: { x: 4, y: 2 },
+    });
+
+    // Read count on right
+    fillTextBG(ctx, '→ C₀+(g−1) = ' + readsThisStep, PAD_L + N_TOT * CELL + 6, rowY + CELL / 2 + 4, {
+      font: '9px JetBrains Mono',
+      textColor: isCurrentStep ? C.warn : C.muted,
+      bgColor: isCurrentStep ? 'rgba(40,30,0,0.9)' : 'rgba(8,10,14,0.85)',
+      align: 'left', padding: { x: 4, y: 2 },
+    });
+
+    // Draw cells
+    for (let c = 0; c < N_TOT; c++) {
+      const x = PAD_L + c * CELL + 1;
+      const y = rowY + 1;
+      const cw2 = CELL - 2;
+      const ch2 = CELL - 2;
+
+      const isPrompt    = c < N_PROMPT;
+      const genIndex    = c - N_PROMPT;   // 0-based index among generated cols
+      const isCurrentQ  = (genIndex === g - 1);     // the Q being emitted this step
+      const isPriorGen  = (genIndex >= 0 && genIndex < g - 1); // previously generated KV
+      const isFuture    = (genIndex >= g);            // not yet generated
+
+      let fillColor, strokeColor, strokeW, textColor, label;
+
+      if (isCurrentQ) {
+        // The new token being generated — yellow/gold
+        fillColor   = 'rgba(255,214,0,0.22)';
+        strokeColor = C.warn;
+        strokeW     = isCurrentStep ? 2 : 1.5;
+        textColor   = C.warn;
+        label       = 'Q' + g;
+      } else if (isFuture) {
+        // Not yet generated
+        fillColor   = 'rgba(255,255,255,0.02)';
+        strokeColor = C.border;
+        strokeW     = 0.5;
+        textColor   = C.border2;
+        label       = '';
+      } else if (isPrompt) {
+        // Prompt KV being read
+        fillColor   = isCurrentStep ? 'rgba(0,212,170,0.28)' : 'rgba(0,212,170,0.10)';
+        strokeColor = isCurrentStep ? C.teal : C.teal + '55';
+        strokeW     = isCurrentStep ? 1.5 : 0.8;
+        textColor   = isCurrentStep ? C.teal : C.teal + '88';
+        label       = 'KV';
+      } else if (isPriorGen) {
+        // Prior generated token KV being read
+        fillColor   = isCurrentStep ? 'rgba(255,107,53,0.32)' : 'rgba(255,107,53,0.10)';
+        strokeColor = isCurrentStep ? C.orange : C.orange + '55';
+        strokeW     = isCurrentStep ? 1.5 : 0.8;
+        textColor   = isCurrentStep ? C.orange : C.orange + '88';
+        label       = 'KV';
+      } else {
+        fillColor   = 'rgba(0,0,0,0)';
+        strokeColor = C.border;
+        strokeW     = 0.5;
+        textColor   = C.muted;
+        label       = '';
+      }
+
+      // Cell background
+      ctx.fillStyle = fillColor;
+      roundRect(ctx, x, y, cw2, ch2, 4);
+      ctx.fill();
+
+      // Cell border
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeW;
+      roundRect(ctx, x, y, cw2, ch2, 4);
+      ctx.stroke();
+
+      // Cell label
+      if (label) {
+        ctx.fillStyle = textColor;
+        ctx.font = (isCurrentQ ? 'bold ' : '') + '8px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + cw2 / 2, y + ch2 / 2 + 3);
+      }
+
+      // Bright flash glow for current step reads
+      if (isCurrentStep && !isFuture && !isCurrentQ) {
+        ctx.shadowColor = isPrompt ? C.teal : C.orange;
+        ctx.shadowBlur  = 6;
+        ctx.strokeStyle = isPrompt ? C.teal : C.orange;
+        ctx.lineWidth   = 1.5;
+        roundRect(ctx, x, y, cw2, ch2, 4);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    // Arrow sweep: draw an arc from Q_t back to first prompt token for current step
+    if (isCurrentStep && g <= N_GEN) {
+      const qCol  = N_PROMPT + (g - 1);
+      const qCx   = PAD_L + qCol * CELL + CELL / 2;
+      const rowCy = rowY + CELL / 2;
+
+      // Line from each read token to Q
+      for (let c = 0; c < N_PROMPT + (g - 1); c++) {
+        const cx = PAD_L + c * CELL + CELL / 2;
+        const isP = c < N_PROMPT;
+        ctx.strokeStyle = isP ? C.teal + 'aa' : C.orange + 'aa';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(cx, rowCy);
+        ctx.lineTo(qCx - CELL / 2 - 1, rowCy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Arrowhead
+        ctx.fillStyle = isP ? C.teal : C.orange;
+        ctx.beginPath();
+        ctx.moveTo(qCx - CELL / 2 + 2, rowCy);
+        ctx.lineTo(qCx - CELL / 2 - 4, rowCy - 3);
+        ctx.lineTo(qCx - CELL / 2 - 4, rowCy + 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  // Cumulative total label — toy schematic (C0=4, G=8)
+  // Total = G·C0 + G(G-1)/2 = 8·4 + 8·7/2 = 32 + 28 = 60
+  const totalReads = N_GEN * N_PROMPT + N_GEN * (N_GEN - 1) / 2;
+  fillTextBG(ctx, `schematic: G·C₀ + G(G−1)/2 = ${N_GEN}·${N_PROMPT} + ${N_GEN}·${N_GEN-1}/2 = ${totalReads}`,
+               PAD_L + 4, PAD_T + N_GEN * ROW_H + 16, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'left', padding: { x: 4, y: 2 },
+  });
+
+  // Live numbers for equation block (from sliders)
+  const { H, A, G: Gslider } = state;
+  const C0live  = H + A;
+  const liveTotal = Gslider * C0live + Gslider * (Gslider - 1) / 2;
+  document.getElementById('kv-live').textContent =
+    `slider → G·C₀ + G(G−1)/2 = ${fmtK(Gslider)}·${fmtK(C0live)} + ${fmtK(Gslider*(Gslider-1)/2)} = ${fmtK(liveTotal)}`;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ── PANEL 3: BANDWIDTH ───────────────────────────────────
+function renderBandwidth() {
+  const canvas = document.getElementById('bw-canvas');
+  const W = canvas.parentElement.clientWidth - 40;
+  const H2 = 200;
+  canvas.width = W; canvas.height = H2;
+  const ctx = canvas.getContext('2d');
+
+  const { H: Htoks, A, kvbytes = 128, tokrate = 50 } = state;
+  const C0 = Htoks + A;
+  const showOffload = document.getElementById('chk-offload')?.checked;
+
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H2);
+
+  const pad = { l: 60, r: 16, t: 16, b: 36 };
+  const cw  = W - pad.l - pad.r;
+  const ch  = H2 - pad.t - pad.b;
+
+  const maxC  = 65536;
+  const steps = 120;
+
+  // Required BW (GB/s) = activeContext × kvBytesPerToken × tokensPerSec / 1e9
+  function bwDemand(c) { return (c * kvbytes * tokrate) / 1e9; }
+
+  const hbmCurves = [
+    { label: 'H200 HBM3e ~4.8 TB/s', bwLimit: 4800, col: C.teal   },
+    { label: 'H100 HBM3  ~3.35 TB/s', bwLimit: 3350, col: C.green  },
+    { label: 'A100 HBM2e ~2 TB/s',    bwLimit: 2000, col: C.purple },
+  ];
+  const offloadCurves = showOffload ? [
+    { label: 'PCIe-5 ~128 GB/s', bwLimit: 128, col: C.warn,  dash: true },
+    { label: 'NVMe   ~14 GB/s',  bwLimit: 14,  col: C.muted, dash: true },
+  ] : [];
+  const allCurves = [...hbmCurves, ...offloadCurves];
+
+  const maxBW = 5500;
+  function xScale(c) { return pad.l + (c / maxC) * cw; }
+  function yScale(v) { return pad.t + ch - Math.min(1, v / maxBW) * ch; }
+
+  // Grid
+  ctx.strokeStyle = C.border; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (i / 4) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    const v = maxBW * (1 - i / 4);
+    fillTextBG(ctx, v >= 1000 ? (v / 1000).toFixed(1) + 'T' : v + 'G', 2, y + 4, {
+      font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+      align: 'left', padding: { x: 2, y: 2 },
+    });
+  }
+
+  // BW demand filled area
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const c = (i / steps) * maxC;
+    const x = xScale(c), y = yScale(bwDemand(c));
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.lineTo(pad.l + cw, pad.t + ch);
+  ctx.lineTo(pad.l, pad.t + ch);
+  ctx.closePath();
+  const fg = ctx.createLinearGradient(0, pad.t, 0, pad.t + ch);
+  fg.addColorStop(0, C.purple + '44'); fg.addColorStop(1, C.purple + '00');
+  ctx.fillStyle = fg; ctx.fill();
+
+  // Demand stroke
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const c = (i / steps) * maxC;
+    const x = xScale(c), y = yScale(bwDemand(c));
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  const dg = ctx.createLinearGradient(pad.l, 0, pad.l + cw, 0);
+  dg.addColorStop(0, C.purple + 'cc'); dg.addColorStop(1, C.danger + 'cc');
+  ctx.strokeStyle = dg; ctx.lineWidth = 2; ctx.stroke();
+
+  // Hardware limit lines
+  allCurves.forEach(cv => {
+    const y = yScale(cv.bwLimit);
+    ctx.save();
+    if (cv.dash) ctx.setLineDash([5, 3]);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y);
+    ctx.strokeStyle = cv.col; ctx.lineWidth = cv.dash ? 1 : 1.5;
+    ctx.stroke(); ctx.restore();
+
+    const crossC = (cv.bwLimit * 1e9) / (kvbytes * tokrate);
+    if (crossC > 0 && crossC < maxC) {
+      const cx2 = xScale(crossC);
+      ctx.beginPath(); ctx.arc(cx2, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = cv.col; ctx.fill();
+      fillTextBG(ctx, 'cross@' + fmtK(Math.round(crossC)) + 'tok', cx2 + 6, y - 4, {
+        font: '8px JetBrains Mono', textColor: cv.col, bgColor: 'rgba(8,10,14,0.88)',
+        align: 'left', padding: { x: 3, y: 2 },
+      });
+    }
+    fillTextBG(ctx, cv.label, pad.l + cw - 4, y - 4, {
+      font: '9px JetBrains Mono', textColor: cv.col, bgColor: 'rgba(8,10,14,0.90)',
+      borderColor: cv.col + '55', align: 'right', padding: { x: 5, y: 3 },
+    });
+  });
+
+  // C0 marker
+  if (C0 < maxC) {
+    const hx = xScale(C0);
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(hx, pad.t); ctx.lineTo(hx, pad.t + ch);
+    ctx.strokeStyle = C.warn; ctx.lineWidth = 1; ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+    fillTextBG(ctx, 'C₀=' + fmtK(C0), hx + 2, pad.t + 12, {
+      font: '9px JetBrains Mono', textColor: C.warn, bgColor: 'rgba(30,20,0,0.88)',
+      borderColor: C.warn + '66', align: 'left', padding: { x: 4, y: 3 },
+    });
+  }
+
+  // Axes
+  fillTextBG(ctx, '← active context (tokens) →', pad.l + cw / 2, H2 - 5, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'center', padding: { x: 5, y: 2 },
+  });
+  fillTextBG(ctx, 'BW (GB/s)', 2, pad.t + 9, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'left', padding: { x: 3, y: 2 },
+  });
+}
+
+// ── LOG-SCALE COLOR MAPPING ──────────────────────────────
+// 0=black, low=blue, mid=green, high=yellow, max=red
+function logColor(v, maxV) {
+  if (v <= 0 || maxV <= 0) return [10, 12, 16]; // bg black
+  const t = Math.log(v + 1) / Math.log(maxV + 1); // 0..1 log-normalized
+  // Color stops: 0→black, 0.2→blue, 0.45→green, 0.72→yellow, 1→red
+  const stops = [
+    [0.00, [10,  12,  16 ]],
+    [0.15, [20,  40, 168 ]],  // blue
+    [0.45, [57, 233, 110 ]],  // green
+    [0.72, [255,214,  0  ]],  // yellow
+    [1.00, [255, 61,  61 ]],  // red
+  ];
+  for (let i = 1; i < stops.length; i++) {
+    if (t <= stops[i][0]) {
+      const lo = stops[i-1], hi = stops[i];
+      const f  = (t - lo[0]) / (hi[0] - lo[0]);
+      return lo[1].map((c, j) => Math.round(c + (hi[1][j] - c) * f));
+    }
+  }
+  return stops[stops.length-1][1];
+}
+
+// Draw the CSS colorbar legend
+function renderColorbar() {
+  const bar = document.getElementById('heatmap-colorbar');
+  bar.innerHTML = '';
+  const steps = 60;
+  for (let i = 0; i < steps; i++) {
+    const t = i / (steps - 1);
+    const [r,g,b] = logColor(Math.round(t * 100), 100);
+    const d = document.createElement('div');
+    d.style.cssText = `width:3px;height:14px;background:rgb(${r},${g},${b})`;
+    bar.appendChild(d);
+  }
+}
+
+// ── TEXT WITH BACKGROUND PILL (canvas legibility helper) ──
+function fillTextBG(ctx, text, x, y, {
+  textColor   = '#e8f0f8',
+  bgColor     = 'rgba(8,10,14,0.82)',
+  font        = '9px JetBrains Mono',
+  align       = 'left',
+  padding     = { x: 5, y: 3 },
+  borderColor = null,
+} = {}) {
+  ctx.save();
+  ctx.font      = font;
+  ctx.textAlign = align;
+  const metrics = ctx.measureText(text);
+  const tw = metrics.width;
+  const th = parseInt(font, 10) || 9;
+  let bx = x;
+  if      (align === 'center') bx = x - tw / 2;
+  else if (align === 'right')  bx = x - tw;
+  const rx = bx - padding.x;
+  const ry = y  - th - padding.y + 1;
+  const rw = tw + padding.x * 2;
+  const rh = th + padding.y * 2;
+  // background
+  ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, rw, rh, 3);
+  ctx.fill();
+  // optional border
+  if (borderColor) {
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.roundRect(rx, ry, rw, rh, 3);
+    ctx.stroke();
+  }
+  ctx.fillStyle = textColor;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// ── HEATMAP STATE ─────────────────────────────────────────
+const hm = { animStep: 0, animating: false, animRaf: null, zoom: false, contours: true, lastTs: 0 };
+
+// ── PANEL 4: HEATMAP (X=decode step, Y=token position) ───
+function renderHeatmap() {
+  const { G } = state;
+  const canvas  = document.getElementById('heatmap-canvas');
+  const showG   = hm.zoom ? Math.min(G, 30) : Math.min(G, 120);
+  const showT   = showG;
+
+  const W  = canvas.parentElement.clientWidth - 40;
+  const H2 = Math.max(180, Math.min(300, showT * 2.8));
+  canvas.width = W; canvas.height = H2;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#0a0c10';
+  ctx.fillRect(0, 0, W, H2);
+
+  const pad = { l: 130, r: 16, t: 20, b: 24 };
+  const cw  = W  - pad.l - pad.r;
+  const ch  = H2 - pad.t - pad.b;
+
+  const fillSteps = hm.animating ? Math.min(hm.animStep, showG) : showG;
+  const maxV      = showG;
+
+  // ── C₀ RECTANGLE BAND (top strip) ────────────────────
+  // Every initial cached token reread G times — full-width band, always max color
+  const bandH = Math.max(16, Math.round(ch * 0.09));
+  const rectFill = ctx.createLinearGradient(pad.l, 0, pad.l + cw, 0);
+  rectFill.addColorStop(0, C.danger + 'ee');
+  rectFill.addColorStop(1, C.danger + '88');
+  ctx.fillStyle = rectFill;
+  ctx.fillRect(pad.l, pad.t, (fillSteps / showG) * cw, bandH);
+  if (fillSteps > 4) {
+    fillTextBG(ctx,
+      `C₀ = ${fmtK(state.H + state.A)} cached tokens — each reread all ${showG} steps (G rereads each)`,
+      pad.l + 6, pad.t + bandH - 4, {
+        font: 'bold 9px JetBrains Mono', textColor: '#fff', bgColor: 'rgba(100,0,0,0.80)',
+        align: 'left', padding: { x: 5, y: 3 },
+      }
+    );
+  }
+
+  // ── GENERATED-TOKEN TRIANGLE (strict lower triangle: t < s) ──
+  // t < s means only PRIOR generated tokens are read, NOT the current one
+  // reread count v = s - t  (ranges G-1 down to 1, never 0 on diagonal)
+  const triTop = pad.t + bandH + 2;
+  const triCh  = ch - bandH - 2;
+  const cellW  = cw / showG;
+  const cellH  = triCh / showG;
+
+  for (let s = 0; s < fillSteps; s++) {
+    for (let t = 0; t < s; t++) {               // STRICT: t < s, not t <= s
+      const v = s - t;                           // rereads: G-1 at top, 1 just below diagonal
+      const [r, g, b] = logColor(v, maxV);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(
+        pad.l + s * cellW,
+        triTop + t * cellH,
+        Math.max(1, cellW + 0.3),
+        Math.max(1, cellH + 0.3)
+      );
+    }
+  }
+
+  // ── CONTOUR BANDS ─────────────────────────────────────
+  if (hm.contours && fillSteps > 8) {
+    const stride = Math.max(1, Math.round(showG / 8));
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+    ctx.lineWidth = 0.8;
+    for (let k = stride; k < showG; k += stride) {
+      const x0 = pad.l + k * cellW;
+      const y0 = triTop;
+      const x1 = pad.l + (showG - 1) * cellW + cellW;
+      const y1 = triTop + (showG - 1 - k) * cellH + cellH;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ── FRONTIER DIAGONAL ──────────────────────────────────
+  // Drawn at t = s boundary — the line where newly generated token would be (not read)
+  if (fillSteps > 1) {
+    ctx.save();
+    ctx.strokeStyle = '#ff3d3d';
+    ctx.lineWidth   = 2;
+    ctx.shadowColor = '#ff3d3d';
+    ctx.shadowBlur  = 5;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, triTop);
+    ctx.lineTo(pad.l + (fillSteps - 1) * cellW + cellW,
+               triTop + (fillSteps - 1) * cellH + cellH);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    if (fillSteps >= 12) {
+      const lx = pad.l + fillSteps * 0.52 * cellW;
+      const ly = triTop + fillSteps * 0.52 * cellH - 6;
+      fillTextBG(ctx, 'autoregressive read frontier', lx, ly, {
+        font: 'bold 9px JetBrains Mono',
+        textColor: '#ff3d3d',
+        bgColor:   'rgba(8,10,14,0.85)',
+        borderColor: 'rgba(255,61,61,0.4)',
+        align: 'left',
+      });
+    }
+  }
+
+  // ── ANIMATED COLUMN HIGHLIGHT ─────────────────────────
+  if (hm.animating && hm.animStep > 0 && hm.animStep <= showG) {
+    const sx = pad.l + (hm.animStep - 1) * cellW;
+    ctx.save();
+    ctx.strokeStyle = C.warn;
+    ctx.lineWidth   = 1.5;
+    ctx.shadowColor = C.warn;
+    ctx.shadowBlur  = 4;
+    ctx.strokeRect(sx, triTop, cellW, triCh);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  // ── CENTRE CALLOUT TEXT ────────────────────────────────
+  if (fillSteps >= showG) {
+    const cx2 = pad.l + cw * 0.62;
+    const cy2 = triTop + triCh * 0.38;
+    fillTextBG(ctx,
+      'Every generated token rereads every previous token.',
+      cx2, cy2, {
+        font: 'bold 10px JetBrains Mono',
+        textColor: '#ffaaaa',
+        bgColor:   'rgba(80,0,0,0.75)',
+        borderColor: 'rgba(255,61,61,0.5)',
+        align: 'center',
+        padding: { x: 7, y: 4 },
+      }
+    );
+    // arrows
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,80,80,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx2, cy2 + 4); ctx.lineTo(pad.l + 10, triTop + triCh * 0.88); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx2, cy2 + 4); ctx.lineTo(pad.l + cw * 0.94, triTop + triCh * 0.12); ctx.stroke();
+    ctx.restore();
+  }
+
+  // ── TOKEN MARKER ROWS (left margin) ───────────────────
+  if (fillSteps >= showG) {
+    const markers = [
+      { t: 0,                    label: `gen token 0 → ${showG - 1} rereads`, col: C.danger },
+      { t: Math.floor(showG / 2),label: `gen token G/2 → ${Math.floor((showG - 1)/2)} rereads`, col: C.warn },
+      { t: showG - 1,            label: 'last gen token → 0 rereads',         col: '#5a7a8a' },
+    ];
+    markers.forEach(m => {
+      const y = triTop + m.t * cellH + cellH / 2 + 4;
+      // dashed guide line across plot
+      ctx.save();
+      ctx.strokeStyle = m.col + '55';
+      ctx.lineWidth   = 0.8;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(pad.l, triTop + m.t * cellH + cellH / 2);
+      ctx.lineTo(pad.l + Math.min(fillSteps, showG) * cellW, triTop + m.t * cellH + cellH / 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      // pill label in left margin
+      fillTextBG(ctx, m.label, pad.l - 6, y, {
+        font: '9px JetBrains Mono',
+        textColor: m.col,
+        bgColor:   'rgba(8,10,14,0.9)',
+        borderColor: m.col + '66',
+        align: 'right',
+        padding: { x: 5, y: 3 },
+      });
+    });
+  }
+
+  // ── AXIS LABELS ────────────────────────────────────────
+  fillTextBG(ctx, '← decode step →', pad.l + cw / 2, H2 - 5, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'center', padding: { x: 6, y: 2 },
+  });
+  fillTextBG(ctx, 'step 1', pad.l + 2, pad.t - 5, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'left', padding: { x: 4, y: 2 },
+  });
+  fillTextBG(ctx, 'step ' + showG, pad.l + cw - 2, pad.t - 5, {
+    font: '9px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'right', padding: { x: 4, y: 2 },
+  });
+
+  // rotated Y-axis label — draw in cleared left strip
+  ctx.save();
+  ctx.translate(12, pad.t + ch / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.font      = '9px JetBrains Mono';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = C.muted;
+  ctx.fillText('← token position (0=earliest) →', 0, 0);
+  ctx.restore();
+
+  // ── LIVE COUNTER ───────────────────────────────────────
+  const liveG = hm.animating ? hm.animStep : showG;
+  const { H, A, G: fullG } = state;
+  const C0full = H + A;
+  // Full totals from slider G (not capped showG)
+  const globalTotal = fullG * C0full + fullG * Math.max(0, fullG - 1) / 2;
+  // Visible window total (showG steps)
+  const visTotal = liveG * C0full + liveG * Math.max(0, liveG - 1) / 2;
+  document.getElementById('hm-live-reads').textContent =
+    `showing ${liveG} steps: ${fmtK(visTotal)} reads  |  full G=${fullG}: ${fmtK(globalTotal)} total`;
+}
+
+// ── COMPANION: REREAD PROFILE ─────────────────────────────
+function renderRereadProfile() {
+  const canvas = document.getElementById('reread-profile-canvas');
+  const W = canvas.parentElement.clientWidth - 4;
+  const H2 = 110;
+  canvas.width = W; canvas.height = H2;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H2);
+
+  const { G } = state;
+  const showT    = Math.min(G, 120);
+  const maxReads = showT;
+  const pad      = { l: 36, r: 8, t: 10, b: 22 };
+  const cw       = W - pad.l - pad.r;
+  const ch       = H2 - pad.t - pad.b;
+
+  // Grid + Y-axis tick labels
+  ctx.strokeStyle = C.border; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (i / 4) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    const v = Math.round(maxReads * (1 - i / 4));
+    fillTextBG(ctx, String(v), pad.l - 4, y + 4, {
+      font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+      align: 'right', padding: { x: 3, y: 2 },
+    });
+  }
+
+  // Bars colored by log-scale
+  // Generated token t has reread count = max(0, showT - 1 - t)
+  // Token 0: G-1 rereads. Token G-1: 0 rereads.
+  const barW = cw / showT;
+  for (let t = 0; t < showT; t++) {
+    const reads = Math.max(0, showT - 1 - t);
+    const norm  = maxReads > 0 ? reads / maxReads : 0;
+    const [r, g, b] = logColor(reads, maxReads);
+    const bh = norm * ch;
+    ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
+    ctx.fillRect(pad.l + t * barW, pad.t + ch - bh, Math.max(1, barW - 0.5), bh);
+  }
+
+  // Linear trend overlay
+  ctx.beginPath();
+  ctx.strokeStyle = C.warn + 'bb'; ctx.lineWidth = 1.5;
+  ctx.moveTo(pad.l, pad.t); ctx.lineTo(pad.l + cw, pad.t + ch);
+  ctx.stroke();
+
+  // Axis label
+  fillTextBG(ctx, 'token index →', pad.l + cw / 2, H2 - 5, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'center', padding: { x: 5, y: 2 },
+  });
+  fillTextBG(ctx, 'reads', 4, pad.t + 9, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'left', padding: { x: 3, y: 2 },
+  });
+
+  // Corner annotations
+  fillTextBG(ctx, `t=0: ${showT-1} rereads`, pad.l + 3, pad.t + 11, {
+    font: 'bold 8px JetBrains Mono', textColor: C.danger, bgColor: 'rgba(60,0,0,0.85)',
+    borderColor: C.danger + '66', align: 'left', padding: { x: 4, y: 3 },
+  });
+  fillTextBG(ctx, 't=G-1: 0 rereads', pad.l + cw - 2, pad.t + ch - 4, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'right', padding: { x: 4, y: 2 },
+  });
+}
+
+// ── COMPANION: BANDWIDTH SHARE PER TOKEN ──────────────────
+function renderBWShare() {
+  const canvas = document.getElementById('bw-share-canvas');
+  const W  = canvas.parentElement.clientWidth - 4;
+  const H2 = 110;
+  canvas.width = W; canvas.height = H2;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H2);
+
+  const { G } = state;
+  const showT    = Math.min(G, 120);
+  // Generated-token reread counts: G-1, G-2, ..., 1, 0
+  // Sum = (G-1)(G)/2 = showT*(showT-1)/2
+  const totalReads = showT * Math.max(0, showT - 1) / 2;
+  const maxShare   = totalReads > 0 ? (showT - 1) / totalReads : 1;
+
+  const pad = { l: 46, r: 8, t: 10, b: 22 };
+  const cw  = W  - pad.l - pad.r;
+  const ch  = H2 - pad.t - pad.b;
+
+  // Grid + Y ticks
+  ctx.strokeStyle = C.border; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y   = pad.t + (i / 4) * ch;
+    const pct = ((1 - i / 4) * maxShare * 100).toFixed(1);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+    fillTextBG(ctx, pct + '%', pad.l - 4, y + 4, {
+      font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+      align: 'right', padding: { x: 3, y: 2 },
+    });
+  }
+
+  // Filled curve
+  ctx.beginPath();
+  ctx.moveTo(pad.l, pad.t);
+  for (let t = 0; t < showT; t++) {
+    const share = totalReads > 0 ? Math.max(0, showT - 1 - t) / totalReads : 0;
+    const x = pad.l + (t / showT) * cw;
+    const y = pad.t + ch - (share / maxShare) * ch;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(pad.l + cw, pad.t + ch);
+  ctx.lineTo(pad.l, pad.t + ch);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(pad.l, 0, pad.l + cw, 0);
+  grad.addColorStop(0,   C.danger + 'cc');
+  grad.addColorStop(0.3, C.warn   + '88');
+  grad.addColorStop(0.7, '#39e96e55');
+  grad.addColorStop(1.0, '#1a4fa822');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Stroke
+  ctx.beginPath();
+  for (let t = 0; t < showT; t++) {
+    const share = (showT - t) / totalReads;
+    const x = pad.l + (t / showT) * cw;
+    const y = pad.t + ch - (share / maxShare) * ch;
+    t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = C.danger; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // Equal share reference
+  const equalShare = 1 / showT;
+  const eqY = pad.t + ch - (equalShare / maxShare) * ch;
+  ctx.beginPath();
+  ctx.setLineDash([4, 3]); ctx.strokeStyle = C.muted + '88'; ctx.lineWidth = 1;
+  ctx.moveTo(pad.l, eqY); ctx.lineTo(pad.l + cw, eqY);
+  ctx.stroke(); ctx.setLineDash([]);
+  fillTextBG(ctx, 'equal share', pad.l + cw - 2, eqY - 3, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'right', padding: { x: 4, y: 2 },
+  });
+
+  // Token 0 callout
+  const t0pct = totalReads > 0 ? ((showT - 1) / totalReads * 100).toFixed(1) : '—';
+  fillTextBG(ctx, `gen token 0: ${t0pct}% of gen-BW`, pad.l + 3, pad.t + 11, {
+    font: 'bold 8px JetBrains Mono', textColor: C.danger, bgColor: 'rgba(60,0,0,0.85)',
+    borderColor: C.danger + '66', align: 'left', padding: { x: 4, y: 3 },
+  });
+
+  // Axis labels
+  fillTextBG(ctx, 'token index →', pad.l + cw / 2, H2 - 5, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'center', padding: { x: 5, y: 2 },
+  });
+  fillTextBG(ctx, 'BW%', 4, pad.t + 9, {
+    font: '8px JetBrains Mono', textColor: C.muted, bgColor: 'rgba(8,10,14,0.85)',
+    align: 'left', padding: { x: 3, y: 2 },
+  });
+}
+
+function lerp(a, b, t) { return a + (b-a)*t; }
+
+// ── ARCH TABLE ────────────────────────────────────────────
+function renderArchTable() {
+  const archs = [
+    { name:'MHA',  type:'Multi-Head Attention',   kv:1.0,  comp:1,   ar:true, col:C.orange,
+      note:'K,V stored per head independently. KV size = 2·L·H·d_head·C' },
+    { name:'GQA',  type:'Grouped-Query Attention', kv:0.25, comp:4,   ar:true, col:C.warn,
+      note:'K,V shared across Q-head groups. Compression = n_heads / n_kv_groups ≈ 4–8×' },
+    { name:'MLA',  type:'Multi-head Latent Attn',  kv:0.10, comp:10,  ar:true, col:C.teal,
+      note:'Projects KV into low-rank latent c_KV ≪ d_model. DeepSeek-V2/V3. Best known compression.' },
+  ];
+
+  const maxKV = 1.0;
+  const tbody = document.getElementById('arch-tbody');
+  tbody.innerHTML = archs.map(a => {
+    const barW = Math.round((a.kv/maxKV)*180);
+    const arStr = a.ar
+      ? `<span style="color:${C.danger};font-weight:700;">YES — rereads every step</span>`
+      : `<span style="color:${C.green};">No</span>`;
+    return `<tr>
+      <td style="color:${a.col};font-weight:700;">${a.name}</td>
+      <td style="color:var(--text)">${a.type}</td>
+      <td>
+        <div style="font-family:var(--mono);color:${a.col}">${a.kv.toFixed(3)}×</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${a.note}</div>
+      </td>
+      <td style="color:${a.col};font-family:var(--mono)">${a.comp}×</td>
+      <td>${arStr}</td>
+      <td>
+        <div class="arch-bar-wrap">
+          <div class="arch-bar" style="width:${barW}px;background:${a.col};opacity:0.75"></div>
+          <span style="font-size:10px;color:${a.col};font-family:var(--mono)">${barW}px</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── REUSE STATS ───────────────────────────────────────────
+function renderReuse() {
+  const { H, A, G } = state;
+  const C0    = H + A;
+  const total = G * C0 + G * (G - 1) / 2;
+  document.getElementById('reuse-reads').textContent = fmtK(total);
+  document.getElementById('ex-H').textContent  = fmtK(H);
+  document.getElementById('ex-A').textContent  = A;
+  document.getElementById('ex-G').textContent  = G;
+  const c0b = document.getElementById('lbl-C0b');
+  if (c0b) c0b.textContent = fmtK(C0);
+  document.getElementById('ex-total').textContent = fmtK(total);
+}
+
+// ── TOOLTIP ───────────────────────────────────────────────
+const tooltip = document.getElementById('tooltip');
+document.querySelectorAll('[data-tip]').forEach(el => {
+  el.addEventListener('mouseenter', e => {
+    tooltip.style.display = 'block';
+    tooltip.innerHTML = el.dataset.tip;
+  });
+  el.addEventListener('mousemove', e => {
+    tooltip.style.left = (e.clientX+12)+'px';
+    tooltip.style.top  = (e.clientY+12)+'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.display='none'; });
+});
+
+// ── MAIN RENDER ───────────────────────────────────────────
+function renderAll() {
+  renderARLoop();
+  renderARReads();
+  renderBandwidth();
+  renderHeatmap();
+  renderRereadProfile();
+  renderBWShare();
+  renderReuse();
+}
+
+// ── HEATMAP BUTTON WIRING ─────────────────────────────────
+document.getElementById('btn-hm-play').addEventListener('click', function() {
+  if (hm.animating) {
+    hm.animating = false;
+    if (hm.animRaf) cancelAnimationFrame(hm.animRaf);
+    this.textContent = '▶ ANIMATE';
+  } else {
+    hm.animating = true;
+    hm.animStep  = 0;
+    this.textContent = '⏹ STOP';
+    function hmFrame(ts) {
+      if (!hm.animating) return;
+      const showG = hm.zoom ? Math.min(state.G, 30) : Math.min(state.G, 120);
+      if (ts - hm.lastTs > 60) {
+        hm.animStep = (hm.animStep % showG) + 1;
+        hm.lastTs = ts;
+        renderHeatmap();
+        renderRereadProfile();
+        renderBWShare();
+      }
+      hm.animRaf = requestAnimationFrame(hmFrame);
+    }
+    hm.animRaf = requestAnimationFrame(hmFrame);
+  }
+});
+
+document.getElementById('btn-hm-zoom').addEventListener('click', function() {
+  hm.zoom = !hm.zoom;
+  this.textContent = hm.zoom ? '🔬 FULL VIEW' : '🔬 ZOOM EARLY';
+  this.style.background = hm.zoom ? 'rgba(0,212,170,0.18)' : 'rgba(0,212,170,0.08)';
+  renderHeatmap(); renderRereadProfile(); renderBWShare();
+});
+
+document.getElementById('btn-hm-contour').addEventListener('click', function() {
+  hm.contours = !hm.contours;
+  this.style.background = hm.contours ? 'rgba(124,110,255,0.18)' : 'rgba(124,110,255,0.08)';
+  renderHeatmap();
+});
+
+// ── RESIZE ────────────────────────────────────────────────
+window.addEventListener('resize', renderAll);
+renderArchTable();
+renderColorbar();
+updateC0Display();
+renderAll();
+
+// ── AUTO-ANIMATE STEP ────────────────────────────────────
+let animating = false;
+let animFrame = null;
+let lastTime = 0;
+
+function autoAnimate(ts) {
+  if (!animating) return;
+  if (ts - lastTime > 700) {
+    state.step = (state.step % 8) + 1;
+    document.getElementById('sl-step').value = state.step;
+    document.getElementById('lbl-step').textContent = state.step;
+    renderAll();
+    lastTime = ts;
+  }
+  animFrame = requestAnimationFrame(autoAnimate);
+}
+
+// click P1 panel to toggle auto-animation
+document.getElementById('p1').addEventListener('click', () => {
+  animating = !animating;
+  if (animating) {
+    animFrame = requestAnimationFrame(autoAnimate);
+    document.getElementById('p1').style.cursor = 'pointer';
+    document.getElementById('p1').title = 'Click to pause';
+  } else {
+    if (animFrame) cancelAnimationFrame(animFrame);
+  }
+});
+document.getElementById('p1').title = 'Click to animate';
+document.getElementById('p1').style.cursor = 'pointer';
+</script>
+</body>
+</html>
