@@ -1,0 +1,9 @@
+gpu: A100
+lane: matched-scaling
+lane_type: core
+model: Qwen2.5-7B
+batches: [1, 2, 4, 8, 16, 32, 64]
+contexts: [1024, 2048, 4096, 8192, 16384, 32768]
+warmup_iters: 10
+measure_iters: 30
+notes: Promote A100 from bridge subset to first-class matched lane.
