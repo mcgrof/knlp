@@ -1,0 +1,1 @@
+"""FIM research package scaffold."""
