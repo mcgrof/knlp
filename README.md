@@ -43,6 +43,8 @@ See [docs/bpa.md](docs/bpa.md) for the current high-level BPA story,
 into BPA and then into fused KV quantization, and the
 [KV Bandwidth visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
 for the current generic public explanation that decode is the issue.
+A complementary structural explainer is available at
+[AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html).
 
 Paper-facing experiment scaffolding for the BPA KV scaling work lives in
 [`docs/paper/bpa/`](docs/paper/bpa/) and
