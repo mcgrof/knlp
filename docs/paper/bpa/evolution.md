@@ -70,3 +70,6 @@ Keep the `knlp` story ordered like this:
 - `docs/fused_kv_quantization.md` = current public fused-kernel writeup
 
 Add paper-shaped narratives later, once the experiments and claims are locked.
+
+For the operational / methodology lineage, see
+[Agentic experiment evolution for BPA](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/agentic_experiment_evolution.md).
