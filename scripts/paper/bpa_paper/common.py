@@ -8,7 +8,7 @@ import dataclasses
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 try:
     import yaml
@@ -23,6 +23,14 @@ class Point:
 
 
 @dataclasses.dataclass
+class RunnerConfig:
+    kind: str
+    command_template: Optional[str] = None
+    setup_command: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+
+
+@dataclasses.dataclass
 class LaneConfig:
     gpu: str
     lane: str
@@ -33,6 +41,7 @@ class LaneConfig:
     measure_iters: int
     lane_type: str
     notes: str
+    runner: Optional[RunnerConfig] = None
 
 
 @dataclasses.dataclass
@@ -69,6 +78,16 @@ def load_config(path: Path) -> LaneConfig:
         measure_iters=int(data.get("measure_iters", 30)),
         lane_type=str(data.get("lane_type", "core")),
         notes=str(data.get("notes", "")),
+        runner=(
+            RunnerConfig(
+                kind=str(data["runner"].get("kind", "plan-only")),
+                command_template=data["runner"].get("command_template"),
+                setup_command=data["runner"].get("setup_command"),
+                env={str(k): str(v) for k, v in data["runner"].get("env", {}).items()},
+            )
+            if isinstance(data.get("runner"), dict)
+            else None
+        ),
     )
 
 

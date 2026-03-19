@@ -34,6 +34,26 @@ The paper should be able to make five claims cleanly and with auditable evidence
 - The private `knlp-key-results` tree is too messy to point at directly; we need
   a clean `knlp-paper-kv-scaling` export layout.
 
+## Coverage Audit of the Current Framework
+
+What is now covered by the current `knlp` scaffolding:
+
+- a paper-facing results tree contract
+- explicit GPU lanes for A100, B200, H100, and W7900
+- smoke-test stages and stop/go criteria
+- fit-output contracts for Hill fits, context linearity, and plateau summaries
+- rerun rules, multi-instance scheduling rules, and paper-usable vs junk criteria
+- public-subset packaging rules for a future `knlp-paper-kv-scaling` export
+
+What remains weak or only partially addressed in code:
+
+- the underlying collectors are still mostly older lane-level scripts rather than fully normalized per-point runners
+- `fit_scaling.py` and `package_results.py` are still contract-first scaffolds rather than complete production pipelines
+- cross-GPU comparison tables and figures still need the real fitting/aggregation backend behind the manifest layer
+- long-context collection still needs a dedicated runner path so capacity evidence is gathered separately from the core matrix
+
+The first hardening step after this document is therefore to wire `run_matrix.py` to a real subprocess-backed point runner contract, keep configs honest about whether a lane is runnable or still plan-only, and then add GPU-specific adapters incrementally.
+
 ## Results Tree Layout
 
 All paper-relevant outputs are staged into a clean tree rooted at:
