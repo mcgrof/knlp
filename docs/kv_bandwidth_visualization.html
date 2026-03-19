@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KV Bandwidth Scaling: Memory Bandwidth Governs Decode Performance</title>
+  <title>Decode Is the Issue: KV-Memory Traffic Governs Transformer Decode</title>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -66,7 +66,7 @@
       gray: '#64748b'
     };
 
-    // Embedded data from B200 campaign measurements
+    // Embedded data from current BPA decode-scaling measurements
     const DATA = {
       bandwidth_scaling: [
         {batch: 1, tokens_per_sec: 123.5, latency_ms: 8.094, kv_bw: 14.6},
@@ -151,7 +151,7 @@
       return (
         <div className="card rounded-xl p-6 mb-6">
           <h3 className="text-lg font-semibold mb-1">Decode Throughput vs Batch Size</h3>
-          <p className="text-gray-500 text-sm mb-4">NVIDIA B200, Qwen2.5-7B, T=2048. Hill saturation model: B_half=27, Smax=4699 tok/s</p>
+          <p className="text-gray-500 text-sm mb-4">Illustrative decode-scaling data. The generic point is that decode throughput saturates according to hardware memory behavior.</p>
           <ResponsiveContainer width="100%" height={350}>
             <LineChart data={DATA.bandwidth_scaling}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -184,7 +184,7 @@
               ))}
             </div>
           </div>
-          <p className="text-gray-500 text-sm mb-4">NVIDIA B200, Qwen2.5-7B. Latency scales linearly with context length.</p>
+          <p className="text-gray-500 text-sm mb-4">Illustrative context-scaling data. The generic point is that decode latency grows with the amount of KV state touched per token.</p>
           <ResponsiveContainer width="100%" height={350}>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -218,7 +218,7 @@
       return (
         <div className="card rounded-xl p-6 mb-6">
           <div className="flex justify-between items-center mb-1">
-            <h3 className="text-lg font-semibold">Cross-GPU Comparison</h3>
+            <h3 className="text-lg font-semibold">Cross-GPU Decode Comparison</h3>
             <div className="flex gap-2">
               {[['throughput', 'Throughput'], ['bandwidth', 'Bandwidth'], ['context', 'Max Context']].map(([k, v]) => (
                 <button key={k}
@@ -228,9 +228,9 @@
             </div>
           </div>
           <p className="text-gray-500 text-sm mb-4">
-            {metric === 'throughput' && 'Decode throughput scales with memory bandwidth, not compute capacity.'}
-            {metric === 'bandwidth' && 'Decode utilizes a fraction of peak bandwidth. All GPUs are memory-bound.'}
-            {metric === 'context' && 'B200 enables 12x longer context than H100/W7900 due to 178 GB HBM.'}
+            {metric === 'throughput' && 'Decode throughput tracks memory-system behavior much more than raw compute.'}
+            {metric === 'bandwidth' && 'Decode uses only a practical slice of peak bandwidth. The bottleneck is still the memory system.'}
+            {metric === 'context' && 'Longer context comes from more memory capacity, but the decode bottleneck story stays the same.'}
           </p>
           <ResponsiveContainer width="100%" height={350}>
             {metric === 'throughput' ? (
@@ -324,11 +324,11 @@
           <header className="text-center mb-12">
             <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
             <h1 className="text-4xl font-bold mb-3">
-              <span className="gradient-text">KV Bandwidth Scaling</span>
+              <span className="gradient-text">Decode Is the Issue</span>
             </h1>
             <p className="text-gray-400 max-w-2xl mx-auto">
-              Memory bandwidth governs transformer decode performance across three accelerator architectures.
-              These measurements motivate bandwidth-proportional attention (BPA) as a research direction.
+              This is the current generic public explainer for the BPA story: autoregressive decode is dominated by KV-memory traffic.
+              The purpose of this page is to show the bottleneck clearly, not to serve as the final paper-shaped narrative.
             </p>
           </header>
 
@@ -408,7 +408,7 @@
               <span className="mx-2">&middot;</span>
               <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" className="hover:text-gray-400">BPA Docs</a>
             </p>
-            <p>Data: Qwen2.5-7B on AMD W7900, NVIDIA H100, NVIDIA B200</p>
+            <p>Illustrative decode-scaling data: Qwen2.5-7B on AMD W7900, NVIDIA H100, NVIDIA B200</p>
           </footer>
         </div>
       );
