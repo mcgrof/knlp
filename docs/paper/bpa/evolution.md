@@ -69,5 +69,5 @@ The public `knlp` story should therefore look like this:
 - `docs/bpa.md` = current high-level BPA systems story
 - `docs/ar_decode_bottleneck.html` = structural explainer for why autoregressive decode rereads KV state every step
 - `docs/kv_bandwidth_visualization.html` = empirical decode-scaling / cross-GPU companion explainer
-- paper-specific narratives and figures can later tighten around the final paper
-  once the experiments and framing are fully locked
+- `docs/fused_kv_quantization.md` = current public writeup of the fused-kernel result
+- paper-specific narratives and figures can later tighten around the final paper once the experiments and framing are fully locked
