@@ -101,13 +101,14 @@ current public entrypoint for this story.
 
 ## Visualization and Data
 
-The current interactive visualization is:
+The current interactive visualizations are:
 
-- [KV Bandwidth Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
+- [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) — structural explanation of why autoregressive decode rereads KV state every step
+- [KV Bandwidth Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
 
-At the moment it should be read as a generic public explanation of the BPA
-systems diagnosis: **decode is the issue**. It is not yet the final paper-shaped
-storytelling artifact.
+Together they serve as the current generic public explanation of the BPA
+systems diagnosis: **decode is the issue**. They are not yet the final
+paper-shaped storytelling artifacts.
 
 ## Status
 
