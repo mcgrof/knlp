@@ -7,3 +7,5 @@ contexts: [1024, 2048, 4096, 8192, 16384, 32768]
 warmup_iters: 10
 measure_iters: 30
 notes: Low-bandwidth contrast lane with explicit no-saturation reporting if observed.
+runner:
+  kind: plan-only
