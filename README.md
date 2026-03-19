@@ -38,9 +38,17 @@ compute capacity or model architecture. BPA investigates architectures
 where KV memory access per token scales with available bandwidth rather
 than full context length.
 
-See [docs/bpa.md](docs/bpa.md) for details, and the
+See [docs/bpa.md](docs/bpa.md) for the current high-level BPA story,
+[docs/paper/bpa/evolution.md](docs/paper/bpa/evolution.md) for how RGSA evolved
+into BPA and then into fused KV quantization, and the
 [KV Bandwidth visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
-for interactive experiment results.
+for the current generic public explanation that decode is the issue.
+
+Paper-facing experiment scaffolding for the BPA KV scaling work lives in
+[`docs/paper/bpa/`](docs/paper/bpa/) and
+[`scripts/paper/bpa_paper/`](scripts/paper/bpa_paper/). These docs/scripts
+define smoke tests, matrix plans, manifest validation, fit-output contracts,
+and clean export packaging for the future `knlp-paper-kv-scaling` results tree.
 
 ## Development Philosophy
 
