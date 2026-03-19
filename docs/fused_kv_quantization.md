@@ -59,6 +59,27 @@ The implementation lives in `knlp`. Start with these files:
 Use these as the current code entry points for the Triton kernels, benchmarking,
 and fused KV experiments.
 
+## Calibration and Ratio Classifier
+
+Kernel fusion is only part of the deployment story. Some model families tolerate
+uniform low-precision KV quantization, while others require asymmetric key/value
+policies. In the current BPA work, the practical compatibility check is a simple
+runtime ratio classifier:
+
+- run a small set of calibration prompts,
+- compare INT8-key and INT6-key logit errors,
+- take the INT6/INT8 error ratio,
+- use that ratio to decide whether the model needs conservative key precision.
+
+Start with these files:
+
+- ratio-classifier script: [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py)
+- calibration guide: [docs/kv_plugin/calibration_guide.md](https://github.com/mcgrof/knlp/blob/main/docs/kv_plugin/calibration_guide.md)
+
+Use the fused kernels and the ratio classifier together. The fused kernel gives
+you the speedup path; the ratio classifier tells you when aggressive key
+quantization is safe and when you need asymmetric settings.
+
 ## Ongoing Experiments
 
 This work is still evolving in several directions:
