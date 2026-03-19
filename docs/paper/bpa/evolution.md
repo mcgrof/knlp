@@ -1,73 +1,72 @@
 # From RGSA to BPA to Fused KV Quantization
 
-This document explains how the BPA story in `knlp` evolved.
+Use this document to place the BPA work in order.
 
-## Phase 1: RGSA / Router Intuition
+## Phase 1: RGSA — route attention instead of paying for everything
 
-The earlier RGSA work attacked attention cost through retrieval and routing.
-The central idea was simple: if attending to all context is expensive, perhaps a
-model can route to only the most relevant chunks.
+RGSA started from the extreme-context scaling question:
 
-That line of work produced useful infrastructure and sharpened an important
-intuition:
+**how do we push attention toward billion-token contexts without paying dense,
+full-history cost everywhere?**
+
+That led to routing and retrieval. The core intuition was right:
 
 - full-context access is expensive,
-- selective access may be necessary,
-- and attention cost should be treated as a systems problem, not just a modeling
-  flourish.
+- selective access is probably necessary,
+- attention scaling is a systems problem, not only an architecture problem.
 
-But RGSA was still framed mainly as an architecture idea.
+RGSA expressed that intuition as an architecture proposal.
 
-## Phase 2: BPA Reframes the Problem
+## Phase 2: BPA — measure the decode bottleneck directly
 
-BPA emerged when the project shifted from architectural intuition to direct
-measurement of decode behavior.
+BPA moved the work from architectural instinct to direct decode measurement.
 
-The key discovery was that autoregressive decode is dominated by repeated KV
-cache reads. Once that was measured across different GPUs, the framing became
-clearer:
+The key result was simple and durable:
 
-- decode is limited by KV-memory traffic,
+- autoregressive decode is dominated by repeated KV-cache reads,
 - context scaling hurts because the model rereads more state per token,
-- batch scaling saturates according to hardware-specific bandwidth,
-- and long context is fundamentally a memory-system problem.
+- batch scaling saturates according to hardware bandwidth,
+- long context is fundamentally a memory-system problem.
 
-BPA therefore became the name for the broader research framing: attention should
-be studied under an explicit bandwidth budget.
+That is the BPA reframing. Do not start from abstract attention structure.
+Start from decode traffic.
 
-## Phase 3: Fused KV Quantization Becomes the Concrete Result
+## Phase 3: Fused KV Quantization — turn the diagnosis into a concrete win
 
-The strongest concrete systems result to come out of that framing is fused KV
-quantization.
+Fused KV quantization is the strongest current concrete result that came out of
+that reframing.
 
-The important lesson was not merely "INT4 is smaller than FP16." The useful
-lesson was:
+The important lesson is not merely that INT4 is smaller than FP16. The lesson
+is operational:
 
-- non-fused quantization paths can be counterproductive,
-- fused quantization reduces real memory traffic inside the kernel,
-- and that is why it delivers real decode speedup.
+- non-fused quantization can be neutral or counterproductive,
+- fused quantization reduces real traffic inside the decode kernel,
+- that is why it delivers real decode speedup.
 
-This made the project much more grounded. The question stopped being whether a
-technique sounded bandwidth-aware in theory and became whether it reduced the
-actual decode bottleneck in practice.
+This is where the BPA story becomes concrete. Judge techniques by whether they
+reduce the actual decode bill.
 
-## What Still Remains Open
+## What Remains Open
 
-The older BPA questions are still alive, but they now sit on top of a stronger
-systems foundation:
+Do not stop at fused quantization.
 
-- can selective KV access reduce the number of entries touched per step?
-- can KV precision be tiered by sensitivity without paying unnecessary traffic?
-- can we formalize a bandwidth budget that scales with hardware and not context?
-- how much protected high-precision state is actually needed as models scale?
+The broader BPA questions remain open:
 
-## Documentation Implication
+- reduce the number of KV entries touched per step,
+- tier KV precision by sensitivity without wasting bandwidth,
+- formalize bandwidth budgets that scale with hardware and not context,
+- determine how much protected high-precision state is really needed,
+- explore FIM-guided selective block attention or MoBA-style directions under
+  explicit bandwidth constraints.
 
-The public `knlp` story should therefore look like this:
+## Documentation Rule
 
-- `docs/rgsa.md` = historical precursor / routing-era work
-- `docs/bpa.md` = current high-level BPA systems story
-- `docs/ar_decode_bottleneck.html` = structural explainer for why autoregressive decode rereads KV state every step
-- `docs/kv_bandwidth_visualization.html` = empirical decode-scaling / cross-GPU companion explainer
-- `docs/fused_kv_quantization.md` = current public writeup of the fused-kernel result
-- paper-specific narratives and figures can later tighten around the final paper once the experiments and framing are fully locked
+Keep the public `knlp` story ordered like this:
+
+- `docs/rgsa.md` = precursor routing-era work
+- `docs/bpa.md` = current BPA systems story
+- `docs/ar_decode_bottleneck.html` = structural decode explainer
+- `docs/kv_bandwidth_visualization.html` = empirical decode-scaling companion
+- `docs/fused_kv_quantization.md` = current public fused-kernel writeup
+
+Add paper-shaped narratives later, once the experiments and claims are locked.

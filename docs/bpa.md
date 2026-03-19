@@ -1,105 +1,102 @@
 # Bandwidth-Proportional Attention (BPA)
 
-Bandwidth-Proportional Attention (BPA) is the `knlp` line of work that grew
-out of an earlier selective-attention idea and eventually sharpened into a more
-concrete systems conclusion: **autoregressive decode is dominated by KV-memory
-traffic, and decode optimization only matters if it attacks that bottleneck**.
+Bandwidth-Proportional Attention (BPA) is the `knlp` line of work for scaling
+transformer decode under explicit memory-bandwidth constraints.
 
-Today BPA should be read less as one fixed architecture and more as the evolved
-story connecting:
+Start from the hard systems fact:
 
-1. **RGSA / routing-era ideas** about reading less context,
-2. **BPA framing** around bandwidth-bound decode and KV access economics, and
-3. **fused KV quantization** as the strongest current concrete systems result.
+**autoregressive decode is dominated by KV-memory traffic.**
 
-For the historical lineage, see
+That fact organizes the current BPA story:
+
+1. **RGSA** explored routing and selective access as an early attempt to avoid
+   paying full attention cost everywhere.
+2. **BPA** reframed the problem around bandwidth-bound decode and KV access
+   economics.
+3. **Fused KV quantization** became the strongest current concrete result,
+   because it reduces real decode traffic inside the kernel.
+
+For the lineage, see
 [RGSA → BPA → fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md).
 
-## The Current Core Message
+## Core Message
 
-During autoregressive decode, the model repeatedly rereads the KV cache for each
-new token. That means decode cost grows with the amount of KV state touched per
-step, which in practice scales with context length and batch size.
+During autoregressive decode, the model rereads KV state for every new token.
+Decode cost therefore grows with the amount of KV state touched per step, which
+in practice scales with context length and batch size.
 
-Across AMD W7900, NVIDIA H100, and NVIDIA B200, measurements in `knlp` show the
-same qualitative behavior:
+Measurements in `knlp` across AMD W7900, NVIDIA H100, and NVIDIA B200 show the
+same qualitative regime:
 
-- decode throughput tracks available memory bandwidth much more than peak
-  compute,
+- decode throughput tracks available memory bandwidth more than peak compute,
 - latency scales approximately linearly with context length,
 - throughput saturates with batch according to hardware-specific parameters,
-- and long-context inference quickly becomes a memory-system problem.
+- long-context inference becomes a memory-system problem before it becomes a
+  compute problem.
 
-That finding reframed the project. The question stopped being merely
-"can attention be made sparse or selective?" and became:
+Use BPA to judge decode interventions by one standard:
 
-> if decode is memory-bound, what interventions actually buy us useful speedup or
-> useful quality preservation under a bandwidth budget?
+> do they reduce the real decode bottleneck, or do they only change the model on paper?
 
 ## Generic Attention Scaling Question
 
-One of the deeper motivations behind BPA is the generic scaling question for
-attention itself: **what can we do to make attention viable as context lengths
-approach billions of tokens?**
+Keep the broader question in view:
 
-Compression helps, but compression alone does not answer that question. As
-context grows, even compressed KV state can still overwhelm the memory system at
-decode time. That is why BPA should be read not only as a decode diagnosis, but
-also as a research outlet for bandwidth-aware approaches to scaling attention
-more generally.
+**how do we scale attention toward billion-token contexts without paying dense,
+full-history cost everywhere?**
 
-This keeps open a broader class of questions:
+Compression helps, but compression alone does not solve that problem. As context
+length grows, even compressed KV state can still overwhelm the memory system at
+decode time.
 
-- can attention spend bandwidth selectively instead of uniformly?
-- can different layers or regions use different access granularities?
-- can FIM-guided sensitivity decide where bandwidth should be spent?
-- can block size, routing policy, or protection level vary with layer
-  importance as context scales toward billion-token regimes?
+Use BPA as a research outlet for bandwidth-aware attention scaling, not only as
+a decode diagnosis. The open questions are concrete:
 
-## Where BPA Landed So Far
+- spend bandwidth selectively instead of uniformly,
+- vary access granularity by layer or region,
+- use FIM-guided sensitivity to decide where bandwidth matters most,
+- vary block size, routing policy, or protection level as context approaches
+  billion-token regimes.
 
-### 1. Decode is the issue
+## Current BPA Results
 
-The first durable result is the systems diagnosis itself: decode is bottlenecked
-by KV-memory traffic. This is the foundation for the current BPA narrative and
-for the existing visualization work.
+### Decode is the bottleneck
 
-### 2. Fused KV quantization is the strongest concrete result
+Treat the systems diagnosis as the foundation. Decode is bottlenecked by
+KV-memory traffic. Build from that.
 
-INT4 KV quantization helps only when it is **fused into the attention kernel**.
-A staged or non-fused path introduces intermediate buffer traffic and can become
-slower than the FP16 baseline. The fused path, by contrast, turns KV
-compression into a real decode speedup.
+### Fused KV quantization is the strongest current result
 
-This is the most concrete current BPA outcome in `knlp`: compression is useful
-when it reduces real memory traffic at the kernel level, not when it only looks
-smaller on paper.
+Quantization helps only when it is **fused into the attention kernel**.
 
-### 3. Long context remains a bandwidth/capacity problem
+A staged or non-fused path adds intermediate buffer traffic and can erase the
+benefit of using a smaller KV format. A fused path turns compression into a real
+decode speedup.
 
-Even after compression, long-context decode remains constrained by the memory
-system. B200-style large-HBM devices extend the practical context window, but
-that is a capacity consequence layered on top of the same decode bottleneck.
+That is the strongest current BPA result in `knlp`: reduce real kernel-level
+memory traffic, not just abstract tensor size.
 
-### 4. Selective access and tiering remain open but motivated
+### Long context remains a bandwidth and capacity problem
 
-Earlier BPA questions about selective KV access, protected layers, tiered
-precision, and generic attention scaling still matter. They now sit on top of a clearer systems story rather
-than being treated as isolated architectural ideas.
+Compression does not remove the long-context problem. It shifts the operating
+point. Large-HBM devices extend practical context, but that extension still sits
+on top of the same decode bottleneck.
 
-## How BPA Relates to RGSA
+### Selective access and tiering remain open
 
-RGSA was an earlier attempt to reduce attention cost through routing and
-retrieval. It matters historically because it captured the right instinct:
-**reading everything is expensive**.
+Do not collapse BPA into fused quantization alone. Selective KV access,
+protected layers, mixed-precision tiering, and more general attention scaling
+remain open parts of the program.
 
-What changed is that BPA grounded that instinct in measurements of the actual
-decode bottleneck. The project moved from "which chunks should we route to?" to
-"what memory traffic do we actually have to pay for at decode time, and which
-interventions reduce it in practice?"
+## Relation to RGSA
 
-RGSA remains documented in `docs/rgsa.md` as precursor work rather than the
-current public entrypoint for this story.
+RGSA captured the right early instinct: **reading everything is expensive**.
+
+BPA made that instinct measurable. The project moved from asking which chunks to
+route to, toward asking which memory traffic decode must actually pay for and
+which interventions reduce that bill in practice.
+
+Keep `docs/rgsa.md` as precursor work. Use BPA as the current public entrypoint.
 
 ## Current BPA Tracks in knlp
 
@@ -111,39 +108,45 @@ current public entrypoint for this story.
 
 ### Fused KV quantization
 - INT4 KV cache quantization with kernel fusion
-- comparison of fused vs non-fused pipelines
+- fused vs non-fused pipeline comparisons
 - cross-GPU validation of the memory-traffic story
 
-### Sensitivity / protection / tiering
+### Sensitivity, protection, and tiering
 - selective high-precision protection of sensitive layers
 - mixed-precision KV schemes
 - bounded-protection (`k*`) experiments
 
-## Visualization and Data
+## Public Explainers
 
-The current public explainers are:
+Use these three together:
 
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) — structural explanation of why autoregressive decode rereads KV state every step
 - [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
 - [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md) — current public writeup of the fused-kernel result
 
-Together they explain the current BPA systems diagnosis: **decode is the issue**. They are not yet the final paper-shaped storytelling artifacts.
+These explain the current BPA systems story. They are not yet the final
+paper-shaped artifacts.
 
 ## Status
 
-BPA in `knlp` is an active line of work with both concrete systems results and open research headroom.
-The cleanest stable public message today is:
+Treat BPA as an active line of work with both strong systems results and open
+research headroom.
+
+The stable public message today is simple:
 
 - decode is memory-bound,
 - fused quantization is a real win because it attacks memory traffic directly,
-- and future BPA-style work should be judged by whether it changes the real
-  decode bottleneck rather than only changing abstract attention structure.
+- BPA remains useful only if it changes the real decode bottleneck rather than
+  only changing abstract attention structure.
 
 ## Research Headroom
 
-Fused KV quantization is the strongest concrete result right now, but it does
-not exhaust BPA as a research direction. Sparse and selective attention work
-continues to create room for bandwidth-aware decode ideas, and one plausible
-future direction is to combine BPA-style bandwidth constraints with FIM-guided
-allocation, such as different block sizes or protection policies by layer
-sensitivity.
+Do not treat fused KV quantization as the end of the line. Sparse and selective
+attention work still leaves room for bandwidth-aware decode ideas.
+
+One plausible next direction is to combine BPA-style bandwidth constraints with
+FIM-guided allocation:
+
+- vary block size by layer sensitivity,
+- vary protection policy by FIM trace,
+- spend bandwidth where the model appears to do the most work.

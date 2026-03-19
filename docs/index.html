@@ -111,11 +111,11 @@
         <div class="text-sm text-amber-400 font-medium mb-2">BPA OVERVIEW</div>
         <h2 class="text-2xl font-bold mb-3">Decode is the bottleneck</h2>
         <p class="text-gray-400 mb-4 max-w-3xl">
-          The `knlp` BPA line started with routing-era ideas like RGSA, then
-          sharpened into a cleaner systems diagnosis: autoregressive decode is
-          dominated by KV-memory traffic. The most concrete current result is
-          fused KV quantization, because it reduces real decode traffic instead
-          of only changing abstract attention structure.
+          Start from the hard systems fact: autoregressive decode is dominated
+          by KV-memory traffic. RGSA explored routing under extreme-context
+          pressure. BPA turned that into a bandwidth-aware decode program.
+          Fused KV quantization is the strongest current concrete result because
+          it reduces real decode traffic inside the kernel.
         </p>
         <div class="flex flex-wrap gap-3 text-sm">
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA overview</a>
