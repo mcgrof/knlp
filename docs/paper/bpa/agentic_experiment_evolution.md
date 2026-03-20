@@ -85,9 +85,9 @@ Every iteration declares: parent finding, hypothesis, metric, budget cap,
 artifact destination, promotion condition, kill condition. This preserves
 lineage and makes later review possible.
 
-## H2 2026 review direction
+## Forward-looking directions
 
-A strong use of BPA Loop v0 is retrospective re-analysis -- not only
+A natural use of BPA Loop v0 is retrospective re-analysis -- not only
 inventing new experiments but reviewing prior routing and KV ideas:
 
 - which experiments were underpowered,
@@ -101,9 +101,9 @@ connect across phases?
 
 ## Relation to the Karpathy loop
 
-The Karpathy-style loop is a useful reference, but BPA needs a stricter
-version. Multiple metrics matter, experiments are more hardware-sensitive,
-false positives are more expensive, and durable provenance matters more than
-local optimization wins. BPA Loop v0 keeps the iterative hypothesis-testing
-cycle but adds stronger gates for reproducibility, cost, promotion, and
-durability.
+Andrej Karpathy's
+[training recipe](https://karpathy.github.io/2019/04/25/recipe/) is a useful
+reference for iterative experiment discipline. BPA Loop v0 borrows the
+hypothesis-testing cycle but adds stricter gates: multiple metrics matter,
+experiments are more hardware-sensitive, false positives are more expensive,
+and durable provenance matters more than local optimization wins.
