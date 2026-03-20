@@ -1,7 +1,7 @@
 # BPA KV Scaling Paper Fortification Plan
 
 This document defines the experiment plan needed to harden the BPA /
-`paper-kv-scaling` paper. It is intentionally broader than one missing GPU lane:
+`paper-memory-decode` paper. It is intentionally broader than one missing GPU lane:
 it covers the remaining weak spots in cross-GPU scaling-law validation,
 long-context evidence, fit diagnostics, artifact provenance, reproducibility, and
 future open-source packaging.
@@ -32,7 +32,7 @@ The paper should be able to make five claims cleanly and with auditable evidence
 - Fit diagnostics and uncertainty need explicit artifacts, not just prose.
 - Cross-GPU comparison needs a single artifact schema and manifest layer.
 - The private `knlp-key-results` tree is too messy to point at directly; we need
-  a clean `knlp-paper-kv-scaling` export layout.
+  a clean `knlp-paper-memory-decode` export layout.
 
 ## Coverage Audit of the Current Framework
 
@@ -43,7 +43,7 @@ What is now covered by the current `knlp` scaffolding:
 - smoke-test stages and stop/go criteria
 - fit-output contracts for Hill fits, context linearity, and plateau summaries
 - rerun rules, multi-instance scheduling rules, and paper-usable vs junk criteria
-- public-subset packaging rules for a future `knlp-paper-kv-scaling` export
+- public-subset packaging rules for a future `knlp-paper-memory-decode` export
 
 What remains weak or only partially addressed in code:
 
@@ -58,12 +58,12 @@ The first hardening step after this document is therefore to wire `run_matrix.py
 
 All paper-relevant outputs are staged into a clean tree rooted at:
 
-`knlp-paper-kv-scaling/`
+`knlp-paper-memory-decode/`
 
 Suggested layout:
 
 ```text
-knlp-paper-kv-scaling/
+knlp-paper-memory-decode/
   manifests/
     run_manifest.json
     export_manifest.json
@@ -322,7 +322,7 @@ paper-relevant subset through `package_results.py`.
 
 Export rules:
 - copy validated raw / derived / figure / report files into
-  `knlp-paper-kv-scaling/`
+  `knlp-paper-memory-decode/`
 - generate export manifest with checksums
 - redact private hostnames and secrets from environment captures
 - keep lane summaries honest about incomplete coverage
@@ -331,7 +331,7 @@ Export rules:
 
 The paper should point to:
 - `knlp` for kernels, orchestration scripts, and reproducibility docs
-- `knlp-paper-kv-scaling` as the clean artifact layout
+- `knlp-paper-memory-decode` as the clean artifact layout
 
 The repo docs should distinguish:
 - smoke tests

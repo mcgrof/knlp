@@ -315,7 +315,7 @@ cp bpa_v29_final_report.md /data/knlp-key-results/bpa/
 cd /data/knlp-key-results && git add bpa/ && git commit
 ```
 
-### `/data/paper-kv-scaling/` — Paper Repository (example)
+### `/data/paper-memory-decode/` — Paper Repository (example)
 Each paper gets its own git repository. The paper repo
 contains LaTeX source, figures, and any data needed to
 reproduce the paper build. See "Paper Workflow" below.
@@ -373,7 +373,7 @@ in v46+:
 ## Paper Workflow
 
 Each paper lives in a separate git tree (e.g.,
-`/data/paper-kv-scaling/`). The paper is written and built
+`/data/paper-memory-decode/`). The paper is written and built
 from the knlp working tree where all code and key-results
 are accessible.
 
