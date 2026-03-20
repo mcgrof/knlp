@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartridges: Pre-Trained KV Caches for Document-Grounded Inference</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root {
+  --bg: #0a0e14; --bg2: #10151c; --bg3: #161d26;
+  --surface: #1a222e; --border: #2a3444; --border2: #3a4a5c;
+  --text: #c8d6e5; --text2: #7a8ea0; --text3: #4a5e70;
+  --green: #00e87c; --green2: #00b85f; --green-bg: #00e87c18;
+  --cyan: #00d4c8; --amber: #f0a030; --red: #e84040;
+  --purple: #a070e8; --blue: #4090e8; --orange: #e87840;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px; }
+header { text-align: center; padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+header h1 { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--green); margin-bottom: 8px; }
+header p { color: var(--text2); font-size: 13px; max-width: 640px; margin: 0 auto; }
+header a { color: var(--cyan); text-decoration: none; }
+header a:hover { text-decoration: underline; }
+.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 28px; overflow-x: auto; }
+.tab { padding: 10px 18px; font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text3);
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; transition: all 0.2s; }
+.tab:hover { color: var(--text2); }
+.tab.active { color: var(--green); border-bottom-color: var(--green); }
+.panel { display: none; }
+.panel.active { display: block; }
+h2 { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 16px; }
+h3 { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--cyan); margin: 20px 0 10px; }
+p { margin-bottom: 14px; color: var(--text2); }
+strong { color: var(--text); font-weight: 600; }
+em { color: var(--amber); font-style: normal; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 20px 0; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+.stat .val { font-family: var(--mono); font-size: 28px; font-weight: 700; color: var(--green); }
+.stat .label { font-size: 11px; color: var(--text3); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+table { width: 100%; border-collapse: collapse; margin: 16px 0; font-family: var(--mono); font-size: 12px; }
+th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2px solid var(--border); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text2); }
+td.hi { color: var(--green); font-weight: 600; }
+td.warn { color: var(--amber); }
+tr:hover td { background: var(--bg3); }
+.chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 20px 0; }
+.chart-wrap canvas { max-height: 320px; }
+pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; margin: 16px 0; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+pre .kw { color: var(--purple); } pre .fn { color: var(--blue); } pre .str { color: var(--green); }
+pre .cm { color: var(--text3); } pre .num { color: var(--amber); } pre .op { color: var(--text2); }
+pre .type { color: var(--cyan); } pre .sh { color: var(--green2); }
+.note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
+.note strong { color: var(--green); }
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; font-family: var(--mono); font-size: 12px; }
+.flow .step { background: var(--surface); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; }
+.flow .arrow { color: var(--green); font-size: 16px; }
+footer { text-align: center; padding: 32px 0 16px; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
+footer a { color: var(--cyan); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>Cartridges</h1>
+  <p>Pre-trained KV caches that skip prefill entirely. Train once per document, inject at serving time, eliminate the prefill bottleneck.
+    Based on <a href="https://arxiv.org/abs/2508.17032">arxiv:2508.17032</a>.
+    55 configurations validated across 3 architectures and 6 documents on H100 and W7900.</p>
+  <p style="margin-top:8px;font-size:12px;">
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/cartridges.md">Documentation</a> &middot;
+    <a href="https://github.com/mcgrof/knlp">knlp</a>
+  </p>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('overview')">Overview</div>
+  <div class="tab" onclick="showTab('speedup')">Prefill Speedup</div>
+  <div class="tab" onclick="showTab('quality')">Quality</div>
+  <div class="tab" onclick="showTab('prefix')">Prefix Tuning</div>
+  <div class="tab" onclick="showTab('vllm')">vLLM Integration</div>
+  <div class="tab" onclick="showTab('cross')">Cross-Model</div>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-overview" class="panel active">
+<h2>What is a cartridge?</h2>
+<p>A cartridge replaces runtime prefill with a pre-trained KV cache. Instead of processing a document through the model at every request, the KV state is trained once offline and injected directly into GPU memory as a CPU&rarr;GPU memcpy.</p>
+
+<div class="stat-grid">
+  <div class="stat"><div class="val">10.6x</div><div class="label">Prefill speedup at 16K tokens</div></div>
+  <div class="stat"><div class="val">55</div><div class="label">Configurations tested</div></div>
+  <div class="stat"><div class="val">0</div><div class="label">vLLM core modifications</div></div>
+  <div class="stat"><div class="val">4x</div><div class="label">Compression sweet spot</div></div>
+</div>
+
+<h3>How it works</h3>
+<div class="flow">
+  <div class="step">Document</div><div class="arrow">&rarr;</div>
+  <div class="step">Offline training (128 steps)</div><div class="arrow">&rarr;</div>
+  <div class="step">Cartridge .pt file</div><div class="arrow">&rarr;</div>
+  <div class="step">CPU&rarr;GPU inject</div><div class="arrow">&rarr;</div>
+  <div class="step">Skip prefill, decode directly</div>
+</div>
+
+<h3>Why GQA matters for cartridges</h3>
+<p>Checkpoint size is dominated by KV head count. At p=256:</p>
+<table>
+  <tr><th>Model</th><th>KV Heads</th><th>Checkpoint</th><th>At p=8192</th></tr>
+  <tr><td>Qwen2.5-7B (GQA)</td><td>4</td><td class="hi">15 MB</td><td>470 MB</td></tr>
+  <tr><td>Qwen2.5-1.5B (GQA)</td><td>2</td><td class="hi">7 MB</td><td>224 MB</td></tr>
+  <tr><td>Llama-2-7b (MHA)</td><td>32</td><td class="warn">128 MB</td><td>4,856 MB</td></tr>
+</table>
+<p>GQA models produce <strong>8.5x smaller cartridges</strong> than MHA models at the same prefix length. GQA is strongly preferred for cartridge deployment.</p>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-speedup" class="panel">
+<h2>Prefill speedup</h2>
+<p>Cartridge prefill time scales sub-linearly with prefix length because loading pre-computed KV (memcpy) is cheaper than running a forward pass over <em>p</em> tokens. Measured on Llama-3.2-1B-Instruct, AMD W7900, FlexAttention + torch.compile.</p>
+
+<div class="chart-wrap"><canvas id="chartSpeedup"></canvas></div>
+
+<table>
+  <tr><th>Prefix tokens</th><th>ICL prefill</th><th>Cartridge prefill</th><th>Speedup</th></tr>
+  <tr><td>256</td><td>0.037s</td><td>0.038s</td><td>1.0x</td></tr>
+  <tr><td>512</td><td>0.050s</td><td>0.040s</td><td>1.3x</td></tr>
+  <tr><td>1,024</td><td>0.072s</td><td>0.041s</td><td>1.8x</td></tr>
+  <tr><td>2,048</td><td>0.138s</td><td>0.048s</td><td>2.9x</td></tr>
+  <tr><td>4,096</td><td>0.312s</td><td>0.071s</td><td>4.4x</td></tr>
+  <tr><td>8,192</td><td>0.758s</td><td>0.110s</td><td>6.9x</td></tr>
+  <tr><td>16,384</td><td>2.027s</td><td>0.192s</td><td class="hi">10.6x</td></tr>
+</table>
+
+<h3>End-to-end throughput (tok/s)</h3>
+<p>At p=16,384: Cartridge achieves <strong>44.5 tok/s</strong> vs ICL at <strong>27.4 tok/s</strong> (1.6x end-to-end). The speedup comes entirely from prefill savings; decode throughput is identical.</p>
+
+<div class="chart-wrap"><canvas id="chartThroughput"></canvas></div>
+
+<h3>vLLM TTFT on H100</h3>
+<p>On H100, prefill at 4K tokens takes only ~80&micro;s of GPU time. TTFT is dominated by Python/HTTP overhead (~5ms), vLLM scheduling (~10ms), and network latency (~3ms). The cartridge advantage manifests at <strong>longer prefixes, lower-end GPUs, or higher concurrency</strong>.</p>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-quality" class="panel">
+<h2>Quality evaluation</h2>
+<p>LLM-as-judge: 10 factual questions per document, each answer scored 0&ndash;5. Instruct models self-judge; Llama-2-7b answers judged by Qwen-7B.</p>
+
+<div class="chart-wrap"><canvas id="chartQuality"></canvas></div>
+
+<h3>Qwen2.5-7B-Instruct</h3>
+<table>
+  <tr><th>Document</th><th>No prefix</th><th>Full</th><th>4x comp.</th><th>16x comp.</th><th>p=256</th></tr>
+  <tr><td>ML Research (8K)</td><td>1.2</td><td class="hi">4.5</td><td>3.3</td><td>3.4</td><td>3.1</td></tr>
+  <tr><td>Llama 2 paper (20K)</td><td>2.7</td><td class="hi">3.7</td><td>2.9</td><td>2.1</td><td>2.5</td></tr>
+  <tr><td>GPL v3 (7K)</td><td>2.9</td><td class="hi">3.8</td><td>2.8</td><td>2.3</td><td>2.4</td></tr>
+  <tr><td>Clinical (12K)</td><td>2.5</td><td class="hi">3.9</td><td class="hi">4.1</td><td>3.7</td><td>3.3</td></tr>
+  <tr><td>RFC 9110 (49K)</td><td>2.5</td><td>&mdash;</td><td class="hi">4.1</td><td>3.9</td><td>3.7</td></tr>
+  <tr><td>Wikipedia (2K)</td><td>3.6</td><td class="hi">4.4</td><td>3.8</td><td>4.0</td><td>3.7</td></tr>
+</table>
+
+<div class="note">
+  <strong>4x compression is the sweet spot.</strong> Quality retention is typically 75&ndash;100% of the full cartridge across all tested architectures. Instruct models compress well; base models struggle at 4x+ compression.
+</div>
+
+<h3>Key findings</h3>
+<p><strong>Instruct tuning is critical.</strong> At p=256, instruct models score 2.4&ndash;4.0 while the base model scores 0.0&ndash;3.2 with high variance.</p>
+<p><strong>Model size matters less than expected.</strong> Qwen-1.5B (1.5B params) often matches Qwen-7B (7B params), suggesting cartridge training adapts well to smaller models.</p>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-prefix" class="panel">
+<h2>Prefix Tuning</h2>
+<p>Cartridges build on <strong>Prefix Tuning</strong> (<a href="https://arxiv.org/abs/2101.00190" style="color:var(--cyan);">Li and Liang, 2021</a>). The core idea: prepend <em>p</em> trainable continuous vectors to the key and value matrices at every attention layer. These vectors are optimized via gradient descent while the model weights stay frozen.</p>
+
+<h3>Initialization strategy matters</h3>
+<p>Li and Liang found that initialization strongly affects final quality:</p>
+<table>
+  <tr><th>Strategy</th><th>Description</th><th>Quality</th></tr>
+  <tr><td class="warn">Random Gaussian</td><td>Sample from N(0, 0.02)</td><td>Worst &mdash; optimizer starts far from viable KV space</td></tr>
+  <tr><td>Vocabulary embeddings</td><td>Sample from model's word embedding matrix</td><td>Better &mdash; starts in a region the model recognizes</td></tr>
+  <tr><td class="hi">Real activations (First-k)</td><td>Run the actual document through the model, take first <em>p</em> KV vectors</td><td>Best &mdash; warm start in the exact KV space the model produces</td></tr>
+</table>
+
+<p><strong>First-k initialization</strong> (used by cartridges) is the natural extension: the initial KV state comes from actually processing the document, giving the optimizer a warm start in a region of KV space the model already understands. The optimizer then refines these vectors to compress the full document's information into <em>p</em> positions.</p>
+
+<h3>From fine-tuning to inference optimization</h3>
+<p>Original prefix tuning was a <em>fine-tuning technique</em>: train task-specific prefixes to adapt a frozen model. Cartridges repurpose it as an <em>inference optimization</em>: the trained prefix <strong>is</strong> the document representation, and injecting it replaces prefill entirely.</p>
+
+<div class="flow">
+  <div class="step">Prefix Tuning (2021)</div><div class="arrow">&rarr;</div>
+  <div class="step">Task-specific soft prompts</div><div class="arrow">&rarr;</div>
+  <div class="step">Cartridges (2025)</div><div class="arrow">&rarr;</div>
+  <div class="step">Document-specific KV caches</div>
+</div>
+
+<h3>SCI vs First-k</h3>
+<p><strong>SCI (Sampled Chunk Initialization)</strong> samples random 64-token chunks from across the document instead of taking the first <em>p</em> tokens. In theory, this captures broader content. In practice, both strategies produce nearly identical results:</p>
+<table>
+  <tr><th>Prefix</th><th>First-k (s)</th><th>SCI (s)</th><th>E2E First-k (tok/s)</th><th>E2E SCI (tok/s)</th></tr>
+  <tr><td>256</td><td>661</td><td>682</td><td>59.5</td><td>60.0</td></tr>
+  <tr><td>4,096</td><td>1,144</td><td>1,131</td><td>56.5</td><td>55.9</td></tr>
+  <tr><td>16,384</td><td>2,684</td><td>2,610</td><td>44.5</td><td>44.2</td></tr>
+</table>
+<p>SCI's broader initialization does not translate into measurable quality or performance advantage over First-k.</p>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-vllm" class="panel">
+<h2>vLLM integration</h2>
+<p>CartridgeConnector plugs into vLLM v0.16.0 as a <code>KVConnectorBase_V1</code> plugin with <strong>zero vLLM core modifications</strong>. About 300 lines of Python.</p>
+
+<h3>Request lifecycle</h3>
+<div class="flow">
+  <div class="step">1. Server starts</div><div class="arrow">&rarr;</div>
+  <div class="step">2. Load .pt + prefix IDs</div><div class="arrow">&rarr;</div>
+  <div class="step">3. Request arrives</div><div class="arrow">&rarr;</div>
+  <div class="step">4. Match prefix</div><div class="arrow">&rarr;</div>
+  <div class="step">5. Allocate blocks</div><div class="arrow">&rarr;</div>
+  <div class="step">6. Scatter KV to GPU</div><div class="arrow">&rarr;</div>
+  <div class="step">7. Decode</div>
+</div>
+
+<h3>Minimum requirements</h3>
+<table>
+  <tr><th>Requirement</th><th>Value</th></tr>
+  <tr><td>vLLM version</td><td class="hi">&ge; 0.16.0 (KVConnectorBase_V1 API)</td></tr>
+  <tr><td>Artifacts</td><td>cartridge.pt + prefix_token_ids.json</td></tr>
+  <tr><td>Core patches</td><td class="hi">None</td></tr>
+  <tr><td>Connector size</td><td>~300 lines Python</td></tr>
+</table>
+
+<h3>Server startup</h3>
+<pre><span class="sh">export</span> CARTRIDGE=/path/to/cartridge.pt
+<span class="sh">export</span> PREFIX_IDS=/path/to/prefix_token_ids.json
+
+vllm serve Qwen/Qwen2.5-7B-Instruct \
+  --host <span class="num">0.0.0.0</span> \
+  --port <span class="num">8000</span> \
+  --max-model-len <span class="num">8192</span> \
+  --gpu-memory-utilization <span class="num">0.40</span> \
+  --kv-transfer-config <span class="str">'{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path": "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridge_path": "'"$CARTRIDGE"'",
+      "prefix_token_ids_path": "'"$PREFIX_IDS"'"
+    },
+    "kv_role": "kv_both"
+  }'</span></pre>
+
+<h3>Connector implementation</h3>
+<pre><span class="kw">class</span> <span class="type">CartridgeConnector</span>(<span class="type">KVConnectorBase_V1</span>):
+    <span class="kw">def</span> <span class="fn">__init__</span>(<span class="kw">self</span>, rank, local_rank, config):
+        <span class="kw">self</span>.cartridge = torch.<span class="fn">load</span>(config.cartridge_path, map_location=<span class="str">"cpu"</span>)
+        <span class="kw">self</span>.prefix_token_ids = <span class="fn">load_json</span>(config.prefix_token_ids_path)
+        <span class="kw">self</span>.layer_k = [layer[<span class="str">"k"</span>].<span class="fn">contiguous</span>() <span class="kw">for</span> layer <span class="kw">in</span> <span class="kw">self</span>.cartridge]
+        <span class="kw">self</span>.layer_v = [layer[<span class="str">"v"</span>].<span class="fn">contiguous</span>() <span class="kw">for</span> layer <span class="kw">in</span> <span class="kw">self</span>.cartridge]
+
+    <span class="kw">def</span> <span class="fn">get_num_new_matched_tokens</span>(<span class="kw">self</span>, request, **kwargs):
+        <span class="cm"># Compare request tokens against stored prefix, block-aligned</span>
+        matched = <span class="fn">longest_common_prefix</span>(
+            request.prompt_token_ids, <span class="kw">self</span>.prefix_token_ids
+        )
+        <span class="kw">return</span> <span class="fn">align_down_to_block_size</span>(matched, block_size=<span class="num">16</span>)
+
+    <span class="kw">def</span> <span class="fn">start_load_kv</span>(<span class="kw">self</span>, connector_meta, **kwargs):
+        <span class="cm"># Scatter pre-trained KV from CPU to vLLM-assigned GPU slots</span>
+        slot_mapping = connector_meta[<span class="str">"slot_mapping"</span>]
+        matched = connector_meta[<span class="str">"matched_tokens"</span>]
+        <span class="kw">for</span> layer_idx <span class="kw">in</span> <span class="fn">range</span>(<span class="fn">len</span>(<span class="kw">self</span>.layer_k)):
+            <span class="fn">scatter_to_gpu_blocks</span>(
+                <span class="kw">self</span>.layer_k[layer_idx][:matched],
+                <span class="kw">self</span>.layer_v[layer_idx][:matched],
+                slot_mapping[:matched],
+            )</pre>
+
+<h3>Sending requests</h3>
+<pre>curl http://localhost:<span class="num">8000</span>/v1/chat/completions \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "messages": [
+      {"role": "system",
+       "content": "&lt;full training document text&gt;"},
+      {"role": "user",
+       "content": "What is the main contribution?"}
+    ]
+  }'</span></pre>
+
+<div class="note">
+  <strong>Key design point:</strong> CartridgeConnector does not allocate KV memory. vLLM still owns allocation. The connector only fills the slots vLLM assigned. This integrates cleanly with the scheduler and continuous batching.
+</div>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-cross" class="panel">
+<h2>Cross-model analysis</h2>
+
+<div class="chart-wrap"><canvas id="chartCkpt"></canvas></div>
+
+<table>
+  <tr><th>Property</th><th>Qwen-7B</th><th>Qwen-1.5B</th><th>Llama-2-7B</th></tr>
+  <tr><td>Parameters</td><td>7B</td><td>1.5B</td><td>7B</td></tr>
+  <tr><td>KV Heads</td><td>4 (GQA)</td><td>2 (GQA)</td><td>32 (MHA)</td></tr>
+  <tr><td>p=256 checkpoint</td><td class="hi">15 MB</td><td class="hi">7 MB</td><td class="warn">128 MB</td></tr>
+  <tr><td>p=8192 checkpoint</td><td>470 MB</td><td>224 MB</td><td class="warn">4,856 MB</td></tr>
+  <tr><td>Best full score</td><td>4.5</td><td>4.5</td><td>4.3</td></tr>
+  <tr><td>Avg p=256 score</td><td>3.1</td><td class="hi">3.5</td><td class="warn">1.6</td></tr>
+</table>
+
+<h3>Key findings</h3>
+<p><strong>GQA models produce dramatically smaller cartridges.</strong> 8.5x smaller than MHA at the same prefix. GQA is strongly preferred.</p>
+<p><strong>Instruct tuning is critical for compression.</strong> Base Llama-2-7b scores 0.0&ndash;3.2 at 4x+ compression vs 2.4&ndash;4.1 for instruct models.</p>
+<p><strong>Small instruct models are surprisingly effective.</strong> Qwen-1.5B (1.5B params) often matches or exceeds Qwen-7B (7B params) at compressed cartridge sizes.</p>
+
+<h3>Concurrency scaling (H100)</h3>
+<table>
+  <tr><th>Prefix</th><th>Conc=1</th><th>Conc=4</th><th>Conc=16</th><th>Output TPS (c=1)</th></tr>
+  <tr><td>4,096</td><td>31ms</td><td>43ms</td><td>75ms</td><td>166</td></tr>
+  <tr><td>8,192</td><td>41ms</td><td>69ms</td><td>127ms</td><td>163</td></tr>
+  <tr><td>16,384</td><td>78ms</td><td>127ms</td><td>245ms</td><td>158</td></tr>
+  <tr><td>32,768</td><td>56ms</td><td>136ms</td><td>261ms</td><td>158</td></tr>
+</table>
+</div>
+
+</div><!-- container -->
+
+<footer>
+  <a href="https://arxiv.org/abs/2508.17032">CARTRIDGE paper</a> &middot;
+  <a href="https://arxiv.org/abs/2101.00190">Prefix Tuning (Li &amp; Liang, 2021)</a> &middot;
+  <a href="https://github.com/mcgrof/knlp/blob/main/docs/cartridges.md">Documentation</a> &middot;
+  <a href="https://mcgrof.github.io/knlp/">knlp</a>
+</footer>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+  // Render charts if not yet rendered
+  if (id === 'speedup' && !window._speedupRendered) { renderSpeedup(); window._speedupRendered = true; }
+  if (id === 'quality' && !window._qualityRendered) { renderQuality(); window._qualityRendered = true; }
+  if (id === 'cross' && !window._crossRendered) { renderCross(); window._crossRendered = true; }
+}
+
+const chartOpts = { responsive: true, plugins: { legend: { labels: { color: '#7a8ea0', font: { family: "'JetBrains Mono',monospace", size: 11 } } } },
+  scales: { x: { ticks: { color: '#4a5e70' }, grid: { color: '#2a3444' } }, y: { ticks: { color: '#4a5e70' }, grid: { color: '#2a3444' } } } };
+
+function renderSpeedup() {
+  const ctx1 = document.getElementById('chartSpeedup').getContext('2d');
+  new Chart(ctx1, { type: 'bar', data: {
+    labels: ['256','512','1K','2K','4K','8K','16K'],
+    datasets: [
+      { label: 'ICL prefill (s)', data: [0.037,0.050,0.072,0.138,0.312,0.758,2.027], backgroundColor: '#e8404080', borderColor: '#e84040', borderWidth: 1 },
+      { label: 'Cartridge prefill (s)', data: [0.038,0.040,0.041,0.048,0.071,0.110,0.192], backgroundColor: '#00e87c80', borderColor: '#00e87c', borderWidth: 1 }
+    ]}, options: { ...chartOpts, scales: { ...chartOpts.scales, y: { ...chartOpts.scales.y, title: { display: true, text: 'Prefill time (s)', color: '#7a8ea0' } } },
+    plugins: { ...chartOpts.plugins, title: { display: true, text: 'Prefill Time: ICL vs Cartridge (W7900)', color: '#c8d6e5', font: { size: 14 } } } } });
+
+  const ctx2 = document.getElementById('chartThroughput').getContext('2d');
+  new Chart(ctx2, { type: 'line', data: {
+    labels: ['256','512','1K','2K','4K','8K','16K'],
+    datasets: [
+      { label: 'Baseline', data: [62.8,63.0,62.8,61.9,61.5,60.4,61.9], borderColor: '#4a5e70', borderDash: [5,5], fill: false, tension: 0.3 },
+      { label: 'ICL', data: [62.2,61.4,59.8,56.8,52.1,41.7,27.4], borderColor: '#e84040', fill: false, tension: 0.3 },
+      { label: 'First-k cartridge', data: [59.5,59.5,59.1,59.3,56.5,51.5,44.5], borderColor: '#00e87c', fill: false, tension: 0.3 },
+    ]}, options: { ...chartOpts, scales: { ...chartOpts.scales, y: { ...chartOpts.scales.y, title: { display: true, text: 'End-to-end throughput (tok/s)', color: '#7a8ea0' } } },
+    plugins: { ...chartOpts.plugins, title: { display: true, text: 'End-to-End Throughput vs Prefix Length (W7900)', color: '#c8d6e5', font: { size: 14 } } } } });
+}
+
+function renderQuality() {
+  const ctx = document.getElementById('chartQuality').getContext('2d');
+  new Chart(ctx, { type: 'bar', data: {
+    labels: ['ML (8K)','Llama2 (20K)','GPL (7K)','Clinical (12K)','RFC (49K)','Wiki (2K)'],
+    datasets: [
+      { label: 'Full', data: [4.5,3.7,3.8,3.9,null,4.4], backgroundColor: '#00e87c80', borderColor: '#00e87c', borderWidth: 1 },
+      { label: '4x compressed', data: [3.3,2.9,2.8,4.1,4.1,3.8], backgroundColor: '#4090e880', borderColor: '#4090e8', borderWidth: 1 },
+      { label: 'p=256', data: [3.1,2.5,2.4,3.3,3.7,3.7], backgroundColor: '#f0a03080', borderColor: '#f0a030', borderWidth: 1 },
+    ]}, options: { ...chartOpts, scales: { ...chartOpts.scales, y: { ...chartOpts.scales.y, min: 0, max: 5, title: { display: true, text: 'LLM-as-judge score (0-5)', color: '#7a8ea0' } } },
+    plugins: { ...chartOpts.plugins, title: { display: true, text: 'Qwen2.5-7B-Instruct Quality by Compression Level', color: '#c8d6e5', font: { size: 14 } } } } });
+}
+
+function renderCross() {
+  const ctx = document.getElementById('chartCkpt').getContext('2d');
+  new Chart(ctx, { type: 'bar', data: {
+    labels: ['Qwen-7B (4 heads)','Qwen-1.5B (2 heads)','Llama-2-7b (32 heads)'],
+    datasets: [
+      { label: 'p=256 checkpoint (MB)', data: [15, 7, 128], backgroundColor: ['#00e87c80','#4090e880','#f0a03080'], borderColor: ['#00e87c','#4090e8','#f0a030'], borderWidth: 1 },
+    ]}, options: { ...chartOpts, indexAxis: 'y', scales: { x: { ...chartOpts.scales.x, title: { display: true, text: 'Checkpoint size (MB)', color: '#7a8ea0' } }, y: chartOpts.scales.y },
+    plugins: { ...chartOpts.plugins, title: { display: true, text: 'Checkpoint Size at p=256 by Architecture', color: '#c8d6e5', font: { size: 14 } } } } });
+}
+</script>
+</body>
+</html>
