@@ -58,6 +58,8 @@ Use these references together:
 - BPA evolution: [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
 - structural decode explainer: [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
 - empirical decode explainer: [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
+- roofline analysis: [Ridge Point Visualization](https://mcgrof.github.io/knlp/ridge_point.html) — interactive roofline model showing where decode sits relative to the compute/memory ridge
+- statistical methods: [Spearman ρ Visualization](https://mcgrof.github.io/knlp/spearman_rho.html) — the paper uses Spearman rank correlation to test whether architectural features predict KV quantization sensitivity (they do not: ρ < 0.2, p > 0.3 across 14 models)
 
 ## Implementation
 
