@@ -44,10 +44,6 @@
            class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
           GitHub
         </a>
-        <a href="paper_memory_decode.html"
-           class="px-5 py-2 bg-green-700 hover:bg-green-600 rounded-lg text-sm font-bold transition-colors ring-1 ring-green-500">
-          &#x1f4dd; Paper Visualization
-        </a>
         <a href="fisher_adam_visualization.html"
            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">
           FIM-Adam
@@ -117,6 +113,39 @@
       </div>
     </section>
 
+    <!-- Paper Visualizations -->
+    <section class="mb-12">
+      <h2 class="text-2xl font-bold mb-6 text-center">knlp Papers</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <a href="paper_memory_decode.html" class="card rounded-lg p-5 block">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-green-400">Memory-Traffic Saturation in Autoregressive Transformer Decode</h3>
+            <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded ml-3 whitespace-nowrap">BPA</span>
+          </div>
+          <p class="text-gray-500 text-sm mb-3">
+            Fused INT4 KV quantization across 14 models and 4 GPU architectures.
+            Batch-driven saturation, fusion mechanism, KV precision asymmetry, and
+            runtime calibration.
+          </p>
+          <div class="flex gap-3 text-xs">
+            <span class="text-green-400">8 interactive panels</span>
+            <span class="text-gray-600">&middot;</span>
+            <span class="text-gray-500"><a href="https://github.com/mcgrof/paper-memory-decode" class="hover:text-gray-300">repository</a></span>
+          </div>
+        </a>
+        <div class="card rounded-lg p-5 opacity-60">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-blue-400">FIM-Guided Compression</h3>
+            <span class="text-xs bg-gray-800 text-gray-400 px-2 py-1 rounded ml-3 whitespace-nowrap">in progress</span>
+          </div>
+          <p class="text-gray-600 text-sm">
+            Fisher Information as a universal signal for pruning, quantization, and
+            layer allocation. Coming soon.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <!-- BPA Story Banner -->
     <section class="mb-12">
       <div class="card rounded-xl p-6">
@@ -130,8 +159,6 @@
           it reduces real decode traffic inside the kernel.
         </p>
         <div class="flex flex-wrap gap-3 text-sm">
-          <a href="paper_memory_decode.html" class="text-green-400 hover:underline font-semibold">Paper interactive visualization</a>
-          <a href="https://github.com/mcgrof/paper-memory-decode" class="text-green-400 hover:underline">Paper repository</a>
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA overview</a>
           <a href="https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md" class="text-blue-400 hover:underline">RGSA → BPA → fused quantization</a>
           <a href="ar_decode_bottleneck.html" class="text-amber-400 hover:underline">AR decode bottleneck explainer</a>
