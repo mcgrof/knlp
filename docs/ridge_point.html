@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ridge Point — KV Cache Streaming Attention</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:      #0a0e17;
+  --bg2:     #0d1421;
+  --bg3:     #070b12;
+  --border:  #1a2a1a;
+  --border2: #253525;
+  --t1:      #e8f5e9;
+  --t2:      #7cb882;
+  --t3:      #3a5a40;
+  --accent:  #00ff88;
+  --amber:   #ffb300;
+  --red:     #ff5252;
+  --blue:    #40c4ff;
+  --purple:  #b388ff;
+  --mono:    'IBM Plex Mono', monospace;
+  --sans:    'IBM Plex Sans', sans-serif;
+}
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--t1); font-family: var(--sans); line-height: 1.6; }
+
+/* ── Layout ── */
+.page { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+
+/* ── Section headers ── */
+.section { margin-bottom: 64px; }
+.section-num {
+  font-family: var(--mono); font-size: 10px; color: var(--t3);
+  letter-spacing: 3px; margin-bottom: 6px;
+}
+.section-title {
+  font-size: clamp(20px, 3vw, 26px); font-weight: 700;
+  color: var(--t1); margin-bottom: 12px; line-height: 1.2;
+}
+.section-lead {
+  font-size: 15px; color: var(--t2); max-width: 640px;
+  line-height: 1.75; margin-bottom: 28px;
+}
+.accent-pill {
+  display: inline-block;
+  background: var(--accent); color: #000;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 2px; letter-spacing: 2px;
+  vertical-align: middle; margin: 0 4px;
+}
+em { color: var(--accent); font-style: normal; font-weight: 600; }
+code {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--bg2); color: var(--accent);
+  padding: 2px 7px; border-radius: 3px;
+}
+
+/* ── Divider ── */
+.divider {
+  border: none; border-top: 1px solid var(--border);
+  margin: 0 0 64px;
+}
+
+/* ── Box styles ── */
+.box {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 20px 24px;
+}
+.box-label {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 3px;
+  color: var(--t3); margin-bottom: 8px;
+}
+
+/* ── VIZ 1: Pipeline diagram ── */
+.pipeline {
+  display: flex; align-items: center;
+  gap: 0; margin: 32px 0;
+  flex-wrap: nowrap; overflow-x: auto;
+}
+.pipe-block {
+  flex: 0 0 auto;
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 14px 18px;
+  text-align: center; min-width: 110px;
+}
+.pipe-block .pb-icon { font-size: 26px; margin-bottom: 6px; }
+.pipe-block .pb-title {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  color: var(--t1); margin-bottom: 3px;
+}
+.pipe-block .pb-sub { font-size: 10px; color: var(--t3); }
+.pipe-arrow {
+  flex: 0 0 auto; padding: 0 6px; text-align: center;
+}
+.pipe-arrow .arrow-line {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.pipe-arrow .arrow-label {
+  font-family: var(--mono); font-size: 9px;
+  white-space: nowrap; padding: 2px 6px;
+  border-radius: 10px;
+}
+.pipe-arrow svg { display: block; }
+
+/* ── VIZ 2: Two ceilings ── */
+.two-ceilings {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 16px; margin: 28px 0;
+}
+@media (max-width: 560px) { .two-ceilings { grid-template-columns: 1fr; } }
+.ceiling-card {
+  border: 1px solid var(--border2); border-radius: 8px;
+  padding: 20px; position: relative; overflow: hidden;
+}
+.ceiling-card.bw  { border-color: #1a3a5a; background: #060e14; }
+.ceiling-card.cmp { border-color: #1a3a1a; background: #060e0a; }
+.ceiling-card .cc-tag {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 3px;
+  margin-bottom: 10px;
+}
+.ceiling-card.bw  .cc-tag { color: var(--blue); }
+.ceiling-card.cmp .cc-tag { color: var(--accent); }
+.ceiling-card .cc-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.ceiling-card.bw  .cc-title { color: var(--blue); }
+.ceiling-card.cmp .cc-title { color: var(--accent); }
+.ceiling-card .cc-body { font-size: 12px; color: var(--t2); line-height: 1.7; }
+.ceiling-card .cc-formula {
+  font-family: var(--mono); font-size: 13px; font-weight: 700;
+  margin-top: 14px; padding: 8px 12px;
+  background: var(--bg3); border-radius: 4px;
+}
+.ceiling-card.bw  .cc-formula { color: var(--blue); }
+.ceiling-card.cmp .cc-formula { color: var(--accent); }
+.cc-bar-wrap { margin-top: 14px; }
+.cc-bar-label { font-family: var(--mono); font-size: 9px; color: var(--t3); margin-bottom: 4px; }
+.cc-bar-track {
+  height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden;
+}
+.cc-bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+
+/* ── VIZ 3: performance = min(…) visual ── */
+.min-demo {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 24px; margin: 28px 0;
+}
+.min-demo h3 {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+  color: var(--t3); margin-bottom: 20px;
+}
+.min-row {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+}
+.min-label { font-family: var(--mono); font-size: 11px; color: var(--t2); min-width: 130px; }
+.min-bar-wrap { flex: 1; position: relative; height: 24px; }
+.min-bar-track { height: 100%; background: var(--bg3); border-radius: 4px; overflow: visible; position: relative; }
+.min-bar-fill  { height: 100%; border-radius: 4px; position: relative; }
+.min-bar-val {
+  position: absolute; right: -38px; top: 50%; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 10px; white-space: nowrap;
+}
+.min-result {
+  margin-top: 20px; padding: 12px 16px;
+  background: var(--bg3); border-radius: 6px; border-left: 3px solid var(--accent);
+  font-family: var(--mono); font-size: 13px; color: var(--t1);
+}
+.min-result span { color: var(--accent); font-weight: 700; }
+
+/* ── VIZ 4: slider demo ── */
+.slider-demo {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 24px; margin: 28px 0;
+}
+.slider-demo h3 {
+  font-size: 14px; font-weight: 600; color: var(--t1); margin-bottom: 6px;
+}
+.slider-demo p { font-size: 12px; color: var(--t2); margin-bottom: 20px; }
+.slider-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.slider-row label { font-family: var(--mono); font-size: 11px; color: var(--t2); min-width: 100px; }
+input[type=range] {
+  flex: 1; -webkit-appearance: none; height: 4px;
+  background: var(--border2); border-radius: 2px; outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+.slider-val {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--accent); min-width: 70px; text-align: right;
+}
+.sd-result {
+  margin-top: 20px; background: var(--bg3); border-radius: 6px;
+  padding: 16px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;
+}
+.sd-res-item { text-align: center; }
+.sd-res-item .label { font-family: var(--mono); font-size: 9px; color: var(--t3); letter-spacing: 2px; margin-bottom: 4px; }
+.sd-res-item .value { font-family: var(--mono); font-size: 16px; font-weight: 700; }
+.sd-status {
+  margin-top: 14px; padding: 10px 14px; border-radius: 6px;
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  text-align: center; transition: all 0.3s;
+}
+.sd-status.mem  { background: #0a1e2e; color: var(--blue); border: 1px solid #1a3a5a; }
+.sd-status.comp { background: #0a1e0a; color: var(--accent); border: 1px solid #1a3a1a; }
+.sd-status.both { background: #1a1a0a; color: var(--amber); border: 1px solid #3a3a1a; }
+
+/* ── Roofline chart ── */
+#roofline-wrap { width: 100%; }
+#roofline-wrap svg { width: 100%; display: block; }
+
+/* ── workload table ── */
+.workload-table { width: 100%; border-collapse: collapse; margin: 24px 0; }
+.workload-table th {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 2px;
+  color: var(--t3); text-align: left; padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workload-table td {
+  font-size: 12px; color: var(--t2); padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workload-table td:first-child { font-family: var(--mono); font-weight: 600; color: var(--t1); }
+.wl-bar {
+  height: 6px; border-radius: 3px; display: inline-block;
+  vertical-align: middle; margin-right: 8px;
+}
+.badge {
+  display: inline-block; font-family: var(--mono); font-size: 9px;
+  padding: 2px 7px; border-radius: 10px; font-weight: 600; letter-spacing: 1px;
+}
+.badge.mem  { background: #0a1e2e; color: var(--blue);   border: 1px solid #1a3a5a; }
+.badge.comp { background: #0a1e0a; color: var(--accent); border: 1px solid #1a3a1a; }
+
+/* ── GPU chip strip ── */
+.gpu-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.gpu-chip {
+  border-radius: 6px; padding: 8px 12px; cursor: pointer;
+  min-width: 80px; transition: all 0.15s; border: 1px solid var(--border);
+  background: transparent; user-select: none;
+}
+.gpu-chip.off { opacity: .28; }
+.gpu-chip-gen  { font-size: 8px; color: var(--t3); margin-bottom: 2px; font-family: var(--mono); }
+.gpu-chip-name { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.gpu-chip-stats { font-size: 9px; color: var(--t2); line-height: 1.9; font-family: var(--mono); }
+.vendor-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.vendor-btn {
+  background: transparent; border-radius: 4px; padding: 5px 14px;
+  cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 1px;
+  font-family: var(--sans); transition: all 0.15s;
+}
+.vendor-btn.nv  { border: 1px solid rgba(0,255,136,.27); color: var(--accent); }
+.vendor-btn.amd { border: 1px solid rgba(255,82,82,.27);  color: var(--red); }
+
+/* ── Tooltip ── */
+#tooltip {
+  position: fixed; display: none;
+  background: var(--bg2); border-radius: 6px;
+  padding: 12px 16px; pointer-events: none; z-index: 999;
+  font-family: var(--mono); font-size: 11px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.5);
+}
+
+/* ── Summary box ── */
+.summary {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 24px 28px; margin-top: 28px;
+}
+.summary h3 { font-size: 15px; font-weight: 700; color: var(--accent); margin-bottom: 16px; }
+.summary-item {
+  display: flex; gap: 14px; margin-bottom: 14px; align-items: flex-start;
+}
+.summary-item .si-key {
+  font-family: var(--mono); font-size: 11px; color: var(--accent);
+  min-width: 90px; padding-top: 1px;
+}
+.summary-item .si-val { font-size: 13px; color: var(--t2); line-height: 1.6; }
+
+/* ── Page title ── */
+.page-title {
+  margin-bottom: 56px; padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.page-title .pt-badge {
+  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px;
+}
+.page-title h1 {
+  font-size: clamp(26px, 4vw, 38px); font-weight: 700;
+  color: var(--t1); letter-spacing: -1px; margin-bottom: 12px;
+  line-height: 1.1;
+}
+.page-title h1 em { color: var(--accent); }
+.page-title p { font-size: 14px; color: var(--t2); max-width: 580px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- ── PAGE TITLE ── -->
+<div class="page-title">
+  <div class="pt-badge">
+    <span class="accent-pill">KV CACHE</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--t3)">performance analysis</span>
+  </div>
+  <h1>Ridge Point Implications for <em>KV Cache Streaming Attention</em></h1>
+  <p>A GPU has two fundamental limits: how fast it can move bytes, and how fast it can compute. Where those limits intersect is the <em>ridge point</em>. For KV cache streaming attention during decode, the ratio of compute to memory traffic — <strong>arithmetic intensity</strong>, measured in FLOPs per byte — stays near 1 F/B regardless of context length or model size. The workload is strongly bandwidth-limited, and understanding why requires looking at what the hardware is actually doing. These are <em>theoretical spec-sheet rooflines</em>; sustained measured performance is lower and kernel-dependent.</p>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 1: What a GPU actually does
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">01 / FOUNDATION</div>
+  <div class="section-title">Every kernel does two things: move bytes, then crunch numbers</div>
+  <div class="section-lead">
+    Before any FLOPs can happen, data has to come from somewhere — HBM memory, L2 cache, system RAM. The GPU loads bytes, does math on them, and writes results back. That's it.
+  </div>
+
+  <!-- Pipeline diagram -->
+  <div class="pipeline">
+    <div class="pipe-block" style="border-color:#1a3a5a">
+      <div class="pb-icon">🗄️</div>
+      <div class="pb-title" style="color:var(--blue)">HBM Memory</div>
+      <div class="pb-sub">where data lives</div>
+    </div>
+
+    <div class="pipe-arrow">
+      <div class="arrow-line">
+        <span class="arrow-label" style="background:#0a1e2e;color:var(--blue)">bandwidth</span>
+        <svg width="40" height="16"><defs><marker id="a1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#40c4ff"/></marker></defs><line x1="2" y1="8" x2="36" y2="8" stroke="#40c4ff" stroke-width="2" marker-end="url(#a1)"/></svg>
+        <span class="arrow-label" style="background:#0a1e2e;color:var(--t3);font-size:8px">GB/s</span>
+      </div>
+    </div>
+
+    <div class="pipe-block" style="border-color:#2a2a1a">
+      <div class="pb-icon">⚡</div>
+      <div class="pb-title" style="color:var(--amber)">Registers / L1</div>
+      <div class="pb-sub">on-chip, fast</div>
+    </div>
+
+    <div class="pipe-arrow">
+      <div class="arrow-line">
+        <span class="arrow-label" style="background:#0a1e0a;color:var(--accent)">FLOPs</span>
+        <svg width="40" height="16"><defs><marker id="a2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#00ff88"/></marker></defs><line x1="2" y1="8" x2="36" y2="8" stroke="#00ff88" stroke-width="2" marker-end="url(#a2)"/></svg>
+        <span class="arrow-label" style="background:#0a1e0a;color:var(--t3);font-size:8px">TFLOPS</span>
+      </div>
+    </div>
+
+    <div class="pipe-block" style="border-color:#1a3a1a">
+      <div class="pb-icon">🧮</div>
+      <div class="pb-title" style="color:var(--accent)">Tensor Cores</div>
+      <div class="pb-sub">do the math</div>
+    </div>
+
+    <div class="pipe-arrow">
+      <div class="arrow-line">
+        <svg width="40" height="16"><defs><marker id="a3" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#40c4ff"/></marker></defs><line x1="2" y1="8" x2="36" y2="8" stroke="#40c4ff" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#a3)"/></svg>
+        <span class="arrow-label" style="background:#0a1e2e;color:var(--t3);font-size:8px">write back</span>
+      </div>
+    </div>
+
+    <div class="pipe-block" style="border-color:#1a3a5a">
+      <div class="pb-icon">🗄️</div>
+      <div class="pb-title" style="color:var(--blue)">HBM Memory</div>
+      <div class="pb-sub">results stored</div>
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="box-label">KEY RATIO</div>
+    <p style="font-size:14px;color:var(--t2);line-height:1.75;margin-bottom:16px">
+      For any kernel, you can measure how much math it does <em>per byte it moves</em>. This ratio is called <em>Arithmetic Intensity</em>:
+    </p>
+    <div style="text-align:center;padding:16px 0">
+      <div style="font-family:var(--mono);font-size:22px;font-weight:700;color:var(--accent)">
+        AI = FLOPs ÷ bytes moved
+      </div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--t3);margin-top:6px">
+        units: FLOP/byte
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-top:12px">
+      To make the math tractable, we use a <em>single-head asymptotic model</em>: count only the K and V reads
+      and the two attention matmuls for one head, and assume context length is long enough that fixed overheads
+      like the query load and output write are negligible. Under that model:
+      a matrix multiply on large matrices does <em>~512 FLOPs per byte</em> — lots of reuse.
+      Streaming decode attention over the KV cache does <em>~1 FLOP per byte</em> — almost none.
+      A 512× gap in arithmetic intensity between a large-batch GEMM and a decode attention pass
+      is the whole story of why transformer inference is hard to make fast.
+    </p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 2: Two ceilings
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">02 / THE TWO CEILINGS</div>
+  <div class="section-title">Your GPU has two speed limits. You always hit the lower one.</div>
+  <div class="section-lead">
+    No matter how many FLOPs the spec sheet claims, actual performance is bounded by whichever resource runs out first — bandwidth or compute.
+  </div>
+
+  <div class="two-ceilings">
+    <div class="ceiling-card bw">
+      <div class="cc-tag">BANDWIDTH CEILING</div>
+      <div class="cc-title">Memory-Bound</div>
+      <div class="cc-body">
+        The GPU can't compute faster than bytes arrive. If it's starved for data, the tensor cores sit idle waiting.
+        <br/><br/>
+        Performance = <code style="color:var(--blue)">BW × AI</code>
+        <br/>More bandwidth or higher AI → goes faster.
+      </div>
+      <div class="cc-formula">perf = BW [GB/s] × AI [F/B] ÷ 1000</div>
+      <div class="cc-bar-wrap">
+        <div class="cc-bar-label">H100 bandwidth · 3350 GB/s</div>
+        <div class="cc-bar-track"><div class="cc-bar-fill" style="width:75%;background:var(--blue)"></div></div>
+      </div>
+    </div>
+    <div class="ceiling-card cmp">
+      <div class="cc-tag">COMPUTE CEILING</div>
+      <div class="cc-title">Compute-Bound</div>
+      <div class="cc-body">
+        The GPU can't compute faster than its tensor cores allow. At some point data arrives faster than it can be processed.
+        <br/><br/>
+        Performance = <code>peak TFLOPS</code>
+        <br/>Fixed ceiling. More AI doesn't help.
+      </div>
+      <div class="cc-formula">perf = peak [TFLOPS]  (flat ceiling)</div>
+      <div class="cc-bar-wrap">
+        <div class="cc-bar-label">H100 dense BF16/FP16 · ~989 TFLOPS (inferred as ½ sparse)</div>
+        <div class="cc-bar-track"><div class="cc-bar-fill" style="width:60%;background:var(--accent)"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="min-demo">
+    <h3>ACTUAL PERFORMANCE = min(bandwidth ceiling, compute ceiling)</h3>
+
+    <div class="min-row">
+      <div class="min-label" style="color:var(--blue)">BW ceiling</div>
+      <div class="min-bar-wrap">
+        <div class="min-bar-track">
+          <div class="min-bar-fill" id="bw-bar" style="background:var(--blue);width:30%">
+            <div class="min-bar-val" id="bw-val" style="color:var(--blue)">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="min-row">
+      <div class="min-label" style="color:var(--accent)">compute ceiling</div>
+      <div class="min-bar-wrap">
+        <div class="min-bar-track">
+          <div class="min-bar-fill" id="cmp-bar" style="background:var(--accent);width:80%">
+            <div class="min-bar-val" id="cmp-val" style="color:var(--accent)">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="min-row">
+      <div class="min-label" style="color:var(--amber)">actual perf</div>
+      <div class="min-bar-wrap">
+        <div class="min-bar-track">
+          <div class="min-bar-fill" id="act-bar" style="background:var(--amber);width:30%">
+            <div class="min-bar-val" id="act-val" style="color:var(--amber)">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="min-result" id="min-result"></div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 3: The ridge point
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">03 / THE RIDGE POINT</div>
+  <div class="section-title">The ridge point: where the two ceilings meet</div>
+  <div class="section-lead">
+    There is exactly one arithmetic intensity where <code>BW × AI = peak TFLOPS</code>.
+    That crossover is the <em>ridge point</em>. Below it you're memory-bound. Above it you're compute-bound.
+    And since AI is a property of the algorithm — not a free dial — most kernels sit in a fixed region of this chart.
+  </div>
+
+  <!-- Kernel picker -->
+  <div class="slider-demo">
+    <h3>Pick an illustrative kernel profile — AI values are rough didactic ranges, not measured data</h3>
+    <p>
+      AI is <strong style="color:var(--red)">not a dial you turn</strong>. It's a property of what the kernel computes.
+      Streaming decode attention over the KV cache lands near ~1 F/B (FP16) in a simplified per-head model — you can't wish it higher without changing the algorithm.
+      Click any profile below to see where it lands on the H100 dense BF16/FP16 theoretical roofline.
+    </p>
+
+    <!-- kernel buttons -->
+    <div id="kernel-btns" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px"></div>
+
+    <div class="sd-result">
+      <div class="sd-res-item">
+        <div class="label">KERNEL AI</div>
+        <div class="value" id="sd-bw" style="color:var(--blue)">—</div>
+      </div>
+      <div class="sd-res-item">
+        <div class="label">H100 RIDGE</div>
+        <div class="value" id="sd-ridge" style="color:var(--accent)">295 F/B</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:2px" id="sd-ridge-note">dense BF16/FP16 TC ref</div>
+      </div>
+      <div class="sd-res-item">
+        <div class="label">ACTUAL PERF</div>
+        <div class="value" id="sd-act" style="color:var(--amber)">—</div>
+      </div>
+    </div>
+
+    <div class="sd-status" id="sd-status" style="margin-top:12px"></div>
+
+    <div id="sd-explain" style="margin-top:12px;font-size:12px;color:var(--t3);font-family:var(--mono);min-height:18px"></div>
+
+    <!-- mini roofline -->
+    <div style="margin-top:20px">
+      <svg id="mini-roof" width="100%" height="130" style="display:block"></svg>
+    </div>
+  </div>
+
+  <!-- How to actually increase AI -->
+  <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:22px 24px;margin-top:0">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:14px">
+      SO HOW DO YOU ACTUALLY INCREASE AI?
+    </div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-bottom:18px">
+      You can't change arithmetic intensity by flipping a switch. It requires <em>redesigning the kernel</em>.
+      There are three real levers:
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">① OPERATOR FUSION</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          Fuse multiple kernels into one pass so intermediate results stay in registers/L1 instead of writing back to HBM.
+          <br/><br/>
+          <strong style="color:var(--t1)">FlashAttention</strong>: tiles the QKᵀ matmul, softmax, and AV matmul into a single kernel pass, keeping intermediate scores in on-chip SRAM. The quadratic S/P matrices are never written to HBM — substantially reducing HBM traffic for long sequences.
+        </div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--blue)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:6px">② INCREASE BATCH SIZE</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          For GEMMs, larger batches reuse the same weight bytes across more tokens.
+          For a 4096×4096 FP16 GEMM: B=1 → ~1 F/B, B=16 → ~16 F/B, B=64 → ~62 F/B, B=512 → ~410 F/B.
+          Scaling is sublinear — input and output bytes also grow with B. Ridge crossed around B≈345 for this shape.
+          <br/><br/>
+          This is the <strong style="color:var(--t1)">only free lunch</strong>: if you can batch more requests together, GEMM AI climbs toward the ridge. But KV cache AI stays fixed regardless of batch size.
+        </div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--purple)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--purple);letter-spacing:2px;margin-bottom:6px">③ COMPRESS THE BYTES</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          Same FLOPs, fewer bytes moved → AI goes up. This is what <strong style="color:var(--t1)">KV quantization and MLA</strong> do.
+          <br/><br/>
+          4× KV compression → 4× higher AI in the single-head streaming model. Whole-layer AI with GQA also improves.
+          Doesn't push past the ridge, but meaningfully reduces total HBM traffic.
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding:12px 14px;background:var(--bg3);border-radius:6px;border-left:3px solid var(--red)">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--red);letter-spacing:2px">THE HARD TRUTH  </span>
+      <span style="font-size:12px;color:var(--t2)">
+        Even with all three techniques combined, most transformer inference kernels still never reach the ridge point (~200–295 F/B on modern GPUs). Common practical compression and head-sharing schemes can move whole-layer effective AI into the low tens of F/B; more aggressive MLA-style compression can go higher in principle but real kernels land lower once overheads are counted. The ridge is a theoretical ceiling, not a realistic target for these workloads.
+      </span>
+    </div>
+  </div>
+
+  <div class="box" style="margin-top:0">
+    <div class="box-label">FORMULA</div>
+    <div style="text-align:center;padding:14px 0 10px">
+      <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)">
+        ridge [F/B] = peak TFLOPS ÷ bandwidth [TB/s]
+      </div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--t3);margin-top:6px">
+        dense BF16/FP16 theoretical · spec-sheet peaks · sustained measured rooflines are lower
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:16px">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">H100</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:#00c853">989 ÷ 3.35 = <span style="color:var(--accent)">295</span></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">H200</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:#00e676">989 ÷ 4.80 = <span style="color:var(--accent)">206</span></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">B200 (HGX)</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--accent)">2250 ÷ 8.0 = <span style="color:var(--accent)">281</span></div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">MI300X</div>
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--red)">1307 ÷ 5.30 = <span style="color:var(--accent)">247</span></div>
+      </div>
+    </div>
+    <div style="margin-top:12px;padding:10px 14px;background:rgba(64,196,255,0.04);border-left:2px solid var(--blue);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--t3);line-height:1.7">
+      ⚠ A GPU does not have one universal ridge point. The ridge depends on which compute ceiling you use.
+      H100 tensor-core FP16 gives ~295 F/B. H100 FP32 vector throughput gives ~20 F/B. Non-tensor-core kernels
+      (layernorm, softmax, gather) cannot use the full tensor-core ceiling, so their effective ridge is much lower.
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 4: Where transformer workloads land
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">04 / TRANSFORMER WORKLOADS</div>
+  <div class="section-title">Where do actual transformer kernels land on this chart?</div>
+  <div class="section-lead">
+    Most transformer operations have very low arithmetic intensity — they spend most time waiting on bandwidth, not computing.
+    <em style="color:var(--t3)">Values below are illustrative rough ranges; actual measurements vary by implementation, hardware, and batch size.</em>
+    The ridge shown is H100 dense BF16/FP16 theoretical (~295 F/B). Non-tensor-core kernels have lower effective ridges.
+  </div>
+
+  <table class="workload-table">
+    <thead>
+      <tr>
+        <th>KERNEL</th>
+        <th>ARITH INTENSITY</th>
+        <th>REGIME</th>
+        <th>WHY</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Streaming decode attention (KV)</td>
+        <td><div class="wl-bar" style="width:4px;background:var(--blue)"></div> ~1 F/B (FP16)</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>Per-head simplified model: 4·d·L FLOPs over 2·d·L·B bytes → 2/B. See §05.</td>
+      </tr>
+      <tr>
+        <td>Embedding lookup</td>
+        <td><div class="wl-bar" style="width:2px;background:var(--blue)"></div> ~0 F/B</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>Gather: one row fetched per token. Essentially pure memory traffic, near-zero compute.</td>
+      </tr>
+      <tr>
+        <td>Attention (short seq)</td>
+        <td><div class="wl-bar" style="width:12px;background:var(--blue)"></div> ~4–16 F/B</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>Rough range; scales with seq len and Q/KV head ratio. Still BW-bound at inference.</td>
+      </tr>
+      <tr>
+        <td>MoE routing</td>
+        <td><div class="wl-bar" style="width:20px;background:var(--blue)"></div> ~16–32 F/B</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>Sparse scatter/gather, low reuse. Illustrative range.</td>
+      </tr>
+      <tr>
+        <td>LayerNorm / SoftMax</td>
+        <td><div class="wl-bar" style="width:24px;background:var(--blue)"></div> ~10–30 F/B (rough)</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>Multiple passes over activations. Cannot use tensor-core ceiling; effective ridge is lower.</td>
+      </tr>
+      <tr>
+        <td>GEMM (small batch)</td>
+        <td><div class="wl-bar" style="width:20px;background:var(--blue)"></div> ~1–16 F/B</td>
+        <td><span class="badge mem">MEMORY</span></td>
+        <td>B=1→~1 F/B, B=16→~16 F/B (4K×4K FP16). Weight bytes dominate at low batch.</td>
+      </tr>
+      <tr>
+        <td>GEMM (large batch)</td>
+        <td><div class="wl-bar" style="width:130px;background:var(--accent)"></div> ~256–410 F/B</td>
+        <td><span class="badge comp">COMPUTE</span></td>
+        <td>B=512→~410 F/B. Ridge (~295 F/B) crossed around B≈345 for 4K×4K FP16. Tensor-core bound.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:18px 24px;margin-bottom:24px">
+    <div style="font-family:var(--mono);font-size:10px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">TAKEAWAY</div>
+    <p style="font-size:14px;color:var(--t2);line-height:1.75">
+      With a theoretical ridge of ~295 F/B (H100 dense BF16/FP16), the tensor cores are idle for almost every transformer inference kernel. You're paying for 989 TFLOPS but only able to use them during large batched matrix multiplies. The rest of the time you're bottlenecked on the 3.35 TB/s pipe.
+      <br/><br/>
+      This is why <em>FlashAttention</em> matters — it eliminates the quadratic S/P intermediates from HBM, reducing total bytes moved without changing compute. And it's why <em>KV quantization and MLA</em> help: fewer bytes per element, same FLOPs, better effective AI.
+    </p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 5: KV Cache Load Deep Dive
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">05 / STREAMING DECODE ATTENTION — THE DEEP DIVE</div>
+  <div class="section-title">Why streaming decode attention over the KV cache has ~1 F/B arithmetic intensity</div>
+  <div class="section-lead">
+    During every decode step, the GPU streams the KV cache out of HBM while computing attention against it.
+    In a simplified per-query-head asymptotic model — which ignores fixed overheads like query loads, output writes,
+    metadata, and dequantization scales — the arithmetic intensity simplifies to a function of
+    <em>bytes per element alone</em>. Context length cancels. Head dimension cancels. Batch size cancels.
+    Whole-layer effective AI can also rise with head sharing (GQA/MQA) or KV compression (MLA) — but the single-head
+    baseline illuminates exactly what drives the bottleneck.
+  </div>
+
+  <!-- The derivation -->
+  <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:22px 26px;margin-bottom:20px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:3px;margin-bottom:14px">THE MATH — SIMPLIFIED ASYMPTOTIC MODEL (ONE QUERY HEAD)</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.8;margin-bottom:16px">
+      For a single decode step, consider <em>one attention head in one layer</em>. The query vector <code>q</code> is a single row
+      of dimension <code>d</code>. The KV cache holds <code>L</code> previous tokens, each with a K and V vector of dimension <code>d</code>.
+      This model counts only the dominant K/V read traffic and the two matmuls — ignoring query loads, output writes,
+      scale factors, and other bookkeeping that become significant at short context lengths.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div style="background:var(--bg3);border-radius:6px;padding:14px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">BYTES LOADED FROM HBM</div>
+        <div style="font-family:var(--mono);font-size:13px;color:#ff5252;line-height:2.2">
+          K matrix: L × d × sizeof(dtype)<br>
+          V matrix: L × d × sizeof(dtype)<br>
+          <span style="color:var(--t3)">──────────────────────</span><br>
+          total = <span style="color:var(--t1)">2 · L · d · B</span>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:8px">where B = bytes per element (2 for FP16, 1 for INT8)</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:14px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">FLOPS COMPUTED</div>
+        <div style="font-family:var(--mono);font-size:13px;color:var(--accent);line-height:2.2">
+          scores: q @ Kᵀ → 2·d·L FLOPs<br>
+          output: scores @ V → 2·d·L FLOPs<br>
+          <span style="color:var(--t3)">──────────────────────</span><br>
+          total = <span style="color:var(--t1)">4 · d · L</span>
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:8px">softmax negligible; dominated by the two matmuls</div>
+      </div>
+    </div>
+    <!-- The result -->
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:18px;text-align:center;margin-bottom:14px">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--t3);margin-bottom:10px">ARITHMETIC INTENSITY — SINGLE HEAD, LARGE-CONTEXT ASYMPTOTE</div>
+      <div style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent);line-height:1.8">
+        AI = 4·d·L / (2·d·L·B) = <span style="color:var(--t1)">2 / B</span>
+      </div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--t3);margin-top:8px">
+        per-head asymptote: L cancels · d cancels · only bytes-per-element B remains
+      </div>
+    </div>
+    <!-- GQA note -->
+    <div style="background:rgba(179,136,255,0.05);border:1px solid rgba(179,136,255,0.18);border-radius:6px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--purple);letter-spacing:2px;margin-bottom:6px">WHOLE-LAYER EFFECTIVE AI ALSO SCALES WITH Q/KV HEAD RATIO</div>
+      <div style="font-size:12px;color:var(--t2);line-height:1.7">
+        The single-head model above has AI = 2/B. But at the <em>layer level</em>, if H<sub>q</sub> query heads
+        all attend over the same H<sub>kv</sub> KV heads (GQA/MQA), the same K/V bytes serve multiple query heads.
+        Whole-layer AI is approximately:
+        <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--purple);text-align:center;margin:10px 0">
+          AI<sub>layer</sub> ≈ 2 · (H<sub>q</sub> / H<sub>kv</sub>) / B
+        </div>
+        MHA (H<sub>q</sub>=H<sub>kv</sub>=32): ~1 F/B (FP16) ·
+        GQA (32Q / 8KV): ~4 F/B ·
+        MQA (32Q / 1KV): ~32 F/B.
+        Still firmly memory-bound on any current GPU, but <em>bytes per element alone</em> is not the full story at the layer level.
+      </div>
+    </div>
+    <!-- dtype table -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center;border-top:2px solid #ff5252">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">FP32</div>
+        <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:#ff5252">0.5 F/B</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:4px">B = 4 bytes</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center;border-top:2px solid var(--amber)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">FP16 / BF16</div>
+        <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--amber)">1.0 F/B</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:4px">B = 2 bytes · standard</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center;border-top:2px solid var(--blue)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">INT8</div>
+        <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--blue)">2.0 F/B</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:4px">B = 1 byte · 2× better</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center;border-top:2px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">INT4</div>
+        <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--accent)">4.0 F/B</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:4px">B = 0.5 bytes · 4× better</div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding:12px 14px;background:rgba(255,179,0,0.06);border-left:3px solid var(--amber);border-radius:4px">
+      <span style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:2px">KEY RESULT  </span>
+      <span style="font-size:12px;color:var(--t2)">
+        Even INT4 gives only 4 F/B per head — still 70–80× below the H100's dense BF16/FP16 theoretical ridge of ~295 F/B.
+        MLA and extreme GQA can push whole-layer effective AI higher, but decode attention remains
+        strongly bandwidth-limited in practice on current hardware.
+      </span>
+    </div>
+  </div>
+
+  <!-- Interactive KV Cache Calculator -->
+  <div class="slider-demo" style="margin-bottom:20px">
+    <h3>Streaming Decode Attention Calculator — per decode step</h3>
+    <p>KV format controls bytes-per-element in the <em>stored KV cache</em>, not necessarily the active compute precision of the attention kernel — quantized KV is often dequantized to a higher precision before the matmul. The H100 reference roofline (295 F/B) is always the dense BF16/FP16 tensor-core theoretical ceiling regardless of KV format selected.</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+      <div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">MODEL PARAMETERS</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Context len</label>
+            <input type="range" id="kv-ctx" min="0" max="7" value="3" style="flex:1"/>
+            <span id="kv-ctx-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">4K</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Layers</label>
+            <input type="range" id="kv-layers" min="0" max="3" value="1" style="flex:1"/>
+            <span id="kv-layers-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">32</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">KV heads</label>
+            <input type="range" id="kv-heads" min="0" max="3" value="1" style="flex:1"/>
+            <span id="kv-heads-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">8</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Head dim</label>
+            <input type="range" id="kv-headdim" min="0" max="2" value="1" style="flex:1"/>
+            <span id="kv-headdim-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">128</span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">SERVING PARAMETERS</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Batch size</label>
+            <input type="range" id="kv-batch" min="1" max="64" value="1" step="1" style="flex:1"/>
+            <span id="kv-batch-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">1</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">Prefix shared</label>
+            <input type="range" id="kv-prefix" min="0" max="100" value="0" step="1" style="flex:1"/>
+            <span id="kv-prefix-val" style="font-family:var(--mono);font-size:10px;color:var(--accent);width:60px;text-align:right">0%</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:10px">
+            <label style="font-family:var(--mono);font-size:10px;color:var(--t2);width:100px;flex-shrink:0">KV format</label>
+            <div style="display:flex;gap:6px;flex:1">
+              <button class="dtype-btn" data-bytes="4" data-label="FP32" style="flex:1;padding:5px 4px;border-radius:4px;border:1px solid #253525;background:transparent;font-family:var(--mono);font-size:9px;color:var(--t3);cursor:pointer">FP32</button>
+              <button class="dtype-btn active-dtype" data-bytes="2" data-label="FP16" style="flex:1;padding:5px 4px;border-radius:4px;border:1px solid var(--amber);background:rgba(255,179,0,0.08);font-family:var(--mono);font-size:9px;color:var(--amber);cursor:pointer">FP16</button>
+              <button class="dtype-btn" data-bytes="1" data-label="INT8" style="flex:1;padding:5px 4px;border-radius:4px;border:1px solid #253525;background:transparent;font-family:var(--mono);font-size:9px;color:var(--t3);cursor:pointer">INT8</button>
+              <button class="dtype-btn" data-bytes="0.5" data-label="INT4" style="flex:1;padding:5px 4px;border-radius:4px;border:1px solid #253525;background:transparent;font-family:var(--mono);font-size:9px;color:var(--t3);cursor:pointer">INT4</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results grid -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">AI (SINGLE HEAD)</div>
+        <div id="kv-ai-val" style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--amber)">1.0 F/B</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">asymptotic model · dtype only</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">IDEALIZED BATCH READ</div>
+        <div id="kv-bytes-val" style="font-family:var(--mono);font-size:20px;font-weight:700;color:#ff5252">—</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">shared-once model · K+V bytes</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">MIN TIME @ PEAK BW</div>
+        <div id="kv-bw-val" style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--blue)">—</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">lower bound at 3,350 GB/s</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;text-align:center">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">AGGREGATE TOKENS / SEC (MAX)</div>
+        <div id="kv-time-val" style="font-family:var(--mono);font-size:20px;font-weight:700;color:var(--accent)">—</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:4px">batch total · if KV load were only cost</div>
+      </div>
+    </div>
+
+    <div id="kv-status" class="sd-status mem" style="margin-bottom:10px"></div>
+    <div id="kv-prefix-note" style="font-family:var(--mono);font-size:11px;color:var(--t3);min-height:16px"></div>
+  </div>
+
+  <!-- Batching: GEMM vs KV comparison -->
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:20px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:14px">BATCHING — WHY IT HELPS GEMM BUT NOT KV CACHE</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+      <!-- GEMM batching -->
+      <div style="background:var(--bg3);border-radius:6px;padding:16px;border-left:3px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:10px">GEMM — AI SCALES WITH BATCH (sublinearly)</div>
+        <p style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:12px">
+          Weight <code>W</code> is <code>K×N</code>, input batch is <code>B×K</code>, output is <code>B×N</code>.
+          More tokens share the same weight bytes — but the input and output bytes also grow with B.
+        </p>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--t1);line-height:2.0;background:var(--bg);border-radius:4px;padding:10px">
+          FLOPs = 2·B·K·N<br>
+          bytes = s·(K·N + B·K + B·N)<br>
+          <span style="color:var(--accent)">AI = B·K·N / (K·N + B·(K+N))</span><br>
+          <span style="color:var(--t3)">→ sublinear in B; saturates near ridge</span>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--t3);line-height:1.8;font-family:var(--mono)">
+          K=N=4096, FP16 (s=2):<br>
+          <span style="color:var(--t2)">AI ≈ B / (1 + B/2048)</span><br>
+          B=1 → ~1 F/B · B=16 → ~16 F/B<br>
+          B=64 → ~62 F/B · B=512 → ~410 F/B<br>
+          <span style="color:var(--amber)">ridge crossed at B≈345</span>
+        </div>
+      </div>
+
+      <!-- KV batching -->
+      <div style="background:var(--bg3);border-radius:6px;padding:16px;border-left:3px solid #ff5252">
+        <div style="font-family:var(--mono);font-size:9px;color:#ff5252;letter-spacing:2px;margin-bottom:10px">KV CACHE — AI DOES NOT SCALE WITH BATCH</div>
+        <p style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:12px">
+          Each user has their <em>own</em> KV cache in separate HBM regions. Batching N users loads
+          N separate blobs. FLOPs and bytes both scale with N — the ratio stays fixed.
+        </p>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--t1);line-height:2.0;background:var(--bg);border-radius:4px;padding:10px">
+          bytes = N · 2·L·d·B<br>
+          FLOPs = N · 4·d·L<br>
+          <span style="color:#ff5252">AI = 2/B  (constant)</span><br>
+          <span style="color:var(--t3)">→ N cancels out entirely</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- batch size visual bar -->
+    <div style="margin-top:16px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:8px">AI VS BATCH SIZE — GEMM 4K×4K FP16 vs FP16 KV (H100 ridge=295 F/B)</div>
+      <div id="batch-compare-bars" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+  <!-- Prefix sharing -->
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:20px 24px;margin-bottom:20px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:6px">PREFIX CACHING — THREE QUANTITIES TO KEEP SEPARATE</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-bottom:14px">
+      When multiple requests share an identical prefix — same system prompt, same document context — that prefix KV
+      can be computed once and the blocks reused.
+      This affects three different quantities in different ways, and confusing them leads to bad offloading analysis later:
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;font-size:12px;color:var(--t2)">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">RESIDENT KV FOOTPRINT</div>
+        Shared prefix blocks are stored once. Reduces how much HBM capacity the KV cache occupies.
+        This is supported by prefix-caching runtimes built on block KV management.
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--blue)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:6px">IDEALIZED DECODE READ TRAFFIC</div>
+        In an idealized simultaneous-batch kernel, shared prefix bytes might be read once across all users.
+        This is a valid model to explore — but it depends on batching and runtime implementation details.
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid #ff5252">
+        <div style="font-family:var(--mono);font-size:9px;color:#ff5252;letter-spacing:2px;margin-bottom:6px">PER-REQUEST AI — UNCHANGED</div>
+        For a single request, the per-head asymptotic baseline AI formula (2/B) is unchanged.
+        Prefix sharing does not alter the single-request baseline AI — though in an idealized batched kernel
+        with true shared-read semantics, whole-batch effective FLOPs-per-byte for the shared portion can rise.
+      </div>
+    </div>
+    <div style="background:rgba(64,196,255,0.04);border:1px solid rgba(64,196,255,0.15);border-radius:6px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--t2);line-height:1.7">
+      <strong style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px">TWO RELATED BUT DISTINCT MECHANISMS</strong><br/><br/>
+      <strong style="color:var(--t1)">Block/page KV management</strong> (PagedAttention in vLLM): partitions the KV cache into fixed-size blocks
+      stored in non-contiguous physical memory, reducing fragmentation and enabling flexible allocation.
+      This is primarily a memory management technique.<br/><br/>
+      <strong style="color:var(--t1)">Automatic prefix caching</strong> (vLLM's APC, RadixAttention in SGLang): uses hash-based reuse
+      to skip recomputing KV blocks when a new request shares a prefix with a prior one.
+      This saves prefill compute and <em>resident KV footprint</em> for the shared prefix.
+      Whether it also reduces HBM read traffic per decode step depends on the batching strategy and kernel implementation.
+    </div>
+
+    <!-- Memory layout visual -->
+    <div style="margin-bottom:16px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">HBM LAYOUT — RESIDENT STORED BLOCKS (not per-step read traffic)</div>
+      <div style="display:flex;flex-direction:column;gap:5px" id="prefix-layout">
+        <!-- rendered by JS -->
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-family:var(--mono);font-size:11px">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px">
+        <div style="font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">HBM FOOTPRINT — NO SHARING</div>
+        <div style="color:#ff5252;font-weight:700">N × full KV blocks</div>
+        <div style="color:var(--t3);font-size:10px;margin-top:4px">each request stores its own prefix</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px">
+        <div style="font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">HBM FOOTPRINT — WITH SHARED BLOCKS</div>
+        <div style="color:var(--accent);font-weight:700">1 shared + N × private</div>
+        <div style="color:var(--t3);font-size:10px;margin-top:4px">prefix blocks stored once in HBM</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px">
+        <div style="font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:6px">HBM CAPACITY SAVED</div>
+        <div style="color:var(--blue);font-weight:700" id="prefix-savings">—</div>
+        <div style="color:var(--t3);font-size:10px;margin-top:4px" id="prefix-savings-note">varies with prefix % and batch</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;font-size:12px;color:var(--t2);line-height:1.75">
+      A 2,000-token system prompt shared across 10,000 users would otherwise require 10,000 copies of the same KV data in HBM.
+      With prefix caching, only one copy is stored — a massive footprint win.
+      Prefix caching can also help a single later request that arrives alone — it reuses already-computed prompt KV
+      blocks without requiring a simultaneous batch.
+    </div>
+
+  </div>
+
+  <!-- Offloading teaser -->
+  <div style="background:rgba(0,255,136,0.03);border:1px solid rgba(0,255,136,0.12);border-radius:8px;padding:18px 24px;margin-bottom:20px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:3px;margin-bottom:10px">↗ THE OFFLOADING EXTENSION — THREE QUANTITIES</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-bottom:14px">
+      Understanding KV cache at the roofline level maps directly onto offloading analysis.
+      There are three distinct quantities — confusing them produces bad trade-off reasoning:
+    </p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;font-size:12px;color:var(--t2)">
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:6px">RESIDENT KV FOOTPRINT</div>
+        How much KV data must exist <em>somewhere</em> — HBM, DRAM, SSD, or a remote tier.
+        Offloading reduces HBM pressure by moving cold KV blocks elsewhere.
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid var(--blue)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:6px">HBM DECODE TRAFFIC</div>
+        How many K/V bytes must be read per decode step from HBM.
+        This is what the AI formula models. Compression and head-sharing reduce it directly.
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;border-left:3px solid #ff5252">
+        <div style="font-family:var(--mono);font-size:9px;color:#ff5252;letter-spacing:2px;margin-bottom:6px">OFFLOADED TRANSFER TRAFFIC</div>
+        How many bytes must cross PCIe, CXL, NVLink, or storage links on the decode critical path.
+        Offloading solves footprint but can move the bottleneck here instead.
+        Recent KV-offloading work identifies PCIe transfer latency as the dominant cost in many offloaded workloads.
+      </div>
+    </div>
+  </div>
+
+  <!-- The real levers -->
+  <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px 24px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:14px">THE REAL LEVERS — WHAT ACTUALLY HELPS</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--blue)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:8px">① KV QUANTIZATION</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          INT8 halves bytes → doubles AI to 2 F/B.<br>
+          INT4 quarters bytes → 4 F/B.<br>
+          Still far from the ridge but <em>real speedup</em> — you can saturate HBM with fewer tokens, or serve more users with the same bandwidth.
+        </div>
+      </div>
+
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--purple)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--purple);letter-spacing:2px;margin-bottom:8px">② MLA (MULTI-HEAD LATENT ATTN)</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          DeepSeek's approach: compress K and V into a lower-dimensional latent vector before caching.
+          DeepSeek-V2 reports a 93.3% KV-cache reduction relative to standard MHA.
+          Fewer bytes stored and loaded → effective AI improves proportionally.
+        </div>
+      </div>
+
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--accent)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:8px">③ GQA / MQA</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          Grouped-query and multi-query attention reduce the <em>number</em> of KV heads (e.g. 32Q heads sharing 8 KV heads).
+          Fewer KV heads means fewer bytes in the cache.
+          Widely used in modern families: Llama 3 and Mistral use GQA; later Gemma-family models adopt it as well (original Gemma 7B used MHA; Gemma 2B used MQA).
+        </div>
+      </div>
+
+      <div style="background:var(--bg3);border-radius:6px;padding:14px;border-left:3px solid var(--amber)">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:2px;margin-bottom:8px">④ PREFIX CACHING</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          Doesn't improve AI per kernel — but eliminates redundant HBM storage and recomputation across requests.
+          At scale this is often the largest practical win.
+          Automatic Prefix Caching in vLLM and RadixAttention in SGLang implement prefix reuse;
+          PagedAttention provides the block-based KV management substrate that makes this practical.
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 14px;background:var(--bg3);border-left:3px solid #ff5252;border-radius:4px">
+      <span style="font-family:var(--mono);font-size:9px;color:#ff5252;letter-spacing:2px">HARD TRUTH  </span>
+      <span style="font-size:12px;color:var(--t2)">
+        Common practical schemes — INT8 KV, modest GQA (32Q/8KV) — can move whole-layer effective AI
+        into the low tens of F/B. More aggressive MLA-style compression can go higher in principle.
+        Real kernels land lower once fixed overheads, non-dominant bytes, and dequantization cost are included.
+        Either way, still well below the H100 dense BF16/FP16 theoretical ridge of ~295 F/B.
+        Decode attention is strongly bandwidth-limited in practice on current hardware.
+        The ridge is not a realistic target — it's a reminder of how far away compute-bound territory is,
+        and why memory bandwidth is the dominant cost lever.
+      </span>
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 6: FlashAttention
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">06 / FLASHATTENTION</div>
+  <div class="section-title">FlashAttention: same math, far fewer bytes through HBM</div>
+  <div class="section-lead">
+    Naive attention materializes the full n×n score matrix S and softmax result P in HBM — quadratic in sequence length.
+    FlashAttention avoids this entirely by tiling the computation so that S and P are computed block-by-block in on-chip SRAM,
+    consumed immediately, and never written to HBM. The inputs (Q, K, V) and output (O) still stream through HBM in both approaches.
+    FlashAttention computes the same exact attention result and has the same asymptotic O(n²d) workload,
+    but practical FLOP counts can differ modestly between implementations — the paper itself shows cases
+    where FlashAttention has a slightly higher FLOP count yet is dramatically faster because HBM accesses drop so much.
+    The win is fewer HBM accesses and no full S/P materialization.
+  </div>
+
+  <!-- Before / After comparison -->
+  <div style="display:grid;grid-template-columns:1fr 40px 1fr;gap:0;align-items:stretch;margin-bottom:20px">
+
+    <!-- NAIVE -->
+    <div style="background:#0d1421;border:1px solid #2a1a1a;border-top:2px solid #ff5252;border-radius:8px;padding:18px 20px">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:3px;color:#ff5252;margin-bottom:4px">BEFORE</div>
+      <div style="font-size:15px;font-weight:700;color:var(--t1);margin-bottom:14px">Naive Attention</div>
+
+      <!-- HBM box -->
+      <div style="background:rgba(255,82,82,0.05);border:1px solid rgba(255,82,82,0.2);border-radius:6px;padding:12px;margin-bottom:10px">
+        <div style="font-family:var(--mono);font-size:9px;color:#ff5252;letter-spacing:2px;margin-bottom:10px">⬛ HBM — full n×n attention scores live here</div>
+        <!-- n×n grid visual -->
+        <div style="display:inline-grid;grid-template-columns:repeat(7,18px);gap:2px;margin-bottom:6px">
+          <div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div><div style="width:18px;height:18px;border-radius:2px;background:#ff5252;opacity:0.75"></div>
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:#ff5252;opacity:0.7;text-align:center">all n² scores stored in HBM · grows quadratically</div>
+      </div>
+
+      <!-- SRAM used within-kernel but intermediates spill to HBM -->
+      <div style="background:rgba(255,255,255,0.02);border:1px dashed #2a2a3a;border-radius:6px;padding:10px 12px;margin-bottom:14px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:4px">◻ SRAM — used within each kernel, but S/P intermediates spill to HBM between steps</div>
+        <div style="font-size:11px;color:var(--t3);font-style:italic">full n×n attention matrices written to HBM before the next kernel reads them</div>
+      </div>
+
+      <!-- 3-step code -->
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;font-family:var(--mono);font-size:11px;line-height:2.1;margin-bottom:14px">
+        <div><span style="color:var(--t3)"># step 1 — write n×n to HBM</span></div>
+        <div><span style="color:#ff5252">S = Q @ Kᵀ</span> <span style="color:var(--t3)">→ HBM</span></div>
+        <div><span style="color:#ff5252">P = softmax(S)</span> <span style="color:var(--t3)">→ HBM</span></div>
+        <div><span style="color:#ff5252">O = P @ V</span> <span style="color:var(--t3)">→ HBM</span></div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span style="background:rgba(255,82,82,0.1);color:#ff5252;border:1px solid rgba(255,82,82,0.2);border-radius:10px;padding:3px 10px;font-family:var(--mono);font-size:9px;font-weight:600">HBM: O(n²) — quadratic S/P intermediates</span>
+        <span style="background:rgba(124,92,255,0.07);color:#b388ff;border:1px solid rgba(124,92,255,0.15);border-radius:10px;padding:3px 10px;font-family:var(--mono);font-size:9px;font-weight:600">S, P materialized between kernels</span>
+      </div>
+    </div>
+
+    <!-- Arrow -->
+    <div style="display:flex;align-items:center;justify-content:center;font-size:22px;color:#3a5a40">→</div>
+
+    <!-- FLASH -->
+    <div style="background:#0d1421;border:1px solid #1a2a1a;border-top:2px solid #00ff88;border-radius:8px;padding:18px 20px">
+      <div style="font-family:var(--mono);font-size:9px;letter-spacing:3px;color:var(--accent);margin-bottom:4px">AFTER</div>
+      <div style="font-size:15px;font-weight:700;color:var(--t1);margin-bottom:14px">FlashAttention</div>
+
+      <!-- HBM: Q K V O -->
+      <div style="background:rgba(0,255,136,0.04);border:1px solid rgba(0,255,136,0.18);border-radius:6px;padding:12px;margin-bottom:10px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);letter-spacing:2px;margin-bottom:10px">✓ HBM — Q, K, V (inputs) + O (output)</div>
+        <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--mono);font-size:10px;color:var(--accent);width:12px">Q</span>
+            <div style="display:flex;gap:2px;flex:1">
+              <div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--mono);font-size:10px;color:var(--accent);width:12px">K</span>
+            <div style="display:flex;gap:2px;flex:1">
+              <div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--mono);font-size:10px;color:var(--accent);width:12px">V</span>
+            <div style="display:flex;gap:2px;flex:1">
+              <div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--accent);opacity:0.45"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-family:var(--mono);font-size:10px;color:var(--blue);width:12px">O</span>
+            <div style="display:flex;gap:2px;flex:1">
+              <div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div><div style="flex:1;height:10px;border-radius:2px;background:var(--blue);opacity:0.35"></div>
+            </div>
+          </div>
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--accent);opacity:0.7;text-align:center">Only Q/K/V/O reside off-chip — S/P intermediates are not materialized in HBM</div>
+      </div>
+
+      <!-- SRAM: tiles -->
+      <div style="background:rgba(64,196,255,0.04);border:1px solid rgba(64,196,255,0.18);border-radius:6px;padding:12px;margin-bottom:14px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--blue);letter-spacing:2px;margin-bottom:8px">⚡ SRAM — tiled attention (constant size)</div>
+        <div style="display:inline-grid;grid-template-columns:repeat(5,18px);gap:2px;margin-bottom:6px">
+          <!-- done tiles -->
+          <div style="width:18px;height:18px;border-radius:2px;background:#131320;border:1px dashed #2e2e42;position:relative;display:flex;align-items:center;justify-content:center"><span style="font-family:var(--mono);font-size:8px;color:#383850">×</span></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#131320;border:1px dashed #2e2e42;display:flex;align-items:center;justify-content:center"><span style="font-family:var(--mono);font-size:8px;color:#383850">×</span></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#131320;border:1px dashed #2e2e42;display:flex;align-items:center;justify-content:center"><span style="font-family:var(--mono);font-size:8px;color:#383850">×</span></div>
+          <!-- current tile -->
+          <div style="width:18px;height:18px;border-radius:2px;background:var(--blue);opacity:0.85;box-shadow:0 0 6px rgba(64,196,255,0.4)"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:var(--blue);opacity:0.85;box-shadow:0 0 6px rgba(64,196,255,0.4)"></div>
+          <!-- not yet -->
+          <div style="width:18px;height:18px;border-radius:2px;background:#070b12;border:1px solid #1c1c2c"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#070b12;border:1px solid #1c1c2c"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#070b12;border:1px solid #1c1c2c"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#070b12;border:1px solid #1c1c2c"></div>
+          <div style="width:18px;height:18px;border-radius:2px;background:#070b12;border:1px solid #1c1c2c"></div>
+        </div>
+        <div style="display:flex;gap:12px;font-family:var(--mono);font-size:8px">
+          <span style="color:var(--blue)">■ in SRAM now</span>
+          <span style="color:#383850">× done, discarded</span>
+          <span style="color:#2a2a3a">□ not yet</span>
+        </div>
+      </div>
+
+      <!-- 1-pass code -->
+      <div style="background:var(--bg3);border-radius:6px;padding:12px;font-family:var(--mono);font-size:11px;line-height:2.1;margin-bottom:14px">
+        <div><span style="color:var(--t3)"># one pass, tile at a time</span></div>
+        <div><span style="color:var(--t3)">for</span> <span style="color:var(--t2)">q_tile</span> <span style="color:var(--t3)">in</span> <span style="color:var(--blue)">tile(Q)</span><span style="color:var(--t3)">:</span></div>
+        <div>&nbsp;<span style="color:var(--t3)">for</span> <span style="color:var(--t2)">kv_tile</span> <span style="color:var(--t3)">in</span> <span style="color:var(--blue)">tile(K,V)</span><span style="color:var(--t3)">:</span></div>
+        <div>&nbsp;&nbsp;<span style="color:var(--accent)">accumulate(O)</span> <span style="color:var(--t3)"># stays in SRAM</span></div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <span style="background:rgba(0,255,136,0.08);color:var(--accent);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:3px 10px;font-family:var(--mono);font-size:9px;font-weight:600">HBM: O(n·d) — no S/P materialization</span>
+        <span style="background:rgba(64,196,255,0.07);color:var(--blue);border:1px solid rgba(64,196,255,0.18);border-radius:10px;padding:3px 10px;font-family:var(--mono);font-size:9px;font-weight:600">reduced HBM accesses vs naive</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key insight box -->
+  <div style="background:linear-gradient(135deg,rgba(124,92,255,0.06),rgba(64,196,255,0.03));border:1px solid rgba(124,92,255,0.18);border-radius:8px;padding:18px 24px;margin-bottom:16px">
+    <div style="font-family:var(--mono);font-size:9px;color:#b388ff;letter-spacing:3px;margin-bottom:8px">KEY INSIGHT</div>
+    <p style="font-size:14px;color:var(--t2);line-height:1.75">
+      The n×n attention matrix is <em style="color:var(--t1)">ephemeral</em> — computed tile-by-tile in fast on-chip SRAM, consumed immediately, then thrown away. <em style="color:var(--t1)">It never gets written to HBM.</em>
+      FlashAttention computes the exact same attention result. The win is far fewer HBM accesses — the quadratic intermediates simply never touch off-chip memory.
+    </p>
+  </div>
+
+  <!-- Two separate tables: intermediates vs essential I/O -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+
+    <!-- Table A: temporary materialized scores -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">TABLE A — TEMPORARY SCORE MATERIALIZATION IN HBM (per head, FP16)</div>
+      <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:4px 8px;color:var(--t3);font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">CONTEXT</th>
+            <th style="text-align:right;padding:4px 8px;color:#ff5252;font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">NAIVE S+P</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--accent);font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">FLASH S+P</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">1K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:#ff5252">4 MiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--accent)">not materialized</td></tr>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">4K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:#ff5252">64 MiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--accent)">not materialized</td></tr>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">16K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:#ff5252">1 GiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--accent)">not materialized</td></tr>
+          <tr><td style="padding:6px 8px;color:var(--t2)">128K</td><td style="padding:6px 8px;text-align:right;color:#ff5252">64 GiB</td><td style="padding:6px 8px;text-align:right;color:var(--accent)">not materialized</td></tr>
+        </tbody>
+      </table>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:6px;line-height:1.6">
+        Naive: S=QKᵀ and P=softmax(S) written to HBM · size = 4·n² bytes/head at FP16<br>
+        Flash: S/P computed tile-by-tile in SRAM, never written to HBM
+      </div>
+    </div>
+
+    <!-- Table B: essential Q/K/V/O traffic -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:10px">TABLE B — ESSENTIAL Q/K/V/O HBM TRAFFIC (per head, FP16, d=128)</div>
+      <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:4px 8px;color:var(--t3);font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">CONTEXT</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--blue);font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">Q+K+V+O</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--blue);font-weight:400;font-size:9px;border-bottom:1px solid var(--border)">K+V only</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">1K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">1 MiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">512 KiB</td></tr>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">4K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">4 MiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">2 MiB</td></tr>
+          <tr><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;color:var(--t2)">16K</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">16 MiB</td><td style="padding:6px 8px;border-bottom:1px solid #0d1a0d;text-align:right;color:var(--blue)">8 MiB</td></tr>
+          <tr><td style="padding:6px 8px;color:var(--t2)">128K</td><td style="padding:6px 8px;text-align:right;color:var(--blue)">128 MiB</td><td style="padding:6px 8px;text-align:right;color:var(--blue)">64 MiB</td></tr>
+        </tbody>
+      </table>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--t3);margin-top:6px;line-height:1.6">
+        Both naive and Flash must stream Q, K, V, O — this traffic is identical.<br>
+        Formula: 8·n·d bytes/head (Q+K+V+O) · d=128 · FP16
+      </div>
+    </div>
+  </div>
+
+  <!-- Connection back to ridge point -->
+  <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:16px 20px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:8px">CONNECTION TO RIDGE POINT</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      FlashAttention's win is eliminating the quadratic S and P intermediates from HBM.
+      At 4K context with d=128, naive attention writes 64 MB of S/P per head to HBM — bytes that don't exist at all in FlashAttention.
+      That is a substantial and real reduction in HBM traffic.
+      <br/><br/>
+      But both algorithms still read the same Q, K, V from HBM and write the same O back — about 4 MiB per head at 4K context.
+      FlashAttention doesn't change how many bytes the inputs and outputs require; it eliminates the wasteful intermediates.
+      That moves the workload's effective position on the roofline chart — more useful compute per byte actually moved.
+      <br/><br/>
+      The on-chip working SRAM is constant with respect to context length for a fixed tile configuration, but its exact
+      size depends on tile dimensions, head dimension, and kernel implementation — it is not a single universal constant.
+    </p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SECTION 6: Full roofline chart
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">07 / FULL ROOFLINE CHART</div>
+  <div class="section-title">Read the roofline chart</div>
+  <div class="section-lead">
+    Each line is one GPU's theoretical spec-sheet roofline using dense BF16/FP16 peaks — sustained measured throughput lies below these lines and is kernel-dependent.
+    The dot marks its ridge point. Everything left of that dot is memory-bound on that GPU. Everything right is compute-bound.
+  </div>
+
+  <div class="vendor-row">
+    <button class="vendor-btn nv"  onclick="toggleVendor('NVIDIA')">NVIDIA</button>
+    <button class="vendor-btn amd" onclick="toggleVendor('AMD')">AMD</button>
+  </div>
+  <div id="chips-NVIDIA" class="gpu-strip"></div>
+  <div id="chips-AMD"    class="gpu-strip"></div>
+
+  <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--bg2);margin-top:12px">
+    <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:2px;margin-bottom:8px">
+      LOG/LOG SCALE · HOVER RIDGE DOT · CLICK CHIP TO TOGGLE
+    </div>
+    <div id="roofline-wrap"></div>
+    <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--t3)">
+        <svg width="22" height="4"><line x1="0" y1="2" x2="22" y2="2" stroke="#3a5a40" stroke-width="2"/></svg>
+        memory-bound slope
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--t3)">
+        <svg width="22" height="4"><line x1="0" y1="2" x2="22" y2="2" stroke="#3a5a40" stroke-width="2" stroke-dasharray="6,3"/></svg>
+        compute ceiling
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--t3)">
+        <svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="#3a5a40"/></svg>
+        ridge point
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SUMMARY
+     ════════════════════════════════════════════════════════════ -->
+<div class="summary">
+  <h3>TL;DR — Ridge Point in Plain English</h3>
+  <div class="summary-item">
+    <div class="si-key">ridge point</div>
+    <div class="si-val">The arithmetic intensity [FLOP/byte] where your GPU transitions from bandwidth-bound to compute-bound. Computed as peak TFLOPS ÷ bandwidth (in TB/s) <em>for the chosen compute ceiling</em> — different precisions and kernel paths give different ridges on the same chip.</div>
+  </div>
+  <div class="summary-item">
+    <div class="si-key">left of ridge</div>
+    <div class="si-val">Memory-bound. Tensor cores are idle. Adding more FLOPs doesn't help — you need more bandwidth, or you need to move fewer bytes (compression, fusion).</div>
+  </div>
+  <div class="summary-item">
+    <div class="si-key">right of ridge</div>
+    <div class="si-val">Compute-bound. Bandwidth is underutilized. Adding bandwidth doesn't help — the FLOPs are the bottleneck.</div>
+  </div>
+  <div class="summary-item">
+    <div class="si-key">at the ridge</div>
+    <div class="si-val">Perfect balance. Both bandwidth and compute are fully utilized simultaneously. Almost never achieved in practice.</div>
+  </div>
+  <div class="summary-item">
+    <div class="si-key">transformers</div>
+    <div class="si-val">Mostly bandwidth-limited. Many common inference kernels — embedding gather (~0 F/B), streaming decode attention (~1–32 F/B depending on head sharing and dtype), GEMMs at batch=1 — sit far left of dense BF16/FP16 rooflines (~200–295 F/B). Large batched GEMMs are the main exception.</div>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
+     SOURCES
+     ════════════════════════════════════════════════════════════ -->
+<div class="section" style="padding-bottom:32px">
+  <div style="font-family:var(--mono);font-size:9px;color:var(--t3);letter-spacing:3px;margin-bottom:16px">SOURCES</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;font-family:var(--mono);font-size:10px;line-height:1.7">
+
+    <a href="https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">01</span> &nbsp;Williams et al. — Roofline Model (EECS Berkeley, 2009)
+    </a>
+
+    <a href="https://www.nvidia.com/en-us/data-center/h100/"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">02</span> &nbsp;NVIDIA — H100 / H200 GPU Spec Sheet
+    </a>
+
+    <a href="https://www.nvidia.com/en-us/data-center/hgx/"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">03</span> &nbsp;NVIDIA — HGX B200 Platform Specs
+    </a>
+
+    <a href="https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">04</span> &nbsp;AMD — MI300X Instinct Accelerator Specs
+    </a>
+
+    <a href="https://arxiv.org/abs/2205.14135"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">05</span> &nbsp;Dao et al. — FlashAttention (arXiv 2205.14135)
+    </a>
+
+    <a href="https://docs.vllm.ai/en/latest/design/prefix_caching/"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">06</span> &nbsp;vLLM — Automatic Prefix Caching Design Docs
+    </a>
+
+    <a href="https://arxiv.org/abs/2405.04434"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">07</span> &nbsp;DeepSeek-AI — DeepSeek-V2 (arXiv 2405.04434)
+    </a>
+
+    <a href="https://ai.meta.com/blog/meta-llama-3/"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">08</span> &nbsp;Meta AI — Introducing Llama 3 (GQA reference)
+    </a>
+
+    <a href="https://mistral.ai/news/announcing-mistral-7b/"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">09</span> &nbsp;Mistral AI — Mistral 7B Announcement (GQA reference)
+    </a>
+
+    <a href="https://arxiv.org/abs/2312.11805"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">10</span> &nbsp;Google — Gemma: Open Models (arXiv 2312.11805)
+    </a>
+
+    <a href="https://arxiv.org/abs/2408.00118"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">11</span> &nbsp;Google — Gemma 2 Technical Report (arXiv 2408.00118)
+    </a>
+
+    <a href="https://arxiv.org/abs/2601.19910"
+       target="_blank" style="color:var(--t2);text-decoration:none;padding:8px 12px;background:var(--bg2);border-radius:5px;border:1px solid var(--border);display:block;transition:border-color 0.15s"
+       onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <span style="color:var(--accent)">12</span> &nbsp;Patel et al. — KV Offloading Bottlenecks (arXiv 2601.19910)
+    </a>
+
+  </div>
+</div>
+
+</div><!-- /page -->
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<script>
+// ── GPU data ──────────────────────────────────────────────────────────────────
+const GPUS = [
+  { key:'B200',   vendor:'NVIDIA', gen:'Blackwell', bw:8000, tflops:2250, color:'#00ff88' },
+  { key:'MI300X', vendor:'AMD',    gen:'CDNA3',     bw:5300, tflops:1307, color:'#ff5252' },
+  { key:'H200',   vendor:'NVIDIA', gen:'Hopper',    bw:4800, tflops:989,  color:'#00e676' },
+  { key:'H100',   vendor:'NVIDIA', gen:'Hopper',    bw:3350, tflops:989,  color:'#00c853' },
+  { key:'MI250X', vendor:'AMD',    gen:'CDNA2',     bw:3277, tflops:383,  color:'#ff6d00' },
+  { key:'A100',   vendor:'NVIDIA', gen:'Ampere',    bw:2000, tflops:312,  color:'#69f0ae' },
+  { key:'W7900',  vendor:'AMD',    gen:'RDNA3',     bw:864,  tflops:122.6,color:'#ffab40' },
+  { key:'MI50',   vendor:'AMD',    gen:'Vega20',    bw:1024, tflops:53.8, color:'#ff9e40' },
+].map(g => ({ ...g, ridge: Math.round(g.tflops / (g.bw / 1000)) }));
+
+const WORKLOADS = [
+  { label:'KV', x:1 }, { label:'Attn', x:8 },
+  { label:'MoE', x:32 }, { label:'GEMM', x:256 },
+];
+
+const visible = Object.fromEntries(GPUS.map(g => [g.key, true]));
+let hovered = null;
+
+// ── Section 2: min() bar animation ───────────────────────────────────────────
+function animateMinBars() {
+  const BW = 3350, PEAK = 989;
+  const AI = 100; // sample: memory-bound example
+  const bwCeil  = Math.min((BW * AI) / 1000, PEAK);
+  const cmpCeil = PEAK;
+  const actual  = Math.min(bwCeil, cmpCeil);
+  const maxVal  = PEAK;
+
+  document.getElementById('bw-bar').style.width  = (bwCeil / maxVal * 100) + '%';
+  document.getElementById('cmp-bar').style.width = (cmpCeil / maxVal * 100) + '%';
+  document.getElementById('act-bar').style.width = (actual / maxVal * 100) + '%';
+  document.getElementById('bw-val').textContent  = Math.round(bwCeil) + ' TF';
+  document.getElementById('cmp-val').textContent = Math.round(cmpCeil) + ' TF';
+  document.getElementById('act-val').textContent = Math.round(actual) + ' TF';
+
+  document.getElementById('min-result').innerHTML =
+    `<span>H100 at AI=100 F/B:</span>  BW ceiling = ${Math.round(bwCeil)} TF  |  compute ceiling = ${cmpCeil} TF  →  actual = <span>${Math.round(actual)} TFLOPS</span>  (memory-bound — BW wins)`;
+}
+animateMinBars();
+
+// ── Section 3: kernel picker ──────────────────────────────────────────────────
+const H100_BW = 3350, H100_PEAK = 989;
+const RIDGE_H100 = Math.round(H100_PEAK / (H100_BW / 1000));
+
+const KERNELS = [
+  { name:'Decode attn (KV)',  ai:1,   tc:false, why:'Single-head asymptotic model (FP16): 4·d·L FLOPs / (2·d·L·2B) = 1 F/B. L and d cancel; only dtype sets this.' },
+  { name:'Embedding lookup',  ai:0,   tc:false, why:'Pure memory gather: one row fetched per token, essentially zero arithmetic. AI ≈ 0 F/B.' },
+  { name:'Attention (seq=1)', ai:8,   tc:false, why:'Illustrative rough range. Scales with Q/KV head ratio and sequence length; still BW-bound at inference.' },
+  { name:'LayerNorm',         ai:20,  tc:false, why:'Illustrative rough range. Cannot use tensor-core ceiling; its effective ridge is ~20 F/B (H100 FP32), not 295 F/B.' },
+  { name:'MoE routing',       ai:28,  tc:false, why:'Illustrative rough range. Sparse scatter/gather to expert buffers. Mostly data movement.' },
+  { name:'GEMM batch=1',      ai:1,   tc:true,  why:'B=1, K=N=4096, FP16: AI = 1·4096/(4096+2·1) ≈ 1 F/B. Weight bytes dwarf input/output at batch=1.' },
+  { name:'FlashAttn (tiled)', ai:80,  tc:true,  why:'Illustrative. Eliminates S/P HBM intermediates via tiling; more useful compute per byte moved vs naive attention.' },
+  { name:'GEMM batch=64',     ai:62,  tc:true,  why:'B=64, K=N=4096, FP16: AI = 64·4096/(4096+128) ≈ 62 F/B. Weight reuse growing but still well below ridge.' },
+  { name:'GEMM batch=512',    ai:410, tc:true,  why:'B=512, K=N=4096, FP16: AI ≈ 410 F/B — past the ~295 F/B theoretical ridge. Ridge crossed around B≈345 for this shape.' },
+];
+
+let selectedKernel = KERNELS[0];
+
+function buildKernelBtns() {
+  const wrap = document.getElementById('kernel-btns');
+  wrap.innerHTML = '';
+  KERNELS.forEach(k => {
+    const btn = document.createElement('button');
+    const active = k === selectedKernel;
+    const isMem  = k.ai < RIDGE_H100;
+    const color  = isMem ? 'var(--blue)' : 'var(--accent)';
+    btn.style.cssText = `
+      background:${active ? (isMem ? '#0a1e2e' : '#0a1e0a') : 'transparent'};
+      border:1px solid ${active ? color : '#253525'};
+      border-radius:4px; padding:6px 12px; cursor:pointer;
+      color:${active ? color : 'var(--t3)'};
+      font-family:var(--mono); font-size:10px; font-weight:${active?'700':'400'};
+      transition:all 0.15s; white-space:nowrap;
+    `;
+    btn.innerHTML = `${k.name} <span style="opacity:0.6">${k.ai} F/B</span>`;
+    btn.addEventListener('click', () => { selectedKernel = k; buildKernelBtns(); updateKernel(); });
+    wrap.appendChild(btn);
+  });
+}
+
+function updateKernel() {
+  const k     = selectedKernel;
+  const ai    = k.ai;
+  // Non-TC kernels cannot use the dense BF16/FP16 tensor-core ceiling.
+  // H100 FP32 vector throughput ~67 TFLOPS → ridge ≈ 20 F/B; use that as a proxy.
+  const H100_FP32 = 67;
+  const ridge   = k.tc ? RIDGE_H100 : Math.round(H100_FP32 / (H100_BW / 1000));
+  const ridgeLbl = k.tc ? 'H100 dense BF16/FP16 TC ridge=' + RIDGE_H100
+                        : 'H100 FP32 vector ridge≈' + ridge + ' (non-TC kernel)';
+  const bwC   = (H100_BW * ai) / 1000;
+  const peakForKernel = k.tc ? H100_PEAK : H100_FP32;
+  const actual = Math.min(bwC, peakForKernel);
+  const isMem  = actual < peakForKernel - 0.5;
+
+  document.getElementById('sd-bw').textContent  = ai + ' F/B';
+  document.getElementById('sd-act').textContent = Math.round(actual) + ' TF';
+  document.getElementById('sd-explain').textContent = k.why;
+
+  // update ridge card
+  const ridgeCard = document.getElementById('sd-ridge');
+  const ridgeNote = document.getElementById('sd-ridge-note');
+  if (ridgeCard) {
+    ridgeCard.textContent = ridge + ' F/B';
+    ridgeCard.style.color = k.tc ? 'var(--accent)' : 'var(--amber)';
+  }
+  if (ridgeNote) {
+    ridgeNote.textContent = k.tc ? 'dense BF16/FP16 TC ref' : 'FP32 vector proxy (non-TC)';
+  }
+
+  const st = document.getElementById('sd-status');
+  if (isMem) {
+    st.className = 'sd-status mem';
+    st.textContent = '📦 MEMORY-BOUND — AI=' + ai + ' F/B  vs  ' + ridgeLbl + ' F/B  →  ' +
+      (k.tc ? 'tensor cores are ' + Math.round((1 - actual/H100_PEAK)*100) + '% idle'
+            : 'relevant compute ceiling is ~' + H100_FP32 + ' TFLOPS (FP32 vector), not TC ceiling');
+  } else {
+    st.className = 'sd-status comp';
+    st.textContent = '🔥 COMPUTE-BOUND — AI=' + ai + ' F/B  >  ' + ridgeLbl + ' F/B  →  BW is underused, compute is the bottleneck';
+  }
+
+  drawMiniRoof(ai, ridge, peakForKernel, k.tc);
+}
+
+function drawMiniRoof(curAI, ridge, peak, isTc) {
+  if (ridge === undefined) { ridge = RIDGE_H100; peak = H100_PEAK; isTc = true; }
+  const svg   = d3.select('#mini-roof');
+  const W     = document.getElementById('mini-roof').parentElement.clientWidth;
+  const H     = 120;
+  const M     = { top:10, right:60, bottom:24, left:44 };
+  const iW    = W - M.left - M.right;
+  const iH    = H - M.top  - M.bottom;
+
+  svg.attr('width', W).attr('height', H);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${M.left},${M.top})`);
+
+  const xSc = d3.scaleLog().domain([1, 700]).range([0, iW]);
+  const ySc = d3.scaleLog().domain([1, 2000]).range([iH, 0]);
+
+  // bg
+  g.append('rect').attr('width', iW).attr('height', iH).attr('fill', '#070b12').attr('rx', 2);
+
+  const mono = "'JetBrains Mono',monospace";
+  const axS  = s => {
+    s.selectAll('text').style('fill','#3a5a40').style('font-family',mono).style('font-size','8px');
+    s.selectAll('line,path').attr('stroke','#1a2a1a');
+  };
+  g.append('g').attr('transform',`translate(0,${iH})`)
+    .call(d3.axisBottom(xSc).ticks(4,',.0f')).call(axS);
+  g.append('g').call(d3.axisLeft(ySc).ticks(3,',.0f')).call(axS);
+
+  const slope = H100_BW / 1000;
+  const ridgeColor = isTc ? '#00ff88' : '#ffab40';
+  const lineGen = d3.line().x(d=>xSc(Math.max(d.x,1))).y(d=>ySc(Math.max(d.y,1)));
+
+  // roofline using passed ridge + peak
+  g.append('path').datum([{x:1,y:slope},{x:ridge,y:peak}])
+    .attr('d',lineGen).attr('fill','none').attr('stroke','#3a6a40').attr('stroke-width',1.5);
+  g.append('path').datum([{x:ridge,y:peak},{x:700,y:peak}])
+    .attr('d',lineGen).attr('fill','none').attr('stroke','#3a6a40').attr('stroke-width',1.5).attr('stroke-dasharray','5,3');
+
+  // ridge dot
+  g.append('circle').attr('cx',xSc(Math.min(ridge,700))).attr('cy',ySc(Math.max(peak,1))).attr('r',4)
+    .attr('fill',ridgeColor);
+  g.append('text').attr('x',xSc(Math.min(ridge,700))+5).attr('y',ySc(Math.max(peak,1))-4)
+    .style('fill',ridgeColor).style('font-family',mono).style('font-size','8px').style('font-weight','700')
+    .text('ridge='+ridge);
+
+  // current AI marker
+  const clampedAI = Math.max(1, Math.min(curAI, 700));
+  const curPerf   = Math.min((H100_BW * curAI)/1000, peak);
+  const isMem     = curPerf < peak - 0.5;
+  const markerColor = isMem ? '#40c4ff' : '#00ff88';
+
+  g.append('line')
+    .attr('x1',xSc(clampedAI)).attr('x2',xSc(clampedAI))
+    .attr('y1',iH).attr('y2',ySc(Math.max(curPerf,1)))
+    .attr('stroke',markerColor).attr('stroke-width',1.5).attr('stroke-dasharray','3,2').attr('opacity',0.8);
+  g.append('circle')
+    .attr('cx',xSc(clampedAI)).attr('cy',ySc(Math.max(curPerf,1))).attr('r',5)
+    .attr('fill',markerColor);
+
+  // labels
+  g.append('text').attr('x',iW+4).attr('y',ySc(Math.max(peak,1))).attr('dominant-baseline','middle')
+    .style('fill','#3a6a40').style('font-family',mono).style('font-size','8px').text('H100');
+  g.append('text').attr('x',M.left/2).attr('y',-6).attr('text-anchor','middle')
+    .style('fill','#3a5a40').style('font-family',mono).style('font-size','8px').text('TF');
+  g.append('text').attr('x',iW/2).attr('y',iH+18).attr('text-anchor','middle')
+    .style('fill','#3a5a40').style('font-family',mono).style('font-size','8px').text('F/B');
+}
+
+buildKernelBtns();
+updateKernel();
+
+// ── GPU chips ────────────────────────────────────────────────────────────────
+function buildChips() {
+  ['NVIDIA','AMD'].forEach(vendor => {
+    const row = document.getElementById(`chips-${vendor}`);
+    row.innerHTML = '';
+    GPUS.filter(g => g.vendor === vendor).forEach(gpu => {
+      const el = document.createElement('div');
+      el.className = 'gpu-chip' + (visible[gpu.key] ? '' : ' off');
+      el.style.borderColor = visible[gpu.key] ? gpu.color+'55' : '#1a2a1a';
+      el.style.background  = visible[gpu.key] ? gpu.color+'0d' : 'transparent';
+      el.innerHTML = `
+        <div class="gpu-chip-gen">${gpu.gen}</div>
+        <div class="gpu-chip-name" style="color:${gpu.color}">${gpu.key}</div>
+        <div class="gpu-chip-stats">
+          <div>${(gpu.bw/1000).toFixed(2)} TB/s</div>
+          <div>${gpu.tflops} TF</div>
+          <div style="color:${gpu.color};font-weight:600">${gpu.ridge} F/B</div>
+        </div>`;
+      el.addEventListener('click',      () => { toggleGpu(gpu.key); });
+      el.addEventListener('mouseenter', () => { hovered = gpu.key; drawRoofline(); });
+      el.addEventListener('mouseleave', () => { hovered = null;    drawRoofline(); });
+      row.appendChild(el);
+    });
+  });
+}
+function toggleGpu(k)   { visible[k] = !visible[k]; buildChips(); drawRoofline(); }
+function toggleVendor(v) {
+  const ks = GPUS.filter(g=>g.vendor===v).map(g=>g.key);
+  const on = ks.every(k=>visible[k]);
+  ks.forEach(k=>{ visible[k]=!on; });
+  buildChips(); drawRoofline();
+}
+
+// ── Label spread ─────────────────────────────────────────────────────────────
+function spreadLabels(labels, minGap) {
+  const out = labels.map(l=>({...l, ly:l.py}));
+  for (let i=1;i<out.length;i++)
+    if (out[i].ly-out[i-1].ly<minGap) out[i].ly=out[i-1].ly+minGap;
+  for (let i=out.length-2;i>=0;i--)
+    if (out[i+1].ly-out[i].ly<minGap) out[i].ly=out[i+1].ly-minGap;
+  return out;
+}
+
+// ── Roofline chart ───────────────────────────────────────────────────────────
+function drawRoofline() {
+  const wrap = document.getElementById('roofline-wrap');
+  const W    = wrap.clientWidth;
+  const H    = Math.max(300, Math.min(480, W*0.55));
+  const M    = {top:20, right:86, bottom:50, left:60};
+  const iW   = W-M.left-M.right, iH = H-M.top-M.bottom;
+
+  d3.select('#roofline-wrap').selectAll('svg').remove();
+  const svg = d3.select('#roofline-wrap').append('svg').attr('width',W).attr('height',H);
+  const g   = svg.append('g').attr('transform',`translate(${M.left},${M.top})`);
+
+  const xSc = d3.scaleLog().domain([0.5,1024]).range([0,iW]);
+  const ySc = d3.scaleLog().domain([0.015,4500]).range([iH,0]);
+
+  g.append('rect').attr('width',iW).attr('height',iH).attr('fill','#070b12').attr('rx',2);
+
+  const xT=[1,2,4,8,16,32,64,128,256,512,1024], yT=[0.1,1,10,100,1000];
+  g.selectAll('.xg').data(xT).enter().append('line')
+    .attr('x1',d=>xSc(d)).attr('x2',d=>xSc(d)).attr('y1',0).attr('y2',iH)
+    .attr('stroke','#0e1a0e').attr('stroke-width',1);
+  g.selectAll('.yg').data(yT).enter().append('line')
+    .attr('x1',0).attr('x2',iW).attr('y1',d=>ySc(d)).attr('y2',d=>ySc(d))
+    .attr('stroke','#0e1a0e').attr('stroke-width',1);
+
+  WORKLOADS.forEach(w => {
+    const cx=xSc(w.x);
+    g.append('line').attr('x1',cx).attr('x2',cx).attr('y1',0).attr('y2',iH)
+      .attr('stroke','#141e14').attr('stroke-width',1).attr('stroke-dasharray','3,4');
+    g.append('text').attr('x',cx).attr('y',iH+8).attr('text-anchor','middle')
+      .style('fill','#3a5a40').style('font-family',"'JetBrains Mono',monospace").style('font-size','8px')
+      .text(w.label);
+  });
+
+  const mono = "'JetBrains Mono',monospace";
+  const axS  = s => {
+    s.selectAll('text').style('fill','#3a5a40').style('font-family',mono).style('font-size','10px');
+    s.selectAll('line,path').attr('stroke','#1a2a1a');
+  };
+  g.append('g').attr('transform',`translate(0,${iH})`)
+    .call(d3.axisBottom(xSc).tickValues(xT).tickFormat(d=>d>=1?d3.format('d')(d):d)).call(axS);
+  g.append('g').call(d3.axisLeft(ySc).tickValues(yT)).call(axS);
+  g.append('text').attr('x',iW/2).attr('y',iH+40).attr('text-anchor','middle')
+    .style('fill','#7cb882').style('font-family',"'IBM Plex Sans',sans-serif").style('font-size','11px')
+    .text('Arithmetic Intensity  [FLOP / byte]');
+  g.append('text').attr('transform','rotate(-90)').attr('x',-iH/2).attr('y',-48)
+    .attr('text-anchor','middle')
+    .style('fill','#7cb882').style('font-family',"'IBM Plex Sans',sans-serif").style('font-size','11px')
+    .text('Performance  [TFLOPS]');
+
+  const defs = svg.append('defs');
+  GPUS.forEach(({key,color}) => {
+    const f=defs.append('filter').attr('id',`rf-glow-${key}`)
+      .attr('x','-50%').attr('y','-50%').attr('width','200%').attr('height','200%');
+    f.append('feGaussianBlur').attr('stdDeviation','3').attr('result','blur');
+    const m=f.append('feMerge');
+    m.append('feMergeNode').attr('in','blur');
+    m.append('feMergeNode').attr('in','SourceGraphic');
+  });
+
+  const visGPUs = GPUS.filter(g=>visible[g.key]);
+  const anyHov  = hovered!==null;
+  const lineGen = d3.line().x(d=>xSc(Math.max(d.x,0.5))).y(d=>ySc(Math.max(d.y,0.015)));
+
+  visGPUs.forEach(gpu => {
+    const isHov=hovered===gpu.key, alpha=anyHov&&!isHov?0.12:1, sw=isHov?2.5:1.8;
+    const slope=gpu.bw/1000;
+    g.append('path').datum([{x:0.5,y:0.5*slope},{x:gpu.ridge,y:gpu.tflops}])
+      .attr('d',lineGen).attr('fill','none').attr('stroke',gpu.color)
+      .attr('stroke-width',sw).attr('stroke-opacity',alpha)
+      .attr('filter',isHov?`url(#rf-glow-${gpu.key})`:null);
+    g.append('path').datum([{x:gpu.ridge,y:gpu.tflops},{x:1024,y:gpu.tflops}])
+      .attr('d',lineGen).attr('fill','none').attr('stroke',gpu.color)
+      .attr('stroke-width',sw).attr('stroke-opacity',alpha).attr('stroke-dasharray','6,3')
+      .attr('filter',isHov?`url(#rf-glow-${gpu.key})`:null);
+  });
+
+  // right-margin labels
+  const raw = visGPUs.map(gpu=>({key:gpu.key,color:gpu.color,py:ySc(gpu.tflops)}))
+    .sort((a,b)=>a.py-b.py);
+  const spread = spreadLabels(raw, 13);
+  spread.forEach(lb => {
+    const isHov=hovered===lb.key, alpha=anyHov&&!isHov?0.12:1;
+    g.append('polyline')
+      .attr('points',`${iW},${lb.py} ${iW+4},${lb.py} ${iW+8},${lb.ly}`)
+      .attr('fill','none').attr('stroke',lb.color).attr('stroke-width',0.8).attr('stroke-opacity',alpha*0.5);
+    g.append('text').attr('x',iW+10).attr('y',lb.ly).attr('dominant-baseline','middle')
+      .style('fill',lb.color).style('fill-opacity',alpha)
+      .style('font-family',mono).style('font-size',isHov?'10.5px':'9.5px')
+      .style('font-weight',isHov?'700':'500').text(lb.key);
+  });
+
+  // ridge dots
+  visGPUs.forEach(gpu => {
+    const isHov=hovered===gpu.key, alpha=anyHov&&!isHov?0.12:1;
+    g.append('circle').attr('cx',xSc(gpu.ridge)).attr('cy',ySc(gpu.tflops)).attr('r',isHov?7:5)
+      .attr('fill',gpu.color).attr('fill-opacity',alpha)
+      .attr('filter',isHov?`url(#rf-glow-${gpu.key})`:null);
+    g.append('circle').attr('cx',xSc(gpu.ridge)).attr('cy',ySc(gpu.tflops)).attr('r',12)
+      .attr('fill','transparent').style('cursor','pointer')
+      .on('mouseenter', evt => { hovered=gpu.key; showTip(evt,gpu); drawRoofline(); })
+      .on('mouseleave', ()  => { hovered=null; hideTip(); drawRoofline(); });
+    if (isHov) {
+      g.append('text').attr('x',xSc(gpu.ridge)).attr('y',ySc(gpu.tflops)+17)
+        .attr('text-anchor','middle').style('fill',gpu.color)
+        .style('font-family',mono).style('font-size','9px').style('font-weight','700')
+        .text(gpu.ridge+' F/B');
+    }
+  });
+}
+
+function showTip(evt,gpu) {
+  const tip=document.getElementById('tooltip');
+  tip.style.border=`1px solid ${gpu.color}`;
+  tip.style.boxShadow=`0 4px 20px ${gpu.color}25`;
+  tip.innerHTML=`
+    <div style="font-weight:700;font-size:13px;color:${gpu.color};margin-bottom:6px;font-family:var(--mono)">
+      ${gpu.key} <span style="color:var(--t3);font-weight:400;font-size:10px">${gpu.vendor} · ${gpu.gen}</span>
+    </div>
+    <div style="color:var(--t2);line-height:2.1;font-family:var(--mono);font-size:11px">
+      <span style="color:var(--t3)">bandwidth   </span>${gpu.bw.toLocaleString()} GB/s<br>
+      <span style="color:var(--t3)">BF16 peak   </span>${gpu.tflops} TFLOPS (dense, theoretical)<br>
+      <span style="color:${gpu.color};font-weight:700">ridge = ${gpu.tflops} ÷ ${(gpu.bw/1000).toFixed(3)} = ${gpu.ridge} F/B</span><br>
+      <span style="color:var(--t3);font-size:9px">spec-sheet · sustained measured ridge is lower</span>
+    </div>`;
+  tip.style.display='block';
+  moveTip(evt);
+}
+function hideTip()  { document.getElementById('tooltip').style.display='none'; }
+function moveTip(e) { const t=document.getElementById('tooltip'); t.style.left=(e.pageX+14)+'px'; t.style.top=(e.pageY-115)+'px'; }
+document.addEventListener('mousemove', e => { if(document.getElementById('tooltip').style.display==='block') moveTip(e); });
+
+buildChips();
+drawRoofline();
+window.addEventListener('resize', () => {
+  drawRoofline();
+  const k = selectedKernel;
+  const H100_FP32 = 67;
+  const ridge = k.tc ? RIDGE_H100 : Math.round(H100_FP32 / (H100_BW / 1000));
+  const peak  = k.tc ? H100_PEAK  : H100_FP32;
+  drawMiniRoof(k.ai, ridge, peak, k.tc);
+});
+
+// ── Section 5: KV Cache Calculator ───────────────────────────────────────────
+const KV_CTX_OPTIONS   = [512, 1024, 2048, 4096, 8192, 16384, 32768, 131072];
+const KV_CTX_LABELS    = ['512','1K','2K','4K','8K','16K','32K','128K'];
+const KV_LAYER_OPTIONS = [12, 32, 64, 96];
+const KV_HEAD_OPTIONS  = [4, 8, 16, 32];
+const KV_HDIM_OPTIONS  = [64, 128, 256];
+const H100_BW_BYTES    = 3350e9; // bytes/sec
+
+let kvBytes    = 2;   // FP16 default
+let kvBytesLbl = 'FP16';
+
+function fmtBytes(b) {
+  if (b >= 1e9) return (b/1e9).toFixed(2) + ' GB';
+  if (b >= 1e6) return (b/1e6).toFixed(1) + ' MB';
+  if (b >= 1e3) return (b/1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+
+function updateKVCalc() {
+  const ctx     = KV_CTX_OPTIONS[+document.getElementById('kv-ctx').value];
+  const layers  = KV_LAYER_OPTIONS[+document.getElementById('kv-layers').value];
+  const heads   = KV_HEAD_OPTIONS[+document.getElementById('kv-heads').value];
+  const hdim    = KV_HDIM_OPTIONS[+document.getElementById('kv-headdim').value];
+  const batch   = +document.getElementById('kv-batch').value;
+  const prefPct = +document.getElementById('kv-prefix').value / 100;
+
+  document.getElementById('kv-ctx-val').textContent    = KV_CTX_LABELS[+document.getElementById('kv-ctx').value];
+  document.getElementById('kv-layers-val').textContent = layers;
+  document.getElementById('kv-heads-val').textContent  = heads;
+  document.getElementById('kv-headdim-val').textContent= hdim;
+  document.getElementById('kv-batch-val').textContent  = batch;
+  document.getElementById('kv-prefix-val').textContent = Math.round(prefPct*100) + '%';
+
+  // AI is fixed by dtype: 2/B (single-head asymptotic model)
+  const ai = 2 / kvBytes;
+
+  // bytes per single user, no sharing (K+V only)
+  const bytesPerUser = 2 * layers * heads * hdim * ctx * kvBytes;
+
+  // with prefix sharing: shared prefix stored once, each user loads own tail
+  const prefixTokens = Math.floor(ctx * prefPct);
+  const tailTokens   = ctx - prefixTokens;
+  const totalBytes   = (2 * layers * heads * hdim * kvBytes) *
+                       (prefixTokens + tailTokens * batch);
+
+  // minimum time at peak H100 HBM bandwidth
+  const timeMs = (totalBytes / H100_BW_BYTES) * 1000;
+
+  // max tokens/sec if KV load were only cost (1 decode step = 1 token per request in batch)
+  const tokensPerSecMax = batch / (timeMs / 1000);
+
+  document.getElementById('kv-ai-val').textContent = ai.toFixed(1) + ' F/B';
+  document.getElementById('kv-ai-val').style.color =
+    ai < 2 ? 'var(--amber)' : ai < 4 ? 'var(--blue)' : 'var(--accent)';
+
+  document.getElementById('kv-bytes-val').textContent = fmtBytes(totalBytes);
+
+  // min time at peak bandwidth
+  document.getElementById('kv-bw-val').textContent = timeMs < 0.01
+    ? (timeMs * 1000).toFixed(2) + ' µs' : timeMs.toFixed(3) + ' ms';
+
+  // max tokens/sec
+  document.getElementById('kv-time-val').textContent =
+    tokensPerSecMax > 1e6 ? (tokensPerSecMax/1e6).toFixed(1)+'M/s'
+    : tokensPerSecMax > 1e3 ? Math.round(tokensPerSecMax/1e3)+'K/s'
+    : Math.round(tokensPerSecMax)+'/s';
+
+  // status
+  const st = document.getElementById('kv-status');
+  st.textContent = '📦 MEMORY-BOUND — single-head AI=' + ai.toFixed(1) +
+    ' F/B  vs  H100 dense BF16/FP16 theoretical ridge=295 F/B  →  tensor cores ' +
+    Math.round((1 - Math.min(1, ai/295))*100) + '% idle  ·  ' +
+    kvBytesLbl + ' · ' + batch + ' user' + (batch>1?'s':'') +
+    (prefPct>0 ? '  ·  ' + Math.round(prefPct*100) + '% prefix shared' : '');
+
+  // prefix note and savings
+  const noShareTotal = bytesPerUser * batch;
+  const saved = prefPct > 0 && batch > 1
+    ? Math.round((1 - totalBytes / noShareTotal) * 100)
+    : 0;
+
+  // update prefix-savings card dynamically
+  const savingsEl = document.getElementById('prefix-savings');
+  const savingsNoteEl = document.getElementById('prefix-savings-note');
+  if (savingsEl) {
+    if (saved > 0) {
+      savingsEl.textContent = saved + '%';
+      savingsEl.style.color = 'var(--blue)';
+      if (savingsNoteEl) savingsNoteEl.textContent = Math.round(prefPct*100) + '% prefix, ' + batch + ' users (simultaneous batch model)';
+    } else if (prefPct > 0 && batch === 1) {
+      savingsEl.textContent = '0%';
+      savingsEl.style.color = 'var(--t3)';
+      if (savingsNoteEl) savingsNoteEl.textContent = 'needs batch > 1 in simultaneous decode model';
+    } else {
+      savingsEl.textContent = '—';
+      savingsEl.style.color = 'var(--t3)';
+      if (savingsNoteEl) savingsNoteEl.textContent = 'set prefix % and batch to see';
+    }
+  }
+
+  document.getElementById('kv-prefix-note').textContent = saved > 0
+    ? '▲ prefix sharing saved ' + saved + '% of HBM capacity  (' +
+      fmtBytes(noShareTotal - totalBytes) + ' not duplicated)'
+    : prefPct > 0 && batch === 1
+    ? '— in this simultaneous-batch decode model, cross-user sharing only appears when batch > 1; in real serving, prefix caching also helps later solo requests by reusing precomputed prompt KV blocks'
+    : '';
+
+  // redraw prefix layout — pass actual batch so "+ more users" note can appear
+  drawPrefixLayout(batch, prefPct);
+}
+
+function drawPrefixLayout(nUsers, prefPct) {
+  const wrap = document.getElementById('prefix-layout');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const totalSegs = 20;
+  const prefSegs  = Math.round(prefPct * totalSegs);
+  const tailSegs  = totalSegs - prefSegs;
+  const displayN  = Math.min(nUsers, 4);  // cap display here, not at call site
+  if (prefSegs > 0) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--accent);width:52px;flex-shrink:0';
+    lbl.textContent = 'SHARED';
+    row.appendChild(lbl);
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:2px;flex:1';
+    for (let i = 0; i < totalSegs; i++) {
+      const cell = document.createElement('div');
+      cell.style.cssText = `flex:1;height:14px;border-radius:2px;` +
+        (i < prefSegs
+          ? 'background:var(--accent);opacity:0.7'
+          : 'background:transparent;border:1px dashed #1a2a1a');
+      bar.appendChild(cell);
+    }
+    row.appendChild(bar);
+    const note = document.createElement('span');
+    note.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--accent);width:60px;text-align:right';
+    note.textContent = '1 copy';
+    row.appendChild(note);
+    wrap.appendChild(row);
+  }
+
+  // per-user private rows
+  for (let u = 0; u < displayN; u++) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--blue);width:52px;flex-shrink:0';
+    lbl.textContent = 'USER ' + (u+1);
+    row.appendChild(lbl);
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:2px;flex:1';
+    for (let i = 0; i < totalSegs; i++) {
+      const cell = document.createElement('div');
+      const isPrefix = i < prefSegs;
+      cell.style.cssText = `flex:1;height:14px;border-radius:2px;` +
+        (isPrefix
+          ? 'background:transparent;border:1px dashed #1a3a1a'
+          : 'background:var(--blue);opacity:0.5');
+      bar.appendChild(cell);
+    }
+    row.appendChild(bar);
+    const note = document.createElement('span');
+    note.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--blue);width:60px;text-align:right';
+    note.textContent = tailSegs > 0 ? 'private' : '(all shared)';
+    row.appendChild(note);
+    wrap.appendChild(row);
+  }
+
+  if (nUsers > 4) {
+    const more = document.createElement('div');
+    more.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--t3);padding-left:58px;margin-top:2px';
+    more.textContent = '+ ' + (nUsers - 4) + ' more users (same pattern)';
+    wrap.appendChild(more);
+  }
+}
+
+function drawBatchCompareBars() {
+  const wrap = document.getElementById('batch-compare-bars');
+  if (!wrap) return;
+  const batches   = [1, 4, 16, 64];
+  const ridgeH100 = 295;
+  // Correct GEMM AI for K=N=4096, FP16 (s=2): AI = B*K*N / (K*N + B*(K+N)) = B/(1+B/2048)
+  function gemmAIFn(b) { return b / (1 + b / 2048); }
+  batches.forEach(b => {
+    const gemmAI = gemmAIFn(b);
+    const kvAI   = 1.0; // FP16 always
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px';
+    const lbl = document.createElement('span');
+    lbl.style.cssText = 'font-family:var(--mono);font-size:9px;color:var(--t3);width:54px;flex-shrink:0';
+    lbl.textContent = 'batch=' + b;
+    row.appendChild(lbl);
+    // GEMM bar
+    const gBar = document.createElement('div');
+    gBar.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px';
+    const gTrack = document.createElement('div');
+    gTrack.style.cssText = 'height:8px;background:#0d1421;border-radius:2px;position:relative;overflow:hidden';
+    const gFill = document.createElement('div');
+    const gW = Math.round((gemmAI / ridgeH100) * 100);
+    gFill.style.cssText = `height:100%;width:${Math.min(gW,100)}%;background:var(--accent);border-radius:2px;opacity:0.7`;
+    gTrack.appendChild(gFill);
+    // ridge marker
+    const gMark = document.createElement('div');
+    gMark.style.cssText = 'position:absolute;top:0;right:0;bottom:0;width:1px;background:#ffffff22';
+    gTrack.appendChild(gMark);
+    gBar.appendChild(gTrack);
+    const gNote = document.createElement('span');
+    gNote.style.cssText = 'font-family:var(--mono);font-size:8px;color:var(--accent)';
+    gNote.textContent = 'GEMM ~' + Math.round(gemmAI) + ' F/B' +
+      (gemmAI >= ridgeH100 ? ' ← compute-bound!' : '  (4K×4K FP16)');
+    gBar.appendChild(gNote);
+    row.appendChild(gBar);
+    // KV bar
+    const kBar = document.createElement('div');
+    kBar.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px';
+    const kTrack = document.createElement('div');
+    kTrack.style.cssText = 'height:8px;background:#0d1421;border-radius:2px;position:relative;overflow:hidden';
+    const kFill = document.createElement('div');
+    const kvBarW = Math.max(0.5, Math.round((1 / ridgeH100) * 100 * 10) / 10);
+    kFill.style.cssText = `height:100%;width:${kvBarW}%;background:#ff5252;border-radius:2px;opacity:0.8`;
+    kTrack.appendChild(kFill);
+    const kMark = document.createElement('div');
+    kMark.style.cssText = 'position:absolute;top:0;right:0;bottom:0;width:1px;background:#ffffff22';
+    kTrack.appendChild(kMark);
+    kBar.appendChild(kTrack);
+    const kNote = document.createElement('span');
+    kNote.style.cssText = 'font-family:var(--mono);font-size:8px;color:#ff5252';
+    kNote.textContent = 'decode attention over KV = 1 F/B  (FP16 single-head model; N cancels)';
+    kBar.appendChild(kNote);
+    row.appendChild(kBar);
+    wrap.appendChild(row);
+  });
+}
+
+// dtype buttons
+document.querySelectorAll('.dtype-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.dtype-btn').forEach(b => {
+      b.style.border = '1px solid #253525';
+      b.style.background = 'transparent';
+      b.style.color = 'var(--t3)';
+      b.classList.remove('active-dtype');
+    });
+    const bytes = parseFloat(btn.dataset.bytes);
+    const lbl   = btn.dataset.label;
+    const color = bytes >= 2 ? 'var(--amber)' : bytes === 1 ? 'var(--blue)' : 'var(--accent)';
+    btn.style.border = `1px solid ${color}`;
+    btn.style.background = `rgba(0,0,0,0.3)`;
+    btn.style.color = color;
+    btn.classList.add('active-dtype');
+    kvBytes    = bytes;
+    kvBytesLbl = lbl;
+    updateKVCalc();
+  });
+});
+
+['kv-ctx','kv-layers','kv-heads','kv-headdim','kv-batch','kv-prefix'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', updateKVCalc);
+});
+
+drawBatchCompareBars();
+drawPrefixLayout(1, 0);
+updateKVCalc();
+</script>
+</body>
+</html>
