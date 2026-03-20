@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pearson r, R² & Spearman ρ</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Serif+Display:ital@0;1&display=swap');
+
+:root {
+  --bg:        #090b0e;
+  --panel:     #0f1217;
+  --panel2:    #13161c;
+  --border:    #1c2230;
+  --amber:     #f5a623;
+  --amber-dim: #6b4610;
+  --cyan:      #00d4c8;
+  --cyan-dim:  #005954;
+  --red:       #ff4d6d;
+  --green:     #39d98a;
+  --purple:    #a78bfa;
+  --text:      #ddd9cc;
+  --muted:     #505870;
+  --muted2:    #8090a8;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.grain {
+  position:fixed; inset:0; pointer-events:none; z-index:999; opacity:.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* HEADER */
+header {
+  padding: 20px 40px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 16px;
+}
+h1 { font-family:'DM Serif Display',serif; font-size:2rem; color:var(--amber); letter-spacing:-.5px; }
+h1 em { color:var(--cyan); font-style:italic; }
+.header-sub { font-size:.65rem; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; }
+
+/* SECTIONS */
+.edu-section { border-bottom:1px solid var(--border); padding:18px 40px 20px; }
+.edu-section.alt { background: var(--panel); }
+
+.sec-tag {
+  font-size:.58rem; text-transform:uppercase; letter-spacing:.13em;
+  color:var(--muted); margin-bottom:12px;
+  display:flex; align-items:center; gap:10px;
+}
+.sec-tag::after { content:''; flex:1; height:1px; background:var(--border); }
+.pill {
+  font-size:.58rem; padding:2px 9px; border-radius:10px;
+  font-weight:700; letter-spacing:.05em; flex-shrink:0;
+}
+.pill-pearson  { background:rgba(0,212,200,.1);  color:var(--cyan);   border:1px solid var(--cyan-dim); }
+.pill-rank     { background:rgba(245,166,35,.1); color:var(--amber);  border:1px solid var(--amber-dim); }
+.pill-spearman { background:rgba(167,139,250,.1);color:var(--purple); border:1px solid #4c3a8a; }
+
+/* PROSE */
+.prose { font-size:.68rem; color:var(--muted2); line-height:1.8; max-width:760px; }
+.prose strong { color:var(--text); font-weight:700; }
+.hl-c { color:var(--cyan); }
+.hl-a { color:var(--amber); }
+.hl-r { color:var(--red); }
+.hl-p { color:var(--purple); }
+
+/* STEP STRIP */
+.step-strip { display:flex; align-items:flex-start; gap:0; margin-top:14px; }
+.step-box {
+  flex:1; background:var(--panel2); border:1px solid var(--border);
+  border-radius:4px; padding:12px 14px;
+}
+.edu-section.alt .step-box { background:var(--bg); }
+.step-num-lg { font-family:'DM Serif Display',serif; font-size:1.6rem; line-height:1; margin-bottom:4px; }
+.step-title-sm { font-size:.7rem; font-weight:700; color:var(--text); margin-bottom:3px; }
+.step-body-sm  { font-size:.63rem; color:var(--muted2); line-height:1.65; }
+.step-body-sm strong { color:var(--text); }
+.step-arrow { padding:0 8px; padding-top:28px; font-size:.85rem; color:var(--muted); flex-shrink:0; }
+
+/* FORMULA */
+.formula-strip { display:flex; align-items:center; gap:20px; margin-top:14px; flex-wrap:wrap; }
+.formula-box {
+  background:var(--panel2); border:1px solid var(--border);
+  border-radius:4px; padding:12px 18px; font-size:.78rem; line-height:2.2;
+}
+.formula-box .f-big  { font-size:1.05rem; color:var(--cyan); font-weight:700; }
+.formula-box .f-note { font-size:.58rem; color:var(--muted); display:block; margin-top:2px; }
+.formula-interp { flex:1; font-size:.65rem; color:var(--muted2); line-height:1.75; min-width:220px; }
+.formula-interp strong { color:var(--text); }
+
+/* RANK DIAGRAM */
+.rank-diagram { display:flex; align-items:flex-start; gap:8px; margin-top:14px; }
+.rd-col { display:flex; flex-direction:column; gap:3px; min-width:90px; }
+.rd-col-head { font-size:.57rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin-bottom:5px; white-space:nowrap; }
+.rd-arrow { display:flex; flex-direction:column; align-items:center; padding-top:25px; min-width:52px; flex-shrink:0; gap:2px; }
+.rd-arrow-main { font-size:.68rem; color:var(--amber-dim); font-weight:700; white-space:nowrap; }
+.rd-arrow-sub  { font-size:.54rem; color:var(--muted); white-space:nowrap; }
+.vrow { display:flex; align-items:center; gap:5px; height:24px; }
+.vbubble { font-size:.7rem; font-weight:700; padding:1px 7px; border-radius:3px; min-width:50px; text-align:center; border:1px solid; font-family:'Space Mono',monospace; }
+.rank-badge { font-size:.67rem; font-weight:700; color:var(--amber); border:1px solid var(--amber-dim); background:rgba(245,166,35,.1); padding:1px 7px; border-radius:3px; min-width:50px; text-align:center; font-family:'Space Mono',monospace; }
+.sort-pos { font-size:.58rem; color:var(--amber); opacity:.7; font-weight:700; }
+.arr-sm   { font-size:.65rem; color:var(--muted); }
+.rank-callout { margin-left:14px; flex:0 0 210px; border-left:2px solid var(--amber-dim); padding-left:12px; margin-top:22px; }
+.rank-callout-head { font-size:.58rem; text-transform:uppercase; letter-spacing:.1em; color:var(--amber-dim); margin-bottom:5px; }
+.rank-callout-body { font-size:.63rem; color:var(--muted2); line-height:1.65; }
+.rank-callout-body strong { color:var(--amber); }
+
+/* INTERACTIVE */
+.interactive-layout { display:grid; grid-template-columns:1fr 310px; height:calc(100vh - 430px); min-height:400px; }
+.left-plots { display:grid; grid-template-rows:1fr 1fr; border-right:1px solid var(--border); }
+.plot-panel { display:flex; flex-direction:column; padding:10px 16px 8px; }
+.plot-panel:first-child { border-bottom:1px solid var(--border); }
+.plot-label { font-size:.59rem; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; margin-bottom:5px; display:flex; align-items:center; gap:8px; }
+.plot-label::after { content:''; flex:1; height:1px; background:var(--border); }
+.canvas-wrap { flex:1; position:relative; cursor:crosshair; }
+canvas { width:100%; height:100%; display:block; }
+
+/* SIDEBAR */
+.sidebar { display:flex; flex-direction:column; gap:12px; padding:14px; overflow-y:auto; }
+.stat-card { background:var(--panel2); border:1px solid var(--border); border-radius:4px; padding:12px; }
+.stat-card-title { font-size:.58rem; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin-bottom:9px; }
+.big-val-row { display:flex; gap:10px; align-items:flex-end; margin-bottom:6px; }
+.big-val { font-family:'DM Serif Display',serif; font-size:2.2rem; line-height:1; letter-spacing:-1px; }
+.big-val.cyan   { color:var(--cyan); }
+.big-val.purple { color:var(--purple); }
+.big-val-label  { font-size:.6rem; color:var(--muted2); padding-bottom:3px; }
+.bar-wrap { margin-top:7px; }
+.bar-label { font-size:.57rem; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:3px; }
+.bar-track { height:5px; background:var(--border); border-radius:3px; overflow:hidden; margin-bottom:5px; }
+.bar-fill  { height:100%; border-radius:3px; transition:width .35s; }
+.bar-cyan   { background:var(--cyan); }
+.bar-purple { background:var(--purple); }
+.interp-text { font-size:.61rem; color:var(--muted2); min-height:1.2em; margin-top:4px; font-style:italic; }
+.preset-grid { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
+.preset-btn { background:var(--panel); border:1px solid var(--border); color:var(--muted2); font-family:'Space Mono',monospace; font-size:.58rem; padding:6px 8px; cursor:pointer; text-align:left; border-radius:3px; line-height:1.45; transition:border-color .15s,background .15s,color .15s; }
+.preset-btn:hover  { border-color:var(--amber); background:rgba(245,166,35,.05); }
+.preset-btn.active { border-color:var(--amber); background:rgba(245,166,35,.07); color:var(--amber); }
+.preset-btn b { display:block; font-weight:700; margin-bottom:1px; }
+.explainer-box { background:var(--panel2); border:1px solid var(--border); border-left:3px solid var(--amber-dim); border-radius:0 4px 4px 0; padding:11px; font-size:.63rem; color:var(--muted2); line-height:1.7; }
+.explainer-box strong { color:var(--amber); }
+.explainer-box em     { color:var(--cyan); font-style:normal; }
+.ctrl-row { display:flex; gap:6px; }
+.ctrl-btn { flex:1; background:transparent; border:1px solid var(--border); color:var(--muted); font-family:'Space Mono',monospace; font-size:.59rem; padding:6px; cursor:pointer; border-radius:3px; text-transform:uppercase; letter-spacing:.07em; transition:all .15s; }
+.ctrl-btn:hover { border-color:var(--red); color:var(--red); }
+.hint { font-size:.57rem; color:var(--muted); text-align:center; opacity:.6; }
+.formula-inline { background:var(--panel2); border:1px solid var(--border); border-radius:3px; padding:9px 12px; font-size:.66rem; line-height:2; }
+.formula-inline .fl { font-size:.56rem; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; margin-bottom:3px; }
+/* R² SECTION */
+.pill-r2 { background:rgba(57,217,138,.1); color:var(--green); border:1px solid #1a5c3a; }
+.hl-g { color:var(--green); }
+.bar-green { background:var(--green); }
+
+.r2-layout { display:flex; gap:28px; align-items:flex-start; }
+.r2-left  { flex:1; min-width:0; }
+.r2-right { flex:0 0 420px; }
+
+.r2-formula-row { display:flex; gap:12px; flex-wrap:wrap; margin-top:4px; }
+.r2-fbox {
+  background:var(--panel2); border:1px solid var(--border);
+  border-radius:4px; padding:10px 14px; font-size:.78rem; line-height:2;
+  flex:1; min-width:180px;
+}
+.r2-fbox .fl { font-size:.56rem; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; margin-bottom:3px; }
+.r2-fbox .f-note { font-size:.57rem; color:var(--muted); display:block; margin-top:2px; line-height:1.5; }
+
+.r2-examples { display:flex; flex-direction:column; gap:14px; }
+
+.r2-example {
+  background:var(--panel2); border:1px solid var(--border);
+  border-radius:4px; padding:12px;
+}
+.r2-ex-header { display:flex; align-items:baseline; gap:10px; margin-bottom:8px; }
+.r2-val   { font-family:'DM Serif Display',serif; font-size:1.3rem; letter-spacing:-.5px; }
+.r2-ex-label { font-size:.6rem; color:var(--muted2); text-transform:uppercase; letter-spacing:.08em; }
+
+.r2-canvas { width:100%; height:90px; display:block; border-radius:3px; background:#0b0d12; margin-bottom:8px; }
+
+.r2-ex-desc { font-size:.62rem; color:var(--muted2); line-height:1.65; }
+.r2-ex-desc em { color:var(--muted); font-style:italic; }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<header>
+  <h1>Pearson <em>r</em>, R² &amp; Spearman <em>ρ</em></h1>
+  <div class="header-sub">three correlation concepts — built up from scratch</div>
+</header>
+
+<!-- ══════════ SECTION 1: PEARSON ══════════ -->
+<div class="edu-section">
+  <div class="sec-tag"><span class="pill pill-pearson">Section 1</span> Pearson r — measuring linear correlation</div>
+
+  <div class="prose">
+    You have two lists of numbers — call them X and Y.
+    The question: <strong>when X is large, does Y tend to be large too?</strong>
+    <span class="hl-c">Pearson r</span> gives you a single number between −1 and +1 that answers exactly that —
+    assuming the relationship between them is a <strong>straight line</strong>.
+  </div>
+
+  <div class="step-strip">
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--cyan)">01</div>
+      <div class="step-title-sm">Mean-center both variables</div>
+      <div class="step-body-sm">Subtract each variable's mean from its values. Now: positive = above average, negative = below average. Units don't matter anymore.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--cyan)">02</div>
+      <div class="step-title-sm">Multiply each pair of deviations</div>
+      <div class="step-body-sm">For each data point i, compute (xᵢ−x̄)·(yᵢ−ȳ). Both above average → <strong style="color:var(--green)">positive product</strong>. One above, one below → <strong style="color:var(--red)">negative product</strong>.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--cyan)">03</div>
+      <div class="step-title-sm">Sum and normalize</div>
+      <div class="step-body-sm">Sum all those products. Divide by the product of the two standard deviations. This rescales everything to [−1, +1] no matter what the original units were.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--cyan)">04</div>
+      <div class="step-title-sm">Read the result</div>
+      <div class="step-body-sm">
+        <strong style="color:var(--green)">r = +1</strong>: perfect line up ↗<br>
+        <strong style="color:var(--red)">r = −1</strong>: perfect line down ↘<br>
+        <strong>r = 0</strong>: no linear trend<br>
+        <strong style="color:var(--red)">Weakness:</strong> outliers and curves break it.
+      </div>
+    </div>
+  </div>
+
+  <div class="formula-strip">
+    <div class="formula-box">
+      <span class="f-big">r</span>
+      <span style="color:var(--text)"> = </span>
+      <span style="color:var(--muted2)">Σ (xᵢ−x̄)(yᵢ−ȳ)</span>
+      <span style="color:var(--text)"> / </span>
+      <span style="color:var(--muted2)">√[ Σ(xᵢ−x̄)² · Σ(yᵢ−ȳ)² ]</span>
+      <span class="f-note">numerator: how much X and Y deviate together &nbsp;|&nbsp; denominator: normalises to [−1, +1]</span>
+    </div>
+    <div class="formula-interp">
+      <strong>The critical weakness of Pearson r:</strong><br>
+      It operates on raw values. One extreme outlier can yank the numerator massively,
+      making r look huge even if the rest of the data shows no trend at all —
+      or it can kill a real trend. It also completely misses relationships that are
+      curved rather than straight.
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ SECTION 2: WHAT IS A RANK ══════════ -->
+<div class="edu-section alt">
+  <div class="sec-tag"><span class="pill pill-rank">Section 2</span> What is a rank?</div>
+
+  <div class="prose">
+    A <strong>rank</strong> is a value's <span class="hl-a">position</span> when you sort the list from smallest to largest.
+    Smallest value → rank&nbsp;1. Next smallest → rank&nbsp;2. And so on.
+    The actual numeric distances between values are discarded — only the <em>ordering</em> survives.
+  </div>
+
+  <div class="rank-diagram">
+    <div class="rd-col">
+      <div class="rd-col-head">① Original values</div>
+      <div id="demoRaw"></div>
+    </div>
+    <div class="rd-arrow">
+      <div class="rd-arrow-main">sort ↓</div>
+      <div class="rd-arrow-sub">smallest first</div>
+    </div>
+    <div class="rd-col">
+      <div class="rd-col-head">② Sorted order</div>
+      <div id="demoSorted"></div>
+    </div>
+    <div class="rd-arrow">
+      <div class="rd-arrow-main">number →</div>
+      <div class="rd-arrow-sub">position = rank</div>
+    </div>
+    <div class="rd-col" style="min-width:145px">
+      <div class="rd-col-head">③ Ranks (back in original order)</div>
+      <div id="demoRanked"></div>
+    </div>
+    <div class="rank-callout">
+      <div class="rank-callout-head">Key insight</div>
+      <div class="rank-callout-body">
+        <strong>4000</strong> is a wild outlier — 85× bigger than 47.
+        But its rank is just <strong>5</strong> — the same as if it were 50 or 500.
+        Once you rank, the size of the gap between values no longer exists.
+        Only "it's the biggest" survives. This is what protects Spearman from outliers.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ SECTION 3: SPEARMAN ══════════ -->
+<div class="edu-section">
+  <div class="sec-tag"><span class="pill pill-spearman">Section 3</span> Spearman ρ — Pearson r applied to ranks</div>
+
+  <div class="prose">
+    Spearman <span class="hl-p">ρ</span> is not a fundamentally new idea.
+    It's just <span class="hl-c">Pearson r</span> applied to the <span class="hl-a">ranked</span> versions of X and Y
+    instead of the raw values. That's the whole trick.
+    Because ranks neutralise outliers and compress any monotone curve into a straight line,
+    <strong>ρ works on any relationship that only goes one direction</strong> — not just linear ones.
+  </div>
+
+  <div class="step-strip">
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--purple)">01</div>
+      <div class="step-title-sm">Rank your X values</div>
+      <div class="step-body-sm">Replace each raw X with its rank (1 = smallest). Ties get the average of the positions they would have occupied.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--purple)">02</div>
+      <div class="step-title-sm">Rank your Y values</div>
+      <div class="step-body-sm">Same for Y. Now both variables live on the same 1…n scale. No units. No outliers. Just order.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--purple)">03</div>
+      <div class="step-title-sm">Run Pearson r on the ranks</div>
+      <div class="step-body-sm">Feed rank(X) and rank(Y) into the exact same Pearson formula from Section 1. The result is <strong style="color:var(--purple)">ρ</strong>.</div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step-box">
+      <div class="step-num-lg" style="color:var(--purple)">04</div>
+      <div class="step-title-sm">Interpret ρ</div>
+      <div class="step-body-sm">
+        <strong style="color:var(--green)">ρ = +1</strong>: same rank order ↗<br>
+        <strong style="color:var(--red)">ρ = −1</strong>: reversed rank order ↘<br>
+        <strong>ρ = 0</strong>: no monotone trend<br>
+        Measures <em>any monotone shape</em>, not just lines.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ SECTION 4: R² ══════════ -->
+<div class="edu-section alt">
+  <div class="sec-tag"><span class="pill pill-r2">Section 4</span> R² — the fraction of variance explained</div>
+
+  <div class="r2-layout">
+    <div class="r2-left">
+      <div class="prose" style="margin-bottom:14px">
+        <strong>Historical background.</strong>
+        Francis Galton coined "regression" in the 1880s studying how children's heights regress toward the population mean.
+        Karl Pearson formalised it and defined <span class="hl-c">r</span> as the correlation coefficient.
+        R² fell out naturally: once you have r, squaring it tells you how much of the variation
+        in one variable is accounted for by the other. It became the standard goodness-of-fit
+        measure for linear regression — so standard that most people encounter R² before they
+        ever think carefully about r.
+      </div>
+      <div class="prose" style="margin-bottom:14px">
+        <strong>What R² literally is.</strong>
+        R² is exactly <span class="hl-c">r</span> squared — <span class="hl-g">r²</span>.
+        More precisely: it is the square of the Pearson correlation between the
+        <em>predicted values</em> (ŷ, from your regression line) and the <em>observed values</em> (y).
+        In simple linear regression those two definitions are identical.
+      </div>
+      <div class="prose" style="margin-bottom:14px">
+        <strong>Why squaring gives a clean interpretation.</strong>
+        r can be negative (−1 to +1). Squaring it does two things:
+        it removes the sign (direction no longer matters — only strength does),
+        and it maps everything to [0, 1].
+        That [0, 1] range has a precise meaning: it is the
+        <span class="hl-g">fraction of the total variance in Y that your model explains</span>.
+        The rest — (1 − R²) — is variance left unexplained, driven by noise or variables you didn't measure.
+      </div>
+
+      <div class="r2-formula-row">
+        <div class="r2-fbox">
+          <div class="fl">Definition</div>
+          <span style="color:var(--green)">R²</span> = <span style="color:var(--cyan)">r</span>² &nbsp;=&nbsp; <span style="color:var(--green)">SS<sub>reg</sub></span> / <span style="color:var(--muted2)">SS<sub>tot</sub></span>
+          <span class="f-note">SS<sub>reg</sub> = variance explained by the model &nbsp;·&nbsp; SS<sub>tot</sub> = total variance in Y</span>
+        </div>
+        <div class="r2-fbox">
+          <div class="fl">Equivalent form</div>
+          <span style="color:var(--green)">R²</span> = 1 − <span style="color:var(--red)">SS<sub>res</sub></span> / <span style="color:var(--muted2)">SS<sub>tot</sub></span>
+          <span class="f-note">SS<sub>res</sub> = variance <em>not</em> explained (residuals) &nbsp;·&nbsp; same result, different framing</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="r2-right">
+      <div class="r2-examples">
+
+        <div class="r2-example">
+          <div class="r2-ex-header">
+            <span class="r2-val" style="color:var(--green)">R² = 1.0</span>
+            <span class="r2-ex-label">perfect fit</span>
+          </div>
+          <canvas id="r2Canvas1" class="r2-canvas"></canvas>
+          <div class="r2-ex-desc">
+            Every point sits exactly on the regression line. The model explains
+            <strong style="color:var(--green)">100%</strong> of the variance in Y — knowing X tells you Y perfectly.
+            <em>Example: distance = speed × time, no measurement error.</em>
+          </div>
+        </div>
+
+        <div class="r2-example">
+          <div class="r2-ex-header">
+            <span class="r2-val" style="color:var(--amber)">R² = 0.80</span>
+            <span class="r2-ex-label">strong but imperfect</span>
+          </div>
+          <canvas id="r2Canvas2" class="r2-canvas"></canvas>
+          <div class="r2-ex-desc">
+            The line captures the trend well, but points scatter around it.
+            <strong style="color:var(--amber)">80%</strong> of variation in Y is explained by X.
+            The remaining 20% is noise, measurement error, or unmeasured variables.
+            <em>Example: study hours predicting exam score.</em>
+          </div>
+        </div>
+
+        <div class="r2-example">
+          <div class="r2-ex-header">
+            <span class="r2-val" style="color:var(--red)">R² = 0.0</span>
+            <span class="r2-ex-label">no linear relationship</span>
+          </div>
+          <canvas id="r2Canvas3" class="r2-canvas"></canvas>
+          <div class="r2-ex-desc">
+            The regression line is flat. X explains
+            <strong style="color:var(--red)">none</strong> of the variance in Y — knowing X tells you nothing about Y.
+            <em>Example: shoe size predicting salary.</em>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ INTERACTIVE ══════════ -->
+<div class="edu-section alt" style="padding-bottom:0;border-bottom:none;">
+  <div class="sec-tag" style="margin-bottom:0">
+    <span class="pill" style="color:#888;border-color:#2a3040;background:rgba(255,255,255,.03)">Interactive</span>
+    drag points · click to add · right-click to remove · or load a preset
+  </div>
+</div>
+
+<div class="interactive-layout">
+  <div class="left-plots">
+    <div class="plot-panel">
+      <div class="plot-label">
+        <span style="color:var(--cyan)">Pearson r</span> on raw data
+      </div>
+      <div class="canvas-wrap" id="rawWrap"><canvas id="rawCanvas"></canvas></div>
+    </div>
+    <div class="plot-panel">
+      <div class="plot-label">
+        <span style="color:var(--purple)">Spearman ρ</span> — same points, rank-transformed (what Spearman actually correlates)
+      </div>
+      <div class="canvas-wrap" id="rankWrap"><canvas id="rankCanvas"></canvas></div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="stat-card">
+      <div class="stat-card-title">Live results</div>
+      <div class="big-val-row">
+        <div>
+          <div class="big-val cyan" id="bigR">—</div>
+          <div class="big-val-label">Pearson r</div>
+        </div>
+        <div style="color:var(--muted);font-size:1.1rem;padding-bottom:3px">vs</div>
+        <div>
+          <div class="big-val purple" id="bigRho">—</div>
+          <div class="big-val-label">Spearman ρ</div>
+        </div>
+      </div>
+      <div class="bar-wrap">
+        <div class="bar-label">Pearson |r|</div>
+        <div class="bar-track"><div class="bar-fill bar-cyan"   id="barR"   style="width:0%"></div></div>
+        <div class="bar-label">Spearman |ρ|</div>
+        <div class="bar-track"><div class="bar-fill bar-purple" id="barRho" style="width:0%"></div></div>
+        <div class="bar-label" style="color:var(--green)">R² (= r²)</div>
+        <div class="bar-track"><div class="bar-fill bar-green"  id="barR2"  style="width:0%"></div></div>
+      </div>
+      <div class="interp-text" id="interpText">load a preset or add points</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-card-title">Presets</div>
+      <div class="preset-grid">
+        <button class="preset-btn" data-p="linear"   onclick="loadPreset('linear',this)">  <b>Linear ↗</b>r ≈ ρ, both work</button>
+        <button class="preset-btn" data-p="monotone" onclick="loadPreset('monotone',this)"><b>Curved ↗</b>ρ nails it, r undershoots</button>
+        <button class="preset-btn" data-p="outlier"  onclick="loadPreset('outlier',this)"> <b>Outlier 💀</b>r wrecked, ρ shrugs</button>
+        <button class="preset-btn" data-p="negative" onclick="loadPreset('negative',this)"><b>Negative ↘</b>ρ near −1</button>
+        <button class="preset-btn" data-p="nonmono"  onclick="loadPreset('nonmono',this)"> <b>∩ shape</b>neither works</button>
+        <button class="preset-btn" data-p="noise"    onclick="loadPreset('noise',this)">   <b>Noise</b>both near 0</button>
+      </div>
+    </div>
+
+    <div class="explainer-box" id="explainerBox">
+      Click a preset to see a specific scenario explained.
+    </div>
+
+    <div class="formula-inline">
+      <div class="fl">Spearman shortcut (no ties)</div>
+      <span style="color:var(--purple)">ρ</span> = 1 − <span style="color:var(--red)">6Σdᵢ²</span> / n(n²−1)<br>
+      <span style="font-size:.57rem;color:var(--muted)">dᵢ = rank(xᵢ) − rank(yᵢ) &nbsp;·&nbsp; equivalent to Pearson on ranks</span>
+    </div>
+
+    <div class="ctrl-row">
+      <button class="ctrl-btn" onclick="clearAll()">Clear</button>
+      <button class="ctrl-btn" onclick="addNoise()">+ noise</button>
+    </div>
+    <div class="hint">n = <span id="nCount">0</span> points</div>
+  </div>
+</div>
+
+<script>
+// ── RANK DIAGRAM ──────────────────────────────
+(function(){
+  const raw    = [12, 47, 3, 4000, 29];
+  const colors = ['#00d4c8','#39d98a','#f5a623','#ff4d6d','#a78bfa'];
+
+  const sortedIdx = raw.map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v).map(e=>e.i);
+  const ranks = new Array(raw.length);
+  sortedIdx.forEach((origI, pos) => { ranks[origI] = pos+1; });
+
+  function row(...html) {
+    const d = document.createElement('div');
+    d.className = 'vrow';
+    d.innerHTML = html.join('');
+    return d;
+  }
+
+  const rawDiv    = document.getElementById('demoRaw');
+  const sortedDiv = document.getElementById('demoSorted');
+  const rankedDiv = document.getElementById('demoRanked');
+
+  raw.forEach((v,i) => {
+    const c = colors[i];
+    rawDiv.appendChild(row(`<div class="vbubble" style="color:${c};border-color:${c}44;background:${c}10">${v}</div>`));
+  });
+
+  sortedIdx.forEach((origI, pos) => {
+    const c = colors[origI];
+    sortedDiv.appendChild(row(
+      `<div class="vbubble" style="color:${c};border-color:${c}44;background:${c}10">${raw[origI]}</div>`,
+      `<span class="sort-pos">← rank ${pos+1}</span>`
+    ));
+  });
+
+  raw.forEach((v,i) => {
+    const c = colors[i];
+    rankedDiv.appendChild(row(
+      `<div class="vbubble" style="color:${c};border-color:${c}22;background:${c}08;opacity:.5;font-size:.62rem">${v}</div>`,
+      `<span class="arr-sm">→</span>`,
+      `<div class="rank-badge">rank ${ranks[i]}</div>`
+    ));
+  });
+})();
+
+// ── R² EXAMPLE CANVASES ──────────────────────
+(function(){
+  const dpr = window.devicePixelRatio || 1;
+
+  function setupCanvas(id) {
+    const cv = document.getElementById(id);
+    const wrap = cv.parentElement;
+    const w = cv.offsetWidth || 390, h = 90;
+    cv.width  = w * dpr; cv.height = h * dpr;
+    cv.style.width = w+'px'; cv.style.height = h+'px';
+    return { ctx: cv.getContext('2d'), W: w*dpr, H: h*dpr };
+  }
+
+  function drawR2(id, pts, color, r2label) {
+    const { ctx, W, H } = setupCanvas(id);
+    const pad = 16 * dpr;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = '#0b0d12'; ctx.fillRect(0,0,W,H);
+
+    // grid lines (subtle)
+    ctx.strokeStyle = '#161c28'; ctx.lineWidth = 1;
+    for (let i=1;i<4;i++) {
+      const y = pad + (H-2*pad)*i/4;
+      ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+    }
+
+    // compute regression line from pts
+    const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
+    const n  = xs.length;
+    const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+    const sxy = xs.reduce((s,x,i)=>s+(x-mx)*(ys[i]-my),0);
+    const sxx = xs.reduce((s,x)=>s+(x-mx)**2,0);
+    const sl  = sxx>1e-10 ? sxy/sxx : 0;
+    const int = my - sl*mx;
+
+    const toS = (x,y) => [pad+x*(W-2*pad), H-pad-y*(H-2*pad)];
+
+    // residual lines
+    pts.forEach(([x,y]) => {
+      const ypred = sl*x + int;
+      const [sx, sy]  = toS(x, y);
+      const [,  spy]  = toS(x, ypred);
+      ctx.strokeStyle = color+'44';
+      ctx.lineWidth   = 1.5*dpr;
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx,spy); ctx.stroke();
+    });
+
+    // regression line
+    const [lx0, ly0] = toS(0, int);
+    const [lx1, ly1] = toS(1, sl+int);
+    ctx.strokeStyle = color+'88'; ctx.lineWidth = 2*dpr;
+    ctx.setLineDash([5*dpr,3*dpr]);
+    ctx.beginPath(); ctx.moveTo(lx0,ly0); ctx.lineTo(lx1,ly1); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // mean line (ȳ)
+    const [, my0] = toS(0, my); const [mx1] = toS(1, my);
+    ctx.strokeStyle = '#2a3448'; ctx.lineWidth = 1*dpr;
+    ctx.beginPath(); ctx.moveTo(pad, my0); ctx.lineTo(W-pad, my0); ctx.stroke();
+    ctx.font = `${7*dpr}px 'Space Mono',monospace`; ctx.fillStyle='#2a3448';
+    ctx.textAlign='left'; ctx.fillText('ȳ', W-pad+3*dpr, my0+3*dpr);
+
+    // points
+    pts.forEach(([x,y]) => {
+      const [sx,sy] = toS(x,y);
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(sx,sy,3.5*dpr,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#0b0d12'; ctx.lineWidth=1*dpr; ctx.stroke();
+    });
+  }
+
+  // R² = 1.0 — perfect line
+  const pts1 = Array.from({length:10},(_,i)=>{const x=i/9; return [x, 0.15+x*0.7];});
+  drawR2('r2Canvas1', pts1, '#39d98a');
+
+  // R² ≈ 0.80 — scattered around line
+  const pts2 = [
+    [.05,.18],[.12,.28],[.2,.32],[.28,.42],[.35,.48],
+    [.42,.52],[.5,.58],[.58,.65],[.65,.72],[.72,.68],
+    [.8,.78],[.88,.82],[.95,.88],[.15,.22],[.55,.45],
+  ];
+  drawR2('r2Canvas2', pts2, '#f5a623');
+
+  // R² = 0.0 — flat / no relationship
+  const pts3 = [
+    [.05,.55],[.12,.25],[.2,.75],[.28,.4],[.36,.6],
+    [.44,.2],[.52,.8],[.6,.35],[.68,.65],[.76,.45],
+    [.84,.7],[.92,.3],[.1,.5],[.5,.5],[.9,.5],
+  ];
+  drawR2('r2Canvas3', pts3, '#ff4d6d');
+})();
+
+// ── MATH ─────────────────────────────────────
+function rankArr(arr) {
+  const n = arr.length;
+  const idx = arr.map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);
+  const out = new Array(n);
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n-1 && idx[j+1].v === idx[j].v) j++;
+    const avg = (i+j)/2+1;
+    for (let k=i;k<=j;k++) out[idx[k].i] = avg;
+    i = j+1;
+  }
+  return out;
+}
+
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return NaN;
+  const mx = xs.reduce((a,b)=>a+b,0)/n;
+  const my = ys.reduce((a,b)=>a+b,0)/n;
+  let num=0, sx=0, sy=0;
+  xs.forEach((x,i) => { const dx=x-mx, dy=ys[i]-my; num+=dx*dy; sx+=dx*dx; sy+=dy*dy; });
+  const d = Math.sqrt(sx*sy);
+  return d < 1e-10 ? 0 : num/d;
+}
+
+const spearman = (xs,ys) => pearson(rankArr(xs), rankArr(ys));
+
+// ── CANVAS ────────────────────────────────────
+let points = [], dragging = null;
+const rawC  = document.getElementById('rawCanvas');
+const rankC = document.getElementById('rankCanvas');
+const rawX  = rawC.getContext('2d');
+const rankX = rankC.getContext('2d');
+const PAD   = 30;
+const dpr   = window.devicePixelRatio || 1;
+
+function resize() {
+  [[document.getElementById('rawWrap'), rawC],
+   [document.getElementById('rankWrap'), rankC]].forEach(([wrap, cv]) => {
+    const r = wrap.getBoundingClientRect();
+    cv.width  = r.width * dpr; cv.height = r.height * dpr;
+    cv.style.width = r.width+'px'; cv.style.height = r.height+'px';
+  });
+  draw();
+}
+window.addEventListener('resize', resize);
+setTimeout(resize, 60);
+
+function drawPlot(ctx, pts, isRank) {
+  const W = ctx.canvas.width, H = ctx.canvas.height, pad = PAD*dpr;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0b0d12'; ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle = '#161c28'; ctx.lineWidth = 1;
+  for (let i=0;i<=5;i++) {
+    const x=pad+(W-2*pad)*i/5, y=pad+(H-2*pad)*i/5;
+    ctx.beginPath(); ctx.moveTo(x,pad); ctx.lineTo(x,H-pad); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+  }
+  ctx.strokeStyle = '#2a3448'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(pad,pad); ctx.lineTo(pad,H-pad); ctx.lineTo(W-pad,H-pad); ctx.stroke();
+
+  if (pts.length < 2) {
+    ctx.fillStyle = '#3a4555'; ctx.font = `${10*dpr}px 'Space Mono',monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('add points or load a preset', W/2, H/2);
+    return;
+  }
+
+  const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+  let dx = xs, dy = ys;
+  if (isRank) {
+    const n = pts.length;
+    dx = rankArr(xs).map(r=>(r-1)/Math.max(n-1,1));
+    dy = rankArr(ys).map(r=>(r-1)/Math.max(n-1,1));
+  }
+
+  const toS = (nx,ny) => [pad+nx*(W-2*pad), H-pad-ny*(H-2*pad)];
+
+  // regression line
+  const mx2=dx.reduce((a,b)=>a+b,0)/dx.length, my2=dy.reduce((a,b)=>a+b,0)/dy.length;
+  const sxy=dx.reduce((s,x,i)=>s+(x-mx2)*(dy[i]-my2),0), sxx=dx.reduce((s,x)=>s+(x-mx2)**2,0);
+  if (Math.abs(sxx) > 1e-10) {
+    const sl=sxy/sxx, int=my2-sl*mx2;
+    const [x0,y0]=toS(0,int), [x1,y1]=toS(1,sl+int);
+    ctx.strokeStyle = isRank ? 'rgba(167,139,250,.28)' : 'rgba(0,212,200,.22)';
+    ctx.lineWidth = 1.5*dpr; ctx.setLineDash([5*dpr,4*dpr]);
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // rank axis labels
+  if (isRank) {
+    const n = pts.length;
+    ctx.font = `${7*dpr}px 'Space Mono',monospace`; ctx.fillStyle = '#3a4555';
+    for (let r=1;r<=n;r++) {
+      const nr=(r-1)/Math.max(n-1,1);
+      ctx.textAlign='center'; const [sx2]=toS(nr,0); ctx.fillText(r, sx2, H-pad+11*dpr);
+      ctx.textAlign='right';  const [,sy2]=toS(0,nr); ctx.fillText(r, pad-4*dpr, sy2+3*dpr);
+    }
+  }
+
+  // points
+  const col = isRank ? '#a78bfa' : '#00d4c8';
+  dx.forEach((nx,i) => {
+    const ny=dy[i], [sx2,sy2]=toS(nx,ny);
+    const g=ctx.createRadialGradient(sx2,sy2,0,sx2,sy2,9*dpr);
+    g.addColorStop(0,col+'40'); g.addColorStop(1,'transparent');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(sx2,sy2,9*dpr,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(sx2,sy2,4*dpr,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#0b0d12'; ctx.lineWidth=1.2*dpr; ctx.stroke();
+  });
+
+  ctx.font=`bold ${8*dpr}px 'Space Mono',monospace`; ctx.fillStyle='#3a4555';
+  ctx.textAlign='center';
+  ctx.fillText(isRank?'rank(X)':'X', W/2, H-3*dpr);
+  ctx.save(); ctx.translate(10*dpr,H/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText(isRank?'rank(Y)':'Y', 0, 0); ctx.restore();
+}
+
+function draw() {
+  drawPlot(rawX, points, false);
+  drawPlot(rankX, points, true);
+  updateStats();
+}
+
+function updateStats() {
+  const n = points.length;
+  document.getElementById('nCount').textContent = n;
+  if (n < 2) {
+    ['bigR','bigRho'].forEach(id=>document.getElementById(id).textContent='—');
+    ['barR','barRho'].forEach(id=>document.getElementById(id).style.width='0%');
+    document.getElementById('interpText').textContent = 'add at least 2 points';
+    return;
+  }
+  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  const r=pearson(xs,ys), rho=spearman(xs,ys);
+  const fmt = v => isNaN(v)?'—':(v>=0?'+':'')+v.toFixed(3);
+  document.getElementById('bigR').textContent   = fmt(r);
+  document.getElementById('bigRho').textContent = fmt(rho);
+  document.getElementById('barR').style.width   = (Math.abs(r||0)*100).toFixed(1)+'%';
+  document.getElementById('barRho').style.width = (Math.abs(rho||0)*100).toFixed(1)+'%';
+  document.getElementById('barR2').style.width  = ((r||0)**2*100).toFixed(1)+'%';
+  const diff = Math.abs(Math.abs(rho||0)-Math.abs(r||0));
+  document.getElementById('interpText').textContent =
+    diff > .15 ? 'ρ and r diverge — outlier or non-linear effect' :
+    Math.abs(rho||0) > .8 ? 'strong monotone agreement' :
+    Math.abs(rho||0) > .5 ? 'moderate monotone trend' : 'weak or no monotone trend';
+}
+
+// ── INTERACTION ───────────────────────────────
+function toNorm(canvas, e) {
+  const r=canvas.getBoundingClientRect(), W=canvas.width, H=canvas.height, pad=PAD*dpr;
+  const cx=e.touches?e.touches[0].clientX:e.clientX, cy=e.touches?e.touches[0].clientY:e.clientY;
+  const nx=((cx-r.left)/r.width  - pad/W)/(1-2*pad/W);
+  const ny=(1-(cy-r.top)/r.height - pad/H)/(1-2*pad/H);
+  return {x:Math.max(0,Math.min(1,nx)), y:Math.max(0,Math.min(1,ny))};
+}
+function nearest(x,y,t=.05) {
+  let bi=-1,bd=Infinity;
+  points.forEach((p,i)=>{const d=Math.hypot(p.x-x,p.y-y);if(d<bd){bd=d;bi=i;}});
+  return bd<t?bi:-1;
+}
+
+rawC.addEventListener('mousedown', e => {
+  e.preventDefault();
+  const {x,y}=toNorm(rawC,e);
+  if (e.button===2){const i=nearest(x,y);if(i>=0){points.splice(i,1);draw();}return;}
+  const i=nearest(x,y);
+  if (i>=0) dragging=i; else {points.push({x,y});draw();}
+});
+rawC.addEventListener('mousemove', e => { if(dragging===null)return; const {x,y}=toNorm(rawC,e); points[dragging]={x,y}; draw(); });
+rawC.addEventListener('mouseup',    ()=>{dragging=null;});
+rawC.addEventListener('mouseleave', ()=>{dragging=null;});
+rawC.addEventListener('contextmenu', e=>e.preventDefault());
+
+// ── PRESETS ───────────────────────────────────
+const MSGS = {
+  linear:   'Linear: both r and ρ capture the trend equally well. When data falls on a straight line, ranking doesn\'t change anything meaningful — the rank scatter is also a straight line.',
+  monotone: 'Curved but monotone: ρ is high because the rank order is perfectly consistent even though the raw relationship curves. Pearson r undershoots — it only measures straight-line fit.',
+  outlier:  'Outlier: one extreme point massively distorts the Pearson r by pulling the numerator. Spearman ρ barely moves — the outlier\'s rank is just "n", capped, no matter how extreme the value.',
+  negative: 'Negative monotone: as X rank goes up, Y rank consistently goes down. ρ near −1 regardless of whether the decrease is linear or curved.',
+  nonmono:  'Non-monotone (∩ shape): the relationship goes up then back down. It\'s not monotone, so neither r nor ρ can see it. Both metrics are near 0 despite a clear pattern existing.',
+  noise:    'Pure noise: no monotone signal. Both metrics near 0. The rank scatter is just as random as the raw scatter — ranking doesn\'t create structure where there is none.',
+};
+
+function loadPreset(name, btn) {
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  let s=name.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  const rand=()=>{s=(s*9301+49297)%233280;return s/233280;};
+  const orig=Math.random; Math.random=rand;
+  if      (name==='linear')   points=Array.from({length:12},(_,i)=>({x:.05+i/11*.9,y:.05+i/11*.9+(rand()-.5)*.09}));
+  else if (name==='monotone') points=Array.from({length:14},(_,i)=>{const x=.05+i/13*.9;return{x,y:Math.pow(x,.32)*.88+(rand()-.5)*.05};});
+  else if (name==='outlier')  { points=Array.from({length:10},(_,i)=>({x:.05+i/9*.72,y:.05+i/9*.72+(rand()-.5)*.07})); points.push({x:.95,y:.03}); }
+  else if (name==='negative') points=Array.from({length:13},(_,i)=>{const x=.05+i/12*.9;return{x,y:.94-Math.pow(x,.55)*.84+(rand()-.5)*.05};});
+  else if (name==='nonmono')  points=Array.from({length:16},(_,i)=>{const x=.05+i/15*.9;return{x,y:.5-.44*Math.cos(x*Math.PI*2)+(rand()-.5)*.08};});
+  else if (name==='noise')    points=Array.from({length:20},()=>({x:.05+rand()*.9,y:.05+rand()*.9}));
+  Math.random=orig;
+  document.getElementById('explainerBox').innerHTML=`<strong>${btn.querySelector('b').textContent}</strong><br><br>${MSGS[name]}`;
+  draw();
+}
+
+function clearAll() {
+  points=[];
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('explainerBox').textContent='Click a preset or add your own points.';
+  draw();
+}
+function addNoise() {
+  for(let i=0;i<5;i++) points.push({x:.05+Math.random()*.9,y:.05+Math.random()*.9});
+  document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));
+  draw();
+}
+
+loadPreset('outlier', document.querySelector('[data-p="outlier"]'));
+</script>
+</body>
+</html>
