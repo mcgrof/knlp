@@ -52,7 +52,7 @@ Paper-facing experiment scaffolding for the BPA KV scaling work lives in
 [`docs/paper/bpa/`](docs/paper/bpa/) and
 [`scripts/paper/bpa_paper/`](scripts/paper/bpa_paper/). These docs/scripts
 define smoke tests, matrix plans, manifest validation, fit-output contracts,
-and clean export packaging for the future `knlp-paper-kv-scaling` results tree.
+and clean export packaging for the future `knlp-paper-memory-decode` results tree.
 
 ## Development Philosophy
 
@@ -126,7 +126,7 @@ Paper-oriented KV scaling scaffolding now lives under
 
 The scaffold provides:
 
-- a canonical `results/knlp-paper-kv-scaling/` tree with `raw/`, `derived/`,
+- a canonical `results/knlp-paper-memory-decode/` tree with `raw/`, `derived/`,
   `figures/`, `manifests/`, `logs/`, `system/`, and `reports/`
 - device configs for `a100`, `h100`, `b200`, and `w7900`
 - dry-run capable scripts for smoke validation, matrix planning, fit planning,
