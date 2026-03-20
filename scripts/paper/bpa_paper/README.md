@@ -10,7 +10,7 @@ cheaper to debug per GPU, and easier to export into a future public subset.
 - dry-run smoke-test planning
 - matrix scheduling / rerun planning
 - fit-output contract for scaling-law diagnostics
-- packaging/export contract for `knlp-paper-kv-scaling`
+- packaging/export contract for `knlp-paper-memory-decode`
 
 ## What this is not
 

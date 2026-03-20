@@ -10,7 +10,7 @@ themselves.
 1. Run per-GPU smoke tests.
 2. Launch full matrix collection with config-driven execution.
 3. Fit scaling and context-linearity diagnostics on collected artifacts.
-4. Package validated results into the `knlp-paper-kv-scaling/` tree.
+4. Package validated results into the `knlp-paper-memory-decode/` tree.
 
 ## Directory Roles
 
@@ -28,7 +28,7 @@ Dry-run smoke test:
 ```bash
 python3 scripts/paper/bpa_paper/run_smoke.py \
   --config scripts/paper/bpa_paper/configs/a100.yaml \
-  --results-root /data/knlp-paper-kv-scaling \
+  --results-root /data/knlp-paper-memory-decode \
   --dry-run
 ```
 
@@ -37,7 +37,7 @@ Full matrix orchestration:
 ```bash
 python3 scripts/paper/bpa_paper/run_matrix.py \
   --config scripts/paper/bpa_paper/configs/b200.yaml \
-  --results-root /data/knlp-paper-kv-scaling \
+  --results-root /data/knlp-paper-memory-decode \
   --lane core
 ```
 
@@ -46,7 +46,7 @@ Rerun only failed points:
 ```bash
 python3 scripts/paper/bpa_paper/run_matrix.py \
   --config scripts/paper/bpa_paper/configs/b200.yaml \
-  --results-root /data/knlp-paper-kv-scaling \
+  --results-root /data/knlp-paper-memory-decode \
   --lane core \
   --rerun-status failed,invalid
 ```
@@ -55,8 +55,8 @@ Fit derived metrics:
 
 ```bash
 python3 scripts/paper/bpa_paper/fit_scaling.py \
-  --manifest /data/knlp-paper-kv-scaling/manifests/run_manifest.json \
-  --results-root /data/knlp-paper-kv-scaling \
+  --manifest /data/knlp-paper-memory-decode/manifests/run_manifest.json \
+  --results-root /data/knlp-paper-memory-decode \
   --dry-run
 ```
 
@@ -64,9 +64,9 @@ Package validated subset:
 
 ```bash
 python3 scripts/paper/bpa_paper/package_results.py \
-  --manifest /data/knlp-paper-kv-scaling/manifests/run_manifest.json \
+  --manifest /data/knlp-paper-memory-decode/manifests/run_manifest.json \
   --source-root /data/knlp-private-results \
-  --export-root /data/knlp-paper-kv-scaling \
+  --export-root /data/knlp-paper-memory-decode \
   --dry-run
 ```
 
