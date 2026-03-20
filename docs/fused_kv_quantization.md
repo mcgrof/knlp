@@ -54,6 +54,7 @@ That is why the practical distinction is:
 
 Use these references together:
 
+- **paper visualization**: [Memory-Traffic Saturation interactive walkthrough](https://mcgrof.github.io/knlp/paper_memory_decode.html) — unified 8-panel visualization covering all paper findings, with links to the supporting explainers below
 - BPA overview: [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md)
 - BPA evolution: [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
 - structural decode explainer: [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
