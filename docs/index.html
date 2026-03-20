@@ -7,12 +7,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { background: #0f172a; }
-    .gradient-text {
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
     .card {
       background: linear-gradient(145deg, #1e293b, #1a2332);
       border: 1px solid #334155;
@@ -27,6 +21,11 @@
       background: linear-gradient(145deg, #1e293b, #1a2332);
       border-left: 4px solid;
     }
+    .camp-header {
+      border-bottom: 1px solid #334155;
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
   </style>
 </head>
 <body class="min-h-screen text-gray-100">
@@ -39,82 +38,18 @@
       <p class="text-gray-500 max-w-2xl mx-auto">
         Rapid prototyping and automation for open source ML R&D using Linux kernel development methodologies
       </p>
-      <div class="mt-6 flex justify-center gap-3 flex-wrap">
+      <div class="mt-6">
         <a href="https://github.com/mcgrof/knlp"
            class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
           GitHub
         </a>
-        <a href="fisher_adam_visualization.html"
-           class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">
-          FIM-Adam
-        </a>
-        <a href="fim_quantization_visualization.html"
-           class="px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm font-medium transition-colors">
-          Quantization
-        </a>
-        <a href="kvsplice_visualization.html"
-           class="px-4 py-2 bg-orange-600 hover:bg-orange-500 rounded-lg text-sm font-medium transition-colors">
-          KVSplice
-        </a>
-        <a href="ra_visualization.html"
-           class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors">
-          RA
-        </a>
-        <a href="tiering_visualization.html"
-           class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-sm font-medium transition-colors">
-          Tiering
-        </a>
-        <a href="gnn_fraud_visualization.html"
-           class="px-4 py-2 bg-rose-600 hover:bg-rose-500 rounded-lg text-sm font-medium transition-colors">
-          GNN Fraud
-        </a>
-        <a href="ar_decode_bottleneck.html"
-           class="px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg text-sm font-medium transition-colors">
-          AR Decode
-        </a>
-        <a href="kv_bandwidth_visualization.html"
-           class="px-4 py-2 bg-yellow-700 hover:bg-yellow-600 rounded-lg text-sm font-medium transition-colors">
-          Decode Scaling
-        </a>
-        <a href="ridge_point.html"
-           class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium transition-colors">
-          Ridge Point
-        </a>
-        <a href="spearman_rho.html"
-           class="px-4 py-2 bg-pink-600 hover:bg-pink-500 rounded-lg text-sm font-medium transition-colors">
-          Spearman &rho;
-        </a>
       </div>
     </header>
 
-    <!-- Key Discovery Banner -->
-    <section class="mb-12">
-      <div class="card rounded-xl p-6 text-center">
-        <div class="text-sm text-blue-400 font-medium mb-2">KEY DISCOVERY</div>
-        <h2 class="text-2xl font-bold mb-3">FIM Trace: Universal Signal for Parameter Importance</h2>
-        <p class="text-gray-400 mb-4 max-w-2xl mx-auto">
-          <a href="https://arxiv.org/abs/2507.18807" class="text-blue-400 hover:underline">Squisher (2025)</a>
-          proves FIM diagonal ≈ Adam exp_avg_sq. Higher FIM trace indicates parameters doing more work.
-          This unifies two phenomena: <strong class="text-orange-400">better compression</strong> AND
-          <strong class="text-cyan-400">better attention</strong> both increase FIM trace.
-        </p>
-        <div class="grid md:grid-cols-2 gap-4 max-w-2xl mx-auto mb-4">
-          <code class="bg-gray-900 rounded-lg p-3 text-sm font-mono">
-            <span class="text-orange-400">More Compression</span> → <span class="text-white">↑ FIM Trace</span>
-          </code>
-          <code class="bg-gray-900 rounded-lg p-3 text-sm font-mono">
-            <span class="text-cyan-400">Better Attention</span> → <span class="text-white">↑ FIM Trace</span>
-          </code>
-        </div>
-        <a href="fisher_adam_visualization.html"
-           class="inline-block mt-2 text-blue-400 hover:text-blue-300 text-sm">
-          Explore Interactive Visualization →
-        </a>
-      </div>
-    </section>
-
-    <!-- Paper Visualizations -->
-    <section class="mb-12">
+    <!-- ============================================================ -->
+    <!-- knlp Papers -->
+    <!-- ============================================================ -->
+    <section class="mb-14">
       <h2 class="text-2xl font-bold mb-6 text-center">knlp Papers</h2>
       <div class="grid md:grid-cols-2 gap-4">
         <a href="paper_memory_decode.html" class="card rounded-lg p-5 block">
@@ -146,33 +81,20 @@
       </div>
     </section>
 
-    <!-- BPA Story Banner -->
-    <section class="mb-12">
-      <div class="card rounded-xl p-6">
-        <div class="text-sm text-amber-400 font-medium mb-2">BPA OVERVIEW</div>
-        <h2 class="text-2xl font-bold mb-3">Decode is the bottleneck</h2>
-        <p class="text-gray-400 mb-4 max-w-3xl">
-          Start from the hard systems fact: autoregressive decode is dominated
-          by KV-memory traffic. RGSA explored routing under extreme-context
-          pressure. BPA turned that into a bandwidth-aware decode program.
-          Fused KV quantization is the strongest current concrete result because
-          it reduces real decode traffic inside the kernel.
+    <!-- ============================================================ -->
+    <!-- FIM-Guided Research -->
+    <!-- ============================================================ -->
+    <section class="mb-14">
+      <div class="camp-header">
+        <h2 class="text-2xl font-bold">FIM-Guided Research</h2>
+        <p class="text-gray-500 text-sm mt-1">
+          All built on the same signal: diagonal Fisher Information (E[g&sup2;] &asymp; Adam exp_avg_sq).
+          <a href="https://arxiv.org/abs/2507.18807" class="text-blue-400 hover:underline">Squisher (2025)</a>
+          proves the equivalence. Higher FIM trace = parameters doing more work.
         </p>
-        <div class="flex flex-wrap gap-3 text-sm">
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA overview</a>
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md" class="text-blue-400 hover:underline">RGSA → BPA → fused quantization</a>
-          <a href="ar_decode_bottleneck.html" class="text-amber-400 hover:underline">AR decode bottleneck explainer</a>
-          <a href="kv_bandwidth_visualization.html" class="text-yellow-400 hover:underline">Decode scaling visualization</a>
-          <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md" class="text-purple-400 hover:underline">Fused KV quantization doc</a>
-        </div>
       </div>
-    </section>
 
-    <!-- Research Highlights -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold mb-6 text-center">Research Highlights</h2>
       <div class="grid gap-4">
-
         <!-- Adam State-Based Pruning -->
         <div class="highlight-card border-green-500 rounded-lg p-5">
           <div class="flex items-start justify-between">
@@ -180,10 +102,10 @@
               <h3 class="font-semibold text-lg text-green-400 mb-2">Adam State-Based Pruning</h3>
               <p class="text-gray-400 text-sm mb-3">
                 bitter7 achieves <strong class="text-white">15.6% better perplexity</strong> than magnitude baseline
-                (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (≈ FIM diagonal) for importance scoring.
+                (37.28 vs 44.15 PPL), leveraging Adam's exp_avg_sq (&asymp; FIM diagonal) for importance scoring.
               </p>
               <code class="text-xs bg-gray-900 px-2 py-1 rounded text-gray-300">
-                importance = |w| × (exp_avg_sq + ε)^0.25
+                importance = |w| &times; (exp_avg_sq + &epsilon;)^0.25
               </code>
             </div>
             <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded">B200x4</span>
@@ -201,7 +123,7 @@
             <div>
               <h3 class="font-semibold text-lg text-purple-400 mb-2">FIM-Guided Quantization</h3>
               <p class="text-gray-400 text-sm mb-3">
-                Diagonal Fisher (E[g²]) identifies critical tensors for precision allocation.
+                Diagonal Fisher identifies critical tensors for precision allocation.
                 Upgrading 4 layers from Q3_K to Q6_K achieves <strong class="text-white">1.26% better perplexity</strong>
                 at only <strong class="text-white">1.8% size increase</strong>.
               </p>
@@ -239,7 +161,7 @@
             <div>
               <h3 class="font-semibold text-lg text-cyan-400 mb-2">Reciprocal Attention</h3>
               <p class="text-gray-400 text-sm mb-3">
-                Learned Q@K.T ↔ K@Q.T alternation achieves <strong class="text-white">82% better perplexity</strong>
+                Learned Q@K.T &harr; K@Q.T alternation achieves <strong class="text-white">82% better perplexity</strong>
                 (50.5 vs 282 PPL) vs baseline. Outperforms
                 <a href="https://arxiv.org/abs/2505.06708" class="text-purple-400 hover:underline">Qwen's SDPA G1 gate</a>
                 by 77%. FIM trace guides layer selection.
@@ -253,7 +175,23 @@
           </div>
         </div>
 
-        <!-- Page-Aware GNN Training -->
+        <!-- Memory Tiering -->
+        <div class="highlight-card border-emerald-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-emerald-400 mb-2">Memory Tiering</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                FIM-ranked parameter placement across GPU, CPU, and storage tiers.
+                exp_avg_sq ranking determines which tensors stay in fast memory.
+              </p>
+            </div>
+          </div>
+          <div class="mt-3 flex gap-3 text-xs">
+            <a href="tiering_visualization.html" class="text-emerald-400 hover:underline">Interactive Demo</a>
+          </div>
+        </div>
+
+        <!-- GNN Fraud Detection -->
         <div class="highlight-card border-rose-500 rounded-lg p-5">
           <div class="flex items-start justify-between">
             <div>
@@ -262,7 +200,7 @@
                 Reciprocal Attention transfers from transformers to GNNs. FIM-guided RA achieves
                 <strong class="text-white">+7% F1</strong> on DGraphFin by applying RA selectively to
                 uncertain nodes (bottom 33% by FIM trace). Page-aware batching provides
-                <strong class="text-white">4× better I/O locality</strong>.
+                <strong class="text-white">4&times; better I/O locality</strong>.
               </p>
             </div>
             <span class="text-xs bg-rose-900 text-rose-300 px-2 py-1 rounded">GNN</span>
@@ -272,16 +210,13 @@
             <a href="gnn_fraud_visualization.html" class="text-rose-400 hover:underline">Interactive Demo</a>
           </div>
         </div>
-
       </div>
-    </section>
 
-    <!-- Unified Framework -->
-    <section class="mb-12">
-      <div class="card rounded-xl p-6">
-        <h2 class="text-xl font-bold mb-4 text-center">Unified FIM Framework</h2>
-        <p class="text-gray-400 text-sm text-center mb-6 max-w-2xl mx-auto">
-          All applications leverage the same underlying signal: E[g²]
+      <!-- Unified FIM table -->
+      <div class="card rounded-xl p-6 mt-6">
+        <h3 class="text-lg font-bold mb-4 text-center">Unified FIM Framework</h3>
+        <p class="text-gray-400 text-sm text-center mb-4 max-w-2xl mx-auto">
+          All applications leverage the same underlying signal: E[g&sup2;]
         </p>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
@@ -300,7 +235,7 @@
               </tr>
               <tr class="border-b border-gray-800">
                 <td class="py-3 px-4"><a href="fim_quantization_visualization.html" class="text-purple-400 hover:underline">Mobile quantization</a></td>
-                <td class="py-3 px-4 font-mono text-xs">Σg² per tensor</td>
+                <td class="py-3 px-4 font-mono text-xs">&Sigma;g&sup2; per tensor</td>
                 <td class="py-3 px-4 text-green-400">1.26% better PPL</td>
               </tr>
               <tr class="border-b border-gray-800">
@@ -320,22 +255,71 @@
               </tr>
               <tr>
                 <td class="py-3 px-4"><a href="gnn_fraud_visualization.html" class="text-rose-400 hover:underline">GNN Fraud Detection</a></td>
-                <td class="py-3 px-4 font-mono text-xs">FIM trace → nodes</td>
+                <td class="py-3 px-4 font-mono text-xs">FIM trace &rarr; nodes</td>
                 <td class="py-3 px-4 text-green-400">+7% F1</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div class="mt-4 text-center">
-          <a href="tiering_visualization.html"
-             class="text-sm text-emerald-400 hover:underline">
-            Explore hierarchical tiering →
-          </a>
-        </div>
       </div>
     </section>
 
-    <!-- Documentation Links -->
+    <!-- ============================================================ -->
+    <!-- Decode & Bandwidth -->
+    <!-- ============================================================ -->
+    <section class="mb-14">
+      <div class="camp-header">
+        <h2 class="text-2xl font-bold">Decode &amp; Bandwidth</h2>
+        <p class="text-gray-500 text-sm mt-1">
+          Autoregressive decode is dominated by memory traffic. These explainers
+          establish the structural and empirical foundations behind the
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA</a>
+          line of work:
+          <a href="https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md" class="text-blue-400 hover:underline">RGSA &rarr; BPA &rarr; fused KV quantization</a>.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <a href="ar_decode_bottleneck.html" class="card rounded-lg p-5 block">
+          <h3 class="font-semibold text-amber-400 mb-2">AR Decode Bottleneck</h3>
+          <p class="text-gray-500 text-sm">
+            Structural explanation of why autoregressive decode rereads KV state
+            every step and why this is an inherent memory-traffic problem.
+          </p>
+        </a>
+        <a href="kv_bandwidth_visualization.html" class="card rounded-lg p-5 block">
+          <h3 class="font-semibold text-yellow-400 mb-2">Decode Scaling</h3>
+          <p class="text-gray-500 text-sm">
+            Empirical cross-GPU decode throughput, latency, and bandwidth
+            measurements across W7900, A100, H100, and B200.
+          </p>
+        </a>
+        <a href="ridge_point.html" class="card rounded-lg p-5 block">
+          <h3 class="font-semibold text-indigo-400 mb-2">Ridge Point</h3>
+          <p class="text-gray-500 text-sm">
+            Interactive roofline model. Decode attention operates 18&ndash;148&times;
+            below the compute/memory ridge on H100 (&sim;295 FLOP/byte).
+          </p>
+        </a>
+        <a href="spearman_rho.html" class="card rounded-lg p-5 block">
+          <h3 class="font-semibold text-pink-400 mb-2">Pearson r, R&sup2; &amp; Spearman &rho;</h3>
+          <p class="text-gray-500 text-sm">
+            Statistical methods used in the paper. Spearman rank correlation tests
+            whether architecture predicts KV sensitivity (&rho; &lt; 0.2, it does not).
+          </p>
+        </a>
+      </div>
+
+      <div class="mt-4 flex flex-wrap gap-3 text-xs text-gray-500">
+        <span>See also:</span>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md" class="text-purple-400 hover:underline">Fused KV quantization doc</a>
+        <a href="https://github.com/mcgrof/knlp/blob/main/docs/bpa.md" class="text-amber-400 hover:underline">BPA overview</a>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Documentation -->
+    <!-- ============================================================ -->
     <section class="mb-12">
       <h2 class="text-2xl font-bold mb-6 text-center">Documentation</h2>
       <div class="grid md:grid-cols-3 gap-4">
@@ -358,12 +342,14 @@
     <footer class="text-center text-gray-600 text-sm border-t border-gray-800 pt-8">
       <p class="mb-2">
         <a href="https://github.com/mcgrof/knlp" class="hover:text-gray-400">GitHub</a>
-        <span class="mx-2">·</span>
+        <span class="mx-2">&middot;</span>
         <a href="https://arxiv.org/abs/2507.18807" class="hover:text-gray-400">Squisher Paper</a>
-        <span class="mx-2">·</span>
-        <a href="fisher_adam_visualization.html" class="hover:text-gray-400">Interactive Demo</a>
+        <span class="mx-2">&middot;</span>
+        <a href="fisher_adam_visualization.html" class="hover:text-gray-400">FIM-Adam Demo</a>
+        <span class="mx-2">&middot;</span>
+        <a href="paper_memory_decode.html" class="hover:text-gray-400">Decode Paper</a>
       </p>
-      <p>MIT License · Luis Chamberlain and contributors</p>
+      <p>MIT License &middot; Luis Chamberlain and contributors</p>
     </footer>
 
   </div>
