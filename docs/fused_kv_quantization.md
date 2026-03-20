@@ -3,9 +3,21 @@
 Fused KV quantization is the strongest concrete systems result in the BPA line
 of work in `knlp`.
 
+The full empirical study is published as:
+
+> **Memory-Traffic Saturation in Autoregressive Transformer Decode**
+> Paper repository: <https://github.com/mcgrof/paper-memory-decode>
+
+The paper benchmarks 14 open-weight models across four GPU architectures
+(W7900, A100, H100, B200) and establishes that decode speedup from fused
+KV compression follows a batch-driven saturation model, that kernel fusion
+rather than quantization alone is the mechanism, and that a 2-minute runtime
+calibration test identifies models requiring asymmetric key/value precision.
+
 Start from the basic rule:
 
-- autoregressive decode is dominated by KV-memory traffic,
+- autoregressive decode is dominated by memory traffic (weights at small
+  batch/short context, KV cache at large batch/long context),
 - quantization helps only if it reduces that traffic in the real decode kernel,
 - and **fusion is the difference between a real speedup and a fake one**.
 
@@ -80,36 +92,90 @@ Use the fused kernels and the ratio classifier together. The fused kernel gives
 you the speedup path; the ratio classifier tells you when aggressive key
 quantization is safe and when you need asymmetric settings.
 
-## Ongoing Experiments
+## Paper Results Summary
 
-This work is still evolving in several directions:
+The paper validates the following results that build directly on BPA work:
 
-- broader cross-GPU decode validation,
-- long-context behavior under memory pressure,
-- selective protection / mixed-precision KV tiering,
-- and follow-on BPA-style architectures that try to reduce the number of KV
-  entries touched per decode step.
+- **Batch-driven saturation**: On H100, decode speedup follows a Hill-type
+  model ($R^2 = 0.80$) governed by batch size. Architecture parameters (GQA
+  ratio, head dimension) contribute only weakly.
+- **Fusion is the mechanism**: The fused INT4 kernel achieves 2.7--4.8x on
+  H100 and 1.6--7.2x on W7900. The non-fused path slows inference (0.5x).
+- **Memory-traffic regime dependence**: At 7B scale with short context, weight
+  reads are 94--99% of per-step bandwidth. KV traffic dominates only at longer
+  contexts, larger batches, or larger models.
+- **KV precision asymmetry**: Values universally tolerate INT4. Key precision
+  floors are model-dependent and confined to the Qwen family (INT7 cliff).
+  This sensitivity attenuates with scale (catastrophic at 7B, +1.55% at 72B).
+- **Runtime calibration**: A 2-minute ratio classifier (INT6/INT8 logit-error
+  ratio, threshold 3.0) identifies sensitive models with 100% accuracy across
+  14 models and generalizes to 72B.
+- **Cross-GPU consistency**: Matched-lane measurements on W7900, A100, H100,
+  and B200 show qualitatively identical decode regimes. Cross-platform
+  variation is explained by sustained decode bandwidth, not headline peak HBM.
 
-Treat fused KV quantization as the strongest current result, not as proof that
-BPA is finished as a research direction.
+## Next Directions
 
-## Where BPA may still go
+### Per-layer activation sensitivity (closing paper Limitation 1)
 
-BPA still has research headroom beyond fused quantization. Recent sparse /
-selective attention work such as MoBA suggests there is still room to explore
-bandwidth-aware decode designs.
+The paper's per-layer sensitivity ranking (Section V-A through V-C) still uses
+projection-weight quantization as a proxy. BPA's hook-based infrastructure
+(`wrapper_hooks.py`, `quantize_intN_grouped()`) already quantizes KV cache
+activations directly for the asymmetry and ratio classifier experiments.
+The remaining step is a per-layer activation sensitivity sweep: quantize all
+layers' KV activations to INT4, restore each layer to FP16 one at a time,
+and compare the activation-based importance ranking against the weight-based
+proxy. The BPA v27/v28 oracle ranking experiments did this for a few models;
+extending it to all 14 models would close the gap.
 
-One natural direction is to combine BPA-style bandwidth thinking with
-FIM-guided structure:
+### Selective bandwidth allocation
 
-- prioritize higher-FIM-trace layers more conservatively,
-- vary block sizes by layer sensitivity,
-- and explore whether selective block attention can spend bandwidth where the
-  model appears to do the most work.
+The paper shows that uniform INT4 works for 12 of 14 models, and the remaining
+2 (Qwen family) need asymmetric keys. But the bounded-protection mechanism
+(BPA v27: only $k^*$ layers need INT8 protection) suggests finer-grained
+policies are possible:
 
-That is not a finished claim here. It is a live research direction.
+- per-layer asymmetric precision selected by activation sensitivity ranking,
+- attention-entropy-guided protection (the paper found entropy correlates at
+  $r = 0.89$ on 3 models but weakens at 14 models --- a per-model calibration
+  approach may still be viable),
+- dynamic precision switching based on runtime context length (short context
+  is weight-bound so KV precision matters less; long context is KV-bound so
+  precision matters more).
+
+### Combining with speculative decoding
+
+The paper's speculation analysis (Section VI) reveals that KV quantization and
+speculation compose super-multiplicatively at long context ($\rho$ up to 1.95
+for Llama at 32K) but sub-multiplicatively at short context ($\rho \approx
+0.62$ for Qwen). This creates an opportunity: BPA's fused kernel could
+adaptively adjust KV precision based on the speculation acceptance rate. When
+acceptance is high (short context, small batch), aggressive KV compression
+adds little value; when acceptance drops (long context, large batch), the
+fused kernel's bandwidth reduction becomes critical.
+
+### Long-context activation quality
+
+The paper validates inference stability up to 32K tokens on W7900 and 384K on
+B200, but targeted retrieval benchmarks (Needle-In-A-Haystack) at extreme
+lengths remain future work. BPA's hook infrastructure can run NIAH evaluations
+under asymmetric KV quantization to test whether quantization errors compound
+over very long contexts, which is the key unknown for production deployment at
+128K+ tokens.
+
+### Toward bandwidth-proportional attention mechanisms
+
+The paper's core finding --- that decode is memory-traffic-limited and the
+dominant traffic source shifts with operating regime --- motivates attention
+mechanisms that constrain KV access proportional to available bandwidth rather
+than reading the full context every step. This is the original BPA research
+direction: spend bandwidth where the model does the most work. Combining
+BPA-style bandwidth budgets with FIM-guided layer sensitivity, MoBA-style
+sparse routing, or learned access patterns remains the longer-term open
+question.
 
 ## Status
 
 Use this document as the stable overview of the fused KV quantization result
-while the paper and paper-specific narrative continue to be polished.
+and the paper that validates it. The paper repository is at
+<https://github.com/mcgrof/paper-memory-decode>.
