@@ -64,15 +64,35 @@ Use these references together:
 
 ## Implementation
 
-The implementation lives in `knlp`. Start with these files:
+The implementation lives in `knlp`, but there are **two different layers** of code that should not be conflated:
 
-- Triton kernel module: [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
+1. **Generic fused expand helpers**
+   - `gpt2/compression/triton_kernels.py`
+   - `scripts/kv_triton_benchmark.py`
+   - useful for generic unpack/dequant+matmul microbenchmarks
+   - **not** the same thing as the paper-grade W7900 decode path
+
+2. **Paper-grade fused decode path (W7900 provenance)**
+   - paper/ablation source: `scripts/v31_kernel_bench.py`
+   - reusable decode-path entry points: `gpt2/compression/triton_decode_kernels.py`
+   - key W7900 variants in the paper:
+     - Pipeline B: baseline fused INT4 decode kernel (`BLOCK_N=64`)
+     - Pipeline C: Delta1 scale broadcast reuse
+     - Pipeline D: Delta2 RDNA3 wavefront-aware tiling (`BLOCK_N=128`)
+     - Pipeline E: Delta1 + Delta2 combined (**paper-grade W7900 production path**)
+
+This distinction matters. Earlier confusion came from benchmarking the generic expand kernel and assuming it represented the paper's W7900 decode kernel path. It does not. The paper-grade W7900 path is the v31 decode-kernel family, now exposed explicitly via `gpt2/compression/triton_decode_kernels.py`.
+
+Start with these files:
+
+- Generic Triton kernel module: [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
+- Paper-grade decode Triton module: [gpt2/compression/triton_decode_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_decode_kernels.py)
 - kernel microbenchmarks: [scripts/kv_triton_benchmark.py](https://github.com/mcgrof/knlp/blob/main/scripts/kv_triton_benchmark.py)
 - quantized KV benchmark: [scripts/benchmark_kv_quantized.py](https://github.com/mcgrof/knlp/blob/main/scripts/benchmark_kv_quantized.py)
 - earlier Triton INT4/INT8 experiment path: [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
+- W7900 paper kernel ablation path: [scripts/v31_kernel_bench.py](https://github.com/mcgrof/knlp/blob/main/scripts/v31_kernel_bench.py)
 
-Use these as the current code entry points for the Triton kernels, benchmarking,
-and fused KV experiments.
+Use the generic module for simple expand/unpack microbenchmarks; use the paper-grade decode module/path when you want provenance-consistent W7900 decode-kernel experiments.
 
 ## Calibration and Ratio Classifier
 
