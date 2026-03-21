@@ -405,7 +405,11 @@ def triton_expand_int4(
         out = torch.empty(M, N, dtype=torch.float16, device=packed.device)
 
         # Grid configuration
+        # AMD RDNA3 / W7900 uses 32-wide wavefronts; BLOCK_N=128 mirrors
+        # the paper-path P3 wavefront-aware tiling instead of the old 64.
+        is_amd = hasattr(torch.version, "hip") and torch.version.hip is not None
         BLOCK_M = 64
+        BLOCK_N = 128 if is_amd else 64
         BLOCK_N = 64
         BLOCK_K = 64  # Must be even
 
@@ -484,7 +488,6 @@ def triton_expand_int8(
         out = torch.empty(M, N, dtype=torch.float16, device=data.device)
 
         BLOCK_M = 64
-        BLOCK_N = 64
         BLOCK_K = 64
 
         grid = (triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))
