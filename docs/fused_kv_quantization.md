@@ -109,11 +109,26 @@ runtime ratio classifier:
 Start with these files:
 
 - ratio-classifier script: [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py)
+- W7900-safe Marin runner: [scripts/marin_w7900_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/marin_w7900_ratio_classifier.py)
 - calibration guide: [docs/kv_plugin/calibration_guide.md](https://github.com/mcgrof/knlp/blob/main/docs/kv_plugin/calibration_guide.md)
 
 Use the fused kernels and the ratio classifier together. The fused kernel gives
 you the speedup path; the ratio classifier tells you when aggressive key
 quantization is safe and when you need asymmetric settings.
+
+### W7900 / Marin local calibration note
+
+A dedicated W7900-safe Marin ratio-classifier path now exists in
+`scripts/marin_w7900_ratio_classifier.py`. This path uses
+`device_map=None` followed by `model.to("cuda")` because prune's ROCm
+setup showed bad behavior with `device_map="auto"` and because the shared
+W7900 workstation should not be treated like an H100 validation lane.
+
+On prune's AMD Radeon Pro W7900, a smoke calibration run for
+`marin-community/marin-8b-base` at `prompt_len=512`, `n_prompts=2` produced
+`ratio_INT6_INT8 = 5.0`, above the threshold `3.0`, so the smoke result says
+Marin needs conservative / FP16 key handling. Treat this as a strong local
+policy signal, not the final full-scale calibration.
 
 ## Paper Results Summary
 
