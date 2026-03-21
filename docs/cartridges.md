@@ -107,9 +107,12 @@ injecting it replaces prefill entirely.
 
 ## vLLM integration
 
-CartridgeConnector plugs into vLLM v0.16.0 as a `KVConnectorBase_V1` plugin
+CartridgeConnector plugs into vLLM as a `KVConnectorBase_V1` plugin
 with **zero vLLM core modifications**. The connector is about 300 lines of
 Python.
+
+A branch with the connector already in place is available at
+[mcgrof/vllm:20260320-cartridge-connector](https://github.com/mcgrof/vllm/tree/20260320-cartridge-connector).
 
 ### Minimum requirements
 
