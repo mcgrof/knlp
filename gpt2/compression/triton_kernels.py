@@ -410,7 +410,6 @@ def triton_expand_int4(
         is_amd = hasattr(torch.version, "hip") and torch.version.hip is not None
         BLOCK_M = 64
         BLOCK_N = 128 if is_amd else 64
-        BLOCK_N = 64
         BLOCK_K = 64  # Must be even
 
         grid = (triton.cdiv(M, BLOCK_M), triton.cdiv(N, BLOCK_N))
