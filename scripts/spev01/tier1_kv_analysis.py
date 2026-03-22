@@ -18,6 +18,14 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from vllm import LLM, SamplingParams
 from transformers import AutoConfig
 
+# --- portability helpers ------------------------------------------------
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.environ.get(
+    "SPEV01_OUTPUT_DIR",
+    os.path.join(_SCRIPT_DIR, "json"),
+)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
 SEQ_LENS = [512, 1024, 2048, 4096, 8192, 16384, 32768]
 MAX_TOKENS = 256
@@ -25,7 +33,7 @@ MAX_TOKENS = 256
 # Load disk benchmark for offload cliff calculation.
 # Fall back to reasonable H100 NVMe defaults if tier0 disk bench
 # was not run (e.g. when the RunPod instance lacks NVMe).
-disk_bench_path = "/root/spev01/json/tier0_disk_bench.json"
+disk_bench_path = os.path.join(OUTPUT_DIR, "tier0_disk_bench.json")
 try:
     with open(disk_bench_path) as f:
         disk_bench = json.load(f)
@@ -77,7 +85,7 @@ baselines = {}
 for sl in [512, 2048, 8192]:
     try:
         with open(
-            f"/root/spev01/json/tier0_baseline_Qwen2.5-7B-Instruct_{sl}.json"
+            os.path.join(OUTPUT_DIR, f"tier0_baseline_Qwen2.5-7B-Instruct_{sl}.json")
         ) as f:
             baselines[sl] = json.load(f)
     except FileNotFoundError:
@@ -120,7 +128,9 @@ for nspec in [3, 5]:
     for sl in [512, 2048, 8192]:
         try:
             with open(
-                f"/root/spev01/json/tier2_speculative_Qwen2.5-7B_ngram{nspec}_{sl}.json"
+                os.path.join(
+                    OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_ngram{nspec}_{sl}.json"
+                )
             ) as f:
                 ngram_results[(nspec, sl)] = json.load(f)
         except FileNotFoundError:
@@ -172,7 +182,8 @@ for (nspec, sl), spec_result in sorted(ngram_results.items()):
 print("\n" + "=" * 60)
 print("KEY FINDING: Speculative Decoding vs KV Offload")
 print("=" * 60)
-print("""
+print(
+    """
 CRITICAL ARCHITECTURAL INSIGHT:
 
 Standard vLLM verification reads ALL KV cache for ALL positions during
@@ -198,14 +209,15 @@ CONCLUSION: Speculation does NOT help with KV offload bandwidth.
 The hypothesis is NEGATIVE for standard attention architectures.
 Potential fix: tree-attention or paged attention that only loads
 KV for accepted token positions during verification.
-""")
+"""
+)
 
 # Save all results
 combined = {
     "tier": "1+3",
     "type": "kv_offload_analysis",
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    "gpu": "H100-80GB",
+    "gpu": os.environ.get("SPEV01_GPU_TAG", "unknown"),
     "model": MODEL,
     "model_config": {
         "num_layers": num_layers,
@@ -222,7 +234,7 @@ combined = {
     "potential_fix": "Tree-attention verification that only loads KV for accepted positions, or KV caching across speculative decode steps.",
 }
 
-out_path = "/root/spev01/json/tier1_3_kv_offload_analysis.json"
+out_path = os.path.join(OUTPUT_DIR, "tier1_3_kv_offload_analysis.json")
 with open(out_path, "w") as f:
     json.dump(combined, f, indent=2)
 print(f"\nSaved to {out_path}")
