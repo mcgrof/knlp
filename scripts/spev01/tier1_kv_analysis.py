@@ -135,7 +135,7 @@ for nspec in [3, 5]:
         try:
             with open(
                 os.path.join(
-                    OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_ngram{nspec}_{sl}.json"
+                    OUTPUT_DIR, f"tier2_ablation_Qwen2.5-7B_ngram{nspec}_{sl}.json"
                 )
             ) as f:
                 ngram_results[(nspec, sl)] = json.load(f)
