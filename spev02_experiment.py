@@ -6,12 +6,18 @@ Default behaviour runs only non-speculative stages:
   A1      — baseline (no offload, no speculation)
   A2      — LMCache disk offload
   A3      — FP8 KV quantization
+  A4      — fused INT4 decode benchmark (bounded dispatch)
 
 Speculative-decoding stages (B2, C1) are ABLATION tests and only
 run when explicitly requested:
 
     --ablation-speculative          (command-line flag)
     SPEV02_ABLATION_SPECULATIVE=1   (environment variable)
+
+The primary performance comparison is A1 vs A4: baseline FP16
+attention vs fused INT4 dequantization with bounded dispatch policy.
+Stage A4 runs at the Triton kernel level (synthetic tensors) to
+isolate the decode attention kernel from model loading and scheduling.
 """
 
 import argparse
@@ -27,8 +33,10 @@ from datetime import datetime, timezone
 
 # --- ablation gate ---------------------------------------------------------
 _parser = argparse.ArgumentParser(
-    description="SPEv-02 experiment runner. Speculation stages are "
-    "off by default; pass --ablation-speculative to enable B2/C1.",
+    description="SPEv-02 experiment runner.  Default stages: Tier0 "
+    "(hardware), A1 (baseline), A2 (LMCache offload), A3 (FP8 KV), "
+    "A4 (fused INT4 decode + bounded dispatch).  Speculation stages "
+    "(B2/C1) are off by default; pass --ablation-speculative to enable.",
     add_help=True,
 )
 _parser.add_argument(
@@ -596,6 +604,93 @@ print("ALL_RESULTS:" + json.dumps(results))
 
 
 ###############################################################################
+# STAGE A4: Fused INT4 Decode Benchmark (bounded dispatch)
+###############################################################################
+
+
+def run_stage_a4():
+    """Run fused INT4 decode benchmark via tier5_fused_decode.py.
+
+    This is the core performance stage: it measures FP16 reference (P0)
+    vs fused INT4 dequantization (P3/P5) at the Triton kernel level
+    across a batch x context length matrix.  The bounded dispatch policy
+    selects BLOCK_N based on batch size and head dimension.
+
+    Results are the primary output for validating BPA fused-KV
+    quantization on a given GPU (see docs/fused_kv_quantization.md).
+    """
+    print("\n" + "=" * 60)
+    print("STAGE A4: Fused INT4 decode benchmark (bounded dispatch)")
+    print("=" * 60)
+
+    tier5_script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "scripts",
+        "spev01",
+        "tier5_fused_decode.py",
+    )
+    if not os.path.exists(tier5_script):
+        print(f"  ERROR: tier5 script not found at {tier5_script}")
+        data = {
+            "stage": "A4",
+            "test_name": "fused_int4_decode",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "results": [],
+            "error": f"tier5 script not found: {tier5_script}",
+        }
+        save_json(data, "stageA4_fused_decode.json")
+        return data
+
+    # Run tier5 in a subprocess with output dir set to our results dir
+    env = os.environ.copy()
+    env["SPEV01_OUTPUT_DIR"] = RESULTS_DIR
+
+    print(f"  Running {tier5_script} ...")
+    try:
+        proc = subprocess.run(
+            ["python3", tier5_script],
+            capture_output=True,
+            text=True,
+            timeout=3600,
+            env=env,
+        )
+        print(proc.stdout[-2000:] if len(proc.stdout) > 2000 else proc.stdout)
+        if proc.returncode != 0:
+            print(f"  tier5 exited with rc={proc.returncode}")
+            if proc.stderr:
+                print(f"  stderr: {proc.stderr[-500:]}")
+    except subprocess.TimeoutExpired:
+        print("  tier5 timed out after 3600s")
+    except Exception as e:
+        print(f"  tier5 failed: {e}")
+
+    # Load the combined results file produced by tier5
+    combined_path = os.path.join(RESULTS_DIR, "tier5_fused_decode_all.json")
+    tier5_results = []
+    try:
+        with open(combined_path) as f:
+            tier5_results = json.load(f)
+    except FileNotFoundError:
+        print(f"  WARNING: {combined_path} not found")
+    except json.JSONDecodeError as e:
+        print(f"  WARNING: could not parse {combined_path}: {e}")
+
+    data = {
+        "stage": "A4",
+        "test_name": "fused_int4_decode",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tier5_results": tier5_results,
+        "notes": (
+            "Kernel-level fused INT4 decode benchmark.  P0 = FP16 "
+            "reference (SDPA), fused = INT4 dequant inside Triton "
+            "attention kernel with bounded dispatch policy."
+        ),
+    }
+    save_json(data, "stageA4_fused_decode.json")
+    return data
+
+
+###############################################################################
 # STAGE B: Speculative Decoding
 ###############################################################################
 
@@ -909,7 +1004,36 @@ print("RESULT_JSON:" + json.dumps(result))
 ###############################################################################
 
 
-def create_summary(tier0, a1, a2, a3, b2, c1):
+def _summarize_a4(a4):
+    """Extract aggregate fused-decode stats from A4 tier5 results."""
+    if not a4 or not a4.get("tier5_results"):
+        return {"success": False, "notes": "not run or no data"}
+    speedups = []
+    n_ok = 0
+    for model_summary in a4["tier5_results"]:
+        agg = model_summary.get("aggregate", {})
+        if agg.get("mean_speedup") is not None:
+            speedups.append(agg["mean_speedup"])
+        n_ok += agg.get("n_ok", 0)
+    return {
+        "success": n_ok > 0,
+        "n_benchmark_points": n_ok,
+        "n_models": len(a4["tier5_results"]),
+        "mean_speedup_across_models": (
+            round(sum(speedups) / len(speedups), 3) if speedups else None
+        ),
+        "per_model": [
+            {
+                "name": m["model_config"]["name"],
+                "mean_speedup": m["aggregate"].get("mean_speedup"),
+                "n_ok": m["aggregate"].get("n_ok", 0),
+            }
+            for m in a4["tier5_results"]
+        ],
+    }
+
+
+def create_summary(tier0, a1, a2, a3, a4, b2, c1):
     print("\n" + "=" * 60)
     print("Creating summary")
     print("=" * 60)
@@ -969,7 +1093,7 @@ def create_summary(tier0, a1, a2, a3, b2, c1):
 
     summary = {
         "experiment": "SPEv-02",
-        "description": "Speculative Decode + KV Offload v2",
+        "description": "KV Offload + Fused Decode Benchmark v2",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "hardware": {
             "gpu": (
@@ -998,6 +1122,7 @@ def create_summary(tier0, a1, a2, a3, b2, c1):
                 "tests_passed": len(a3_ok),
                 "avg_tokens_per_sec": avg_tps(a3_ok),
             },
+            "A4_fused_decode": _summarize_a4(a4),
             "B2_speculation": {
                 "success": len(b2_ok) > 0,
                 "tests_passed": len(b2_ok),
@@ -1026,6 +1151,20 @@ def create_summary(tier0, a1, a2, a3, b2, c1):
             summary["conclusions"].append(
                 f"LMCache offload has {comp['throughput_ratio']:.1f}x baseline throughput (slower due to disk I/O)"
             )
+
+    # A4: fused decode speedup
+    a4_summary = _summarize_a4(a4)
+    if a4_summary.get("mean_speedup_across_models"):
+        comparisons["fused_vs_baseline"] = {
+            "mean_fused_speedup": a4_summary["mean_speedup_across_models"],
+            "n_models": a4_summary["n_models"],
+            "n_benchmark_points": a4_summary["n_benchmark_points"],
+            "per_model": a4_summary.get("per_model", []),
+        }
+        summary["conclusions"].append(
+            f"Fused INT4 decode: mean {a4_summary['mean_speedup_across_models']:.2f}x "
+            f"speedup over FP16 baseline across {a4_summary['n_models']} model configs"
+        )
 
     spec_speedups = [
         v["speedup"]
@@ -1056,6 +1195,7 @@ if __name__ == "__main__":
     a1 = run_stage_a1()
     a2 = run_stage_a2()
     a3 = run_stage_a3()
+    a4 = run_stage_a4()
 
     # --- Speculative stages are ablation-only ---
     b2 = None
@@ -1097,7 +1237,7 @@ if __name__ == "__main__":
             "notes": "Skipped: speculative ablation not enabled",
         }
 
-    summary = create_summary(tier0, a1, a2, a3, b2, c1)
+    summary = create_summary(tier0, a1, a2, a3, a4, b2, c1)
 
     print("\n" + "=" * 60)
     print("EXPERIMENT COMPLETE")
