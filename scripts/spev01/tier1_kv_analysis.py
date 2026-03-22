@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Tier 1+3 Combined: KV cache analysis and offload simulation.
 
+This tier runs by default (no speculation gate).  It performs
+analytical KV cache calculations that do not require a GPU.
+If tier2 speculative results are present (from an earlier
+``--ablation-speculative`` run) they are loaded for comparison;
+otherwise the speculation-impact section is silently skipped.
+
 Since LMCache 0.3.x requires vLLM v1 API and this instance lacks NVMe,
 we measure the KV metrics that matter for offload analysis:
 - KV cache size per token per layer
