@@ -25,7 +25,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # --- ablation gate ---------------------------------------------------------
 _parser = argparse.ArgumentParser(
-    description="Tier 2 speculative-decoding ablation (off by default).",
+    description="Tier 2 ablation harness (speculative decoding optional, off by default).",
     add_help=True,
 )
 _parser.add_argument(
@@ -41,7 +41,7 @@ if not (
     _args.ablation_speculative or os.environ.get("SPEV01_ABLATION_SPECULATIVE") == "1"
 ):
     print(
-        "tier2_speculative: speculative ablation NOT enabled.\n"
+        "tier2_ablation: speculative ablation NOT enabled.\n"
         "Pass --ablation-speculative or set SPEV01_ABLATION_SPECULATIVE=1 to run."
     )
     sys.exit(0)
@@ -58,7 +58,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 HAS_CUDA = torch.cuda.is_available()
 if not HAS_CUDA:
-    sys.exit("ERROR: tier2_speculative requires a CUDA GPU (torch.cuda unavailable)")
+    sys.exit("ERROR: tier2_ablation requires a CUDA GPU (torch.cuda unavailable)")
 
 
 def _detect_gpu_name():
@@ -209,7 +209,7 @@ for num_spec in [3, 5]:
         all_results.append(result)
 
         out_path = os.path.join(
-            OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_ngram{num_spec}_{seq_len}.json"
+            OUTPUT_DIR, f"tier2_ablation_Qwen2.5-7B_ngram{num_spec}_{seq_len}.json"
         )
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
@@ -312,7 +312,7 @@ for num_spec in [3, 5]:
         all_results.append(result)
 
         out_path = os.path.join(
-            OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_draft{num_spec}_{seq_len}.json"
+            OUTPUT_DIR, f"tier2_ablation_Qwen2.5-7B_draft{num_spec}_{seq_len}.json"
         )
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
@@ -324,7 +324,7 @@ for num_spec in [3, 5]:
         torch.cuda.empty_cache()
 
 # Save combined
-with open(os.path.join(OUTPUT_DIR, "tier2_speculative_all.json"), "w") as f:
+with open(os.path.join(OUTPUT_DIR, "tier2_ablation_all.json"), "w") as f:
     json.dump(all_results, f, indent=2)
 
 print("\n\n=== ALL SPECULATIVE RESULTS ===")
