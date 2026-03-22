@@ -116,6 +116,31 @@ Use the fused kernels and the ratio classifier together. The fused kernel gives
 you the speedup path; the ratio classifier tells you when aggressive key
 quantization is safe and when you need asymmetric settings.
 
+### Current H100 bounded decode policy
+
+The current H100 decode policy is bounded and model-sensitive rather than
+universal. The strongest BPA follow-up result is that Hopper decode should be
+treated as a dispatch problem: first decide FP16 reference (`P0`) vs fused,
+and for Qwen-family models choose `P3` vs `P5` inside the fused branch.
+
+Current working rules from the 2026-03-21 H100 policy loop:
+
+- `qwen25_1.8b`
+  - `B < 3` -> `P0`
+  - `3 <= B < 8` -> `P5`
+  - `B >= 8` -> `P3`
+- `qwen25_7b`
+  - `B = 1` -> `P0`
+  - `B = 2, T = 2048` -> `P5`
+  - otherwise prefer `P3` in the tested regime
+- `mistral_7b`
+  - conservative current rule: fused from about `B >= 3`
+- `llama31_8b`
+  - fused from about `B >= 2`
+
+This bounded policy is currently the best practical H100 decode rule from the
+BPA iteration process.
+
 ### W7900 / Marin local calibration note
 
 A dedicated W7900-safe Marin ratio-classifier path now exists in
