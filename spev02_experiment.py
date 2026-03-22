@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import time
 import sys
@@ -10,8 +11,14 @@ import gc
 import signal
 from datetime import datetime, timezone
 
-RESULTS_DIR = "/tmp/spev02_results"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.environ.get(
+    "SPEV02_OUTPUT_DIR",
+    os.path.join(_SCRIPT_DIR, "spev02_results"),
+)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+HAS_NVIDIA_SMI = shutil.which("nvidia-smi") is not None
 
 
 def save_json(data, filename):
@@ -23,7 +30,25 @@ def save_json(data, filename):
 
 
 def get_gpu_info():
-    """Get GPU info from nvidia-smi."""
+    """Get GPU info, gracefully handling missing nvidia-smi."""
+    if not HAS_NVIDIA_SMI:
+        try:
+            import torch
+
+            name = (
+                torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no-gpu"
+            )
+        except Exception:
+            name = "no-gpu"
+        return {
+            "gpu_name": name,
+            "memory_total_mib": 0,
+            "memory_used_mib": 0,
+            "memory_free_mib": 0,
+            "temperature_c": 0,
+            "power_draw_w": 0.0,
+            "note": "nvidia-smi not available",
+        }
     result = subprocess.run(
         [
             "nvidia-smi",
@@ -45,13 +70,18 @@ def get_gpu_info():
 
 
 def get_gpu_mem_used():
-    """Return current GPU memory used in MiB."""
+    """Return current GPU memory used in MiB, or 0 if unavailable."""
+    if not HAS_NVIDIA_SMI:
+        return 0
     result = subprocess.run(
         ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
         capture_output=True,
         text=True,
     )
-    return int(result.stdout.strip())
+    try:
+        return int(result.stdout.strip())
+    except (ValueError, AttributeError):
+        return 0
 
 
 ###############################################################################
@@ -178,13 +208,18 @@ try:
     output_tokens = len(outputs[0].outputs[0].token_ids)
     prompt_tokens = len(outputs[0].prompt_token_ids)
 
-    # Get peak GPU memory
-    import subprocess
-    mem_result = subprocess.run(
-        ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-        capture_output=True, text=True
-    )
-    peak_vram_mib = int(mem_result.stdout.strip())
+    # Get peak GPU memory (graceful if nvidia-smi absent)
+    import subprocess, shutil
+    peak_vram_mib = 0
+    if shutil.which("nvidia-smi"):
+        try:
+            mem_result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10
+            )
+            peak_vram_mib = int(mem_result.stdout.strip())
+        except Exception:
+            pass
 
     result = {{
         "context_length": ctx_len,
@@ -445,12 +480,17 @@ for ctx_len in context_lengths:
 
         output_tokens = len(outputs[0].outputs[0].token_ids)
 
-        import subprocess
-        mem_result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True
-        )
-        peak_vram = int(mem_result.stdout.strip())
+        import subprocess, shutil
+        peak_vram = 0
+        if shutil.which("nvidia-smi"):
+            try:
+                mem_result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=10
+                )
+                peak_vram = int(mem_result.stdout.strip())
+            except Exception:
+                pass
 
         result = {
             "context_length": ctx_len,
@@ -576,12 +616,17 @@ for method_name, spec_cfg in methods:
         output_tokens = len(outputs[0].outputs[0].token_ids)
         prompt_tokens = len(outputs[0].prompt_token_ids)
 
-        import subprocess
-        mem_result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True
-        )
-        peak_vram = int(mem_result.stdout.strip())
+        import subprocess, shutil
+        peak_vram = 0
+        if shutil.which("nvidia-smi"):
+            try:
+                mem_result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=10
+                )
+                peak_vram = int(mem_result.stdout.strip())
+            except Exception:
+                pass
 
         result = {{
             "context_length": {ctx_len},
@@ -725,12 +770,17 @@ for method_name, spec_cfg in methods:
         output_tokens = len(outputs[0].outputs[0].token_ids)
         prompt_tokens = len(outputs[0].prompt_token_ids)
 
-        import subprocess
-        mem_result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True
-        )
-        peak_vram = int(mem_result.stdout.strip())
+        import subprocess, shutil
+        peak_vram = 0
+        if shutil.which("nvidia-smi"):
+            try:
+                mem_result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=10
+                )
+                peak_vram = int(mem_result.stdout.strip())
+            except Exception:
+                pass
 
         result = {{
             "context_length": {ctx_len},

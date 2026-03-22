@@ -3,11 +3,46 @@
 Measures acceptance rate, throughput, and effective KV reduction.
 """
 
-import json, time, torch, os
+import json, time, torch, os, sys, shutil, subprocess
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from vllm import LLM, SamplingParams
+
+# --- portability helpers ------------------------------------------------
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.environ.get(
+    "SPEV01_OUTPUT_DIR",
+    os.path.join(_SCRIPT_DIR, "json"),
+)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+HAS_CUDA = torch.cuda.is_available()
+if not HAS_CUDA:
+    sys.exit("ERROR: tier2_speculative requires a CUDA GPU (torch.cuda unavailable)")
+
+
+def _detect_gpu_name():
+    if shutil.which("nvidia-smi"):
+        try:
+            r = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            parts = [p.strip() for p in r.stdout.strip().split(",")]
+            return f"{parts[0]}-{int(parts[1])//1024}GB"
+        except Exception:
+            pass
+    return torch.cuda.get_device_name(0)
+
+
+GPU_TAG = _detect_gpu_name()
 
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
 DRAFT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -118,7 +153,7 @@ for num_spec in [3, 5]:
             "tier": "2",
             "type": "speculative_decode",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "gpu": "H100-80GB",
+            "gpu": GPU_TAG,
             "model": MODEL,
             "method": "ngram",
             "num_speculative_tokens": num_spec,
@@ -134,7 +169,9 @@ for num_spec in [3, 5]:
         }
         all_results.append(result)
 
-        out_path = f"/root/spev01/json/tier2_speculative_Qwen2.5-7B_ngram{num_spec}_{seq_len}.json"
+        out_path = os.path.join(
+            OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_ngram{num_spec}_{seq_len}.json"
+        )
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
         print(
@@ -218,7 +255,7 @@ for num_spec in [3, 5]:
             "tier": "2",
             "type": "speculative_decode",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "gpu": "H100-80GB",
+            "gpu": GPU_TAG,
             "model": MODEL,
             "method": "draft_model",
             "draft_model": DRAFT_MODEL,
@@ -235,7 +272,9 @@ for num_spec in [3, 5]:
         }
         all_results.append(result)
 
-        out_path = f"/root/spev01/json/tier2_speculative_Qwen2.5-7B_draft{num_spec}_{seq_len}.json"
+        out_path = os.path.join(
+            OUTPUT_DIR, f"tier2_speculative_Qwen2.5-7B_draft{num_spec}_{seq_len}.json"
+        )
         with open(out_path, "w") as f:
             json.dump(result, f, indent=2)
         print(
@@ -246,7 +285,7 @@ for num_spec in [3, 5]:
         torch.cuda.empty_cache()
 
 # Save combined
-with open("/root/spev01/json/tier2_speculative_all.json", "w") as f:
+with open(os.path.join(OUTPUT_DIR, "tier2_speculative_all.json"), "w") as f:
     json.dump(all_results, f, indent=2)
 
 print("\n\n=== ALL SPECULATIVE RESULTS ===")
