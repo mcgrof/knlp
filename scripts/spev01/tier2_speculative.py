@@ -1,11 +1,50 @@
 #!/usr/bin/env python3
 """Tier 2: Speculative decoding — ngram and draft model methods.
-Measures acceptance rate, throughput, and effective KV reduction.
+
+This tier is an ABLATION test.  It does NOT run by default.
+Enable it explicitly with:
+
+    --ablation-speculative          (command-line flag)
+    SPEV01_ABLATION_SPECULATIVE=1   (environment variable)
+
+Without the flag the script exits immediately with rc=0 so that
+automated runners (e.g. ``run_all_tiers.sh``) skip speculation
+benchmarks by default and only measure the non-speculative baseline.
 """
 
-import json, time, torch, os, sys, shutil, subprocess
+import argparse
+import json
+import time
+import torch
+import os
+import sys
+import shutil
+import subprocess
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# --- ablation gate ---------------------------------------------------------
+_parser = argparse.ArgumentParser(
+    description="Tier 2 speculative-decoding ablation (off by default).",
+    add_help=True,
+)
+_parser.add_argument(
+    "--ablation-speculative",
+    action="store_true",
+    default=False,
+    help="Enable speculative-decoding ablation tests. "
+    "Without this flag the script exits immediately.",
+)
+_args = _parser.parse_args()
+
+if not (
+    _args.ablation_speculative or os.environ.get("SPEV01_ABLATION_SPECULATIVE") == "1"
+):
+    print(
+        "tier2_speculative: speculative ablation NOT enabled.\n"
+        "Pass --ablation-speculative or set SPEV01_ABLATION_SPECULATIVE=1 to run."
+    )
+    sys.exit(0)
 
 from vllm import LLM, SamplingParams
 
