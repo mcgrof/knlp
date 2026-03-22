@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
-"""SPEv-02: Speculative Decode + KV Offload v2 - Full experiment runner."""
+"""SPEv-02: KV Offload v2 — full experiment runner.
 
+Default behaviour runs only non-speculative stages:
+  Tier 0  — hardware validation
+  A1      — baseline (no offload, no speculation)
+  A2      — LMCache disk offload
+  A3      — FP8 KV quantization
+
+Speculative-decoding stages (B2, C1) are ABLATION tests and only
+run when explicitly requested:
+
+    --ablation-speculative          (command-line flag)
+    SPEV02_ABLATION_SPECULATIVE=1   (environment variable)
+"""
+
+import argparse
 import json
 import os
 import shutil
@@ -10,6 +24,25 @@ import sys
 import gc
 import signal
 from datetime import datetime, timezone
+
+# --- ablation gate ---------------------------------------------------------
+_parser = argparse.ArgumentParser(
+    description="SPEv-02 experiment runner. Speculation stages are "
+    "off by default; pass --ablation-speculative to enable B2/C1.",
+    add_help=True,
+)
+_parser.add_argument(
+    "--ablation-speculative",
+    action="store_true",
+    default=False,
+    help="Enable speculative-decoding ablation stages (B2, C1). "
+    "Without this flag only baseline/offload/quant stages run.",
+)
+_cli_args = _parser.parse_args()
+
+ABLATION_SPECULATIVE = _cli_args.ablation_speculative or (
+    os.environ.get("SPEV02_ABLATION_SPECULATIVE") == "1"
+)
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.environ.get(
@@ -1017,31 +1050,52 @@ if __name__ == "__main__":
     print("SPEv-02 Experiment Runner")
     print(f"Started at {datetime.now(timezone.utc).isoformat()}")
     print(f"Results dir: {RESULTS_DIR}")
+    print(f"Speculative ablation: {'ENABLED' if ABLATION_SPECULATIVE else 'disabled'}")
 
     tier0 = run_tier0()
     a1 = run_stage_a1()
     a2 = run_stage_a2()
     a3 = run_stage_a3()
-    b2 = run_stage_b2()
 
-    # Run C only if A and B succeeded
-    a1_ok = any(r.get("status") == "ok" for r in a1.get("results", []))
-    a2_ok = any(r.get("status") == "ok" for r in a2.get("results", []))
-    b2_ok = any(r.get("status") == "ok" for r in b2.get("results", []))
-
+    # --- Speculative stages are ablation-only ---
+    b2 = None
     c1 = None
-    if a1_ok and a2_ok and b2_ok:
-        c1 = run_stage_c1()
+    if ABLATION_SPECULATIVE:
+        b2 = run_stage_b2()
+
+        a1_ok = any(r.get("status") == "ok" for r in a1.get("results", []))
+        a2_ok = any(r.get("status") == "ok" for r in a2.get("results", []))
+        b2_ok = any(r.get("status") == "ok" for r in b2.get("results", []))
+
+        if a1_ok and a2_ok and b2_ok:
+            c1 = run_stage_c1()
+        else:
+            print("\nSkipping Stage C: A or B did not succeed")
+            c1 = {
+                "stage": "C1",
+                "test_name": "combined_lmcache_speculation",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "results": [],
+                "notes": "Skipped because Stage A or B did not independently succeed",
+            }
+            save_json(c1, "stageC1_naive_combined.json")
     else:
-        print("\nSkipping Stage C: A or B did not succeed")
+        print("\nSkipping Stages B2/C1 (speculative ablation not enabled).")
+        print("  Pass --ablation-speculative or set SPEV02_ABLATION_SPECULATIVE=1.")
+        b2 = {
+            "stage": "B2",
+            "test_name": "speculation_draft_model",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "results": [],
+            "notes": "Skipped: speculative ablation not enabled",
+        }
         c1 = {
             "stage": "C1",
             "test_name": "combined_lmcache_speculation",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "results": [],
-            "notes": "Skipped because Stage A or B did not independently succeed",
+            "notes": "Skipped: speculative ablation not enabled",
         }
-        save_json(c1, "stageC1_naive_combined.json")
 
     summary = create_summary(tier0, a1, a2, a3, b2, c1)
 
