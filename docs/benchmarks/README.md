@@ -14,6 +14,43 @@ accuracy, and long-context retrieval quality.
 | [Full Runbook](../fused_kv_benchmark_runbook.md) | The canonical evaluation protocol: all 7 benchmark tools, execution order, thresholds, and result directory layout |
 | [Reproducibility Checklist](reproducibility.md) | Pre-submission checklist, required artifacts, environment pinning, and result archival procedure |
 
+## AMD / ROCm: Required Environment Variable
+
+On AMD GPUs, export `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+before running any benchmark. PyTorch on current AMD GPUs warns
+that the Flash Efficient and Mem Efficient SDPA attention paths
+are experimental unless this variable is set. Without it, the
+framework silently falls back to a slower attention path. On the
+`prune` benchmark host this is already exported in `~/.bashrc`.
+Log the variable's state in `backend_manifest.json` for every
+run (the manifest generation scripts in the smoke test and
+runbook do this automatically).
+
+## Smoke-Tested Evaluation Stack on W7900
+
+The following phases pass end-to-end on an AMD Radeon Pro W7900
+(48 GB) with `marin-community/marin-8b-base`, TP=1, using the
+Marin-compatible xKV smoke path:
+
+- **Latency** (vLLM `benchmark_latency.py`)
+- **Throughput** (vLLM `benchmark_throughput.py`)
+- **Serving** (vLLM `benchmark_serving.py`)
+- **GuideLLM** (open-loop serving sweep)
+- **LongBench** (real-world long-doc QA, sample limiting fixed)
+- **NIAH** (needle-in-a-haystack retrieval)
+- **RULER** (variable tracking task via xKV path)
+- **InfiniteBench** (1-sample passkey, harness execution only)
+
+The xKV smoke path supports LongBench, NIAH, and one RULER task
+(`vt`) on W7900. RULER and NIAH require local data materialized
+under `evaluate/data/ruler/data/llama-3/`. InfiniteBench has a
+minimal local HuggingFace smoke runner on `prune` for 1-sample
+passkey validation. InfiniteBench smoke proves harness execution,
+not benchmark quality.
+
+See the [smoke test plan](smoke-test.md) for per-phase details,
+pass criteria, and artifact verification.
+
 ## What This Evaluates
 
 Every benchmark compares exactly two configurations:

@@ -65,7 +65,7 @@ Generate the manifest at the start of every run:
 
 ```bash
 python3 -c "
-import json, sys, importlib
+import json, os, sys, importlib
 
 manifest = {}
 
@@ -79,6 +79,13 @@ import torch
 manifest['torch_version'] = torch.__version__
 manifest['cuda_version'] = torch.version.cuda or 'N/A'
 manifest['rocm_version'] = getattr(torch.version, 'hip', None) or 'N/A'
+
+# --- AMD/ROCm experimental SDPA flag ---
+# On AMD GPUs, PyTorch warns that Flash Efficient and Mem
+# Efficient SDPA paths are experimental unless this is set.
+# On prune this is exported in ~/.bashrc.
+manifest['torch_rocm_aotriton_enable_experimental'] = os.environ.get(
+    'TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL', 'unset')
 
 # --- FlashAttention ---
 try:
@@ -147,6 +154,7 @@ Every `backend_manifest.json` must contain at minimum:
 | `tensor_parallel_size` | `1` | Affects KV cache layout |
 | `max_model_len` | `32768` | Affects paged attention block allocation |
 | `enforce_eager` | `false` | torch.compile changes attention dispatch |
+| `torch_rocm_aotriton_enable_experimental` | `1` or `unset` | On AMD/ROCm: enables experimental Flash Efficient and Mem Efficient SDPA paths. Without it, PyTorch silently falls back to slower attention. On `prune` this is exported in `~/.bashrc`. |
 
 If the run uses HuggingFace Transformers directly (not vLLM),
 record `attn_implementation` (`eager`, `sdpa`, `flash_attention_2`)
