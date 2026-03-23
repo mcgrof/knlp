@@ -9,6 +9,7 @@ accuracy, and long-context retrieval quality.
 
 | Document | Purpose |
 |----------|---------|
+| [Smoke Test Plan](smoke-test.md) | Validate plumbing and artifact generation in 10-20 minutes before committing to real runs |
 | [Quickstart](quickstart.md) | Get running in 30 minutes with a minimal FP16-vs-FUSED comparison |
 | [Full Runbook](../fused_kv_benchmark_runbook.md) | The canonical evaluation protocol: all 7 benchmark tools, execution order, thresholds, and result directory layout |
 | [Reproducibility Checklist](reproducibility.md) | Pre-submission checklist, required artifacts, environment pinning, and result archival procedure |

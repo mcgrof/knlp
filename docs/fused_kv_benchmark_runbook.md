@@ -376,6 +376,11 @@ that quantization errors are accumulating at long range.
 
 ## 5. Recommended Execution Order
 
+If this is a new machine, new vLLM build, or changed model
+target, run the [smoke test suite](benchmarks/smoke-test.md)
+first (10-20 minutes) to validate plumbing before investing
+in the phases below.
+
 Run benchmarks in this order so that early failures prevent
 wasted compute on downstream tasks.
 
