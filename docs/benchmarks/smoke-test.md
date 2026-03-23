@@ -23,7 +23,8 @@ publishable subset, see the [quickstart](quickstart.md).
 
 ## What Smoke Tests Validate
 
-Smoke tests confirm these properties for each benchmark tool:
+Each smoke test targets one tool in the evaluation stack and
+confirms four properties:
 
 1. **Plumbing**: The tool launches, connects to the server (if
    applicable), and completes without error.
@@ -48,13 +49,13 @@ Smoke tests explicitly do NOT validate:
 ## Prerequisites
 
 Same as the [quickstart prerequisites](quickstart.md#prerequisites),
-plus a small model that loads fast. These examples use
-`Qwen/Qwen2.5-7B` (fits on a single 80 GB GPU), but substitute
-any model your pipeline targets.
+plus a model that loads fast. These examples use
+`marin-community/marin-8b-base` on an AMD Radeon Pro W7900 (48 GB),
+but substitute any model your pipeline targets.
 
 ```bash
 # Shared environment for smoke tests
-export MODEL=Qwen/Qwen2.5-7B
+export MODEL=marin-community/marin-8b-base
 export TP=1
 export MAX_MODEL_LEN=4096       # Short context is fine for smoke
 export GPU_MEMORY_UTILIZATION=0.90
@@ -79,30 +80,33 @@ phase fails, fix it before proceeding.
 | Phase | Benchmark | Est. Time | What It Catches |
 |-------|-----------|-----------|-----------------|
 | S0 | Server startup | 1-2 min | Model loading, VRAM, flag parsing |
-| S1 | vLLM latency smoke | 1 min | Decode path, batch dispatch |
-| S2 | vLLM throughput smoke | 1 min | Engine saturation path, prompt handling |
-| S3 | lm-eval smoke | 2-5 min | Accuracy harness, vLLM backend integration |
-| S4 | GuideLLM serving smoke | 2-3 min | Server endpoint, open-loop client, JSON output |
-| S5 | vLLM serving smoke | 1-2 min | Poisson-arrival client, result serialization |
-| S6 | NIAH smoke | 2-3 min | Retrieval harness, server interaction, heatmap data |
-| S7 | RULER smoke (placeholder) | TBD | Synthetic task generation, eval loop |
-| S8 | LongBench smoke (placeholder) | TBD | Prediction + scoring pipeline |
-| S9 | InfiniteBench smoke (placeholder) | TBD | Extreme-length eval loop |
+| S1 | Startup time | 1 min | Cold-start initialization, engine construction |
+| S2 | vLLM latency smoke | 1 min | Decode path, batch dispatch |
+| S3 | vLLM throughput smoke | 1 min | Engine saturation path, prompt handling |
+| S4 | vLLM serving smoke | 1-2 min | Poisson-arrival client, result serialization |
+| S5 | lm-eval smoke | 2-5 min | Accuracy harness, vLLM backend integration |
+| S6 | GuideLLM serving smoke | 2-3 min | Server endpoint, open-loop client, JSON output |
+| S7 | NIAH smoke | 2-3 min | Retrieval harness, server interaction, heatmap data |
+| S8 | RULER smoke | 2-3 min | Synthetic task generation, eval loop, scoring |
+| S9 | LongBench smoke | 2-3 min | Prediction + scoring pipeline, dataset download |
+| S10 | InfiniteBench smoke | 2-3 min | Extreme-length eval loop, passkey retrieval path |
 
-**Total estimated time**: 10-20 minutes for phases S0-S6
-(concrete commands below). Phases S7-S9 are placeholders pending
-framework integration.
+**Total estimated time**: 15-25 minutes for all phases.
 
 Rationale: S0 catches fatal issues (wrong model path, OOM,
-bad flags). S1-S2 validate the offline engine without a server.
-S3 validates accuracy tooling. S4-S6 require a running server
-and validate online paths. S7-S9 validate long-context harnesses.
+bad flags). S1 measures cold-start. S2-S3 validate the offline
+engine without a server. S4-S6 require a running server and
+validate online paths. S7-S10 validate long-context harnesses
+against the server.
 
 ---
 
 ## S0. Server Startup Smoke
 
-Verify the model loads and the health endpoint responds.
+**Validates**: Model loads, health endpoint responds, VRAM
+allocation succeeds, KV cache dtype flag is parsed correctly.
+
+**Artifacts**: `$SMOKE_DIR/bench/smoke_startup.log`
 
 ```bash
 # Start server
@@ -128,20 +132,60 @@ curl -s http://localhost:8000/health | grep -q ok \
   || echo "SMOKE S0: FAIL — server not healthy after 120s"
 ```
 
-**Pass criteria**: Server responds to `/health` within 120 seconds.
-Log file is non-empty and contains no Python tracebacks.
+**Pass criteria**: Server responds to `/health` within 120
+seconds. Log file is non-empty and contains no Python
+tracebacks.
 
-Leave the server running for S4-S6.
+Leave the server running for S4-S10.
 
 ---
 
-## S1. vLLM Latency Smoke
+## S1. Startup Time Smoke
 
-Minimal latency benchmark: single batch size, short sequence,
-few iterations.
+**Validates**: Engine cold-start completes, LLM constructor
+returns without error, weight loading and KV cache allocation
+succeed. This corresponds to runbook Section 2d (startup time)
+and catches issues like missing model files, incompatible
+config, or silent OOM during cache pre-allocation.
+
+**Artifacts**: `$SMOKE_DIR/bench/smoke_startup_time.log`
 
 ```bash
-python <VLLM_DIR>/benchmarks/benchmark_latency.py \
+{ time python -c "
+from vllm import LLM
+llm = LLM(model='$MODEL',
+           tensor_parallel_size=$TP,
+           max_model_len=$MAX_MODEL_LEN,
+           gpu_memory_utilization=$GPU_MEMORY_UTILIZATION)
+print('Engine ready')
+" ; } 2>&1 | tee $SMOKE_DIR/bench/smoke_startup_time.log
+```
+
+**Pass criteria**: Script exits 0 and prints "Engine ready".
+Log contains a `real` time line from the shell `time` builtin.
+The time value itself does not matter for smoke purposes; only
+that the engine initializes without error.
+
+**Verify artifact**:
+```bash
+grep -q "Engine ready" $SMOKE_DIR/bench/smoke_startup_time.log \
+  && echo "SMOKE S1: PASS" \
+  || echo "SMOKE S1: FAIL — engine did not initialize"
+```
+
+---
+
+## S2. vLLM Latency Smoke
+
+**Validates**: Offline decode path works end-to-end. The
+engine accepts a batch, runs prefill + decode, and reports
+latency. Catches kernel dispatch errors, dtype mismatches,
+and attention backend failures.
+
+**Artifacts**: `$SMOKE_DIR/bench/smoke_latency.log`
+
+```bash
+python $VLLM_DIR/benchmarks/benchmark_latency.py \
   --model $MODEL \
   --tensor-parallel-size $TP \
   --input-len 128 \
@@ -160,18 +204,23 @@ not matter for smoke purposes.
 ```bash
 test -s $SMOKE_DIR/bench/smoke_latency.log \
   && grep -qi "latency" $SMOKE_DIR/bench/smoke_latency.log \
-  && echo "SMOKE S1: PASS" \
-  || echo "SMOKE S1: FAIL — missing or empty output"
+  && echo "SMOKE S2: PASS" \
+  || echo "SMOKE S2: FAIL — missing or empty output"
 ```
 
 ---
 
-## S2. vLLM Throughput Smoke
+## S3. vLLM Throughput Smoke
 
-Minimal throughput benchmark: few prompts, short sequences.
+**Validates**: Engine saturation path works. The throughput
+benchmark feeds many prompts and measures aggregate token
+throughput. Catches prompt handling errors, scheduler bugs,
+and output token counting failures.
+
+**Artifacts**: `$SMOKE_DIR/bench/smoke_throughput.log`
 
 ```bash
-python <VLLM_DIR>/benchmarks/benchmark_throughput.py \
+python $VLLM_DIR/benchmarks/benchmark_throughput.py \
   --model $MODEL \
   --tensor-parallel-size $TP \
   --input-len 128 \
@@ -187,16 +236,71 @@ numbers (e.g. `Throughput: X.XX requests/s`).
 ```bash
 test -s $SMOKE_DIR/bench/smoke_throughput.log \
   && grep -qi "throughput" $SMOKE_DIR/bench/smoke_throughput.log \
-  && echo "SMOKE S2: PASS" \
-  || echo "SMOKE S2: FAIL — missing or empty output"
+  && echo "SMOKE S3: PASS" \
+  || echo "SMOKE S3: FAIL — missing or empty output"
 ```
 
 ---
 
-## S3. lm-eval Smoke
+## S4. vLLM Serving Smoke
 
-Run a single lightweight task with minimal samples. The `arc_easy`
-task is fast and catches vLLM backend integration issues.
+**Validates**: Online serving path through the OpenAI-compatible
+endpoint. The Poisson-arrival client sends requests, the
+server schedules them, and the benchmark collects per-request
+latency metrics. Catches endpoint routing errors, request
+serialization bugs, and result file generation failures.
+
+Requires the server from S0 to be running. Uses synthetic data
+to avoid needing the ShareGPT dataset.
+
+**Artifacts**: `$SMOKE_DIR/bench/smoke_serving.json`
+
+```bash
+python $VLLM_DIR/benchmarks/benchmark_serving.py \
+  --backend vllm \
+  --model $MODEL \
+  --endpoint /v1/completions \
+  --host localhost \
+  --port 8000 \
+  --dataset-name random \
+  --random-input-len 128 \
+  --random-output-len 16 \
+  --request-rate 2 \
+  --num-prompts 10 \
+  --save-result \
+  --result-dir $SMOKE_DIR/bench/ \
+  --result-filename smoke_serving.json
+```
+
+**Pass criteria**: Script exits 0. JSON result file exists with
+latency metrics.
+
+**Verify artifact**:
+```bash
+test -s $SMOKE_DIR/bench/smoke_serving.json \
+  && echo "SMOKE S4: PASS" \
+  || echo "SMOKE S4: FAIL — serving benchmark produced no output"
+```
+
+Note: `--dataset-name random` avoids needing to download
+ShareGPT. 10 prompts at rate=2 finishes in about 5 seconds of
+request generation plus decode time.
+
+---
+
+## S5. lm-eval Smoke
+
+**Validates**: The lm-eval harness loads, connects to the vLLM
+backend, runs evaluation on a small sample, and writes a JSON
+results file. Catches backend integration errors (wrong
+model_args format, missing `add_bos_token`), task loading
+failures, and output serialization bugs.
+
+**Artifacts**: `$SMOKE_DIR/lm_eval/smoke_standard.json`
+
+Run a single lightweight task with minimal samples. The
+`arc_easy` task is fast and catches vLLM backend integration
+issues.
 
 ```bash
 lm_eval --model vllm \
@@ -219,8 +323,8 @@ import json, sys
 with open('$SMOKE_DIR/lm_eval/smoke_standard.json') as f:
     d = json.load(f)
 assert 'results' in d, 'no results key'
-print('SMOKE S3: PASS — lm-eval produced results')
-" || echo "SMOKE S3: FAIL"
+print('SMOKE S5: PASS — lm-eval produced results')
+" || echo "SMOKE S5: FAIL"
 ```
 
 Note: `--limit 20` restricts to 20 samples per task so it
@@ -229,9 +333,17 @@ accuracy numbers but sufficient to verify the pipeline.
 
 ---
 
-## S4. GuideLLM Serving Smoke
+## S6. GuideLLM Serving Smoke
+
+**Validates**: GuideLLM connects to the vLLM OpenAI-compatible
+endpoint, drives open-loop traffic, collects TTFT/ITL/throughput
+metrics, and writes a JSON report. Catches endpoint
+compatibility issues, emulated data generation failures, and
+rate sweep logic errors.
 
 Requires the server from S0 to be running.
+
+**Artifacts**: `$SMOKE_DIR/guidellm/smoke_sweep.json`
 
 ```bash
 guidellm \
@@ -250,8 +362,8 @@ contains request-level metrics.
 **Verify artifact**:
 ```bash
 test -s $SMOKE_DIR/guidellm/smoke_sweep.json \
-  && echo "SMOKE S4: PASS" \
-  || echo "SMOKE S4: FAIL — GuideLLM produced no output"
+  && echo "SMOKE S6: PASS" \
+  || echo "SMOKE S6: FAIL — GuideLLM produced no output"
 ```
 
 Note: `--max-seconds 30` caps the sweep to 30 seconds total.
@@ -260,52 +372,24 @@ plumbing.
 
 ---
 
-## S5. vLLM Serving Smoke
+## S7. NIAH Smoke
 
-Requires the server from S0 to be running. Uses synthetic data
-to avoid needing the ShareGPT dataset.
-
-```bash
-python <VLLM_DIR>/benchmarks/benchmark_serving.py \
-  --backend vllm \
-  --model $MODEL \
-  --endpoint /v1/completions \
-  --host localhost \
-  --port 8000 \
-  --dataset-name random \
-  --random-input-len 128 \
-  --random-output-len 16 \
-  --request-rate 2 \
-  --num-prompts 10 \
-  --save-result \
-  --result-dir $SMOKE_DIR/bench/ \
-  --result-filename smoke_serving.json
-```
-
-**Pass criteria**: Script exits 0. JSON result file exists with
-latency metrics.
-
-**Verify artifact**:
-```bash
-test -s $SMOKE_DIR/bench/smoke_serving.json \
-  && echo "SMOKE S5: PASS" \
-  || echo "SMOKE S5: FAIL — serving benchmark produced no output"
-```
-
-Note: `--dataset-name random` avoids needing to download
-ShareGPT. 10 prompts at rate=2 finishes in about 5 seconds of
-request generation plus decode time.
-
----
-
-## S6. NIAH Smoke
+**Validates**: The Needle-in-a-Haystack retrieval harness
+sends prompts with an embedded needle to the vLLM server,
+collects model responses, scores retrieval accuracy, and writes
+per-cell result files. Catches prompt construction errors,
+server interaction failures, result parsing bugs, and output
+directory creation issues.
 
 Requires the server from S0 to be running. Uses the shortest
 context length and fewest depth intervals that exercise the
 retrieval pipeline.
 
+**Artifacts**: `$SMOKE_DIR/niah/smoke/` directory with
+per-cell retrieval result files.
+
 ```bash
-python <NIAH_DIR>/run_needle_in_haystack.py \
+python $NIAH_DIR/run_needle_in_haystack.py \
   --model_name $MODEL \
   --provider vllm \
   --context_lengths 1024 \
@@ -320,8 +404,8 @@ per-cell retrieval files. At least one result file is non-empty.
 ```bash
 test -d $SMOKE_DIR/niah/smoke/ \
   && [ "$(ls -A $SMOKE_DIR/niah/smoke/)" ] \
-  && echo "SMOKE S6: PASS" \
-  || echo "SMOKE S6: FAIL — NIAH produced no results"
+  && echo "SMOKE S7: PASS" \
+  || echo "SMOKE S7: FAIL — NIAH produced no results"
 ```
 
 Note: A single context length with 3 depth points is the
@@ -330,19 +414,24 @@ minimum that exercises the retrieval loop. This runs in
 
 ---
 
-## S7. RULER Smoke (Placeholder)
+## S8. RULER Smoke
 
-RULER integration depends on the framework setup for your
-environment. The smoke test should:
+**Validates**: RULER data preparation generates synthetic task
+inputs, the vLLM evaluation script processes them, and scored
+results are written to disk. Catches tokenizer incompatibilities,
+task data generation errors, vLLM eval script integration
+failures, and output directory issues.
 
-1. Generate task data for a single task (`niah_single`) at the
-   shortest supported sequence length.
-2. Run evaluation on that single task.
-3. Verify the output directory contains scored results.
+Requires a running server or offline vLLM access depending on
+the RULER version.
+
+**Artifacts**:
+- `$SMOKE_DIR/ruler/smoke/data/` — generated task inputs
+- `$SMOKE_DIR/ruler/smoke/results/` — scored evaluation output
 
 ```bash
-# Template — adapt paths to your RULER installation
-python <RULER_DIR>/scripts/data/prepare_data.py \
+# Step 1: Generate task data for one task at short length
+python $RULER_DIR/scripts/data/prepare_data.py \
   --task niah_single \
   --model_name $MODEL \
   --tokenizer_name $MODEL \
@@ -350,7 +439,8 @@ python <RULER_DIR>/scripts/data/prepare_data.py \
   --num_samples 5 \
   --output_dir $SMOKE_DIR/ruler/smoke/data/
 
-python <RULER_DIR>/scripts/eval/evaluate_vllm.py \
+# Step 2: Evaluate
+python $RULER_DIR/scripts/eval/evaluate_vllm.py \
   --model_name $MODEL \
   --data_dir $SMOKE_DIR/ruler/smoke/data/ \
   --output_dir $SMOKE_DIR/ruler/smoke/results/ \
@@ -358,19 +448,43 @@ python <RULER_DIR>/scripts/eval/evaluate_vllm.py \
   --max_model_len $MAX_MODEL_LEN
 ```
 
-**Pass criteria**: Both scripts exit 0. Results directory
-contains scored output for the single task.
+**Pass criteria**: Both scripts exit 0. The data directory
+contains generated input files. The results directory contains
+scored output for `niah_single`.
+
+**Verify artifact**:
+```bash
+test -d $SMOKE_DIR/ruler/smoke/data/ \
+  && [ "$(ls -A $SMOKE_DIR/ruler/smoke/data/)" ] \
+  && test -d $SMOKE_DIR/ruler/smoke/results/ \
+  && [ "$(ls -A $SMOKE_DIR/ruler/smoke/results/)" ] \
+  && echo "SMOKE S8: PASS" \
+  || echo "SMOKE S8: FAIL — RULER data or results missing"
+```
+
+Note: A single task (`niah_single`) with 5 samples at 4096
+tokens is the cheapest configuration that exercises the full
+prepare-evaluate-score pipeline. This runs in 2-3 minutes vs
+2-4 hours for the full RULER suite.
 
 ---
 
-## S8. LongBench Smoke (Placeholder)
+## S9. LongBench Smoke
 
-The smoke test should run prediction and evaluation on a single
-short dataset subset.
+**Validates**: The LongBench prediction script downloads (or
+loads cached) dataset samples, sends them through the vLLM
+backend, writes predictions to disk, and the scoring script
+produces a results file. Catches dataset download failures,
+backend incompatibilities, prediction file format errors, and
+evaluation metric computation bugs.
+
+**Artifacts**:
+- `$SMOKE_DIR/longbench/smoke/predictions/` — model predictions
+- `$SMOKE_DIR/longbench/smoke/scores/` — evaluated scores
 
 ```bash
-# Template — adapt paths to your LongBench installation
-python <LONGBENCH_DIR>/pred.py \
+# Step 1: Generate predictions on a single short dataset
+python $LONGBENCH_DIR/pred.py \
   --model $MODEL \
   --backend vllm \
   --tensor_parallel_size $TP \
@@ -379,24 +493,49 @@ python <LONGBENCH_DIR>/pred.py \
   --max_samples 5 \
   --output_dir $SMOKE_DIR/longbench/smoke/predictions/
 
-python <LONGBENCH_DIR>/eval.py \
+# Step 2: Score predictions
+python $LONGBENCH_DIR/eval.py \
   --pred_dir $SMOKE_DIR/longbench/smoke/predictions/ \
   --output_dir $SMOKE_DIR/longbench/smoke/scores/
 ```
 
-**Pass criteria**: Both scripts exit 0. Scores directory
+**Pass criteria**: Both scripts exit 0. Predictions directory
+contains a non-empty file for `qasper`. Scores directory
 contains a non-empty results file.
+
+**Verify artifact**:
+```bash
+test -d $SMOKE_DIR/longbench/smoke/predictions/ \
+  && [ "$(ls -A $SMOKE_DIR/longbench/smoke/predictions/)" ] \
+  && test -d $SMOKE_DIR/longbench/smoke/scores/ \
+  && [ "$(ls -A $SMOKE_DIR/longbench/smoke/scores/)" ] \
+  && echo "SMOKE S9: PASS" \
+  || echo "SMOKE S9: FAIL — LongBench predictions or scores missing"
+```
+
+Note: The `qasper` dataset is short (single-doc QA, typically
+under 8K tokens) and fast to evaluate. 5 samples exercise
+the full predict-then-score pipeline without long waits.
+This runs in 2-3 minutes vs 2-4 hours for the full LongBench
+suite.
 
 ---
 
-## S9. InfiniteBench Smoke (Placeholder)
+## S10. InfiniteBench Smoke
 
-The smoke test should run the simplest task (passkey) at the
-shortest feasible length.
+**Validates**: The InfiniteBench evaluation script loads
+extreme-length task data, sends it through vLLM, and writes
+scored results. The passkey task is the simplest (needle
+retrieval in a long document) and the most sensitive to cache
+corruption. Catches task data loading errors, context length
+truncation bugs, vLLM integration failures, and scoring logic
+errors.
+
+**Artifacts**: `$SMOKE_DIR/infinitebench/smoke/` directory
+with passkey result files.
 
 ```bash
-# Template — adapt paths to your InfiniteBench installation
-python <INFINITEBENCH_DIR>/eval_vllm.py \
+python $INFINITEBENCH_DIR/eval_vllm.py \
   --model_name $MODEL \
   --task_name passkey \
   --max_seq_length $MAX_MODEL_LEN \
@@ -407,6 +546,21 @@ python <INFINITEBENCH_DIR>/eval_vllm.py \
 
 **Pass criteria**: Script exits 0. Output directory contains
 result files with passkey retrieval scores.
+
+**Verify artifact**:
+```bash
+test -d $SMOKE_DIR/infinitebench/smoke/ \
+  && [ "$(ls -A $SMOKE_DIR/infinitebench/smoke/)" ] \
+  && echo "SMOKE S10: PASS" \
+  || echo "SMOKE S10: FAIL — InfiniteBench produced no results"
+```
+
+Note: The passkey task embeds a short string in a long context
+and asks the model to retrieve it. With `--max_samples 3` and
+`MAX_MODEL_LEN=4096`, this exercises the full eval loop without
+requiring 100K+ token contexts. For a proper stress test of
+extreme lengths, run the full InfiniteBench suite from the
+runbook.
 
 ---
 
@@ -421,11 +575,12 @@ kill $SERVER_PID 2>/dev/null
 echo "=== Smoke Test Summary ==="
 for f in \
   $SMOKE_DIR/bench/smoke_startup.log \
+  $SMOKE_DIR/bench/smoke_startup_time.log \
   $SMOKE_DIR/bench/smoke_latency.log \
   $SMOKE_DIR/bench/smoke_throughput.log \
+  $SMOKE_DIR/bench/smoke_serving.json \
   $SMOKE_DIR/lm_eval/smoke_standard.json \
-  $SMOKE_DIR/guidellm/smoke_sweep.json \
-  $SMOKE_DIR/bench/smoke_serving.json; do
+  $SMOKE_DIR/guidellm/smoke_sweep.json; do
   if [ -s "$f" ]; then
     echo "  OK  $f"
   else
@@ -433,12 +588,18 @@ for f in \
   fi
 done
 
-# Check NIAH directory
-if [ -d "$SMOKE_DIR/niah/smoke/" ] && [ "$(ls -A $SMOKE_DIR/niah/smoke/)" ]; then
-  echo "  OK  $SMOKE_DIR/niah/smoke/"
-else
-  echo "  MISSING  $SMOKE_DIR/niah/smoke/"
-fi
+# Check directory-based outputs
+for d in \
+  $SMOKE_DIR/niah/smoke/ \
+  $SMOKE_DIR/ruler/smoke/results/ \
+  $SMOKE_DIR/longbench/smoke/scores/ \
+  $SMOKE_DIR/infinitebench/smoke/; do
+  if [ -d "$d" ] && [ "$(ls -A $d)" ]; then
+    echo "  OK  $d"
+  else
+    echo "  MISSING  $d"
+  fi
+done
 ```
 
 The smoke directory can be deleted after review. Smoke results
@@ -450,7 +611,7 @@ evidentiary value.
 ## FUSED Config Smoke
 
 The examples above run with default FP16 KV cache. To smoke-test
-the FUSED configuration, repeat S0-S6 with the fused flag added
+the FUSED configuration, repeat S0-S10 with the fused flag added
 to each command. The key difference is one extra flag on the
 server and offline benchmarks:
 
@@ -466,7 +627,7 @@ python -m vllm.entrypoints.openai.api_server \
   --port 8000 &
 
 # Offline benchmarks with fused KV
-python <VLLM_DIR>/benchmarks/benchmark_latency.py \
+python $VLLM_DIR/benchmarks/benchmark_latency.py \
   --model $MODEL ... \
   --kv-cache-dtype int4_fused \
   2>&1 | tee $SMOKE_DIR/bench/smoke_latency_fused.log
@@ -482,7 +643,7 @@ the quantization path.
 ## Relationship to Other Documents
 
 - **This document** (smoke test): validates plumbing in
-  10-20 minutes. No publishable numbers.
+  15-25 minutes. No publishable numbers.
 - **[Quickstart](quickstart.md)**: minimal publishable results
   in 4-6 hours GPU time.
 - **[Full runbook](../fused_kv_benchmark_runbook.md)**: paper-grade
