@@ -21,6 +21,56 @@ publishable subset, see the [quickstart](quickstart.md).
 
 ---
 
+## Confirmed Smoke-Pass Set on W7900
+
+The following phases pass end-to-end on an AMD Radeon Pro W7900
+(48 GB) with `marin-community/marin-8b-base`, TP=1:
+
+| Phase | Benchmark | Status |
+|-------|-----------|--------|
+| S2 | vLLM latency | PASS |
+| S3 | vLLM throughput | PASS |
+| S4 | vLLM serving | PASS |
+| S6 | GuideLLM serving | PASS |
+| S9 | LongBench | PASS |
+| S7 | NIAH | PASS |
+| S8 | RULER (variable tracking) | PASS |
+| S10 | InfiniteBench smoke | PASS |
+
+InfiniteBench smoke proves harness execution, not benchmark
+quality. The passkey score at `MAX_MODEL_LEN=4096` is
+meaningless for quality purposes because the task requires
+100K+ token contexts; the smoke only validates that the eval
+loop runs to completion without error.
+
+---
+
+## AMD / ROCm Environment Prerequisites
+
+On AMD GPUs, PyTorch warns that the Flash Efficient and Mem
+Efficient SDPA attention paths are experimental unless the
+following environment variable is set:
+
+```bash
+export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+```
+
+On the `prune` benchmark host, this variable is already
+exported in `~/.bashrc`. Verify it is active before every
+benchmark session:
+
+```bash
+echo $TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL
+# Must print: 1
+```
+
+Without this variable, vLLM may silently fall back to a
+slower attention path or refuse to use the preferred SDPA
+backend. Log the state of this variable in the backend
+manifest (see S-1 below) for every run.
+
+---
+
 ## What Smoke Tests Validate
 
 Each smoke test targets one tool in the evaluation stack and
@@ -115,11 +165,13 @@ detection failures before any benchmark runs.
 
 ```bash
 python3 -c "
-import json, sys, torch
+import json, os, sys, torch
 m = {}
 m['torch_version'] = torch.__version__
 m['cuda_version'] = torch.version.cuda or 'N/A'
 m['rocm_version'] = getattr(torch.version, 'hip', None) or 'N/A'
+m['torch_rocm_aotriton_enable_experimental'] = os.environ.get(
+    'TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL', 'unset')
 try:
     import flash_attn
     m['flash_attn_version'] = flash_attn.__version__
@@ -145,9 +197,12 @@ json.dump(m, sys.stdout, indent=2); print()
 
 **Pass criteria**: Script exits 0. JSON file contains
 `vllm_attn_backend`, `flash_attn_version`, `torch_version`,
-and `gpu_name`. If `flash_attn_version` is `not installed` and
-you expected FlashAttention, stop and install it before
-proceeding.
+and `gpu_name`. On AMD/ROCm hosts, verify
+`torch_rocm_aotriton_enable_experimental` is `1`. If it is
+`unset`, add `export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+to `~/.bashrc` and re-source before proceeding. If
+`flash_attn_version` is `not installed` and you expected
+FlashAttention, stop and install it before proceeding.
 
 **Verify artifact**:
 ```bash
@@ -451,7 +506,10 @@ directory creation issues.
 
 Requires the server from S0 to be running. Uses the shortest
 context length and fewest depth intervals that exercise the
-retrieval pipeline.
+retrieval pipeline. The Marin-compatible xKV smoke path
+supports NIAH on W7900. Local NIAH data must be materialized
+under `evaluate/data/ruler/data/llama-3/` for smoke use (see
+S8 for directory setup).
 
 **Artifacts**: `$SMOKE_DIR/niah/smoke/` directory with
 per-cell retrieval result files.
@@ -491,16 +549,35 @@ task data generation errors, vLLM eval script integration
 failures, and output directory issues.
 
 Requires a running server or offline vLLM access depending on
-the RULER version.
+the RULER version. The Marin-compatible xKV smoke path now
+supports the `vt` (variable tracking) task on W7900 in
+addition to NIAH-style tasks.
+
+### Local data materialization
+
+RULER and NIAH require pre-generated task data on disk. For
+smoke use with the xKV path, materialize data under:
+
+```
+evaluate/data/ruler/data/llama-3/
+```
+
+This directory must exist before running RULER smoke. The
+`prepare_data.py` script writes tokenized task inputs here.
+If the directory is missing, the eval script fails silently
+or with a confusing file-not-found error.
 
 **Artifacts**:
 - `$SMOKE_DIR/ruler/smoke/data/` — generated task inputs
 - `$SMOKE_DIR/ruler/smoke/results/` — scored evaluation output
 
 ```bash
+# Step 0: Ensure local data directory exists
+mkdir -p evaluate/data/ruler/data/llama-3/
+
 # Step 1: Generate task data for one task at short length
 python $RULER_DIR/scripts/data/prepare_data.py \
-  --task niah_single \
+  --task vt \
   --model_name $MODEL \
   --tokenizer_name $MODEL \
   --max_seq_length 4096 \
@@ -518,7 +595,7 @@ python $RULER_DIR/scripts/eval/evaluate_vllm.py \
 
 **Pass criteria**: Both scripts exit 0. The data directory
 contains generated input files. The results directory contains
-scored output for `niah_single`.
+scored output for `vt`.
 
 **Verify artifact**:
 ```bash
@@ -530,10 +607,10 @@ test -d $SMOKE_DIR/ruler/smoke/data/ \
   || echo "SMOKE S8: FAIL — RULER data or results missing"
 ```
 
-Note: A single task (`niah_single`) with 5 samples at 4096
-tokens is the cheapest configuration that exercises the full
-prepare-evaluate-score pipeline. This runs in 2-3 minutes vs
-2-4 hours for the full RULER suite.
+Note: The `vt` (variable tracking) task with 5 samples at
+4096 tokens is confirmed to pass on W7900 via the xKV smoke
+path. This runs in 2-3 minutes vs 2-4 hours for the full
+RULER suite.
 
 ---
 
@@ -545,6 +622,12 @@ backend, writes predictions to disk, and the scoring script
 produces a results file. Catches dataset download failures,
 backend incompatibilities, prediction file format errors, and
 evaluation metric computation bugs.
+
+The Marin-compatible xKV smoke path supports LongBench on
+W7900. Sample limiting (`--max_samples`) was fixed in the
+smoke harness to correctly truncate the dataset before
+inference rather than after, preventing full-dataset runs
+that waste GPU time during smoke.
 
 **Artifacts**:
 - `$SMOKE_DIR/longbench/smoke/predictions/` — model predictions
@@ -569,7 +652,9 @@ python $LONGBENCH_DIR/eval.py \
 
 **Pass criteria**: Both scripts exit 0. Predictions directory
 contains a non-empty file for `qasper`. Scores directory
-contains a non-empty results file.
+contains a non-empty results file. Verify the prediction
+file contains exactly `--max_samples` entries (not the full
+dataset).
 
 **Verify artifact**:
 ```bash
@@ -599,6 +684,18 @@ corruption. Catches task data loading errors, context length
 truncation bugs, vLLM integration failures, and scoring logic
 errors.
 
+A minimal local HuggingFace smoke runner exists on `prune`
+for 1-sample passkey validation. This runner loads the model
+directly via HuggingFace Transformers (no vLLM server
+required) and runs a single passkey retrieval sample.
+
+**Important**: InfiniteBench smoke proves harness execution,
+not benchmark quality. The passkey score at
+`MAX_MODEL_LEN=4096` is meaningless for quality purposes
+because the task requires 100K+ token contexts. The smoke
+only validates that the eval loop, scoring logic, and artifact
+generation run to completion without error.
+
 **Artifacts**: `$SMOKE_DIR/infinitebench/smoke/` directory
 with passkey result files.
 
@@ -608,7 +705,7 @@ python $INFINITEBENCH_DIR/eval_vllm.py \
   --task_name passkey \
   --max_seq_length $MAX_MODEL_LEN \
   --tensor_parallel_size $TP \
-  --max_samples 3 \
+  --max_samples 1 \
   --output_dir $SMOKE_DIR/infinitebench/smoke/
 ```
 
@@ -623,12 +720,10 @@ test -d $SMOKE_DIR/infinitebench/smoke/ \
   || echo "SMOKE S10: FAIL — InfiniteBench produced no results"
 ```
 
-Note: The passkey task embeds a short string in a long context
-and asks the model to retrieve it. With `--max_samples 3` and
-`MAX_MODEL_LEN=4096`, this exercises the full eval loop without
-requiring 100K+ token contexts. For a proper stress test of
-extreme lengths, run the full InfiniteBench suite from the
-runbook.
+Note: With `--max_samples 1` and `MAX_MODEL_LEN=4096`, this
+exercises the full eval loop without requiring 100K+ token
+contexts. For a proper stress test of extreme lengths, run
+the full InfiniteBench suite from the runbook.
 
 ---
 
