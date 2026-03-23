@@ -250,8 +250,7 @@ server schedules them, and the benchmark collects per-request
 latency metrics. Catches endpoint routing errors, request
 serialization bugs, and result file generation failures.
 
-Requires the server from S0 to be running. Uses synthetic data
-to avoid needing the ShareGPT dataset.
+Requires the server from S0 to be running. Use the completions endpoint (`/v1/completions`) for Marin in this stack. Do not use the chat endpoint unless the tokenizer provides a valid chat template. Uses synthetic data to avoid needing the ShareGPT dataset.
 
 **Artifacts**: `$SMOKE_DIR/bench/smoke_serving.json`
 
