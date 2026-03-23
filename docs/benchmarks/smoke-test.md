@@ -79,6 +79,7 @@ phase fails, fix it before proceeding.
 
 | Phase | Benchmark | Est. Time | What It Catches |
 |-------|-----------|-----------|-----------------|
+| S-1 | Backend manifest | <1 min | Attention backend detection, library versions, GPU info |
 | S0 | Server startup | 1-2 min | Model loading, VRAM, flag parsing |
 | S1 | Startup time | 1 min | Cold-start initialization, engine construction |
 | S2 | vLLM latency smoke | 1 min | Decode path, batch dispatch |
@@ -93,11 +94,79 @@ phase fails, fix it before proceeding.
 
 **Total estimated time**: 15-25 minutes for all phases.
 
-Rationale: S0 catches fatal issues (wrong model path, OOM,
-bad flags). S1 measures cold-start. S2-S3 validate the offline
-engine without a server. S4-S6 require a running server and
-validate online paths. S7-S10 validate long-context harnesses
-against the server.
+Rationale: S-1 catches library and backend detection issues
+before any GPU work. S0 catches fatal issues (wrong model path,
+OOM, bad flags). S1 measures cold-start. S2-S3 validate the
+offline engine without a server. S4-S6 require a running server
+and validate online paths. S7-S10 validate long-context
+harnesses against the server.
+
+---
+
+## S-1. Backend Manifest Smoke
+
+**Validates**: Attention backend libraries are installed and
+detectable, the manifest generation script runs without error,
+and all required fields are populated. This catches missing
+FlashAttention installs, wrong CUDA/ROCm builds, and GPU
+detection failures before any benchmark runs.
+
+**Artifacts**: `$SMOKE_DIR/backend_manifest.json`
+
+```bash
+python3 -c "
+import json, sys, torch
+m = {}
+m['torch_version'] = torch.__version__
+m['cuda_version'] = torch.version.cuda or 'N/A'
+m['rocm_version'] = getattr(torch.version, 'hip', None) or 'N/A'
+try:
+    import flash_attn
+    m['flash_attn_version'] = flash_attn.__version__
+except ImportError:
+    m['flash_attn_version'] = 'not installed'
+import vllm
+m['vllm_version'] = vllm.__version__
+try:
+    from vllm.config import get_attn_backend
+    m['vllm_attn_backend'] = str(get_attn_backend())
+except Exception:
+    m['vllm_attn_backend'] = 'could not detect'
+if torch.cuda.is_available():
+    m['gpu_name'] = torch.cuda.get_device_name(0)
+    m['gpu_count'] = torch.cuda.device_count()
+    m['gpu_memory_gb'] = round(
+        torch.cuda.get_device_properties(0).total_mem / 1e9, 1)
+else:
+    m['gpu_name'] = 'N/A'
+json.dump(m, sys.stdout, indent=2); print()
+" > $SMOKE_DIR/backend_manifest.json
+```
+
+**Pass criteria**: Script exits 0. JSON file contains
+`vllm_attn_backend`, `flash_attn_version`, `torch_version`,
+and `gpu_name`. If `flash_attn_version` is `not installed` and
+you expected FlashAttention, stop and install it before
+proceeding.
+
+**Verify artifact**:
+```bash
+python3 -c "
+import json, sys
+with open('$SMOKE_DIR/backend_manifest.json') as f:
+    m = json.load(f)
+required = ['torch_version', 'flash_attn_version',
+            'vllm_version', 'gpu_name']
+missing = [k for k in required if k not in m]
+if missing:
+    print(f'SMOKE S-1: FAIL — missing fields: {missing}')
+    sys.exit(1)
+print(f'SMOKE S-1: PASS')
+print(f'  Attention backend: {m.get(\"vllm_attn_backend\", \"unknown\")}')
+print(f'  FlashAttention: {m[\"flash_attn_version\"]}')
+print(f'  GPU: {m[\"gpu_name\"]}')
+"
+```
 
 ---
 
@@ -573,6 +642,7 @@ kill $SERVER_PID 2>/dev/null
 
 echo "=== Smoke Test Summary ==="
 for f in \
+  $SMOKE_DIR/backend_manifest.json \
   $SMOKE_DIR/bench/smoke_startup.log \
   $SMOKE_DIR/bench/smoke_startup_time.log \
   $SMOKE_DIR/bench/smoke_latency.log \
