@@ -5,10 +5,20 @@ fused INT4 KV quantization against FP16 baselines. The benchmarks
 produce paper-grade evidence for serving throughput, latency, model
 accuracy, and long-context retrieval quality.
 
+## Canonical Benchmark Lane: Container
+
+All W7900/ROCm benchmarks run from the `knlp-rocm-bench` container.
+See [container.md](container.md) for build instructions, launch
+script, and per-phase smoke examples. The container bakes in vLLM,
+lm-eval, GuideLLM, and FlashAttention; long-context repos (xKV,
+InfiniteBench) are bind-mounted from `/data`. Split host Python
+environments are demoted to debug-only use.
+
 ## Documents
 
 | Document | Purpose |
 |----------|---------|
+| [Container Setup](container.md) | Build and run the unified ROCm benchmark container (start here) |
 | [Smoke Test Plan](smoke-test.md) | Validate plumbing and artifact generation across the full evaluation stack in 15-25 minutes before committing to real runs |
 | [Quickstart](quickstart.md) | Get running in 30 minutes with a minimal FP16-vs-FUSED comparison |
 | [Full Runbook](../fused_kv_benchmark_runbook.md) | The canonical evaluation protocol: all 7 benchmark tools, execution order, thresholds, and result directory layout |
@@ -16,15 +26,12 @@ accuracy, and long-context retrieval quality.
 
 ## AMD / ROCm: Required Environment Variable
 
-On AMD GPUs, export `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
-before running any benchmark. PyTorch on current AMD GPUs warns
-that the Flash Efficient and Mem Efficient SDPA attention paths
-are experimental unless this variable is set. Without it, the
-framework silently falls back to a slower attention path. On the
-`prune` benchmark host this is already exported in `~/.bashrc`.
-Log the variable's state in `backend_manifest.json` for every
-run (the manifest generation scripts in the smoke test and
-runbook do this automatically).
+On AMD GPUs, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` must be
+set. The `knlp-rocm-bench` container sets this automatically via
+`ENV` in the Dockerfile and via the launch script. For direct host
+use (debug-only), export it in `~/.bashrc`. Without it, PyTorch
+silently falls back to a slower attention path. Log the variable's
+state in `backend_manifest.json` for every run.
 
 ## Smoke-Tested Evaluation Stack on W7900
 
