@@ -2,8 +2,11 @@
 
 This page gets you from zero to a minimal FP16-vs-FUSED comparison
 in about 30 minutes of active setup time plus benchmark runtime.
-For the full evaluation protocol, see the
-[runbook](../fused_kv_benchmark_runbook.md).
+If this is your first run on a new machine or after upgrading
+dependencies, run the [smoke tests](smoke-test.md) first (10-20
+minutes) to validate that every tool works end-to-end before
+committing GPU hours here. For the full evaluation protocol, see
+the [runbook](../fused_kv_benchmark_runbook.md).
 
 ---
 
@@ -205,6 +208,8 @@ cd /data/knlp-key-results && git add fused_kv_bench/ && git commit \
 
 ## What Next
 
+- **Smoke tests**: If anything failed unexpectedly, run the
+  [smoke test suite](smoke-test.md) to isolate the broken tool.
 - **Full evaluation**: Follow the
   [runbook](../fused_kv_benchmark_runbook.md) from Section 5
   (Recommended Execution Order). The quickstart covers phases 2-4
