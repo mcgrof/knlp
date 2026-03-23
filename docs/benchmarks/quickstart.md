@@ -12,7 +12,12 @@ the [runbook](../fused_kv_benchmark_runbook.md).
 
 ## Prerequisites
 
-You need:
+Run all benchmarks inside the `knlp-rocm-bench` container (see
+[container.md](container.md)). The container provides vLLM, lm-eval,
+GuideLLM, and FlashAttention with ROCm support. Direct host Python
+environments are for debugging only.
+
+If not using the container, you need:
 
 1. **A GPU with enough VRAM** for the target model (e.g. 80 GB for
    a 7B model at FP16 with long-context KV cache).
