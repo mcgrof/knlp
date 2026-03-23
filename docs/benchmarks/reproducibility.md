@@ -46,12 +46,20 @@ required = [
     'serving_engine', 'vllm_version', 'torch_version',
     'flash_attn_version', 'vllm_attn_backend',
     'gpu_name', 'gpu_count', 'kv_cache_dtype',
-    'tensor_parallel_size', 'max_model_len'
+    'tensor_parallel_size', 'max_model_len',
+    'torch_rocm_aotriton_enable_experimental'
 ]
 missing = [k for k in required if k not in m]
 if missing:
     print(f'FAIL: backend_manifest.json missing: {missing}')
     sys.exit(1)
+# On AMD/ROCm hosts, verify the experimental flag is set
+rocm = m.get('rocm_version', 'N/A')
+aotriton = m.get('torch_rocm_aotriton_enable_experimental', 'unset')
+if rocm != 'N/A' and aotriton != '1':
+    print(f'WARN: ROCm detected but '
+          f'TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL={aotriton}')
+    print('  Set it to 1 in ~/.bashrc to enable experimental SDPA paths')
 print('OK: backend_manifest.json has all required fields')
 "
 ```
@@ -81,6 +89,12 @@ the KV cache quantization flag. Check each item:
 - [ ] **FlashAttention version**: Same `flash-attn` package version
   (or both absent)
 - [ ] **Dataset**: Same evaluation data, same preprocessing
+- [ ] **TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL**: On AMD/ROCm
+  hosts, this variable must be `1` for both runs. Without it,
+  PyTorch refuses to use the Flash Efficient and Mem Efficient
+  SDPA attention paths, causing silent fallback. On `prune` this
+  is exported in `~/.bashrc`. Log its value in the backend
+  manifest.
 
 If any of these differ between FP16 and FUSED, the comparison
 is invalid and must be re-run.
@@ -270,5 +284,7 @@ Before submitting or publishing results, confirm:
 - [ ] Results reproducible from committed configs and pinned vLLM
 - [ ] Multiple attention backends tested where hardware permits
   (see [runbook Section 9](../fused_kv_benchmark_runbook.md))
+- [ ] On AMD/ROCm hosts: `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+  logged in manifest and active for both FP16 and FUSED runs
 
 When all items are checked, the results are submission-ready.
