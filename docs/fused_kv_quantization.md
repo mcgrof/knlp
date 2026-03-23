@@ -81,7 +81,7 @@ The implementation lives in `knlp`, but there are **two different layers** of co
      - Pipeline D: Delta2 RDNA3 wavefront-aware tiling (`BLOCK_N=128`)
      - Pipeline E: Delta1 + Delta2 combined (**paper-grade W7900 production path**)
 
-This distinction matters. Earlier confusion came from benchmarking the generic expand kernel and assuming it represented the paper's W7900 decode kernel path. It does not. The paper-grade W7900 path is the v31 decode-kernel family, now exposed explicitly via `gpt2/compression/triton_decode_kernels.py`.
+Use the generic expand kernel only for generic unpack/dequant microbenchmarks. Use the v31 decode-kernel family for provenance-consistent W7900 paper experiments. The paper-grade W7900 decode path is exposed explicitly via `gpt2/compression/triton_decode_kernels.py`.
 
 Start with these files:
 
