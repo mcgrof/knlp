@@ -24,7 +24,8 @@ between the two runs. Any deviation invalidates the comparison.
 
 ## 0. Reproducibility Requirements
 
-Before running anything, lock the environment.
+Before running anything, lock the environment and record the
+attention backend.
 
 ### Pin the vLLM commit
 
@@ -49,6 +50,108 @@ nvidia-smi --query-gpu=name,driver_version,memory.total \
   --format=csv,noheader \
   >> <RESULTS_DIR>/collect_env.txt
 ```
+
+### Generate the attention backend manifest
+
+**Every benchmark run must produce `backend_manifest.json`.**
+Attention dispatch in vLLM and HuggingFace is implicit: the
+framework selects FlashAttention, SDPA, paged attention, or a
+fallback based on hardware, library versions, and config flags
+at runtime. Two runs with identical flags can hit different
+kernels if the installed FlashAttention version differs. Record
+the actual dispatch path, not just what you requested.
+
+Generate the manifest at the start of every run:
+
+```bash
+python3 -c "
+import json, sys, importlib
+
+manifest = {}
+
+# --- Serving engine ---
+import vllm
+manifest['serving_engine'] = 'vLLM'
+manifest['vllm_version'] = vllm.__version__
+
+# --- PyTorch ---
+import torch
+manifest['torch_version'] = torch.__version__
+manifest['cuda_version'] = torch.version.cuda or 'N/A'
+manifest['rocm_version'] = getattr(torch.version, 'hip', None) or 'N/A'
+
+# --- FlashAttention ---
+try:
+    import flash_attn
+    manifest['flash_attn_version'] = flash_attn.__version__
+except ImportError:
+    manifest['flash_attn_version'] = 'not installed'
+
+# --- vLLM attention backend ---
+try:
+    from vllm.config import get_attn_backend
+    manifest['vllm_attn_backend'] = str(get_attn_backend())
+except Exception:
+    manifest['vllm_attn_backend'] = 'could not detect'
+
+# --- GPU / platform ---
+if torch.cuda.is_available():
+    manifest['gpu_name'] = torch.cuda.get_device_name(0)
+    manifest['gpu_count'] = torch.cuda.device_count()
+    manifest['gpu_memory_gb'] = round(
+        torch.cuda.get_device_properties(0).total_mem / 1e9, 1)
+else:
+    manifest['gpu_name'] = 'N/A'
+
+# --- KV cache mode ---
+# Filled in by the caller after server starts.
+manifest['kv_cache_dtype'] = '${KV_CACHE_DTYPE:-fp16}'
+
+# --- Config flags ---
+manifest['tensor_parallel_size'] = int('${TP:-1}')
+manifest['max_model_len'] = int('${MAX_MODEL_LEN:-0}')
+manifest['dtype'] = '${DTYPE:-auto}'
+manifest['enforce_eager'] = '${ENFORCE_EAGER:-false}'
+
+json.dump(manifest, sys.stdout, indent=2)
+print()
+" > <RESULTS_DIR>/backend_manifest.json
+```
+
+After the vLLM server starts, update the manifest with the
+runtime attention backend from the server log:
+
+```bash
+# Extract the actual attention backend from server startup log
+grep -i "attention backend\|Using.*attention\|flash.*attn\|PagedAttention" \
+  <RESULTS_DIR>/guidellm/server_<TAG>.log \
+  | head -5 \
+  >> <RESULTS_DIR>/backend_manifest_runtime.txt
+```
+
+#### Required manifest fields
+
+Every `backend_manifest.json` must contain at minimum:
+
+| Field | Example | Why |
+|-------|---------|-----|
+| `serving_engine` | `vLLM`, `HF Transformers`, `TGI` | Different engines use different attention dispatch |
+| `vllm_version` | `0.7.3` | Attention backend selection changes between versions |
+| `torch_version` | `2.5.1+cu124` | SDPA backend availability depends on torch build |
+| `cuda_version` / `rocm_version` | `12.4` / `6.2` | Kernel availability depends on compute platform |
+| `flash_attn_version` | `2.7.3` or `not installed` | FlashAttention availability changes dispatch |
+| `vllm_attn_backend` | `FLASH_ATTN`, `XFORMERS`, `ROCM_FLASH` | The actual backend vLLM selected |
+| `gpu_name` | `NVIDIA H100 80GB HBM3` | Kernel dispatch is GPU-dependent |
+| `gpu_count` | `1` | TP degree affects attention path |
+| `kv_cache_dtype` | `fp16`, `int4_fused` | The quantization mode under test |
+| `tensor_parallel_size` | `1` | Affects KV cache layout |
+| `max_model_len` | `32768` | Affects paged attention block allocation |
+| `enforce_eager` | `false` | torch.compile changes attention dispatch |
+
+If the run uses HuggingFace Transformers directly (not vLLM),
+record `attn_implementation` (`eager`, `sdpa`, `flash_attention_2`)
+from the model config. If using vLLM with paged attention, record
+whether PagedAttention V1 or V2 is active.
 
 ### Save all JSON artifacts
 
@@ -474,6 +577,8 @@ For every benchmark that measures latency or throughput, report:
 
 ```
 <RESULTS_DIR>/
+├── backend_manifest.json       # REQUIRED: attention backend + versions
+├── backend_manifest_runtime.txt # Attention backend from server log
 ├── collect_env.txt
 ├── config_diff.txt
 ├── common.env
@@ -520,15 +625,68 @@ cd /data/knlp-key-results && git add fused_kv_bench/ && git commit
 
 ---
 
-## 9. Checklist Before Submission
+## 9. Attention Backend Testing Matrix
 
+Do not leave attention backend dispatch implicit. Test both
+FlashAttention-backed and paged-attention paths where the hardware
+and vLLM build support them. At minimum, run each benchmark
+configuration with the backend explicitly set and recorded.
+
+### Required backend coverage
+
+| Backend | How to force | When to test |
+|---------|-------------|--------------|
+| FlashAttention V2 | Install `flash-attn`, vLLM auto-selects | Default on NVIDIA GPUs with flash-attn installed |
+| SDPA (torch native) | `export VLLM_ATTENTION_BACKEND=TORCH_SDPA` | Fallback path; test when flash-attn is absent or on non-NVIDIA hardware |
+| FlashInfer | `export VLLM_ATTENTION_BACKEND=FLASHINFER` | Paged-attention path used in production vLLM deployments |
+| ROCm Flash | Auto-selected on AMD GPUs | Required for AMD GPU benchmarks |
+| Eager (no fusion) | `--enforce-eager` + `export VLLM_ATTENTION_BACKEND=TORCH_SDPA` | Baseline for isolating kernel-level effects |
+
+For each backend tested, generate a separate
+`backend_manifest.json` and store results in backend-specific
+subdirectories (e.g. `bench_flash/`, `bench_sdpa/`). If a backend
+is unavailable on the test hardware, document this in the manifest
+rather than silently omitting it.
+
+### Preventing silent backend fallback
+
+vLLM silently falls back to a slower backend when the preferred
+one is unavailable (e.g. FlashAttention not installed, or
+incompatible GPU). To detect this:
+
+1. Set `VLLM_ATTENTION_BACKEND` explicitly in `common.env`.
+2. After server startup, grep the log for the actual backend.
+3. Compare the requested backend against the runtime log. If
+   they differ, the run is invalid and must be re-done with the
+   correct backend installed.
+
+```bash
+# Verify backend matches request
+REQUESTED="FLASH_ATTN"
+ACTUAL=$(grep -oP 'Using attention backend: \K\S+' \
+  <RESULTS_DIR>/guidellm/server_<TAG>.log)
+if [ "$ACTUAL" != "$REQUESTED" ]; then
+  echo "ERROR: Requested $REQUESTED but got $ACTUAL"
+  echo "Install the correct backend or update common.env"
+  exit 1
+fi
+```
+
+---
+
+## 10. Checklist Before Submission
+
+- [ ] `backend_manifest.json` present with all required fields
+- [ ] Attention backend verified against server startup log
 - [ ] vLLM commit hash recorded
 - [ ] `collect_env.txt` saved
 - [ ] `config_diff.txt` documents the exact flag difference
 - [ ] FP16 and FUSED use identical model weights, TP, max-model-len
+- [ ] FP16 and FUSED use the same attention backend
 - [ ] All JSON results committed to key-results repo
 - [ ] lm-eval accuracy delta <1% on all standard tasks
 - [ ] NIAH retrieval 100% at all tested (depth, length) pairs
 - [ ] Latency and throughput numbers reported with p50/p95/p99
 - [ ] No cherry-picked operating points; full sweep data available
 - [ ] Results reproducible from committed configs and pinned vLLM
+- [ ] Multiple attention backends tested where hardware permits

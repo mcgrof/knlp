@@ -24,8 +24,8 @@ You need:
 
 ## Step 1: Lock the Environment
 
-Record exactly what you are running. This takes 2 minutes and
-prevents wasted debugging later.
+Record exactly what you are running, including the attention
+backend. This takes 2 minutes and prevents wasted debugging later.
 
 ```bash
 RESULTS_DIR=./fused_kv_results_$(date +%Y%m%d)
@@ -43,6 +43,40 @@ python -c "import torch; print(torch.__version__)" \
 nvidia-smi --query-gpu=name,driver_version,memory.total \
   --format=csv,noheader \
   >> $RESULTS_DIR/collect_env.txt
+```
+
+Generate the attention backend manifest. This records which
+attention kernel the framework will actually dispatch, not just
+what you requested. See the
+[runbook Section 0](../fused_kv_benchmark_runbook.md) for the
+full manifest generation script. At minimum:
+
+```bash
+python3 -c "
+import json, sys, torch
+m = {}
+m['torch_version'] = torch.__version__
+m['cuda_version'] = torch.version.cuda or 'N/A'
+try:
+    import flash_attn; m['flash_attn_version'] = flash_attn.__version__
+except ImportError:
+    m['flash_attn_version'] = 'not installed'
+import vllm; m['vllm_version'] = vllm.__version__
+if torch.cuda.is_available():
+    m['gpu_name'] = torch.cuda.get_device_name(0)
+    m['gpu_count'] = torch.cuda.device_count()
+json.dump(m, sys.stdout, indent=2); print()
+" > $RESULTS_DIR/backend_manifest.json
+```
+
+After the vLLM server starts (Step 3d), capture the runtime
+attention backend from the server log and append it to the
+manifest directory:
+
+```bash
+grep -i "attention backend\|Using.*attention" \
+  $RESULTS_DIR/niah/server_fp16.log \
+  > $RESULTS_DIR/backend_manifest_runtime.txt
 ```
 
 ## Step 2: Write a Shared Config
