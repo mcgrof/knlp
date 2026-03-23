@@ -20,6 +20,8 @@ them, a third party cannot reproduce the run.
 
 | Artifact | How to generate | Why it matters |
 |----------|----------------|----------------|
+| `backend_manifest.json` | Script in [runbook Section 0](../fused_kv_benchmark_runbook.md#generate-the-attention-backend-manifest) | Records the actual attention backend, serving engine, library versions, GPU, and config flags. Without this, two runs with identical flags can silently use different attention kernels. |
+| `backend_manifest_runtime.txt` | Grep server startup log for attention backend lines | Confirms what the framework actually dispatched at runtime, not just what was requested. |
 | `vllm_commit.txt` | `git log --oneline -1` in the vLLM source tree | Pins the exact serving framework version. Different commits can change KV cache layout, kernel dispatch, or scheduling. |
 | `collect_env.txt` | `python -c "import vllm; vllm.utils.collect_env()"` | Records PyTorch version, CUDA/ROCm version, GPU driver, and Python version in one file. |
 | `common.env` | Hand-written (see [quickstart](quickstart.md#step-2-write-a-shared-config)) | Ensures FP16 and FUSED runs use identical model, TP degree, max-model-len, dtype, and seed. |
@@ -29,10 +31,29 @@ them, a third party cannot reproduce the run.
 
 ```bash
 # After collecting artifacts, verify:
-test -f $RESULTS_DIR/vllm_commit.txt || echo "MISSING: vllm_commit.txt"
-test -f $RESULTS_DIR/collect_env.txt || echo "MISSING: collect_env.txt"
-test -f $RESULTS_DIR/common.env      || echo "MISSING: common.env"
-test -f $RESULTS_DIR/config_diff.txt || echo "MISSING: config_diff.txt"
+test -f $RESULTS_DIR/backend_manifest.json || echo "MISSING: backend_manifest.json"
+test -f $RESULTS_DIR/vllm_commit.txt       || echo "MISSING: vllm_commit.txt"
+test -f $RESULTS_DIR/collect_env.txt       || echo "MISSING: collect_env.txt"
+test -f $RESULTS_DIR/common.env            || echo "MISSING: common.env"
+test -f $RESULTS_DIR/config_diff.txt       || echo "MISSING: config_diff.txt"
+
+# Validate manifest has required fields
+python3 -c "
+import json, sys
+with open('$RESULTS_DIR/backend_manifest.json') as f:
+    m = json.load(f)
+required = [
+    'serving_engine', 'vllm_version', 'torch_version',
+    'flash_attn_version', 'vllm_attn_backend',
+    'gpu_name', 'gpu_count', 'kv_cache_dtype',
+    'tensor_parallel_size', 'max_model_len'
+]
+missing = [k for k in required if k not in m]
+if missing:
+    print(f'FAIL: backend_manifest.json missing: {missing}')
+    sys.exit(1)
+print('OK: backend_manifest.json has all required fields')
+"
 ```
 
 ---
@@ -42,6 +63,10 @@ test -f $RESULTS_DIR/config_diff.txt || echo "MISSING: config_diff.txt"
 The FP16 and FUSED runs must be identical in every respect except
 the KV cache quantization flag. Check each item:
 
+- [ ] **Attention backend**: Same backend for both runs (e.g.
+  both FlashAttention V2, or both SDPA). Verify from
+  `backend_manifest.json` and server startup log. Silent
+  fallback to a different backend invalidates the comparison.
 - [ ] **Model weights**: Same HuggingFace model ID or local
   checkpoint path
 - [ ] **Tensor-parallel degree**: Same TP value
@@ -53,6 +78,8 @@ the KV cache quantization flag. Check each item:
   number of GPUs
 - [ ] **vLLM commit**: Same commit hash for both runs
 - [ ] **torch.compile status**: Both enabled or both disabled
+- [ ] **FlashAttention version**: Same `flash-attn` package version
+  (or both absent)
 - [ ] **Dataset**: Same evaluation data, same preprocessing
 
 If any of these differ between FP16 and FUSED, the comparison
@@ -180,6 +207,19 @@ Include in the commit message:
 
 These are failure modes observed in prior benchmark runs:
 
+**Silent attention backend fallback.** vLLM falls back to a
+slower attention backend when the preferred one is unavailable
+(e.g. FlashAttention not installed). This changes the code path
+under test without any visible error. Always verify the runtime
+backend from the server log matches what you intended. Comparing
+FP16-on-FlashAttention vs FUSED-on-SDPA is not a valid
+comparison.
+
+**Missing `backend_manifest.json`.** Without the manifest, there
+is no way to verify which attention kernel, serving engine, or
+library versions were active during the run. Generate it before
+every run using the script in the runbook.
+
 **Missing `add_bos_token=True` in lm-eval.** Most causal LMs
 condition on BOS. Omitting this flag silently degrades scores,
 making FP16 look worse than it is and masking FUSED regressions.
@@ -206,12 +246,20 @@ invalid results. Always restart the server when switching configs.
 OOMs silently, retrieval scores drop to zero and look like a
 quantization failure. Check server logs for OOM errors.
 
+**Assuming FlashAttention is active without checking.** On AMD
+GPUs, ROCm Flash or Triton attention replaces NVIDIA
+FlashAttention. On CPU-only builds, only eager/SDPA is available.
+The manifest must record the actual backend, not an assumption.
+
 ---
 
 ## 8. Pre-Submission Summary
 
 Before submitting or publishing results, confirm:
 
+- [ ] `backend_manifest.json` present with all required fields
+- [ ] Attention backend verified against server startup log
+- [ ] FP16 and FUSED runs used the same attention backend
 - [ ] All environment artifacts present (Section 1)
 - [ ] Controlled variables verified (Section 2)
 - [ ] Required benchmarks completed (Section 3)
@@ -220,5 +268,7 @@ Before submitting or publishing results, confirm:
 - [ ] Results archived to key-results repo (Section 6)
 - [ ] No common mistakes apply (Section 7)
 - [ ] Results reproducible from committed configs and pinned vLLM
+- [ ] Multiple attention backends tested where hardware permits
+  (see [runbook Section 9](../fused_kv_benchmark_runbook.md))
 
 When all items are checked, the results are submission-ready.

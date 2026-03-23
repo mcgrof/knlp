@@ -24,8 +24,18 @@ Every benchmark compares exactly two configurations:
 | `FUSED` | Fused INT4 dequant inside the attention kernel |
 
 All other variables (model weights, vLLM commit, tensor-parallel
-degree, max-model-len, GPU type, driver version) are held
-identical. Any deviation invalidates the comparison.
+degree, max-model-len, GPU type, driver version, **attention
+backend**) are held identical. Any deviation invalidates the
+comparison.
+
+**Attention backend dispatch is implicit.** vLLM and HuggingFace
+Transformers select the attention kernel (FlashAttention, SDPA,
+paged attention, etc.) at runtime based on installed libraries and
+hardware. Two runs with identical CLI flags can hit different
+kernels. Every benchmark run must record the actual backend in a
+`backend_manifest.json` artifact. See the
+[runbook Section 0](../fused_kv_benchmark_runbook.md) for the
+manifest generation script and required fields.
 
 ## Benchmark Tools
 
@@ -62,6 +72,8 @@ All benchmarks write JSON artifacts into a single results tree:
 
 ```
 <RESULTS_DIR>/
+├── backend_manifest.json    # REQUIRED: attention backend, versions, GPU
+├── backend_manifest_runtime.txt  # Runtime backend from server log
 ├── collect_env.txt          # vLLM version, torch version, GPU info
 ├── config_diff.txt          # Exact flag difference between FP16 and FUSED
 ├── common.env               # Shared launch config (model, TP, max-model-len)
