@@ -98,10 +98,16 @@ Smoke tests explicitly do NOT validate:
 
 ## Prerequisites
 
-Same as the [quickstart prerequisites](quickstart.md#prerequisites),
-plus a model that loads fast. These examples use
-`marin-community/marin-8b-base` on an AMD Radeon Pro W7900 (48 GB),
-but substitute any model your pipeline targets.
+Run all smoke tests inside the `knlp-rocm-bench` container (see
+[container.md](container.md)). The container provides vLLM, lm-eval,
+GuideLLM, and sets `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
+automatically. For long-context harnesses (xKV, InfiniteBench),
+the `/data` bind mount makes host repos available inside the
+container.
+
+These examples use `marin-community/marin-8b-base` on an AMD
+Radeon Pro W7900 (48 GB), but substitute any model your pipeline
+targets.
 
 ```bash
 # Shared environment for smoke tests
