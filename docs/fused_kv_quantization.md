@@ -18,6 +18,17 @@ quantization alone is the mechanism that turns compression into a real decode
 win. Third, a short runtime calibration test can identify models that require
 more conservative key precision.
 
+## Table of Contents
+
+- [What "fused" means here](#what-fused-means-here)
+- [Related documentation](#related-documentation)
+- [Implementation](#implementation)
+- [W7900-specific fused decode provenance](#w7900-specific-fused-decode-provenance)
+- [Calibration and ratio classifier](#calibration-and-ratio-classifier)
+- [Paper Results Summary](#paper-results-summary)
+- [Next Directions](#next-directions)
+- [Status](#status)
+
 ## What "fused" means here
 
 A non-fused path reads quantized KV, dequantizes into an intermediate buffer,
@@ -41,22 +52,14 @@ Use these references together. The standalone systems diagnosis is [Memory-Traff
 
 The implementation in `knlp` has two layers, and it helps to keep them
 separate. One layer is generic unpack/dequant machinery used for microbenchmarks
-and simpler experiments. The other is the decode path that matters for the
-paper-grade W7900 provenance.
+and simpler experiments. The other layer is a W7900-specific fused decode
+provenance path that documents how the paper-grade AMD decode kernels evolved.
+That second layer is not the whole fused-KV story across all GPUs. It is the
+particular W7900 decode lineage that was important for the AMD paper path.
 
 The generic side starts with `kernels/triton_kernels.py` and
 `scripts/kv_triton_benchmark.py`. Those are useful when the goal is to study
-unpack/dequant behavior in isolation or run small microbenchmarks. They are not
-the same thing as the paper-grade decode path.
-
-The paper-grade decode side starts with
-`kernels/triton_decode_kernels.py` and the ablation source
-`scripts/v31_kernel_bench.py`. The W7900 path in the paper evolved through a
-set of kernel variants rather than a single frozen kernel. Pipeline B is the
-baseline fused INT4 decode kernel with `BLOCK_N=64`. Pipeline C adds Delta1
-scale broadcast reuse. Pipeline D adds Delta2 RDNA3 wavefront-aware tiling with
-`BLOCK_N=128`. Pipeline E combines Delta1 and Delta2 and is the paper-grade
-W7900 production path.
+unpack/dequant behavior in isolation or run small microbenchmarks.
 
 If you want a simple starting point, begin with these files:
 - [kernels/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/kernels/triton_kernels.py)
@@ -66,9 +69,25 @@ If you want a simple starting point, begin with these files:
 - [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
 - [scripts/v31_kernel_bench.py](https://github.com/mcgrof/knlp/blob/main/scripts/v31_kernel_bench.py)
 
-Use the generic module for small unpack/dequant experiments. Use the decode
-module and the v31 lineage when you need provenance-consistent W7900 decode
-experiments.
+Use the generic module for small unpack/dequant experiments.
+
+## W7900-specific fused decode provenance
+
+The W7900-specific decode side starts with `kernels/triton_decode_kernels.py`
+and the ablation source `scripts/v31_kernel_bench.py`. This section is here to
+document the AMD/W7900 fused decode path specifically, because that path has
+its own optimization history and should not be mistaken for the entire
+cross-GPU fused quantization story.
+
+The W7900 path in the paper evolved through a set of kernel variants rather
+than a single frozen kernel. Pipeline B is the baseline fused INT4 decode
+kernel with `BLOCK_N=64`. Pipeline C adds Delta1 scale broadcast reuse.
+Pipeline D adds Delta2 RDNA3 wavefront-aware tiling with `BLOCK_N=128`.
+Pipeline E combines Delta1 and Delta2 and is the paper-grade W7900 production
+path.
+
+Use the decode module and the v31 lineage when you need
+provenance-consistent W7900 decode experiments.
 
 ## Calibration and ratio classifier
 
