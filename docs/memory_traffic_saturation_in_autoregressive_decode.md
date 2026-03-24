@@ -1,16 +1,19 @@
 # Memory-Traffic Saturation in Autoregressive Decode
 
-This characterization grew out of the original [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md).
-BPA led here because it forced a sharper systems question:
+Use this document as the standalone systems characterization of decode-time
+memory traffic.
+
+Start from the concrete question:
 **what memory traffic does decode actually pay for, and which interventions
 change that bill in practice?**
 
-That question led first to the cross-GPU decode characterization here, then to
-KV quantization review, and then to fused KV quantization as the strongest
-concrete intervention.
+Use the measurements here to establish the cross-GPU decode regime, motivate
+KV quantization review, and explain why fused KV quantization became the
+strongest concrete intervention.
 
-For the research lineage behind that progression, see:
-- [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md).
+For the research lineage, see
+[RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md).
 
 For the empirical visualization, see:
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
