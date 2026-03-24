@@ -83,12 +83,12 @@ tolerance. That earlier bounded-protection story is still important because it
 established that not all model families react to KV quantization the same way.
 
 The later fused-KV work extends that picture from a handful of families to a
-larger benchmark set. The paper summary in `docs/fused_kv_quantization.md`
+larger benchmark set. The paper summary in [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md)
 states that the runtime ratio classifier identifies sensitive models with 100%
 accuracy across 14 models and generalizes to 72B. It also states that values
 universally tolerate INT4 while key precision floors are model-dependent and
-concentrated in the Qwen family. That is the current clearest public summary of
-why cross-model calibration matters.
+concentrated in the Qwen family. That is the current clearest summary of why
+cross-model calibration matters.
 
 DeepSeek MLA-related work belongs in the same discussion even though it is not
 yet folded into one clean benchmark matrix. Scripts such as
