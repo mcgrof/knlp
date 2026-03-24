@@ -106,6 +106,105 @@ Keep `docs/rgsa.md` as precursor work. Use BPA as the main overview for this lin
 - context-linearity measurements
 - long-context capacity pushes
 
+## Multi-GPU Empirical Dataset
+
+Use `bpa-multi-gpu/` as the empirical decode-time KV bandwidth dataset.
+
+Treat it as a measured corpus of:
+- GPU-specific decode throughput,
+- latency vs. batch and context,
+- effective KV-read bandwidth,
+- batch-saturation behavior,
+- and long-context capacity limits.
+
+The current paper-facing dataset spans:
+- AMD W7900 matched lane,
+- NVIDIA A100 matched lane,
+- NVIDIA H100 reference lane,
+- NVIDIA B200 core provenance lane,
+- NVIDIA B200 long-context lane.
+
+Use this dataset to answer three questions:
+1. does decode throughput follow hardware memory-system strength,
+2. where does each GPU saturate under batch growth,
+3. when does long-context planning become a capacity problem instead of only a bandwidth problem.
+
+### Dataset layout
+
+Use these paths in `knlp-key-results`:
+- `bpa-multi-gpu/json/`
+- `bpa-multi-gpu/smoke/`
+- `bpa-multi-gpu/long_context/`
+- `bpa-multi-gpu/logs/`
+
+The paper-facing matched lanes are the JSON files under `bpa-multi-gpu/json/`.
+The capacity evidence lives under `bpa-multi-gpu/long_context/`.
+
+### What each row records
+
+Expect per-point measurements such as:
+- batch size `B`
+- context length `T`
+- mean latency
+- standard deviation
+- tokens/sec
+- KV bytes touched
+- effective bandwidth (`bw_GBs`)
+
+Use those rows to derive:
+- context-linearity behavior,
+- bandwidth plateaus,
+- batch-saturation fits,
+- and practical planning limits for long-context serving.
+
+### Reproduce the dataset
+
+Do this in order.
+
+1. Run smoke tests first.
+2. Run the full matrix only after smoke passes.
+3. Fit the scaling summaries.
+4. Package the paper-facing results.
+
+Use these scripts:
+- `scripts/paper/bpa_paper/run_smoke.py`
+- `scripts/paper/bpa_paper/run_matrix.py`
+- `scripts/paper/bpa_paper/fit_scaling.py`
+- `scripts/paper/bpa_paper/package_results.py`
+
+Use these lane configs:
+- `scripts/paper/bpa_paper/configs/w7900.yaml`
+- `scripts/paper/bpa_paper/configs/a100.yaml`
+- `scripts/paper/bpa_paper/configs/h100.yaml`
+- `scripts/paper/bpa_paper/configs/b200.yaml`
+
+Read the orchestration overview before rerunning anything:
+- `scripts/paper/bpa_paper/README.md`
+
+### Command pattern
+
+Run the paper-facing framework like this:
+
+```bash
+python scripts/paper/bpa_paper/run_smoke.py --config scripts/paper/bpa_paper/configs/a100.yaml
+python scripts/paper/bpa_paper/run_matrix.py --config scripts/paper/bpa_paper/configs/a100.yaml
+python scripts/paper/bpa_paper/fit_scaling.py --config scripts/paper/bpa_paper/configs/a100.yaml
+python scripts/paper/bpa_paper/package_results.py --config scripts/paper/bpa_paper/configs/a100.yaml
+```
+
+Swap the config file for `w7900.yaml`, `h100.yaml`, or `b200.yaml` as needed.
+
+### Use this dataset for memory planning and tiering
+
+Use the measured `bw_GBs` and long-context rows to reason about:
+- the sustained decode bandwidth a device actually delivers,
+- whether a target serving regime is bandwidth-limited or capacity-limited,
+- and whether a lower storage tier could possibly feed dense decode fast enough.
+
+Do not plan tiering from advertised HBM capacity alone.
+Use the measured decode-time bandwidth rows first, then ask whether any lower
+memory tier can sustain that demand.
+
 ### Fused KV quantization
 - INT4 KV cache quantization with kernel fusion
 - fused vs non-fused pipeline comparisons
