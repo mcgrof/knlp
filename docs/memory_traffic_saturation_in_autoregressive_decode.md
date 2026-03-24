@@ -13,7 +13,7 @@ given batch and context, whether extra HBM capacity will materially help, and
 whether a lower memory tier could ever feed the workload fast enough to matter.
 Detailed planning examples appear in [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering).
 
-For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For script provenance and the reason this result now has its own standalone entrypoint, see [Memory-Traffic Saturation in Autoregressive Decode: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_lineage.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://knlp.io/ridge_point.html).
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For script provenance and the reason this result now has its own standalone entrypoint, see [Memory-Traffic Saturation in Autoregressive Decode: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_lineage.md). For the cross-model companion, use [Cross-Model KV Sensitivity and Decode Scaling](https://github.com/mcgrof/knlp/blob/main/docs/cross_model_kv_sensitivity_and_decode_scaling.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://knlp.io/ridge_point.html).
 
 ## Table of Contents
 
