@@ -55,13 +55,13 @@ Each point is intended to record values such as:
 
 ## Why this matters
 
-This characterization answered the question that BPA forced into the open:
+Start with the concrete systems question:
 
 > is decode really bottlenecked by memory traffic, or is that just a loose story
 > people tell before they profile the kernel path carefully?
 
-The answer from the measurements is that decode is consistently memory-traffic
-limited across tested hardware classes. That result then motivated the next
+Use the measurements here to answer it directly: decode is consistently
+memory-traffic limited across tested hardware classes. Then ask the next
 question:
 
 > if decode is dominated by KV traffic, which intervention reduces real kernel
