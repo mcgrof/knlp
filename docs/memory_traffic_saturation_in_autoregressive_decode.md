@@ -136,7 +136,7 @@ python scripts/memory_traffic_saturation.py \
   --stage matrix-exec
 ```
 
-Run the public workflow for all lanes as a dry run:
+Run the full configured workflow as a dry run:
 
 ```bash
 python scripts/memory_traffic_saturation.py \
@@ -144,6 +144,11 @@ python scripts/memory_traffic_saturation.py \
   --gpu all \
   --stage full-dry-run
 ```
+
+Here `--gpu all` means: run all configured experiment tracks in sequence. It
+does not detect local hardware or provision GPUs automatically. Use a specific
+value such as `--gpu a100` or `--gpu h100` when you are running on a single
+machine or targeting one known hardware lane.
 
 Derive fit artifacts and package a paper-facing export tree:
 
@@ -159,21 +164,26 @@ python scripts/memory_traffic_saturation.py \
   --stage package
 ```
 
-## Public scripts involved
+## Scripts
 
-Use these public scripts directly.
+Use these scripts directly.
 
-### Unified standalone helper
+### Standalone helper
 - `scripts/memory_traffic_saturation.py`
 
-### Underlying public dataset framework
+### Dataset framework
 - `scripts/paper/bpa_paper/run_dataset.py`
 - `scripts/paper/bpa_paper/run_smoke.py`
 - `scripts/paper/bpa_paper/run_matrix.py`
 - `scripts/paper/bpa_paper/fit_scaling.py`
 - `scripts/paper/bpa_paper/package_results.py`
 
-### Lane configs
+### Config files
+
+A **lane** is a scoped experiment track: one hardware target, one measurement
+purpose, one defined batch/context grid, and one artifact contract.
+
+These config files define the current lanes:
 - `scripts/paper/bpa_paper/configs/w7900.yaml`
 - `scripts/paper/bpa_paper/configs/a100.yaml`
 - `scripts/paper/bpa_paper/configs/h100.yaml`
@@ -221,13 +231,115 @@ For the intervention and kernel-path story, see:
 
 ## Use this for memory planning and tiering
 
-Use the measured decode-time bandwidth rows to reason about:
-- sustained decode bandwidth,
-- batch saturation,
-- context-linearity,
-- practical long-context limits,
-- and whether any lower memory/storage tier could sustain dense decode.
+Use this dataset to answer a practical deployment question:
 
-Do not plan future tiering from capacity alone.
-Plan from measured decode-time bandwidth first, then ask whether any lower tier
-can actually feed that workload.
+> can this system actually serve dense autoregressive decode at the batch,
+> context, and latency target you care about?
+
+Do not plan from model size, HBM capacity, or spec-sheet bandwidth alone.
+Plan from measured decode behavior.
+
+### Why this is useful
+
+This dataset records what the system actually does during decode:
+- measured latency,
+- measured tokens/sec,
+- measured effective bandwidth,
+- measured batch saturation,
+- and measured context scaling.
+
+That lets you plan from observed behavior instead of relying on brochure
+numbers or rough back-of-the-envelope KV cache math.
+
+### Why you would do this
+
+Use these measurements when you need to decide things like:
+- whether one GPU is sufficient for a target serving regime,
+- whether buying more HBM capacity will actually help,
+- whether a lower memory/storage tier could sustain dense decode,
+- whether fused KV compression is worth the engineering effort,
+- and whether a long-context product target is bandwidth-limited,
+  capacity-limited, or both.
+
+### Separate bandwidth planning from capacity planning
+
+Use the core matched lanes to answer the bandwidth question:
+- what sustained decode-time bandwidth does this workload actually need,
+- where does throughput saturate under batch growth,
+- and how does latency scale with context length on real hardware?
+
+Use the long-context lane to answer the capacity question:
+- when does larger HBM materially extend feasible context length,
+- and when does extra capacity matter more than another increment of bandwidth?
+
+Keep those two planning problems separate. A system can have enough capacity and
+still fail to sustain decode-time traffic. A system can also have strong
+bandwidth and still run out of HBM at long context.
+
+### Use measured bandwidth before proposing tiering
+
+Do not propose KV offload, host-memory cache tiers, CXL-backed expansion, or
+other storage hierarchies from capacity numbers alone.
+
+Start with the measured `bw_GBs` rows and ask:
+- what bandwidth does dense decode actually require at the target `B` and `T`?
+- does the system already saturate before that point?
+- could any lower tier feed that decode path fast enough?
+
+If the lower tier cannot sustain the measured decode-time demand, then the
+design increases capacity without solving the actual bottleneck.
+
+### Practical examples
+
+#### Example 1: choose between A100 and B200
+
+Suppose you want to serve a 7B model at moderate batch and context lengths in
+roughly the 8K--32K regime.
+
+Use the matched-lane measurements to check:
+- where A100 saturates,
+- what throughput B200 adds in practice,
+- and whether the expected gain comes from bandwidth, capacity, or both.
+
+Do not assume that the ratio of peak HBM bandwidth will transfer directly into
+real decode throughput.
+
+#### Example 2: evaluate KV offload to a slower tier
+
+Suppose someone proposes moving older KV state to host memory or another slower
+storage layer.
+
+Use the measured decode rows to ask:
+- what sustained bandwidth is required at the target batch and context,
+- and can the proposed tier deliver that continuously during dense decode?
+
+If not, then the idea adds bytes of storage without making the decode path
+viable.
+
+#### Example 3: plan a 128K+ context product
+
+Suppose the target is premium long-context inference at 128K or beyond.
+
+Answer two questions separately:
+1. can the decode path sustain the traffic in the target operating regime?
+2. can the device hold enough KV state at all?
+
+Use the core lanes for the first question and the long-context lane for the
+second.
+
+#### Example 4: decide whether fused KV compression is worth building
+
+Use the dataset to determine whether the current serving regime is already in a
+memory-traffic-limited decode phase. If the target operating region is short
+context and weakly KV-bound, compression may not be the highest-leverage change.
+If the target region is long context, larger batch, or a clear KV-bandwidth
+plateau, then fused KV compression becomes much more attractive.
+
+### Working rule
+
+Use the measured decode-time bandwidth rows first. Then decide:
+- whether the workload is bandwidth-limited,
+- whether it is capacity-limited,
+- and whether any lower memory tier can actually feed it.
+
+Do not design tiering from capacity alone.
