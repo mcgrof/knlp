@@ -13,7 +13,7 @@ given batch and context, whether extra HBM capacity will materially help, and
 whether a lower memory tier could ever feed the workload fast enough to matter.
 Detailed planning examples appear in [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering).
 
-For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For the research lineage, see [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For script provenance and the reason this result now has its own standalone entrypoint, see [Memory-Traffic Saturation in Autoregressive Decode: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_lineage.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
 
 ## Table of Contents
 
@@ -22,7 +22,6 @@ For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/m
 - [What it shows](#what-it-shows)
 - [Reproduce this result](#reproduce-this-result)
 - [Scripts](#scripts)
-- [Original script lineage](#original-script-lineage)
 - [Relationship to fused quantization](#relationship-to-fused-quantization)
 - [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering)
 
@@ -167,33 +166,6 @@ These config files define the current lanes:
 - `scripts/paper/bpa_paper/configs/a100.yaml`
 - `scripts/paper/bpa_paper/configs/h100.yaml`
 - `scripts/paper/bpa_paper/configs/b200.yaml`
-
-## Original script lineage
-
-This standalone result was derived from a broader BPA script lineage.
-Use the unified helper above for reproduction now, but keep these original
-public scripts as provenance for how the result emerged:
-
-### H100 decode characterization lineage
-- `scripts/v35_h100_bench.py`
-- `scripts/bpa_h100_exp3_kernel_latency.py`
-- `scripts/bpa_h100_exp2_long_context.py`
-
-### W7900 lineage
-- `scripts/bpa_v50_w7900.py`
-- `scripts/bpa_v51_w7900.py`
-- `scripts/bpa_v52_w7900.py`
-- `scripts/bpa_v53_w7900.py`
-
-### Supporting helpers
-- `scripts/check_a100_baseline.py`
-- `scripts/plot_scaling_laws_b200.py`
-- `scripts/generate_unified_comparison.py`
-- `scripts/regenerate_unified_summary.py`
-
-Use the original lineage scripts when you need provenance or want to inspect
-how the result evolved. Use the unified helper when you want to reproduce the
-public dataset cleanly.
 
 ## Relationship to fused quantization
 
