@@ -254,6 +254,25 @@ both. Only after that should you decide whether a lower memory tier can feed
 the workload or whether compression and routing are required. Do not design
 future tiering from capacity alone.
 
+If asynchronous fused dequantization becomes common in mainstream inference
+stacks, this characterization does not become obsolete, but the measurement
+framework should be rerun with that kernel path made explicit. The likely
+change is not that decode suddenly stops being a memory-traffic problem. The
+more likely outcome is that the measured bandwidth plateau, saturation onset,
+and implementation-dependent deltas move because overlap and staging improve.
+That future comparison should be done as a matched with-versus-without study on
+identical hardware, models, batch sizes, and context lengths so the effect of
+asynchronous fused dequantization is isolated directly.
+
+We have not prioritized that comparison yet because the more immediate source of
+variation in the current work is model-specific calibration policy. The results
+already show that a calibration or ratio-classifier step is needed for some
+models and that the appropriate mapping varies by model family and regime. The
+active R&D focus is therefore on reducing the time it takes to discover those
+mappings and apply them when they matter. Once that policy-selection path is
+cheaper and more stable, it will make more sense to add a dedicated async
+fused-dequantization delta study on top of the same measurement framework.
+
 ## Practical use cases
 
 One common use case is hardware selection for a real serving target. Suppose
