@@ -165,8 +165,8 @@ level benchmarking, earlier family studies, matched-lane decode characterization
 and ratio-classifier work.
 
 There is also open work in extending the family coverage more cleanly. DeepSeek
-MLA and other architecture-specific variants should eventually land in the same
-public narrative with the same clarity as Qwen, Mistral, and Llama. The same
-is true for newer larger families where the question is not just whether decode
-is bandwidth-limited, but whether the calibration policy continues to compress
-cleanly at scale.
+MLA and other architecture-specific variants should eventually be documented
+with the same clarity as Qwen, Mistral, and Llama. The same is true for newer
+larger families where the question is not just whether decode is bandwidth-
+limited, but whether the calibration policy continues to compress cleanly at
+scale.
