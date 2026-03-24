@@ -11,50 +11,28 @@ Use the measurements here to establish the cross-GPU decode regime, motivate
 KV quantization review, and explain why fused KV quantization became the
 strongest concrete intervention.
 
-For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md).
-For the research lineage, see
-[RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md).
-
-For the empirical visualization, see:
-- [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
-- [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For the research lineage, see [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
 
 ## What this is
 
-This is the standalone empirical decode characterization that established:
-- autoregressive decode is governed by memory traffic,
-- throughput follows hardware memory-system strength more than peak compute,
-- latency grows approximately linearly with context length,
-- batch growth drives hardware-specific saturation,
-- and long-context planning becomes a capacity problem only after decode
-  traffic has been reduced enough.
-
-Treat this as the systems diagnosis that motivated later fused
-quantization work.
+This document records the decode-time memory-traffic characterization that set
+the direction for the later quantization work. The core result is simple:
+autoregressive decode is governed by memory traffic, throughput follows
+hardware memory-system strength more than peak compute, latency grows roughly
+linearly with context length, batch growth produces hardware-specific
+saturation, and long-context planning becomes a capacity problem only after the
+decode traffic problem has been understood. Treat this as the systems
+diagnosis that motivated later fused quantization work.
 
 ## What it measures
 
-The measurement corpus covers decode-time KV bandwidth behavior across:
-- multiple GPUs,
-- multiple batch sizes,
-- multiple context lengths,
-- and multiple kernel paths.
-
-The current paper-facing lanes are:
-- AMD W7900 matched lane,
-- NVIDIA A100 matched lane,
-- NVIDIA H100 reference lane,
-- NVIDIA B200 core provenance lane,
-- NVIDIA B200 long-context lane.
-
-Each point is intended to record values such as:
-- batch size `B`,
-- context length `T`,
-- mean latency,
-- standard deviation,
-- tokens/sec,
-- KV bytes touched,
-- effective bandwidth (`bw_GBs`).
+The measurement corpus covers decode-time KV bandwidth behavior across multiple
+GPUs, batch sizes, context lengths, and kernel paths. The current paper-facing
+tracks cover AMD W7900, NVIDIA A100, NVIDIA H100, and NVIDIA B200, with the
+B200 also used for the long-context capacity path. Each measurement point is
+intended to record the batch size `B`, context length `T`, mean latency,
+standard deviation, tokens/sec, KV bytes touched, and effective bandwidth
+(`bw_GBs`).
 
 ## Why this matters
 
