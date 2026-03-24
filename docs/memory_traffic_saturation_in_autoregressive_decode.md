@@ -1,9 +1,7 @@
 # Memory-Traffic Saturation in Autoregressive Decode
 
-This document stands on its own.
-
-It came out of the original BPA effort, but it is no longer just a BPA note.
-BPA led to this characterization because BPA asked a sharper systems question:
+This characterization grew out of the original [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md).
+BPA led here because it forced a sharper systems question:
 **what memory traffic does decode actually pay for, and which interventions
 change that bill in practice?**
 
@@ -11,15 +9,8 @@ That question led first to the cross-GPU decode characterization here, then to
 KV quantization review, and then to fused KV quantization as the strongest
 concrete intervention.
 
-Use this document when you want the standalone systems result:
-- what was measured,
-- why it was measured,
-- what it shows,
-- and how to reproduce it with public scripts in `knlp`.
-
-For BPA lineage and broader motivation, see:
-- [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md)
-- [RGSA \u2192 BPA \u2192 fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
+For the research lineage behind that progression, see:
+- [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
 
 For the empirical visualization, see:
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
@@ -35,7 +26,7 @@ This is the standalone empirical decode characterization that established:
 - and long-context planning becomes a capacity problem only after decode
   traffic has been reduced enough.
 
-Treat this as the public systems diagnosis that motivated later fused
+Treat this as the systems diagnosis that motivated later fused
 quantization work.
 
 ## What it measures
@@ -112,7 +103,7 @@ not just provide more bytes of storage.
 
 ## Reproduce this result
 
-Use the standalone public helper:
+Use the standalone helper:
 - `scripts/memory_traffic_saturation.py`
 
 That helper wraps the paper-facing BPA dataset framework so this result can be
