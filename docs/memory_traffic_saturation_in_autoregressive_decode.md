@@ -1,26 +1,30 @@
 # Memory-Traffic Saturation in Autoregressive Decode
 
-Use this document as the standalone systems characterization of decode-time
-memory traffic.
-
-Start from the concrete question:
-**what memory traffic does decode actually pay for, and which interventions
-change that bill in practice?**
-
-You can use the measurements here to establish the cross-GPU decode regime,
-motivate KV quantization review, and explain why fused KV quantization became
-the strongest concrete intervention.
-
 This document records the decode-time memory-traffic characterization that set
-the direction for the later quantization work. The core result is simple:
-autoregressive decode is governed by memory traffic, throughput follows
-hardware memory-system strength more than peak compute, latency grows roughly
-linearly with context length, batch growth produces hardware-specific
-saturation, and long-context planning becomes a capacity problem only after the
-decode traffic problem has been understood. Treat this as the systems
-diagnosis that motivated later fused quantization work.
+the direction for the later quantization work. It shows that autoregressive
+decode is governed by memory traffic, that throughput follows hardware
+memory-system strength more than peak compute, that latency grows roughly
+linearly with context length, and that batch growth produces
+hardware-specific saturation. It is useful for two reasons. First, it explains
+why fused KV quantization became a strong intervention: it attacks the traffic
+that actually limits decode. Second, it gives you measured data for practical
+planning questions such as whether a target GPU can sustain dense decode at a
+given batch and context, whether extra HBM capacity will materially help, and
+whether a lower memory tier could ever feed the workload fast enough to matter.
+Detailed planning examples appear in [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering).
 
 For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For the research lineage, see [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
+
+## Table of Contents
+
+- [What it measures](#what-it-measures)
+- [Why this matters](#why-this-matters)
+- [What it shows](#what-it-shows)
+- [Reproduce this result](#reproduce-this-result)
+- [Scripts](#scripts)
+- [Original script lineage](#original-script-lineage)
+- [Relationship to fused quantization](#relationship-to-fused-quantization)
+- [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering)
 
 ## What it measures
 
@@ -34,19 +38,15 @@ standard deviation, tokens/sec, KV bytes touched, and effective bandwidth
 
 ## Why this matters
 
-Start with the concrete systems question:
-
-> is decode really bottlenecked by memory traffic, or is that just a loose story
-> people tell before they profile the kernel path carefully?
-
-Use the measurements here to answer it directly: decode is consistently
-memory-traffic limited across tested hardware classes. Then ask the next
-question:
-
-> if decode is dominated by KV traffic, which intervention reduces real kernel
-> traffic instead of only shrinking tensors on paper?
-
-That is what led to fused KV quantization.
+The purpose of this characterization is to replace intuition with measurement.
+A lot of discussion around decode bottlenecks starts from a loose story that
+memory traffic must matter, but that story is not enough by itself. The
+measurements here make the claim concrete: across the tested hardware classes,
+decode is consistently memory-traffic limited. Once that is established, the
+next question becomes much sharper. If decode is dominated by KV traffic, then
+which intervention reduces real kernel traffic instead of merely shrinking
+representations on paper? That is the line of reasoning that led to fused KV
+quantization.
 
 ## What it shows
 
