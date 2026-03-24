@@ -182,12 +182,13 @@ For the intervention and kernel-path story, see:
 
 ## Use this for memory planning and tiering
 
-You can use this dataset to answer a practical deployment question: can a
-system actually serve dense autoregressive decode at the batch, context, and
-latency target you care about? That is the reason to keep this characterization
-around as more than a paper artifact. It gives you measured decode behavior,
-not just a hardware spec sheet and not just an estimate of KV cache size on
-paper.
+We did this work to understand what dense autoregressive decode actually pays
+for at runtime and to ground later quantization work in measured behavior
+instead of intuition. You can now also use the same dataset to answer a
+practical deployment question: can a system actually serve dense autoregressive
+decode at the batch, context, and latency target you care about? It gives you
+measured decode behavior, not just a hardware spec sheet and not just an
+estimate of KV cache size on paper.
 
 That matters because memory planning for LLM serving is easy to do badly. It is
 common to look only at model size, HBM capacity, or advertised bandwidth and
