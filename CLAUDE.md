@@ -77,6 +77,40 @@ Architectural changes include:
 - Kconfig parser silently ignores lines with spaces around equals signs
 - After any edit to defconfigs, verify syntax: `grep " = " defconfigs/*` should return nothing
 
+### Markdown / Documentation Files
+- **CRITICAL**: Write documentation as technical prose, not as an AI-flavored outline.
+- Start by stating plainly what the document is for and why it exists.
+- Pull the key motivation into the top of the document. Do not bury the use case deep in the file.
+- Use a short Table of Contents for longer documents.
+- Prefer narrative paragraphs over shopping-list bullet dumps.
+- Use bullets only when they genuinely improve readability: short file lists,
+  compact result summaries, or small enumerations.
+- Do **not** create sections like "What this is" if that content belongs in the intro.
+- Do **not** write prompt-y filler like "This document stands on its own" or
+  hedged internal commentary like "the evidence is real and already public".
+- Do **not** apologize for confusing structure inside the main doc. Fix the structure.
+- Standalone docs must stand on their own. Do not make the reader chase older
+  internal notes just to understand the actual result.
+- If lineage or provenance matters, split it into a separate lineage/provenance
+  doc and link to it. Keep the main doc focused on the result itself.
+- When older work matters, summarize the result directly in the main doc.
+  Put historical breadcrumbs in the lineage doc, not in the main narrative.
+- Use direct links for referenced docs and scripts. Do not write bare paths when
+  a real markdown link is more useful.
+- Avoid weird audience markers like "public narrative" or "public scripts"
+  unless the distinction truly matters.
+- Avoid robotic imperative spam like repeated "Use X" / "Do Y" / "Start with".
+  Mix in natural phrasing such as "You can use..." when it reads better.
+- If a term is used repeatedly, define it once before leaning on it.
+  Example: define "lane" before saying "lane configs".
+- If a CLI flag can be misunderstood, explain it where it is introduced.
+  Example: `--gpu all` means all configured tracks, not local GPU autodetect.
+- When documenting examples or use cases, prefer short narrative subsections to
+  giant bullet farms.
+- If a path name is historically misleading, fix the repo layout if practical.
+  Do not leave the doc to carry the whole burden of explaining a bad structure.
+- Documentation edits should reduce confusion, not relocate it.
+
 ## GPT2 Model Naming Convention
 
 ### Overview
