@@ -1,121 +1,93 @@
 # Fused KV Quantization
 
-Fused KV quantization is the strongest concrete systems result in the BPA line
-of work in `knlp`.
+Fused KV quantization is the strongest concrete intervention that came out of
+the decode-side memory-traffic work in `knlp`. The important point is not
+simply that INT4 is smaller than FP16 on paper. The important point is that
+autoregressive decode pays for memory traffic in the kernel that actually runs,
+and compression only helps if it reduces that real traffic. That is why fusion
+matters.
 
-The full empirical study is published as:
+The full empirical study is published in **Memory-Traffic Saturation in
+Autoregressive Transformer Decode**:
+<https://github.com/mcgrof/paper-memory-decode>
 
-> **Memory-Traffic Saturation in Autoregressive Transformer Decode**
-> Paper repository: <https://github.com/mcgrof/paper-memory-decode>
-
-The paper benchmarks 14 open-weight models across four GPU architectures
-(W7900, A100, H100, B200) and establishes that decode speedup from fused
-KV compression follows a batch-driven saturation model, that kernel fusion
-rather than quantization alone is the mechanism, and that a 2-minute runtime
-calibration test identifies models requiring asymmetric key/value precision.
-
-Start from the basic rule:
-
-- autoregressive decode is dominated by memory traffic (weights at small
-  batch/short context, KV cache at large batch/long context),
-- quantization helps only if it reduces that traffic in the real decode kernel,
-- and **fusion is the difference between a real speedup and a fake one**.
+That work benchmarks 14 open-weight models across W7900, A100, H100, and B200
+and shows three things clearly. First, decode speedup from fused KV compression
+follows a batch-driven saturation pattern. Second, kernel fusion rather than
+quantization alone is the mechanism that turns compression into a real decode
+win. Third, a short runtime calibration test can identify models that require
+more conservative key precision.
 
 ## What "fused" means here
 
-A non-fused pipeline typically:
+A non-fused path reads quantized KV, dequantizes into an intermediate buffer,
+writes that buffer back out, and only then runs attention over the expanded
+representation. That extra read/write path can erase much or all of the benefit
+of using a smaller KV format in the first place.
 
-1. reads quantized KV,
-2. dequantizes into an intermediate buffer,
-3. writes that buffer back to memory,
-4. then runs attention over the dequantized representation.
+A fused path does the dequantization inside the attention kernel. The expanded
+values exist only long enough to be consumed by the decode computation instead
+of being written back as a separate global-memory artifact. That is the entire
+point. The practical distinction is therefore simple: non-fused quantization
+can be neutral or counterproductive, while fused quantization can translate
+compression into real decode speedup because it removes traffic from the path
+that actually dominates decode.
 
-That extra read/write path can destroy the benefit of using a smaller KV format.
-The memory traffic saved by quantization is partially or fully paid back in
-intermediate buffer movement.
+## Related documentation
 
-A fused pipeline instead dequantizes inside the attention kernel, so the decode
-loop avoids unnecessary intermediate memory writes.
-
-## Why it matters
-
-This is the key BPA lesson in concrete form.
-
-The point is not merely that INT4 is smaller than FP16 on paper. The point is
-that decode is bottlenecked by KV-memory movement, so the implementation only
-helps if it reduces real memory traffic in the kernel that dominates decode.
-
-That is why the practical distinction is:
-
-- **non-fused quantization**: can be neutral or counterproductive
-- **fused quantization**: can translate compression into real decode speedup
-
-## Related Documentation
-
-Use these references together:
-
-- **paper visualization**: [Memory-Traffic Saturation interactive walkthrough](https://mcgrof.github.io/knlp/paper_memory_decode.html) — unified 8-panel visualization covering all paper findings, with links to the supporting explainers below
-- standalone systems diagnosis: [Memory-Traffic Saturation in Autoregressive Decode](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_in_autoregressive_decode.md)
-- BPA overview: [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md)
-- BPA evolution: [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md)
-- structural decode explainer: [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html)
-- empirical decode explainer: [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html)
-- roofline analysis: [Ridge Point Visualization](https://mcgrof.github.io/knlp/ridge_point.html) — interactive roofline model showing where decode sits relative to the compute/memory ridge
-- statistical methods: [Spearman ρ Visualization](https://mcgrof.github.io/knlp/spearman_rho.html) — the paper uses Spearman rank correlation to test whether architectural features predict KV quantization sensitivity (they do not: ρ < 0.2, p > 0.3 across 14 models)
+Use these references together. The standalone systems diagnosis is [Memory-Traffic Saturation in Autoregressive Decode](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_in_autoregressive_decode.md). The paper visualization is the [Memory-Traffic Saturation interactive walkthrough](https://mcgrof.github.io/knlp/paper_memory_decode.html). For broader BPA background, use [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md) and [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For supporting visual context, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://mcgrof.github.io/knlp/ridge_point.html). For the statistical side of the sensitivity discussion, use [Spearman ρ Visualization](https://mcgrof.github.io/knlp/spearman_rho.html).
 
 ## Implementation
 
-The implementation lives in `knlp`, but there are **two different layers** of code that should not be conflated:
+The implementation in `knlp` has two layers, and it helps to keep them
+separate. One layer is generic unpack/dequant machinery used for microbenchmarks
+and simpler experiments. The other is the decode path that matters for the
+paper-grade W7900 provenance.
 
-1. **Generic fused expand helpers**
-   - `gpt2/compression/triton_kernels.py`
-   - `scripts/kv_triton_benchmark.py`
-   - useful for generic unpack/dequant+matmul microbenchmarks
-   - **not** the same thing as the paper-grade W7900 decode path
+The generic side starts with `gpt2/compression/triton_kernels.py` and
+`scripts/kv_triton_benchmark.py`. Those are useful when the goal is to study
+unpack/dequant behavior in isolation or run small microbenchmarks. They are not
+the same thing as the paper-grade decode path.
 
-2. **Paper-grade fused decode path (W7900 provenance)**
-   - paper/ablation source: `scripts/v31_kernel_bench.py`
-   - reusable decode-path entry points: `gpt2/compression/triton_decode_kernels.py`
-   - key W7900 variants in the paper:
-     - Pipeline B: baseline fused INT4 decode kernel (`BLOCK_N=64`)
-     - Pipeline C: Delta1 scale broadcast reuse
-     - Pipeline D: Delta2 RDNA3 wavefront-aware tiling (`BLOCK_N=128`)
-     - Pipeline E: Delta1 + Delta2 combined (**paper-grade W7900 production path**)
+The paper-grade decode side starts with
+`gpt2/compression/triton_decode_kernels.py` and the ablation source
+`scripts/v31_kernel_bench.py`. The W7900 path in the paper evolved through a
+set of kernel variants rather than a single frozen kernel. Pipeline B is the
+baseline fused INT4 decode kernel with `BLOCK_N=64`. Pipeline C adds Delta1
+scale broadcast reuse. Pipeline D adds Delta2 RDNA3 wavefront-aware tiling with
+`BLOCK_N=128`. Pipeline E combines Delta1 and Delta2 and is the paper-grade
+W7900 production path.
 
-Use the generic expand kernel only for generic unpack/dequant microbenchmarks. Use the v31 decode-kernel family for provenance-consistent W7900 paper experiments. The paper-grade W7900 decode path is exposed explicitly via `gpt2/compression/triton_decode_kernels.py`.
+If you want a simple starting point, begin with these files:
+- [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
+- [gpt2/compression/triton_decode_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_decode_kernels.py)
+- [scripts/kv_triton_benchmark.py](https://github.com/mcgrof/knlp/blob/main/scripts/kv_triton_benchmark.py)
+- [scripts/benchmark_kv_quantized.py](https://github.com/mcgrof/knlp/blob/main/scripts/benchmark_kv_quantized.py)
+- [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
+- [scripts/v31_kernel_bench.py](https://github.com/mcgrof/knlp/blob/main/scripts/v31_kernel_bench.py)
 
-Start with these files:
+Use the generic module for small unpack/dequant experiments. Use the decode
+module and the v31 lineage when you need provenance-consistent W7900 decode
+experiments.
 
-- Generic Triton kernel module: [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
-- Paper-grade decode Triton module: [gpt2/compression/triton_decode_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_decode_kernels.py)
-- kernel microbenchmarks: [scripts/kv_triton_benchmark.py](https://github.com/mcgrof/knlp/blob/main/scripts/kv_triton_benchmark.py)
-- quantized KV benchmark: [scripts/benchmark_kv_quantized.py](https://github.com/mcgrof/knlp/blob/main/scripts/benchmark_kv_quantized.py)
-- earlier Triton INT4/INT8 experiment path: [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
-- W7900 paper kernel ablation path: [scripts/v31_kernel_bench.py](https://github.com/mcgrof/knlp/blob/main/scripts/v31_kernel_bench.py)
-
-Use the generic module for simple expand/unpack microbenchmarks; use the paper-grade decode module/path when you want provenance-consistent W7900 decode-kernel experiments.
-
-## Calibration and Ratio Classifier
+## Calibration and ratio classifier
 
 Kernel fusion is only part of the deployment story. Some model families tolerate
-uniform low-precision KV quantization, while others require asymmetric key/value
-policies. In the current BPA work, the practical compatibility check is a simple
-runtime ratio classifier:
-
-- run a small set of calibration prompts,
-- compare INT8-key and INT6-key logit errors,
-- take the INT6/INT8 error ratio,
-- use that ratio to decide whether the model needs conservative key precision.
+uniform low-precision KV quantization, while others require asymmetric
+key/value policies. In the current work, the practical compatibility check is a
+runtime ratio classifier. It compares INT8-key and INT6-key logit errors on a
+small calibration set and uses the INT6/INT8 error ratio to decide whether a
+model needs conservative key precision.
 
 Start with these files:
+- [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py)
+- [scripts/marin_w7900_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/marin_w7900_ratio_classifier.py)
+- [docs/kv_plugin/calibration_guide.md](https://github.com/mcgrof/knlp/blob/main/docs/kv_plugin/calibration_guide.md)
 
-- ratio-classifier script: [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py)
-- W7900-safe Marin runner: [scripts/marin_w7900_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/marin_w7900_ratio_classifier.py)
-- calibration guide: [docs/kv_plugin/calibration_guide.md](https://github.com/mcgrof/knlp/blob/main/docs/kv_plugin/calibration_guide.md)
-
-Use the fused kernels and the ratio classifier together. The fused kernel gives
-you the speedup path; the ratio classifier tells you when aggressive key
-quantization is safe and when you need asymmetric settings.
+The fused kernel and the ratio classifier solve different parts of the problem.
+The fused kernel gives you the speedup path. The ratio classifier tells you when
+aggressive key quantization is safe and when an asymmetric setting is the right
+choice.
 
 ### Current H100 bounded decode policy
 
