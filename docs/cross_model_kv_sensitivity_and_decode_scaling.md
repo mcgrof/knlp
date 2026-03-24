@@ -115,8 +115,8 @@ every model family.
 
 ## Current evidence in `knlp`
 
-The evidence is still distributed across several documents and scripts, but it
-is real and already public.
+The current evidence in `knlp` is spread across several documents and scripts.
+This section pulls those pieces together.
 
 The current high-level summary lives in `docs/fused_kv_quantization.md`, which
 captures the paper-level claims about 14 models, runtime calibration, family-
