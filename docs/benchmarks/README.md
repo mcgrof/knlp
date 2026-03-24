@@ -10,9 +10,12 @@ accuracy, and long-context retrieval quality.
 All W7900/ROCm benchmarks run from the `knlp-rocm-bench` container.
 See [container.md](container.md) for build instructions, launch
 script, and per-phase smoke examples. The container bakes in vLLM,
-lm-eval, GuideLLM, and FlashAttention; long-context repos (xKV,
-InfiniteBench) are bind-mounted from `/data`. Split host Python
-environments are demoted to debug-only use.
+lm-eval, GuideLLM, FlashAttention, and the Python dependencies for
+xKV and InfiniteBench eval paths (no `pip install` at container
+start needed). The xKV and InfiniteBench repositories themselves
+are bind-mounted from `/data`.  Built-in helper scripts
+(`smoke-xkv`, `smoke-ib`) provide one-command smoke runs. Split
+host Python environments are demoted to debug-only use.
 
 ## Documents
 

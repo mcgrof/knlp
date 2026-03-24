@@ -12,15 +12,43 @@ environments.
 |------|--------|-----------------------|
 | vLLM (ROCm) | base image | `python -m vllm` |
 | vLLM benchmarks | base image | `$VLLM_DIR/benchmarks/` |
-| lm-eval | pip install in Dockerfile | `lm_eval` CLI |
-| GuideLLM | pip install in Dockerfile | `guidellm` CLI |
+| lm-eval | Dockerfile pip | `lm_eval` CLI |
+| GuideLLM | Dockerfile pip | `guidellm` CLI |
 | PyTorch + ROCm 7.0 | base image | `import torch` |
 | FlashAttention (ROCm) | base image | `import flash_attn` |
+| xKV eval deps | Dockerfile pip | termcolor, pandas, jieba, fuzzywuzzy, rouge, etc. |
+| InfiniteBench eval deps | Dockerfile pip | openai, xopen, python-dotenv |
+| smoke-xkv helper | COPY in Dockerfile | `/usr/local/bin/smoke-xkv` |
+| smoke-ib helper | COPY in Dockerfile | `/usr/local/bin/smoke-ib` |
 
-Long-context harnesses (xKV, InfiniteBench, RULER, LongBench, NIAH)
-are bind-mounted from the host at `/data` rather than vendored into
-the image. This avoids bloating the image with multi-GB repos and
-datasets while keeping the repos updatable independently.
+### What is baked in vs. bind-mounted
+
+**Baked into the image** — Python libraries that xKV and InfiniteBench
+import at eval time.  These are lightweight pip packages (termcolor,
+pandas, jieba, fuzzywuzzy, rouge, rouge_score, wonderwords, tabulate,
+tiktoken, einops, omegaconf, loguru, tenacity, protobuf, nltk, openai,
+xopen, python-dotenv).  Baking them in eliminates the need to run
+`pip install` at container start.
+
+The Dockerfile deliberately excludes `nemo_toolkit[all]`,
+`pytorch-lightning`, `hydra-core`, `fastchat`, and other heavy
+packages from xKV's `requirements.txt`.  Those are only needed for
+xKV's training and patching paths, not the evaluation smoke paths
+this container targets.
+
+**Bind-mounted at runtime** — The xKV and InfiniteBench repositories
+themselves (`/data/xKV`, `/data/InfiniteBench`), the HuggingFace
+model cache, and the results directory.  These are bind-mounted
+because:
+
+| Host path | Container path | Why bind-mounted |
+|-----------|---------------|------------------|
+| `/data/xKV` | `/data/xKV` | Contains model code, eval scripts, and pre-tokenized RULER/NIAH data that change independently of the container |
+| `/data/InfiniteBench` | `/data/InfiniteBench` | Contains eval scripts and task templates that change independently |
+| `/data/knlp` | `/data/knlp` | Main code repo; avoids rebuilding container for code changes |
+| `~/.cache/huggingface` | `/root/.cache/huggingface` | 100+ GB model cache; vendoring would make the image unusable |
+| `$BENCH_RESULTS_DIR` | `/results` | Output must persist after container exits |
+| `/dev/kfd`, `/dev/dri` | device passthrough | GPU access (ROCm) |
 
 ## Build the image
 
@@ -44,15 +72,6 @@ HuggingFace cache mounts, results mounts, and environment variables:
 # Run a specific command
 ./container/run-bench.sh python3 -c "import vllm; print(vllm.__version__)"
 ```
-
-### What the launch script mounts
-
-| Host path | Container path | Purpose |
-|-----------|---------------|---------|
-| `/dev/kfd`, `/dev/dri` | device passthrough | GPU access |
-| `~/.cache/huggingface` | `/root/.cache/huggingface` | Model cache |
-| `/data` | `/data` | xKV, InfiniteBench, knlp repos |
-| `$BENCH_RESULTS_DIR` | `/results` | Benchmark output |
 
 ### Environment variables set by the script
 
@@ -156,23 +175,60 @@ in the same container session:
 '
 ```
 
-### Long-context harnesses (xKV, InfiniteBench)
+### xKV smoke (canonical container workflow)
 
-These repos live on the host at `/data/xKV` and `/data/InfiniteBench`
-and are accessible inside the container via the `/data` mount:
+Run xKV long-context smoke directly via the built-in helper
+script.  No `pip install` needed — all eval dependencies are
+baked into the image.
 
 ```bash
-./container/run-bench.sh python /data/xKV/evaluate/eval_acc.py --help
+# One-command smoke (defaults to Qwen/Qwen2.5-0.5B)
+./container/run-bench.sh smoke-xkv
+
+# Override model
+./container/run-bench.sh smoke-xkv --model marin-community/marin-8b-base
 ```
 
-Install any repo-specific Python deps at container start if needed:
+Or run manually for more control:
 
 ```bash
 ./container/run-bench.sh bash -c '
-  pip install -r /data/xKV/requirements.txt
-  python /data/xKV/evaluate/eval_acc.py ...
+  export PYTHONPATH=/data/xKV:$PYTHONPATH
+  python /data/xKV/evaluate/eval_acc.py \
+    --model_name_or_path Qwen/Qwen2.5-0.5B \
+    --datalen 4096 \
+    --dataset_name "ruler/niah_single_1" \
+    --num_samples 5 \
+    --result_dir /results/smoke_xkv/
 '
 ```
+
+### InfiniteBench smoke (canonical container workflow)
+
+Run the minimal HuggingFace InfiniteBench passkey smoke.  Loads
+the model directly via Transformers — no vLLM server needed.
+
+```bash
+# One-command smoke (defaults to Qwen/Qwen2.5-0.5B)
+./container/run-bench.sh smoke-ib
+
+# Override model
+./container/run-bench.sh smoke-ib --model marin-community/marin-8b-base
+```
+
+Or run manually:
+
+```bash
+./container/run-bench.sh python /data/InfiniteBench/src/eval_hf_smoke.py \
+  --model Qwen/Qwen2.5-0.5B \
+  --task passkey \
+  --limit 1 \
+  --output /results/smoke_infinitebench/passkey_smoke.json
+```
+
+InfiniteBench smoke proves harness execution, not benchmark
+quality.  The passkey score at short context lengths is
+meaningless — the task requires 100K+ tokens for a real signal.
 
 ## Split host envs (debug-only)
 
