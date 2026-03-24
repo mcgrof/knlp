@@ -50,35 +50,57 @@ quantization.
 
 ## What it shows
 
-Use the dataset to show five things.
+The measurements support five concrete conclusions.
 
 ### 1. Decode is a memory-traffic problem
 
-Across the tested GPUs, decode throughput follows sustained decode-time
-bandwidth far more closely than headline compute throughput.
+The first result is the core systems diagnosis: decode follows sustained
+memory movement much more closely than advertised compute capability. In the
+matched lanes, throughput ordering tracks the practical strength of the memory
+system rather than any simple FLOP ranking. The W7900 sits at the low end of
+that curve, A100 occupies the intermediate regime, and H100/B200 define the
+higher-bandwidth end. That is exactly the pattern you would expect if decode is
+paying primarily for repeatedly rereading KV state instead of consuming the GPU
+as a pure compute engine.
 
-### 2. Context growth is close to linear
+### 2. Context growth stays close to linear in the core regime
 
-At fixed batch, latency grows approximately linearly with context length in the
-core decode regime.
+The second result is that latency grows roughly linearly with context length at
+fixed batch across the tested GPUs. This matters because it ties the slowdown
+directly to the amount of KV state reread per decode step. The matched-lane
+runs do not show some exotic nonlinear transition in the normal operating
+range; they show the cleaner and more operationally useful story that longer
+context means proportionally more traffic and therefore proportionally slower
+decode.
 
-### 3. Batch growth saturates by hardware class
+### 3. Batch growth saturates, but the saturation point depends on hardware
 
-At fixed context, throughput rises with batch and then saturates or flattens,
-with the onset and plateau depending on the GPU and kernel path.
+The third result is that throughput does not scale forever with batch. It rises
+and then saturates or flattens, and the onset of that flattening depends on the
+GPU and kernel path. The A100 lane is useful here because it fills the gap
+between the low-bandwidth W7900 and the stronger H100/B200 lanes. That makes it
+clear that the saturation behavior is not just a two-endpoint curiosity. The
+shape is stable, but the operating point shifts with the hardware.
 
-### 4. Cross-GPU behavior is qualitatively stable
+### 4. The qualitative decode regime survives across GPUs
 
-The exact fit parameters are not universal, but the decode regime is. W7900,
-A100, H100, and B200 all show the same qualitative memory-traffic-limited
-behavior.
+The fourth result is cross-GPU stability in the qualitative regime. The exact
+fit parameters are not universal, and the point of this document is not to
+pretend they are. What survives across W7900, A100, H100, and B200 is the more
+important structural result: decode remains memory-traffic limited, context
+scaling remains close to linear in the core regime, and batch growth runs into
+hardware-specific saturation. That is a stronger and more useful conclusion
+than any claim that one exact coefficient set governs every accelerator.
 
 ### 5. Capacity planning starts after bandwidth planning
 
-The B200 long-context lane shows that large HBM capacity extends feasible
-context length, but only after the decode traffic problem has been understood.
-This is why future tiering strategies must satisfy decode-time bandwidth demand,
-not just provide more bytes of storage.
+The fifth result comes from separating the core matched lanes from the B200
+long-context path. The B200 long-context measurements show that large HBM
+capacity materially extends feasible context length, but they also make clear
+that capacity becomes useful only after the decode traffic problem has been
+understood. In other words, extra memory capacity does not rescue a decode path
+that cannot sustain the needed bandwidth. This is the result that makes the
+dataset directly useful for future tiering and memory planning work.
 
 ## Reproduce this result
 
