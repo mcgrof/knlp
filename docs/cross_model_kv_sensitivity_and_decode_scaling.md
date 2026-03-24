@@ -91,11 +91,11 @@ concentrated in the Qwen family. That is the current clearest summary of why
 cross-model calibration matters.
 
 DeepSeek MLA-related work belongs in the same discussion even though it is not
-yet folded into one clean benchmark matrix. Scripts such as
-`scripts/analyze_mla_kv_structure.py` and the DeepSeek KVSplice work explore
-whether MLA-style latent KV structure changes the usual K/V sensitivity story.
-That is exactly the kind of architectural variation this cross-model document
-is meant to track.
+yet folded into one clean benchmark matrix. The current exploration is visible
+in [scripts/analyze_mla_kv_structure.py](https://github.com/mcgrof/knlp/blob/main/scripts/analyze_mla_kv_structure.py) and the related DeepSeek KVSplice
+work, which explore whether MLA-style latent KV structure changes the usual K/V
+sensitivity story. That is exactly the kind of architectural variation this
+cross-model document is meant to track.
 
 ## How the cross-model result connects to decode scaling
 
