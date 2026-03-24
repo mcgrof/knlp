@@ -236,6 +236,7 @@ memory tier can sustain that demand.
 
 Use these together:
 
+- [Memory-Traffic Saturation in Autoregressive Decode](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_in_autoregressive_decode.md) — standalone systems characterization that grew out of BPA and motivated the later quantization review and fused-kernel work
 - [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) — structural explanation of why autoregressive decode rereads KV state every step
 - [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html) — empirical cross-GPU decode scaling and bandwidth view
 - [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md) — fused-kernel overview, code pointers, and forward-looking activation work
