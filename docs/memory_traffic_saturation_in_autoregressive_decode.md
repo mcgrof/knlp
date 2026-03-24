@@ -13,7 +13,7 @@ given batch and context, whether extra HBM capacity will materially help, and
 whether a lower memory tier could ever feed the workload fast enough to matter.
 Detailed planning examples appear in [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering).
 
-For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For script provenance and the reason this result now has its own standalone entrypoint, see [Memory-Traffic Saturation in Autoregressive Decode: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_lineage.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For script provenance and the reason this result now has its own standalone entrypoint, see [Memory-Traffic Saturation in Autoregressive Decode: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_lineage.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://knlp.io/ridge_point.html).
 
 ## Table of Contents
 
@@ -24,6 +24,7 @@ For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/m
 - [Scripts](#scripts)
 - [Relationship to fused quantization](#relationship-to-fused-quantization)
 - [Use this for memory planning and tiering](#use-this-for-memory-planning-and-tiering)
+- [Practical use cases](#practical-use-cases)
 
 ## What it measures
 
@@ -220,28 +221,50 @@ whether the slower tier can feed that demand continuously. If the measured
 a host-memory tier, CXL-backed tier, or storage-backed cache can deliver, then
 the proposal increases capacity without solving the bottleneck. The point is not
 to reject tiering out of hand. The point is to make tiering answer to measured
-decode-time bandwidth rather than to architecture diagrams.
-
-A few practical examples make the distinction clearer. If you are choosing
-between A100 and B200 for a 7B-class dense decode service in the 8K--32K range,
-you can use the matched-lane measurements to see where A100 saturates, what
-throughput B200 actually adds, and whether the gain comes from bandwidth,
-capacity, or both. Do not assume that the ratio of peak HBM bandwidth will map
-cleanly onto real decode throughput. If someone proposes moving older KV state
-to host memory or another slower tier, you can use the measured rows to ask
-what sustained bandwidth the target batch/context regime really requires and
-whether that lower tier can actually keep up. If the answer is no, then the
-proposal adds bytes without making dense decode viable. If the target is a
-128K+ product, answer two separate questions: can the decode path sustain the
-traffic, and can the device hold enough KV at all? Use the core lanes for the
-first and the long-context lane for the second. If the question is whether
-fused KV compression is worth building, the same logic applies: if the target
-regime is already weakly KV-bound, compression may not be the highest-leverage
-change; if the regime sits on a clear KV-bandwidth plateau, then compression
-becomes much more attractive.
+decode-time bandwidth rather than to architecture diagrams. The same reasoning
+also benefits from the [Ridge Point Visualization](https://knlp.io/ridge_point.html),
+which helps place the measured decode regime against the compute/memory balance
+of the hardware.
 
 The working rule is simple. Start with the measured decode-time bandwidth rows.
 Then decide whether the workload is bandwidth-limited, capacity-limited, or
 both. Only after that should you decide whether a lower memory tier can feed
 the workload or whether compression and routing are required. Do not design
 future tiering from capacity alone.
+
+## Practical use cases
+
+One common use case is hardware selection for a real serving target. Suppose
+you are choosing between A100 and B200 for a 7B-class dense decode service in
+the 8K--32K range. The useful question is not which GPU advertises the larger
+HBM number. The useful question is which device sustains the decode regime you
+actually need. The matched-lane measurements let you see where A100 saturates,
+what throughput B200 adds in practice, and whether the difference comes from
+bandwidth, capacity, or both. That is a much better basis for planning than
+assuming the ratio of peak HBM bandwidth will map cleanly onto real decode
+throughput.
+
+Another use case is evaluating KV offload to a slower tier. If someone proposes
+moving older KV state to host memory, a CXL-backed tier, or another slower
+storage layer, the right first question is whether that lower tier can sustain
+the bandwidth that dense decode actually demands. The measured rows let you ask
+what sustained bandwidth the target batch/context regime really requires and
+whether the proposed tier can keep up. If the answer is no, then the proposal
+adds bytes of storage without making dense decode viable. That is exactly the
+kind of planning mistake this dataset is meant to prevent.
+
+A third use case is long-context product planning. If the target is 128K or
+beyond, two questions have to be separated cleanly. First, can the decode path
+sustain the traffic in the target operating regime? Second, can the device hold
+enough KV state at all? The core matched lanes answer the first question. The
+long-context lane answers the second. Treating those as one blended question is
+how teams end up buying hardware with enough memory but not enough practical
+bandwidth, or enough bandwidth but not enough capacity.
+
+A fourth use case is deciding whether fused KV compression is worth building.
+This dataset tells you whether the target regime is already sitting in a
+memory-traffic-limited decode phase. If the regime is short context and weakly
+KV-bound, compression may not be the highest-leverage change. If the regime
+sits on a clear KV-bandwidth plateau, then fused KV compression becomes much
+more attractive because it attacks the resource that is actually limiting
+decode.
