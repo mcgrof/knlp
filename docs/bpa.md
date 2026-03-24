@@ -108,9 +108,10 @@ Keep `docs/rgsa.md` as precursor work. Use BPA as the main overview for this lin
 
 ## Multi-GPU Empirical Dataset
 
-Use `bpa-multi-gpu/` as the empirical decode-time KV bandwidth dataset.
+Build the public BPA multi-GPU empirical dataset with the scripts in `knlp`.
+Do not depend on any private result tree layout.
 
-Treat it as a measured corpus of:
+Treat the dataset as a measured corpus of:
 - GPU-specific decode throughput,
 - latency vs. batch and context,
 - effective KV-read bandwidth,
@@ -129,17 +130,6 @@ Use this dataset to answer three questions:
 2. where does each GPU saturate under batch growth,
 3. when does long-context planning become a capacity problem instead of only a bandwidth problem.
 
-### Dataset layout
-
-Use these paths in `knlp-key-results`:
-- `bpa-multi-gpu/json/`
-- `bpa-multi-gpu/smoke/`
-- `bpa-multi-gpu/long_context/`
-- `bpa-multi-gpu/logs/`
-
-The paper-facing matched lanes are the JSON files under `bpa-multi-gpu/json/`.
-The capacity evidence lives under `bpa-multi-gpu/long_context/`.
-
 ### What each row records
 
 Expect per-point measurements such as:
@@ -157,20 +147,10 @@ Use those rows to derive:
 - batch-saturation fits,
 - and practical planning limits for long-context serving.
 
-### Reproduce the dataset
+### Run the dataset builder
 
-Do this in order.
-
-1. Run smoke tests first.
-2. Run the full matrix only after smoke passes.
-3. Fit the scaling summaries.
-4. Package the paper-facing results.
-
-Use these scripts:
-- `scripts/paper/bpa_paper/run_smoke.py`
-- `scripts/paper/bpa_paper/run_matrix.py`
-- `scripts/paper/bpa_paper/fit_scaling.py`
-- `scripts/paper/bpa_paper/package_results.py`
+Use the unified public helper:
+- `scripts/paper/bpa_paper/run_dataset.py`
 
 Use these lane configs:
 - `scripts/paper/bpa_paper/configs/w7900.yaml`
@@ -183,16 +163,53 @@ Read the orchestration overview before rerunning anything:
 
 ### Command pattern
 
-Run the paper-facing framework like this:
+Pick a results root that you control:
 
 ```bash
-python scripts/paper/bpa_paper/run_smoke.py --config scripts/paper/bpa_paper/configs/a100.yaml
-python scripts/paper/bpa_paper/run_matrix.py --config scripts/paper/bpa_paper/configs/a100.yaml
-python scripts/paper/bpa_paper/fit_scaling.py --config scripts/paper/bpa_paper/configs/a100.yaml
-python scripts/paper/bpa_paper/package_results.py --config scripts/paper/bpa_paper/configs/a100.yaml
+export RESULTS_ROOT=$PWD/results/bpa-multi-gpu
 ```
 
-Swap the config file for `w7900.yaml`, `h100.yaml`, or `b200.yaml` as needed.
+Run one lane at a time:
+
+```bash
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu a100 \
+  --stage smoke
+
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu a100 \
+  --stage matrix-plan
+
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu a100 \
+  --stage matrix-exec
+```
+
+Run the whole public workflow as a dry run:
+
+```bash
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu all \
+  --stage full-dry-run
+```
+
+Derive fit artifacts and package a paper-facing export tree:
+
+```bash
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu all \
+  --stage fit
+
+python scripts/paper/bpa_paper/run_dataset.py \
+  --results-root "$RESULTS_ROOT" \
+  --gpu all \
+  --stage package
+```
 
 ### Use this dataset for memory planning and tiering
 
