@@ -115,15 +115,31 @@ every model family.
 
 ## Current evidence in `knlp`
 
-The current evidence in `knlp` is spread across several documents and scripts.
-This section pulls those pieces together.
+The current evidence supports a clear standalone cross-model result. The
+qualitative decode regime survives across families and hardware targets, which
+is why the memory-traffic story generalizes beyond any one benchmark model. At
+the same time, KV sensitivity is not uniform across families. Qwen-family
+models are the clearest example of sink-dominated or key-sensitive behavior,
+while Mistral- and Llama-family models are much closer to uniform robustness
+under aggressive low-precision settings.
 
-The current high-level summary lives in [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md), which captures the paper-level claims about 14 models, runtime calibration, family-specific key sensitivity, and cross-GPU consistency. The earlier family-level sensitivity evidence lives in [BPA v27 Main Report](https://github.com/mcgrof/knlp/blob/main/docs/bpa_v27_main_report.md) and [BPA v27 Submission Readiness Assessment](https://github.com/mcgrof/knlp/blob/main/docs/bpa_v27_submission_readiness.md), where the sink-dominance versus uniform-robustness split across Qwen, Mistral, and Llama was first made explicit. The ratio-classifier implementation path is documented through [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py) and [scripts/marin_w7900_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/marin_w7900_ratio_classifier.py). DeepSeek MLA analysis is currently represented by [scripts/analyze_mla_kv_structure.py](https://github.com/mcgrof/knlp/blob/main/scripts/analyze_mla_kv_structure.py) and related DeepSeek plugin/evaluation scripts.
+The current public summary also supports a larger benchmark claim than the
+older family-level work alone. The fused-KV paper summary in `knlp` states that
+runtime calibration identifies sensitive models with 100% accuracy across 14
+models and generalizes to 72B. It also states that values universally tolerate
+INT4 while key precision floors are model-dependent and concentrated in the
+Qwen family. Taken together, those results are the current best public summary
+of what generalized and what remained family-specific.
 
-That scattered state is exactly why this document exists. The current repo has
-real cross-model results, but until now the narrative has been spread across
-older BPA reports, fused-KV notes, paper-facing summaries, and model-family
-scripts.
+DeepSeek MLA-related work remains more exploratory, but it belongs in the same
+cross-model discussion because it tests whether architectures with latent KV
+structure change the usual K/V sensitivity story. That part of the effort is
+not yet documented as cleanly as the Qwen, Mistral, and Llama results, but it
+is already part of the broader question this document is meant to organize.
+
+For script provenance and the older path that led to this summary, use the
+lineage companion:
+[Cross-Model KV Sensitivity and Decode Scaling: Lineage and Script Provenance](https://github.com/mcgrof/knlp/blob/main/docs/cross_model_kv_sensitivity_and_decode_scaling_lineage.md).
 
 ## How to use these results
 
