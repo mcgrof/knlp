@@ -44,13 +44,13 @@ separate. One layer is generic unpack/dequant machinery used for microbenchmarks
 and simpler experiments. The other is the decode path that matters for the
 paper-grade W7900 provenance.
 
-The generic side starts with `gpt2/compression/triton_kernels.py` and
+The generic side starts with `kernels/triton_kernels.py` and
 `scripts/kv_triton_benchmark.py`. Those are useful when the goal is to study
 unpack/dequant behavior in isolation or run small microbenchmarks. They are not
 the same thing as the paper-grade decode path.
 
 The paper-grade decode side starts with
-`gpt2/compression/triton_decode_kernels.py` and the ablation source
+`kernels/triton_decode_kernels.py` and the ablation source
 `scripts/v31_kernel_bench.py`. The W7900 path in the paper evolved through a
 set of kernel variants rather than a single frozen kernel. Pipeline B is the
 baseline fused INT4 decode kernel with `BLOCK_N=64`. Pipeline C adds Delta1
@@ -59,8 +59,8 @@ scale broadcast reuse. Pipeline D adds Delta2 RDNA3 wavefront-aware tiling with
 W7900 production path.
 
 If you want a simple starting point, begin with these files:
-- [gpt2/compression/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_kernels.py)
-- [gpt2/compression/triton_decode_kernels.py](https://github.com/mcgrof/knlp/blob/main/gpt2/compression/triton_decode_kernels.py)
+- [kernels/triton_kernels.py](https://github.com/mcgrof/knlp/blob/main/kernels/triton_kernels.py)
+- [kernels/triton_decode_kernels.py](https://github.com/mcgrof/knlp/blob/main/kernels/triton_decode_kernels.py)
 - [scripts/kv_triton_benchmark.py](https://github.com/mcgrof/knlp/blob/main/scripts/kv_triton_benchmark.py)
 - [scripts/benchmark_kv_quantized.py](https://github.com/mcgrof/knlp/blob/main/scripts/benchmark_kv_quantized.py)
 - [scripts/v28_triton_int4_dequant.py](https://github.com/mcgrof/knlp/blob/main/scripts/v28_triton_int4_dequant.py)
