@@ -101,9 +101,11 @@ Smoke tests explicitly do NOT validate:
 Run all smoke tests inside the `knlp-rocm-bench` container (see
 [container.md](container.md)). The container provides vLLM, lm-eval,
 GuideLLM, and sets `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`
-automatically. For long-context harnesses (xKV, InfiniteBench),
-the `/data` bind mount makes host repos available inside the
-container.
+automatically.  Python dependencies for xKV and InfiniteBench eval
+paths are baked into the image — no `pip install` at container start
+is needed.  The xKV and InfiniteBench repositories themselves are
+bind-mounted from `/data` (see container.md for what is baked in
+vs. bind-mounted and why).
 
 These examples use `marin-community/marin-8b-base` on an AMD
 Radeon Pro W7900 (48 GB), but substitute any model your pipeline
@@ -517,6 +519,10 @@ supports NIAH on W7900. Local NIAH data must be materialized
 under `evaluate/data/ruler/data/llama-3/` for smoke use (see
 S8 for directory setup).
 
+**Quick path**: Use the built-in `smoke-xkv` helper from the
+container to run xKV NIAH smoke with one command (see
+[container.md](container.md#xkv-smoke-canonical-container-workflow)).
+
 **Artifacts**: `$SMOKE_DIR/niah/smoke/` directory with
 per-cell retrieval result files.
 
@@ -690,10 +696,11 @@ corruption. Catches task data loading errors, context length
 truncation bugs, vLLM integration failures, and scoring logic
 errors.
 
-A minimal local HuggingFace smoke runner exists on `prune`
-for 1-sample passkey validation. This runner loads the model
-directly via HuggingFace Transformers (no vLLM server
-required) and runs a single passkey retrieval sample.
+**Quick path**: Use the built-in `smoke-ib` helper from the
+container to run InfiniteBench smoke with one command (see
+[container.md](container.md#infinitebench-smoke-canonical-container-workflow)).
+This loads the model directly via HuggingFace Transformers
+(no vLLM server required) and runs a single passkey sample.
 
 **Important**: InfiniteBench smoke proves harness execution,
 not benchmark quality. The passkey score at
