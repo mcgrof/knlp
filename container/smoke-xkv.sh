@@ -19,12 +19,16 @@ set -euo pipefail
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B}"
 XKV_DIR="${XKV_DIR:-/data/xKV}"
 SMOKE_DIR="${SMOKE_DIR:-/results/smoke_xkv}"
+DATALEN="${DATALEN:-8192}"
+NUM_SAMPLES="${NUM_SAMPLES:-1}"
 
 # Parse optional overrides
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --model) MODEL="$2"; shift 2;;
         --output) SMOKE_DIR="$2"; shift 2;;
+        --datalen) DATALEN="$2"; shift 2;;
+        --num-samples) NUM_SAMPLES="$2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -38,9 +42,11 @@ fi
 mkdir -p "$SMOKE_DIR"
 
 echo "=== xKV smoke test ==="
-echo "  Model:  $MODEL"
-echo "  xKV:    $XKV_DIR"
-echo "  Output: $SMOKE_DIR"
+echo "  Model:   $MODEL"
+echo "  xKV:     $XKV_DIR"
+echo "  Output:  $SMOKE_DIR"
+echo "  Datalen: $DATALEN"
+echo "  Samples: $NUM_SAMPLES"
 echo ""
 
 # xKV eval_acc.py needs its root on PYTHONPATH
@@ -52,11 +58,12 @@ export PYTHONPATH="${XKV_DIR}:${PYTHONPATH:-}"
 #   - Dataset loading (HuggingFace or local)
 #   - Tokenization and model forward pass
 #   - Metric scoring and result serialization
-python "$XKV_DIR/evaluate/eval_acc.py" \
+cd "$XKV_DIR"
+python evaluate/eval_acc.py \
     --model_name_or_path "$MODEL" \
-    --datalen 4096 \
+    --datalen "$DATALEN" \
     --dataset_name "ruler/niah_single_1" \
-    --num_samples 5 \
+    --num_samples "$NUM_SAMPLES" \
     --result_dir "$SMOKE_DIR" \
     2>&1 | tee "$SMOKE_DIR/smoke_xkv.log"
 
