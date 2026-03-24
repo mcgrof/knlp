@@ -11,10 +11,6 @@ You can use the measurements here to establish the cross-GPU decode regime,
 motivate KV quantization review, and explain why fused KV quantization became
 the strongest concrete intervention.
 
-For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For the research lineage, see [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
-
-## What this is
-
 This document records the decode-time memory-traffic characterization that set
 the direction for the later quantization work. The core result is simple:
 autoregressive decode is governed by memory traffic, throughput follows
@@ -23,6 +19,8 @@ linearly with context length, batch growth produces hardware-specific
 saturation, and long-context planning becomes a capacity problem only after the
 decode traffic problem has been understood. Treat this as the systems
 diagnosis that motivated later fused quantization work.
+
+For BPA background, see the [BPA overview](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md). For the research lineage, see [RGSA, BPA, and fused KV quantization](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For the empirical visualization, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html) and [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html).
 
 ## What it measures
 
