@@ -23,7 +23,12 @@ HF_CACHE="${HF_HOME:-$HOME/.cache/huggingface}"
 RESULTS_DIR="${BENCH_RESULTS_DIR:-$(pwd)/bench_results}"
 mkdir -p "$RESULTS_DIR"
 
-exec docker run --rm -it \
+TTY_ARGS=()
+if [ -t 0 ] && [ -t 1 ]; then
+    TTY_ARGS=(-it)
+fi
+
+exec docker run --rm "${TTY_ARGS[@]}" \
     --device=/dev/kfd \
     --device=/dev/dri \
     --group-add video \
