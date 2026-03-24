@@ -118,17 +118,7 @@ every model family.
 The current evidence in `knlp` is spread across several documents and scripts.
 This section pulls those pieces together.
 
-The current high-level summary lives in `docs/fused_kv_quantization.md`, which
-captures the paper-level claims about 14 models, runtime calibration, family-
-specific key sensitivity, and cross-GPU consistency. The earlier family-level
-sensitivity evidence lives in `docs/bpa_v27_main_report.md` and
-`docs/bpa_v27_submission_readiness.md`, where the sink-dominance versus uniform-
-robustness split across Qwen, Mistral, and Llama was first made explicit. The
-ratio-classifier implementation path is documented through
-`scripts/bpa_h100_exp4_ratio_classifier.py` and
-`scripts/marin_w7900_ratio_classifier.py`. DeepSeek MLA analysis is currently
-represented by `scripts/analyze_mla_kv_structure.py` and related DeepSeek
-plugin/evaluation scripts.
+The current high-level summary lives in [Fused KV Quantization](https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md), which captures the paper-level claims about 14 models, runtime calibration, family-specific key sensitivity, and cross-GPU consistency. The earlier family-level sensitivity evidence lives in [BPA v27 Main Report](https://github.com/mcgrof/knlp/blob/main/docs/bpa_v27_main_report.md) and [BPA v27 Submission Readiness Assessment](https://github.com/mcgrof/knlp/blob/main/docs/bpa_v27_submission_readiness.md), where the sink-dominance versus uniform-robustness split across Qwen, Mistral, and Llama was first made explicit. The ratio-classifier implementation path is documented through [scripts/bpa_h100_exp4_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py) and [scripts/marin_w7900_ratio_classifier.py](https://github.com/mcgrof/knlp/blob/main/scripts/marin_w7900_ratio_classifier.py). DeepSeek MLA analysis is currently represented by [scripts/analyze_mla_kv_structure.py](https://github.com/mcgrof/knlp/blob/main/scripts/analyze_mla_kv_structure.py) and related DeepSeek plugin/evaluation scripts.
 
 That scattered state is exactly why this document exists. The current repo has
 real cross-model results, but until now the narrative has been spread across
