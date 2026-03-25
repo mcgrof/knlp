@@ -64,6 +64,10 @@ The proof artifacts record these backends explicitly:
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_7b.json`
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_14b.json`
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_32b.json`
+- `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen3_8b.json`
+- `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen3_14b.json`
+- `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen3_32b.json`
+- `docs/benchmarks/data/h100_ablation/tier5_flash_proof_deepseek_r1_distill_qwen_32b.json`
 - `scripts/spev01/tier5_fused_decode.py`
 
 ## Qwen2.5-7B results
@@ -180,3 +184,20 @@ fix. Committed alongside the artifacts for traceability.
 
 - See `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_32b.json` for the full table.
 - Pattern remains consistent with 14B: fused loses at tiny batch-1 points, crosses over cleanly once batch rises, and remains substantially faster than the INT4->dequant->FlashAttention path at moderate and large operating points.
+
+## Newer open-model extensions
+
+Additional H100 proof artifacts were collected for newer open-weight families:
+
+- Qwen3-8B
+- Qwen3-14B
+- Qwen3-32B
+- DeepSeek-R1-Distill-Qwen-32B
+
+These runs use the same three-way ablation shape as the Qwen2.5 results:
+
+- FP16 + forced FlashAttention
+- INT4 -> dequant -> forced FlashAttention
+- Triton fused INT4 decode
+
+The qualitative pattern remained stable: fused decode still loses at tiny batch-1 points, crosses over once batch rises, and remains substantially faster than the dequantized FlashAttention path at moderate and large operating points.
