@@ -1,13 +1,20 @@
 # Quickstart: Fused KV Quantization Benchmarks
 
-> **Integration status**: The `--kv-cache-dtype int4_fused` flag
-> used below does not exist in stock vLLM (through 0.18.0). This
-> quickstart is a protocol specification for when a custom vLLM
-> branch with fused INT4 paged attention support is available. For
-> the currently runnable proof path, use the standalone Triton
-> kernel ablations in `scripts/spev01/tier5_fused_decode.py`. See
-> [fused_kv_quantization.md](../fused_kv_quantization.md) for the
-> full gap analysis.
+> **Integration status (updated 2026-03-25)**: The
+> `--kv-cache-dtype int4_fused` flag is now implemented in the vLLM
+> branch `20250325-fused-quantization` on `/data/vllm`. This branch
+> adds a real `FusedInt4AttentionBackend` with a Triton fused decode
+> kernel that reads packed INT4 KV cache and dequantizes in-register.
+> The commands below are now runnable against that branch. Kernel-level
+> validation was done on AMD W7900 (ROCm 6.4, Triton 3.5.1) with
+> 2.5x-5.4x decode speedup and cosine similarity = 1.0. H100
+> validation is the next step.
+>
+> For the standalone Triton kernel ablations (no vLLM needed), use
+> `scripts/spev01/tier5_fused_decode.py`. For the vLLM kernel-level
+> smoke benchmark, use `benchmarks/fused_int4_smoke.py` in the vLLM
+> branch. See [fused_kv_quantization.md](../fused_kv_quantization.md)
+> for the full technical overview.
 
 This page gets you from zero to a minimal FP16-vs-FUSED comparison
 in about 30 minutes of active setup time plus benchmark runtime.
@@ -30,8 +37,16 @@ If not using the container, you need:
 
 1. **A GPU with enough VRAM** for the target model (e.g. 80 GB for
    a 7B model at FP16 with long-context KV cache).
-2. **vLLM** built from source or installed from a branch that
-   supports fused INT4 KV quantization. Pin the commit.
+2. **vLLM** from the `20250325-fused-quantization` branch on
+   `/data/vllm` (or a descendant). This branch adds the
+   `FusedInt4AttentionBackend` and the `--kv-cache-dtype int4_fused`
+   flag. Install in development mode:
+   ```bash
+   cd /data/vllm
+   git checkout 20250325-fused-quantization
+   VLLM_USE_PRECOMPILED=1 pip install -e .
+   ```
+   Pin the commit with `git log --oneline -1`.
 3. **lm-eval-harness** (`pip install lm-eval`).
 4. **GuideLLM** (`pip install guidellm`) --- optional for the
    quickstart, required for the full runbook.
@@ -46,7 +61,7 @@ RESULTS_DIR=./fused_kv_results_$(date +%Y%m%d)
 mkdir -p $RESULTS_DIR/{bench,lm_eval,niah}
 
 # Pin vLLM commit
-cd <VLLM_DIR>
+cd /data/vllm
 git log --oneline -1 > $RESULTS_DIR/vllm_commit.txt
 
 # Collect environment
@@ -118,10 +133,9 @@ echo "FUSED adds: --kv-cache-dtype int4_fused" \
   > $RESULTS_DIR/config_diff.txt
 ```
 
-Replace `--kv-cache-dtype int4_fused` with whatever flag your
-vLLM branch uses for fused INT4 KV cache. Stock vLLM does not
-support this flag; a custom branch with fused INT4 paged
-attention is required.
+The `--kv-cache-dtype int4_fused` flag is the correct flag for
+the `20250325-fused-quantization` vLLM branch. Stock vLLM
+(main) does not support this flag yet.
 
 ## Step 3: Run the Minimal Benchmark Set
 
@@ -164,7 +178,7 @@ for TAG in fp16 fused; do
   if [ "$TAG" = "fused" ]; then EXTRA="--kv-cache-dtype int4_fused"; else EXTRA=""; fi
   for BS in 1 8; do
     for IL in 512 8192; do
-      python <VLLM_DIR>/benchmarks/benchmark_latency.py \
+      python /data/vllm/benchmarks/benchmark_latency.py \
         --model $MODEL \
         --tensor-parallel-size $TP \
         --input-len $IL \
@@ -188,7 +202,7 @@ not be claimed as meaningful.
 ```bash
 for TAG in fp16 fused; do
   if [ "$TAG" = "fused" ]; then EXTRA="--kv-cache-dtype int4_fused"; else EXTRA=""; fi
-  python <VLLM_DIR>/benchmarks/benchmark_throughput.py \
+  python /data/vllm/benchmarks/benchmark_throughput.py \
     --model $MODEL \
     --tensor-parallel-size $TP \
     --input-len 512 \
@@ -255,6 +269,52 @@ cp -a $RESULTS_DIR/ /data/knlp-key-results/fused_kv_bench/
 cd /data/knlp-key-results && git add fused_kv_bench/ && git commit \
   -m "bench: quickstart results $(date +%Y%m%d)"
 ```
+
+## Step 0 (Optional): Kernel-Level Smoke Test
+
+Before running the full benchmark protocol, you can verify the fused
+INT4 kernels work on your GPU with a self-contained smoke test that
+does not require a model download:
+
+```bash
+cd /data/vllm
+python benchmarks/fused_int4_smoke.py 2>smoke_stderr.log
+```
+
+This runs both the FP16 SDPA baseline and the fused INT4 decode
+kernel with synthetic tensors and emits a JSON manifest to stdout.
+Check for:
+
+- All `cosine_similarity` values should be > 0.99
+- `backend_manifest.fused_selected` should be `FUSED_INT4_TRITON`
+- `backend_manifest.fallback` should be `none`
+
+The stderr output shows per-point latencies with WIN/LOSE tags.
+Expected results on W7900: 2.5x-5.4x speedup at B >= 2.
+
+You can also run the unit tests:
+
+```bash
+python -m pytest tests/kernels/attention/test_fused_int4.py -xvs
+```
+
+### Validated results (2026-03-25)
+
+Kernel-level smoke benchmark on AMD Radeon Pro W7900 (ROCm 6.4,
+Triton 3.5.1), Qwen2.5-7B config (heads=28, kv_heads=4, dim=128):
+
+| B | T | Baseline (ms) | Fused (ms) | Speedup |
+|---|---|---------------|------------|---------|
+| 1 | 2048 | 3.073 | 1.157 | 2.66x |
+| 1 | 4096 | 5.998 | 2.239 | 2.68x |
+| 2 | 2048 | 4.747 | 1.862 | 2.55x |
+| 2 | 4096 | 9.645 | 3.395 | 2.84x |
+| 4 | 2048 | 8.483 | 2.872 | 2.95x |
+| 4 | 4096 | 17.775 | 5.209 | 3.41x |
+| 8 | 2048 | 16.363 | 3.572 | 4.58x |
+| 8 | 4096 | 35.119 | 6.518 | 5.39x |
+
+Cosine similarity = 1.000000 across all points.
 
 ## What Next
 
