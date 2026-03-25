@@ -244,77 +244,91 @@ question.
 
 ## Serving Integration Status
 
-The fused decode work in `knlp` currently exists as standalone Triton
-kernel benchmarks that prove the systems result (fusion eliminates the
-intermediate buffer and delivers real decode speedup). It does **not**
-exist as an integrated serving path inside vLLM or any other inference
-engine. The docs below (runbook, quickstart, smoke-test) describe a
-vLLM evaluation protocol that uses `--kv-cache-dtype int4_fused`, but
-that flag does not exist in stock vLLM (tested through 0.18.0). The
-protocol is written for a future vLLM branch or plugin that implements
-fused INT4 KV cache support.
+### vLLM branch with fused INT4 support (2026-03-25)
+
+The `--kv-cache-dtype int4_fused` flag is now implemented in the vLLM
+branch `20250325-fused-quantization` on `/data/vllm`. This branch adds
+a real `FusedInt4AttentionBackend` that integrates the fused decode
+kernel with vLLM's paged block-table cache model.
+
+**Kernel-level validation on AMD W7900** (ROCm 6.4, Triton 3.5.1):
+2.5x-5.4x decode speedup, cosine similarity = 1.000000 across all
+test points (B=1,2,4,8 x D=64,128). H100 serving validation is the
+next step.
 
 ### What works today
 
-These components run end-to-end and produce the paper's proof
-artifacts:
+These components run end-to-end:
 
 | Layer | What it does | Key files |
 |-------|-------------|-----------|
+| **vLLM int4_fused backend** | Full attention backend with paged cache, fused decode, prefill fallback | `/data/vllm/vllm/v1/attention/backends/fused_int4.py` |
+| **vLLM smoke benchmark** | Kernel-level FP16 vs fused INT4 comparison with JSON manifest | `/data/vllm/benchmarks/fused_int4_smoke.py` |
+| **vLLM unit tests** | Config, pack/unpack, cache write, decode correctness, backend class | `/data/vllm/tests/kernels/attention/test_fused_int4.py` |
 | Triton fused decode kernels | INT4 dequant inside attention, online softmax, GQA support | `kernels/triton_decode_kernels.py`, `scripts/v31_kernel_bench.py` |
 | 3-way ablation benchmark | P0 (FP16+FlashAttention), P1 (INT4 dequant+FlashAttention), Pfused (Triton fused) | `scripts/spev01/tier5_fused_decode.py` |
 | Hook-based KV compression wrapper | Forward hooks on HF models for per-layer KV quantization | `gpt2/compression/wrapper_hooks.py` |
 | Ratio classifier | Runtime INT6/INT8 calibration to identify sensitive models | `scripts/bpa_h100_exp4_ratio_classifier.py` |
 | Generic INT4/INT8 unpack/dequant | Microbenchmark machinery | `kernels/triton_kernels.py` |
 
-### What does not exist
+### vLLM integration checklist
 
-A vLLM-integrated fused INT4 serving path requires modifications
-to vLLM internals that are outside the scope of `knlp`:
+The five items from the original gap analysis and their current status:
 
-1. **KV cache dtype registration**: vLLM's `CacheConfig` must
-   accept `int4_fused` (or equivalent) as a valid
-   `kv_cache_dtype`. Currently, vLLM supports `auto`, `fp8`,
-   and `fp8_e5m2`/`fp8_e4m3fn` but not INT4 variants.
+1. **KV cache dtype registration** --- **Done.** `int4_fused` is a
+   valid `CacheDType` in `vllm/config/cache.py`. `is_quantized_kv_cache()`
+   recognises it. `FUSED_INT4` is registered in the backend registry.
+   The CUDA platform routes `int4_fused` requests to the `FUSED_INT4`
+   backend exclusively.
 
-2. **Paged attention kernel**: vLLM's paged attention (V1 and
-   V2) reads KV blocks in FP16/BF16/FP8. A fused INT4 path
-   needs a paged attention kernel that reads packed INT4 bytes
-   and dequantizes in-register, matching what the standalone
-   Triton kernels already do but integrated with vLLM's block
-   table layout.
+2. **Paged attention kernel** --- **Done.** The `fused_int4_decode`
+   Triton kernel reads packed INT4 bytes from the paged KV cache,
+   resolves physical block addresses via block-table lookup, handles
+   variable-length sequences, and uses online softmax with even/odd
+   Q decomposition for the packed K dot product. K and V have
+   independent scale tensors for future asymmetric K/V support.
 
-3. **Cache manager**: vLLM's `CacheEngine` allocates KV blocks
-   at the configured dtype width. INT4 packing (2 values per
-   byte) plus per-group FP16 scales requires a different block
-   layout and memory accounting.
+3. **Cache manager** --- **Partial.** The backend declares cache shape
+   `(2, num_blocks, block_size, num_kv_heads, head_size//2)` in uint8.
+   Scale tensors are lazily allocated in the attention impl on first
+   forward call. For production, these should be integrated with the
+   `CacheEngine` allocation path.
 
-4. **Prefill path**: The current Triton kernels target decode
-   (single-query attention). A serving engine also needs a
-   fused prefill path or must fall back to FP16 during prefill
-   and quantize to INT4 before caching.
+4. **Prefill path** --- **Done (fallback).** Prefill uses
+   `torch.nn.functional.scaled_dot_product_attention` directly on the
+   FP16 K/V from the model, with explicit logging:
+   `fallback_reason=prefill_not_fused`. The `reshape_and_cache_int4`
+   kernel quantizes K/V to INT4 when writing into the cache.
 
-5. **Bounded dispatch integration**: The H100 policy (Section
-   "Current H100 bounded decode policy" above) routes B=1 to
-   P0 and larger batches to fused. A serving integration must
-   implement this dispatch at the scheduler or kernel level.
+5. **Bounded dispatch integration** --- **Stubbed.** The backend
+   accepts a `block_n` parameter and the code has a placeholder for
+   batch-size-dependent BLOCK_N selection (the bounded dispatch
+   policy). The CUDA platform priority list routes `int4_fused`
+   exclusively to `FUSED_INT4`, so activating bounded dispatch
+   (B=1->FlashAttention, B>=2->fused) requires scheduler-level
+   routing that is not yet implemented.
 
-### Reading the benchmark docs honestly
+### What remains for production
 
-The runbook, quickstart, and smoke-test documents describe a
-complete evaluation protocol. They are written *prospectively*
-for when a fused INT4 vLLM branch exists. Until that branch is
-built, the `--kv-cache-dtype int4_fused` flag in those docs is
-a placeholder. The documents are still useful as protocol
-specifications: they define exactly what to measure, what
-thresholds to apply, and what artifacts to collect once the
-serving integration is available.
+- **H100 serving validation**: Full vLLM API server + lm-eval with
+  FlashAttention 3 baseline comparison
+- **Scale tensor lifecycle**: Integrate with `CacheEngine` allocation
+  instead of lazy allocation
+- **CUDAGraph support**: Currently `AttentionCGSupport.NEVER`
+- **Bounded dispatch**: Scheduler-level routing between FlashAttention
+  and fused based on batch size
+- **Asymmetric K/V**: The structure supports it (separate K/V scale
+  tensors) but the actual per-K/per-V precision policy is not
+  implemented
 
-The standalone Triton kernel ablations (tier5_fused_decode.py
-and v31_kernel_bench.py) are the currently runnable proof path.
-They measure raw decode kernel latency outside any serving
-framework and produce the JSON proof artifacts in
-`docs/benchmarks/data/h100_ablation/`.
+### Reading the benchmark docs
+
+The runbook, quickstart, and smoke-test documents describe the full
+evaluation protocol. The quickstart commands are now runnable against
+the `20250325-fused-quantization` vLLM branch. The standalone Triton
+kernel ablations (`tier5_fused_decode.py`, `v31_kernel_bench.py`)
+remain available as the no-vLLM proof path and produce the JSON proof
+artifacts in `docs/benchmarks/data/h100_ablation/`.
 
 ## Status
 
