@@ -787,13 +787,20 @@ evidentiary value.
 
 ## FUSED Config Smoke
 
+> **Integration status**: The `--kv-cache-dtype int4_fused` flag
+> below does not exist in stock vLLM (through 0.18.0). This
+> section applies only when running a custom vLLM branch with
+> fused INT4 paged attention support. See
+> [fused_kv_quantization.md](../fused_kv_quantization.md) for
+> the serving integration gap analysis.
+
 The examples above run with default FP16 KV cache. To smoke-test
 the FUSED configuration, repeat S0-S10 with the fused flag added
 to each command. The key difference is one extra flag on the
 server and offline benchmarks:
 
 ```bash
-# Server with fused KV
+# Server with fused KV (requires custom vLLM branch)
 python -m vllm.entrypoints.openai.api_server \
   --model $MODEL \
   --tensor-parallel-size $TP \

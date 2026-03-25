@@ -1,5 +1,16 @@
 # Fused KV Quantization: Benchmark Runbook
 
+> **Integration status**: This runbook is a protocol specification
+> for evaluating fused INT4 KV quantization inside a serving engine.
+> Stock vLLM (through 0.18.0) does not support the
+> `--kv-cache-dtype int4_fused` flag used in examples below. The
+> flag is a placeholder for a future vLLM branch or plugin. Until
+> that branch exists, the fused decode proof artifacts come from
+> standalone Triton kernel benchmarks
+> (`scripts/spev01/tier5_fused_decode.py`), not from a vLLM serving
+> path. See [fused_kv_quantization.md](fused_kv_quantization.md)
+> for the full serving integration gap analysis.
+
 This document specifies the evaluation protocol for validating fused
 INT4 KV quantization against FP16 baselines in a paper-grade setting.
 It covers serving throughput, latency profiling, accuracy evaluation,
@@ -186,8 +197,10 @@ export SEED=42
 
 The FUSED run adds exactly one flag (e.g.
 `--kv-cache-dtype fp8` or a custom fused-int4 flag depending on
-the vLLM branch). Document the exact flag difference in
-`<RESULTS_DIR>/config_diff.txt`.
+the vLLM branch). Note: stock vLLM does not support
+`int4_fused`; this requires a custom vLLM branch with fused
+INT4 paged attention support. Document the exact flag
+difference in `<RESULTS_DIR>/config_diff.txt`.
 
 ---
 
