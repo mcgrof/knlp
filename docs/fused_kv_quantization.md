@@ -44,9 +44,22 @@ can be neutral or counterproductive, while fused quantization can translate
 compression into real decode speedup because it removes traffic from the path
 that actually dominates decode.
 
+## FlashAttention: PyTorch SDPA vs external flash\_attn
+
+When this document or the proof artifacts refer to "FlashAttention",
+the implementation is **PyTorch SDPA** (`torch.nn.functional.scaled_dot_product_attention`)
+with the `FLASH_ATTENTION_FORCED` backend hint. PyTorch 2.4+ ships its
+own FlashAttention-2 kernel inside SDPA; no external package is required.
+The H100 proof pass explicitly confirmed that the `flash_attn` pip
+package (Dao-AILab) was **not installed**, so there is no ambiguity
+about which FlashAttention ran. The `FLASH_ATTENTION_FORCED` setting
+makes the backend deterministic and verifiable in the JSON proof
+artifacts. For the full H100 ablation against FlashAttention-backed
+baselines, see [H100 FlashAttention vs fused INT4 decode ablation](benchmarks/h100_flashattention_fused_ablation.md).
+
 ## Related documentation
 
-Use these references together. The standalone systems diagnosis is [Memory-Traffic Saturation in Autoregressive Decode](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_in_autoregressive_decode.md). The cross-model companion is [Cross-Model KV Sensitivity and Decode Scaling](https://github.com/mcgrof/knlp/blob/main/docs/cross_model_kv_sensitivity_and_decode_scaling.md). The paper visualization is the [Memory-Traffic Saturation interactive walkthrough](https://mcgrof.github.io/knlp/paper_memory_decode.html). For broader BPA background, use [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md) and [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For supporting visual context, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://mcgrof.github.io/knlp/ridge_point.html). For the statistical side of the sensitivity discussion, use [Spearman ρ Visualization](https://mcgrof.github.io/knlp/spearman_rho.html).
+Use these references together. The standalone systems diagnosis is [Memory-Traffic Saturation in Autoregressive Decode](https://github.com/mcgrof/knlp/blob/main/docs/memory_traffic_saturation_in_autoregressive_decode.md). The cross-model companion is [Cross-Model KV Sensitivity and Decode Scaling](https://github.com/mcgrof/knlp/blob/main/docs/cross_model_kv_sensitivity_and_decode_scaling.md). The paper visualization is the [Memory-Traffic Saturation interactive walkthrough](https://mcgrof.github.io/knlp/paper_memory_decode.html). For broader BPA background, use [docs/bpa.md](https://github.com/mcgrof/knlp/blob/main/docs/bpa.md) and [docs/paper/bpa/evolution.md](https://github.com/mcgrof/knlp/blob/main/docs/paper/bpa/evolution.md). For supporting visual context, use [AR Decode Bottleneck](https://mcgrof.github.io/knlp/ar_decode_bottleneck.html), [Decode Scaling Visualization](https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html), and [Ridge Point Visualization](https://mcgrof.github.io/knlp/ridge_point.html). For the statistical side of the sensitivity discussion, use [Spearman ρ Visualization](https://mcgrof.github.io/knlp/spearman_rho.html). For the H100 FlashAttention fused decode proof, see [H100 FlashAttention vs fused INT4 decode ablation](benchmarks/h100_flashattention_fused_ablation.md).
 
 ## Implementation
 
