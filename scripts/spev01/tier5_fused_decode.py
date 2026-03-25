@@ -463,7 +463,7 @@ def main():
     print(f"Batch sizes: {DECODE_BATCHES}")
     print()
 
-    gpu_mem_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+    gpu_mem_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
     all_results = []
 
     for cfg in CONFIGS:
