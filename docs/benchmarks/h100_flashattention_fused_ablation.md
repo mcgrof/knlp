@@ -28,6 +28,7 @@ The proof artifacts explicitly record:
 
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_7b.json`
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_14b.json`
+- `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_32b.json`
 - `scripts/spev01/tier5_fused_decode.py`
 
 ## Qwen2.5-7B summary
@@ -62,4 +63,9 @@ The proof artifacts explicitly record:
 
 ### Systems interpretation
 
-> The strongest systems result is not merely that fused decode beats an FP16 FlashAttention baseline at moderate-to-large operating points. It is that fused decode substantially outperforms the more apples-to-apples INT4→dequant→FlashAttention path, showing that the benefit comes from **fusion**, not just from quantization alone.
+> The strongest systems result is not merely that fused decode beats an FP16 FlashAttention baseline at moderate-to-large operating points. It is that fused decode substantially outperforms the more apples-to-apples INT4→dequant→FlashAttention path, confirming that the benefit comes from fusion --- eliminating the intermediate FP16 buffer materialization --- not from quantization alone.
+
+## Qwen2.5-32B summary
+
+- See `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_32b.json` for the full table.
+- Pattern remains consistent with 14B: fused loses at tiny batch-1 points, crosses over cleanly once batch rises, and remains substantially faster than the INT4->dequant->FlashAttention path at moderate and large operating points.
