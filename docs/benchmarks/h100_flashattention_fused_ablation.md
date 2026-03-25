@@ -61,6 +61,28 @@ The proof artifacts record these backends explicitly:
 - `dequant_backend = FLASH_ATTENTION_FORCED`
 - `fused_backend = TRITON_FUSED_INT4_DECODE`
 
+## What lives where
+
+There are two different kinds of source involved in this work and they should
+not be conflated.
+
+`scripts/spev01/tier5_fused_decode.py` is the **standalone benchmark harness**
+used to produce the H100 proof artifacts in this document. It contains the
+Triton fused decode benchmark path that was exercised directly against a
+FlashAttention-backed baseline.
+
+`kernels/vllm_fused_int4_backend_snapshot.py` is a **durable source snapshot**
+of the later serving-side fused INT4 backend from the public
+`mcgrof/vllm` branch `20250325-fused-quantization`. It is committed here so the
+fused Triton serving kernels and backend logic do not live only in another
+repository. This snapshot includes the Triton cache-write kernel, the fused
+INT4 decode kernel, backend verification logging, and the separate K/V scale
+structure needed for future asymmetric K/V work.
+
+The H100 numbers in this note come from the standalone benchmark harness, not
+from a serving benchmark. The source snapshot is kept here for provenance and
+kernel archaeology.
+
 ## Artifacts
 
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen25_7b.json`
@@ -70,7 +92,8 @@ The proof artifacts record these backends explicitly:
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen3_14b.json`
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_qwen3_32b.json`
 - `docs/benchmarks/data/h100_ablation/tier5_flash_proof_deepseek_r1_distill_qwen_32b.json`
-- `scripts/spev01/tier5_fused_decode.py`
+- `scripts/spev01/tier5_fused_decode.py` — standalone H100 benchmark harness used for the proof runs
+- `kernels/vllm_fused_int4_backend_snapshot.py` — durable source snapshot of the fused INT4 Triton serving backend corresponding to the public `mcgrof/vllm` branch `20250325-fused-quantization`
 
 ## Qwen2.5-7B results
 
