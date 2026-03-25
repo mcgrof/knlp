@@ -1,5 +1,14 @@
 # Quickstart: Fused KV Quantization Benchmarks
 
+> **Integration status**: The `--kv-cache-dtype int4_fused` flag
+> used below does not exist in stock vLLM (through 0.18.0). This
+> quickstart is a protocol specification for when a custom vLLM
+> branch with fused INT4 paged attention support is available. For
+> the currently runnable proof path, use the standalone Triton
+> kernel ablations in `scripts/spev01/tier5_fused_decode.py`. See
+> [fused_kv_quantization.md](../fused_kv_quantization.md) for the
+> full gap analysis.
+
 This page gets you from zero to a minimal FP16-vs-FUSED comparison
 in about 30 minutes of active setup time plus benchmark runtime.
 If this is your first run on a new machine or after upgrading
@@ -110,7 +119,9 @@ echo "FUSED adds: --kv-cache-dtype int4_fused" \
 ```
 
 Replace `--kv-cache-dtype int4_fused` with whatever flag your
-vLLM branch uses for fused INT4 KV cache.
+vLLM branch uses for fused INT4 KV cache. Stock vLLM does not
+support this flag; a custom branch with fused INT4 paged
+attention is required.
 
 ## Step 3: Run the Minimal Benchmark Set
 
