@@ -1,5 +1,13 @@
 # Reproducibility Checklist
 
+> **Integration status**: This checklist applies to vLLM-based
+> serving benchmarks. Stock vLLM (through 0.18.0) does not
+> support fused INT4 KV cache; a custom branch is required. The
+> currently reproducible proof path uses standalone Triton kernel
+> ablations (`scripts/spev01/tier5_fused_decode.py`). See
+> [fused_kv_quantization.md](../fused_kv_quantization.md) for
+> the serving integration status.
+
 This document covers everything required to make a fused KV
 quantization benchmark run reproducible by a third party. Use it
 as a pre-submission gate: every item must be satisfied before

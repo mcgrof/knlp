@@ -1,10 +1,12 @@
 # H100 FlashAttention vs fused INT4 decode ablation
 
 This note records the H100 proof pass for fused KV decode against
-FlashAttention-backed baselines. The purpose is to confirm that
-fused INT4 decode beats FlashAttention-backed paths on Hopper
+FlashAttention-backed baselines using standalone Triton kernel
+benchmarks (not a vLLM serving path). The purpose is to confirm
+that fused INT4 decode beats FlashAttention-backed paths on Hopper
 hardware and to separate the contribution of fusion from the
-contribution of quantization alone.
+contribution of quantization alone. These results measure raw
+decode kernel latency outside any serving framework.
 
 ## Environment
 
