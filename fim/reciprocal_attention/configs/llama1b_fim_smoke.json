@@ -1,0 +1,42 @@
+{
+  "run_name": "llama1b-fim-smoke",
+  "model": {
+    "hidden_size": 2048,
+    "intermediate_size": 5632,
+    "num_hidden_layers": 22,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 4,
+    "max_position_embeddings": 2048,
+    "vocab_size": 50304,
+    "rms_norm_eps": 1e-6,
+    "rope_theta": 10000.0
+  },
+  "training": {
+    "train_steps": 4,
+    "eval_interval": 2,
+    "eval_batches": 1,
+    "batch_size": 2,
+    "seq_len": 128
+  },
+  "attention": {
+    "impl": "sdpa",
+    "backend": "auto",
+    "record_backend": true,
+    "capture_attention_stats": true
+  },
+  "ra": {
+    "enabled": false,
+    "layers": {}
+  },
+  "fim": {
+    "enabled": true,
+    "batches": 4,
+    "candidate_low_threshold": 0.15,
+    "candidate_keep_top_k_layers": 5,
+    "select_top_heads": 8,
+    "output_file": "configs/ra_surgical_llama1b.json"
+  },
+  "tracking": {
+    "out_dir": "out/llama1b-matched"
+  }
+}
