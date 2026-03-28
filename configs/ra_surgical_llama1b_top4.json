@@ -1,0 +1,15 @@
+{
+  "model": "llama-1b",
+  "selection_method": "placeholder-for-smoke-test+top4-trim",
+  "candidate_layers": [3, 5, 8, 10, 15],
+  "candidate_layer_traces": {},
+  "selected_head_count": 4,
+  "layers": {
+    "3": [0, 5, 12],
+    "8": [1]
+  },
+  "scores": {
+    "3": {"0": 0.9, "5": 0.85, "12": 0.82},
+    "8": {"1": 0.75}
+  }
+}
