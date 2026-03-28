@@ -1,0 +1,23 @@
+{
+  "run_name": "llama150m-baseline-smoke",
+  "training": {
+    "train_steps": 4,
+    "eval_interval": 2,
+    "eval_batches": 1,
+    "batch_size": 2,
+    "seq_len": 128
+  },
+  "attention": {
+    "impl": "sdpa",
+    "backend": "auto",
+    "record_backend": true,
+    "capture_attention_stats": false
+  },
+  "ra": {
+    "enabled": false,
+    "layers": {}
+  },
+  "fim": {
+    "enabled": false
+  }
+}
