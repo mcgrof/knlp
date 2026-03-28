@@ -1,0 +1,40 @@
+{
+  "candidate_layer_traces": {
+    "1": 1.1259199116973552e-06,
+    "2": 1.1152950814509775e-06,
+    "4": 1.1782353439571125e-06
+  },
+  "candidate_layers": [
+    4,
+    1,
+    2
+  ],
+  "layers": {
+    "1": [
+      0,
+      7
+    ],
+    "2": [
+      7
+    ],
+    "4": [
+      6
+    ]
+  },
+  "model": "llama-150m",
+  "scores": {
+    "1": {
+      "0": 1.0000017881393433,
+      "7": 1.0000019073486328
+    },
+    "2": {
+      "7": 1.000002384185791
+    },
+    "4": {
+      "6": 1.0000019073486328
+    }
+  },
+  "selected_head_count": 4,
+  "selection_method": "attention-proxy-max-eigenvalue+top4-trim",
+  "source_selection_file": "configs/ra_surgical_llama150m.json"
+}

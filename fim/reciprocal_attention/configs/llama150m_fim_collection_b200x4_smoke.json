@@ -1,0 +1,43 @@
+{
+  "run_name": "llama150m-fim-collection-b200x4-smoke",
+  "training": {
+    "train_steps": 2,
+    "max_time": 120,
+    "eval_interval": 1,
+    "eval_batches": 2,
+    "batch_size": 8,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 0.0006,
+    "min_lr": 6e-05,
+    "warmup_steps": 200,
+    "weight_decay": 0.1,
+    "max_grad_norm": 1.0,
+    "seq_len": 1024,
+    "bf16": true
+  },
+  "attention": {
+    "impl": "sdpa",
+    "backend": "auto",
+    "record_backend": true,
+    "capture_attention_stats": true
+  },
+  "ra": {
+    "enabled": false,
+    "layers": {}
+  },
+  "fim": {
+    "enabled": true,
+    "batches": 2,
+    "candidate_low_threshold": 0.15,
+    "candidate_keep_top_k_layers": 3,
+    "select_top_heads": 8,
+    "output_file": "configs/ra_surgical_llama150m.json"
+  },
+  "tracking": {
+    "wandb": false,
+    "wandb_project": "llama150m-ra-surgical-b200x4",
+    "wandb_mode": "offline",
+    "log_jsonl": true,
+    "out_dir": "out/llama150m-matched"
+  }
+}
