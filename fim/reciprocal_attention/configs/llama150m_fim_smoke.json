@@ -1,0 +1,28 @@
+{
+  "run_name": "llama150m-fim-smoke",
+  "training": {
+    "train_steps": 4,
+    "eval_interval": 2,
+    "eval_batches": 1,
+    "batch_size": 2,
+    "seq_len": 128
+  },
+  "attention": {
+    "impl": "sdpa",
+    "backend": "auto",
+    "record_backend": true,
+    "capture_attention_stats": true
+  },
+  "ra": {
+    "enabled": false,
+    "layers": {}
+  },
+  "fim": {
+    "enabled": true,
+    "batches": 4,
+    "candidate_low_threshold": 0.15,
+    "candidate_keep_top_k_layers": 3,
+    "select_top_heads": 8,
+    "output_file": "configs/ra_surgical_llama150m.json"
+  }
+}
