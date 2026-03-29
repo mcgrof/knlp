@@ -4,7 +4,7 @@ Date: 2026-03-28
 
 ## Model architecture
 
-TinyLlama-1.1B architecture with GPT-2 tokenizer:
+TinyLlama-1.1B architecture with GPT-2 tokenizer (this is the 1B lane used here; it is not Marin):
 
 | Parameter              | Value  |
 |------------------------|--------|
@@ -35,6 +35,34 @@ TinyLlama-1.1B architecture with GPT-2 tokenizer:
 
 ## Design decisions
 
+## Run identity
+
+- model family for this lane: TinyLlama-1.1B style 1B reciprocal-attention harness
+- not the Marin LLaMA-1B line
+- headline surgical arm: RA-8 from `configs/ra_surgical_llama1b.json`
+- negative control only: RA-4 top-4 trim from `configs/ra_surgical_llama1b_top4.json`
+
+## Prior durable result to reuse
+
+The last durable 4xH100 bundle is:
+
+- `/data/knlp-key-results/paper-fim/1b/ra/llama1b-matched-20260328T231857Z`
+
+That run established the exact 8-head placement file already available in the repo:
+
+- layer 1: `[7, 11]`
+- layer 2: `[4, 10]`
+- layer 3: `[11, 22]`
+- layer 4: `[3, 21]`
+
+The same durable bundle also showed that the trimmed RA-4 arm is a negative-control outcome for 1B:
+
+- baseline PPL: `322.02`
+- RA-4 PPL: `331.63`
+- delta: `+2.98%` worse than baseline
+
+The next 1B run should therefore reuse the validated surgical-8 placement unless a new FIM collection explicitly replaces it.
+
 The 1B lane reuses the same harness as 150M (`llama150m_matched.py`)
 with only JSON config changes. The harness was extended with:
 
@@ -63,8 +91,11 @@ globally, with top-4 derivation available.
 - single-process baseline: PASS (q shape [2,32,128,64], MATH backend)
 - single-process FIM: PASS (generates selection with model=llama-1b)
 - single-process RA-8: PASS (reciprocal [2,2,128,64], parity_ok=true)
+- single-process RA-4: PASS (parity_ok=true)
 - DDP smoke (tiny model, gloo, world_size=2): PASS
 - eval checkpoint path: PASS (graceful handling of missing datasets lib)
+- derive-top4: PASS (trims 8-head to 4-head from placeholder selection)
+- readiness-check (full chain): PASS (baseline+FIM+RA8+RA4+derive-top4)
 
 ### Cloud smoke
 
@@ -101,16 +132,34 @@ Production (1-hour wall-clock):
 
 - run_llama1b_matched.sh: run script with all modes
 - setup_llama1b_cloud.sh: cloud setup + smoke validation
-- run_llama1b_full_pipeline.sh: FIM -> baseline -> RA8 -> eval
+- run_llama1b_full_pipeline.sh: FIM -> baseline -> RA-8 -> eval
 
 ## Cloud execution plan
 
 1. Provision 4xH100 80GB (RunPod or Prime Intellect)
 2. Sync repo + data to pod
 3. Run `scripts/setup_llama1b_cloud.sh` (installs deps, runs smokes)
-4. Run `scripts/run_llama1b_full_pipeline.sh` (~2.5 hours total)
+4. Run `scripts/run_llama1b_full_pipeline.sh` (~2.5 hours total, headline = baseline vs RA-8)
 5. Sync results to local + knlp-key-results
 6. Destroy instance
+
+## Changes (2026-03-28, audit pass 2)
+
+- Eval tasks wired consistently: shell eval commands now run
+  hellaswag+lambada+winogrande (was hellaswag+lambada only)
+- Added `readiness-check` mode to `run_llama1b_matched.sh` that
+  runs all CPU smokes plus derive-top4 in a single invocation
+- Full readiness-check passed locally (4 smokes + derive-top4)
+
+## Config audit
+
+All 12 JSON configs verified consistent:
+- Model architecture: 2048/5632/22/32/4/2048/50304 across all
+- Production hyperparams: bs=4, ga=8, lr=3e-4, warmup=1000,
+  seq_len=1024, bf16=true, weight_decay=0.1, max_grad_norm=1.0
+- SDPA settings: impl=sdpa, backend=auto, record_backend=true
+- FIM: candidate_keep_top_k_layers=5 (correct for 22 layers)
+- No torch.compile anywhere in the lane
 
 ## Blockers
 
@@ -118,6 +167,19 @@ Production (1-hour wall-clock):
   prime CLI all missing)
 - Manual pod creation via RunPod web UI required
 - Data files (finewebedu train/val.bin) need rsync to pod
+
+## Next command
+
+Local readiness-check (already passed):
+```
+WANDB_DISABLED=1 bash scripts/run_llama1b_matched.sh readiness-check
+```
+
+Cloud (after provisioning 4xH100, syncing repo+data):
+```
+bash scripts/setup_llama1b_cloud.sh
+bash scripts/run_llama1b_full_pipeline.sh
+```
 
 ## Results
 

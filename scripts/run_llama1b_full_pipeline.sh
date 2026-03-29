@@ -5,10 +5,9 @@ set -euo pipefail
 #
 # Runs the complete experiment:
 #   1. FIM collection (~15 min)
-#   2. Derive top-4 selection
-#   3. Baseline training (1 hr wall-clock)
-#   4. RA-8 training (1 hr wall-clock)
-#   5. HellaSwag + LAMBADA eval on both checkpoints
+#   2. Baseline training (1 hr wall-clock)
+#   3. RA-8 surgical training (1 hr wall-clock)
+#   4. HellaSwag + Winogrande eval on both checkpoints
 #
 # Usage:
 #   bash scripts/run_llama1b_full_pipeline.sh [NPROC]
@@ -34,33 +33,24 @@ OUT_DIR=out/llama1b-matched
 START_TIME=$(date +%s)
 
 # Phase 1: FIM collection
-echo "=== Phase 1/6: FIM collection ==="
+echo "=== Phase 1/5: FIM collection ==="
 bash $RUNNER full-fim
 echo "FIM collection done at $(date -u)"
 
-# Phase 2: Derive top-4 selection
-echo "=== Phase 2/6: derive top-4 selection ==="
-bash $RUNNER derive-top4
-echo "Top-4 derivation done"
-
-# Phase 3: Baseline training (1 hr)
-echo "=== Phase 3/6: baseline training (1 hr) ==="
+# Phase 2: Baseline training (1 hr)
+echo "=== Phase 2/4: baseline training (1 hr) ==="
 bash $RUNNER full-baseline
 echo "Baseline done at $(date -u)"
 
-# Phase 4: RA-8 surgical training (1 hr)
-echo "=== Phase 4/6: RA-8 surgical training (1 hr) ==="
+# Phase 3: RA-8 surgical training (1 hr)
+echo "=== Phase 3/4: RA-8 surgical training (1 hr) ==="
 bash $RUNNER full-ra8
 echo "RA-8 done at $(date -u)"
 
-# Phase 5: Downstream evaluation
-echo "=== Phase 5/6: eval baseline ==="
-bash $RUNNER eval-baseline
-echo "Baseline eval done at $(date -u)"
-
-echo "=== Phase 6/6: eval RA-8 ==="
-bash $RUNNER eval-ra8
-echo "RA-8 eval done at $(date -u)"
+# Phase 4: Downstream evaluation
+echo "=== Phase 4/4: eval baseline + RA-8 ==="
+bash $RUNNER eval-all
+echo "Eval done at $(date -u)"
 
 END_TIME=$(date +%s)
 TOTAL_SECS=$((END_TIME - START_TIME))
