@@ -45,12 +45,17 @@ derive_top4() {
     --output "$output"
 }
 
+EVAL_TASKS=${LLAMA1B_EVAL_TASKS:-hellaswag,winogrande}
+EVAL_MAX_EXAMPLES=${LLAMA1B_EVAL_MAX_EXAMPLES:-1000}
+EVAL_SMOKE_MAX_EXAMPLES=${LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES:-32}
+
 run_eval() {
   local ckpt=$1
   local out_dir=${2:-out/llama1b-matched}
+  local max_examples=${3:-$EVAL_MAX_EXAMPLES}
   "$PY" "$RUNNER" --eval-checkpoint "$ckpt" \
-    --eval-tasks hellaswag,lambada \
-    --eval-max-examples 1000 \
+    --eval-tasks "$EVAL_TASKS" \
+    --eval-max-examples "$max_examples" \
     --output "$out_dir"
 }
 
@@ -80,80 +85,100 @@ case "$mode" in
     run_ddp "$CFG_DIR/llama1b_fim_smoke.json"
     ;;
   target-smoke-baseline)
-    run_ddp "$CFG_DIR/llama1b_baseline_b200x4_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_baseline_4xh100_smoke.json"
     ;;
   target-smoke-fim)
-    run_ddp "$CFG_DIR/llama1b_fim_collection_b200x4_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100_smoke.json"
     ;;
   target-smoke-ra8)
-    run_ddp "$CFG_DIR/llama1b_ra_surgical8_b200x4_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100_smoke.json"
     ;;
   target-smoke-ra4)
-    run_ddp "$CFG_DIR/llama1b_ra_surgical4_b200x4_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical4_4xh100_smoke.json"
     ;;
   target-smoke-all)
-    run_ddp "$CFG_DIR/llama1b_baseline_b200x4_smoke.json"
-    run_ddp "$CFG_DIR/llama1b_fim_collection_b200x4_smoke.json"
-    run_ddp "$CFG_DIR/llama1b_ra_surgical8_b200x4_smoke.json"
-    run_ddp "$CFG_DIR/llama1b_ra_surgical4_b200x4_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_baseline_4xh100_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical4_4xh100_smoke.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100_smoke.json"
     ;;
   full-baseline)
-    run_ddp "$CFG_DIR/llama1b_baseline_b200x4.json"
+    run_ddp "$CFG_DIR/llama1b_baseline_4xh100.json"
     ;;
   full-fim)
-    run_ddp "$CFG_DIR/llama1b_fim_collection_b200x4.json"
+    run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100.json"
     ;;
   full-ra8)
-    run_ddp "$CFG_DIR/llama1b_ra_surgical8_b200x4.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100.json"
     ;;
   full-ra4)
-    run_ddp "$CFG_DIR/llama1b_ra_surgical4_b200x4.json"
+    run_ddp "$CFG_DIR/llama1b_ra_surgical4_4xh100.json"
     ;;
   derive-top4)
     derive_top4 "${2:-}" "${3:-}"
     ;;
+  eval-smoke-baseline)
+    run_eval "out/llama1b-matched/llama1b-baseline-4xh100-smoke.checkpoint.pt" "${2:-out/llama1b-matched}" "$EVAL_SMOKE_MAX_EXAMPLES"
+    ;;
   eval-baseline)
-    run_eval "out/llama1b-matched/llama1b-baseline-b200x4-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
+    run_eval "out/llama1b-matched/llama1b-baseline-4xh100-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
     ;;
   eval-ra8)
-    run_eval "out/llama1b-matched/llama1b-ra-surgical8-b200x4-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
+    run_eval "out/llama1b-matched/llama1b-ra-surgical8-4xh100-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
     ;;
   eval-ra4)
-    run_eval "out/llama1b-matched/llama1b-ra-surgical4-b200x4-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
+    run_eval "out/llama1b-matched/llama1b-ra-surgical4-4xh100-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
     ;;
   eval-all)
     echo "=== Eval: baseline ==="
-    run_eval "out/llama1b-matched/llama1b-baseline-b200x4-1hr.checkpoint.pt" "out/llama1b-matched"
+    run_eval "out/llama1b-matched/llama1b-baseline-4xh100-1hr.checkpoint.pt" "out/llama1b-matched"
     echo "=== Eval: RA-8 ==="
-    run_eval "out/llama1b-matched/llama1b-ra-surgical8-b200x4-1hr.checkpoint.pt" "out/llama1b-matched"
+    run_eval "out/llama1b-matched/llama1b-ra-surgical8-4xh100-1hr.checkpoint.pt" "out/llama1b-matched"
     echo "=== Eval complete ==="
     ;;
-  full-sequence)
-    # Pipeline: FIM -> top4 -> baseline -> RA8
-    echo "=== Phase 1/4: FIM collection ==="
-    run_ddp "$CFG_DIR/llama1b_fim_collection_b200x4.json"
-    echo "=== Phase 2/4: derive top-4 selection ==="
+  readiness-check)
+    # Quick local validation of the entire chain.
+    # Runs CPU smokes (baseline, FIM, RA-8, RA-4) sequentially,
+    # then verifies the eval codepath by checking that the harness
+    # accepts --eval-checkpoint with a nonexistent path gracefully.
+    echo "=== Readiness check: CPU smokes ==="
+    echo "--- baseline ---"
+    run_single "$CFG_DIR/llama1b_baseline_smoke.json"
+    echo "--- FIM ---"
+    run_single "$CFG_DIR/llama1b_fim_smoke.json"
+    echo "--- RA-8 ---"
+    run_single "$CFG_DIR/llama1b_ra_surgical8_smoke.json"
+    echo "--- RA-4 ---"
+    run_single "$CFG_DIR/llama1b_ra_surgical4_smoke.json"
+    echo "--- derive-top4 ---"
     derive_top4
-    echo "=== Phase 3/4: baseline (1 hr wall-clock) ==="
-    run_ddp "$CFG_DIR/llama1b_baseline_b200x4.json"
-    echo "=== Phase 4/4: RA-8 surgical (1 hr wall-clock) ==="
-    run_ddp "$CFG_DIR/llama1b_ra_surgical8_b200x4.json"
+    echo "--- eval smoke (baseline, ${EVAL_SMOKE_MAX_EXAMPLES} examples) ---"
+    run_eval "out/llama1b-matched/llama1b-baseline-smoke.checkpoint.pt" \
+      "out/llama1b-matched" "$EVAL_SMOKE_MAX_EXAMPLES"
+    echo "=== All readiness checks PASSED ==="
+    ;;
+  full-sequence)
+    # Pipeline: FIM -> baseline -> RA-8
+    echo "=== Phase 1/3: FIM collection ==="
+    run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100.json"
+    echo "=== Phase 2/3: baseline (1 hr wall-clock) ==="
+    run_ddp "$CFG_DIR/llama1b_baseline_4xh100.json"
+    echo "=== Phase 3/3: RA-8 surgical (1 hr wall-clock) ==="
+    run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100.json"
     echo "=== full-sequence complete ==="
     ;;
   full-sequence-eval)
     # Full pipeline including eval
-    echo "=== Phase 1/6: FIM collection ==="
-    run_ddp "$CFG_DIR/llama1b_fim_collection_b200x4.json"
-    echo "=== Phase 2/6: derive top-4 selection ==="
-    derive_top4
-    echo "=== Phase 3/6: baseline (1 hr wall-clock) ==="
-    run_ddp "$CFG_DIR/llama1b_baseline_b200x4.json"
-    echo "=== Phase 4/6: RA-8 surgical (1 hr wall-clock) ==="
-    run_ddp "$CFG_DIR/llama1b_ra_surgical8_b200x4.json"
-    echo "=== Phase 5/6: eval baseline ==="
-    run_eval "out/llama1b-matched/llama1b-baseline-b200x4-1hr.checkpoint.pt" "out/llama1b-matched"
-    echo "=== Phase 6/6: eval RA-8 ==="
-    run_eval "out/llama1b-matched/llama1b-ra-surgical8-b200x4-1hr.checkpoint.pt" "out/llama1b-matched"
+    echo "=== Phase 1/5: FIM collection ==="
+    run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100.json"
+    echo "=== Phase 2/5: baseline (1 hr wall-clock) ==="
+    run_ddp "$CFG_DIR/llama1b_baseline_4xh100.json"
+    echo "=== Phase 3/5: RA-8 surgical (1 hr wall-clock) ==="
+    run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100.json"
+    echo "=== Phase 4/5: eval baseline ==="
+    run_eval "out/llama1b-matched/llama1b-baseline-4xh100-1hr.checkpoint.pt" "out/llama1b-matched"
+    echo "=== Phase 5/5: eval RA-8 ==="
+    run_eval "out/llama1b-matched/llama1b-ra-surgical8-4xh100-1hr.checkpoint.pt" "out/llama1b-matched"
     echo "=== full-sequence-eval complete ==="
     ;;
   *)
@@ -163,6 +188,7 @@ Usage: scripts/run_llama1b_matched.sh <mode>
 LLaMA-1B (1.175B params, TinyLlama architecture) matched RA lane.
   Model: h=2048, L=22, H=32, KV=4, I=5632, V=50304
   Training: bs=4, ga=8, 4xGPU => effective batch=128
+  Hardware: 4xH100 80GB
 
 Smoke tests (single-process, CPU-safe):
   baseline          single-process baseline smoke
@@ -181,21 +207,26 @@ DDP smoke (multi-GPU or CPU/gloo):
   target-smoke-ra4       target-shape bf16 RA-4 smoke (seq_len=1024)
   target-smoke-all       all target-shape smokes sequentially
 
-Full production runs (DDP, wall-clock matched):
+Full production runs (DDP, 4xH100, wall-clock matched):
   full-baseline     1-hr baseline
   full-fim          FIM collection (~15 min)
-  full-ra8          1-hr RA-8 surgical
-  full-ra4          1-hr RA-4 surgical
+  full-ra8          1-hr RA-8 surgical (default headline arm)
+  full-ra4          1-hr RA-4 surgical (negative-control trim)
   derive-top4 [in] [out]   trim 8-head selection to top-4
 
-Downstream evaluation:
-  eval-baseline     HellaSwag + LAMBADA on baseline checkpoint
-  eval-ra8          HellaSwag + LAMBADA on RA-8 checkpoint
-  eval-all          eval both baseline and RA-8
+Downstream evaluation (default: hellaswag,winogrande):
+  eval-smoke-baseline  quick eval (32 examples) on baseline smoke ckpt
+  eval-baseline     eval on baseline checkpoint
+  eval-ra8          eval on RA-8 checkpoint
+  eval-ra4          eval on RA-4 checkpoint
+  eval-all          eval baseline + RA-8 (default headline comparison)
 
-Full pipeline:
-  full-sequence       FIM -> top4 -> baseline -> RA8
-  full-sequence-eval  FIM -> top4 -> baseline -> RA8 -> eval both
+Readiness:
+  readiness-check     CPU smokes (baseline+FIM+RA8+RA4) + derive-top4
+
+Full pipeline (default: baseline vs RA-8):
+  full-sequence       FIM -> baseline -> RA-8
+  full-sequence-eval  FIM -> baseline -> RA-8 -> eval both
 
 Environment:
   PYTHON=python3           python interpreter
@@ -203,6 +234,9 @@ Environment:
   NPROC_PER_NODE=4         GPUs per node for DDP modes
   WANDB_MODE=offline       force wandb mode (offline/disabled/online)
   WANDB_DISABLED=1         disable wandb entirely
+  LLAMA1B_EVAL_TASKS=hellaswag,winogrande  eval task list
+  LLAMA1B_EVAL_MAX_EXAMPLES=1000           examples per eval task
+  LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES=32       examples for smoke eval
 EOF
     ;;
 esac
