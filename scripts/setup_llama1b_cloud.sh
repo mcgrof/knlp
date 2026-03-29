@@ -27,7 +27,7 @@ fi
 
 # Install dependencies
 echo "=== Installing Dependencies ==="
-pip install --quiet --upgrade datasets wandb
+pip install --quiet --upgrade datasets wandb transformers accelerate sentencepiece tiktoken tokenizers
 
 # Verify critical imports
 echo "=== Verifying Imports ==="
@@ -35,9 +35,15 @@ python3 -c "
 import torch
 import transformers
 import datasets
+import sentencepiece
+import tiktoken
+import tokenizers
 print(f'torch: {torch.__version__}')
 print(f'transformers: {transformers.__version__}')
 print(f'datasets: {datasets.__version__}')
+print(f'sentencepiece: {sentencepiece.__version__}')
+print(f'tiktoken: {tiktoken.__version__}')
+print(f'tokenizers: {tokenizers.__version__}')
 print(f'CUDA available: {torch.cuda.is_available()}')
 print(f'CUDA device count: {torch.cuda.device_count()}')
 for i in range(torch.cuda.device_count()):
@@ -64,24 +70,37 @@ echo "val.bin: $(stat --format='%s bytes' "$VAL_BIN")"
 
 # Disable wandb for setup verification
 export WANDB_DISABLED=1
+RUN_FIM_SMOKE=${RUN_FIM_SMOKE:-0}
+export LLAMA1B_EVAL_TASKS=${LLAMA1B_EVAL_TASKS:-hellaswag,winogrande}
+export LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES=${LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES:-32}
 
 # Run target-shape smoke: baseline
 echo "=== Smoke Test: baseline (target-shape, bf16, seq_len=1024) ==="
 NPROC_PER_NODE=$GPU_COUNT scripts/run_llama1b_matched.sh target-smoke-baseline
 echo "=== Baseline smoke: PASS ==="
 
-# Run target-shape smoke: FIM collection
-echo "=== Smoke Test: FIM collection ==="
-NPROC_PER_NODE=$GPU_COUNT scripts/run_llama1b_matched.sh target-smoke-fim
-echo "=== FIM smoke: PASS ==="
+# Validate downstream eval hook on the fresh smoke checkpoint.
+echo "=== Eval Smoke: baseline checkpoint (${LLAMA1B_EVAL_TASKS}, max_examples=${LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES}) ==="
+scripts/run_llama1b_matched.sh eval-smoke-baseline
+echo "=== Eval smoke: PASS ==="
 
-# Run target-shape smoke: RA-8
-echo "=== Smoke Test: RA-8 ==="
+# Run target-shape smoke: surgical RA top-4
+echo "=== Smoke Test: RA-8 (surgical-8 headline arm) ==="
 NPROC_PER_NODE=$GPU_COUNT scripts/run_llama1b_matched.sh target-smoke-ra8
 echo "=== RA-8 smoke: PASS ==="
 
+if [ "$RUN_FIM_SMOKE" = "1" ] || [ "$RUN_FIM_SMOKE" = "true" ]; then
+  echo "=== Optional Smoke Test: FIM collection ==="
+  NPROC_PER_NODE=$GPU_COUNT scripts/run_llama1b_matched.sh target-smoke-fim
+  echo "=== FIM smoke: PASS ==="
+else
+  echo "=== Skipping target-shape FIM smoke ==="
+  echo "Reason: baseline + surgical-RA top-4 are the required readiness gate for the matched comparison,"
+  echo "and the 1B FIM collection is validated in the real pipeline rather than burning extra cloud time here."
+fi
+
 echo ""
-echo "=== ALL SMOKE TESTS PASSED ==="
+echo "=== REQUIRED CLOUD READINESS PASSED ==="
 echo "Cloud environment is ready for production runs."
 echo ""
 echo "To launch the full pipeline:"
