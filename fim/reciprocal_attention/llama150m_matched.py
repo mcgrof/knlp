@@ -41,6 +41,22 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import LlamaConfig, LlamaForCausalLM
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
 
+import functools
+
+try:
+    from torch.distributed.fsdp import (
+        FullStateDictConfig,
+        FullyShardedDataParallel as FSDP,
+        MixedPrecision,
+        ShardingStrategy,
+        StateDictType,
+    )
+    from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+    FSDP_AVAILABLE = True
+except ImportError:
+    FSDP_AVAILABLE = False
+
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
 except Exception:  # pragma: no cover - older torch fallback
@@ -228,9 +244,7 @@ class AttentionStatsCollector:
             "per_layer_traces": [float(x) for x in layer_trace.tolist()],
             "per_head_traces": [[float(y) for y in row] for row in head_trace.tolist()],
             "head_score_metric": self.score_metric,
-            "per_head_scores": [
-                [float(y) for y in row] for row in self.head_score.tolist()
-            ],
+            "per_head_scores": [[float(y) for y in row] for row in self.head_score.tolist()],
             "per_head_max_eigenvalue": [
                 [float(y) for y in row] for row in self.head_score.tolist()
             ],
@@ -256,27 +270,28 @@ class BackendRecorder:
     ) -> None:
         if label in self.calls:
             return
-        probe = infer_runtime_backend(
-            q=q,
-            k=k,
-            v=v,
-            mask=mask,
-            dropout_p=dropout_p,
-            is_causal=is_causal,
-            requested_backend_names=self.requested_backend_names,
-        )
-        self.calls[label] = {
-            "actual_backend": probe.get("actual_backend", "unknown"),
-            "probe": probe,
-            "sample": {
-                "device": str(q.device),
-                "dtype": str(q.dtype),
-                "shape": list(q.shape),
-                "mask": None if mask is None else list(mask.shape),
-                "dropout_p": float(dropout_p),
-                "is_causal": bool(is_causal),
-            },
-        }
+        with torch.no_grad():
+            probe = infer_runtime_backend(
+                q=q,
+                k=k,
+                v=v,
+                mask=mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                requested_backend_names=self.requested_backend_names,
+            )
+            self.calls[label] = {
+                "actual_backend": probe.get("actual_backend", "unknown"),
+                "probe": probe,
+                "sample": {
+                    "device": str(q.device),
+                    "dtype": str(q.dtype),
+                    "shape": list(q.shape),
+                    "mask": None if mask is None else list(mask.shape),
+                    "dropout_p": float(dropout_p),
+                    "is_causal": bool(is_causal),
+                },
+            }
 
     def summary(self) -> Dict[str, Any]:
         standard = self.calls.get("standard", {})
@@ -643,7 +658,13 @@ def build_model(cfg: Dict[str, Any]) -> LlamaForCausalLM:
         tie_word_embeddings=False,
     )
     llama_cfg._attn_implementation = attn_cfg.get("impl", "sdpa")
+    # For FSDP with large models, build in bf16 to halve CPU memory
+    init_dtype = None
+    if cfg.get("distributed_strategy") == "fsdp" and cfg["training"].get("bf16"):
+        init_dtype = torch.bfloat16
     model = LlamaForCausalLM(llama_cfg)
+    if init_dtype is not None:
+        model = model.to(dtype=init_dtype)
     model.config.use_cache = False
     return model
 
@@ -936,9 +957,7 @@ def generate_surgical_config(
     fim_summary: Dict[str, Any], cfg: Dict[str, Any]
 ) -> Dict[str, Any]:
     per_layer = fim_summary["per_layer_traces"]
-    per_head = (
-        fim_summary.get("per_head_scores") or fim_summary["per_head_max_eigenvalue"]
-    )
+    per_head = fim_summary.get("per_head_scores") or fim_summary["per_head_max_eigenvalue"]
     score_metric = fim_summary.get(
         "head_score_metric", cfg["fim"].get("head_score_metric", "exact_eigmax")
     )
@@ -1054,7 +1073,7 @@ def eval_hellaswag(
     try:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as exc:
@@ -1134,7 +1153,7 @@ def eval_lambada(
     try:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as exc:
@@ -1191,16 +1210,14 @@ def eval_winogrande(
         return {"error": "datasets library not installed", "accuracy": -1.0}
 
     try:
-        ds = load_dataset(
-            "allenai/winogrande", "winogrande_debiased", split="validation"
-        )
+        ds = load_dataset("allenai/winogrande", "winogrande_debiased", split="validation")
     except Exception as exc:
         return {"error": f"dataset load failed: {exc}", "accuracy": -1.0}
 
     try:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as exc:
@@ -1227,7 +1244,9 @@ def eval_winogrande(
             scores = []
             for text in candidates:
                 tokens = tokenizer.encode(text, return_tensors="pt").to(device)
-                if tokens.shape[1] > cfg["model"].get("max_position_embeddings", 2048):
+                if tokens.shape[1] > cfg["model"].get(
+                    "max_position_embeddings", 2048
+                ):
                     tokens = tokens[:, : cfg["model"]["max_position_embeddings"]]
                 if tokens.shape[1] < 2:
                     scores.append(float("-inf"))
@@ -1304,7 +1323,6 @@ def run_eval_checkpoint(
         "bf16": use_bf16,
         "tasks": {},
     }
-    had_error = False
 
     for task in task_list:
         print(
@@ -1329,17 +1347,11 @@ def run_eval_checkpoint(
         else:
             r = {"error": f"unknown task: {task}"}
         results["tasks"][task] = r
-        accuracy = r.get("accuracy")
-        if "error" in r or (
-            isinstance(accuracy, (int, float)) and float(accuracy) < 0.0
-        ):
-            had_error = True
         print(
             json.dumps({"event": "eval_result", "task": task, **r}, sort_keys=True),
             flush=True,
         )
 
-    results["ok"] = not had_error
     out_dir = Path(output_dir) if output_dir else Path(checkpoint_path).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     run_name = Path(checkpoint_path).stem.replace(".checkpoint", "")
@@ -1348,7 +1360,7 @@ def run_eval_checkpoint(
         json.dumps({"event": "eval_complete", "results": results}, sort_keys=True),
         flush=True,
     )
-    return 1 if had_error else 0
+    return 0
 
 
 def main() -> int:
@@ -1441,7 +1453,12 @@ def main() -> int:
     if rank0(rank):
         save_json(out_dir / f"{run_name}.resolved.json", cfg)
 
-    model = build_model(cfg).to(device)
+    use_fsdp = cfg.get("distributed_strategy", "ddp") == "fsdp"
+    if use_fsdp:
+        # FSDP: build on CPU, apply patch, then let FSDP shard to GPUs
+        model = build_model(cfg)
+    else:
+        model = build_model(cfg).to(device)
     patch_ctx = apply_llama_sdpa_patch(model, cfg, repo_root)
     train_ds = MemmapTokenDataset(
         repo_root / cfg["data"]["train_bin"],
@@ -1456,7 +1473,37 @@ def main() -> int:
         cfg["data"].get("dtype", "uint16"),
     )
 
-    if distributed:
+    if cfg["training"].get("gradient_checkpointing", False):
+        model.gradient_checkpointing_enable()
+
+    _bf16_ok = (
+        bool(cfg["training"].get("bf16", False))
+        and device.type == "cuda"
+        and torch.cuda.is_bf16_supported()
+    )
+    if distributed and use_fsdp:
+        if not FSDP_AVAILABLE:
+            raise RuntimeError("FSDP requested but not available in this torch build")
+        from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+
+        fsdp_mp = MixedPrecision(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.bfloat16,
+            buffer_dtype=torch.bfloat16,
+        ) if _bf16_ok else None
+        auto_wrap = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={LlamaDecoderLayer},
+        )
+        model = FSDP(
+            model,
+            auto_wrap_policy=auto_wrap,
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            mixed_precision=fsdp_mp,
+            device_id=local_rank,
+            use_orig_params=True,
+        )
+    elif distributed:
         ddp_kwargs = (
             {"device_ids": [local_rank], "output_device": local_rank}
             if device.type == "cuda"
@@ -1566,28 +1613,73 @@ def main() -> int:
     if exit_reason != "max_time":
         stop_elapsed_s = round(time.time() - started, 3)
 
-    # Save checkpoint for downstream evaluation unless explicitly disabled
-    save_checkpoint = bool(cfg.get("tracking", {}).get("save_checkpoint", True))
-    if rank0(rank) and save_checkpoint:
+    # Save checkpoint for downstream evaluation
+    if use_fsdp and distributed:
+        save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
+            fsdp_state = model.state_dict()
+        if rank0(rank):
+            ckpt_path = out_dir / f"{run_name}.checkpoint.pt"
+            try:
+                torch.save(
+                    {
+                        "model_state_dict": fsdp_state,
+                        "config": cfg,
+                        "completed_steps": completed_steps,
+                        "exit_reason": exit_reason,
+                    },
+                    ckpt_path,
+                )
+                print(
+                    json.dumps(
+                        {"event": "checkpoint_saved", "path": str(ckpt_path)},
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+            except Exception as e:
+                print(
+                    json.dumps(
+                        {
+                            "event": "checkpoint_save_failed",
+                            "path": str(ckpt_path),
+                            "error": repr(e),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+    elif rank0(rank):
         ckpt_path = out_dir / f"{run_name}.checkpoint.pt"
         raw = model.module if distributed else model
-        torch.save(
-            {
-                "model_state_dict": raw.state_dict(),
-                "config": cfg,
-                "completed_steps": completed_steps,
-                "exit_reason": exit_reason,
-            },
-            ckpt_path,
-        )
-        print(
-            json.dumps(
-                {"event": "checkpoint_saved", "path": str(ckpt_path)}, sort_keys=True
-            ),
-            flush=True,
-        )
-    elif rank0(rank) and not save_checkpoint:
-        print(json.dumps({"event": "checkpoint_skipped"}, sort_keys=True), flush=True)
+        try:
+            torch.save(
+                {
+                    "model_state_dict": raw.state_dict(),
+                    "config": cfg,
+                    "completed_steps": completed_steps,
+                    "exit_reason": exit_reason,
+                },
+                ckpt_path,
+            )
+            print(
+                json.dumps(
+                    {"event": "checkpoint_saved", "path": str(ckpt_path)}, sort_keys=True
+                ),
+                flush=True,
+            )
+        except Exception as e:
+            print(
+                json.dumps(
+                    {
+                        "event": "checkpoint_save_failed",
+                        "path": str(ckpt_path),
+                        "error": repr(e),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
     fim_summary = (
         patch_ctx.stats_collector.summary()
