@@ -308,6 +308,32 @@ The five items from the original gap analysis and their current status:
    (B=1->FlashAttention, B>=2->fused) requires scheduler-level
    routing that is not yet implemented.
 
+### A100 serving-path reconciliation (2026-03-29)
+
+The March 29 A100 runs resolved the earlier scientific blocker but also clarified
+that the serving-path problem is not finished. Two result bundles matter. The
+first bundle (`fused-quant/a100-20260329-135620/` in `knlp-key-results`) proved
+that the fused INT4 kernel, roundtrip path, and stride-view cache layouts are
+numerically sound on A100, and it reproduced the expected kernel-level speedup
+shape. But its end-to-end MSL sweep used a permissive acceptance rule that
+counted answer-prefix matches as success even when the continuation clearly
+contained garbage tails such as repeated `pérdida`.
+
+The second bundle (`fused-quant/a100-20260329-2035/`) tightened that
+interpretation and showed the real serving result: once fused decode actually
+activates, the standalone kernel still passes but the full vLLM serving path can
+produce corrupted output. That means the grouped-scale / packed-contract fear is
+no longer the main blocker. The kernel itself is not the bug. The remaining
+blocker is the serving integration path: actual cache allocation, prefill write
+semantics, block-table usage, or another surrounding lifecycle mismatch.
+
+The practical conclusion is to separate **kernel correctness** from **serving
+correctness**. A100 now says the former is solved and the latter still needs
+instrumentation. The next useful work is therefore to trace the exact vLLM cache
+allocation and write path used during serving, compare it against the passing
+standalone diagnostic path, and tighten end-to-end validators so garbage
+continuations never count as success again.
+
 ### What remains for production
 
 - **H100 serving validation**: Full vLLM API server + lm-eval with
