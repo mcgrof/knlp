@@ -27,6 +27,22 @@ The strongest interpretation is not that SPF is finished, but that richer
 live-trace structure finally produced measurable signal beyond the earlier
 cache-light online run.
 
+
+## Interpretation guardrail
+
+If the bar is **real scheduler-integrated online TTFT / latency improvement**,
+this stage is still **not enough**.
+
+The scaled single-A100 run is meaningful because it proved stronger signal than
+the earlier cache-light online attempt, but it is still a bounded live-trace A/B
+stage. It does **not** yet prove final serving-path value in the true scheduler
+integration path.
+
+Operationally, that means this result should be read as:
+- stronger justification to continue,
+- better than the earlier neutral result,
+- but still short of a production or final benchmark claim.
+
 ## What the next stage is
 
 Yes, the next stage has already been thought about.
