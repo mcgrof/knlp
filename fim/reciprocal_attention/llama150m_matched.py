@@ -108,6 +108,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "candidate_low_threshold": 0.15,
         "candidate_keep_top_k_layers": 3,
         "select_top_heads": 8,
+        "head_score_metric": "exact_eigmax",
         "output_file": "configs/ra_surgical_llama150m.json",
     },
     "tracking": {
@@ -135,12 +136,13 @@ class AttentionStatsCollector:
     num_layers: int
     num_heads: int
     enabled: bool = False
+    score_metric: str = "exact_eigmax"
     synced: bool = False
     layer_sum: torch.Tensor = field(init=False)
     layer_count: torch.Tensor = field(init=False)
     head_sum: torch.Tensor = field(init=False)
     head_count: torch.Tensor = field(init=False)
-    head_eigmax: torch.Tensor = field(init=False)
+    head_score: torch.Tensor = field(init=False)
 
     def __post_init__(self) -> None:
         self.layer_sum = torch.zeros(self.num_layers, dtype=torch.float64)
@@ -151,9 +153,19 @@ class AttentionStatsCollector:
         self.head_count = torch.zeros(
             self.num_layers, self.num_heads, dtype=torch.float64
         )
-        self.head_eigmax = torch.zeros(
+        self.head_score = torch.zeros(
             self.num_layers, self.num_heads, dtype=torch.float64
         )
+
+    def _score_head(self, mean_attn: torch.Tensor) -> float:
+        if self.score_metric == "inbound_mass_var":
+            inbound = mean_attn.sum(dim=0)
+            return float(inbound.var(unbiased=False).item())
+        try:
+            eigvals = torch.linalg.eigvals(mean_attn).real
+            return float(eigvals.abs().max().item())
+        except Exception:
+            return float("nan")
 
     def update(self, layer_idx: int, attn_probs: torch.Tensor) -> None:
         if not self.enabled:
@@ -166,17 +178,12 @@ class AttentionStatsCollector:
             self.head_count[layer_idx] += 1
             self.layer_sum[layer_idx] += head_trace.mean().item()
             self.layer_count[layer_idx] += 1
-            # approximate per-head max eigenvalue via exact eigvals on mean attention matrix
             mean_mats = probs.mean(dim=0)  # [H, T, T]
             for h in range(mean_mats.shape[0]):
-                try:
-                    eigvals = torch.linalg.eigvals(mean_mats[h]).real
-                    eigmax = float(eigvals.abs().max().item())
-                except Exception:
-                    eigmax = float("nan")
-                cur = self.head_eigmax[layer_idx, h].item()
-                if math.isnan(cur) or eigmax > cur:
-                    self.head_eigmax[layer_idx, h] = eigmax
+                score = self._score_head(mean_mats[h])
+                cur = self.head_score[layer_idx, h].item()
+                if math.isnan(cur) or score > cur:
+                    self.head_score[layer_idx, h] = score
 
     def sync_distributed(self) -> None:
         if self.synced or not dist.is_initialized():
@@ -202,7 +209,7 @@ class AttentionStatsCollector:
         reduce_sum("layer_count")
         reduce_sum("head_sum")
         reduce_sum("head_count")
-        reduce_max("head_eigmax")
+        reduce_max("head_score")
         self.synced = True
 
     def summary(self) -> Dict[str, Any]:
@@ -220,8 +227,12 @@ class AttentionStatsCollector:
         return {
             "per_layer_traces": [float(x) for x in layer_trace.tolist()],
             "per_head_traces": [[float(y) for y in row] for row in head_trace.tolist()],
+            "head_score_metric": self.score_metric,
+            "per_head_scores": [
+                [float(y) for y in row] for row in self.head_score.tolist()
+            ],
             "per_head_max_eigenvalue": [
-                [float(y) for y in row] for row in self.head_eigmax.tolist()
+                [float(y) for y in row] for row in self.head_score.tolist()
             ],
         }
 
@@ -696,6 +707,7 @@ def apply_llama_sdpa_patch(
         num_layers=num_layers,
         num_heads=num_heads,
         enabled=bool(attn_cfg.get("capture_attention_stats") or fim_cfg.get("enabled")),
+        score_metric=str(fim_cfg.get("head_score_metric", "exact_eigmax")),
     )
     ctx = RAPatchContext(
         backend_recorder=backend_recorder,
@@ -924,7 +936,12 @@ def generate_surgical_config(
     fim_summary: Dict[str, Any], cfg: Dict[str, Any]
 ) -> Dict[str, Any]:
     per_layer = fim_summary["per_layer_traces"]
-    per_head = fim_summary["per_head_max_eigenvalue"]
+    per_head = (
+        fim_summary.get("per_head_scores") or fim_summary["per_head_max_eigenvalue"]
+    )
+    score_metric = fim_summary.get(
+        "head_score_metric", cfg["fim"].get("head_score_metric", "exact_eigmax")
+    )
     low_threshold = float(cfg["fim"].get("candidate_low_threshold", 0.15))
     keep_top_layers = int(cfg["fim"].get("candidate_keep_top_k_layers", 3))
     select_top_heads = int(cfg["fim"].get("select_top_heads", 8))
@@ -964,7 +981,8 @@ def generate_surgical_config(
 
     return {
         "model": model_label,
-        "selection_method": "attention-proxy-max-eigenvalue",
+        "selection_method": f"attention-proxy-{score_metric}",
+        "head_score_metric": score_metric,
         "candidate_layers": candidates,
         "candidate_layer_traces": {str(i): per_layer[i] for i in candidates},
         "selected_head_count": len(chosen),
@@ -1031,12 +1049,12 @@ def eval_hellaswag(
     except ImportError:
         return {"error": "datasets library not installed", "accuracy": -1.0}
 
-    ds = load_dataset("Rowan/hellaswag", split="validation", trust_remote_code=True)
+    ds = load_dataset("Rowan/hellaswag", split="validation")
 
     try:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as exc:
@@ -1116,7 +1134,7 @@ def eval_lambada(
     try:
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
     except Exception as exc:
@@ -1160,9 +1178,102 @@ def eval_lambada(
     }
 
 
+def eval_winogrande(
+    model: torch.nn.Module,
+    cfg: Dict[str, Any],
+    device: torch.device,
+    max_examples: int = 1000,
+) -> Dict[str, Any]:
+    """Evaluate on Winogrande (coreference-style sentence completion)."""
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        return {"error": "datasets library not installed", "accuracy": -1.0}
+
+    try:
+        ds = load_dataset(
+            "allenai/winogrande", "winogrande_debiased", split="validation"
+        )
+    except Exception as exc:
+        return {"error": f"dataset load failed: {exc}", "accuracy": -1.0}
+
+    try:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    except Exception as exc:
+        return {"error": f"tokenizer load failed: {exc}", "accuracy": -1.0}
+
+    model.eval()
+    correct = 0
+    total = 0
+    n = min(max_examples, len(ds))
+
+    with torch.no_grad():
+        for i in range(n):
+            ex = ds[i]
+            sentence = ex["sentence"]
+            option1 = ex["option1"]
+            option2 = ex["option2"]
+            label = int(ex["answer"]) - 1  # 1-indexed -> 0-indexed
+
+            candidates = [
+                sentence.replace("_", option1),
+                sentence.replace("_", option2),
+            ]
+
+            scores = []
+            for text in candidates:
+                tokens = tokenizer.encode(text, return_tensors="pt").to(device)
+                if tokens.shape[1] > cfg["model"].get("max_position_embeddings", 2048):
+                    tokens = tokens[:, : cfg["model"]["max_position_embeddings"]]
+                if tokens.shape[1] < 2:
+                    scores.append(float("-inf"))
+                    continue
+                out = model(input_ids=tokens)
+                logits = out.logits if hasattr(out, "logits") else out[0]
+                shift_logits = logits[:, :-1, :].contiguous()
+                shift_labels = tokens[:, 1:].contiguous()
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_labels.view(-1),
+                    reduction="mean",
+                )
+                scores.append(-float(loss.item()))
+
+            pred = max(range(len(scores)), key=lambda j: scores[j])
+            if pred == label:
+                correct += 1
+            total += 1
+
+            if total % 200 == 0:
+                print(
+                    json.dumps(
+                        {
+                            "event": "winogrande_progress",
+                            "done": total,
+                            "of": n,
+                            "acc_so_far": round(correct / total, 4),
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+
+    accuracy = correct / max(total, 1)
+    return {
+        "task": "winogrande",
+        "accuracy": round(accuracy, 4),
+        "correct": correct,
+        "total": total,
+    }
+
+
 def run_eval_checkpoint(
     checkpoint_path: str,
-    tasks: str = "hellaswag,lambada",
+    tasks: str = "hellaswag,lambada,winogrande",
     max_examples: int = 1000,
     output_dir: Optional[str] = None,
 ) -> int:
@@ -1193,6 +1304,7 @@ def run_eval_checkpoint(
         "bf16": use_bf16,
         "tasks": {},
     }
+    had_error = False
 
     for task in task_list:
         print(
@@ -1209,14 +1321,25 @@ def run_eval_checkpoint(
                 device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
             ):
                 r = eval_lambada(model, cfg, device, max_examples=max_examples)
+        elif task == "winogrande":
+            with torch.autocast(
+                device_type=device.type, dtype=torch.bfloat16, enabled=use_bf16
+            ):
+                r = eval_winogrande(model, cfg, device, max_examples=max_examples)
         else:
             r = {"error": f"unknown task: {task}"}
         results["tasks"][task] = r
+        accuracy = r.get("accuracy")
+        if "error" in r or (
+            isinstance(accuracy, (int, float)) and float(accuracy) < 0.0
+        ):
+            had_error = True
         print(
             json.dumps({"event": "eval_result", "task": task, **r}, sort_keys=True),
             flush=True,
         )
 
+    results["ok"] = not had_error
     out_dir = Path(output_dir) if output_dir else Path(checkpoint_path).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     run_name = Path(checkpoint_path).stem.replace(".checkpoint", "")
@@ -1225,7 +1348,7 @@ def run_eval_checkpoint(
         json.dumps({"event": "eval_complete", "results": results}, sort_keys=True),
         flush=True,
     )
-    return 0
+    return 1 if had_error else 0
 
 
 def main() -> int:
@@ -1255,8 +1378,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--eval-tasks",
-        default="hellaswag,lambada",
-        help="Comma-separated eval tasks (default: hellaswag,lambada)",
+        default="hellaswag,lambada,winogrande",
+        help="Comma-separated eval tasks (default: hellaswag,lambada,winogrande)",
     )
     parser.add_argument(
         "--eval-max-examples",
@@ -1443,8 +1566,9 @@ def main() -> int:
     if exit_reason != "max_time":
         stop_elapsed_s = round(time.time() - started, 3)
 
-    # Save checkpoint for downstream evaluation
-    if rank0(rank):
+    # Save checkpoint for downstream evaluation unless explicitly disabled
+    save_checkpoint = bool(cfg.get("tracking", {}).get("save_checkpoint", True))
+    if rank0(rank) and save_checkpoint:
         ckpt_path = out_dir / f"{run_name}.checkpoint.pt"
         raw = model.module if distributed else model
         torch.save(
@@ -1462,6 +1586,8 @@ def main() -> int:
             ),
             flush=True,
         )
+    elif rank0(rank) and not save_checkpoint:
+        print(json.dumps({"event": "checkpoint_skipped"}, sort_keys=True), flush=True)
 
     fim_summary = (
         patch_ctx.stats_collector.summary()
