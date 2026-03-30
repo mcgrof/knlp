@@ -37,6 +37,13 @@ run_ddp() {
   "${TORCHRUN_CMD[@]}" --standalone --nproc_per_node "$NPROC" "$RUNNER" --config "$cfg"
 }
 
+
+run_ddp_override() {
+  local cfg=$1
+  shift
+  "${TORCHRUN_CMD[@]}" --standalone --nproc_per_node "$NPROC" "$RUNNER" --config "$cfg" "$@"
+}
+
 derive_top4() {
   local input=${1:-configs/ra_surgical_llama1b.json}
   local output=${2:-configs/ra_surgical_llama1b_top4.json}
@@ -96,6 +103,9 @@ case "$mode" in
   target-smoke-ra4)
     run_ddp "$CFG_DIR/llama1b_ra_surgical4_4xh100_smoke.json"
     ;;
+  target-smoke-ra28)
+    run_ddp "$CFG_DIR/llama1b_ra_surgical28_4xh100_smoke.json"
+    ;;
   target-smoke-all)
     run_ddp "$CFG_DIR/llama1b_baseline_4xh100_smoke.json"
     run_ddp "$CFG_DIR/llama1b_fim_collection_4xh100_smoke.json"
@@ -114,6 +124,9 @@ case "$mode" in
   full-ra4)
     run_ddp "$CFG_DIR/llama1b_ra_surgical4_4xh100.json"
     ;;
+  full-ra28)
+    run_ddp "$CFG_DIR/llama1b_ra_surgical28_4xh100.json"
+    ;;
   derive-top4)
     derive_top4 "${2:-}" "${3:-}"
     ;;
@@ -128,6 +141,9 @@ case "$mode" in
     ;;
   eval-ra4)
     run_eval "out/llama1b-matched/llama1b-ra-surgical4-4xh100-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
+    ;;
+  eval-ra28)
+    run_eval "out/llama1b-matched/llama1b-ra-surgical28-4xh100-1hr.checkpoint.pt" "${2:-out/llama1b-matched}"
     ;;
   eval-all)
     echo "=== Eval: baseline ==="
@@ -166,6 +182,28 @@ case "$mode" in
     echo "=== Phase 3/3: RA-8 surgical (1 hr wall-clock) ==="
     run_ddp "$CFG_DIR/llama1b_ra_surgical8_4xh100.json"
     echo "=== full-sequence complete ==="
+    ;;
+  full-baseline-seed)
+    # Usage: full-baseline-seed <seed>
+    local seed=${2:?seed required}
+    run_ddp_override "$CFG_DIR/llama1b_baseline_4xh100.json" \
+      --override "seed=$seed" "run_name=llama1b-baseline-4xh100-1hr-s${seed}"
+    ;;
+  full-ra28-seed)
+    # Usage: full-ra28-seed <seed>
+    local seed=${2:?seed required}
+    run_ddp_override "$CFG_DIR/llama1b_ra_surgical28_4xh100.json" \
+      --override "seed=$seed" "run_name=llama1b-ra-surgical28-4xh100-1hr-s${seed}"
+    ;;
+  eval-baseline-seed)
+    # Usage: eval-baseline-seed <seed>
+    local seed=${2:?seed required}
+    run_eval "out/llama1b-matched/llama1b-baseline-4xh100-1hr-s${seed}.checkpoint.pt" "out/llama1b-matched"
+    ;;
+  eval-ra28-seed)
+    # Usage: eval-ra28-seed <seed>
+    local seed=${2:?seed required}
+    run_eval "out/llama1b-matched/llama1b-ra-surgical28-4xh100-1hr-s${seed}.checkpoint.pt" "out/llama1b-matched"
     ;;
   full-sequence-eval)
     # Full pipeline including eval
@@ -210,14 +248,22 @@ DDP smoke (multi-GPU or CPU/gloo):
 Full production runs (DDP, 4xH100, wall-clock matched):
   full-baseline     1-hr baseline
   full-fim          FIM collection (~15 min)
-  full-ra8          1-hr RA-8 surgical (default headline arm)
+  full-ra8          1-hr RA-8 surgical
+  full-ra28         1-hr RA-28 surgical (promoted headline arm)
   full-ra4          1-hr RA-4 surgical (negative-control trim)
   derive-top4 [in] [out]   trim 8-head selection to top-4
+
+Seeded runs (for multi-seed campaigns):
+  full-baseline-seed <seed>   1-hr baseline with explicit seed
+  full-ra28-seed <seed>       1-hr RA-28 with explicit seed
+  eval-baseline-seed <seed>   eval baseline checkpoint for given seed
+  eval-ra28-seed <seed>       eval RA-28 checkpoint for given seed
 
 Downstream evaluation (default: hellaswag,winogrande):
   eval-smoke-baseline  quick eval (32 examples) on baseline smoke ckpt
   eval-baseline     eval on baseline checkpoint
   eval-ra8          eval on RA-8 checkpoint
+  eval-ra28         eval on RA-28 checkpoint
   eval-ra4          eval on RA-4 checkpoint
   eval-all          eval baseline + RA-8 (default headline comparison)
 
