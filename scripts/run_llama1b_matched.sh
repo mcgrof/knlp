@@ -185,24 +185,24 @@ case "$mode" in
     ;;
   full-baseline-seed)
     # Usage: full-baseline-seed <seed>
-    local seed=${2:?seed required}
+    seed=${2:?seed required}
     run_ddp_override "$CFG_DIR/llama1b_baseline_4xh100.json" \
       --override "seed=$seed" "run_name=llama1b-baseline-4xh100-1hr-s${seed}"
     ;;
   full-ra28-seed)
     # Usage: full-ra28-seed <seed>
-    local seed=${2:?seed required}
+    seed=${2:?seed required}
     run_ddp_override "$CFG_DIR/llama1b_ra_surgical28_4xh100.json" \
       --override "seed=$seed" "run_name=llama1b-ra-surgical28-4xh100-1hr-s${seed}"
     ;;
   eval-baseline-seed)
     # Usage: eval-baseline-seed <seed>
-    local seed=${2:?seed required}
+    seed=${2:?seed required}
     run_eval "out/llama1b-matched/llama1b-baseline-4xh100-1hr-s${seed}.checkpoint.pt" "out/llama1b-matched"
     ;;
   eval-ra28-seed)
     # Usage: eval-ra28-seed <seed>
-    local seed=${2:?seed required}
+    seed=${2:?seed required}
     run_eval "out/llama1b-matched/llama1b-ra-surgical28-4xh100-1hr-s${seed}.checkpoint.pt" "out/llama1b-matched"
     ;;
   full-sequence-eval)
