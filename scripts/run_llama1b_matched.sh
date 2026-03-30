@@ -187,13 +187,13 @@ case "$mode" in
     # Usage: full-baseline-seed <seed>
     seed=${2:?seed required}
     run_ddp_override "$CFG_DIR/llama1b_baseline_4xh100.json" \
-      --override "seed=$seed" --override "run_name=llama1b-baseline-4xh100-1hr-s${seed}"
+      --override "seed=$seed" --override "run_name=\"llama1b-baseline-4xh100-1hr-s${seed}\""
     ;;
   full-ra28-seed)
     # Usage: full-ra28-seed <seed>
     seed=${2:?seed required}
     run_ddp_override "$CFG_DIR/llama1b_ra_surgical28_4xh100.json" \
-      --override "seed=$seed" --override "run_name=llama1b-ra-surgical28-4xh100-1hr-s${seed}"
+      --override "seed=$seed" --override "run_name=\"llama1b-ra-surgical28-4xh100-1hr-s${seed}\""
     ;;
   eval-baseline-seed)
     # Usage: eval-baseline-seed <seed>
