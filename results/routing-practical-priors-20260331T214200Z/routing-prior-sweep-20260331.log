@@ -1,0 +1,79 @@
+[2026-03-31T21:32:22Z] === ROUTING PRIOR EXTRACTION + ACCURACY SWEEP ===
+[2026-03-31T21:32:22Z] Model: NousResearch/Meta-Llama-3.1-8B
+[2026-03-31T21:32:22Z] Block sizes: [128, 256]
+[2026-03-31T21:32:22Z] K values: [4, 8, 16]
+[2026-03-31T21:32:22Z] Output: /workspace/routing_prior_sweep_results.json
+[2026-03-31T21:32:22Z] Loading model...
+`torch_dtype` is deprecated! Use `dtype` instead!
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files:  25%|██▌       | 1/4 [00:01<00:05,  1.96s/it]Fetching 4 files:  50%|█████     | 2/4 [00:04<00:04,  2.17s/it]Fetching 4 files: 100%|██████████| 4/4 [00:04<00:00,  1.07s/it]
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:01,  1.71it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:01<00:01,  1.48it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:01<00:00,  1.49it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  2.14it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  1.86it/s]
+[2026-03-31T21:32:32Z] Model loaded: 32L, 32Q/8KV, d=128
+[2026-03-31T21:32:32Z] Max position embeddings: 131072
+[2026-03-31T21:32:32Z] Model config: 32L, 32Q/8KV, d=128
+[2026-03-31T21:32:32Z] Input sequence: 242 tokens
+[2026-03-31T21:32:32Z] Extending to 4096 tokens via generation...
+The attention mask and the pad token id were not set. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+Setting `pad_token_id` to `eos_token_id`:128001 for open-end generation.
+The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavi[2026-03-31T21:34:50Z] Extended to 4096 tokens
+[2026-03-31T21:34:50Z] 
+===[2026-03-31T21:34:54Z] Extended to 4096 tokens
+[2026-03-31T21:34:54Z] 
+=== Block Size = 128, 32 blocks, 4096 tokens ===
+[2026-03-31T21:34:54Z] Extracting prefill-derived priors...
+[2026-03-31T21:34:54Z]   Bulk prefill 4095 tokens...
+[2026-03-31T21:34:54Z]   Last-token forward with attention capture...
+[2026-03-31T21:34:54Z]   Prior extraction: 0.7s
+[2026-03-31T21:34:54Z]   Affinity sparsity: 25088/32768 (76.6%) near-zero
+[2026-03-31T21:34:54Z] Building blocked KV cache...
+[2026-03-31T21:34:54Z] Computing decode Q vectors per layer...
+[2026-03-31T21:34:55Z] 
+  --- BS=128, K=4 (512 tokens/KVH, 87.5% KV reduction) ---
+[2026-03-31T21:34:55Z]   PREFILL cos=0.8926 (std=0.0616, min=0.7646, max=0.9937)
+[2026-03-31T21:34:55Z]   RANDOM  cos=0.8751
+[2026-03-31T21:34:55Z]   Δcos = +0.0175 (prefill - random)
+[2026-03-31T21:34:55Z]   Latency: routed=0.121ms, dense=0.662ms, speedup=5.5x
+[2026-03-31T21:34:55Z] 
+  --- BS=128, K=8 (1024 tokens/KVH, 75.0% KV reduction) ---
+[2026-03-31T21:34:55Z]   PREFILL cos=0.9532 (std=0.0295, min=0.9052, max=0.9976)
+[2026-03-31T21:34:55Z]   RANDOM  cos=0.9038
+[2026-03-31T21:34:55Z]   Δcos = +0.0493 (prefill - random)
+[2026-03-31T21:34:55Z]   Latency: routed=0.080ms, dense=0.316ms, speedup=4.0x
+[2026-03-31T21:34:55Z] 
+  --- BS=128, K=16 (2048 tokens/KVH, 50.0% KV reduction) ---
+[2026-03-31T21:34:56Z]   PREFILL cos=0.9890 (std=0.0086, min=0.9664, max=0.9994)
+[2026-03-31T21:34:56Z]   RANDOM  cos=0.9208
+[2026-03-31T21:34:56Z]   Δcos = +0.0682 (prefill - random)
+[2026-03-31T21:34:56Z]   Latency: routed=0.156ms, dense=0.316ms, speedup=2.0x
+[2026-03-31T21:34:56Z] 
+=== Block Size = 256, 16 blocks, 4096 tokens ===
+[2026-03-31T21:34:56Z] Extracting prefill-derived priors...
+[2026-03-31T21:34:56Z]   Bulk prefill 4095 tokens...
+[2026-03-31T21:34:56Z]   Last-token forward with attention capture...
+[2026-03-31T21:34:56Z]   Prior extraction: 0.7s
+[2026-03-31T21:34:56Z]   Affinity sparsity: 9820/16384 (59.9%) near-zero
+[2026-03-31T21:34:56Z] Building blocked KV cache...
+[2026-03-31T21:34:56Z] Computing decode Q vectors per layer...
+[2026-03-31T21:34:57Z] 
+  --- BS=256, K=4 (1024 tokens/KVH, 75.0% KV reduction) ---
+[2026-03-31T21:34:57Z]   PREFILL cos=0.9284 (std=0.0382, min=0.8619, max=0.9974)
+[2026-03-31T21:34:57Z]   RANDOM  cos=0.8933
+[2026-03-31T21:34:57Z]   Δcos = +0.0351 (prefill - random)
+[2026-03-31T21:34:57Z]   Latency: routed=0.079ms, dense=0.415ms, speedup=5.2x
+[2026-03-31[2026-03-31T21:34:57Z]   PREFILL cos=0.9860 (std=0.0088, min=0.9590, max=[2026-03-31T21:34:57Z]   PREFILL cos=0.9869 (std=0.0091, min=0.9608, max=0.9995)
+[2026-03-31T21:34:57Z]   RANDOM  cos=0.9100
+[2026-03-31T21:34:57Z]   Δcos = +0.0769 (prefill - random)
+[2026-03-31T21:34:57Z]   Latency: routed=0.155ms, dense=0.313ms, speedup=2.0x
+[2026-03-31T21:34:57Z]   K=16 >= total_blocks=16, skipping
+[2026-03-31T21:34:57Z] 
+Results written to: /workspace/routing_prior_sweep_results.json
+[2026-03-31T21:34:57Z] 
+=== SUMMARY TABLE ===
+[2026-03-31T21:34:57Z] Config                Prefill cos   Random cos     Δcos  KV red%  Speedup
+[2026-03-31T21:34:57Z] ------------------------------------------------------------------------------
+[2026-03-31T21:34:57Z] BS=128 K=16             0.9890       0.9208  +0.0682    50.0%     2.0x
+[2026-03-31T21:34:57Z] BS=128 K= 4             0.8926       0.8751  +0.0175    87.5%     5.5x
+[2026-03-31T21:34:57Z] BS=128 K= 8             0.9532       0.9038  +0.0493    75.0%     4.0x
+[2026-03-31T21:34:57Z] BS=256 K= 4             0.9284       0.8933  +0.0351    75.0%     5.2x
+[2026-03-31T21:34:57Z] BS=256 K= 8             0.9869       0.9100  +0.0769    50.0%     2.0x
+[2026-03-31T21:34:57Z] 
+=== DONE ===
