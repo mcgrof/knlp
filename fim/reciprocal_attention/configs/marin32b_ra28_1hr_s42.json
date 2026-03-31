@@ -1,0 +1,55 @@
+{
+  "run_name": "marin32b-ra28-alpha0625-1hr-s42",
+  "distributed_strategy": "fsdp",
+  "model": {
+    "hidden_size": 5120,
+    "intermediate_size": 27648,
+    "num_hidden_layers": 64,
+    "num_attention_heads": 40,
+    "num_key_value_heads": 8,
+    "max_position_embeddings": 2048,
+    "vocab_size": 50304,
+    "rms_norm_eps": 1e-06,
+    "rope_theta": 10000.0
+  },
+  "training": {
+    "train_steps": 50000,
+    "max_time": 3600,
+    "eval_interval": 25,
+    "eval_batches": 2,
+    "batch_size": 1,
+    "gradient_accumulation_steps": 16,
+    "learning_rate": 0.0001,
+    "min_lr": 1e-05,
+    "warmup_steps": 100,
+    "weight_decay": 0.1,
+    "max_grad_norm": 1.0,
+    "seq_len": 1024,
+    "bf16": true,
+    "gradient_checkpointing": true
+  },
+  "attention": {
+    "impl": "sdpa",
+    "backend": "auto",
+    "record_backend": true,
+    "capture_attention_stats": false
+  },
+  "ra": {
+    "enabled": true,
+    "alpha_std": 0.9375,
+    "alpha_rec": 0.0625,
+    "selection_file": "configs/ra_headscale_marin32b_28.json"
+  },
+  "fim": {
+    "enabled": false
+  },
+  "tracking": {
+    "wandb": false,
+    "wandb_project": "marin32b-ra-headscale-4xh100",
+    "wandb_mode": "disabled",
+    "log_jsonl": true,
+    "out_dir": "out/marin32b-ra28-1hr-s42",
+    "save_checkpoint": false
+  },
+  "seed": 42
+}
