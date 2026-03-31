@@ -1,0 +1,40 @@
+{
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "torch": "2.6.0+cu126",
+  "cuda": "12.6",
+  "python": "3.12.12 (main, Oct 10 2025, 08:52:57) [GCC 11.4.0]",
+  "timestamp": "2026-03-31T20:35:35.431764+00:00",
+  "bits": 4,
+  "group_size": 32,
+  "configs": {
+    "qwen25_7b": {
+      "name": "Qwen2.5-7B-like",
+      "num_heads": 28,
+      "num_kv_heads": 4,
+      "head_dim": 128
+    },
+    "llama3_8b": {
+      "name": "Llama3.1-8B-like",
+      "num_heads": 32,
+      "num_kv_heads": 8,
+      "head_dim": 128
+    }
+  },
+  "batch_sizes": [
+    1,
+    4
+  ],
+  "seq_lens": [
+    8192,
+    16384,
+    32768,
+    65536
+  ],
+  "arms": [
+    "A_uncompressed",
+    "D_fused_quant",
+    "B_practical_turboquant"
+  ],
+  "qjl": "DISABLED",
+  "rotation_seed": 42
+}

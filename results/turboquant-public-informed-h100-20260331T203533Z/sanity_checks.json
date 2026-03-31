@@ -1,0 +1,31 @@
+{
+  "rotation": {
+    "orthogonality_max_err": 0.0001087188720703125,
+    "orthogonality_frob_err": 0.0032672882080078125,
+    "orthogonality_pass": true,
+    "orthogonality_transpose_max_err": 9.775161743164062e-05,
+    "orthogonality_transpose_pass": true,
+    "roundtrip_max_err": 0.001953125,
+    "roundtrip_mse": 1.1920928955078125e-07,
+    "roundtrip_cos_sim": 1.0,
+    "roundtrip_pass": true,
+    "norm_preservation_max_err": 0.0009765625,
+    "norm_preservation_pass": true,
+    "dimension_check_pass": true,
+    "dimension_check_err": 0.001953125,
+    "fp16_precision_drift": 0.0013930797576904297,
+    "fp16_precision_pass": true,
+    "ALL_SANITY_CHECKS_PASS": true
+  },
+  "quant_roundtrip": {
+    "turboquant_correct_mse": 7.146596908569336e-05,
+    "turboquant_correct_cos": 0.99560546875,
+    "turboquant_NO_inverse_mse": 0.015625,
+    "turboquant_NO_inverse_cos": 0.004146575927734375,
+    "plain_quant_mse": 7.456541061401367e-05,
+    "plain_quant_cos": 0.99560546875,
+    "inverse_rotation_matters": true,
+    "correct_path_quality_ok": true,
+    "bug_class_detected": true
+  }
+}

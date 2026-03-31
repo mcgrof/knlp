@@ -1,0 +1,6 @@
+{
+  "verdict": "NO \u2014 TurboQuant overhead remains too high even at long contexts for this dimensionality.",
+  "followup": false,
+  "long_ctx_overhead_pct": 10.744976453931898,
+  "long_ctx_quality_delta": 0.0
+}
