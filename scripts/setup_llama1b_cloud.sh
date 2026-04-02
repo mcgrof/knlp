@@ -80,9 +80,13 @@ NPROC_PER_NODE=$GPU_COUNT scripts/run_llama1b_matched.sh target-smoke-baseline
 echo "=== Baseline smoke: PASS ==="
 
 # Validate downstream eval hook on the fresh smoke checkpoint.
-echo "=== Eval Smoke: baseline checkpoint (${LLAMA1B_EVAL_TASKS}, max_examples=${LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES}) ==="
-scripts/run_llama1b_matched.sh eval-smoke-baseline
-echo "=== Eval smoke: PASS ==="
+if [ "${LLAMA1B_SKIP_EVAL_SMOKE:-0}" != "1" ]; then
+  echo "=== Eval Smoke: baseline checkpoint (${LLAMA1B_EVAL_TASKS}, max_examples=${LLAMA1B_EVAL_SMOKE_MAX_EXAMPLES}) ==="
+  scripts/run_llama1b_matched.sh eval-smoke-baseline
+  echo "=== Eval smoke: PASS ==="
+else
+  echo "=== Eval Smoke: skipped via LLAMA1B_SKIP_EVAL_SMOKE=1 ==="
+fi
 
 # Run target-shape smoke: surgical RA top-4
 echo "=== Smoke Test: RA-8 (surgical-8 headline arm) ==="

@@ -244,7 +244,9 @@ class AttentionStatsCollector:
             "per_layer_traces": [float(x) for x in layer_trace.tolist()],
             "per_head_traces": [[float(y) for y in row] for row in head_trace.tolist()],
             "head_score_metric": self.score_metric,
-            "per_head_scores": [[float(y) for y in row] for row in self.head_score.tolist()],
+            "per_head_scores": [
+                [float(y) for y in row] for row in self.head_score.tolist()
+            ],
             "per_head_max_eigenvalue": [
                 [float(y) for y in row] for row in self.head_score.tolist()
             ],
@@ -957,7 +959,9 @@ def generate_surgical_config(
     fim_summary: Dict[str, Any], cfg: Dict[str, Any]
 ) -> Dict[str, Any]:
     per_layer = fim_summary["per_layer_traces"]
-    per_head = fim_summary.get("per_head_scores") or fim_summary["per_head_max_eigenvalue"]
+    per_head = (
+        fim_summary.get("per_head_scores") or fim_summary["per_head_max_eigenvalue"]
+    )
     score_metric = fim_summary.get(
         "head_score_metric", cfg["fim"].get("head_score_metric", "exact_eigmax")
     )
@@ -1210,7 +1214,9 @@ def eval_winogrande(
         return {"error": "datasets library not installed", "accuracy": -1.0}
 
     try:
-        ds = load_dataset("allenai/winogrande", "winogrande_debiased", split="validation")
+        ds = load_dataset(
+            "allenai/winogrande", "winogrande_debiased", split="validation"
+        )
     except Exception as exc:
         return {"error": f"dataset load failed: {exc}", "accuracy": -1.0}
 
@@ -1244,9 +1250,7 @@ def eval_winogrande(
             scores = []
             for text in candidates:
                 tokens = tokenizer.encode(text, return_tensors="pt").to(device)
-                if tokens.shape[1] > cfg["model"].get(
-                    "max_position_embeddings", 2048
-                ):
+                if tokens.shape[1] > cfg["model"].get("max_position_embeddings", 2048):
                     tokens = tokens[:, : cfg["model"]["max_position_embeddings"]]
                 if tokens.shape[1] < 2:
                     scores.append(float("-inf"))
@@ -1486,11 +1490,15 @@ def main() -> int:
             raise RuntimeError("FSDP requested but not available in this torch build")
         from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
-        fsdp_mp = MixedPrecision(
-            param_dtype=torch.bfloat16,
-            reduce_dtype=torch.bfloat16,
-            buffer_dtype=torch.bfloat16,
-        ) if _bf16_ok else None
+        fsdp_mp = (
+            MixedPrecision(
+                param_dtype=torch.bfloat16,
+                reduce_dtype=torch.bfloat16,
+                buffer_dtype=torch.bfloat16,
+            )
+            if _bf16_ok
+            else None
+        )
         auto_wrap = functools.partial(
             transformer_auto_wrap_policy,
             transformer_layer_cls={LlamaDecoderLayer},
@@ -1664,7 +1672,8 @@ def main() -> int:
             )
             print(
                 json.dumps(
-                    {"event": "checkpoint_saved", "path": str(ckpt_path)}, sort_keys=True
+                    {"event": "checkpoint_saved", "path": str(ckpt_path)},
+                    sort_keys=True,
                 ),
                 flush=True,
             )
