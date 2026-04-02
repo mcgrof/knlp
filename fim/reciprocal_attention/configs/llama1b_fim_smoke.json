@@ -34,7 +34,8 @@
     "candidate_low_threshold": 0.15,
     "candidate_keep_top_k_layers": 5,
     "select_top_heads": 8,
-    "output_file": "configs/ra_surgical_llama1b.json"
+    "head_score_metric": "inbound_mass_var",
+    "output_file": "out/llama1b-matched/ra_surgical_llama1b_smoke.json"
   },
   "tracking": {
     "out_dir": "out/llama1b-matched"
