@@ -90,8 +90,51 @@
       7: new Set([0, 8]),
     };
 
+    const LLAMA_MATCHED = {
+      target: 'Matched LLaMA-150M lane (4xB200-style policy, completed on 4xH100)',
+      backend: {
+        impl: 'sdpa',
+        actual: 'FLASH_ATTENTION',
+        parity: true,
+        compile: false,
+      },
+      candidateLayers: [4, 1, 2],
+      candidateLayerTraces: {
+        1: 1.1259199116973552e-06,
+        2: 1.1152950814509775e-06,
+        4: 1.1782353439571125e-06,
+      },
+      surgical8: {
+        1: [0, 7],
+        2: [7],
+        4: [0, 1, 2, 3, 6],
+      },
+      surgical4: {
+        1: [0, 7],
+        2: [7],
+        4: [6],
+      },
+      baseline: {
+        status: 'complete',
+        elapsed_s: 3600.065,
+        completed_steps: 26432,
+        perplexity: 239.66,
+      },
+      ra8: {
+        status: 'complete',
+        elapsed_s: 3600.002,
+        completed_steps: 25702,
+        perplexity: 217.06,
+        note: 'RA-8 finished its 1h wall-clock run with FLASH_ATTENTION parity confirmed. The 9.4% perplexity improvement over baseline (217.06 vs 239.66) is the matched result so far. The optional RA-4 variant is currently running on the same 4xH100 lane.',
+      },
+    };
+
     function isSurgical(layer, head) {
       return SURGICAL_HEADS[layer] && SURGICAL_HEADS[layer].has(head);
+    }
+
+    function isLlamaSelected(selection, layer, head) {
+      return selection[layer] && selection[layer].includes(head);
     }
 
     // Section 0: Key Discovery
@@ -452,11 +495,137 @@
       );
     }
 
-    // Section 4: How RA Works
+    // Section 4: Matched LLaMA-150M Lane
+    function MatchedLlamaSection() {
+      const rows = Array.from({ length: 6 }, (_, layer) => ({ layer, heads: Array.from({ length: 8 }, (_, head) => head) }));
+      const baselineHours = (LLAMA_MATCHED.baseline.elapsed_s / 3600).toFixed(2);
+      const raHours = (LLAMA_MATCHED.ra8.elapsed_s / 3600).toFixed(2);
+
+      return (
+        <div className="card rounded-xl p-6 mb-8 border border-cyan-500/30">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 4: Matched LLaMA-150M Surgical Lane</h2>
+          <p className="text-gray-400 mb-4">
+            This is the clean follow-up lane requested after the GPT-2 result: same SDPA-family path on both arms,
+            no <code className="text-cyan-300">torch.compile</code>, explicit backend-parity logging, FIM-derived surgical placement,
+            and 1-hour wall-clock DDP runs. The live cloud stand-in is 4xH100, used only after local and cloud DDP smoke passed.
+          </p>
+
+          <div className="grid md:grid-cols-4 gap-4 mb-6">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">Backend parity</div>
+              <div className="text-lg font-semibold text-cyan-400">{LLAMA_MATCHED.backend.actual}</div>
+              <div className="text-xs text-gray-400 mt-1">
+                impl={LLAMA_MATCHED.backend.impl} · parity_ok={String(LLAMA_MATCHED.backend.parity)} · compile={String(LLAMA_MATCHED.backend.compile)}
+              </div>
+            </div>
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">Candidate FIM layers</div>
+              <div className="text-lg font-semibold text-white">{LLAMA_MATCHED.candidateLayers.join(', ')}</div>
+              <div className="text-xs text-gray-400 mt-1">Selected after excluding the top-critical layer from the FIM sweep.</div>
+            </div>
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">1h baseline</div>
+              <div className="text-lg font-semibold text-emerald-400">PPL {LLAMA_MATCHED.baseline.perplexity.toFixed(2)}</div>
+              <div className="text-xs text-gray-400 mt-1">{baselineHours}h · {LLAMA_MATCHED.baseline.completed_steps.toLocaleString()} steps · max_time exit</div>
+            </div>
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-1">1h RA-8</div>
+              <div className="text-lg font-semibold text-emerald-400">PPL {LLAMA_MATCHED.ra8.perplexity.toFixed(2)}</div>
+              <div className="text-xs text-gray-400 mt-1">{raHours}h · {LLAMA_MATCHED.ra8.completed_steps.toLocaleString()} steps · max_time exit</div>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">FIM-guided surgical placement</h3>
+              <div className="space-y-3">
+                {Object.entries(LLAMA_MATCHED.candidateLayerTraces).map(([layer, trace]) => (
+                  <div key={layer} className="bg-gray-900 rounded-lg p-3 flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-cyan-300">Layer {layer}</div>
+                      <div className="text-xs text-gray-500">candidate for LLaMA surgical RA</div>
+                    </div>
+                    <div className="text-sm font-mono text-gray-300">trace={Number(trace).toExponential(3)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg text-sm text-gray-300">
+                8-head set: L1 [0,7], L2 [7], L4 [0,1,2,3,6]<br />
+                4-head set: L1 [0,7], L2 [7], L4 [6]
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-3 text-gray-300">Head-map: selected LLaMA surgical heads</h3>
+              <div className="space-y-3">
+                <div>
+                  <div className="text-sm text-cyan-300 mb-2">8-head matched run</div>
+                  <div className="space-y-1">
+                    {rows.map(({ layer, heads }) => (
+                      <div key={`llama8-${layer}`} className="flex items-center gap-2">
+                        <div className="w-14 text-xs text-gray-500">L{layer}</div>
+                        <div className="grid grid-cols-8 gap-1 flex-1">
+                          {heads.map((head) => (
+                            <div
+                              key={`llama8-${layer}-${head}`}
+                              className="h-8 rounded flex items-center justify-center text-xs font-mono"
+                              style={{
+                                backgroundColor: isLlamaSelected(LLAMA_MATCHED.surgical8, layer, head) ? '#0891b2' : '#1f2937',
+                                border: isLlamaSelected(LLAMA_MATCHED.surgical8, layer, head) ? '2px solid #67e8f9' : '1px solid #374151',
+                                color: isLlamaSelected(LLAMA_MATCHED.surgical8, layer, head) ? '#ecfeff' : '#6b7280',
+                              }}
+                            >
+                              {head}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-sm text-amber-300 mb-2">Top-4 variant</div>
+                  <div className="space-y-1">
+                    {rows.map(({ layer, heads }) => (
+                      <div key={`llama4-${layer}`} className="flex items-center gap-2">
+                        <div className="w-14 text-xs text-gray-500">L{layer}</div>
+                        <div className="grid grid-cols-8 gap-1 flex-1">
+                          {heads.map((head) => (
+                            <div
+                              key={`llama4-${layer}-${head}`}
+                              className="h-8 rounded flex items-center justify-center text-xs font-mono"
+                              style={{
+                                backgroundColor: isLlamaSelected(LLAMA_MATCHED.surgical4, layer, head) ? '#d97706' : '#1f2937',
+                                border: isLlamaSelected(LLAMA_MATCHED.surgical4, layer, head) ? '2px solid #fcd34d' : '1px solid #374151',
+                                color: isLlamaSelected(LLAMA_MATCHED.surgical4, layer, head) ? '#fffbeb' : '#6b7280',
+                              }}
+                            >
+                              {head}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-sm text-gray-300">
+            {LLAMA_MATCHED.ra8.note}
+          </div>
+        </div>
+      );
+    }
+
+    // Section 5: How RA Works
     function HowItWorksSection() {
       return (
         <div className="card rounded-xl p-6 mb-8">
-          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 4: How Reciprocal Attention Works</h2>
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 5: How Reciprocal Attention Works</h2>
           <p className="text-gray-400 mb-4">
             Standard attention uses Q@K.T. Reciprocal Attention learns when to use K@Q.T instead,
             providing complementary information flow.
@@ -556,6 +725,7 @@
           <LayerTraceSection />
           <HeadHeatmapSection />
           <ResultsSection />
+          <MatchedLlamaSection />
           <HowItWorksSection />
 
           {/* GNN Transfer Section */}

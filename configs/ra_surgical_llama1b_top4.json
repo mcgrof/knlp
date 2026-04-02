@@ -1,15 +1,40 @@
 {
-  "model": "llama-1b",
-  "selection_method": "placeholder-for-smoke-test+top4-trim",
-  "candidate_layers": [3, 5, 8, 10, 15],
-  "candidate_layer_traces": {},
-  "selected_head_count": 4,
-  "layers": {
-    "3": [0, 5, 12],
-    "8": [1]
+  "candidate_layer_traces": {
+    "0": 2.1700073655021392e-06,
+    "2": 1.6748248498288377e-06,
+    "20": 1.633294709790789e-06,
+    "4": 1.6870514149521417e-06,
+    "7": 1.7511495822001659e-06
   },
+  "candidate_layers": [
+    0,
+    7,
+    4,
+    2,
+    20
+  ],
+  "head_score_metric": "inbound_mass_var",
+  "layers": {
+    "2": [
+      4,
+      23,
+      29
+    ],
+    "20": [
+      3
+    ]
+  },
+  "model": "llama-1b",
   "scores": {
-    "3": {"0": 0.9, "5": 0.85, "12": 0.82},
-    "8": {"1": 0.75}
-  }
+    "2": {
+      "23": 0.350423663854599,
+      "29": 0.491601824760437,
+      "4": 0.4651259183883667
+    },
+    "20": {
+      "3": 0.3549891710281372
+    }
+  },
+  "selected_head_count": 4,
+  "selection_method": "attention-proxy-inbound_mass_var"
 }
