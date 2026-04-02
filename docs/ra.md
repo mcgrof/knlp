@@ -335,11 +335,124 @@ cache management: chunks with high inbound mass are frequently referenced
 by later tokens and should be retained; chunks with low inbound mass are
 rarely attended and can be evicted with minimal quality loss.
 
+## Matched LLaMA-150M Lane
+
+A separate matched LLaMA-150M experiment lane exists for the apples-to-apples
+comparison requested after the GPT-2 result. It currently lives in the
+standalone harness `fim/reciprocal_attention/llama150m_matched.py` rather than
+in the legacy GPT-2 trainer.
+
+Properties of that lane:
+- baseline and RA both use the same SDPA-family path
+- no `torch.compile`
+- explicit backend probing with parity logging
+- FIM collection writes surgical head-selection JSON
+- DDP smoke and 1-hour wall-clock target configs are both supported
+- one obvious entrypoint: `scripts/run_llama150m_matched.sh`
+
+Current local artifacts and docs:
+- configs:
+  - `fim/reciprocal_attention/configs/llama150m_baseline_smoke.json`
+  - `fim/reciprocal_attention/configs/llama150m_fim_smoke.json`
+  - `fim/reciprocal_attention/configs/llama150m_ra_surgical8_smoke.json`
+  - `fim/reciprocal_attention/configs/llama150m_ra_surgical4_smoke.json`
+  - `fim/reciprocal_attention/configs/llama150m_baseline_b200x4.json`
+  - `fim/reciprocal_attention/configs/llama150m_fim_collection_b200x4.json`
+  - `fim/reciprocal_attention/configs/llama150m_ra_surgical8_b200x4.json`
+  - `fim/reciprocal_attention/configs/llama150m_ra_surgical4_b200x4.json`
+- surgical selections:
+  - `configs/ra_surgical_llama150m.json`
+  - `configs/ra_surgical_llama150m_top4.json`
+- audit / current state:
+  - `fim/reciprocal_attention/LLAMA150M_AUDIT.md`
+
+The paired 1-hour comparison is now complete:
+
+| Arm      | Final PPL | Steps  | Backend          | Parity |
+|----------|-----------|--------|------------------|--------|
+| Baseline | 239.66    | 26 432 | FLASH_ATTENTION  | true   |
+| RA-8     | 217.06    | 25 702 | FLASH_ATTENTION  | true   |
+
+RA-8 delivers a 9.4% perplexity improvement under identical wall-clock,
+hardware, and backend conditions. Both runs exited on `max_time` with
+FLASH_ATTENTION parity confirmed.
+
+A harness fix now records `stop_elapsed_s` (when training stopped) separately
+from `total_elapsed_s` (including teardown/barrier overhead), so elapsed
+accounting in the completion event is unambiguous for future matched runs.
+
+The optional RA-4 variant is now running on the same 4xH100 lane; last direct pod check showed it active at `elapsed_s=1452.016`, `step=10350`, `perplexity=189.91`.
+
+Important caveat: this matched lane is reproducible today, but it is not yet a
+first-class production-trainer path. The remaining gaps are production
+integration and final checked-in result export.
+
+## Matched LLaMA-1B Lane
+
+A 1B-scale lane extends the matched comparison to a deeper GQA architecture.
+It reuses the same harness (`fim/reciprocal_attention/llama150m_matched.py`)
+with only JSON config changes.
+
+### Architecture (TinyLlama-1.1B)
+
+| Parameter              | Value  |
+|------------------------|--------|
+| hidden_size            | 2048   |
+| intermediate_size      | 5632   |
+| num_hidden_layers      | 22     |
+| num_attention_heads    | 32     |
+| num_key_value_heads    | 4      |
+| GQA ratio              | 8:1    |
+| max_position_embeddings| 2048   |
+| vocab_size             | 50304  |
+| Total params           | ~1.175B|
+
+### Training configuration
+
+| Parameter                | Value   |
+|--------------------------|---------|
+| batch_size (per GPU)     | 4       |
+| gradient_accumulation    | 8       |
+| GPUs                     | 4       |
+| effective batch          | 128     |
+| learning_rate            | 3e-4    |
+| warmup_steps             | 1000    |
+| max_time                 | 3600s   |
+| seq_len                  | 1024    |
+| dtype                    | bf16    |
+| torch.compile            | disabled|
+
+LR reduced from 6e-4 (150M) to 3e-4 for the larger model. FIM collection
+uses `candidate_keep_top_k_layers=5` (vs 3 for 150M) to accommodate 22
+layers. Same effective batch size (128) as 150M for fair comparison.
+
+### Entrypoints
+
+- Runner: `scripts/run_llama1b_matched.sh`
+- Full pipeline: `scripts/run_llama1b_full_pipeline.sh`
+- Cloud setup: `scripts/setup_llama1b_cloud.sh`
+- Audit: `fim/reciprocal_attention/LLAMA1B_AUDIT.md`
+
+### Downstream evaluation
+
+Post-training eval includes HellaSwag, LAMBADA, and Winogrande via
+`--eval-checkpoint`. Both arms use the same eval harness and output layout.
+
+### Results
+
+Pending 4xH100 cloud execution.
+
 ## References
 
 - Qwen3 SDPA Gating: "Gated Attention for Large Language Models" (NeurIPS 2025 Oral)
 - SPDA Theory: "Scaled Dot-Product Attention as One-Sided Entropic Optimal Transport"
 - FIM Analysis: `docs/FIM.md`
 - Implementation: `gpt2/model_knlp.py`
+- Matched LLaMA harness: `fim/reciprocal_attention/llama150m_matched.py`
+- Matched LLaMA runner: `scripts/run_llama150m_matched.sh`
+- Matched LLaMA audit: `fim/reciprocal_attention/LLAMA150M_AUDIT.md`
 - Pseudocode: `docs/gpt2_ra_pseudocode.md`
 - Surgical head set: `configs/ra_surgical_gpt2.json`
+- Matched LLaMA-1B runner: `scripts/run_llama1b_matched.sh`
+- Matched LLaMA-1B audit: `fim/reciprocal_attention/LLAMA1B_AUDIT.md`
+- LLaMA-1B full pipeline: `scripts/run_llama1b_full_pipeline.sh`
