@@ -1,0 +1,56 @@
+{
+  "attention": {
+    "backend": "auto",
+    "capture_attention_stats": false,
+    "impl": "sdpa",
+    "record_backend": true
+  },
+  "data": {
+    "dtype": "uint16",
+    "train_bin": "gpt2/data/finewebedu/train.bin",
+    "val_bin": "gpt2/data/finewebedu/val.bin"
+  },
+  "fim": {
+    "enabled": false
+  },
+  "model": {
+    "attn_pdrop": 0.0,
+    "embd_pdrop": 0.1,
+    "n_embd": 768,
+    "n_head": 12,
+    "n_layer": 12,
+    "n_positions": 1024,
+    "resid_pdrop": 0.1,
+    "vocab_size": 50304
+  },
+  "ra": {
+    "alpha_rec": 0.0625,
+    "alpha_std": 0.9375,
+    "enabled": true,
+    "selection_file": "fim/reciprocal_attention/configs/ra_ablation_gpt2_arm_a_fimtrace.json"
+  },
+  "run_name": "gpt2-arm-a-fimtrace-1xh100_smoke",
+  "seed": 1337,
+  "tracking": {
+    "log_jsonl": true,
+    "out_dir": "out/gpt2-matched",
+    "wandb": false,
+    "wandb_mode": "offline",
+    "wandb_project": "gpt2-paper-ablation"
+  },
+  "training": {
+    "batch_size": 8,
+    "bf16": true,
+    "eval_batches": 1,
+    "eval_interval": 4,
+    "gradient_accumulation_steps": 1,
+    "learning_rate": 0.0006,
+    "max_grad_norm": 1.0,
+    "max_time": null,
+    "min_lr": 6e-05,
+    "seq_len": 1024,
+    "train_steps": 8,
+    "warmup_steps": 0,
+    "weight_decay": 0.1
+  }
+}
