@@ -1,0 +1,53 @@
+{
+  "attention": {
+    "backend": "auto",
+    "capture_attention_stats": false,
+    "impl": "sdpa",
+    "record_backend": true
+  },
+  "data": {
+    "dtype": "uint16",
+    "train_bin": "gpt2/data/finewebedu/train.bin",
+    "val_bin": "gpt2/data/finewebedu/val.bin"
+  },
+  "fim": {
+    "enabled": false
+  },
+  "model": {
+    "attn_pdrop": 0.0,
+    "embd_pdrop": 0.1,
+    "n_embd": 768,
+    "n_head": 12,
+    "n_layer": 12,
+    "n_positions": 1024,
+    "resid_pdrop": 0.1,
+    "vocab_size": 50304
+  },
+  "ra": {
+    "enabled": false
+  },
+  "run_name": "gpt2-baseline-1xh100",
+  "seed": 1337,
+  "tracking": {
+    "log_jsonl": true,
+    "out_dir": "out/gpt2-matched",
+    "wandb": false,
+    "wandb_mode": "offline",
+    "wandb_project": "gpt2-paper-ablation"
+  },
+  "training": {
+    "batch_size": 8,
+    "bf16": true,
+    "eval_batches": 2,
+    "eval_interval": 50,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 0.0006,
+    "max_grad_norm": 1.0,
+    "max_time": 3600,
+    "min_lr": 6e-05,
+    "seq_len": 1024,
+    "train_steps": 50000,
+    "warmup_steps": 200,
+    "weight_decay": 0.1
+  }
+}
