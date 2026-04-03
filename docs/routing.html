@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>knlp routing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-2: #1a2332;
+    --border: #334155;
+    --text: #cbd5e1;
+    --muted: #94a3b8;
+    --green: #22c55e;
+    --blue: #60a5fa;
+    --purple: #c084fc;
+    --amber: #f59e0b;
+    --cyan: #22d3ee;
+    --rose: #fb7185;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+
+  .card {
+    background: linear-gradient(145deg, var(--surface), var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+
+  .panel {
+    background: linear-gradient(145deg, #172030, #141c2a);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+  }
+
+  .code-block {
+    background: #0b1220;
+    border: 1px solid #23324a;
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .code-title {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    background: #10192a;
+    border-bottom: 1px solid #23324a;
+    padding: 10px 14px;
+  }
+
+  .diff-pre {
+    background: #0a0f1a;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+
+  .diff-line {
+    display: block;
+    white-space: pre;
+    margin: 0;
+    padding: 0;
+  }
+
+  .diff-hdr {
+    color: #94a3b8;
+    background: rgba(148, 163, 184, 0.08);
+  }
+
+  .diff-add {
+    color: #bbf7d0;
+    background: rgba(34, 197, 94, 0.16);
+  }
+
+  .diff-del {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.16);
+  }
+
+  .diff-sign {
+    display: inline-block;
+    width: 1.2em;
+    font-weight: 700;
+  }
+
+  .diff-key {
+    color: #93c5fd;
+  }
+
+  .diff-str {
+    color: #86efac;
+  }
+
+  .diff-num {
+    color: #fbbf24;
+  }
+
+  pre {
+    margin: 0;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: #dbe7f3;
+  }
+
+  code.inline {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: #172033;
+    border: 1px solid #253247;
+  }
+
+  .kw { color: #f472b6; }
+  .fn { color: #93c5fd; }
+  .nm { color: #67e8f9; }
+  .cm { color: #64748b; }
+  .str { color: #86efac; }
+  .num { color: #fbbf24; }
+  .op { color: #cbd5e1; }
+  .type { color: #c084fc; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  th {
+    text-align: left;
+    color: #94a3b8;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #243244;
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .good { color: #4ade80; font-weight: 600; }
+  .warn { color: #fbbf24; font-weight: 600; }
+  .info { color: #7dd3fc; font-weight: 600; }
+
+  .path-list li {
+    font-family: var(--mono);
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  .mini-note {
+    border-left: 3px solid var(--green);
+    background: rgba(34, 197, 94, 0.08);
+    border-radius: 0 10px 10px 0;
+    padding: 12px 16px;
+  }
+
+  .section-link {
+    color: #60a5fa;
+  }
+
+  .section-link:hover {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <header class="text-center mb-14">
+      <div class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs font-mono text-slate-400 mb-5">
+        knlp / decode &amp; bandwidth
+      </div>
+      <h1 class="text-5xl font-semibold tracking-tight text-slate-100 mb-4">knlp routing</h1>
+      <p class="text-lg text-slate-400 max-w-4xl mx-auto leading-8">
+        knlp routing is a decode-time systems technique for existing transformer models. Instead of letting every
+        head read the full relevant KV footprint, routing restricts each head to a selected subset of KV blocks.
+        The goal is to reduce memory traffic during autoregressive decode while preserving useful output quality.
+      </p>
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+        <a href="ar_decode_bottleneck.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">AR decode bottleneck</a>
+        <a href="cartridges_visualization.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">Cartridges</a>
+        <a href="https://github.com/mcgrof/vllm/tree/cartridge-routing-phase1" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors">vLLM branch</a>
+      </div>
+    </header>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Summary</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          In the current practical-prior path, routing does not require retraining or model-weight changes.
+          It requires a routing prior, per-head block selection, and a backend kernel that can attend only to the selected blocks.
+          The present implementation combines prefill-derived priors with a fused Triton decode kernel and an H100-tuned autotuned variant.
+        </p>
+        <div class="grid md:grid-cols-4 gap-4 mt-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Primary H100 point</div>
+            <div class="text-3xl font-semibold text-green-400">0.042 ms</div>
+            <div class="text-sm text-slate-400 mt-2">Autotuned routed decode at <span class="font-mono">BS=128, K=8</span></div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Dense baseline</div>
+            <div class="text-3xl font-semibold text-blue-400">0.125 ms</div>
+            <div class="text-sm text-slate-400 mt-2">FlashAttention-backed SDPA on the same H100 setup</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">KV reduction</div>
+            <div class="text-3xl font-semibold text-purple-400">75%</div>
+            <div class="text-sm text-slate-400 mt-2">Selected-block decode rather than full-footprint decode</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Current question</div>
+            <div class="text-3xl font-semibold text-amber-400">quality</div>
+            <div class="text-sm text-slate-400 mt-2">The remaining work is downstream validation and serving-path proof</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="card p-6">
+          <h2 class="text-2xl font-semibold text-slate-100 mb-3">What routing changes</h2>
+          <p class="text-slate-300 leading-8 mb-4">
+            Standard dense decode asks every relevant head to read from the whole available KV region.
+            Routing changes that rule by assigning each KV head a smaller set of candidate blocks and restricting
+            decode-time attention to that set. A useful mental model is simple: dense decode reads everything that
+            might matter, while routed decode tries to read only the blocks the prior says are worth checking for each head.
+          </p>
+          <p class="text-slate-400 leading-8">
+            This matters most in autoregressive decode, where repeated KV reads become the bottleneck.
+            The broader systems motivation is explained in
+            <a class="section-link" href="ar_decode_bottleneck.html">AR decode bottleneck</a>.
+          </p>
+        </div>
+        <div class="card p-6">
+          <h2 class="text-2xl font-semibold text-slate-100 mb-3">What routing is not</h2>
+          <ul class="list-disc pl-6 text-slate-300 space-y-2">
+            <li>It is not a new trained model architecture.</li>
+            <li>It is not speculative decoding.</li>
+            <li>It is not tied to cartridges, although cartridges can carry reusable priors.</li>
+            <li>It does not require vLLM to exist as an offline or kernel-level research line.</li>
+          </ul>
+          <p class="text-slate-400 leading-8 mt-4">
+            Routing core, cartridges, and vLLM integration are related but separate. Routing is the main feature.
+            Cartridges are one optional prior source, and vLLM is one optional serving-path integration.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Architecture</h2>
+        <p class="text-slate-400 leading-8 mb-6">
+          The current routing stack has one required path and two optional extensions. The required path produces a routing prior,
+          turns it into per-head block tables, and executes routed decode in a fused Triton kernel. Cartridges and vLLM are optional layers on top.
+        </p>
+
+        <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-5 mb-6">
+          <div class="text-xs font-mono uppercase tracking-wider text-green-400 mb-4">Required core path</div>
+          <div class="grid gap-3 md:grid-cols-[1fr_auto_1fr_auto_1.2fr_auto_1fr] items-stretch">
+            <div class="panel p-4 flex flex-col justify-center">
+              <div class="text-sm font-mono text-slate-500 mb-2">1</div>
+              <div class="text-base font-semibold text-slate-100">Existing model</div>
+            </div>
+            <div class="hidden md:flex items-center justify-center text-slate-500 text-2xl">→</div>
+            <div class="panel p-4 flex flex-col justify-center">
+              <div class="text-sm font-mono text-slate-500 mb-2">2</div>
+              <div class="text-base font-semibold text-slate-100">Dense prefill</div>
+            </div>
+            <div class="hidden md:flex items-center justify-center text-slate-500 text-2xl">→</div>
+            <div class="panel p-4 flex flex-col justify-center">
+              <div class="text-sm font-mono text-slate-500 mb-2">3</div>
+              <div class="text-base font-semibold text-slate-100">Routing prior + per-head block tables</div>
+            </div>
+            <div class="hidden md:flex items-center justify-center text-slate-500 text-2xl">→</div>
+            <div class="panel p-4 flex flex-col justify-center">
+              <div class="text-sm font-mono text-slate-500 mb-2">4</div>
+              <div class="text-base font-semibold text-slate-100">Routed decode</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="rounded-xl border border-purple-500/40 bg-purple-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-purple-300 mb-3">Optional prior source</div>
+            <h3 class="text-lg font-semibold text-purple-200 mb-2">Cartridges</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              Cartridges can carry reusable routing sidecars or routing oracles for document, prefix, or session reuse.
+            </p>
+            <p class="text-sm text-slate-500">
+              Feeds into: routing prior + per-head block tables.
+            </p>
+          </div>
+
+          <div class="rounded-xl border border-purple-500/40 bg-purple-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-purple-300 mb-3">Optional prior source</div>
+            <h3 class="text-lg font-semibold text-purple-200 mb-2">Future sources</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              The same backend path could later consume live prefill-derived priors, request-scoped policy, or retrieval-derived priors such as RAG systems that already maintain pre-computed KV cache artifacts.
+            </p>
+            <p class="text-sm text-slate-500">
+              Feeds into: routing prior + per-head block tables.
+            </p>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-cyan-500/40 bg-cyan-950/10 p-5">
+          <div class="text-xs font-mono uppercase tracking-wider text-cyan-300 mb-3">Optional serving integration</div>
+          <h3 class="text-lg font-semibold text-cyan-200 mb-2">vLLM</h3>
+          <p class="text-slate-300 leading-7 mb-3">
+            The current vLLM path loads a prior source into runtime state and applies a narrow first-token routing patch for serving-path validation.
+          </p>
+          <p class="text-sm text-slate-500">
+            Consumes the same routing prior path rather than redefining routing itself.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Origins and lineage</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          The routing line did not begin as a serving optimization project. It grew out of the earlier
+          FIM-guided and reciprocal-attention research agenda within <a class="section-link" href="https://knlp.io/">knlp</a>,
+          where the broader question was how to use signals already present in the transformer pipeline as indicators of
+          tensor importance and structure. The guiding idea was broader than routing alone: if existing traces already
+          reveal what matters, then those traces may be reusable for several kinds of optimization rather than only for one bespoke learned mechanism.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          While working through that line, attention probability traces started to look like more direct functional priors for
+          decode-time block selection than FIM traces alone. The research thread therefore shifted from asking only how to
+          approximate attention structurally to asking which existing pipeline signals could guide later decode-time KV access.
+          That shift turned routing into a serious systems candidate rather than an adjacent research curiosity.
+        </p>
+        <p class="text-slate-300 leading-8">
+          From there, two follow-on branches emerged. One branch asked whether reusable document or prefix structure could be
+          captured in cartridge-style sidecars or routing oracles. The other asked whether routing could ever be fast enough to
+          matter in practice. The fused Triton kernel answered the second question by removing the Python-loop overhead that had
+          made routed decode too expensive to be operationally interesting. Once that kernel existed, the question became whether
+          practical priors were accurate enough to justify deeper validation and serving-path work.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The fused Triton kernel</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          The kernel is the center of the current implementation. The routing idea is simple, but without a fused kernel it degenerates into a
+          Python loop that launches separate attention work for each head or selected block. The Triton path removes that overhead by computing
+          one routed decode step in a single fused kernel launch across the selected KV blocks.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-4 mb-6 items-stretch">
+          <div class="panel p-5 h-full flex flex-col">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Core file</div>
+            <div class="text-base md:text-lg font-semibold text-blue-300 font-mono leading-7 break-all">routing/fused_routed_attention.py</div>
+            <div class="text-sm text-slate-400 mt-3 leading-6">Defines the fused decode kernel and the reference routed decode path.</div>
+          </div>
+          <div class="panel p-5 h-full flex flex-col">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">H100 path</div>
+            <div class="text-base md:text-lg font-semibold text-purple-300 font-mono leading-7 break-all">routing/fused_routed_attention_autotune.py</div>
+            <div class="text-sm text-slate-400 mt-3 leading-6">Adds bounded Triton autotuning over tile size, warp count, and pipeline stages.</div>
+          </div>
+          <div class="panel p-5 h-full flex flex-col">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">What it replaces</div>
+            <div class="text-base md:text-lg font-semibold text-amber-300 font-mono leading-7 break-all">per-head Python loop</div>
+            <div class="text-sm text-slate-400 mt-3 leading-6">Avoids N separate attention calls for selected-block decode.</div>
+          </div>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">Interface — routed decode consumes a routing prior, block tables, and the existing KV cache</div>
+          <pre><code><span class="kw">from</span> <span class="nm">routing.fused_routed_attention</span> <span class="kw">import</span> <span class="fn">fused_routed_decode</span>, <span class="fn">select_top_k_blocks</span>
+
+<span class="cm"># derive per-head selected blocks from the routing prior</span>
+block_tables, block_counts <span class="op">=</span> <span class="fn">select_top_k_blocks</span>(routing_prior, k<span class="op">=</span><span class="num">8</span>)
+
+<span class="cm"># run routed decode on the existing paged KV cache</span>
+out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
+    q,
+    k_cache,
+    v_cache,
+    block_tables,
+    block_counts,
+)
+</code></pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">Kernel body — iterate over selected blocks, then over BLOCK_T token tiles inside each block</div>
+          <pre><code><span class="kw">for</span> block_idx <span class="kw">in</span> <span class="fn">range</span>(max_selected_blocks):
+    active <span class="op">=</span> block_idx <span class="op"><</span> n_blocks
+    phys_block <span class="op">=</span> <span class="fn">tl.load</span>(Block_tables <span class="op">+</span> ...)
+
+    <span class="kw">for</span> t_start <span class="kw">in</span> <span class="fn">range</span>(<span class="num">0</span>, block_size, BLOCK_T):
+        t_offsets <span class="op">=</span> t_start <span class="op">+</span> <span class="fn">tl.arange</span>(<span class="num">0</span>, BLOCK_T)
+        t_mask <span class="op">=</span> (t_offsets <span class="op"><</span> block_size) <span class="op">&amp;</span> active
+
+        k_tile <span class="op">=</span> <span class="fn">tl.load</span>(K_cache <span class="op">+</span> ...)
+        scores <span class="op">=</span> <span class="fn">tl.sum</span>(q_vec[<span class="kw">None</span>, :] <span class="op">*</span> k_tile, axis=<span class="num">1</span>) <span class="op">*</span> scale
+        scores <span class="op">=</span> <span class="fn">tl.where</span>(t_mask, scores, <span class="op">-</span><span class="fn">inf</span>)
+
+        m_new <span class="op">=</span> <span class="fn">tl.maximum</span>(m_prev, <span class="fn">tl.max</span>(scores, axis=<span class="num">0</span>))
+        correction <span class="op">=</span> <span class="fn">tl.exp</span>(m_prev <span class="op">-</span> m_new)
+        p <span class="op">=</span> <span class="fn">tl.exp</span>(scores <span class="op">-</span> m_new)
+
+        v_tile <span class="op">=</span> <span class="fn">tl.load</span>(V_cache <span class="op">+</span> ...)
+        acc <span class="op">=</span> acc <span class="op">*</span> correction <span class="op">+</span> <span class="fn">tl.sum</span>(p[:, <span class="kw">None</span>] <span class="op">*</span> v_tile, axis=<span class="num">0</span>)
+</code></pre>
+        </div>
+
+        <div class="mini-note mb-6">
+          <strong class="text-green-300">What the kernel actually does.</strong>
+          It walks only the selected physical blocks for each KV head, streams through each block in <span class="font-mono">BLOCK_T</span>-sized token tiles,
+          computes attention scores against the current query vector, maintains an online softmax, and accumulates values without leaving the fused kernel path.
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">H100 autotuning — bounded search over tile size, warp count, and pipeline stages</div>
+          <pre><code><span class="kw">def</span> <span class="fn">_get_autotune_configs</span>():
+    configs <span class="op">=</span> []
+    <span class="kw">for</span> block_t <span class="kw">in</span> [<span class="num">32</span>, <span class="num">64</span>, <span class="num">128</span>]:
+        <span class="kw">for</span> nw <span class="kw">in</span> [<span class="num">4</span>, <span class="num">8</span>]:
+            <span class="kw">for</span> ns <span class="kw">in</span> [<span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>]:
+                configs.<span class="fn">append</span>(
+                    triton.<span class="type">Config</span>({<span class="str">"BLOCK_T"</span>: block_t}, num_warps<span class="op">=</span>nw, num_stages<span class="op">=</span>ns)
+                )
+    <span class="kw">return</span> configs
+
+<span class="op">@</span>triton.<span class="fn">autotune</span>(
+    configs<span class="op">=</span><span class="fn">_get_autotune_configs</span>(),
+    key<span class="op">=</span>[<span class="str">"head_dim"</span>, <span class="str">"block_size"</span>, <span class="str">"max_selected_blocks"</span>],
+)
+</code></pre>
+        </div>
+
+        <p class="text-slate-300 leading-8">
+          The H100 work focused on the same fused kernel, not a different algorithm. The question was whether a fixed hand-chosen
+          configuration should remain the baseline or whether bounded Triton autotuning would produce a better implementation target.
+          The answer was the autotuned kernel: it was faster, more stable across runs, and sufficient to close the H100 kernel-selection question
+          without requiring a deeper redesign.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Optional serving path: cartridges and vLLM</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Routing does not require cartridges or vLLM, but they provide one concrete way to test routing in a serving stack.
+          Cartridges can carry reusable routing sidecars or routing oracles, and the public
+          <a class="section-link" href="https://github.com/mcgrof/vllm/tree/cartridge-routing-phase1">cartridge-routing-phase1</a>
+          branch in <span class="font-mono">mcgrof/vllm</span> is the current phase-1 serving experiment.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          The current vLLM patch is cartridge-guided: it loads a prior source into runtime state and uses a narrow first-token routing path.
+          That should not be confused with routing as a whole. If the cartridge branch disappeared, the fused routed kernel and offline
+          prior-extraction story would still exist. What would disappear is this particular vLLM activation path.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          The key implementation detail is that the routing prior is not embedded inside <span class="font-mono">prefix_token_ids.json</span>.
+          The cartridge directory gains a new sidecar file, <span class="font-mono">routing_prior.pt</span>, and the serving configuration JSON
+          is extended so the connector knows to load it.
+        </p>
+
+        <p class="text-slate-300 leading-8 mb-4">
+          Concretely, the cartridge directory gains one additional sidecar file:
+          <span class="font-mono">routing_prior.pt</span>.
+          The meaningful configuration change is in the connector JSON.
+        </p>
+
+        <div class="code-block">
+          <div class="code-title">Unified diff — connector JSON changes when routing is enabled</div>
+          <div class="diff-pre"><div class="diff-line diff-hdr">--- kv_connector_extra_config.before.json</div><div class="diff-line diff-hdr">+++ kv_connector_extra_config.after.json</div><div class="diff-line diff-hdr">@@ -1,4 +1,7 @@</div><div class="diff-line"><span class="diff-sign"> </span>{</div><div class="diff-line"><span class="diff-sign"> </span>  <span class="diff-key">"cartridge_path"</span>: <span class="diff-str">"/path/to/cartridge.pt"</span>,</div><div class="diff-line diff-del"><span class="diff-sign">-</span>  <span class="diff-key">"prefix_token_ids_path"</span>: <span class="diff-str">"/path/to/prefix_token_ids.json"</span></div><div class="diff-line diff-add"><span class="diff-sign">+</span>  <span class="diff-key">"prefix_token_ids_path"</span>: <span class="diff-str">"/path/to/prefix_token_ids.json"</span>,</div><div class="diff-line diff-add"><span class="diff-sign">+</span>  <span class="diff-key">"routing_prior_path"</span>: <span class="diff-str">"/path/to/routing_prior.pt"</span>,</div><div class="diff-line diff-add"><span class="diff-sign">+</span>  <span class="diff-key">"routing_mode"</span>: <span class="diff-str">"cartridge_prior"</span>,</div><div class="diff-line diff-add"><span class="diff-sign">+</span>  <span class="diff-key">"routing_K"</span>: <span class="diff-num">4</span></div><div class="diff-line"><span class="diff-sign"> </span>}</div></div>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">Expanded connector JSON — same change without diff compression</div>
+          <pre><code><span class="cm">// kv_connector_extra_config after routing is enabled</span>
+{
+  <span class="str">"cartridge_path"</span>: <span class="str">"/path/to/cartridge.pt"</span>,
+  <span class="str">"prefix_token_ids_path"</span>: <span class="str">"/path/to/prefix_token_ids.json"</span>,
+  <span class="str">"routing_prior_path"</span>: <span class="str">"/path/to/routing_prior.pt"</span>,
+  <span class="str">"routing_mode"</span>: <span class="str">"cartridge_prior"</span>,
+  <span class="str">"routing_K"</span>: <span class="num">4</span>
+}
+</code></pre>
+        </div>
+
+        <p class="text-slate-300 leading-8 mb-4">
+          That is the concrete integration point. The artifact itself gains a routing sidecar, and the connector JSON changes from
+          "load a cartridge" to "load a cartridge plus a routing prior and activate routed decode." This is why the current serving-path
+          experiment is best understood as cartridge-guided routing rather than as a fully general online routing system.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          Readers looking for the actual serving-path code should start at the public
+          <a class="section-link" href="https://github.com/mcgrof/vllm/tree/cartridge-routing-phase1">cartridge-routing-phase1 branch</a>.
+          The most relevant files are
+          <a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/routing_sidecar_contract.md">routing_sidecar_contract.md</a>,
+          <a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/scripts/generate_routing_prior.py">scripts/generate_routing_prior.py</a>,
+          <a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/scripts/measure_routing_phase1.py">scripts/measure_routing_phase1.py</a>, and
+          <a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/vllm/distributed/kv_transfer/kv_connector/v1/cartridge_connector.py">vllm/distributed/kv_transfer/kv_connector/v1/cartridge_connector.py</a>.
+        </p>
+        <p class="text-slate-300 leading-8">
+          The same backend pieces — routed-attention state, conditional attention hooks, and request-scoped prior handling — could later support
+          other prior sources such as live prefill-derived priors, request-level policy, or non-cartridge offline artifacts.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Results</h2>
+
+        <h3 class="text-lg font-semibold text-blue-300 mb-3">Practical priors on A100</h3>
+        <p class="text-slate-300 leading-8 mb-4">
+          The practical-prior sweep established that prefill-derived priors are strong enough to justify real validation work.
+          The routing story is no longer blocked by obviously weak priors.
+        </p>
+        <div class="overflow-x-auto mb-8">
+          <table>
+            <thead>
+              <tr>
+                <th>Operating point</th>
+                <th>Cosine</th>
+                <th>KV reduction</th>
+                <th>Per-layer decode speedup</th>
+                <th>Interpretation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code class="inline">BS=128, K=8</code></td>
+                <td class="good">0.953</td>
+                <td>75%</td>
+                <td class="good">4.0x</td>
+                <td>Primary operating point</td>
+              </tr>
+              <tr>
+                <td><code class="inline">BS=256, K=8</code></td>
+                <td class="good">0.987</td>
+                <td>50%</td>
+                <td class="good">2.0x</td>
+                <td>High-accuracy fallback</td>
+              </tr>
+              <tr>
+                <td><code class="inline">BS=256, K=4</code></td>
+                <td class="warn">0.928</td>
+                <td>75%</td>
+                <td class="good">5.2x</td>
+                <td>Latency-oriented operating point</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-semibold text-purple-300 mb-3">H100 kernel baseline</h3>
+        <p class="text-slate-300 leading-8 mb-4">
+          The H100 evaluation answered a narrower question than the earlier routing experiments: once the fused routed kernel was already correct and useful,
+          what configuration should be carried forward as the baseline for later validation? The answer was the autotuned Triton kernel rather than a deeper redesign.
+        </p>
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Primary H100 result</div>
+            <p class="text-slate-300 leading-8">
+              At <code class="inline">BS=128, K=8</code>, the autotuned routed kernel measured <span class="good">0.042 ms</span>
+              against a dense FlashAttention-backed SDPA baseline of <span class="info">0.125 ms</span>, corresponding to a
+              <span class="good">3.0×</span> speedup with <span class="good">75% KV reduction</span>.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Stability</div>
+            <p class="text-slate-300 leading-8">
+              The H100 result was stable across reruns with measured variation of approximately <span class="good">±0.6%</span>.
+              That was good enough to establish the kernel baseline and move attention to quality and serving-path validation.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Open questions</h2>
+        <ul class="list-disc pl-6 text-slate-300 space-y-2">
+          <li>downstream task quality preservation</li>
+          <li>perplexity preservation</li>
+          <li>multi-prompt stability</li>
+          <li>prior staleness over decode steps</li>
+          <li>batch &gt; 1 robustness</li>
+          <li>serving-path TTFT benefit in vLLM</li>
+        </ul>
+        <p class="text-slate-400 leading-8 mt-4">
+          The kernel question is answered well enough for the routing line to move on. The next stage is about validating quality,
+          robustness, and serving usefulness rather than continuing open-ended kernel redesign.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Code map</h2>
+        <div class="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-lg font-semibold text-blue-300 mb-3">Core routing in knlp</h3>
+            <ul class="path-list list-disc pl-6 text-slate-300 space-y-2">
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/fused_routed_attention.py">routing/fused_routed_attention.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/fused_routed_attention_autotune.py">routing/fused_routed_attention_autotune.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/benchmark.py">routing/benchmark.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/benchmark_h100_optimization.py">routing/benchmark_h100_optimization.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/tests/test_fused_routed_attention.py">routing/tests/test_fused_routed_attention.py</a></li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-cyan-300 mb-3">Optional vLLM integration</h3>
+            <p class="text-slate-400 mb-3 leading-7">
+              Public branch:
+              <a class="section-link" href="https://github.com/mcgrof/vllm/tree/cartridge-routing-phase1">mcgrof/vllm: cartridge-routing-phase1</a>
+            </p>
+            <ul class="path-list list-disc pl-6 text-slate-300 space-y-2">
+              <li><a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/routing_sidecar_contract.md">routing_sidecar_contract.md</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/scripts/generate_routing_prior.py">scripts/generate_routing_prior.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/scripts/measure_routing_phase1.py">scripts/measure_routing_phase1.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/vllm/blob/cartridge-routing-phase1/vllm/distributed/kv_transfer/kv_connector/v1/cartridge_connector.py">vllm/distributed/kv_transfer/kv_connector/v1/cartridge_connector.py</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-slate-500 text-sm border-t border-slate-800 pt-8 mt-14">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-300">GitHub</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://github.com/mcgrof/vllm/tree/cartridge-routing-phase1" class="hover:text-slate-300">cartridge-routing-phase1</a>
+        <span class="mx-2">&middot;</span>
+        <a href="ar_decode_bottleneck.html" class="hover:text-slate-300">AR decode bottleneck</a>
+        <span class="mx-2">&middot;</span>
+        <a href="cartridges_visualization.html" class="hover:text-slate-300">Cartridges</a>
+      </p>
+      <p>Routing documentation for knlp</p>
+    </footer>
+  </div>
+</body>
+</html>
