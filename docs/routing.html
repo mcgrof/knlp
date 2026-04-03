@@ -358,15 +358,16 @@
           </p>
         </div>
         <div class="card p-6">
-          <h2 class="text-2xl font-semibold text-slate-100 mb-3">Careful future guidance</h2>
+          <h2 class="text-2xl font-semibold text-slate-100 mb-3">Current release guidance</h2>
           <p class="text-slate-300 leading-8 mb-4">
-            The recent H100 follow-up matters because it narrowed the next kernel question. The main win came from better kernel configuration,
-            not from a new routing-policy abstraction: extending the bounded search to include larger token-tile sizes closed the biggest gap.
+            Treat the current routing release as a kernel-first implementation. The promoted H100 baseline comes from bounded kernel configuration
+            and better defaults, not from a new routing-policy abstraction. Keep the current path simple: use the fused kernel, keep the bounded search,
+            and treat the existing H100 operating points as the release baseline.
           </p>
           <p class="text-slate-400 leading-8">
-            Future work should therefore stay disciplined. First exhaust bounded kernel configuration and regime-specific scheduling choices;
-            only then escalate to deeper kernel-body redesign. If ideas from fused quantization transfer here, they are more likely to improve
-            prior construction or prior-to-block-table selection than the routed decode kernel directly.
+            Keep future work disciplined. Exhaust bounded kernel configuration and regime-specific scheduling first. Escalate to deeper kernel-body
+            redesign only after the current search space stops paying off. If ideas from fused quantization transfer here, apply them first to prior
+            construction or prior-to-block-table selection rather than to the routed decode kernel directly.
           </p>
         </div>
       </div>
@@ -492,10 +493,10 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
         </div>
 
         <p class="text-slate-300 leading-8">
-          The H100 work focused on the same fused kernel, not a different algorithm. The most important recent result was not a new kernel body,
-          but a better bounded search and better defaults. Extending the search to include larger <span class="font-mono">BLOCK_T</span> values exposed a missing
-          winning regime: on H100, <span class="font-mono">BLOCK_T=block_size</span> was often the right choice because it removed an otherwise unnecessary inner token-tile loop.
-          That materially improved all tested operating points and fixed the earlier <span class="font-mono">BS=256, K=8</span> regime mismatch.
+          Use the same fused kernel across the current routing release. The current H100 baseline depends on a bounded search and on better launch defaults,
+          not on a separate kernel body. Include larger <span class="font-mono">BLOCK_T</span> values in the search space. On H100, <span class="font-mono">BLOCK_T=block_size</span>
+          is the right default in the promoted regimes because it removes an unnecessary inner token-tile loop. Treat that as the starting point for
+          future routing work.
         </p>
       </div>
     </section>
@@ -613,11 +614,11 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
           </table>
         </div>
 
-        <h3 class="text-lg font-semibold text-purple-300 mb-3">H100 kernel baseline and P1 follow-up</h3>
+        <h3 class="text-lg font-semibold text-purple-300 mb-3">Current H100 release baseline</h3>
         <p class="text-slate-300 leading-8 mb-4">
-          The more careful H100 follow-up narrowed the question further: was the remaining gap really a metadata-contract problem, or was the kernel still dominant?
-          The answer was the kernel. Fresh attribution showed the kernel still dominated end-to-end time, and the first promoted P1 branch won by fixing the bounded search
-          and the default launch heuristics rather than by redesigning routing itself.
+          Use the current H100 release baseline as a kernel-dominant routing result. Fresh attribution on the promoted path shows the kernel still dominates
+          end-to-end time, so keep the interpretation simple: treat routing as a kernel-first implementation line and treat the promoted P1 branch as the
+          current baseline for downstream validation.
         </p>
         <div class="grid md:grid-cols-2 gap-4">
           <div class="panel p-5">
@@ -629,11 +630,12 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
             </p>
           </div>
           <div class="panel p-5">
-            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Why it improved</div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Release configuration rule</div>
             <p class="text-slate-300 leading-8">
-              The key fix was extending the search and defaults to cover larger token tiles. In practice that meant allowing
-              <span class="font-mono">BLOCK_T=256</span> and aligning the base kernel defaults more closely with the H100 winners.
-              That change also repaired the earlier <code class="inline">BS=256, K=8</code> regime, which moved from slower-than-dense to faster-than-dense.
+              Extend the search and defaults to cover larger token tiles. In practice that means allowing
+              <span class="font-mono">BLOCK_T=256</span> and aligning the base kernel defaults with the H100 winners.
+              Use that configuration as the release baseline for the current routed decode path, including the repaired
+              <code class="inline">BS=256, K=8</code> regime.
             </p>
           </div>
         </div>
@@ -642,18 +644,18 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
 
     <section class="mb-12">
       <div class="card p-6">
-        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Open questions</h2>
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Next validation gates</h2>
         <ul class="list-disc pl-6 text-slate-300 space-y-2">
-          <li>downstream task quality preservation</li>
-          <li>perplexity preservation</li>
-          <li>multi-prompt stability</li>
-          <li>prior staleness over decode steps</li>
-          <li>batch &gt; 1 robustness</li>
-          <li>serving-path TTFT benefit in vLLM</li>
+          <li>validate downstream task quality preservation</li>
+          <li>validate perplexity preservation</li>
+          <li>validate multi-prompt stability</li>
+          <li>measure prior staleness over decode steps</li>
+          <li>validate batch &gt; 1 robustness</li>
+          <li>measure serving-path TTFT benefit in vLLM</li>
         </ul>
         <p class="text-slate-400 leading-8 mt-4">
-          The kernel question is answered well enough for the routing line to move on. The next stage is about validating quality,
-          robustness, and serving usefulness rather than continuing open-ended kernel redesign.
+          Treat the kernel question as answered well enough for the current release. Move next to quality, robustness, memory, and serving-path validation
+          rather than restarting open-ended kernel redesign.
         </p>
       </div>
     </section>
@@ -667,8 +669,11 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
             <ul class="path-list list-disc pl-6 text-slate-300 space-y-2">
               <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/fused_routed_attention.py">routing/fused_routed_attention.py</a></li>
               <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/fused_routed_attention_autotune.py">routing/fused_routed_attention_autotune.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/CONTRACT.md">routing/CONTRACT.md</a></li>
               <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/benchmark.py">routing/benchmark.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/benchmark_attribution.py">routing/benchmark_attribution.py</a></li>
               <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/benchmark_h100_optimization.py">routing/benchmark_h100_optimization.py</a></li>
+              <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/p1_autotune_diagnostic.py">routing/p1_autotune_diagnostic.py</a></li>
               <li><a class="section-link" href="https://github.com/mcgrof/knlp/blob/main/routing/tests/test_fused_routed_attention.py">routing/tests/test_fused_routed_attention.py</a></li>
             </ul>
           </div>
