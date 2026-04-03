@@ -267,6 +267,8 @@
           <p class="text-slate-400 leading-8 mt-4">
             Routing core, cartridges, and vLLM integration are related but separate. Routing is the main feature.
             Cartridges are one optional prior source, and vLLM is one optional serving-path integration.
+            Today, the richer routing-policy logic still belongs mainly in the offline/core routing path before kernel launch,
+            not inside vLLM itself.
           </p>
         </div>
       </div>
@@ -333,10 +335,38 @@
           <div class="text-xs font-mono uppercase tracking-wider text-cyan-300 mb-3">Optional serving integration</div>
           <h3 class="text-lg font-semibold text-cyan-200 mb-2">vLLM</h3>
           <p class="text-slate-300 leading-7 mb-3">
-            The current vLLM path loads a prior source into runtime state and applies a narrow first-token routing patch for serving-path validation.
+            The current vLLM path is still cartridge-guided routing-prior ingestion plus a narrow first-token routing patch for serving-path validation.
           </p>
           <p class="text-sm text-slate-500">
-            Consumes the same routing prior path rather than redefining routing itself.
+            It consumes a prior produced upstream. It is not yet a general routing-policy stack.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="grid md:grid-cols-2 gap-5">
+        <div class="card p-6">
+          <h2 class="text-2xl font-semibold text-slate-100 mb-3">Where routing policy lives today</h2>
+          <p class="text-slate-300 leading-8 mb-4">
+            Today, richer routing policy and prior-selection logic belong primarily to the offline/core routing path, before kernel launch.
+            The natural implementation point is the path that builds priors and turns them into per-head block tables, not the Triton kernel itself.
+          </p>
+          <p class="text-slate-400 leading-8">
+            In practice that means the routing-prior extraction and prior-to-block-table selection path is the right place for
+            future policy work such as head-specific aggressiveness, thresholding, or other selection heuristics.
+          </p>
+        </div>
+        <div class="card p-6">
+          <h2 class="text-2xl font-semibold text-slate-100 mb-3">Careful future guidance</h2>
+          <p class="text-slate-300 leading-8 mb-4">
+            The recent H100 follow-up matters because it narrowed the next kernel question. The main win came from better kernel configuration,
+            not from a new routing-policy abstraction: extending the bounded search to include larger token-tile sizes closed the biggest gap.
+          </p>
+          <p class="text-slate-400 leading-8">
+            Future work should therefore stay disciplined. First exhaust bounded kernel configuration and regime-specific scheduling choices;
+            only then escalate to deeper kernel-body redesign. If ideas from fused quantization transfer here, they are more likely to improve
+            prior construction or prior-to-block-table selection than the routed decode kernel directly.
           </p>
         </div>
       </div>
@@ -381,12 +411,12 @@
           <div class="panel p-5 h-full flex flex-col">
             <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Core file</div>
             <div class="text-base md:text-lg font-semibold text-blue-300 font-mono leading-7 break-all">routing/fused_routed_attention.py</div>
-            <div class="text-sm text-slate-400 mt-3 leading-6">Defines the fused decode kernel and the reference routed decode path.</div>
+            <div class="text-sm text-slate-400 mt-3 leading-6">Defines the fused decode kernel, the current default launch heuristics, and the bounded H100 autotune search.</div>
           </div>
           <div class="panel p-5 h-full flex flex-col">
-            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">H100 path</div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Compatibility shim</div>
             <div class="text-base md:text-lg font-semibold text-purple-300 font-mono leading-7 break-all">routing/fused_routed_attention_autotune.py</div>
-            <div class="text-sm text-slate-400 mt-3 leading-6">Adds bounded Triton autotuning over tile size, warp count, and pipeline stages.</div>
+            <div class="text-sm text-slate-400 mt-3 leading-6">Keeps the old autotune entrypoint alive, but the real kernel logic now lives in the main file.</div>
           </div>
           <div class="panel p-5 h-full flex flex-col">
             <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">What it replaces</div>
@@ -446,8 +476,8 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
           <div class="code-title">H100 autotuning — bounded search over tile size, warp count, and pipeline stages</div>
           <pre><code><span class="kw">def</span> <span class="fn">_get_autotune_configs</span>():
     configs <span class="op">=</span> []
-    <span class="kw">for</span> block_t <span class="kw">in</span> [<span class="num">32</span>, <span class="num">64</span>, <span class="num">128</span>]:
-        <span class="kw">for</span> nw <span class="kw">in</span> [<span class="num">4</span>, <span class="num">8</span>]:
+    <span class="kw">for</span> block_t <span class="kw">in</span> [<span class="num">32</span>, <span class="num">64</span>, <span class="num">128</span>, <span class="num">256</span>]:
+        <span class="kw">for</span> nw <span class="kw">in</span> [<span class="num">4</span>, <span class="num">8</span>, <span class="num">16</span>]:
             <span class="kw">for</span> ns <span class="kw">in</span> [<span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>]:
                 configs.<span class="fn">append</span>(
                     triton.<span class="type">Config</span>({<span class="str">"BLOCK_T"</span>: block_t}, num_warps<span class="op">=</span>nw, num_stages<span class="op">=</span>ns)
@@ -462,10 +492,10 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
         </div>
 
         <p class="text-slate-300 leading-8">
-          The H100 work focused on the same fused kernel, not a different algorithm. The question was whether a fixed hand-chosen
-          configuration should remain the baseline or whether bounded Triton autotuning would produce a better implementation target.
-          The answer was the autotuned kernel: it was faster, more stable across runs, and sufficient to close the H100 kernel-selection question
-          without requiring a deeper redesign.
+          The H100 work focused on the same fused kernel, not a different algorithm. The most important recent result was not a new kernel body,
+          but a better bounded search and better defaults. Extending the search to include larger <span class="font-mono">BLOCK_T</span> values exposed a missing
+          winning regime: on H100, <span class="font-mono">BLOCK_T=block_size</span> was often the right choice because it removed an otherwise unnecessary inner token-tile loop.
+          That materially improved all tested operating points and fixed the earlier <span class="font-mono">BS=256, K=8</span> regime mismatch.
         </p>
       </div>
     </section>
@@ -530,7 +560,9 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
         </p>
         <p class="text-slate-300 leading-8">
           The same backend pieces — routed-attention state, conditional attention hooks, and request-scoped prior handling — could later support
-          other prior sources such as live prefill-derived priors, request-level policy, or non-cartridge offline artifacts.
+          other prior sources such as live prefill-derived priors, request-level policy, or non-cartridge offline artifacts. If that happens,
+          the cleaner design is for vLLM to ingest a richer prior or policy artifact produced upstream, rather than to invent the routing policy inside
+          the serving stack itself.
         </p>
       </div>
     </section>
@@ -581,25 +613,27 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
           </table>
         </div>
 
-        <h3 class="text-lg font-semibold text-purple-300 mb-3">H100 kernel baseline</h3>
+        <h3 class="text-lg font-semibold text-purple-300 mb-3">H100 kernel baseline and P1 follow-up</h3>
         <p class="text-slate-300 leading-8 mb-4">
-          The H100 evaluation answered a narrower question than the earlier routing experiments: once the fused routed kernel was already correct and useful,
-          what configuration should be carried forward as the baseline for later validation? The answer was the autotuned Triton kernel rather than a deeper redesign.
+          The more careful H100 follow-up narrowed the question further: was the remaining gap really a metadata-contract problem, or was the kernel still dominant?
+          The answer was the kernel. Fresh attribution showed the kernel still dominated end-to-end time, and the first promoted P1 branch won by fixing the bounded search
+          and the default launch heuristics rather than by redesigning routing itself.
         </p>
         <div class="grid md:grid-cols-2 gap-4">
           <div class="panel p-5">
-            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Primary H100 result</div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Promoted H100 point</div>
             <p class="text-slate-300 leading-8">
-              At <code class="inline">BS=128, K=8</code>, the autotuned routed kernel measured <span class="good">0.042 ms</span>
-              against a dense FlashAttention-backed SDPA baseline of <span class="info">0.125 ms</span>, corresponding to a
-              <span class="good">3.0×</span> speedup with <span class="good">75% KV reduction</span>.
+              At <code class="inline">BS=128, K=8</code>, the promoted P1 base kernel measured <span class="good">0.072 ms</span>
+              against a dense FlashAttention-backed SDPA baseline of <span class="info">0.124 ms</span>, corresponding to a
+              <span class="good">1.7×</span> speedup with <span class="good">75% KV reduction</span>.
             </p>
           </div>
           <div class="panel p-5">
-            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Stability</div>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Why it improved</div>
             <p class="text-slate-300 leading-8">
-              The H100 result was stable across reruns with measured variation of approximately <span class="good">±0.6%</span>.
-              That was good enough to establish the kernel baseline and move attention to quality and serving-path validation.
+              The key fix was extending the search and defaults to cover larger token tiles. In practice that meant allowing
+              <span class="font-mono">BLOCK_T=256</span> and aligning the base kernel defaults more closely with the H100 winners.
+              That change also repaired the earlier <code class="inline">BS=256, K=8</code> regime, which moved from slower-than-dense to faster-than-dense.
             </p>
           </div>
         </div>
