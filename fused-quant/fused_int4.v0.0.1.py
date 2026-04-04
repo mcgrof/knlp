@@ -131,8 +131,8 @@ MIN_FUSED_SEQ_LEN: int = int(_MIN_FUSED_SEQ_LEN_DEFAULT)
 K_PRECISION: str = os.environ.get("VLLM_FUSED_INT4_K_PRECISION", "int4")
 
 # P1 harness: tunable decode-kernel config via env vars
-DECODE_BLOCK_N: int = int(os.environ.get("VLLM_FUSED_INT4_DECODE_BLOCK_N", "32"))
-DECODE_NUM_WARPS: int = int(os.environ.get("VLLM_FUSED_INT4_DECODE_NUM_WARPS", "2"))  # H1 promoted: 2 warps
+DECODE_BLOCK_N: int = int(os.environ.get("VLLM_FUSED_INT4_DECODE_BLOCK_N", "128"))
+DECODE_NUM_WARPS: int = int(os.environ.get("VLLM_FUSED_INT4_DECODE_NUM_WARPS", "8"))  # H1 promoted: 2 warps
 DECODE_NUM_STAGES: int = int(os.environ.get("VLLM_FUSED_INT4_DECODE_NUM_STAGES", "3"))  # H1 promoted: 3 stages
 DECODE_GATHERED_SCALE: bool = os.environ.get("VLLM_FUSED_INT4_DECODE_GATHERED_SCALE", "0") == "1"  # H3: gathered scale load
 
@@ -703,6 +703,7 @@ def _fused_int4_decode_kernel(
     BLOCK_N: tl.constexpr,  # context tile size
     N_REP: tl.constexpr,  # num_heads // num_kv_heads (GQA ratio)
     IS_ASYMMETRIC: tl.constexpr,
+    USE_GATHERED_SCALE: tl.constexpr,
 ):
     pid_sh = tl.program_id(0)
     # Decompose program id into (seq, head)
@@ -920,6 +921,14 @@ def fused_int4_decode(
 
     output = torch.empty_like(query)
 
+    # P1 harness: use env-configured BLOCK_N, and optionally num_warps/num_stages
+    effective_block_n = min(block_n, 128)
+    launch_kwargs = {}
+    if DECODE_NUM_WARPS > 0:
+        launch_kwargs["num_warps"] = DECODE_NUM_WARPS
+    if DECODE_NUM_STAGES > 0:
+        launch_kwargs["num_stages"] = DECODE_NUM_STAGES
+
     grid = (num_seqs * num_heads,)
     _fused_int4_decode_kernel[grid](
         query,
@@ -951,9 +960,11 @@ def fused_int4_decode(
         NUM_GROUPS=num_groups,
         BYTES_PER_GROUP=bytes_per_group,
         BLOCK_SIZE=block_size,
-        BLOCK_N=min(block_n, 128),
+        BLOCK_N=effective_block_n,
         N_REP=n_rep,
         IS_ASYMMETRIC=asymmetric,
+        USE_GATHERED_SCALE=DECODE_GATHERED_SCALE,
+        **launch_kwargs,
     )
     return output
 
@@ -1840,8 +1851,14 @@ class FusedInt4AttentionImpl(
         - k_precision=int4: K gets INT4 cache (original path).
         - k_precision=int8: K gets INT8 cache.
         """
-        if self._int4_value_cache is not None:
+        if (self._int4_value_cache is not None
+                and self._int4_value_cache.shape[0] >= num_blocks):
             return
+        if self._int4_value_cache is not None:
+            logger.info(
+                "[FusedInt4] Reallocating caches: old num_blocks=%d -> new num_blocks=%d",
+                self._int4_value_cache.shape[0], num_blocks,
+            )
         logger.info(
             "[FusedInt4] Allocating caches: k_precision=%s, "
             "num_blocks=%d, block_size=%d, num_kv_heads=%d, half_hd=%d, "
@@ -1954,8 +1971,9 @@ class FusedInt4AttentionImpl(
         ensuring it exists before forward() needs it.  The planner
         already budgets for this via shadow_bytes_per_block.
         """
-        # Initialize auxiliary INT4 V cache (once, planner-visible)
-        if self._int4_value_cache is None and kv_cache.numel() > 0:
+        # Initialize/resize auxiliary INT4 V cache (may reallocate if
+        # profiling created a small cache that is now too small).
+        if kv_cache.numel() > 0:
             key_cache_fp16 = kv_cache[0]
             num_blocks = key_cache_fp16.shape[0]
             block_size = key_cache_fp16.shape[1]
@@ -2012,10 +2030,9 @@ class FusedInt4AttentionImpl(
         num_blocks = key_cache_fp16.shape[0]
         block_size = key_cache_fp16.shape[1]
 
-        # Safety check: INT4 V cache should already be initialized by
-        # do_kv_cache_update. This is a fallback for edge cases only.
-        if self._int4_value_cache is None:
-            self._ensure_int4_cache(num_blocks, block_size, kv_cache.device)
+        # Ensure INT4 V cache matches the FP16 cache size.
+        # May reallocate if profiling created a small cache.
+        self._ensure_int4_cache(num_blocks, block_size, kv_cache.device)
 
         num_actual_tokens = attn_metadata.num_actual_tokens
 
@@ -2273,7 +2290,7 @@ class FusedInt4AttentionImpl(
                 seq_lens,
                 num_kv_heads=self.num_kv_heads,
                 head_size=self.head_size,
-                block_n=64,
+                block_n=DECODE_BLOCK_N,
                 k_zeros=self._k_zeros,
                 v_zeros=self._v_zeros,
                 asymmetric=self._asymmetric,
