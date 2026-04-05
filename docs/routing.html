@@ -233,8 +233,8 @@
           </div>
           <div class="panel p-4">
             <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Current question</div>
-            <div class="text-3xl font-semibold text-amber-400">quality</div>
-            <div class="text-sm text-slate-400 mt-2">The remaining work is downstream validation and serving-path proof</div>
+            <div class="text-3xl font-semibold text-amber-400">scaling</div>
+            <div class="text-sm text-slate-400 mt-2">Bounded serving proven (15&times; TTFT on W7900); remaining work is broader latency sweep and full integration</div>
           </div>
         </div>
       </div>
@@ -646,11 +646,11 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
       <div class="card p-6">
         <h2 class="text-2xl font-semibold text-slate-100 mb-4">W7900/ROCm validation</h2>
         <p class="text-slate-300 leading-8 mb-4">
-          First routing validation on AMD ROCm hardware. The fused Triton kernel compiles and executes correctly on ROCm/gfx1100 with zero code modifications from the H100 path.
-          Downstream quality matches the H100 result exactly: 100% prediction agreement between routed and dense decode.
+          First routing validation on AMD ROCm hardware. The full validation ladder &mdash; kernel correctness, quality preservation,
+          CartridgeConnector serving, and bounded TTFT comparison &mdash; is proven on ROCm/gfx1100 with zero kernel modifications from the H100 path.
         </p>
 
-        <div class="grid md:grid-cols-3 gap-4 mb-6">
+        <div class="grid md:grid-cols-5 gap-4 mb-6">
           <div class="panel p-4">
             <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">GPU</div>
             <div class="text-xl font-semibold text-cyan-400">AMD Radeon Pro W7900</div>
@@ -665,6 +665,16 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
             <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">S2 quality gate</div>
             <div class="text-3xl font-semibold text-green-400">100%</div>
             <div class="text-sm text-slate-400 mt-2">Prediction agreement &middot; 6/6 examples</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">S3 serving smoke</div>
+            <div class="text-3xl font-semibold text-green-400">PASS</div>
+            <div class="text-sm text-slate-400 mt-2">CartridgeConnector KV injection on V1</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">S4 TTFT speedup</div>
+            <div class="text-3xl font-semibold text-green-400">15.16&times;</div>
+            <div class="text-sm text-slate-400 mt-2">0.11s routed vs 1.61s dense</div>
           </div>
         </div>
 
@@ -705,6 +715,83 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
             </tbody>
           </table>
         </div>
+
+
+        <h3 class="text-lg font-semibold text-cyan-300 mb-3">S3: CartridgeConnector serving smoke (W7900)</h3>
+        <p class="text-slate-300 leading-8 mb-4">
+          vLLM V1 engine with CartridgeConnector on <code class="inline">routing-on-spf-base</code>.
+          Cartridge: citation-check/default-50pct (28 layers, 4128 tokens, 258 blocks of 16, 4 KV heads, 128 head_dim).
+        </p>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th>Test</th>
+                <th>Result</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Server startup</td>
+                <td class="good">PASS</td>
+                <td>V1 engine, CartridgeConnector loaded, routes available</td>
+              </tr>
+              <tr>
+                <td>Control request (non-matching)</td>
+                <td class="good">PASS</td>
+                <td>&ldquo;What is 2+2?&rdquo; &rarr; &ldquo;2 + 2 equals 4.&rdquo; (HTTP 200)</td>
+              </tr>
+              <tr>
+                <td>Matching request (cartridge prefix)</td>
+                <td class="good">PASS</td>
+                <td>4128 tokens matched, KV injected into GPU cache</td>
+              </tr>
+              <tr>
+                <td>Post-injection control</td>
+                <td class="good">PASS</td>
+                <td>&ldquo;What is the capital of France?&rdquo; &rarr; &ldquo;Paris.&rdquo; (HTTP 200)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mini-note mb-6" style="border-left-color: var(--amber);">
+          <strong class="text-amber-300">V1 fix required.</strong>
+          CartridgeConnector initially hit <code class="inline">AttributeError: ForwardContext has no virtual_engine</code>.
+          The V0 API indexed KV cache by <code class="inline">forward_context.virtual_engine</code>; V1 stores it as a direct tensor.
+          Fix committed as <code class="inline">c66bdb0fd</code> &mdash; one-line change in <code class="inline">cartridge_connector.py</code>.
+        </div>
+
+        <h3 class="text-lg font-semibold text-cyan-300 mb-3">S4: Bounded TTFT &mdash; routed vs dense (W7900)</h3>
+        <p class="text-slate-300 leading-8 mb-4">
+          The critical serving-path question: does KV injection actually skip prefill computation and deliver measurable latency savings?
+          Measured wall-clock time to first SSE chunk on streaming <code class="inline">/v1/completions</code> requests.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 mb-4">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Dense TTFT</div>
+            <div class="text-3xl font-semibold text-blue-400">1.606s</div>
+            <div class="text-sm text-slate-400 mt-2">4136 reversed tokens &middot; full prefill</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Routed TTFT</div>
+            <div class="text-3xl font-semibold text-green-400">0.106s</div>
+            <div class="text-sm text-slate-400 mt-2">4136 matched tokens &middot; KV injected</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Speedup</div>
+            <div class="text-3xl font-semibold text-green-400">15.16&times;</div>
+            <div class="text-sm text-slate-400 mt-2">1.50s saved per request</div>
+          </div>
+        </div>
+        <p class="text-slate-400 leading-8 mb-6">
+          The routed path loads pre-computed KV state directly into GPU cache in ~0.1s, while the dense path must compute
+          attention for all 4136 tokens (~1.6s). This is the first serving-latency measurement of CartridgeConnector on
+          ROCm/W7900 and confirms that KV injection actually skips prefill computation, not just cosmetically.
+          This is a bounded validation at a single prefix length (4128 tokens), not a full scaling sweep.
+        </p>
 
         <h3 class="text-lg font-semibold text-amber-300 mb-3">Cross-platform comparison: H100 vs W7900</h3>
         <p class="text-slate-300 leading-8 mb-4">
@@ -749,7 +836,17 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
               <tr>
                 <td>Promoted kernel latency</td>
                 <td class="good">0.072 ms (BS=128, K=8)</td>
-                <td class="info">not yet profiled</td>
+                <td class="info">not yet profiled (kernel-level)</td>
+              </tr>
+              <tr>
+                <td>CartridgeConnector serving</td>
+                <td class="info">not yet proven (H100 serving = C)</td>
+                <td class="good">PASS &mdash; KV injection end-to-end</td>
+              </tr>
+              <tr>
+                <td>Serving TTFT (4k tokens)</td>
+                <td class="info">&mdash;</td>
+                <td class="good">0.106s routed vs 1.606s dense (15.16&times;)</td>
               </tr>
               <tr>
                 <td>Attention backend</td>
@@ -774,7 +871,9 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
 
         <p class="text-slate-400 leading-8">
           The W7900 result demonstrates that knlp routing is portable across GPU vendors with zero kernel modifications.
-          Both kernel correctness and downstream quality are proven on ROCm. Next step on W7900 is S3 (CartridgeConnector serving smoke).
+          The full bounded validation ladder is proven on ROCm: kernel correctness (S1), quality preservation (S2),
+          CartridgeConnector serving (S3), and 15&times; TTFT speedup via KV injection (S4).
+          The W7900 is the first platform where CartridgeConnector serving latency has been measured end-to-end.
         </p>
       </div>
     </section>
@@ -788,7 +887,7 @@ out <span class="op">=</span> <span class="fn">fused_routed_decode</span>(
           <li>validate multi-prompt stability</li>
           <li>measure prior staleness over decode steps</li>
           <li>validate batch &gt; 1 robustness</li>
-          <li>measure serving-path TTFT benefit in vLLM</li>
+          <li><del>measure serving-path TTFT benefit in vLLM</del> &mdash; <span class="good">15.16&times; on W7900 (bounded)</span></li>
         </ul>
         <p class="text-slate-400 leading-8 mt-4">
           Treat the kernel question as answered well enough for the current release. Move next to quality, robustness, memory, and serving-path validation
