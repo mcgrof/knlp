@@ -22,6 +22,7 @@ FP8-V](#flashinfer-asymmetric-path) below.
 
 - [Status and versions](#status-and-versions)
 - [Latency analysis](#latency-analysis)
+- [Hardware notes: FP8 attention across vendors](#hardware-notes-fp8-attention-across-vendors)
 - [FlashInfer asymmetric path](#flashinfer-asymmetric-path)
 - [Paper reference](#paper-reference)
 - [Collaboration pointers](#collaboration-pointers)
@@ -59,6 +60,21 @@ residual gap is acceptable for production because fused INT4's
 value proposition is memory capacity (2× more concurrent
 sequences) and long-context latency (3–4× at 32K tokens), not
 short-context decode speed.
+
+## Hardware notes: FP8 attention across vendors
+
+The FP16-K / FP8-V asymmetric pattern is a software workaround
+for a Tensor Core ISA constraint on NVIDIA Hopper: the FP8
+matmul instruction requires both operands to share an FP8
+format, so a symmetric FP8 KV cache forces a K-dequantization
+pass ahead of softmax.  AMD CDNA 3 removes the constraint in
+hardware via WMMA FP8 matmul with scale absorption into the
+accumulator.  NVIDIA Blackwell preserves the legacy-FP8 matching
+constraint but introduces block-scaled MXFP8 as a potential new
+path with similar hardware-level scale absorption.  See
+[fp8-attention-hardware-notes.md](fp8-attention-hardware-notes.md)
+for the per-architecture detail and the open questions that
+follow from this landscape.
 
 ## FlashInfer asymmetric path
 
