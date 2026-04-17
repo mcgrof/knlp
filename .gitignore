@@ -230,3 +230,8 @@ gpt2/mla.py.orig
 
 # KVSplice visualization script (one-off)
 scripts/visualize_kvsplice_strategy.py
+
+# Claude Code / agent tool state — per-checkout, never shared
+.claude/
+.flash/
+.runpod/
