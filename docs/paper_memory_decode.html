@@ -717,33 +717,36 @@
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
-    <a href="https://mcgrof.github.io/knlp/ridge_point.html">Ridge Point</a>
-    <a href="https://github.com/mcgrof/paper-memory-decode">Paper Repo</a>
+    <a href="https://github.com/mcgrof/flashinfer">FlashInfer</a>
+    <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant</a>
+    <a href="https://github.com/mcgrof/paper-memory-decode">Paper</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
   </nav>
 </header>
 
 <section class="hero">
   <div class="tag-row">
-    <span class="tag tag-green">KEY RESULT</span>
-    <span class="tag tag-cyan">H100 · A100 · B200 · W7900</span>
+    <span class="tag tag-green">PRODUCTION RESULT</span>
+    <span class="tag tag-cyan">H100 · A100 · B200 · W7900 · MI300X</span>
     <span class="tag tag-purple">14 Models · 7 Families</span>
-    <span class="tag tag-amber">INT4 Fused · Triton</span>
+    <span class="tag tag-amber">Asymmetric FP16-K / FP8-V</span>
   </div>
   <h1>Memory-Traffic Saturation in<br>Autoregressive Transformer Decode</h1>
   <p class="hero-sub">
-    Decode is memory-traffic-limited — but the dominant traffic source depends on operating regime.
-    Across 14 open-weight models and four GPU architectures, a batch-driven Hill saturation model
-    (<em>R² = 0.80</em>) captures decode speedup from fused INT4 KV quantization with minimal dependence
-    on model family, GQA ratio, or head dimension. <strong>Kernel fusion, not quantization alone, is the mechanism.</strong>
-    A 2-minute runtime calibration test identifies models requiring asymmetric key/value precision,
-    revealing a family-specific KV precision asymmetry absent from architectural predictors.
+    <strong>Asymmetric FP16-K / FP8-V KV cache quantization via a modified FlashInfer matches or beats FP16 decode
+    throughput on every tested model</strong> and reaches <em>1.38× FP16 on Qwen2.5-7B</em> at vLLM batch 32, while
+    providing 1.33× KV-cache capacity. It also restores retrieval quality on fragile-key models: symmetric FP8 drops
+    Qwen2.5-7B NIAH accuracy at 32K tokens to <em>0.00</em>; asymmetric K16/V8 recovers it to <em>0.89</em>, above the
+    FP16 baseline. Behind the practical result: decode is governed by memory-traffic physics, and a batch-driven Hill
+    saturation model (<em>R² = 0.80</em>) predicts the speedup across 14 models and 5 GPU architectures without
+    per-model benchmarking.
   </p>
   <div>
     <a class="paper-link" href="https://github.com/mcgrof/paper-memory-decode">paper-memory-decode repo ↗</a>
-    <a class="paper-link" href="https://github.com/mcgrof/knlp/blob/main/docs/fused_kv_quantization.md">fused KV doc ↗</a>
-    <a class="paper-link" href="https://arxiv.org/abs/2602.21548">DualPath (arXiv:2602.21548) ↗</a>
-    <a class="paper-link" href="https://arxiv.org/abs/2502.13189">MoBA (arXiv:2502.13189) ↗</a>
+    <a class="paper-link" href="https://github.com/mcgrof/flashinfer">FlashInfer fork ↗</a>
+    <a class="paper-link" href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs ↗</a>
+    <a class="paper-link" href="https://arxiv.org/abs/2602.21548">DualPath ↗</a>
+    <a class="paper-link" href="https://arxiv.org/abs/2502.13189">MoBA ↗</a>
   </div>
 </section>
 
@@ -775,6 +778,74 @@
         features predict KV quantization sensitivity. They do not: ρ &lt; 0.2, p &gt; 0.3 across 14 models.
         Understand what that means here.</div>
     </a>
+  </div>
+</section>
+
+<!-- P0: HEADLINE — ASYMMETRIC FP16-K / FP8-V -->
+<section class="panel-section">
+  <div class="panel-header">
+    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">P0</span>
+    <span class="panel-title">Asymmetric FP16-K / FP8-V — The Production Decode Operating Point</span>
+  </div>
+  <p class="panel-body">
+    Storing keys at native FP16 and only quantizing values to FP8 keeps <em>K</em> dequantization off the softmax serial
+    critical path (it never happens) while <em>V</em> dequantization overlaps with the reduction pipeline. The net result
+    is a configuration that matches FP16 decode throughput within measurement noise on every model and
+    exceeds it on GQA-heavy architectures — with 1.33× KV cache capacity and <strong>zero custom kernels beyond
+    an upstreamable FlashInfer modification</strong>.
+  </p>
+
+  <div class="pipeline-grid">
+    <div class="pipeline-row">
+      <span class="pipe-id">FP16 baseline</span>
+      <span class="pipe-desc">PyTorch SDPA · FP16 KV cache · no quantization</span>
+      <span class="pipe-result" style="color:var(--text2);">1.00×</span>
+    </div>
+    <div class="pipeline-row loser">
+      <span class="pipe-id">Symmetric FP8</span>
+      <span class="pipe-desc">FP8 K + FP8 V · K dequant on softmax critical path · 3–8% throughput penalty on H100.
+        On fragile-key models (Qwen) collapses: ppl 8.4 → 151 at 32K, NIAH retrieval 0.84 → 0.00.</span>
+      <span class="pipe-result bad">0.92–0.97× <span style="color:var(--red);">·&nbsp;Qwen collapses</span></span>
+    </div>
+    <div class="pipeline-row winner">
+      <span class="pipe-id">Asymmetric K16/V8</span>
+      <span class="pipe-desc">FP16 K + FP8 V via modified FlashInfer · prefill-time V quantization · 1.33× capacity.
+        Rescues fragile-key models to FP16 quality (Qwen NIAH 0.89 at 32K, <em>above</em> FP16 baseline).</span>
+      <span class="pipe-result good">1.00–1.38× <span style="color:var(--green);">·&nbsp;universal</span></span>
+    </div>
+  </div>
+
+  <div class="key-result">
+    <div class="kr-label">Mechanism — why asymmetric is a throughput win, not a compromise</div>
+    On NVIDIA Hopper, Tensor Core FP8 MMA requires matching operand dtypes, so symmetric FP8 must dequantize K to
+    FP16 before the <em>q · k</em> dot product that feeds softmax. Softmax cannot emit any attention weight until all
+    scores are in — so K dequant serialises ahead of softmax and every cycle spent converting K adds directly to
+    per-token decode latency. Asymmetric K16/V8 keeps K at native precision so no K dequant is needed; V dequant feeds
+    an associative reduction and overlaps with the accumulation pipeline. The hardware-level equivalent on AMD CDNA 3
+    is WMMA FP8 matmul with scales absorbed into the accumulator — same bottleneck, solved in silicon rather than in
+    software. See the <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
+      style="color:var(--cyan);">hardware notes</a>.
+  </div>
+
+  <div class="warn-box">
+    <div class="wr-label">Quality rescue on fragile-key models</div>
+    NIAH multikey-3 retrieval at 32K tokens on H100 via vLLM + FlashInfer, across three models:
+    <div style="margin-top:10px; font-family:var(--mono); font-size:11px; line-height:1.8;">
+      <strong>Qwen2.5-7B (fragile)</strong> &nbsp;&nbsp;FP16: 0.84 &nbsp;·&nbsp; FP8-sym: <span style="color:var(--red);">0.00</span> &nbsp;·&nbsp; Asym K16/V8: <span style="color:var(--green);">0.89</span><br>
+      <strong>Qwen3-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 0.95 &nbsp;·&nbsp; FP8-sym: 0.92 &nbsp;·&nbsp; Asym K16/V8: 0.95<br>
+      <strong>Llama-3.1-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 1.00 &nbsp;·&nbsp; FP8-sym: 1.00 &nbsp;·&nbsp; Asym K16/V8: 1.00
+    </div>
+    Qwen2.5-7B under symmetric FP8 suffers total retrieval failure — not graceful degradation, complete collapse.
+    Asymmetric K16/V8 matches or exceeds the FP16 baseline on every row. Tolerant models are unaffected in either
+    direction, so asymmetric is the safe universal default.
+  </div>
+
+  <div class="citation-block">
+    Code: <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a> ·
+    branches <a href="https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-dtype"><code>asymmetric-kv-dtype</code></a>
+    (FP16-K / FP8-V production path) and
+    <a href="https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-int4v"><code>asymmetric-kv-int4v</code></a>
+    (INT4-V evolution). Integrates with vLLM 0.19 via <code>kv_cache_dtype=auto;fp8_e4m3</code>.
   </div>
 </section>
 
@@ -862,7 +933,10 @@
     <div class="dr-label">Critical Systems Insight</div>
     Quantization without fusion is <strong>counterproductive</strong>. Any deployment that dequantizes KV cache into a temporary
     buffer before calling attention will see no benefit and likely a regression — validated on both NVIDIA Hopper and AMD RDNA 3.
-    The speedup comes entirely from eliminating intermediate memory traffic.
+    The speedup comes entirely from eliminating intermediate memory traffic.  This custom fused INT4 Triton kernel
+    is the <em>mechanism proof</em>; the production vehicle is FlashInfer, which applies the same fusion principle
+    with upstream-quality paged-cache infrastructure (see <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>
+    for the asymmetric FP16-K / FP8-V path built on top of it).
   </div>
 
   <div class="panel-body" style="margin-top:16px;">
@@ -975,6 +1049,18 @@
     Larger models distribute quantization error across more layers. KFP16/VINT4 remains safe at all Qwen scales (+0.31% at 72B).
   </div>
 
+  <div class="key-result" style="margin-top:16px;">
+    <div class="kr-label">Asymmetric FP16-K / FP8-V rescues fragile-key models without calibration</div>
+    On Qwen2.5-7B the same fragility observed under INT4 keys reappears under symmetric FP8: WikiText-2 perplexity
+    jumps from 5.2 (FP16) to 774–1046 at 2–16K context under uncalibrated symmetric FP8. Keeping K at FP16 and only
+    quantizing V to FP8 recovers ppl to 5.23–6.07 across the same context range, GSM8K accuracy from 0.0% back to
+    84.5%, and MMLU from 48.9% back to 76.2% — essentially indistinguishable from FP16 baseline.
+    No calibration, no per-model tuning; asymmetric K16/V8 is the safe universal default.
+    See <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a> for throughput data and the
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md" style="color:var(--cyan);">hardware notes</a>
+    for why the asymmetric pattern is a software workaround for a Hopper Tensor Core ISA constraint.
+  </div>
+
   <div class="chart-wrap">
     <div class="chart-inner" style="height:200px;">
       <canvas id="asymChart"></canvas>
@@ -991,14 +1077,17 @@
 <section class="panel-section">
   <div class="panel-header">
     <span class="panel-id">P5</span>
-    <span class="panel-title">Cross-GPU Validation — Four Matched Lanes</span>
+    <span class="panel-title">Cross-GPU Validation — Five Matched Lanes</span>
   </div>
   <p class="panel-body">
-    The same qualitative pattern holds across W7900, A100, H100, and B200.
+    The same qualitative pattern holds across AMD W7900 (RDNA 3), NVIDIA A100 (Ampere), NVIDIA H100 (Hopper),
+    NVIDIA B200 (Blackwell), and AMD MI300X (CDNA 3).
     Throughput ordering follows hardware memory-system strength. Latency remains approximately linear in context length.
     <em>Cross-platform variation is explained better by sustained decode-bandwidth plateau than by headline peak HBM bandwidth.</em>
     B200 has 1.96× the H100 peak bandwidth but decode throughput gain is smaller — practical kernel bandwidth at decode batch sizes
-    remains well below peak on both architectures.
+    remains well below peak on both architectures.  On the AMD side, MI300X's CDNA 3 WMMA FP8 path eliminates the K-dequant
+    serial penalty that Hopper's Tensor Core ISA imposes, so symmetric FP8 carries a much smaller throughput cost on MI300X
+    (1.7–2.5%) than on H100 (3–8%) — the asymmetric-vs-symmetric ordering is different across vendors for structural reasons.
   </p>
 
   <table class="gpu-table">
@@ -1049,6 +1138,15 @@
         <td class="highlight">36.5k</td>
         <td class="muted">saturating</td>
         <td class="highlight">384K</td>
+      </tr>
+      <tr>
+        <td>AMD MI300X</td>
+        <td class="muted">192 GB</td>
+        <td class="muted">5300 GB/s</td>
+        <td class="muted">—</td>
+        <td class="muted">—</td>
+        <td class="muted">saturating</td>
+        <td class="muted">32K+</td>
       </tr>
     </tbody>
   </table>
@@ -1179,17 +1277,17 @@
         quantitative input to that scheduling problem.
       </div>
     </a>
-    <div class="future-card" style="cursor:default;">
-      <div class="fc-label" style="color:var(--purple);">AKP — Adaptive KV Precision</div>
-      <div class="fc-title">Per-Tensor Precision Policies Based on Architecture-Specific Floors</div>
+    <a class="future-card" href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md">
+      <div class="fc-label" style="color:var(--purple);">MXFP8 on Blackwell</div>
+      <div class="fc-title">Block-Scaled Microscaling FP8 as a Blackwell-Native Closure</div>
       <div class="fc-desc">
-        The KV precision asymmetry discovery directly motivates AKP: rather than uniform quantization,
-        select per-tensor precision based on the ratio classifier result.
-        Combine with attention mechanisms that constrain KV access proportional to available memory bandwidth.
-        The fused kernel's natural support for asymmetric precision (K and V loaded at independent formats)
-        provides the implementation substrate.
+        The asymmetric FP16-K / FP8-V pattern is a software workaround for Hopper's FP8 Tensor Core operand-matching
+        requirement.  Blackwell preserves that requirement for the legacy FP8 path but introduces block-scaled
+        MXFP8 with hardware scale absorption during matmul — the same architectural pattern AMD WMMA FP8 already
+        implements on CDNA 3.  A production-quality MXFP8 paged-attention kernel would close the Hopper bottleneck
+        on Blackwell at hardware level.  No such kernel exists in the open-source inference stack at time of writing.
       </div>
-    </div>
+    </a>
     <div class="future-card" style="cursor:default;">
       <div class="fc-label" style="color:var(--green);">Open Questions</div>
       <div class="fc-title">What Remains Unknown</div>
@@ -1204,12 +1302,19 @@
   </div>
 
   <div class="citation-block">
-    <strong>Practical deployment recipe:</strong> For 12 of 14 tested models — uniform INT4 KV quantization with the fused P5 kernel. No per-model tuning. 2.7–4.8× decode speedup on H100.
-    For Qwen family (7B–32B) — KFP16/VINT4 or KINT8/VINT4. 37–62% bandwidth reduction preserving quality.
-    Determine which to use with the 2-minute ratio classifier.
+    <strong>Practical deployment recipe:</strong> The recommended default for all tested models is
+    <strong>asymmetric FP16-K / FP8-V</strong> via the modified FlashInfer (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>). It provides 1.33× KV-cache capacity with no throughput penalty,
+    is the only quality-safe configuration for fragile-key models (Qwen), and requires no custom kernels —
+    just the FlashInfer branches at <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a>.
+    For maximum capacity, symmetric FP8 doubles KV storage at a 3–8% throughput cost on H100 (1.7–2.5% on MI300X),
+    and stays quality-safe on tolerant models.  The custom fused INT4 Triton kernel (<a href="#" onclick="return false;" style="color:var(--cyan);">P2</a>) remains available in the repository as a
+    controlled experiment that proves the fusion mechanism in isolation — it is not the production path.
     <br>
-    Code: <a href="https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py">ratio_classifier.py</a> ·
-    <a href="https://github.com/mcgrof/knlp/blob/main/kernels/triton_kernels.py">triton_kernels.py</a>
+    Code:
+    <a href="https://github.com/mcgrof/flashinfer">FlashInfer fork</a> ·
+    <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs</a> ·
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md">hardware notes</a> ·
+    <a href="https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py">ratio_classifier.py</a>
   </div>
 </section>
 
@@ -1222,6 +1327,8 @@
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
     <a href="https://github.com/mcgrof/paper-memory-decode">Paper Repo</a>
+    <a href="https://github.com/mcgrof/flashinfer">FlashInfer Fork</a>
+    <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant Docs</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
   </div>
 </footer>
