@@ -93,15 +93,16 @@ from 0.84 (FP16) to 0.00 under symmetric FP8 and recovers to
 0.89 under asymmetric K16/V8.
 
 That work lives in its own FlashInfer fork rather than in this
-repo, as two topic branches:
+repo, at <https://github.com/mcgrof/flashinfer>, as two topic
+branches:
 
-- `asymmetric-kv-dtype` — the FP16-K / FP8-V production path.
-- `asymmetric-kv-int4v` — later evolution adding INT4-V on top
-  of the FP16-K path.
+- [`asymmetric-kv-dtype`](https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-dtype)
+  — the FP16-K / FP8-V production path.
+- [`asymmetric-kv-int4v`](https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-int4v)
+  — later evolution adding INT4-V on top of the FP16-K path.
 
-Both branches are intended for public release.  The fused INT4
-Triton kernel documented here and the FlashInfer branches are
-peers in the same programme: the Triton kernel proves the
+The fused INT4 Triton kernel documented here and the FlashInfer
+branches are peers in the same programme: the Triton kernel proves the
 fusion mechanism on a custom path; FlashInfer applies the same
 principle in a production stack.
 
