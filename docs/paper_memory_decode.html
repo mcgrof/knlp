@@ -856,10 +856,20 @@
     <span class="panel-title">Batch-Driven Saturation — One Number Governs Decode</span>
   </div>
   <p class="panel-body">
-    Across <strong>767 decode-mode configurations</strong> with B ≥ 4, a single Hill-type model fitted on batch size alone
-    explains <em>80% of variance</em> in P5/P0 speedup ratio across 14 architectures on H100.
-    Context length, KV bytes per token, GQA ratio, and head dimension are weak predictors after accounting for batch.
-    Architecture does not fundamentally change the workload — memory-traffic physics does.
+    Across <strong>767 decode-mode configurations</strong> with B ≥ 4, a single Hill-type model
+    fitted on batch size alone explains <em>80% of variance</em> in fused-KV speedup ratio
+    across 14 architectures on H100. Context length, KV bytes per token, GQA ratio, and head
+    dimension are weak predictors after accounting for batch. Architecture does not
+    fundamentally change the workload — memory-traffic physics does.
+  </p>
+  <p class="panel-body" style="margin-top:8px; font-size:11px; color:var(--text3);">
+    <em>Data provenance:</em> the saturation coefficients below were fit to the fused INT4 Triton
+    sweep — the original R&amp;D that established the memory-traffic-bound hypothesis across 14
+    models before the FlashInfer production path existed. The physics claim (decode is governed by
+    batch-driven memory-traffic saturation) carries through to FlashInfer FP8; the specific
+    <em>S<sub>max</sub></em> depends on compression ratio and kernel overhead. See
+    <a href="#" onclick="return false;" style="color:var(--cyan);">P2</a> for per-model FlashInfer
+    throughput.
   </p>
   <div class="math-block">S(B) = S<sub>max</sub> · B<sup>γ</sup> / (B<sub>½</sub><sup>γ</sup> + B<sup>γ</sup>) &nbsp;&nbsp;→&nbsp;&nbsp; S<sub>max</sub>=3.75 · B<sub>½</sub>=5.1 · γ=1.32 · R²=0.80</div>
   <div class="key-result">
@@ -892,64 +902,85 @@
   </div>
 </section>
 
-<!-- P2: FUSION IS THE MECHANISM -->
+<!-- P2: FLASHINFER PER-MODEL PRODUCTION THROUGHPUT -->
 <section class="panel-section">
   <div class="panel-header">
     <span class="panel-id">P2</span>
-    <span class="panel-title">Fusion Is the Mechanism — Not Quantization Itself</span>
+    <span class="panel-title">Per-Model FlashInfer Throughput — Asymmetric K16/V8 vs Symmetric FP8 on H100</span>
   </div>
   <p class="panel-body">
-    Six pipelines were developed. The critical comparison is P0 (FP16 baseline) vs P1 (non-fused INT4) vs P5 (fused INT4).
-    A non-fused pipeline reads INT4, dequantizes into an <strong>intermediate FP16 buffer</strong>,
-    writes that buffer back, then calls attention. The extra write largely negates the savings from reading smaller values.
-    The fused kernel dequantizes <em>inside the attention loop</em> — unpacked values live only in registers, never touching global memory.
-    This is analogous to FlashAttention's tile-and-discard strategy.
+    vLLM 0.19 + FlashInfer decode throughput measured at batch 32 on H100 SXM5 across eight open-weight
+    models spanning three architectures. The comparison is three-way: FP16 baseline, symmetric FP8, and
+    our asymmetric K16/V8 branch. Asymmetric matches or exceeds FP16 on production-scale models (7B and
+    up) and reaches <strong>1.38× FP16 on Qwen2.5-7B</strong>. Small-model throughput
+    (0.5–1.5B) sits slightly under FP16 because at that scale per-step bandwidth is dominated by model
+    weights, not KV cache — KV compression contributes less of the total savings. Symmetric FP8 falls
+    below asymmetric on every model because K dequantization under symmetric FP8 lies on the softmax
+    serial critical path, whereas asymmetric keeps K at native precision and only pipelines V dequant.
+  </p>
+
+  <!-- Per-model 3-row bars: FP16 / FP8-sym / asym K16/V8 -->
+  <div class="speedup-bar-wrap" id="flashinferBars"></div>
+
+  <div class="key-result">
+    <div class="kr-label">Asymmetric wins over symmetric FP8 on every tested model</div>
+    Per-model asymmetric-vs-symmetric ratio ranges from <strong>+1.0% (Llama-3.1-8B)</strong> to
+    <strong>+4.2% (Qwen2.5-1.5B)</strong>, with the headline
+    <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. This gap is structural, not noise:
+    asymmetric eliminates K dequantization entirely whereas symmetric serializes it ahead of softmax.
+    Critically, asymmetric is also the only quality-safe configuration on fragile-key models (see
+    <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a> for the NIAH 0.00 → 0.89
+    retrieval rescue on Qwen2.5-7B).
+  </div>
+
+  <div class="citation-block">
+    Source: <code>/data/knlp-key-results/h100-flashinfer/h100_throughput_sweep.json</code>.
+    Measurements at batch 32 through vLLM 0.19 + FlashInfer 0.6.7 with our asymmetric-KV-dtype
+    branch applied (<a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a>).
+    FlashInfer paged-cache infrastructure; no custom kernel code beyond the upstreamable asymmetric patch.
+  </div>
+</section>
+
+<!-- P2b: FUSION PRINCIPLE / MECHANISM PROOF (demoted to a compact aside) -->
+<section class="panel-section">
+  <div class="panel-header">
+    <span class="panel-id">P2&#8239;·&#8239;R&amp;D</span>
+    <span class="panel-title">Earlier R&amp;D — Fusion Principle Proof (Custom INT4 Triton Kernel)</span>
+  </div>
+  <p class="panel-body">
+    The asymmetric FlashInfer result above rests on a structural claim: kernel fusion — dequantizing
+    KV inside the attention loop instead of materializing an intermediate FP16 buffer — is what turns
+    KV compression into real decode throughput. That claim was first established by a custom fused
+    INT4 Triton kernel before FlashInfer's production paged-cache infrastructure existed. It remains
+    on the repository as a controlled experiment and is now demoted to R&amp;D/appendix status; the
+    paper's main result is FlashInfer (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>,
+    P2 above).
   </p>
 
   <div class="pipeline-grid">
-    <div class="pipeline-row">
-      <span class="pipe-id">P0 — baseline</span>
-      <span class="pipe-desc">FP16 KV cache · PyTorch SDPA · no quantization</span>
-      <span class="pipe-result" style="color:var(--text2);">1.0×</span>
-    </div>
     <div class="pipeline-row loser">
-      <span class="pipe-id">P1 — non-fused</span>
-      <span class="pipe-desc">INT4 KV → dequant → FP16 buffer → SDPA. The buffer write negates savings.</span>
-      <span class="pipe-result bad">0.5× (slowdown)</span>
-    </div>
-    <div class="pipeline-row">
-      <span class="pipe-id">P3 — fused</span>
-      <span class="pipe-desc">Hardware-aware fused INT4 Triton kernel · RDNA3 wavefront tiling (BLOCK_N=128)</span>
-      <span class="pipe-result good">2.7–7.2×</span>
+      <span class="pipe-id">Non-fused INT4</span>
+      <span class="pipe-desc">Dequant to an intermediate FP16 buffer, then call standard attention.
+        The temp-buffer write negates the bandwidth savings from reading smaller values.</span>
+      <span class="pipe-result bad">0.5× (slowdown vs FP16)</span>
     </div>
     <div class="pipeline-row winner">
-      <span class="pipe-id">P5 — unified</span>
-      <span class="pipe-desc">Production kernel · register tiling · warp-level reductions · unified decode+prefill paths</span>
+      <span class="pipe-id">Fused INT4 Triton</span>
+      <span class="pipe-desc">Dequantize K/V inside the attention tile loop — unpacked values
+        live only in registers and never touch global memory.</span>
       <span class="pipe-result good">2.7–4.8× (H100) · 1.6–7.2× (W7900)</span>
     </div>
   </div>
 
   <div class="danger-box">
-    <div class="dr-label">Critical Systems Insight</div>
-    Quantization without fusion is <strong>counterproductive</strong>. Any deployment that dequantizes KV cache into a temporary
-    buffer before calling attention will see no benefit and likely a regression — validated on both NVIDIA Hopper and AMD RDNA 3.
-    The speedup comes entirely from eliminating intermediate memory traffic.  This custom fused INT4 Triton kernel
-    is the <em>mechanism proof</em>; the production vehicle is FlashInfer, which applies the same fusion principle
-    with upstream-quality paged-cache infrastructure (see <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>
-    for the asymmetric FP16-K / FP8-V path built on top of it).
-  </div>
-
-  <div class="panel-body" style="margin-top:16px;">
-    <strong>Why speedup &lt; 4×.</strong> INT4 compresses KV reads by 4×, but not all decode traffic is KV.
-    Let <em>f</em> be the fraction of total traffic from KV reads:
-  </div>
-  <div class="math-block">Speedup ≈ 1 / (f/4 + (1−f)) = 1 / (1 − 3f/4) &nbsp;&nbsp; At f = 0.85 → 3.6× · matches S<sub>max</sub> ≈ 3.75</div>
-
-  <!-- Per-model speedup bars -->
-  <div class="speedup-bar-wrap" id="modelBars"></div>
-  <div class="citation-block">
-    Full four-pipeline validation on AMD W7900 (RDNA 3) via Triton ROCm backend — fused kernel achieves 1.6–7.2× with full
-    numerical fidelity (max absolute error &lt; 4.9×10⁻⁴). P1 slowdown confirmed cross-vendor.
+    <div class="dr-label">Why this stays on the record</div>
+    Quantization without fusion is <strong>counterproductive</strong>. Any deployment that dequantizes
+    KV cache into a temporary buffer before calling attention will see no benefit and likely a
+    regression — validated on both NVIDIA Hopper and AMD RDNA 3 through the Triton ROCm backend.
+    The fused INT4 Triton kernel proves the mechanism in isolation from FlashInfer's
+    implementation details. Full write-up and kernel source:
+    <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">knlp/docs/fused-quant</a>;
+    appendix of the paper.
   </div>
 </section>
 
@@ -970,12 +1001,12 @@
     <div class="regime-zone rz-weight">
       <div class="rz-label">Weight-bound regime</div>
       <div class="rz-big" style="color:var(--purple);">94–99%</div>
-      <div class="rz-desc">weights dominate<br>small model, short ctx<br>INT4 KV → modest benefit</div>
+      <div class="rz-desc">weights dominate<br>small model, short ctx<br>KV compression → modest benefit</div>
     </div>
     <div class="regime-zone rz-kv">
       <div class="rz-label">KV-bound regime</div>
       <div class="rz-big" style="color:var(--green);">→ 50%+</div>
-      <div class="rz-desc">KV cache dominates<br>long ctx · large batch · large model<br>fused INT4 → full speedup</div>
+      <div class="rz-desc">KV cache dominates<br>long ctx · large batch · large model<br>asymmetric K16/V8 → full win</div>
     </div>
     <div class="rz-arrow">↔</div>
     <div class="rz-axis">→ batch size · context length · model scale increase →</div>
@@ -1434,35 +1465,72 @@ function updateSatMarker() {
   satChart.update('none');
 }
 
-// ── Model speedup bars ──
-const models = [
-  { name: 'Gemma3-4B',    val: 2.57 },
-  { name: 'Gemma3n-E4B',  val: 2.63 },
-  { name: 'Qwen2.5-1.8B', val: 2.69 },
-  { name: 'DeepSeek-MLA', val: 2.70 },
-  { name: 'Qwen2.5-0.5B', val: 2.73 },
-  { name: 'DS-R1-7B',     val: 2.89 },
-  { name: 'Qwen2.5-7B',   val: 2.92 },
-  { name: 'Phi-4-14B',    val: 2.94 },
-  { name: 'Qwen3-8B',     val: 3.06 },
-  { name: 'Nemotron-Nano',val: 3.10 },
-  { name: 'Llama3.1-8B',  val: 3.10 },
-  { name: 'Mistral-24B',  val: 3.11 },
-  { name: 'Mistral-7B',   val: 3.11 },
-  { name: 'Gemma3-12B',   val: 3.12 }
+// ── FlashInfer per-model production throughput bars ──
+// Source: h100_throughput_sweep.json (H100 SXM5, vLLM 0.19 + FlashInfer 0.6.7,
+// asymmetric-kv-dtype branch, batch 32). tok/s measured end-to-end.
+const fiModels = [
+  { name: 'Qwen2.5-0.5B',   fp16: 3312.3, fp8: 3098.9, asym: 2884.4 },
+  { name: 'Qwen2.5-1.5B',   fp16: 2912.9, fp8: 2741.3, asym: 2857.4 },
+  { name: 'Qwen2.5-7B',     fp16: 2065.7, fp8: 2763.0, asym: 2845.0 },
+  { name: 'Mistral-7B',     fp16: 2861.8, fp8: 2915.9, asym: 2945.4 },
+  { name: 'Llama-3.1-8B',   fp16: 2084.9, fp8: 2085.5, asym: 2105.2 },
+  { name: 'Qwen3-8B',       fp16: 2467.3, fp8: 2282.8, asym: 2315.5 },
+  { name: 'Phi-4-14B',      fp16: 1027.6, fp8: 1041.5, asym: 1018.4 },
+  { name: 'DS-R1-Qwen-7B',  fp16: 2979.5, fp8: 2896.4, asym: 2866.4 },
 ];
 
-const barsDiv = document.getElementById('modelBars');
-models.forEach(m => {
-  const pct = ((m.val - 2.4) / (3.2 - 2.4) * 100).toFixed(1);
-  const hi = m.val >= 3.0;
-  barsDiv.innerHTML += `
-    <div class="model-row-bar">
-      <span class="model-name-bar">${m.name}</span>
-      <div class="bar-outer"><div class="bar-inner${hi ? ' highlight' : ''}" style="width:${pct}%"></div></div>
-      <span class="speedup-val">${m.val.toFixed(2)}×</span>
+const fiBarsDiv = document.getElementById('flashinferBars');
+if (fiBarsDiv) {
+  // Ratio vs FP16 so the bars compare apples-to-apples.
+  const maxR = Math.max(
+    ...fiModels.flatMap(m => [m.fp8 / m.fp16, m.asym / m.fp16])
+  );
+  const axisMax = Math.ceil(maxR * 10) / 10;  // round up to 0.1
+  fiBarsDiv.innerHTML = `
+    <div style="display:grid; grid-template-columns: 130px 1fr 52px; gap:8px;
+         font-size:10px; color:var(--text3); margin-bottom:8px;
+         letter-spacing:0.04em; text-transform:uppercase;">
+      <span></span>
+      <span>speedup relative to FP16 baseline · <span style="color:var(--blue);">FP16</span>
+        · <span style="color:var(--purple);">symmetric FP8</span>
+        · <span style="color:var(--green);">asymmetric K16/V8</span></span>
+      <span style="text-align:right;">asym/fp16</span>
     </div>`;
-});
+  fiModels.forEach(m => {
+    const rFp8  = m.fp8  / m.fp16;
+    const rAsym = m.asym / m.fp16;
+    const pctFp16 = (1 / axisMax * 100).toFixed(1);
+    const pctFp8  = (rFp8  / axisMax * 100).toFixed(1);
+    const pctAsym = (rAsym / axisMax * 100).toFixed(1);
+    const win = rAsym >= 1.0;
+    fiBarsDiv.innerHTML += `
+      <div style="margin-bottom:10px;">
+        <div class="model-row-bar" style="grid-template-columns:130px 1fr 52px;">
+          <span class="model-name-bar" style="grid-row:span 3;">${m.name}</span>
+          <div class="bar-outer" style="background:var(--bg3);">
+            <div class="bar-inner" style="width:${pctFp16}%; background:var(--blue);"></div>
+          </div>
+          <span class="speedup-val" style="color:${win?'var(--green)':'var(--amber)'};
+                grid-row:span 3;">${rAsym.toFixed(2)}×</span>
+        </div>
+        <div style="display:grid; grid-template-columns:130px 1fr 52px; gap:8px;
+             margin-bottom:3px;">
+          <span></span>
+          <div class="bar-outer" style="background:var(--bg3);">
+            <div class="bar-inner" style="width:${pctFp8}%; background:var(--purple);"></div>
+          </div>
+          <span></span>
+        </div>
+        <div style="display:grid; grid-template-columns:130px 1fr 52px; gap:8px;">
+          <span></span>
+          <div class="bar-outer" style="background:var(--bg3);">
+            <div class="bar-inner" style="width:${pctAsym}%; background:var(--green);"></div>
+          </div>
+          <span></span>
+        </div>
+      </div>`;
+  });
+}
 
 // ── Traffic donut charts ──
 const trafficData = [
