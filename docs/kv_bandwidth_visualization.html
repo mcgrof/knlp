@@ -158,7 +158,7 @@
               <XAxis dataKey="batch" stroke="#94a3b8" label={{value: 'Batch Size', position: 'bottom', fill: '#94a3b8'}} />
               <YAxis stroke="#94a3b8" label={{value: 'Tokens/sec', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
               <Tooltip content={CustomTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" wrapperStyle={{paddingBottom: 10}} />
               <Line type="monotone" dataKey="tokens_per_sec" name="Throughput (tok/s)" stroke={COLORS.b200} strokeWidth={3} dot={{r: 5, fill: COLORS.b200}} />
               <Line type="monotone" dataKey="kv_bw" name="KV Bandwidth (GB/s)" stroke={COLORS.h100} strokeWidth={2} dot={{r: 4, fill: COLORS.h100}} yAxisId={0} />
             </LineChart>
@@ -191,7 +191,7 @@
               <XAxis dataKey="context" stroke="#94a3b8" label={{value: 'Context Length', position: 'bottom', fill: '#94a3b8'}} />
               <YAxis stroke="#94a3b8" label={{value: 'Latency (ms)', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
               <Tooltip content={CustomTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" wrapperStyle={{paddingBottom: 10}} />
               <Line type="monotone" dataKey="latency" name="Decode Latency (ms)" stroke={COLORS.accent} strokeWidth={3} dot={{r: 5, fill: COLORS.accent}} />
               <Line type="monotone" dataKey="bw" name="KV Bandwidth (GB/s)" stroke={COLORS.b200} strokeWidth={2} dot={{r: 4, fill: COLORS.b200}} />
             </LineChart>
@@ -239,7 +239,7 @@
                 <XAxis dataKey="gpu" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" label={{value: 'Tokens/sec', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
                 <Tooltip content={CustomTooltip} />
-                <Legend />
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom: 10}} />
                 <Bar dataKey="B=1" fill={COLORS.h100} radius={[4,4,0,0]} />
                 <Bar dataKey="B=8" fill={COLORS.b200} radius={[4,4,0,0]} />
               </BarChart>
@@ -249,7 +249,7 @@
                 <XAxis dataKey="gpu" stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" label={{value: 'GB/s', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
                 <Tooltip content={CustomTooltip} />
-                <Legend />
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom: 10}} />
                 <Bar dataKey="Peak" fill="#334155" radius={[4,4,0,0]} />
                 <Bar dataKey="Measured" fill={COLORS.accent} radius={[4,4,0,0]} />
               </BarChart>
@@ -283,7 +283,7 @@
               <YAxis yAxisId="left" stroke="#94a3b8" label={{value: 'GPU Memory (GB)', angle: -90, position: 'insideLeft', fill: '#94a3b8'}} />
               <YAxis yAxisId="right" orientation="right" stroke="#94a3b8" label={{value: 'Tokens/sec', angle: 90, position: 'insideRight', fill: '#94a3b8'}} />
               <Tooltip content={CustomTooltip} />
-              <Legend />
+              <Legend verticalAlign="top" wrapperStyle={{paddingBottom: 10}} />
               <ReferenceLine yAxisId="left" y={178} stroke="#ef4444" strokeDasharray="5 5" label={{value: '178 GB HBM limit', fill: '#ef4444', position: 'right'}} />
               <Line yAxisId="left" type="monotone" dataKey="memory" name="GPU Memory (GB)" stroke={COLORS.b200} strokeWidth={3} dot={{r: 5, fill: COLORS.b200}} />
               <Line yAxisId="right" type="monotone" dataKey="tps" name="Throughput (tok/s)" stroke={COLORS.w7900} strokeWidth={2} dot={{r: 4, fill: COLORS.w7900}} />
