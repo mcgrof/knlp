@@ -746,7 +746,6 @@
     <a class="paper-link" href="https://github.com/mcgrof/flashinfer">FlashInfer fork ↗</a>
     <a class="paper-link" href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs ↗</a>
     <a class="paper-link" href="https://arxiv.org/abs/2602.21548">DualPath ↗</a>
-    <a class="paper-link" href="https://arxiv.org/abs/2502.13189">MoBA ↗</a>
   </div>
 </section>
 
@@ -1259,7 +1258,7 @@
     These projections assume dense attention. Speculative decoding reduces full KV reads per generated token but
     does not reduce the <em>instantaneous</em> bandwidth of the verification kernel.
     At realistic acceptance rates (k=2–4), required bandwidth at T=128K is still 2.5–25 TB/s,
-    exceeding NVLink by 3–28×. Sparse attention (MoBA, sliding window) could reduce per-step traffic —
+    exceeding NVLink by 3–28×. Sparse attention (sliding window) could reduce per-step traffic —
     quantifying that interaction remains future work.
     <br><br>
     Systems like <a href="https://arxiv.org/abs/2602.21548" style="color:var(--cyan);">DualPath</a>,
@@ -1282,19 +1281,6 @@
   </p>
 
   <div class="future-grid">
-    <a class="future-card" href="https://arxiv.org/abs/2502.13189">
-      <div class="fc-label" style="color:var(--cyan);">MoBA — arXiv:2502.13189</div>
-      <div class="fc-title">Mixture of Block Attention for Long-Context LLMs</div>
-      <div class="fc-desc">
-        Applies MoE routing to the attention mechanism. Each query attends to a small subset of KV blocks,
-        reducing complexity toward near-linear. Allows seamless transition between full and sparse attention.
-        Deployed in Kimi's long-context serving. Directly reduces per-step KV reads — the architectural-level
-        complement to kernel-level quantization.
-        <br><br><strong style="color:var(--cyan);">Connection:</strong> MoBA reduces f (KV traffic fraction) structurally.
-        The paper's speedup model predicts this directly increases compression benefit:
-        lower f → higher effective speedup from KV reduction.
-      </div>
-    </a>
     <a class="future-card" href="https://arxiv.org/abs/2602.21548">
       <div class="fc-label" style="color:var(--amber);">DualPath — arXiv:2602.21548</div>
       <div class="fc-title">Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</div>
@@ -1325,7 +1311,7 @@
       <div class="fc-desc">
         <strong style="color:var(--text);">Qwen root cause:</strong> The key fragility is family-specific and attenuates at 72B. Does it disappear entirely at larger scale? What in the training pipeline creates the INT7 floor?
         <br><br>
-        <strong style="color:var(--text);">Sparse attention interaction:</strong> MoBA and sliding-window attention reduce per-step KV traffic. How does that change the tiering bandwidth requirement and the quantization–speculation composition ratio?
+        <strong style="color:var(--text);">Sparse attention interaction:</strong> Sliding-window and other sparse-attention variants reduce per-step KV traffic. How does that change the tiering bandwidth requirement and the quantization–speculation composition ratio?
         <br><br>
         <strong style="color:var(--text);">Multi-GPU tensor parallel:</strong> All results are single-GPU. Tensor parallelism changes the bandwidth-to-compute ratio and may shift the saturation model parameters.
       </div>
