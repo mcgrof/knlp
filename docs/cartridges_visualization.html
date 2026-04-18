@@ -68,9 +68,11 @@ footer a { color: var(--cyan); text-decoration: none; }
   <h1>Cartridges</h1>
   <p>Pre-trained KV caches that skip prefill entirely. Train once per document, inject at serving time, eliminate the prefill bottleneck.
     Based on <a href="https://arxiv.org/abs/2508.17032">arxiv:2508.17032</a>.
-    55 configurations validated across 3 architectures and 6 documents on H100 and W7900.</p>
+    55 configurations validated across 3 architectures and 6 documents on H100 and W7900.
+    Production connector with multi-cartridge routing, GPU residency, LMCache tiering, and SQLite registry.</p>
   <p style="margin-top:8px;font-size:12px;">
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/cartridges.md">Documentation</a> &middot;
+    <a href="https://github.com/mcgrof/vllm/tree/20260415-cartridges-v0.4">vllm branch</a> &middot;
     <a href="https://github.com/mcgrof/knlp">knlp</a>
   </p>
 </header>
@@ -92,8 +94,9 @@ footer a { color: var(--cyan); text-decoration: none; }
 <div class="stat-grid">
   <div class="stat"><div class="val">10.6x</div><div class="label">Prefill speedup at 16K tokens</div></div>
   <div class="stat"><div class="val">55</div><div class="label">Configurations tested</div></div>
-  <div class="stat"><div class="val">0</div><div class="label">vLLM core modifications</div></div>
+  <div class="stat"><div class="val">7</div><div class="label">Production modules (~2800 LOC)</div></div>
   <div class="stat"><div class="val">4x</div><div class="label">Compression sweet spot</div></div>
+  <div class="stat"><div class="val">185</div><div class="label">Unit tests passing</div></div>
 </div>
 
 <h3>How it works</h3>
@@ -209,89 +212,80 @@ footer a { color: var(--cyan); text-decoration: none; }
 
 <!-- ============================================================ -->
 <div id="tab-vllm" class="panel">
-<h2>vLLM integration</h2>
-<p>CartridgeConnector plugs into vLLM v0.16.0 as a <code>KVConnectorBase_V1</code> plugin with <strong>zero vLLM core modifications</strong>. About 300 lines of Python.</p>
+<h2>vLLM integration (v0.4)</h2>
+<p>CartridgeConnector is a <code>KVConnectorBase_V1</code> plugin built as a production stack of seven modules (~2,800 lines). It supports <strong>single-cartridge</strong> (backward-compatible) and <strong>multi-cartridge</strong> (per-request dispatch) modes with no vLLM core modifications.</p>
+
+<h3>Production stack</h3>
+<table>
+  <tr><th>Module</th><th>Responsibility</th></tr>
+  <tr><td class="hi">CartridgeConnector</td><td>KVConnectorBase_V1 plugin. Hooks into the V1 scheduler via get_num_new_matched_tokens() and materialises KV via triton_reshape_and_cache_flash.</td></tr>
+  <tr><td class="hi">CartridgeManifest</td><td>Per-cartridge metadata + strict format validation. Names the model, layout, quantisation, and provenance.</td></tr>
+  <tr><td class="hi">CartridgeRegistry</td><td>SQLite-backed manifest index. Registry errors fall back to full prefill; a bad cartridge never poisons the serving path.</td></tr>
+  <tr><td class="hi">CartridgeStore</td><td>Read-only chunked KV access with residency bookkeeping. Payload stored separately so manifests can be scanned cheaply.</td></tr>
+  <tr><td class="hi">CartridgeGPUResidency</td><td>LRU eviction + pinning across a bounded GPU budget (default 8&times; largest cartridge or 1 GiB). Hot cartridges stay resident; cold ones spill.</td></tr>
+  <tr><td class="hi">CartridgeLMCachePlugin</td><td>Implements the LMCache StoragePluginInterface (read-only, min LMCache v0.3.13). Cartridges flow through the existing tiered KV offload without patches.</td></tr>
+  <tr><td class="hi">CartridgeRouter</td><td>Per-request dispatch. Explicit ids, named labels, static mapping, and composite chains. Carries cartridge_id end-to-end through connector metadata to the worker.</td></tr>
+</table>
 
 <h3>Request lifecycle</h3>
 <div class="flow">
-  <div class="step">1. Server starts</div><div class="arrow">&rarr;</div>
-  <div class="step">2. Load .pt + prefix IDs</div><div class="arrow">&rarr;</div>
-  <div class="step">3. Request arrives</div><div class="arrow">&rarr;</div>
-  <div class="step">4. Match prefix</div><div class="arrow">&rarr;</div>
-  <div class="step">5. Allocate blocks</div><div class="arrow">&rarr;</div>
-  <div class="step">6. Scatter KV to GPU</div><div class="arrow">&rarr;</div>
-  <div class="step">7. Decode</div>
+  <div class="step">1. Request arrives</div><div class="arrow">&rarr;</div>
+  <div class="step">2. Router resolves cartridge_id</div><div class="arrow">&rarr;</div>
+  <div class="step">3. Registry looks up manifest</div><div class="arrow">&rarr;</div>
+  <div class="step">4. Store loads KV (GPU-resident or fetch)</div><div class="arrow">&rarr;</div>
+  <div class="step">5. Scheduler allocates blocks</div><div class="arrow">&rarr;</div>
+  <div class="step">6. Connector scatters KV to paged cache</div><div class="arrow">&rarr;</div>
+  <div class="step">7. Decode (skip prefill)</div>
 </div>
 
-<h3>Minimum requirements</h3>
-<table>
-  <tr><th>Requirement</th><th>Value</th></tr>
-  <tr><td>vLLM version</td><td class="hi">&ge; 0.16.0 (KVConnectorBase_V1 API)</td></tr>
-  <tr><td>Artifacts</td><td>cartridge.pt + prefix_token_ids.json</td></tr>
-  <tr><td>Core patches</td><td class="hi">None</td></tr>
-  <tr><td>Connector size</td><td>~300 lines Python</td></tr>
-</table>
-
-<h3>Server startup</h3>
-<pre><span class="sh">export</span> CARTRIDGE=/path/to/cartridge.pt
-<span class="sh">export</span> PREFIX_IDS=/path/to/prefix_token_ids.json
-
-vllm serve Qwen/Qwen2.5-7B-Instruct \
-  --host <span class="num">0.0.0.0</span> \
-  --port <span class="num">8000</span> \
-  --max-model-len <span class="num">8192</span> \
-  --gpu-memory-utilization <span class="num">0.40</span> \
+<h3>Singleton mode (backward compatible)</h3>
+<pre>vllm serve Qwen/Qwen2.5-7B-Instruct \
   --kv-transfer-config <span class="str">'{
     "kv_connector": "CartridgeConnector",
-    "kv_connector_module_path": "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
     "kv_connector_extra_config": {
-      "cartridge_path": "'"$CARTRIDGE"'",
-      "prefix_token_ids_path": "'"$PREFIX_IDS"'"
+      "cartridge_path": "/path/to/cartridge.pt"
     },
     "kv_role": "kv_both"
   }'</span></pre>
 
-<h3>Connector implementation</h3>
-<pre><span class="kw">class</span> <span class="type">CartridgeConnector</span>(<span class="type">KVConnectorBase_V1</span>):
-    <span class="kw">def</span> <span class="fn">__init__</span>(<span class="kw">self</span>, rank, local_rank, config):
-        <span class="kw">self</span>.cartridge = torch.<span class="fn">load</span>(config.cartridge_path, map_location=<span class="str">"cpu"</span>)
-        <span class="kw">self</span>.prefix_token_ids = <span class="fn">load_json</span>(config.prefix_token_ids_path)
-        <span class="kw">self</span>.layer_k = [layer[<span class="str">"k"</span>].<span class="fn">contiguous</span>() <span class="kw">for</span> layer <span class="kw">in</span> <span class="kw">self</span>.cartridge]
-        <span class="kw">self</span>.layer_v = [layer[<span class="str">"v"</span>].<span class="fn">contiguous</span>() <span class="kw">for</span> layer <span class="kw">in</span> <span class="kw">self</span>.cartridge]
-
-    <span class="kw">def</span> <span class="fn">get_num_new_matched_tokens</span>(<span class="kw">self</span>, request, **kwargs):
-        <span class="cm"># Compare request tokens against stored prefix, block-aligned</span>
-        matched = <span class="fn">longest_common_prefix</span>(
-            request.prompt_token_ids, <span class="kw">self</span>.prefix_token_ids
-        )
-        <span class="kw">return</span> <span class="fn">align_down_to_block_size</span>(matched, block_size=<span class="num">16</span>)
-
-    <span class="kw">def</span> <span class="fn">start_load_kv</span>(<span class="kw">self</span>, connector_meta, **kwargs):
-        <span class="cm"># Scatter pre-trained KV from CPU to vLLM-assigned GPU slots</span>
-        slot_mapping = connector_meta[<span class="str">"slot_mapping"</span>]
-        matched = connector_meta[<span class="str">"matched_tokens"</span>]
-        <span class="kw">for</span> layer_idx <span class="kw">in</span> <span class="fn">range</span>(<span class="fn">len</span>(<span class="kw">self</span>.layer_k)):
-            <span class="fn">scatter_to_gpu_blocks</span>(
-                <span class="kw">self</span>.layer_k[layer_idx][:matched],
-                <span class="kw">self</span>.layer_v[layer_idx][:matched],
-                slot_mapping[:matched],
-            )</pre>
-
-<h3>Sending requests</h3>
-<pre>curl http://localhost:<span class="num">8000</span>/v1/chat/completions \
-  -H <span class="str">"Content-Type: application/json"</span> \
-  -d <span class="str">'{
-    "model": "Qwen/Qwen2.5-7B-Instruct",
-    "messages": [
-      {"role": "system",
-       "content": "&lt;full training document text&gt;"},
-      {"role": "user",
-       "content": "What is the main contribution?"}
-    ]
+<h3>Multi-cartridge mode</h3>
+<pre>vllm serve Qwen/Qwen2.5-7B-Instruct \
+  --kv-transfer-config <span class="str">'{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridges": {
+        "medical":  "/data/cartridges/medical.pt",
+        "legal":    "/data/cartridges/legal.pt",
+        "clinical": "/data/cartridges/clinical.pt"
+      },
+      "router": {"type": "label", "field": "cartridge_id"}
+    },
+    "kv_role": "kv_both"
   }'</span></pre>
+<p>Two concurrent requests can inject different cartridges into different allocated blocks without cross-contamination. The router carries <code>cartridge_id</code> end-to-end from the scheduler to the worker side of the connector.</p>
+
+<h3>W7900 validation</h3>
+<table>
+  <tr><th>Phase</th><th>What it tests</th><th>Result</th></tr>
+  <tr><td>Phase 0</td><td>Single-cartridge load + KV injection smoke</td><td class="hi">PASS</td></tr>
+  <tr><td>Phase 0.5</td><td>LMCache StoragePluginInterface integration</td><td class="hi">PASS</td></tr>
+  <tr><td>Phase 1</td><td>Multi-cartridge routing (3 cartridges, same model)</td><td class="hi">PASS</td></tr>
+  <tr><td>Phase 2</td><td>TTFT benchmark: cartridge vs dense prefill</td><td class="hi">7.0x p50 speedup</td></tr>
+  <tr><td>Phase 3</td><td>Multi-cartridge routing dispatch (20 cartridges)</td><td class="hi">PASS &middot; 57% hit at 5/20 capacity</td></tr>
+  <tr><td>Phase 4</td><td>GPU residency stress under pressure</td><td class="hi">PASS</td></tr>
+</table>
+
+<h3>ROCm build profile</h3>
+<pre><span class="cm"># Minimal build for cartridge-only serving on W7900 / gfx1100</span>
+<span class="sh">VLLM_BUILD_PROFILE=cartridges_rocm</span> pip install -e .</pre>
+<p>Builds only the extensions a cartridge-serving path needs (vllm._C, vllm._rocm_C, cumem_allocator). Includes a gfx1100 sampler thread-count fix and a gfx1x skinny_gemm wave32 workaround.</p>
 
 <div class="note">
-  <strong>Key design point:</strong> CartridgeConnector does not allocate KV memory. vLLM still owns allocation. The connector only fills the slots vLLM assigned. This integrates cleanly with the scheduler and continuous batching.
+  <strong>Design invariant:</strong> CartridgeConnector does not allocate KV memory. vLLM still owns allocation via BlockPool. The connector only fills the slots vLLM assigned. This integrates cleanly with the scheduler, continuous batching, and prefix caching.
 </div>
 </div>
 
@@ -332,6 +326,7 @@ vllm serve Qwen/Qwen2.5-7B-Instruct \
   <a href="https://arxiv.org/abs/2508.17032">CARTRIDGE paper</a> &middot;
   <a href="https://arxiv.org/abs/2101.00190">Prefix Tuning (Li &amp; Liang, 2021)</a> &middot;
   <a href="https://github.com/mcgrof/knlp/blob/main/docs/cartridges.md">Documentation</a> &middot;
+  <a href="https://github.com/mcgrof/vllm/tree/20260415-cartridges-v0.4">vllm branch</a> &middot;
   <a href="https://mcgrof.github.io/knlp/">knlp</a>
 </footer>
 
