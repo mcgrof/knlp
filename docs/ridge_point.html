@@ -385,11 +385,27 @@ input[type=range]::-webkit-slider-thumb {
     <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-top:12px">
       To make the math tractable, we use a <em>single-head asymptotic model</em>: count only the K and V reads
       and the two attention matmuls for one head, and assume context length is long enough that fixed overheads
-      like the query load and output write are negligible. Under that model:
-      a matrix multiply on large matrices does <em>~512 FLOPs per byte</em> — lots of reuse.
-      Streaming decode attention over the KV cache does <em>~1 FLOP per byte</em> — almost none.
-      A 512× gap in arithmetic intensity between a large-batch GEMM and a decode attention pass
-      is the whole story of why transformer inference is hard to make fast.
+      like the query load and output write are negligible.
+    </p>
+
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-top:12px">
+      <strong>Two phases, two very different AIs.</strong> Transformer inference runs in two
+      phases with fundamentally different memory-traffic characteristics, which is why comparing a single headline
+      number to the ridge point can be misleading:
+    </p>
+    <ul style="font-size:13px;color:var(--t2);line-height:1.75;margin:8px 0 12px 24px;list-style:disc">
+      <li><strong style="color:var(--accent)">Prefill</strong> — the one-shot pass that processes the entire input prompt.
+        It is dominated by <em>large matrix multiplies</em> (GEMMs) over thousands of tokens at once. These reuse
+        each loaded weight across many tokens, so they operate at <em>~512 FLOPs per byte</em> — close to the
+        compute-bound ceiling.</li>
+      <li><strong style="color:var(--blue)">Decode</strong> — the autoregressive loop that emits one output token
+        at a time, attending against the growing KV cache. Each step streams the full KV cache out of HBM and
+        does a tiny amount of math per byte read: <em>~1 FLOP per byte</em> — deeply memory-bound.</li>
+    </ul>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-top:12px">
+      The same model, the same hardware, the same attention kernel — but the 512× AI gap between prefill's big
+      GEMMs and decode's per-token attention is the whole story of why transformer inference is hard to make
+      fast and why prefill and decode need fundamentally different optimisation strategies.
     </p>
   </div>
 </div>
