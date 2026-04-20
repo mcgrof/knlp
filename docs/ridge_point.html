@@ -413,6 +413,107 @@ input[type=range]::-webkit-slider-thumb {
 <hr class="divider"/>
 
 <!-- ════════════════════════════════════════════════════════════
+     SECTION 1b: Phase-split deployment
+     ════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-num">01b / PHASE-SPLIT DEPLOYMENT</div>
+  <div class="section-title">The AI gap is wide enough that production serving already splits prefill and decode onto different GPUs</div>
+  <div class="section-lead">
+    Once you see prefill's ~512 FLOP/byte next to decode's ~1 FLOP/byte, running both phases on the same
+    device at the same time looks obviously wrong — one phase wastes the bandwidth ceiling, the other wastes
+    the compute ceiling. Multiple research groups and production systems reached the same conclusion
+    independently and the industry is now moving toward <em>disaggregated serving</em> as the default
+    pattern for large-scale inference.
+  </div>
+
+  <div class="box">
+    <div class="box-label">PRIOR ART — THE FIRST WAVE</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      <strong style="color:var(--accent)">Splitwise</strong>
+      (<a href="https://arxiv.org/abs/2311.18677" style="color:var(--blue)">arXiv:2311.18677</a>, 2023)
+      and <strong style="color:var(--accent)">DistServe</strong>
+      (<a href="https://arxiv.org/abs/2401.09670" style="color:var(--blue)">arXiv:2401.09670</a>, 2024)
+      were the first wave. Both argued that prefill belongs on GPUs with strong tensor-core throughput
+      and decode belongs on GPUs with strong memory-bandwidth-per-dollar; combining them on the same
+      device forces one resource to sit idle while the other saturates. The natural move is to
+      <em>disaggregate</em> — run the prompt through one GPU pool for prefill, hand the resulting KV
+      cache off to a second pool for decode.
+      &nbsp;
+      <a href="https://podcast.do-not-panic.com/episodes/splitwise-phase-split-llm-inference/"
+         style="color:var(--amber)">🎧&nbsp;Audio summary covering both papers</a>.
+    </p>
+  </div>
+
+  <div class="box" style="margin-top:16px">
+    <div class="box-label">2026 DEPLOYMENT EVIDENCE — AGENTIC SCALE</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      <strong style="color:var(--accent)">DualPath</strong> (DeepSeek,
+      <a href="https://arxiv.org/pdf/2602.21548" style="color:var(--blue)">arXiv:2602.21548</a>, 2026)
+      extends the phase-split pattern into agentic serving where the KV cache grows across multiple user
+      turns and has to flow across a tiering hierarchy.  It characterizes storage-side bandwidth pressure
+      on the decode path — which is the same roofline analysis applied one level out, where the bandwidth
+      ceiling stops being HBM and becomes NVLink / PCIe / CXL / storage. The paper confirms that the
+      512× AI gap does not close at scale; it compounds.
+      &nbsp;
+      <a href="https://podcast.do-not-panic.com/episodes/dualpath-breaks-storage-bandwidth-bottleneck-in-agentic-inference/"
+         style="color:var(--amber)">🎧&nbsp;Audio summary</a>.
+    </p>
+  </div>
+
+  <div class="box" style="margin-top:16px">
+    <div class="box-label">EMPIRICAL BACKBONE — WHERE KERNELS ACTUALLY LAND</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      <strong style="color:var(--accent)">A Systematic Characterization of LLM Inference on GPUs</strong>
+      (<a href="https://arxiv.org/pdf/2512.01644" style="color:var(--blue)">arXiv:2512.01644</a>, 2025)
+      provides the measurement spine for all of the above. It measures where real inference kernels actually
+      land on the roofline across model scales and GPU generations, and confirms that decode sits deep in the
+      memory-bound region — not by a narrow margin, by an order of magnitude.
+      &nbsp;
+      <a href="https://podcast.do-not-panic.com/episodes/systematic-characterization-of-llm-inference-on-gpus/"
+         style="color:var(--amber)">🎧&nbsp;Audio summary</a>.
+    </p>
+  </div>
+
+  <div class="box" style="margin-top:16px;border-color:#3a3a1a;background:rgba(240,160,48,0.04)">
+    <div class="box-label" style="color:var(--amber)">FOUNDATIONAL FRAMEWORK — WHERE THIS MENTAL MODEL COMES FROM</div>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      <strong style="color:var(--accent)">Roofline: An Insightful Visual Performance Model for Multicore
+      Architectures</strong> — Williams, Waterman, Patterson (Berkeley, 2008).
+      <a href="https://people.eecs.berkeley.edu/~kubitron/cs252/handouts/papers/RooflineVyNoYellow.pdf"
+         style="color:var(--blue)">PDF</a>.
+      The original paper that introduced the visual framework this entire page is applying — arithmetic
+      intensity on the x-axis, a flat compute ceiling and a diagonal bandwidth ceiling, kernels plotted as
+      points against those ceilings, with the ridge point as the crossover.
+    </p>
+
+    <p style="font-size:13px;color:var(--t2);line-height:1.75;margin-top:12px">
+      <strong>Does roofline plus AI actually help the analysis? Yes — because it separates what is a
+      property of the algorithm from what is a property of the hardware.</strong>
+    </p>
+    <ul style="font-size:13px;color:var(--t2);line-height:1.75;margin:8px 0 12px 24px;list-style:disc">
+      <li><em>AI is an algorithm property.</em> It is what the kernel computes, regardless of what hardware
+        runs it. Streaming decode attention is ~1 FLOP/byte on an H100, on an A100, on a B200, on an MI300X,
+        on anything. You cannot raise it without changing the algorithm.</li>
+      <li><em>Bandwidth and compute ceilings are hardware properties.</em> They change every GPU generation.</li>
+      <li>Plotting a kernel as a single dot on the AI axis immediately tells you three things at once:
+        <em>(1)</em> which ceiling you are hitting, <em>(2)</em> how much headroom exists to that ceiling, and
+        <em>(3)</em> which lever — algorithmic change, kernel engineering, or hardware upgrade — is even capable
+        of moving the bottleneck. Without roofline there is no principled way to decide whether the next
+        improvement should be KV quantization, kernel fusion, prefill-decode disaggregation, a tiering
+        architecture change, or a GPU upgrade — they each target a different axis of the chart.</li>
+    </ul>
+    <p style="font-size:13px;color:var(--t2);line-height:1.75">
+      That is why this page starts with the KEY RATIO — every downstream optimization in LLM serving (KV
+      cache compression, asymmetric K/V precision, fused-decode kernels, prefill-decode disaggregation,
+      cache tiering) is a move to either raise effective AI or lower the per-step bandwidth requirement, and
+      roofline is the chart that tells you which one matters for the case in front of you.
+    </p>
+  </div>
+</div>
+
+<hr class="divider"/>
+
+<!-- ════════════════════════════════════════════════════════════
      SECTION 2: Two ceilings
      ════════════════════════════════════════════════════════════ -->
 <div class="section">
