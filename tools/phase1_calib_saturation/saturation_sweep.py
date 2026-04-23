@@ -49,7 +49,7 @@ def build_llm(model: str, config: str, max_model_len: int):
     common = dict(
         model=model,
         dtype="float16",
-        gpu_memory_utilization=0.88,
+        gpu_memory_utilization=0.80,
         enforce_eager=True,
         max_model_len=max_model_len,
         attention_backend="FLASHINFER",
@@ -107,65 +107,72 @@ def slug(model_id: str) -> str:
     return model_id.replace("/", "__")
 
 
-def run_one_model(model: str, out_path: Path, configs_to_run):
-    results = []
+def run_one_config(model: str, config: str, out_path: Path):
+    """Run a single (model, config) over the full B x T grid, then exit.
+
+    Running one config per Python process is the only reliable way to
+    release vLLM v1's async engine-core GPU memory between configs.
+    The orchestrator loops over configs externally and appends each
+    per-config JSONL to a master per-model file.
+    """
     max_model_len = max(T_GRID) + 128
-
-    for config in configs_to_run:
-        try:
-            print(f"=== {model} / {config} ===", flush=True)
-            llm = build_llm(model, config, max_model_len)
-        except Exception as e:
-            err = f"build_llm: {e}"[:400]
-            print(f"  {err}", flush=True)
-            for B in B_GRID:
-                for T in T_GRID:
-                    results.append(dict(
-                        model=model, config=config, B=B, T=T,
-                        tok_per_s=None, err=err,
-                    ))
-            continue
-
+    results = []
+    try:
+        print(f"=== {model} / {config} ===", flush=True)
+        llm = build_llm(model, config, max_model_len)
+    except Exception as e:
+        err = f"build_llm: {e}"[:600]
+        print(f"  {err}", flush=True)
         for B in B_GRID:
             for T in T_GRID:
-                try:
-                    tps = measure_decode_throughput(llm, B, T)
-                    print(f"  {config} B={B} T={T} -> {tps:.1f} tok/s", flush=True)
-                    results.append(dict(
-                        model=model, config=config, B=B, T=T,
-                        tok_per_s=tps, err=None,
-                    ))
-                except Exception as e:
-                    err = str(e)[:400]
-                    print(f"  {config} B={B} T={T} FAIL: {err}", flush=True)
-                    results.append(dict(
-                        model=model, config=config, B=B, T=T,
-                        tok_per_s=None, err=err,
-                    ))
+                results.append(dict(
+                    model=model, config=config, B=B, T=T,
+                    tok_per_s=None, err=err,
+                ))
+        _write(results, out_path, append=True)
+        return
 
-            # Persist after every batch-block so a late crash doesn't
-            # erase earlier points
-            with open(out_path, "w") as f:
-                for r in results:
-                    f.write(json.dumps(r) + "\n")
+    for B in B_GRID:
+        for T in T_GRID:
+            try:
+                tps = measure_decode_throughput(llm, B, T)
+                print(f"  {config} B={B} T={T} -> {tps:.1f} tok/s", flush=True)
+                results.append(dict(
+                    model=model, config=config, B=B, T=T,
+                    tok_per_s=tps, err=None,
+                ))
+            except Exception as e:
+                err = str(e)[:400]
+                print(f"  {config} B={B} T={T} FAIL: {err}", flush=True)
+                results.append(dict(
+                    model=model, config=config, B=B, T=T,
+                    tok_per_s=None, err=err,
+                ))
+        _write(results, out_path, append=True)
+        results = []   # already flushed; don't double-write
 
-        del llm
-        gc.collect()
-        torch.cuda.empty_cache()
+    print(f"done: {model}/{config}")
 
-    print(f"done: {out_path}")
+
+def _write(rows, path: Path, append: bool):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if append else "w"
+    with open(path, mode) as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--config", required=True, choices=CONFIGS,
+                    help="ONE config per invocation — one vLLM process "
+                         "per config so GPU memory releases cleanly")
     ap.add_argument("--out-dir", default=str(RESULT_DIR))
-    ap.add_argument("--configs", nargs="+", default=CONFIGS,
-                    help="subset of configs to run")
     args = ap.parse_args()
 
     out = Path(args.out_dir) / f"saturation_{slug(args.model)}.jsonl"
-    run_one_model(args.model, out, args.configs)
+    run_one_config(args.model, args.config, out)
 
 
 if __name__ == "__main__":
