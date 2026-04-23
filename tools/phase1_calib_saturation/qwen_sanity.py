@@ -1,12 +1,11 @@
 #!/usr/bin/env python3.12
-"""Qwen2.5-7B calibrated FP8 sanity check.
+"""Qwen2.5-7B: confirm calibrated symmetric FP8 still collapses.
 
-Expect: calibrated per-tensor FP8 still collapses Qwen (because the
-precision floor is a bit-budget problem, not a scale-finding problem).
-
-Runs exactly one invocation: WikiText-2 PPL at T=2048 with calibrated
-per-tensor FP8 scales.  Five minutes total.  Writes result JSON and
-prints the ppl number.
+Five-minute sanity check.  Expected result: with vLLM runtime
+calibration (calculate_kv_scales=True), Qwen2.5-7B still collapses
+because the precision floor is a bit-budget problem, not a scale-
+finding problem.  If it unexpectedly survives, that is a paper-
+changing finding and we expand to the full eval battery.
 """
 
 import json
@@ -17,12 +16,7 @@ from pathlib import Path
 
 
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
-SCALES_DIR = Path("/workspace/results/kv_scales")
 OUT_DIR = Path("/workspace/results/qwen_sanity")
-
-
-def slug(m: str) -> str:
-    return m.replace("/", "__")
 
 
 def main():
@@ -30,21 +24,15 @@ def main():
     os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
     os.environ.setdefault("HF_HOME", "/root/.cache/huggingface")
 
-    pt_path = SCALES_DIR / f"{slug(MODEL)}.pertensor.json"
-    if not pt_path.exists():
-        print(f"ERR: no scales for {MODEL}.  Run collect_kv_scales.py first.",
-              file=sys.stderr)
-        sys.exit(1)
-
     model_args = (
         f"pretrained={MODEL},"
         "dtype=float16,"
-        "gpu_memory_utilization=0.90,"
+        "gpu_memory_utilization=0.88,"
         "enforce_eager=True,"
         "attention_backend=FLASHINFER,"
         "max_model_len=2048,"
         "kv_cache_dtype=fp8_e4m3,"
-        f"quantization_param_path={pt_path}"
+        "calculate_kv_scales=True"
     )
 
     cmd = [
@@ -61,12 +49,11 @@ def main():
     (OUT_DIR / "stdout.log").write_text(r.stdout)
     (OUT_DIR / "stderr.log").write_text(r.stderr)
 
-    # Parse the results JSON
     for p in OUT_DIR.rglob("results_*.json"):
         data = json.load(open(p))
         wt = data.get("results", {}).get("wikitext", {})
         ppl = wt.get("word_perplexity,none") or wt.get("bits_per_byte,none")
-        print(f"\n=== Qwen2.5-7B, calibrated FP8 per-tensor, T=2048 ===")
+        print(f"\n=== Qwen2.5-7B, calibrated FP8 (calculate_kv_scales), T=2048 ===")
         print(f"WikiText PPL: {ppl}")
         print(f"Full results: {p}")
         return 0
