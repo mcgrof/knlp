@@ -66,10 +66,10 @@ def build_llm(model: str, config: str, max_model_len: int):
                    calculate_kv_scales=True)
 
     if config == "asym_uncalib":
-        return LLM(**common, kv_cache_dtype="auto;fp8_e4m3")
+        return LLM(**common, kv_cache_dtype=("auto", "fp8_e4m3"))
 
     if config == "asym_calib":
-        return LLM(**common, kv_cache_dtype="auto;fp8_e4m3",
+        return LLM(**common, kv_cache_dtype=("auto", "fp8_e4m3"),
                    calculate_kv_scales=True)
 
     raise ValueError(f"unknown config: {config}")
