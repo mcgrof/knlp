@@ -1,0 +1,94 @@
+{
+  "lmcache_repo": "/home/mcgrof/devel/lmcache",
+  "branch": "asymmetric-kv-codec",
+  "base": "origin/dev@7b09ac9d",
+  "metadata_definition": {
+    "file": "lmcache/v1/memory_management.py",
+    "class": "MemoryObjMetadata",
+    "lines": "100-174",
+    "notes": "already supports plural shapes/dtypes alongside legacy singular shape/dtype; TODO(chunxiaozheng) tracks migration",
+    "fields": ["shape", "dtype", "address", "phy_size", "ref_count", "pin_count", "fmt", "cached_positions", "shapes (plural)", "dtypes (plural)"]
+  },
+  "plural_aware_readers": [
+    {"file": "lmcache/v1/gpu_connector/gpu_connectors.py", "line": 465, "snippet": "metadata.get_dtypes()", "role": "GPU connector copy path; already plural"},
+    {"file": "lmcache/v1/storage_backend/connector/fs_connector.py", "line": 249, "snippet": "metadata.shapes, metadata.dtypes, metadata.fmt", "role": "FS connector"},
+    {"file": "lmcache/v1/storage_backend/connector/infinistore_connector.py", "line": 107, "snippet": "assert len(metadata.dtypes) == 1", "role": "infinistore — assertion would need relaxation"},
+    {"file": "lmcache/v1/storage_backend/connector/mooncakestore_connector.py", "line": 442, "snippet": "metadata.dtypes", "role": "Mooncake"},
+    {"file": "lmcache/v1/storage_backend/connector/redis_connector.py", "line": [292, 530, 670], "snippet": "metadata.dtypes", "role": "Redis"},
+    {"file": "lmcache/v1/storage_backend/connector/sagemaker_hyperpod_connector.py", "line": [483, 509], "snippet": "metadata.dtypes[0]", "role": "Sagemaker"}
+  ],
+  "singular_only_readers": [
+    {"file": "lmcache/v1/storage_backend/gds_backend.py", "line": 693, "snippet": "memory_obj.metadata.dtype", "role": "GDS backend; widen in Phase 4"},
+    {"file": "lmcache/v1/storage_backend/local_disk_backend.py", "line": 535, "snippet": "memory_obj.metadata.dtype", "role": "Local disk; widen in Phase 4"},
+    {"file": "lmcache/v1/storage_backend/nixl_storage_backend.py", "line": 757, "snippet": "metadata.dtype", "role": "NIXL; defer past Phase 4"},
+    {"file": "lmcache/v1/storage_backend/plugins/dax_backend.py", "line": 411, "snippet": "obj_metadata.dtype", "role": "DAX plugin; defer"},
+    {"file": "lmcache/v1/storage_backend/plugins/rust_raw_block_backend.py", "line": 569, "snippet": "obj.metadata.dtype", "role": "Rust raw block plugin; defer"},
+    {"file": "lmcache/v1/storage_backend/connector/mock_connector.py", "line": [226, 274], "snippet": "metadata.dtype", "role": "Mock connector; widen for tests"},
+    {"file": "lmcache/v1/server/__main__.py", "line": 74, "snippet": "lms_memory_obj.dtype", "role": "Cache server; defer"},
+    {"file": "lmcache/v1/memory_management.py", "line": 478, "snippet": "assert metadata.dtype is not None", "role": "TensorMemoryObj guard; relax for asym"}
+  ],
+  "wire_protocol": {
+    "file": "lmcache/v1/protocol.py",
+    "items": [
+      {"name": "DTYPE_TO_INT", "lines": "47-48", "notes": "already maps float8_e4m3fn=7, float8_e5m2=8; no work needed"},
+      {"name": "RemoteMetadata", "lines": "99-146", "notes": "plural by design (shapes/dtypes lists, num_groups packing). Asym maps cleanly to num_groups=2"},
+      {"name": "ClientMetaMessage", "lines": "152-209", "notes": "singular dtype + 4D shape. Out of scope for headline result"},
+      {"name": "ServerMetaMessage", "lines": "212-239", "notes": "singular dtype + 4D shape. Out of scope for headline result"}
+    ]
+  },
+  "serde_plugins": {
+    "directory": "lmcache/v1/storage_backend/naive_serde/",
+    "factory": {"file": "lmcache/v1/storage_backend/naive_serde/__init__.py", "line": 21, "function": "CreateSerde", "notes": "Adds new serde types here"},
+    "abstract_interface": {
+      "file": "lmcache/v1/storage_backend/naive_serde/serde.py",
+      "interface": "Serializer.serialize(memory_obj) -> MemoryObj  /  Deserializer.deserialize(memory_obj) -> MemoryObj",
+      "notes": "no target_runtime_layout argument; codec layer must own that decision"
+    },
+    "implementations": [
+      {"name": "naive", "file": "naive_serde.py", "notes": "passthrough"},
+      {"name": "kivi", "file": "kivi_serde.py", "status": "TODO(Yuhan), no logic"},
+      {"name": "cachegen", "files": ["cachegen_basics.py", "cachegen_decoder.py", "cachegen_encoder.py"], "notes": "real impl"}
+    ]
+  },
+  "vllm_connector_contract": {
+    "file": "lmcache/integration/vllm/lmcache_connector_v1.py",
+    "method": "save_kv_layer",
+    "line": 90,
+    "signature": "save_kv_layer(layer_name: str, kv_layer: torch.Tensor, attn_metadata: AttentionMetadata, **kwargs)",
+    "variants": [
+      "lmcache/integration/vllm/lmcache_connector_v1_085.py:66",
+      "lmcache/integration/vllm/lmcache_mp_connector_0180.py:565"
+    ],
+    "notes": "single-tensor public signature.  Native asym passthrough (Phase 4) plumbs dtype-awareness inside the implementation, not the public API."
+  },
+  "phase_plan": {
+    "phase_1_files_to_add": [
+      "lmcache/v1/kv_codec/__init__.py",
+      "lmcache/v1/kv_codec/codec.py",
+      "lmcache/v1/kv_codec/encoded_kv.py",
+      "lmcache/v1/kv_codec/asym_k16_v8.py",
+      "lmcache/v1/kv_codec/errors.py",
+      "tests/v1/kv_codec/__init__.py",
+      "tests/v1/kv_codec/conftest.py",
+      "tests/v1/kv_codec/test_scale_schema.py",
+      "tests/v1/kv_codec/test_quant_dequant.py",
+      "tests/v1/kv_codec/test_header_roundtrip.py",
+      "tests/v1/kv_codec/test_corruption.py",
+      "tests/v1/kv_codec/test_cross_config_poisoning.py",
+      "tests/v1/kv_codec/test_codec_pair.py",
+      "tests/v1/kv_codec/test_property_hypothesis.py",
+      "tests/v1/kv_codec/test_naive_parity.py"
+    ],
+    "phase_2_files_to_modify": [
+      "lmcache/v1/storage_backend/naive_serde/__init__.py",
+      "lmcache/v1/storage_backend/naive_serde/asym_serde.py (new)",
+      "lmcache/v1/config.py"
+    ],
+    "phase_4_files_to_modify": [
+      "lmcache/v1/storage_backend/local_disk_backend.py",
+      "lmcache/v1/storage_backend/gds_backend.py",
+      "lmcache/v1/memory_management.py",
+      "lmcache/integration/vllm/lmcache_connector_v1.py (implementation only, signature unchanged)"
+    ]
+  }
+}
