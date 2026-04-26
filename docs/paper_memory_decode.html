@@ -1091,6 +1091,45 @@
     for why the asymmetric pattern is a software workaround for a Hopper Tensor Core ISA constraint.
   </div>
 
+  <div class="key-result" style="margin-top:16px;">
+    <div class="kr-label">Calibration cannot rescue Qwen — static per-tensor FP8 is <em>worse</em> than uncalibrated</div>
+    A common reviewer concern is that the symmetric-FP8 baseline is a strawman vs the standard production
+    calibration path.  We tested directly with <code>llm-compressor</code> (the standard NVIDIA-aligned KV-quant
+    calibration tool), 512-sample WikiText-2 calibration set at T=2048, per-tensor static FP8 e4m3 scales loaded
+    by vLLM.  On Qwen2.5-7B the result is <strong>worse</strong> than uncalibrated symmetric FP8: WikiText-2
+    perplexity jumps to <strong>9.6×10<sup>5</sup></strong> with GSM8K accuracy at 0%, vs uncalibrated FP8's
+    PPL ≈ 157 / GSM8K 0.5%.  The mechanism is the dual of dynamic-calibration failure: a per-tensor scale wide
+    enough to absorb Qwen's K outliers leaves typical channel values rounded to a coarser grid than the
+    unconditional default, destroying bulk precision in exchange for retaining a handful of outlier samples.
+    Asymmetric K16/V8 under the identical protocol yields PPL 7.50 matching FP16 to four decimals and GSM8K
+    84.5% — a 169.5-point absolute improvement over static-calibrated FP8.  Calibration cannot solve a
+    precision-floor problem; what it can do is shift which part of the distribution gets sacrificed.
+    Archive at
+    <a href="https://github.com/mcgrof/knlp-key-results/tree/main/qwen-fragility-bundled-20260425" style="color:var(--cyan);">
+    qwen-fragility-bundled-20260425</a>.
+  </div>
+
+  <div class="key-result" style="margin-top:16px;">
+    <div class="kr-label">Hybrid linear + full-attention models — Qwen3.6-27B (Qwen3.5 family)</div>
+    Qwen3.6-27B uses <code>Qwen3_5ForConditionalGeneration</code> — a hybrid architecture where every fourth layer
+    carries a true KV cache (the rest are linear attention).  At T=2048: FP16 PPL 7.358, FP8-sym PPL 7.347
+    (drops 10.5 absolute points on GSM8K, 35.5% → 25.0%, n=200 8-shot), <strong>asymmetric K16/V8 PPL 7.358 with
+    GSM8K 35.5% — sample-by-sample identical to FP16</strong>.  Asymmetric is also fastest at evaluation time
+    (24 s for the WikiText-2 sweep vs 79 s FP16, 42 s FP8-sym) due to smaller V cache enabling more concurrency.
+    The K-dequant throughput penalty appears across batch and context too: at T=16,384, sym FP8 is 0.78×–0.80×
+    of FP16 throughput across B ∈ [4, 32].  Even on a model where 75% of layers do not use the standard KV cache
+    at all, asymmetric delivers FP16-equivalent quality and a real throughput improvement.
+  </div>
+
+  <div class="key-result" style="margin-top:16px;">
+    <div class="kr-label">Large-model FP8 activation quant at 72B (closes proxy gap)</div>
+    Earlier 27B–72B numbers used hook-based weight-quantization as a proxy for activation sensitivity.  We now
+    have a direct activation-quant measurement: Qwen2.5-72B-Instruct (FP8-dynamic weights, ~72 GB on H200) on
+    WikiText-103 at T=2048 over 262K tokens.  FP16-KV PPL 4.337, FP8-sym PPL 4.355 (+0.41%), <strong>asymmetric
+    K16/V8 PPL 4.337 — NLL identical to FP16 to six decimals</strong>.  Asymmetric matches FP16 exactly at 72B
+    parameters under real activation quantization, on a single GPU; the proxy and the real path agree.
+  </div>
+
   <div class="chart-wrap">
     <div class="chart-inner" style="height:200px;">
       <canvas id="asymChart"></canvas>
