@@ -8,27 +8,44 @@ those patches are now known to be dangerous or wrong-headed.
 
 ## What the LMCache asymmetric work actually delivers today
 
-### Storage tier — production-ready
+### Storage tier — ready to ship behind an experimental flag
 
-The `AsymK16V8Codec` and the split-tier (`SPLIT_K_CPU_V_NVME`) backend
-are landed in real LMCache and demonstrably correct on H100:
+The `AsymK16V8Codec` and the split-tier (`SPLIT_K_CPU_V_NVME`)
+backend are landed in real LMCache and measured correct on H100:
 
 - **Storage ratio 0.7500** median (24 cells, 3 model shapes ×
-  2 sequence lengths × 4 seeds), matching the paper's claim exactly.
+  2 sequence lengths × 4 seeds).
 - **K bit-exact** across every seed × layer × shape.
-- **V relative error 0.0217** median and max, well under FP8 e4m3
-  bound 0.075.
+- **V relative error 0.0217** median and max across the 24 cells.
+  This is below the project acceptance threshold of 0.075.  We
+  have median and max only at this size; per-cell p95 / p99 /
+  max-abs / clipped-value counts are not yet broken out, and
+  `0.075` is the project's chosen acceptance bar — not a
+  theoretical FP8 e4m3 bound across all distributions.
 - **Split-tier moves 2/3 of bytes off NVMe** (NVMe traffic ratio
   0.333 across 1MB / 8MB / 32MB / 64MB chunks).
 - **Small-chunk write speedup of 2.48×** (28.5 → 70.8 MB/s at 1MB),
   read parity at small/medium and +21% at 64MB.
 - The encode hot path's `bytes(tensor.untyped_storage())` was an
   ~860ms-per-MB Python-level bottleneck; replaced with a numpy
-  `tobytes()` reinterpretation, ~10000× faster. Committed on the
+  `tobytes()` reinterpretation, ~10000× faster.  Committed on the
   `asymmetric-kv-codec` branch.
 
-This half is shippable. JSONs at
+JSONs at
 `prune:/data/knlp-key-results/lmcache_asym_perf_quality_20260426/`.
+
+**Caveat: pinned-memory pressure under concurrent serving.**
+`SPLIT_K_CPU_V_NVME` puts K on host pinned memory.  Pinned pages
+are not free — at high concurrency they can starve the rest of
+the host.  We have not yet stress-tested under fill/evict churn,
+prefix-cache restore traffic, or long-running serving.  Required
+benchmark before production-default: long-running concurrent
+serving with realistic LMCache spill/restore traffic, measuring
+pinned-memory pressure on the host and tail latency on cache-hit
+paths.
+
+Until that benchmark exists, the storage tier ships behind an
+experimental flag, not as production-default.
 
 ### vLLM runtime forward path — incomplete in the upstream forks
 
@@ -342,7 +359,26 @@ either `Tensor` (symmetric) or `tuple[Tensor, Tensor]` (asymmetric).
 Fail closed: if asymmetric KV is requested and backend is not
 FlashInfer, raise `NotImplementedError`.
 
-### Milestone 3: vLLM asymmetric cache writer
+### Milestone 3: vLLM asymmetric cache writer — contract verified locally
+
+The fork's commit `84d8633a4 flashinfer: split cache write for
+asymmetric V FP8` implements the GPU writer.  To distinguish
+"implemented" from "verified," `scripts/test_asym_kv_writer_correctness.py`
+exercises the write contract on CPU:
+
+- K stored bit-exact at written slots
+- K untouched at unwritten slots
+- V dequantized via `v_scale` matches original V within FP8 e4m3
+  noise (rel err < 0.075)
+- writing V does not corrupt K bytes; writing K does not corrupt V
+- `slot_mapping == -1` correctly skips the token
+
+The contract test passes on CPU.  GPU writer-against-this-contract
+is the next thing to verify (small CUDA test; not yet run).  Until
+the GPU writer is exercised against this contract, M3 is
+"contract-verified" but not "GPU-verified."
+
+### Milestone 3 design notes (kept for context)
 
 New op `reshape_and_cache_flash_asym(key, value, k_cache, v_cache,
 slot_mapping, k_cache_dtype, v_cache_dtype, k_scale, v_scale)`.
