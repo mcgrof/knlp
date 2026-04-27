@@ -128,9 +128,12 @@ self._cached_v_data_type = v_data_type
 
 These mirror the fields the decode wrapper already has.
 
-### Step 4 — JIT dispatch / `get_module_args`
+### Step 4 — JIT dispatch + kernel template
 
-This is the load-bearing change.  In `prefill.py` the dispatch tuple
+Two pieces here.  The dispatch part is small.  The kernel template
+part is the actual blocker, and is the bigger lift.
+
+**Step 4a — dispatch keying** (small).  In `prefill.py` the dispatch tuple
 currently looks like:
 
 ```python
@@ -170,6 +173,48 @@ When both `k_data_type == v_data_type == kv_data_type`, the dispatch
 tuple is functionally equivalent to the old key — homogeneous callers
 pick the same module they always did.  When they differ, a separate
 asymmetric variant is selected/compiled.
+
+**Step 4b — kernel template refactor** (the blocker).
+
+The current kernel template in `include/flashinfer/attention/prefill.cuh`
+uses a single `DTypeKV` type parameter ~80 times: K shared memory, V
+shared memory, K-frag and V-frag types, FP8 dequant `vec_cast`, MMA
+path, RoPE.  When the JIT keys produce a `dtype_k_bf16_dtype_v_e4m3`
+module, codegen emits a `Params` struct with `DTypeK = bf16, DTypeV =
+e4m3`, but the kernel still instantiates with one `DTypeKV`.  Result:
+
+```
+prefill.cuh:1758: error: a value of type "RaggedParams::DTypeV *"
+    (aka "__nv_fp8_e4m3 *") cannot be used to initialize an entity
+    of type "DTypeKV *" (aka "__nv_bfloat16 *")
+      DTypeKV* v = params.v;
+```
+
+So the kernel template has to be refactored to accept and use
+`DTypeK` and `DTypeV` separately:
+
+- Add `DTypeK_, DTypeV_` template params to `KernelTraits` /
+  `KTraits` alongside (or replacing) `DTypeKV_`.
+- K-related sites (`k_smem`, `k_frag`, `UPCAST_STRIDE_K`,
+  K-RoPE) use `DTypeK`.
+- V-related sites (`v_smem`, `v_frag`, `UPCAST_STRIDE_V`)
+  use `DTypeV`.
+- FP8 dequant gates that currently read `sizeof(DTypeKV) == 1`
+  need to gate on `sizeof(DTypeV) == 1` for V, and not at all on
+  K (since asym K is high precision).
+- Shared memory layout asserts must allow K and V at different
+  per-element sizes.  Some current asserts require `sizeof(DTypeKV)
+  == 2` (e.g. line 541 inside the RoPE-Llama codepath); those need
+  to read `sizeof(DTypeK)` not `sizeof(DTypeKV)`.
+
+This is the core upstream work needed.  The Params struct already
+carries split types in this fork (commit
+`414b187 default_prefill_params.cuh: asymmetric K/V plumbing`).  The
+JIT key + URI + codegen substitution already produce a unique
+asymmetric variant when given `dtype_k`/`dtype_v` (verified by our
+M1 rerun: the build cache directory under
+`/root/.cache/flashinfer/.../batch_prefill_with_kv_cache_dtype_q_bf16_dtype_k_bf16_dtype_v_e4m3...`
+is generated correctly).  The hole is the kernel itself.
 
 ### Step 5 — `run()` validation
 
