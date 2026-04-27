@@ -169,6 +169,73 @@ def patch_prefill_run_validation(fi_root: Path):
     return True
 
 
+def patch_prefill_failclosed_guard(fi_root: Path):
+    """Insert a fail-closed Python guard so asymmetric prefill dtype
+    combinations raise NotImplementedError BEFORE the JIT codegen and
+    NVCC fire.
+
+    Background: the fork's kernel template in prefill.cuh still uses
+    a unified DTypeKV internally.  Even with the JIT URI / dispatch
+    correctly emitting an asymmetric specialization, the compile
+    fails at prefill.cuh:1758 because Params has DTypeV* but the
+    kernel body declares DTypeKV* v.  This is the right behavior — a
+    cast-based "fix" would silence the compiler while letting the
+    kernel read FP8 V memory as BF16 (or vice versa) and produce
+    silent corruption.
+
+    Until the CUDA template refactor lands upstream, raise a clean
+    NotImplementedError instead of a 400-line NVCC dump.  The
+    user-visible message points at the precise location of the gap.
+
+    This guard goes in plan() right after the k_data_type/v_data_type
+    canonicalization block we added in patch_prefill_plan_body."""
+    p = fi_root / "flashinfer" / "prefill.py"
+    t = p.read_text()
+    old = (
+        "        # Asymmetric K/V: if k_data_type/v_data_type omitted,\n"
+        "        # both default to kv_data_type (back-compat).  When set,\n"
+        "        # they may differ (e.g., k=bf16, v=fp8_e4m3).\n"
+        "        if k_data_type is None:\n"
+        "            k_data_type = kv_data_type\n"
+        "        k_data_type = canonicalize_torch_dtype(k_data_type)\n"
+        "        if v_data_type is None:\n"
+        "            v_data_type = kv_data_type\n"
+        "        v_data_type = canonicalize_torch_dtype(v_data_type)\n"
+    )
+    guard = (
+        "        # Fail-closed: the CUDA prefill kernel template still\n"
+        "        # assumes DTypeK == DTypeV internally (prefill.cuh\n"
+        "        # uses unified DTypeKV).  Until the kernel refactor\n"
+        "        # lands, asymmetric prefill must not reach NVCC — a\n"
+        "        # cast-based silence would let the kernel misread\n"
+        "        # FP8 memory as BF16 and corrupt output silently.\n"
+        "        if k_data_type != v_data_type:\n"
+        "            raise NotImplementedError(\n"
+        '                "FlashInfer paged prefill does not yet support"\n'
+        '                " asymmetric K/V dtypes: k_data_type="\n'
+        '                f"{k_data_type}, v_data_type={v_data_type}. "\n'
+        '                "The Python/JIT path now reaches the intended"\n'
+        '                " asymmetric specialization, but prefill.cuh"\n'
+        '                " still uses a unified DTypeKV internally"\n'
+        "                \" (e.g. line 1758: 'DTypeKV* v = params.v').\"\n"
+        '                " The fix is a CUDA template refactor that"\n'
+        '                " splits DTypeKV into DTypeK and DTypeV with"\n'
+        '                " trait-based FP8 dispatch (is_fp8<DTypeV>),"\n'
+        '                " not a sizeof()-based byte-width test."\n'
+        "            )\n"
+    )
+    n = t.count(old)
+    if n == 0:
+        print("  [guard] canonicalize block not found")
+        return False
+    # Insert the guard right AFTER the canonicalization block at every
+    # plan() body site (paged + ragged).
+    t = t.replace(old, old + guard)
+    p.write_text(t)
+    print(f"  [guard] fail-closed asym-prefill guard at {n} site(s)")
+    return True
+
+
 def patch_prefill_jit_dispatch(fi_root: Path):
     """Forward k_data_type/v_data_type from plan() body to
     get_batch_prefill_module(...).
@@ -214,13 +281,13 @@ def patch_prefill_jit_dispatch(fi_root: Path):
     # kv_data_type, so for symmetry we forward dtype_k/dtype_v to the
     # ragged caller too when they're available.
     old_ragged = (
-        "            elif self._backend != \"cudnn\":\n"
+        '            elif self._backend != "cudnn":\n'
         "                self._cached_module = get_batch_prefill_module(\n"
         "                    self._backend, *get_module_args\n"
         "                )"
     )
     new_ragged = (
-        "            elif self._backend != \"cudnn\":\n"
+        '            elif self._backend != "cudnn":\n'
         "                self._cached_module = get_batch_prefill_module(\n"
         "                    self._backend, *get_module_args,\n"
         "                    dtype_k=k_data_type,\n"
@@ -247,8 +314,9 @@ def main():
     ok1 = patch_prefill_plan_signature(fi_root)
     ok2 = patch_prefill_plan_body(fi_root)
     ok3 = patch_prefill_run_validation(fi_root)
-    ok4 = patch_prefill_jit_dispatch(fi_root)
-    if all([ok1, ok2, ok3, ok4]):
+    ok4 = patch_prefill_failclosed_guard(fi_root)
+    ok5 = patch_prefill_jit_dispatch(fi_root)
+    if all([ok1, ok2, ok3, ok4, ok5]):
         print("\nMilestone 1 prefill extension applied.")
         print("Run scripts/test_flashinfer_asym_kv.py to verify before")
         print("attempting any vLLM integration.")
