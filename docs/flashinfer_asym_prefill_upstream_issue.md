@@ -6,13 +6,21 @@ maintainer can read them in order without backstory and decide.
 
 ---
 
-## Issue
+## Issue (boring version, suitable for upstream)
 
 ### Problem
 
+Batch prefill JIT can now emit an asymmetric q/k/v dtype
+specialization, but `prefill.cuh` still assumes
+`DTypeK == DTypeV` internally.
+
 `BatchPrefillWithPagedKVCacheWrapper.run()` accepts a tuple paged KV
 cache `(k_cache, v_cache)`, but `BatchPrefillWithPagedKVCacheWrapper.plan()`
-only accepts and specializes on a single `kv_data_type`.
+only accepts and specializes on a single `kv_data_type`.  Even after
+threading `dtype_k` / `dtype_v` through `plan()` and into the JIT
+URI / dispatch (which the codegen + `_kv_uri_fragment` already
+support), the kernel template fails to compile because the kernel
+body still uses unified `DTypeKV` for V- and K-side pointers.
 
 This blocks mixed-dtype tuple KV cache, specifically:
 
@@ -31,15 +39,17 @@ preserves output quality).
 
 ### Why this matters for prefill specifically
 
-In vLLM, prefill writes K/V into the paged cache and the FlashInfer
-prefill kernel reads back from that paged cache to compute attention.
-So prefill needs the same asymmetric cache dtype support as decode.
+In a vLLM-style serving stack, prefill writes K/V into the paged
+cache and the FlashInfer prefill kernel reads back from that paged
+cache to compute attention.  Prefill therefore needs the same
+asymmetric cache dtype support as decode.
 
-The decode wrapper already supports this — `BatchDecodeWithPagedKVCacheWrapper.plan()`
-accepts `k_data_type` and `v_data_type` separately, validates them at
-`run()`, and the asymmetric decode path produces correct output (we
-measured rel err 0.0254 vs a BF16 reference, well within FP8 e4m3
-noise).
+The decode wrapper already supports this in this fork —
+`BatchDecodeWithPagedKVCacheWrapper.plan()` accepts `k_data_type`
+and `v_data_type` separately, validates them at `run()`, and the
+asymmetric decode kernel produces output within FP8 noise of a
+BF16 reference (standalone test: rel err 0.0254 against a torch
+reference using BF16 K and dequantized V).
 
 The prefill wrapper does not.
 
@@ -199,13 +209,21 @@ So the kernel template has to be refactored to accept and use
   K-RoPE) use `DTypeK`.
 - V-related sites (`v_smem`, `v_frag`, `UPCAST_STRIDE_V`)
   use `DTypeV`.
-- FP8 dequant gates that currently read `sizeof(DTypeKV) == 1`
-  need to gate on `sizeof(DTypeV) == 1` for V, and not at all on
-  K (since asym K is high precision).
+- FP8 dequant gates that currently key on `sizeof(DTypeKV) == 1`
+  should be replaced with **dtype traits**, not byte-width tests.
+  Use `is_fp8<DTypeV>` for the V dequant path and `is_fp8<DTypeK>`
+  for any K-side quantized handling.  Byte-width conflates FP8,
+  INT8, and any other 1-byte dtype, and the semantic intent here
+  is "this side is FP8 quantized," not "this side is one byte."
+  See FlashInfer issue #742 for the broader 8-bit KV tracking that
+  motivates trait-based dispatch.
 - Shared memory layout asserts must allow K and V at different
   per-element sizes.  Some current asserts require `sizeof(DTypeKV)
   == 2` (e.g. line 541 inside the RoPE-Llama codepath); those need
   to read `sizeof(DTypeK)` not `sizeof(DTypeKV)`.
+- Phrase the API as "K and V may have independent dtypes" rather
+  than "V is the FP8 side."  BF16-K + FP8-V is one supported case;
+  the goal is generic split, not asymmetric-FP8-V specifically.
 
 This is the core upstream work needed.  The Params struct already
 carries split types in this fork (commit
