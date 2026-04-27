@@ -291,3 +291,167 @@ Quantitatively, the prefill standalone rel err drops from the current
 - Document the asymmetric tuple cache flow alongside the existing
   `paged_kv_cache=(k_cache, v_cache)` runtime documentation, so the
   full plan/run path is internally consistent.
+
+---
+
+## Important: do NOT "fix" with a cast
+
+Once the JIT correctly emits an asymmetric specialization, the
+compile error at `prefill.cuh:1758` looks superficially like a
+type-conversion bug.  Resist the urge to write:
+
+```cpp
+DTypeKV* v = reinterpret_cast<DTypeKV*>(params.v);
+```
+
+That silences the compiler at the cost of letting the kernel read
+FP8 V memory as BF16 (or BF16 K memory as FP8 depending on which
+side gets lied to).  It turns a clean compile-time error into
+silent numerical corruption.  The compiler is protecting against
+exactly the failure mode that caused the original M1 prefill rel
+err of 3.49.
+
+The compile error is **the diagnostic**.  It proves the asymmetric
+specialization reached the CUDA template:
+
+```text
+Params says:    v is DTypeV*  = __nv_fp8_e4m3*
+Kernel says:    v must be DTypeKV* = __nv_bfloat16*
+```
+
+The fix has to make the kernel's internal type vocabulary match
+the data layout that the wrapper, JIT, and Params struct already
+agree on.
+
+## Refactor workflow (deterministic ugly)
+
+The kernel body has ~80 `DTypeKV` sites.  Don't try to be clever.
+
+1. Change `KernelTraits` template signature: replace `DTypeKV_`
+   with `DTypeK_, DTypeV_`.
+2. Update Params / RaggedParams (already done in fork commit
+   `414b187`).  Top-level pointers in the kernel body:
+   ```cpp
+   DTypeK* k = params.k;
+   DTypeV* v = params.v;
+   ```
+3. **Poison the unified alias** during the refactor — do NOT
+   define `using DTypeKV = DTypeK;` because half the V path will
+   silently become wrong:
+   ```cpp
+   // Temporary during refactor only:
+   using DTypeKV_DO_NOT_USE = void;
+   ```
+4. Compile the BF16-K + FP8-V specialization and let every
+   remaining `DTypeKV` use fail.  Make the compiler the unpaid
+   intern.
+5. Classify each failure:
+
+   ```text
+   QK path:
+     - K global pointer       -> DTypeK*
+     - K page loads           -> DTypeK
+     - K shared memory        -> DTypeK or K compute tile type
+     - K fragments            -> DTypeK-derived
+     - RoPE on K              -> DTypeK / K compute type
+     - k_scale                -> only if is_fp8<DTypeK>
+
+   PV path:
+     - V global pointer       -> DTypeV*
+     - V page loads           -> DTypeV
+     - V shared memory        -> DTypeV or V compute tile type
+     - V fragments            -> DTypeV-derived
+     - v_scale                -> only if is_fp8<DTypeV>
+
+   Shared / output path:
+     - attention scores       -> existing score/accum type
+     - softmax                -> existing softmax type
+     - output accumulator     -> existing accum type
+     - output store           -> DTypeO
+   ```
+
+6. Restore homogeneous behavior **only through explicit aliases /
+   helpers**, not by recreating one global `DTypeKV`.
+
+### Watch shared-memory byte layout
+
+The second wave of bugs lives in shared-memory sizing.  Anything
+like:
+
+```cpp
+num_kv_elems * sizeof(DTypeKV)
+```
+
+must become side-specific:
+
+```cpp
+num_k_elems * sizeof(DTypeK)
+num_v_elems * sizeof(DTypeV)
+```
+
+Same for static asserts:
+
+```cpp
+// before:
+static_assert(sizeof(DTypeKV) == 2);
+// after, K-side:
+static_assert(sizeof(DTypeK) == 2);
+```
+
+Pointer offsets into raw shared-memory buffers must respect
+separate alignment for K and V regions.
+
+### Use dtype traits, not byte-size tests
+
+Avoid:
+
+```cpp
+if constexpr (sizeof(DTypeV) == 1) { /* FP8 path */ }
+```
+
+`sizeof(T) == 1` conflates FP8, INT8, and any other 1-byte dtype.
+FlashInfer issue #742 (8-bit KV tracking) discusses INT8 KV
+support; byte-width is the wrong semantic test.
+
+Use traits:
+
+```cpp
+template <typename T> struct is_fp8_type : std::false_type {};
+template <> struct is_fp8_type<__nv_fp8_e4m3> : std::true_type {};
+template <> struct is_fp8_type<__nv_fp8_e5m2> : std::true_type {};
+
+if constexpr (is_fp8_type<DTypeV>::value) {
+    // apply v_scale / FP8 dequant
+} else {
+    // BF16/FP16 V path
+}
+```
+
+Apply the same trait to K independently — for K16/V8 the K side
+should behave like BF16 attention, not FP8.
+
+### Add a static_assert support matrix
+
+Don't let the JIT generate every Frankenstein combination:
+
+```cpp
+template <typename DTypeQ, typename DTypeK, typename DTypeV,
+          typename DTypeO>
+struct is_supported_prefill_dtype_combo : std::false_type {};
+
+template <>
+struct is_supported_prefill_dtype_combo<
+    nv_bfloat16, nv_bfloat16, __nv_fp8_e4m3, nv_bfloat16>
+    : std::true_type {};
+
+// ... legacy homogeneous combos ...
+
+static_assert(
+    is_supported_prefill_dtype_combo<DTypeQ, DTypeK, DTypeV,
+                                       DTypeO>::value,
+    "Unsupported FlashInfer prefill dtype combination"
+);
+```
+
+Failure on an unsupported combo is then explicit, not "kernel
+silently produces garbage."

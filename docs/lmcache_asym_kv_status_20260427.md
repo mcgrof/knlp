@@ -176,8 +176,25 @@ correctly rejects the type mismatch on `DTypeKV* v = params.v`.
 
 **Diagnosis:** the upstream gap is a **kernel template refactor**
 (replace one `DTypeKV` with `DTypeK + DTypeV`), not just JIT
-dispatch keying.  The dispatch is already correct.  The kernel is
-not.
+dispatch keying.  The Python and JIT paths now reach the intended
+asymmetric specialization; the remaining mismatch is inside the
+CUDA prefill template.
+
+**Temporary mitigation in the extension script:** the patch script
+(`scripts/flashinfer_asym_prefill_extension.py`) now adds a
+fail-closed Python guard that raises `NotImplementedError` for
+asymmetric prefill dtype combinations *before* the JIT codegen
+fires.  This avoids misleading 400-line NVCC dumps and points
+callers at the precise location of the upstream gap.  It does NOT
+make asymmetric prefill work — it makes the failure mode
+maintainable until the CUDA template refactor lands.
+
+**Critical:** do not "fix" the compile error with a cast like
+`reinterpret_cast<DTypeKV*>(params.v)`.  That silences the
+compiler at the cost of letting the kernel read FP8 V memory as
+BF16, which produces silent numerical corruption (the same failure
+mode the original M1 rel err 3.49 captured).  The compiler is
+protecting against the bug, not causing it.
 
 This is upstream FlashInfer engineering — substantial CUDA template
 work touching K/V shared memory layouts, vec_cast paths, RoPE, MMA.
@@ -358,6 +375,35 @@ either `Tensor` (symmetric) or `tuple[Tensor, Tensor]` (asymmetric).
 
 Fail closed: if asymmetric KV is requested and backend is not
 FlashInfer, raise `NotImplementedError`.
+
+## Phase split (honest)
+
+The FlashInfer prefill kernel-template refactor is real upstream
+work.  Before that lands, there's a possible short-term demo route
+worth labeling honestly:
+
+**Demo workaround** (not full serving):
+- BF16 prefill (uses FA2/FA3 or another BF16 prefill path that
+  doesn't read paged cache mid-attention; computes K/V from KV
+  proj, attends in BF16, then writes to the asym cache)
+- Asymmetric writer stores K=BF16 lossless, V=FP8
+- Asymmetric decode reads `(k_cache, v_cache)` tuple
+- Useful for proving Qwen decode quality and partial throughput
+  recovery vs. baseline FP16 KV
+- **Not** a full LMCache solution: prefix-cached prefills and
+  chunked prefills still need the real asymmetric paged prefill
+  kernel; first-token prefill sees BF16 V while later decode sees
+  FP8-V from cache, which is acceptable for a demo but is not the
+  same numeric path as full serving.
+
+**Real solution** (full serving):
+- Split-`DTypeK` / `DTypeV` FlashInfer paged prefill kernel
+- Required for prefix caching, LMCache cache-hit prefills, and any
+  chunked-prefill path that re-attends over paged cache
+- Real asymmetric throughput numbers come once this lands
+
+This split keeps the project honest about what's deployable vs.
+what's a demo.
 
 ### Milestone 3: vLLM asymmetric cache writer — contract verified locally
 
