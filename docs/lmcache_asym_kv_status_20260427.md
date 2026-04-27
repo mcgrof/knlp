@@ -124,7 +124,56 @@ the engine boot far enough to expose downstream gaps:
 Each milestone is a gate: do not start the next one until the
 previous one has tests passing.
 
-### Milestone 1: FlashInfer standalone proof — RUN 2026-04-27, partial pass
+### Milestone 1: FlashInfer standalone proof — second run 2026-04-27 (kernel template gap)
+
+The first M1 run identified a **JIT dispatch** gap: prefill `plan()`
+collapsed K/V to one `kv_data_type` so the JIT picked a symmetric
+FP8-FP8 module → BF16 K reinterpreted as FP8 → garbage (rel err 3.49).
+
+We then read the fork carefully and found the JIT scaffolding
+(`get_batch_prefill_uri`, `_kv_uri_fragment`, `gen_batch_prefill_module`,
+`gen_customize_batch_prefill_module`) **already accepts `dtype_k`/`dtype_v`
+end to end** — the only missing wire was that `prefill.py:plan()` didn't
+forward them to `get_batch_prefill_module()`.  Closed that wire (4-line
+patch at both paged-prefill callsites) and re-ran on a fresh H100.
+
+**Result:** the JIT now correctly differentiates and tries to compile a
+distinct asymmetric variant.  Build cache directory contains
+`batch_prefill_with_kv_cache_dtype_q_bf16_dtype_k_bf16_dtype_v_e4m3_dtype_o_bf16_...`
+— proof the wire works.  But compilation fails:
+
+```
+prefill.cuh:1758: error: a value of type "RaggedParams::DTypeV *"
+    (aka "__nv_fp8_e4m3 *") cannot be used to initialize an entity
+    of type "DTypeKV *" (aka "__nv_bfloat16 *")
+      DTypeKV* v = params.v;
+```
+
+The fork's commit `414b187 default_prefill_params.cuh: asymmetric K/V
+plumbing` plumbed `DTypeK` and `DTypeV` into the **Params** struct,
+but the **kernel template** in `prefill.cuh` was never refactored —
+it still uses unified `DTypeKV` for ~80 type sites.  When the JIT
+generates an asymmetric variant, the Params struct has split types,
+the kernel instantiates with unified `DTypeKV`, and the compiler
+correctly rejects the type mismatch on `DTypeKV* v = params.v`.
+
+**Diagnosis:** the upstream gap is a **kernel template refactor**
+(replace one `DTypeKV` with `DTypeK + DTypeV`), not just JIT
+dispatch keying.  The dispatch is already correct.  The kernel is
+not.
+
+This is upstream FlashInfer engineering — substantial CUDA template
+work touching K/V shared memory layouts, vec_cast paths, RoPE, MMA.
+Out of scope for patch-script work without dedicated kernel
+benchmarking and trial-and-error on H100.
+
+The `docs/flashinfer_asym_prefill_upstream_issue.md` doc captures
+this finding precisely as the next upstream PR.
+
+Ran on `lmc-m1-rerun2` (pod jhtsv13sxfkbhv, ~5min, ~$0.25 burn).
+Logs at `/tmp/m1_rerun_logs/m1.log` (kernel compile error).
+
+### Milestone 1: original first run findings (decode-only)
 
 **Decode passes the gate.** Prefill exposes a deeper fork gap.
 
