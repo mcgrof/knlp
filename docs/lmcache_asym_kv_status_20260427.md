@@ -234,7 +234,44 @@ Code:
 
 This is the gate.  If it fails, vLLM patches are confetti.
 
-### Milestone 2: vLLM logical asym cache allocation
+### Milestone 2: vLLM logical asym cache allocation — VERIFIED 2026-04-27
+
+The fork already implements asymmetric tuple-cache allocation in
+`vllm/v1/worker/gpu/attn_utils.py:_reshape_kv_cache` (commit `cce4dee92
+v1/attn_utils: split cache into (K, V) for asymmetric`).  When
+`AttentionSpec.v_dtype` differs from `.dtype`, the raw int8 buffer is
+sliced into K and V regions per page and reinterpreted as separate
+4-D NHD tensors at the requested dtypes.
+
+A standalone gate test mechanically reproduces the split algorithm
+and verifies its invariants without a full vLLM install:
+
+- `(k_cache, v_cache)` is a tuple of 4-D NHD tensors (no leading
+  "2" dim)
+- `k_cache.dtype == bfloat16`, `v_cache.dtype == float8_e4m3fn`
+- byte accounting: `total = K_bytes + V_bytes`, exactly 0.75× of
+  symmetric BF16 K+V at the allocator boundary (196608 = 0.75 ×
+  262144 for the test grid)
+- K-half / V-half byte stamping (0x11 / 0x22) round-trips through
+  the typed views — confirms the byte split direction is correct
+- K-writes and V-writes do not alias
+- production-scale grid (Qwen2.5-7B layer slice, 6.3MB) preserves
+  all the above
+
+The companion test that invokes the fork's actual function lives at
+`tests/v1/worker/test_asym_kv_cache_allocation.py` in the asym fork
+(committed b9f38e9f3); it runs in CI / on a pod where vllm is
+installed.
+
+Code:
+- `scripts/test_asym_kv_allocation_standalone.py` — local gate, runs
+  in <1 second on CPU, no vllm install needed.
+
+This is the same 0.75 storage ratio that the codec produces.  Now
+also proven at the vllm allocator boundary, which is what mattered:
+the runtime cache, not LMCache, is where Qwen K-fragility shows up.
+
+### Milestone 2 design notes (kept for context)
 
 Add `is_asymmetric_kv(spec)`, `cache_dtype_k_str(spec)`,
 `cache_dtype_v_str(spec)`, `cache_dtype_k_torch(spec, model_dtype)`,
