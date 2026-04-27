@@ -124,7 +124,91 @@ the engine boot far enough to expose downstream gaps:
 Each milestone is a gate: do not start the next one until the
 previous one has tests passing.
 
-### Milestone 1: FlashInfer standalone proof — IN PROGRESS
+### Milestone 1: FlashInfer standalone proof — RUN 2026-04-27, partial pass
+
+**Decode passes the gate.** Prefill exposes a deeper fork gap.
+
+Result on H100 SXM SECURE pod `lmc-m1-gate` (zc3bi9q4h79kgs, $2.99/hr,
+~10min total burn):
+
+| Sub-test | Q | K | V | rel err vs BF16 ref | bound | status |
+|----------|---|---|---|---:|---:|--------|
+| decode (Q=1)  | BF16 | BF16 | FP8 e4m3 | **0.0254** | 0.10 | PASS |
+| prefill (Q=32, causal) | BF16 | BF16 | FP8 e4m3 | **3.4946** | 0.10 | FAIL |
+
+Decode is a real, honest signal: the fork's decode CUDA kernel does
+honor asymmetric K=BF16 V=FP8 and produces output within FP8 e4m3
+noise of the BF16 reference.
+
+Prefill output is garbage. Diagnosis from `flashinfer/prefill.py`
+line 1995, the JIT dispatch tuple:
+
+```python
+get_module_args = (
+    q_data_type,
+    kv_data_type,           # <-- single dtype, not (k_data_type, v_data_type)
+    o_data_type,
+    paged_kv_indptr.dtype,
+    head_dim_qk,
+    ...
+)
+```
+
+The fork added `k_data_type`/`v_data_type` kwargs to `plan()` but the
+JIT dispatch never compiles or selects an asymmetric kernel variant.
+With `kv_data_type=fp8`, the JIT picks the symmetric FP8-FP8 module.
+That module then reads K as FP8 — but our K tensor is BF16 in memory.
+The kernel reinterprets BF16 bytes as FP8 → garbage output.
+
+The fork commit `414b187 default_prefill_params.cuh: asymmetric K/V
+plumbing` is **architecturally incomplete on the prefill side**:
+
+- decode-side: kernel + JIT dispatch + plan signature + run-time
+  validation are all asymmetric-aware (proven by 0.0254 rel err).
+- prefill-side: only the kernel-level `cuh` was touched. The Python
+  JIT module dispatch path was not extended. The plan signature
+  was not extended (we did that ourselves in this milestone). The
+  symmetric FP8 module gets selected and silently misreads K.
+
+To land prefill asym, the work needed is:
+
+1. Extend `get_module_args` to `(q_data_type, k_data_type,
+   v_data_type, o_data_type, ...)` so the dispatch key carries both.
+2. Add or generate an asymmetric kernel module variant (or verify
+   the existing `default_prefill_params.cuh` correctly handles it
+   when picked) — this is JIT template + AOT codegen work, not
+   patches.
+3. Verify the prefill CUDA kernel actually reads K-tensors as
+   `k_dtype` and V-tensors as `v_dtype`. The commit message claims
+   it does, but with the dispatch never selecting it, this is
+   unverified.
+
+**What this means for the project plan.** Decode-only asymmetric
+support is meaningful for the production case where prefill is run
+in standard BF16 (the prompt is processed once, no FP8 quant needed)
+and only the long-lived cached KV is asymmetric for decode. But for
+this we still need vLLM to:
+- never write through a symmetric FP8 path during prefill,
+- materialize the cache as `(k_cache, v_cache)` with separate
+  dtypes,
+- on cache write, store K losslessly and V as FP8 directly,
+- on decode-side `plan()` and `run()`, pass the asymmetric tuple.
+
+The cache-writer milestones (3-6 in the plan) are still applicable
+and unchanged.  But Milestone 4 (FlashInfer backend forward) splits
+into two halves: decode is unblocked; prefill needs the JIT/kernel
+work above before any vLLM patch can land it correctly.
+
+Code:
+- `scripts/flashinfer_asym_prefill_extension.py` — applies the plan
+  signature + body + run validation extension to the fork.
+  Validation is now strict (no relaxation) and replaces the legacy
+  `_check_cached_qkv_data_type` helper.
+- `scripts/test_flashinfer_asym_kv.py` — the gate test.  Decode
+  passes; prefill assert fails by design until the JIT dispatch is
+  extended.
+- Run logs at
+  `prune:/data/knlp-key-results/lmcache_asym_perf_quality_20260426/m1_gate_full.log`
 
 Extend `BatchPrefillWithPagedKVCacheWrapper.plan()` and
 `BatchDCPPrefillWrapper.plan()` to accept `k_data_type` and

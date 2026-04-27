@@ -121,43 +121,48 @@ def patch_prefill_run_validation(fi_root: Path):
         print("  [run] no _check_cached_qkv_data_type call to replace")
         return False
     # For each unique k_cache var name, replace with the explicit form.
+    # Build the replacement as a plain multi-line block; pre-resolve
+    # expected dtypes into local names so we don't need nested f-strings
+    # (Python 3.12 doesn't allow nested quotes the way earlier versions did).
     seen = set()
     for full, k_var in matches:
         if (full, k_var) in seen:
             continue
         seen.add((full, k_var))
-        # Build the replacement.  v_cache var name follows from k_cache.
-        # In the existing code paths, the prefill run signature has
-        # `paged_kv_cache` which can be a tuple or a single tensor.
-        # Insert a tuple-aware validation block right before the call.
-        replacement = (
-            "# Asymmetric-aware paged KV validation.  No dtype relaxation.\n"
-            "        _kc = " + k_var + "\n"
-            "        if isinstance(_kc, (tuple, list)):\n"
-            "            _k_t, _v_t = _kc\n"
-            "        else:\n"
-            "            _k_t = _v_t = _kc\n"
-            "        if q.dtype != self._cached_q_data_type:\n"
-            "            raise ValueError(\n"
-            '                f"q dtype {q.dtype} != cached q_data_type "\n'
-            '                f"{self._cached_q_data_type}")\n'
-            '        if _k_t.dtype != getattr(self, "_cached_k_data_type",'
-            " self._cached_kv_data_type):\n"
-            "            raise ValueError(\n"
-            '                f"k_cache dtype {_k_t.dtype} != cached "\n'
-            '                f"k_data_type "\n'
-            "                f\"{getattr(self, '_cached_k_data_type', \"\n"
-            '                f"self._cached_kv_data_type)}")\n'
-            '        if _v_t.dtype != getattr(self, "_cached_v_data_type",'
-            " self._cached_kv_data_type):\n"
-            "            raise ValueError(\n"
-            '                f"v_cache dtype {_v_t.dtype} != cached "\n'
-            '                f"v_data_type "\n'
-            "                f\"{getattr(self, '_cached_v_data_type', \"\n"
-            '                f"self._cached_kv_data_type)}")\n'
-            "        # Original symmetric-helper call retained for back-compat:\n"
-            "        " + full
+        # In prefill.run() the caller has already done
+        # `k_cache, v_cache = _unpack_paged_kv_cache(paged_kv_cache, ...)`
+        # so we can reference both variables directly.  The first arg of
+        # _check_cached_qkv_data_type IS the k_cache tensor; v_cache is
+        # the sibling variable in the same scope.
+        v_var = "v_cache" if k_var == "k_cache" else k_var
+        validation_block = """# Asymmetric-aware paged KV validation. No dtype relaxation.
+        # Replaces the legacy symmetric _check_cached_qkv_data_type helper
+        # which conflated K and V into a single kv_data_type and would
+        # reject BF16 K when V is FP8 (the entire point of asymmetric).
+        _exp_q = self._cached_q_data_type
+        _exp_k = getattr(self, "_cached_k_data_type", self._cached_kv_data_type)
+        _exp_v = getattr(self, "_cached_v_data_type", self._cached_kv_data_type)
+        if q.dtype != _exp_q:
+            raise ValueError(
+                "q dtype " + str(q.dtype) +
+                " != cached q_data_type " + str(_exp_q)
+            )
+        if {k_var}.dtype != _exp_k:
+            raise ValueError(
+                "k_cache dtype " + str({k_var}.dtype) +
+                " != cached k_data_type " + str(_exp_k)
+            )
+        if {v_var}.dtype != _exp_v:
+            raise ValueError(
+                "v_cache dtype " + str({v_var}.dtype) +
+                " != cached v_data_type " + str(_exp_v)
+            )
+        """.format(
+            k_var=k_var, v_var=v_var
         )
+        # Drop the legacy call entirely.  Our explicit checks above are
+        # strictly stronger.
+        replacement = validation_block
         t = t.replace(full, replacement, 1)
     p.write_text(t)
     print(f"  [run] replaced {len(seen)} validation site(s)")
