@@ -31,11 +31,17 @@ def split_asym_kv(
     k_dtype: torch.dtype,
     v_dtype: torch.dtype,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Mechanical replica of attn_utils.py:_reshape_kv_cache asym branch.
+    """Split the raw int8 buffer into K (k_dtype) and V (v_dtype)
+    typed strided views over the original storage.
 
-    Splits a raw int8 buffer of shape [num_blocks * page_bytes] into
-    two 4-D NHD tensors with K at the model dtype and V at the cache
-    dtype.  Page bytes = K-half + V-half.
+    Layout per page is K-half then V-half.  Stride along the
+    block dim equals the full page size in elements of the typed
+    view.  The K view starts at storage offset 0; the V view
+    starts after the K-half within the first page.
+
+    Both views point into `raw_tensor`'s storage — no copies — so
+    the block manager's occupancy bookkeeping against the raw
+    tensor stays consistent with what the kernel reads/writes.
     """
     k_elem_bytes = torch.empty((), dtype=k_dtype).element_size()
     v_elem_bytes = torch.empty((), dtype=v_dtype).element_size()
@@ -44,11 +50,38 @@ def split_asym_kv(
     v_page_bytes = elements_per_page * v_elem_bytes
     page_bytes = k_page_bytes + v_page_bytes
 
-    raw_pages = raw_tensor.view(num_blocks, page_bytes)
-    k_raw = raw_pages[:, :k_page_bytes].contiguous()
-    v_raw = raw_pages[:, k_page_bytes:].contiguous()
-    k_cache = k_raw.view(k_dtype).view(num_blocks, block_size, num_kv_heads, head_size)
-    v_cache = v_raw.view(v_dtype).view(num_blocks, block_size, num_kv_heads, head_size)
+    # Sanity: the raw allocation must hold an integer number of
+    # full pages and align to both dtype sizes.
+    assert raw_tensor.numel() == num_blocks * page_bytes
+    assert page_bytes % k_elem_bytes == 0
+    assert page_bytes % v_elem_bytes == 0
+    assert k_page_bytes % v_elem_bytes == 0
+
+    # Reinterpret the raw uint8/int8 buffer as the typed dtype.
+    # PyTorch requires a contiguous 1-D view to do .view(dtype),
+    # but `raw_tensor` is already contiguous so this is free.
+    k_typed = raw_tensor.view(k_dtype)
+    v_typed = raw_tensor.view(v_dtype)
+
+    # Stride along the block dim is the full page in *elements*
+    # of the typed view (not bytes).  K-half lives at the start
+    # of each page; V-half lives `k_page_bytes` after that.
+    k_page_stride = page_bytes // k_elem_bytes
+    v_page_stride = page_bytes // v_elem_bytes
+    v_offset_elems = k_page_bytes // v_elem_bytes
+
+    k_cache = torch.as_strided(
+        k_typed,
+        size=(num_blocks, block_size, num_kv_heads, head_size),
+        stride=(k_page_stride, num_kv_heads * head_size, head_size, 1),
+        storage_offset=0,
+    )
+    v_cache = torch.as_strided(
+        v_typed,
+        size=(num_blocks, block_size, num_kv_heads, head_size),
+        stride=(v_page_stride, num_kv_heads * head_size, head_size, 1),
+        storage_offset=v_offset_elems,
+    )
     return k_cache, v_cache
 
 
@@ -130,6 +163,37 @@ def test_asym_split_byte_pattern_matches_layout():
     print("  test_byte_pattern: K=0x11, V=0x22 round-trip OK")
 
 
+def test_asym_split_preserves_raw_ownership():
+    """K and V must be views into the original raw int8 buffer,
+    not freshly-allocated storage.  The block manager's
+    bookkeeping is against the raw tensor's storage; if our split
+    yields tensors that point elsewhere, the bookkeeping is a lie.
+
+    Reproduces the design-review concern that `.contiguous()` on
+    a non-contiguous slice copies.  This test FAILS today on the
+    current `split_asym_kv` implementation, which is what makes
+    it the right gate for Step 0.
+    """
+    NB, BS, H, D = 4, 16, 8, 128
+    k_dtype, v_dtype = torch.bfloat16, torch.float8_e4m3fn
+    elements = NB * BS * H * D
+    raw = torch.zeros(elements * 2 + elements * 1, dtype=torch.int8)
+
+    raw_start = raw.data_ptr()
+    raw_end = raw_start + raw.untyped_storage().nbytes()
+
+    k_cache, v_cache = split_asym_kv(raw, NB, BS, H, D, k_dtype, v_dtype)
+
+    for side, t in [("K", k_cache), ("V", v_cache)]:
+        ptr = t.data_ptr()
+        assert raw_start <= ptr < raw_end, (
+            f"asym {side} cache at 0x{ptr:x} is NOT a view into the "
+            f"raw allocation [0x{raw_start:x}, 0x{raw_end:x}). "
+            f"`.contiguous()` allocated fresh storage."
+        )
+    print("  test_preserves_raw_ownership: K and V are views into raw OK")
+
+
 def test_asym_split_no_aliasing():
     """K and V must occupy distinct byte regions — writing through
     the K view must not corrupt V, and vice versa."""
@@ -188,6 +252,7 @@ def main():
     test_asym_split_dtypes_and_shapes()
     test_asym_split_byte_accounting_is_0_75x_of_symmetric_bf16()
     test_asym_split_byte_pattern_matches_layout()
+    test_asym_split_preserves_raw_ownership()
     test_asym_split_no_aliasing()
     test_asym_split_8mb_page_grid()
     print()
