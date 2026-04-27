@@ -169,6 +169,75 @@ def patch_prefill_run_validation(fi_root: Path):
     return True
 
 
+def patch_prefill_jit_dispatch(fi_root: Path):
+    """Forward k_data_type/v_data_type from plan() body to
+    get_batch_prefill_module(...).
+
+    The fork's get_batch_prefill_module already accepts dtype_k/dtype_v
+    kwargs, _kv_uri_fragment already keys the JIT cache on them, and
+    gen_customize_batch_prefill_module already substitutes them as
+    template params for the kernel codegen.  The single missing wire
+    is in prefill.py's plan(): it never passes dtype_k/dtype_v through
+    when calling get_batch_prefill_module, so they default to None and
+    the URI/codegen falls back to the symmetric kv_data_type kernel.
+
+    This patch closes that wire at both call sites (paged prefill
+    around line 1993 and ragged prefill around line 3024).
+    """
+    p = fi_root / "flashinfer" / "prefill.py"
+    t = p.read_text()
+    old = (
+        "                self._cached_module = get_batch_prefill_module(\n"
+        "                    self._backend, *get_module_args\n"
+        "                )"
+    )
+    new = (
+        "                self._cached_module = get_batch_prefill_module(\n"
+        "                    self._backend, *get_module_args,\n"
+        "                    dtype_k=k_data_type,\n"
+        "                    dtype_v=v_data_type,\n"
+        "                )"
+    )
+    n_paged = t.count(old)
+    if n_paged:
+        t = t.replace(old, new)
+
+    # Ragged prefill (3-space indent due to nesting differences in source)
+    old2 = (
+        "            get_module_args = (\n"
+        "                q_data_type,\n"
+        "                kv_data_type,\n"
+    )
+    # We don't want to silently mutate ragged's get_module_args because
+    # ragged path doesn't read from a paged cache — it takes K and V as
+    # separate ragged tensors.  But the JIT dispatch still keys on
+    # kv_data_type, so for symmetry we forward dtype_k/dtype_v to the
+    # ragged caller too when they're available.
+    old_ragged = (
+        "            elif self._backend != \"cudnn\":\n"
+        "                self._cached_module = get_batch_prefill_module(\n"
+        "                    self._backend, *get_module_args\n"
+        "                )"
+    )
+    new_ragged = (
+        "            elif self._backend != \"cudnn\":\n"
+        "                self._cached_module = get_batch_prefill_module(\n"
+        "                    self._backend, *get_module_args,\n"
+        "                    dtype_k=k_data_type,\n"
+        "                    dtype_v=v_data_type,\n"
+        "                )"
+    )
+    n_ragged = t.count(old_ragged)
+    if n_ragged:
+        t = t.replace(old_ragged, new_ragged)
+    p.write_text(t)
+    print(
+        f"  [jit] forwarded dtype_k/dtype_v at "
+        f"{n_paged} paged + {n_ragged} ragged callsite(s)"
+    )
+    return n_paged > 0 or n_ragged > 0
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: flashinfer_asym_prefill_extension.py <flashinfer-src-root>")
@@ -178,7 +247,8 @@ def main():
     ok1 = patch_prefill_plan_signature(fi_root)
     ok2 = patch_prefill_plan_body(fi_root)
     ok3 = patch_prefill_run_validation(fi_root)
-    if all([ok1, ok2, ok3]):
+    ok4 = patch_prefill_jit_dispatch(fi_root)
+    if all([ok1, ok2, ok3, ok4]):
         print("\nMilestone 1 prefill extension applied.")
         print("Run scripts/test_flashinfer_asym_kv.py to verify before")
         print("attempting any vLLM integration.")
