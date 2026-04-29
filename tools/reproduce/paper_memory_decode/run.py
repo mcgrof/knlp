@@ -6,6 +6,7 @@ Invoked from Makefile.decode as
 Subcommands: doctor, estimate, fetch, build, run, report, upload,
 provider-info, clean, clobber.
 """
+
 from __future__ import annotations
 import argparse
 import dataclasses
@@ -42,14 +43,18 @@ def _existing_run_id(results_root: Path, profile: str) -> Optional[str]:
     if not results_root.exists():
         return None
     candidates = sorted(
-        [p for p in results_root.iterdir()
-         if p.is_dir() and p.name.startswith(profile + "-")],
+        [
+            p
+            for p in results_root.iterdir()
+            if p.is_dir() and p.name.startswith(profile + "-")
+        ],
         reverse=True,
     )
     return candidates[0].name if candidates else None
 
 
 # ── Subcommands ──────────────────────────────────────────────────────────
+
 
 def cmd_doctor(args, cfg: DecodeConfig) -> int:
     host = _hardware.detect()
@@ -66,8 +71,12 @@ def cmd_estimate(args, cfg: DecodeConfig) -> int:
 
 def cmd_provider_info(args) -> int:
     host = _hardware.detect()
-    out = {"hostname": host.hostname, "provider": host.provider,
-           "gpu_names": host.gpu_names, "gpu_count": host.gpu_count}
+    out = {
+        "hostname": host.hostname,
+        "provider": host.provider,
+        "gpu_names": host.gpu_names,
+        "gpu_count": host.gpu_count,
+    }
     print(json.dumps(out, indent=2))
     return 0
 
@@ -92,18 +101,23 @@ def cmd_fetch(args, cfg: DecodeConfig) -> int:
             if rc:
                 rc_total |= rc
         # Detect dirty tree
-        dirty = subprocess.check_output(
-            ["git", "status", "--porcelain"], cwd=str(target_p)
-        ).decode().strip()
+        dirty = (
+            subprocess.check_output(["git", "status", "--porcelain"], cwd=str(target_p))
+            .decode()
+            .strip()
+        )
         if dirty and cfg.fail_on_dirty_git:
-            print(f"ERROR: {name} has uncommitted changes.  "
-                  f"Set CONFIG_KNLP_FAIL_ON_DIRTY_GIT=n to override.")
+            print(
+                f"ERROR: {name} has uncommitted changes.  "
+                f"Set CONFIG_KNLP_FAIL_ON_DIRTY_GIT=n to override."
+            )
             return 3
         rc = subprocess.call(["git", "checkout", ref], cwd=str(target_p))
         rc_total |= rc
         # Submodules (FlashInfer needs cutlass)
-        subprocess.call(["git", "submodule", "update", "--init", "--recursive"],
-                        cwd=str(target_p))
+        subprocess.call(
+            ["git", "submodule", "update", "--init", "--recursive"], cwd=str(target_p)
+        )
     return rc_total
 
 
@@ -119,7 +133,8 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
 
     pip = shutil.which("pip3") or shutil.which("pip")
     if not pip:
-        print("ERROR: pip not found in PATH"); return 4
+        print("ERROR: pip not found in PATH")
+        return 4
 
     def install(path: Path) -> int:
         if not path.exists():
@@ -148,7 +163,9 @@ def _run_stage_pipeline(cfg: DecodeConfig, stage_filter: Optional[str] = None) -
     results_root = Path(cfg.results_root).resolve()
     results_root.mkdir(parents=True, exist_ok=True)
 
-    run_id = _existing_run_id(results_root, cfg.profile) or _manifest.make_run_id(cfg.profile)
+    run_id = _existing_run_id(results_root, cfg.profile) or _manifest.make_run_id(
+        cfg.profile
+    )
     run_dir = results_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -161,7 +178,9 @@ def _run_stage_pipeline(cfg: DecodeConfig, stage_filter: Optional[str] = None) -
     tel = _telemetry.build(cfg, manifest_dict, run_dir)
     tel.start_run(manifest_dict)
 
-    stage_list = _stages.PROFILE_STAGES.get(cfg.profile, _stages.PROFILE_STAGES["decode"])
+    stage_list = _stages.PROFILE_STAGES.get(
+        cfg.profile, _stages.PROFILE_STAGES["decode"]
+    )
     if stage_filter:
         stage_list = [s for s in stage_list if s == stage_filter]
         if not stage_list:
@@ -182,8 +201,9 @@ def _run_stage_pipeline(cfg: DecodeConfig, stage_filter: Optional[str] = None) -
         except Exception as e:
             with ctx.stderr_path.open("a") as f:
                 f.write(f"EXCEPTION: {type(e).__name__}: {e}\n")
-            result = _stages.StageResult(name=stage_name, status="failed",
-                                         reason=f"{type(e).__name__}: {e}")
+            result = _stages.StageResult(
+                name=stage_name, status="failed", reason=f"{type(e).__name__}: {e}"
+            )
         if result.status == "passed":
             ctx.mark_done({"status": "passed", "reason": result.reason})
         elif result.status == "skipped":
@@ -225,8 +245,10 @@ def cmd_upload(args, cfg: DecodeConfig) -> int:
     if not cfg.upload_artifacts:
         print("CONFIG_KNLP_UPLOAD_ARTIFACTS=n; skipping upload")
         return 0
-    print("upload: telemetry sinks already mirrored each metric live.  "
-          "Artifact upload at run-end is integrated into stage execution.")
+    print(
+        "upload: telemetry sinks already mirrored each metric live.  "
+        "Artifact upload at run-end is integrated into stage execution."
+    )
     return 0
 
 
@@ -255,8 +277,18 @@ def cmd_clobber(args, cfg: DecodeConfig) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="paper_memory_decode")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ["doctor", "estimate", "fetch", "build", "run",
-                 "report", "upload", "clean", "clobber", "provider-info"]:
+    for name in [
+        "doctor",
+        "estimate",
+        "fetch",
+        "build",
+        "run",
+        "report",
+        "upload",
+        "clean",
+        "clobber",
+        "provider-info",
+    ]:
         sp = sub.add_parser(name)
         sp.add_argument("--config", default=".config")
         if name == "run":
