@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+# Make targets for paper-memory-decode reproduction profiles.
+#
+# Selecting one of:
+#   make defconfig-decode
+#   make defconfig-decode-sat
+#   make defconfig-decode-full
+# writes .config and enables CONFIG_KNLP_REPRODUCE_DECODE.  Plain `make`
+# after that runs decode-doctor → decode-fetch → decode-build →
+# decode-run → decode-report → optional decode-upload.
+
+DECODE_ORCH := python3 -m tools.reproduce.paper_memory_decode.run
+
+.PHONY: decode-doctor decode-estimate decode-fetch decode-build \
+        decode-run decode-report decode-upload decode-clean \
+        decode-clobber decode-provider-info decode
+
+# When CONFIG_KNLP_REPRODUCE_DECODE=y, plain `make` defaults to the
+# decode pipeline.  Otherwise the existing all: target is unaffected.
+ifeq ($(CONFIG_KNLP_REPRODUCE_DECODE),y)
+.DEFAULT_GOAL := decode
+endif
+
+decode: decode-doctor decode-fetch decode-build decode-run decode-report
+	@if [ "$(CONFIG_KNLP_UPLOAD_ARTIFACTS)" = "y" ]; then \
+		$(MAKE) decode-upload; \
+	fi
+
+decode-doctor:
+	@$(DECODE_ORCH) doctor --config .config
+
+decode-estimate:
+	@$(DECODE_ORCH) estimate --config .config
+
+decode-fetch:
+	@$(DECODE_ORCH) fetch --config .config
+
+decode-build:
+	@$(DECODE_ORCH) build --config .config
+
+decode-run:
+	@if [ -n "$(STAGE)" ]; then \
+		$(DECODE_ORCH) run --config .config --stage "$(STAGE)"; \
+	else \
+		$(DECODE_ORCH) run --config .config; \
+	fi
+
+decode-report:
+	@$(DECODE_ORCH) report --config .config
+
+decode-upload:
+	@$(DECODE_ORCH) upload --config .config
+
+decode-provider-info:
+	@$(DECODE_ORCH) provider-info
+
+decode-clean:
+	@$(DECODE_ORCH) clean --config .config
+
+decode-clobber:
+	@$(DECODE_ORCH) clobber --config .config
