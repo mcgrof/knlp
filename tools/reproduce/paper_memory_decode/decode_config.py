@@ -1,4 +1,5 @@
 """Parse .config and expose typed access for the rest of the package."""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,7 +109,9 @@ class DecodeConfig:
             wandb_entity=get("CONFIG_KNLP_WANDB_ENTITY", ""),
             wandb_mode=get("CONFIG_KNLP_WANDB_MODE", cls.wandb_mode),
             enable_trackerio=bool(get("CONFIG_KNLP_ENABLE_TRACKERIO", False)),
-            trackerio_project=get("CONFIG_KNLP_TRACKERIO_PROJECT", cls.trackerio_project),
+            trackerio_project=get(
+                "CONFIG_KNLP_TRACKERIO_PROJECT", cls.trackerio_project
+            ),
             trackerio_url=get("CONFIG_KNLP_TRACKERIO_URL", ""),
             upload_artifacts=bool(get("CONFIG_KNLP_UPLOAD_ARTIFACTS", False)),
             allow_hardware_skips=bool(get("CONFIG_KNLP_ALLOW_HARDWARE_SKIPS", True)),
@@ -119,6 +122,10 @@ class DecodeConfig:
             raw=raw,
         )
 
+    @property
+    def model_qwen25_7b(self) -> str:
+        return self.qwen25_7b
+
     def is_enabled(self) -> bool:
         return bool(self.raw and self.raw.get("CONFIG_KNLP_REPRODUCE_DECODE"))
 
@@ -127,7 +134,17 @@ class DecodeConfig:
         wt = Path(self.worktree_root).resolve()
         return [
             ("vllm", self.vllm_repo, self.vllm_ref, str(wt / self.vllm_dir)),
-            ("flashinfer", self.flashinfer_repo, self.flashinfer_ref, str(wt / self.flashinfer_dir)),
-            ("lmcache", self.lmcache_repo, self.lmcache_ref, str(wt / self.lmcache_dir)),
+            (
+                "flashinfer",
+                self.flashinfer_repo,
+                self.flashinfer_ref,
+                str(wt / self.flashinfer_dir),
+            ),
+            (
+                "lmcache",
+                self.lmcache_repo,
+                self.lmcache_ref,
+                str(wt / self.lmcache_dir),
+            ),
             ("paper", self.paper_repo, self.paper_ref, str(wt / self.paper_dir)),
         ]
