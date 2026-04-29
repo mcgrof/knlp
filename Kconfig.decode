@@ -1,0 +1,186 @@
+# SPDX-License-Identifier: MIT
+# Configuration for paper-memory-decode reproduction profiles.
+#
+# Selecting one of the decode-* defconfigs sets these values.  After
+# defconfig selection, plain `make` runs the configured profile via
+# Makefile.decode.
+
+menu "Paper-memory-decode reproduction"
+
+config KNLP_REPRODUCE_DECODE
+	bool "Enable paper-memory-decode reproduction profile"
+	default n
+	help
+	  Set by defconfig-decode, defconfig-decode-sat, and
+	  defconfig-decode-full.  When set, plain `make` runs the
+	  configured reproduction profile.
+
+if KNLP_REPRODUCE_DECODE
+
+config KNLP_REPRODUCE_PROFILE
+	string "Reproduction profile name"
+	default "decode"
+	help
+	  One of: decode, decode-sat, decode-full.  Drives stage
+	  selection in tools/reproduce/paper_memory_decode/run.py.
+
+config KNLP_WORKTREE_ROOT
+	string "Parent directory for cloned companion repos"
+	default ".."
+	help
+	  Companion repos (vllm, flashinfer, lmcache,
+	  paper-memory-decode) are cloned into this directory.
+	  Default is the parent of the knlp checkout.
+
+config KNLP_RESULTS_ROOT
+	string "Results directory"
+	default "./results/decode"
+
+config KNLP_BUILD_ROOT
+	string "Build/cache directory"
+	default "./build/decode"
+
+# ── Companion repos ────────────────────────────────────────────
+
+config KNLP_VLLM_REPO
+	string "vLLM repo URL"
+	default "https://github.com/mcgrof/vllm.git"
+
+config KNLP_VLLM_REF
+	string "vLLM git ref (branch, tag, or commit)"
+	default "asymmetric-kv-plumbing"
+
+config KNLP_VLLM_DIR
+	string "vLLM clone directory (relative to WORKTREE_ROOT)"
+	default "vllm"
+
+config KNLP_FLASHINFER_REPO
+	string "FlashInfer repo URL"
+	default "https://github.com/mcgrof/flashinfer.git"
+
+config KNLP_FLASHINFER_REF
+	string "FlashInfer git ref"
+	default "asym-prefill-refactor-stage"
+
+config KNLP_FLASHINFER_DIR
+	string "FlashInfer clone directory"
+	default "flashinfer"
+
+config KNLP_LMCACHE_REPO
+	string "LMCache repo URL"
+	default "https://github.com/mcgrof/LMCache.git"
+
+config KNLP_LMCACHE_REF
+	string "LMCache git ref"
+	default "asymmetric-kv-codec"
+
+config KNLP_LMCACHE_DIR
+	string "LMCache clone directory"
+	default "lmcache"
+
+config KNLP_PAPER_REPO
+	string "Paper repo URL"
+	default "https://github.com/mcgrof/paper-memory-decode.git"
+
+config KNLP_PAPER_REF
+	string "Paper git ref"
+	default "main"
+
+config KNLP_PAPER_DIR
+	string "Paper clone directory"
+	default "paper-memory-decode"
+
+# ── Models / datasets ──────────────────────────────────────────
+
+config KNLP_MODEL_QWEN25_7B
+	string "Qwen2.5-7B HF model id"
+	default "Qwen/Qwen2.5-7B-Instruct"
+
+config KNLP_DATASET_WIKITEXT
+	string "WikiText dataset name"
+	default "wikitext"
+
+config KNLP_DATASET_GSM8K
+	string "GSM8K dataset name"
+	default "gsm8k"
+
+# ── Telemetry ──────────────────────────────────────────────────
+
+config KNLP_ENABLE_WANDB
+	bool "Mirror metrics to Weights & Biases"
+	default n
+	help
+	  When enabled, metrics also stream to W&B.  Local JSONL is
+	  always canonical.  Reads WANDB_API_KEY from environment.
+
+config KNLP_WANDB_PROJECT
+	string "W&B project name"
+	depends on KNLP_ENABLE_WANDB
+	default "knlp-memory-decode"
+
+config KNLP_WANDB_ENTITY
+	string "W&B entity (leave blank for default)"
+	depends on KNLP_ENABLE_WANDB
+	default ""
+
+config KNLP_WANDB_MODE
+	string "W&B mode (online, offline, disabled)"
+	depends on KNLP_ENABLE_WANDB
+	default "online"
+
+config KNLP_ENABLE_TRACKERIO
+	bool "Mirror metrics to trackerio"
+	default n
+
+config KNLP_TRACKERIO_PROJECT
+	string "trackerio project name"
+	depends on KNLP_ENABLE_TRACKERIO
+	default "knlp-memory-decode"
+
+config KNLP_TRACKERIO_URL
+	string "trackerio base URL"
+	depends on KNLP_ENABLE_TRACKERIO
+	default ""
+
+# ── Run policy ─────────────────────────────────────────────────
+
+config KNLP_UPLOAD_ARTIFACTS
+	bool "Upload artifacts (manifest, plots, report) to W&B/trackerio"
+	default n
+	depends on KNLP_ENABLE_WANDB || KNLP_ENABLE_TRACKERIO
+
+config KNLP_ALLOW_HARDWARE_SKIPS
+	bool "Allow stages to skip when required hardware is missing"
+	default y
+	help
+	  When set, stages emit a structured skip entry instead of
+	  failing when their required hardware (e.g. B200, MI300X) is
+	  not present.  Skips are recorded in skips.json and surfaced
+	  in the run report.
+
+config KNLP_FAIL_ON_DIRTY_GIT
+	bool "Fail if any companion repo has uncommitted changes"
+	default y
+
+config KNLP_REQUIRE_PINNED_REFS
+	bool "Require all companion-repo refs to be pinned commit SHAs"
+	default n
+	help
+	  When set, refs must be 40-char commit SHAs (not branch names).
+	  Useful for archival reproduction; relax for development.
+
+config KNLP_PARALLEL_GPUS
+	string "GPU parallelism (auto, off, or fixed integer)"
+	default "auto"
+	help
+	  When the host has multiple GPUs, the orchestrator can shard
+	  independent stages across them with CUDA_VISIBLE_DEVICES.
+	  This is embarrassingly parallel; not tensor parallel.
+
+config KNLP_MAX_PARALLEL_GPU_JOBS
+	int "Maximum concurrent GPU jobs"
+	default 8
+
+endif # KNLP_REPRODUCE_DECODE
+
+endmenu

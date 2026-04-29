@@ -1,0 +1,31 @@
+# Reproduce the core paper-memory-decode results: full-stack vLLM +
+# FlashInfer + LMCache asymmetric K16/V8 quality + implementation
+# gates.  Single-H100 profile.
+CONFIG_KNLP_REPRODUCE_DECODE=y
+CONFIG_KNLP_REPRODUCE_PROFILE="decode"
+CONFIG_KNLP_WORKTREE_ROOT=".."
+CONFIG_KNLP_RESULTS_ROOT="./results/decode"
+CONFIG_KNLP_BUILD_ROOT="./build/decode"
+CONFIG_KNLP_VLLM_REPO="https://github.com/mcgrof/vllm.git"
+CONFIG_KNLP_VLLM_REF="asymmetric-kv-plumbing"
+CONFIG_KNLP_VLLM_DIR="vllm"
+CONFIG_KNLP_FLASHINFER_REPO="https://github.com/mcgrof/flashinfer.git"
+CONFIG_KNLP_FLASHINFER_REF="asym-prefill-refactor-stage"
+CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
+CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_LMCACHE_REF="asymmetric-kv-codec"
+CONFIG_KNLP_LMCACHE_DIR="lmcache"
+CONFIG_KNLP_PAPER_REPO="https://github.com/mcgrof/paper-memory-decode.git"
+CONFIG_KNLP_PAPER_REF="main"
+CONFIG_KNLP_PAPER_DIR="paper-memory-decode"
+CONFIG_KNLP_MODEL_QWEN25_7B="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_KNLP_DATASET_WIKITEXT="wikitext"
+CONFIG_KNLP_DATASET_GSM8K="gsm8k"
+CONFIG_KNLP_ENABLE_WANDB=n
+CONFIG_KNLP_ENABLE_TRACKERIO=n
+CONFIG_KNLP_UPLOAD_ARTIFACTS=n
+CONFIG_KNLP_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_FAIL_ON_DIRTY_GIT=y
+CONFIG_KNLP_REQUIRE_PINNED_REFS=n
+CONFIG_KNLP_PARALLEL_GPUS="auto"
+CONFIG_KNLP_MAX_PARALLEL_GPU_JOBS=8
