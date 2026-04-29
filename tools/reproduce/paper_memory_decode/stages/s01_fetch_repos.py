@@ -32,6 +32,11 @@ def run(ctx: StageContext) -> StageResult:
             name=ctx.name, status="failed", reason="git not found in PATH"
         )
 
+    # Prevent git from trying to prompt for credentials when running
+    # non-interactively.  All repos in the default config are public;
+    # if a clone still fails the error message will be visible in the log.
+    _git_env = {"GIT_TERMINAL_PROMPT": "0"}
+
     failures: list[str] = []
 
     for name, url, ref, abs_path in repos:
@@ -43,7 +48,10 @@ def run(ctx: StageContext) -> StageResult:
         if p.is_dir() and (p / ".git").exists():
             # Already cloned — fetch and checkout.
             rc = ctx.run_subprocess(
-                ["git", "fetch", "--tags", "origin"], cwd=str(p), timeout=300
+                ["git", "fetch", "--tags", "origin"],
+                cwd=str(p),
+                extra_env=_git_env,
+                timeout=300,
             )
             if rc != 0:
                 failures.append(f"{name}: git fetch failed (rc={rc})")
@@ -51,7 +59,11 @@ def run(ctx: StageContext) -> StageResult:
         else:
             # Fresh clone.
             p.parent.mkdir(parents=True, exist_ok=True)
-            rc = ctx.run_subprocess(["git", "clone", url, str(p)], timeout=600)
+            rc = ctx.run_subprocess(
+                ["git", "clone", url, str(p)],
+                extra_env=_git_env,
+                timeout=600,
+            )
             if rc != 0:
                 failures.append(f"{name}: git clone failed (rc={rc})")
                 continue
