@@ -65,6 +65,14 @@ def run(ctx: StageContext) -> StageResult:
                 timeout=600,
             )
             if rc != 0:
+                # The paper repo may not be public yet.  Warn rather than
+                # fail — the code repos are sufficient for all quality gates.
+                if name == "paper":
+                    ctx.stderr_path.open("a").write(
+                        f"WARN: {name}: git clone failed (rc={rc}) — "
+                        "paper source is optional for quality-gate stages\n"
+                    )
+                    continue
                 failures.append(f"{name}: git clone failed (rc={rc})")
                 continue
 
