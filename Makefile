@@ -10,6 +10,11 @@ SHELL := /bin/bash
 # Include Kconfig support to get CONFIG variables
 include Makefile.kconfig
 
+# Include paper-memory-decode reproduction targets (decode-doctor,
+# decode-fetch, decode-build, decode-run, decode-report, decode-upload).
+# When CONFIG_KNLP_REPRODUCE_DECODE=y this overrides .DEFAULT_GOAL.
+include Makefile.decode
+
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
 export GPT2_MAX_TIME := $(TIME)
