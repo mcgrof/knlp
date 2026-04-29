@@ -201,6 +201,16 @@ Do not improvise experiments. Use the selected defconfig.
 `~/.cache/huggingface/token`. The Qwen2.5 download won't proceed
 without one on most provider images.
 
+**`kconfiglib` not installed.** The `make defconfig-decode` step copies
+the defconfig to `.config` and then runs `pyconf.py --olddefconfig` to
+fill in defaults and validate the Kconfig tree.  That second step
+requires `kconfiglib`.  Without it the raw defconfig is used as-is
+(still functional, but unvalidated).  Install it with:
+
+```bash
+pip install kconfiglib
+```
+
 **`cmake: command not found` or version too old.** vLLM's editable
 build wants cmake ≥ 4. Run `pip install --upgrade cmake`. The
 `decode-doctor` stage checks for this and prints the exact fix.

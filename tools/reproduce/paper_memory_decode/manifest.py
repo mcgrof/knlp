@@ -3,6 +3,7 @@
 Captured once at run start and saved to results/<profile>/<run_id>/manifest.json.
 Stable schema_version 1; schema bumps are major events.
 """
+
 from __future__ import annotations
 import datetime as _dt
 import json
@@ -31,9 +32,11 @@ class GitInfo:
 
 def _run(cmd: list[str], cwd: str | None = None) -> str:
     try:
-        return subprocess.check_output(
-            cmd, cwd=cwd, stderr=subprocess.DEVNULL, timeout=30
-        ).decode().strip()
+        return (
+            subprocess.check_output(cmd, cwd=cwd, stderr=subprocess.DEVNULL, timeout=30)
+            .decode()
+            .strip()
+        )
     except Exception:
         return ""
 
@@ -101,12 +104,21 @@ def build_manifest(cfg: DecodeConfig, host: HostInfo, run_id: str) -> Manifest:
         "gsm8k": {"name": cfg.gsm8k},
     }
     m.telemetry = {
-        "wandb": {"enabled": cfg.enable_wandb, "project": cfg.wandb_project,
-                  "entity": cfg.wandb_entity, "mode": cfg.wandb_mode},
-        "trackerio": {"enabled": cfg.enable_trackerio, "project": cfg.trackerio_project,
-                      "url": cfg.trackerio_url},
+        "wandb": {
+            "enabled": cfg.enable_wandb,
+            "project": cfg.wandb_project,
+            "entity": cfg.wandb_entity,
+            "mode": cfg.wandb_mode,
+        },
+        "trackerio": {
+            "enabled": cfg.enable_trackerio,
+            "project": cfg.trackerio_project,
+            "url": cfg.trackerio_url,
+        },
     }
-    m.config = {k: v for k, v in (cfg.raw or {}).items() if k.startswith("CONFIG_KNLP_")}
+    m.config = {
+        k: v for k, v in (cfg.raw or {}).items() if k.startswith("CONFIG_KNLP_")
+    }
     return m
 
 
