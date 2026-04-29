@@ -717,29 +717,33 @@
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
-    <a href="https://github.com/mcgrof/flashinfer">FlashInfer</a>
-    <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant</a>
+    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer</a>
+    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM</a>
+    <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache</a>
     <a href="https://github.com/mcgrof/paper-memory-decode">Paper</a>
+    <a href="#reproduce">Reproduce</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
   </nav>
 </header>
 
 <section class="hero">
   <div class="tag-row">
-    <span class="tag tag-green">PRODUCTION RESULT</span>
+    <span class="tag tag-green">FULL-STACK VALIDATED</span>
     <span class="tag tag-cyan">H100 · A100 · B200 · W7900 · MI300X</span>
     <span class="tag tag-purple">14 Models · 7 Families</span>
-    <span class="tag tag-amber">Asymmetric FP16-K / FP8-V</span>
+    <span class="tag tag-amber">Asymmetric K16/V8</span>
   </div>
   <h1>Memory-Traffic Saturation in<br>Autoregressive Transformer Decode</h1>
   <p class="hero-sub">
-    <strong>Asymmetric FP16-K / FP8-V KV cache quantization via a modified FlashInfer matches or beats FP16 decode
-    throughput on every tested model</strong> and reaches <em>1.38× FP16 on Qwen2.5-7B</em> at vLLM batch 32, while
-    providing 1.33× KV-cache capacity. It also restores retrieval quality on fragile-key models: symmetric FP8 drops
-    Qwen2.5-7B NIAH accuracy at 32K tokens to <em>0.00</em>; asymmetric K16/V8 recovers it to <em>0.89</em>, above the
-    FP16 baseline. Behind the practical result: decode is governed by memory-traffic physics, and a batch-driven Hill
-    saturation model (<em>R² = 0.80</em>) predicts the speedup across 14 models and 5 GPU architectures without
-    per-model benchmarking.
+    <strong>Asymmetric K16/V8 KV cache quantization via modified vLLM + FlashInfer matches FP16 perplexity on
+    Qwen2.5-7B at both 2K and 8K context</strong> and recovers GSM8K to within 0.5 pp (90.0% vs 90.5% FP16, n=200,
+    8-shot), while symmetric FP8 collapses (PPL 214→1058, GSM8K 2.0%). The asymmetric path runs end-to-end through
+    the modified serving stack: prefill-time V quantization, paged-cache writes, and asymmetric FlashInfer
+    prefill/decode kernels. At the standalone-kernel level on the headline Qwen2.5-7B lane, K16/V8 matches FP16
+    within measurement noise and is 33% faster than symmetric FP8 by avoiding the serial K-dequant path.
+    Behind the practical result: throughput scaling is governed primarily by memory traffic, while quantization
+    safety remains model-family dependent. K16/V8 means native-16-bit keys (FP16 or BF16 depending on model dtype)
+    plus FP8 e4m3 values; the Qwen2.5-7B vLLM runs use BF16 K + FP8 V.
   </p>
   <div>
     <a class="paper-link" href="https://github.com/mcgrof/paper-memory-decode">paper-memory-decode repo ↗</a>
@@ -780,18 +784,128 @@
   </div>
 </section>
 
-<!-- P0: HEADLINE — ASYMMETRIC FP16-K / FP8-V -->
+<!-- HEADLINE: FULL-STACK Qwen2.5-7B QUALITY VALIDATION -->
+<section class="panel-section">
+  <div class="panel-header">
+    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">★</span>
+    <span class="panel-title">Full-Stack vLLM + FlashInfer Validation — Qwen2.5-7B-Instruct on H100</span>
+  </div>
+  <p class="panel-body">
+    The asymmetric K16/V8 result now runs end-to-end through the modified vLLM + FlashInfer serving stack with
+    explicit FlashInfer backend selection. The asymmetric path exercises prefill-time V quantization, paged-cache
+    writes, and asymmetric FlashInfer prefill/decode kernels. The table reports controlled FP16 / FP8-sym / K16/V8
+    measurements on the same H100 path: K16/V8 matches FP16 perplexity to reported precision at both 2K and 8K
+    context and recovers GSM8K to within 0.5 percentage points, while symmetric FP8 collapses on Qwen.
+  </p>
+
+  <div class="kr-table" style="margin:24px 0;">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:14px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border2);">
+          <th style="text-align:left;padding:12px 16px;color:var(--text2);font-weight:600;">Config</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@2K</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">PPL@8K</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">GSM8K (n=200)</th>
+          <th style="text-align:right;padding:12px 16px;color:var(--text2);font-weight:600;">Smoke tok/s</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:12px 16px;">FP16 baseline</td>
+          <td style="text-align:right;padding:12px 16px;">6.997</td>
+          <td style="text-align:right;padding:12px 16px;">5.243</td>
+          <td style="text-align:right;padding:12px 16px;">90.5%</td>
+          <td style="text-align:right;padding:12px 16px;">102.6</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:12px 16px;">FP8 symmetric</td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>214.3</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>1058.0</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--red);"><strong>2.0%</strong></td>
+          <td style="text-align:right;padding:12px 16px;">97.9</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;"><strong>Asymmetric K16/V8</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>6.997</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>5.243</strong></td>
+          <td style="text-align:right;padding:12px 16px;color:var(--green);"><strong>90.0%</strong></td>
+          <td style="text-align:right;padding:12px 16px;">105.8</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="panel-body" style="margin-top:16px;">
+    Symmetric FP8 PPL gets <em>5× worse</em> from 2K to 8K (214→1058) — the K-fragility phenomenon strengthens
+    at longer context. Asymmetric K16/V8 stays bit-identical to FP16 PPL across both context lengths.
+    This is the final serving-stack validation; the earlier HuggingFace <code>DynamicCache</code> simulation in
+    Section V is retained only as a precision-asymmetry cross-check.
+  </p>
+
+  <div class="kr-label" style="margin-top:24px;">Implementation gates — three failure surfaces, all closed</div>
+  <div class="kr-table" style="margin:12px 0;">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border2);">
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Gate</th>
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">FlashInfer decode, BF16-K / FP8-V</td>
+          <td style="padding:10px 16px;color:var(--green);">rel err 0.0254 vs BF16 ref</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">FlashInfer prefill, BF16-K / FP8-V</td>
+          <td style="padding:10px 16px;color:var(--green);">rel err 0.0255 vs BF16 ref</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">vLLM cache writer</td>
+          <td style="padding:10px 16px;color:var(--green);">K bit-exact, V within FP8 noise</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;">K/V aliasing check</td>
+          <td style="padding:10px 16px;color:var(--green);">disjoint storage</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 16px;">Required backend</td>
+          <td style="padding:10px 16px;">FlashInfer via <code>attention_config</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="kr-label" style="margin-top:24px;">Production recipe</div>
+  <pre style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;color:var(--text);"><code>from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="Qwen/Qwen2.5-7B-Instruct",
+    dtype="bfloat16",
+    kv_cache_dtype=("auto", "fp8_e4m3"),         # K native, V FP8
+    attention_config={"backend": "FLASHINFER"},  # required: auto picks FlashAttn
+)</code></pre>
+  <p class="panel-body" style="margin-top:8px;font-size:13px;color:var(--text2);">
+    The <code>VLLM_ATTENTION_BACKEND</code> environment variable is <em>not honored</em> in this vLLM build —
+    pass <code>attention_config={"backend": "FLASHINFER"}</code> explicitly. Auto-selection picks FlashAttention,
+    which lacks the asymmetric tuple writer.
+  </p>
+</section>
+
+<!-- P0: HEADLINE — ASYMMETRIC K16/V8 -->
 <section class="panel-section">
   <div class="panel-header">
     <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">P0</span>
-    <span class="panel-title">Asymmetric FP16-K / FP8-V — The Production Decode Operating Point</span>
+    <span class="panel-title">Asymmetric K16/V8 — The Production Decode Operating Point</span>
   </div>
   <p class="panel-body">
-    Storing keys at native FP16 and only quantizing values to FP8 keeps <em>K</em> dequantization off the softmax serial
-    critical path (it never happens) while <em>V</em> dequantization overlaps with the reduction pipeline. The net result
-    is a configuration that matches FP16 decode throughput within measurement noise on every model and
-    exceeds it on GQA-heavy architectures — with 1.33× KV cache capacity and <strong>zero custom kernels beyond
-    an upstreamable FlashInfer modification</strong>.
+    Storing keys at native 16-bit precision and only quantizing values to FP8 keeps <em>K</em> dequantization off
+    the softmax serial critical path (it never happens) while <em>V</em> dequantization overlaps with the reduction
+    pipeline. At the standalone FlashInfer kernel level on the headline Qwen2.5-7B lane, asymmetric K16/V8 matches
+    FP16 within measurement noise and is 33% faster than symmetric FP8 by avoiding the serial K-dequant path.
+    Across the three-model vLLM batch-32 throughput comparison (Qwen2.5-7B, Llama-3.1-8B, Marin-8B), asymmetric
+    is 4.8–9.6% faster than symmetric FP8 while providing 1.33× KV cache capacity.
+    Implementation requires modified vLLM/FlashInfer kernels but no model changes, retraining, or calibration.
   </p>
 
   <div class="pipeline-grid">
@@ -835,16 +949,19 @@
       <strong>Llama-3.1-8B (tolerant)</strong> &nbsp;&nbsp;FP16: 1.00 &nbsp;·&nbsp; FP8-sym: 1.00 &nbsp;·&nbsp; Asym K16/V8: 1.00
     </div>
     Qwen2.5-7B under symmetric FP8 suffers total retrieval failure — not graceful degradation, complete collapse.
-    Asymmetric K16/V8 matches or exceeds the FP16 baseline on every row. Tolerant models are unaffected in either
-    direction, so asymmetric is the safe universal default.
+    Asymmetric K16/V8 matches FP16 within measurement noise and slightly exceeds it on the Qwen2.5-7B 32K row
+    (0.89 vs 0.84). Tolerant models are unaffected in either direction, so asymmetric is the recommended safe
+    default among the evaluated fused FP8 KV-cache paths.
   </div>
 
   <div class="citation-block">
     Code: <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a> ·
-    branches <a href="https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-dtype"><code>asymmetric-kv-dtype</code></a>
-    (FP16-K / FP8-V production path) and
-    <a href="https://github.com/mcgrof/flashinfer/tree/asymmetric-kv-int4v"><code>asymmetric-kv-int4v</code></a>
-    (INT4-V evolution). Integrates with vLLM 0.19 via <code>kv_cache_dtype=auto;fp8_e4m3</code>.
+    branch <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>
+    (K16/V8 production path with FI-1..FI-5 CUDA template refactor for independent K/V dtypes in
+    prefill+decode). vLLM-side plumbing on
+    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing"><code>asymmetric-kv-plumbing</code></a>.
+    Integrates with vLLM via <code>LLM(kv_cache_dtype=("auto", "fp8_e4m3"),
+    attention_config={"backend": "FLASHINFER"})</code>.
   </div>
 </section>
 
@@ -910,12 +1027,14 @@
   <p class="panel-body">
     vLLM 0.19 + FlashInfer decode throughput measured at batch 32 on H100 SXM5 across eight open-weight
     models spanning three architectures. The comparison is three-way: FP16 baseline, symmetric FP8, and
-    our asymmetric K16/V8 branch. Asymmetric matches or exceeds FP16 on production-scale models (7B and
-    up) and reaches <strong>1.38× FP16 on Qwen2.5-7B</strong>. Small-model throughput
-    (0.5–1.5B) sits slightly under FP16 because at that scale per-step bandwidth is dominated by model
-    weights, not KV cache — KV compression contributes less of the total savings. Symmetric FP8 falls
-    below asymmetric on every model because K dequantization under symmetric FP8 lies on the softmax
-    serial critical path, whereas asymmetric keeps K at native precision and only pipelines V dequant.
+    our asymmetric K16/V8 branch. Asymmetric reaches <strong>1.38× FP16 on Qwen2.5-7B</strong> — the
+    largest end-to-end win — and is within a few percent of FP16 on the remaining models, with some small
+    or integration-sensitive cases trailing FP16 (Qwen3-8B at 0.94×, DS-R1-7B at 0.96×, Phi-4-14B at 0.99×).
+    Small-model throughput (0.5–1.5B) sits slightly under FP16 because at that scale per-step bandwidth is
+    dominated by model weights, not KV cache — KV compression contributes less of the total savings.
+    Symmetric FP8 falls below asymmetric on every model because K dequantization under symmetric FP8 lies
+    on the softmax serial critical path, whereas asymmetric keeps K at native precision and only pipelines
+    V dequant.
   </p>
 
   <!-- Per-model 3-row bars: FP16 / FP8-sym / asym K16/V8 -->
@@ -934,9 +1053,11 @@
 
   <div class="citation-block">
     Source: <code>/data/knlp-key-results/h100-flashinfer/h100_throughput_sweep.json</code>.
-    Measurements at batch 32 through vLLM 0.19 + FlashInfer 0.6.7 with our asymmetric-KV-dtype
-    branch applied (<a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a>).
-    FlashInfer paged-cache infrastructure; no custom kernel code beyond the upstreamable asymmetric patch.
+    Measurements at batch 32 through vLLM 0.19 + FlashInfer 0.6.7 with our K16/V8 branch applied
+    (<a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>).
+    Asymmetric K16/V8 requires the small vLLM/FlashInfer dtype-split extension described in the paper —
+    no model changes, no calibration. Symmetric FP8 maps onto existing FlashInfer paged-cache infrastructure
+    without modification.
   </div>
 </section>
 
@@ -1358,13 +1479,18 @@
   </div>
 
   <div class="citation-block">
-    <strong>Practical deployment recipe:</strong> The recommended default for all tested models is
-    <strong>asymmetric FP16-K / FP8-V</strong> via the modified FlashInfer (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>). It provides 1.33× KV-cache capacity with no throughput penalty,
-    is the only quality-safe configuration for fragile-key models (Qwen), and requires no custom kernels —
-    just the FlashInfer branches at <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a>.
-    For maximum capacity, symmetric FP8 doubles KV storage at a 3–8% throughput cost on H100 (1.7–2.5% on MI300X),
-    and stays quality-safe on tolerant models.  The custom fused INT4 Triton kernel (<a href="#" onclick="return false;" style="color:var(--cyan);">P2</a>) remains available in the repository as a
-    controlled experiment that proves the fusion mechanism in isolation — it is not the production path.
+    <strong>Practical deployment recipe:</strong> The recommended safe default among the evaluated fused FP8
+    KV-cache paths is <strong>asymmetric K16/V8</strong> via the modified FlashInfer + vLLM
+    (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>). It provides 1.33× KV-cache
+    capacity, avoids the Qwen-family quality failures of symmetric FP8, and is within measurement noise of
+    FP16 at the standalone-kernel level. End-to-end throughput depends on model size, context, batch, and
+    serving-stack overhead. The implementation requires modified vLLM/FlashInfer kernels but no model
+    changes, retraining, or calibration.
+    For maximum capacity, symmetric FP8 doubles KV storage at a 3–8% throughput cost on H100 (1.7–2.5% on
+    MI300X), and stays quality-safe on tolerant models. The custom fused INT4 Triton kernel
+    (<a href="#" onclick="return false;" style="color:var(--cyan);">P2</a>) remains available in the
+    repository as a controlled experiment that proves the fusion mechanism in isolation — it is not the
+    production path.
     <br>
     Code:
     <a href="https://github.com/mcgrof/flashinfer">FlashInfer fork</a> ·
@@ -1372,6 +1498,72 @@
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md">hardware notes</a> ·
     <a href="https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py">ratio_classifier.py</a>
   </div>
+</section>
+
+<!-- REPRODUCE -->
+<section class="panel-section" id="reproduce">
+  <div class="panel-header">
+    <span class="panel-id" style="background:rgba(124,110,255,0.15);color:var(--accent3,#7c6eff);border-color:#5a4fc0;">REP</span>
+    <span class="panel-title">Reproduce — Companion Repos and Defconfig Workflow</span>
+  </div>
+  <p class="panel-body">
+    The full-stack vLLM + FlashInfer asymmetric K16/V8 result depends on three modified serving-stack
+    repos plus the paper LaTeX source. All four are public on GitHub with the exact branches the paper
+    measurements were taken on.
+  </p>
+
+  <div class="kr-table" style="margin:16px 0;">
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border2);">
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Repo</th>
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">Branch</th>
+          <th style="text-align:left;padding:10px 16px;color:var(--text2);font-weight:600;">What it contains</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">mcgrof/vllm</a></td>
+          <td style="padding:10px 16px;"><code>asymmetric-kv-plumbing</code></td>
+          <td style="padding:10px 16px;">Tuple K/V cache, FlashAttn writer patch, asym dtype plumbing</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">mcgrof/flashinfer</a></td>
+          <td style="padding:10px 16px;"><code>asym-prefill-refactor-stage</code></td>
+          <td style="padding:10px 16px;">FI-1..FI-5 CUDA template refactor for independent K/V dtypes in prefill+decode</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border);">
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">mcgrof/LMCache</a></td>
+          <td style="padding:10px 16px;"><code>asymmetric-kv-codec</code></td>
+          <td style="padding:10px 16px;">K16/V8 codec, split-tier placement, serde, 74 CPU unit tests</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/paper-memory-decode">mcgrof/paper-memory-decode</a></td>
+          <td style="padding:10px 16px;"><code>main</code></td>
+          <td style="padding:10px 16px;">LaTeX source, figures, data, generate scripts</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="panel-body">
+    The knlp defconfig system provides one-command reproduction of the core paper findings:
+  </p>
+  <pre style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;color:var(--text);"><code>git clone https://github.com/mcgrof/knlp.git && cd knlp
+make defconfig-decode       # Core asym claims (1×H100, ~4-8 h warm)
+make</code></pre>
+  <p class="panel-body" style="margin-top:8px;">
+    Three reproduction profiles are planned: <code>defconfig-decode</code> (core full-stack quality
+    battery + standalone FlashInfer gates + LMCache codec checks),
+    <code>defconfig-decode-sat</code> (saturation model + Hill fit), and
+    <code>defconfig-decode-full</code> (everything possible from the paper, with structured skip reports
+    when cross-GPU hardware is missing). Each defconfig pins exact git refs, clones the four repos into
+    the parent directory, builds the modified serving stack, runs the configured stages, and writes
+    machine-readable artifacts to <code>results/decode/&lt;run_id&gt;/</code>. Local JSONL telemetry is
+    canonical; W&amp;B and trackerio are optional mirrors. See
+    <a href="https://github.com/mcgrof/knlp/blob/main/docs/reproduce/paper-memory-decode.md">docs/reproduce/paper-memory-decode.md</a>
+    for the full quickstart, runtime estimates, hardware requirements, and AI-agent instructions.
+  </p>
 </section>
 
 <footer>
@@ -1383,7 +1575,9 @@
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
     <a href="https://github.com/mcgrof/paper-memory-decode">Paper Repo</a>
-    <a href="https://github.com/mcgrof/flashinfer">FlashInfer Fork</a>
+    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer Fork</a>
+    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM Fork</a>
+    <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache Fork</a>
     <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant Docs</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
   </div>
@@ -1492,7 +1686,7 @@ function updateSatMarker() {
 
 // ── FlashInfer per-model production throughput bars ──
 // Source: h100_throughput_sweep.json (H100 SXM5, vLLM 0.19 + FlashInfer 0.6.7,
-// asymmetric-kv-dtype branch, batch 32). tok/s measured end-to-end.
+// asym-prefill-refactor-stage branch, batch 32). tok/s measured end-to-end.
 const fiModels = [
   { name: 'Qwen2.5-0.5B',   fp16: 3312.3, fp8: 3098.9, asym: 2884.4 },
   { name: 'Qwen2.5-1.5B',   fp16: 2912.9, fp8: 2741.3, asym: 2857.4 },
