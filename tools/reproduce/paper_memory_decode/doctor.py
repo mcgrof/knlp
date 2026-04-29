@@ -12,9 +12,11 @@ from .hardware import HostInfo
 MIN_DISK_GB = {"decode": 200, "decode-sat": 100, "decode-full": 500}
 
 
-def run_checks(cfg: DecodeConfig, host: HostInfo) -> list[str]:
-    """Return a list of human-readable issues.  Empty list means OK."""
+def run_checks(cfg: DecodeConfig, host: HostInfo) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings).  errors non-empty means the stage fails.
+    warnings are logged but do not block the run."""
     issues: list[str] = []
+    warnings: list[str] = []
 
     # --- Tools ----------------------------------------------------------
     if not host.has_git:
@@ -57,14 +59,15 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> list[str]:
 
     # --- Secrets / network ----------------------------------------------
     if not host.has_hf_token:
-        issues.append(
+        # Qwen2.5-7B-Instruct is public; missing token is a warning not an error.
+        warnings.append(
             "HF token not present (HF_TOKEN env or ~/.cache/huggingface/token); "
-            "Qwen2.5 download may fail"
+            "Qwen2.5 download will work for public models but may fail for gated ones"
         )
     if cfg.enable_wandb and not host.has_wandb_key:
-        issues.append("CONFIG_KNLP_ENABLE_WANDB=y but WANDB_API_KEY not set")
+        warnings.append("CONFIG_KNLP_ENABLE_WANDB=y but WANDB_API_KEY not set")
     if cfg.enable_trackerio and not host.has_trackerio_key:
-        issues.append(
+        warnings.append(
             "CONFIG_KNLP_ENABLE_TRACKERIO=y but TRACKERIO_API_KEY/TRACKERIO_TOKEN not set"
         )
 
@@ -83,13 +86,19 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> list[str]:
                     f"CONFIG_KNLP_REQUIRE_PINNED_REFS=y but {name} ref '{ref}' is not a 40-char SHA"
                 )
 
-    return issues
+    return issues, warnings
 
 
-def render(cfg, host, issues: list[str]) -> str:
+def render(cfg, host, issues: list[str], warnings: list[str] | None = None) -> str:
+    lines = []
+    if warnings:
+        lines.append("decode-doctor: warnings (non-blocking):")
+        for w in warnings:
+            lines.append(f"  ~ {w}")
     if not issues:
-        return "decode-doctor: all checks passed."
-    lines = ["decode-doctor: issues found:"]
+        lines.append("decode-doctor: all checks passed.")
+        return "\n".join(lines) if lines else "decode-doctor: all checks passed."
+    lines.append("decode-doctor: issues found:")
     for i in issues:
         lines.append(f"  - {i}")
     return "\n".join(lines)

@@ -58,8 +58,8 @@ def _existing_run_id(results_root: Path, profile: str) -> Optional[str]:
 
 def cmd_doctor(args, cfg: DecodeConfig) -> int:
     host = _hardware.detect()
-    issues = _doctor.run_checks(cfg, host)
-    print(_doctor.render(cfg, host, issues))
+    issues, warnings = _doctor.run_checks(cfg, host)
+    print(_doctor.render(cfg, host, issues, warnings))
     return 1 if issues else 0
 
 
