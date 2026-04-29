@@ -78,12 +78,24 @@ def detect() -> HostInfo:
         if rocm:
             h.rocm_version = rocm[0]
 
-    # Disk + RAM
-    try:
-        st = os.statvfs(".")
-        h.free_disk_gb = (st.f_bavail * st.f_frsize) / (1024**3)
-    except Exception:
-        pass
+    # Disk + RAM — check multiple candidate paths and keep the max.
+    # On RunPod the large volume is at /runpod-volume, not the root fs.
+    _disk_candidates = [
+        os.environ.get("KNLP_WORKTREE_ROOT", ".."),
+        "/runpod-volume",
+        "/workspace",
+        ".",
+    ]
+    _best_free = 0.0
+    for _dp in _disk_candidates:
+        try:
+            _st = os.statvfs(_dp)
+            _free = (_st.f_bavail * _st.f_frsize) / (1024**3)
+            if _free > _best_free:
+                _best_free = _free
+        except Exception:
+            pass
+    h.free_disk_gb = _best_free
     try:
         with open("/proc/meminfo") as f:
             for line in f:

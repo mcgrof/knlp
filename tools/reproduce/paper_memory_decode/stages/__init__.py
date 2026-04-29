@@ -167,12 +167,17 @@ def _not_yet(ctx: StageContext) -> StageResult:
 def stage_doctor(ctx: StageContext) -> StageResult:
     from .. import doctor as _doctor
 
-    issues = _doctor.run_checks(ctx.cfg, ctx.host)
+    issues, warnings = _doctor.run_checks(ctx.cfg, ctx.host)
     ctx.log_metric("issue_count", len(issues))
+    ctx.log_metric("warning_count", len(warnings))
+    with ctx.stderr_path.open("a") as f:
+        for w in warnings:
+            f.write(f"DOCTOR WARN: {w}\n")
+        for i in issues:
+            f.write(f"DOCTOR ERROR: {i}\n")
+        if issues:
+            f.write(f"STAGE FAILED: {'; '.join(issues)}\n")
     if issues:
-        with ctx.stderr_path.open("a") as f:
-            for i in issues:
-                f.write(f"DOCTOR: {i}\n")
         return StageResult(name=ctx.name, status="failed", reason="; ".join(issues[:3]))
     return StageResult(name=ctx.name, status="passed")
 
