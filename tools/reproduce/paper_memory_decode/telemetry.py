@@ -1,5 +1,6 @@
 """Telemetry abstraction.  Local JSONL is canonical; W&B and trackerio
 are optional mirrors."""
+
 from __future__ import annotations
 import json
 import os
@@ -14,7 +15,9 @@ class Telemetry:
 
     def start_run(self, manifest: dict) -> None: ...
     def start_stage(self, stage: str, config: dict) -> None: ...
-    def log_metric(self, name: str, value: float | int | str, **labels: Any) -> None: ...
+    def log_metric(
+        self, name: str, value: float | int | str, **labels: Any
+    ) -> None: ...
     def log_artifact(self, path: str | Path, artifact_type: str = "result") -> None: ...
     def finish_stage(self, status: str) -> None: ...
     def finish_run(self) -> None: ...
@@ -44,13 +47,15 @@ class LocalTelemetry(Telemetry):
         self._write({"event": "stage_start", "stage": stage, "config": config})
 
     def log_metric(self, name: str, value, **labels) -> None:
-        self._write({
-            "event": "metric",
-            "stage": self._stage,
-            "name": name,
-            "value": value,
-            "labels": labels,
-        })
+        self._write(
+            {
+                "event": "metric",
+                "stage": self._stage,
+                "name": name,
+                "value": value,
+                "labels": labels,
+            }
+        )
 
     def log_artifact(self, path, artifact_type: str = "result") -> None:
         rec = {"stage": self._stage, "path": str(path), "type": artifact_type}
@@ -76,6 +81,7 @@ class WandbTelemetry(Telemetry):
         self._wandb = None
         try:
             import wandb  # type: ignore[import-not-found]
+
             self._wandb = wandb
         except Exception:
             return
@@ -97,7 +103,9 @@ class WandbTelemetry(Telemetry):
 
     def log_metric(self, name: str, value, **labels) -> None:
         if self._wandb is not None and isinstance(value, (int, float)):
-            self._wandb.log({name: value, **{f"label.{k}": v for k, v in labels.items()}})
+            self._wandb.log(
+                {name: value, **{f"label.{k}": v for k, v in labels.items()}}
+            )
 
     def log_artifact(self, path, artifact_type: str = "result") -> None:
         if self._wandb is not None and Path(path).exists():
@@ -126,6 +134,7 @@ class TrackerIOTelemetry(Telemetry):
         self._client = None
         try:
             import trackio  # type: ignore[import-not-found]
+
             self._client = trackio
         except Exception:
             return
@@ -175,10 +184,17 @@ def build(cfg, manifest_dict: dict, results_dir: Path) -> Telemetry:
     sinks: list[Telemetry] = [LocalTelemetry(results_dir)]
     if cfg.enable_wandb and os.environ.get("WANDB_API_KEY"):
         sinks.append(
-            WandbTelemetry(cfg.wandb_project, cfg.wandb_entity or None,
-                           cfg.wandb_mode, manifest_dict)
+            WandbTelemetry(
+                cfg.wandb_project,
+                cfg.wandb_entity or None,
+                cfg.wandb_mode,
+                manifest_dict,
+            )
         )
-    if cfg.enable_trackerio and (os.environ.get("TRACKERIO_API_KEY") or
-                                  os.environ.get("TRACKERIO_TOKEN")):
-        sinks.append(TrackerIOTelemetry(cfg.trackerio_project, cfg.trackerio_url, manifest_dict))
+    if cfg.enable_trackerio and (
+        os.environ.get("TRACKERIO_API_KEY") or os.environ.get("TRACKERIO_TOKEN")
+    ):
+        sinks.append(
+            TrackerIOTelemetry(cfg.trackerio_project, cfg.trackerio_url, manifest_dict)
+        )
     return CompositeTelemetry(sinks)

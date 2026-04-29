@@ -1,4 +1,5 @@
 """Pre-flight checks that surface problems before we burn build/GPU time."""
+
 from __future__ import annotations
 import shutil
 from pathlib import Path
@@ -36,7 +37,9 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> list[str]:
     # --- Hardware -------------------------------------------------------
     if host.gpu_count == 0:
         if cfg.profile == "decode" or cfg.profile == "decode-full":
-            issues.append("no GPU detected; decode/decode-full profiles require an NVIDIA H100")
+            issues.append(
+                "no GPU detected; decode/decode-full profiles require an NVIDIA H100"
+            )
     else:
         # Memory sanity for 7B
         if host.gpu_memory_mb and max(host.gpu_memory_mb) < 70_000:
@@ -61,12 +64,16 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> list[str]:
     if cfg.enable_wandb and not host.has_wandb_key:
         issues.append("CONFIG_KNLP_ENABLE_WANDB=y but WANDB_API_KEY not set")
     if cfg.enable_trackerio and not host.has_trackerio_key:
-        issues.append("CONFIG_KNLP_ENABLE_TRACKERIO=y but TRACKERIO_API_KEY/TRACKERIO_TOKEN not set")
+        issues.append(
+            "CONFIG_KNLP_ENABLE_TRACKERIO=y but TRACKERIO_API_KEY/TRACKERIO_TOKEN not set"
+        )
 
     # --- Companion-repo paths -------------------------------------------
     wt = Path(cfg.worktree_root).resolve()
     if not wt.exists():
-        issues.append(f"worktree root {wt} does not exist; create it or set CONFIG_KNLP_WORKTREE_ROOT")
+        issues.append(
+            f"worktree root {wt} does not exist; create it or set CONFIG_KNLP_WORKTREE_ROOT"
+        )
 
     # --- Pinned-ref policy ----------------------------------------------
     if cfg.require_pinned_refs:
