@@ -222,6 +222,7 @@ source "Kconfig.models"
 source "Kconfig.optimizers"
 source "Kconfig.pruning"
 source "Kconfig.ra_mla"
+source "Kconfig.decode"
 
 menu "Advanced Options"
 
