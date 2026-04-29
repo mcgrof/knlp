@@ -1,4 +1,5 @@
 """Detect host hardware and reproduction-relevant capabilities."""
+
 from __future__ import annotations
 import os
 import shutil
@@ -50,9 +51,15 @@ def detect() -> HostInfo:
 
     # NVIDIA GPUs
     if shutil.which("nvidia-smi"):
-        names = _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]).splitlines()
-        mems = _run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"]).splitlines()
-        drv = _run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"]).splitlines()
+        names = _run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]
+        ).splitlines()
+        mems = _run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"]
+        ).splitlines()
+        drv = _run(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"]
+        ).splitlines()
         h.gpu_count = len([n for n in names if n.strip()])
         h.gpu_names = [n.strip() for n in names if n.strip()]
         h.gpu_memory_mb = [int(m.strip()) for m in mems if m.strip().isdigit()]
@@ -92,7 +99,9 @@ def detect() -> HostInfo:
         os.path.expanduser("~/.cache/huggingface/token")
     )
     h.has_wandb_key = bool(os.environ.get("WANDB_API_KEY"))
-    h.has_trackerio_key = bool(os.environ.get("TRACKERIO_API_KEY") or os.environ.get("TRACKERIO_TOKEN"))
+    h.has_trackerio_key = bool(
+        os.environ.get("TRACKERIO_API_KEY") or os.environ.get("TRACKERIO_TOKEN")
+    )
 
     # Provider tags (best-effort, no secrets)
     for env_key, label in [

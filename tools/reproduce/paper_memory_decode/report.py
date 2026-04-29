@@ -1,4 +1,5 @@
 """Generate report.md and report.json from stage results."""
+
 from __future__ import annotations
 import json
 from dataclasses import asdict
@@ -47,7 +48,9 @@ def collect_stage_outputs(run_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
-def write_reports(run_dir: Path, manifest: dict, stage_results: list[dict]) -> tuple[Path, Path]:
+def write_reports(
+    run_dir: Path, manifest: dict, stage_results: list[dict]
+) -> tuple[Path, Path]:
     run_dir.mkdir(parents=True, exist_ok=True)
     json_path = run_dir / "report.json"
     md_path = run_dir / "report.md"
@@ -72,18 +75,26 @@ def write_reports(run_dir: Path, manifest: dict, stage_results: list[dict]) -> t
     md.append(f"- Run ID: `{summary['run_id']}`")
     md.append(f"- Started: {summary['started_at']}")
     hw = summary["hardware"]
-    md.append(f"- Hardware: {hw.get('gpu_count', 0)}× "
-              f"{', '.join(hw.get('gpu_names') or ['no GPU'])}")
-    md.append(f"  · CUDA {hw.get('cuda_version', '?')}, "
-              f"driver {hw.get('driver_version', '?')}")
-    md.append(f"  · Disk free {hw.get('free_disk_gb', 0)} GB, "
-              f"RAM {hw.get('total_ram_gb', 0)} GB\n")
+    md.append(
+        f"- Hardware: {hw.get('gpu_count', 0)}× "
+        f"{', '.join(hw.get('gpu_names') or ['no GPU'])}"
+    )
+    md.append(
+        f"  · CUDA {hw.get('cuda_version', '?')}, "
+        f"driver {hw.get('driver_version', '?')}"
+    )
+    md.append(
+        f"  · Disk free {hw.get('free_disk_gb', 0)} GB, "
+        f"RAM {hw.get('total_ram_gb', 0)} GB\n"
+    )
 
     md.append("## Git refs")
     for name, info in summary["git"].items():
         dirty = " (dirty)" if info.get("dirty") else ""
-        md.append(f"- **{name}** `{info.get('ref', '')}` "
-                  f"{(info.get('commit') or '')[:12]}{dirty}")
+        md.append(
+            f"- **{name}** `{info.get('ref', '')}` "
+            f"{(info.get('commit') or '')[:12]}{dirty}"
+        )
     md.append("")
 
     md.append("## Stage results")
@@ -91,8 +102,13 @@ def write_reports(run_dir: Path, manifest: dict, stage_results: list[dict]) -> t
     md.append("|---|---|---|")
     for s in stage_results:
         notes = s.get("reason") or f"{s.get('metric_count', 0)} metrics"
-        emoji = {"passed": "✅", "failed": "❌", "skipped": "⏭",
-                 "warned": "⚠", "missing": "·"}.get(s["status"], "?")
+        emoji = {
+            "passed": "✅",
+            "failed": "❌",
+            "skipped": "⏭",
+            "warned": "⚠",
+            "missing": "·",
+        }.get(s["status"], "?")
         md.append(f"| `{s['name']}` | {emoji} {s['status']} | {notes} |")
     md.append("")
 
@@ -102,9 +118,11 @@ def write_reports(run_dir: Path, manifest: dict, stage_results: list[dict]) -> t
     md.append(f"- **Skipped**: {summary['skip_count']}\n")
 
     if summary["fail_count"]:
-        md.append("**Run did not complete successfully.** Inspect "
-                  "`results/<run_id>/stages/<stage>/stderr.log` for the "
-                  "failed stages.\n")
+        md.append(
+            "**Run did not complete successfully.** Inspect "
+            "`results/<run_id>/stages/<stage>/stderr.log` for the "
+            "failed stages.\n"
+        )
 
     md.append("## Artifacts")
     md.append(f"- Manifest: `{run_dir}/manifest.json`")
