@@ -15,6 +15,11 @@ include Makefile.kconfig
 # When CONFIG_KNLP_REPRODUCE_DECODE=y this overrides .DEFAULT_GOAL.
 include Makefile.decode
 
+# Include CartridgeConnector vLLM validation targets (cartridges-doctor,
+# cartridges-fetch, cartridges-build, cartridges-test, cartridges-report).
+# When CONFIG_KNLP_REPRODUCE_CARTRIDGES=y this overrides .DEFAULT_GOAL.
+include Makefile.cartridges
+
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
 export GPT2_MAX_TIME := $(TIME)
