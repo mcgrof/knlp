@@ -162,10 +162,12 @@ def run(ctx: StageContext) -> StageResult:
             ctx.mark_skipped(reason)
             return StageResult(name=ctx.name, status="skipped", reason=reason)
 
-    # Resolve bench directory.  Prefer a real NVMe mount if configured.
-    nvme_env = os.environ.get("KNLP_NVME_PATH", "")
-    if nvme_env:
-        bench_dir = nvme_env
+    # Resolve bench directory.  Priority: defconfig > env var > tmpdir.
+    cfg_nvme = getattr(ctx.cfg, "nvme_path", "") or ""
+    env_nvme = os.environ.get("KNLP_NVME_PATH", "")
+    nvme_root = cfg_nvme or env_nvme
+    if nvme_root:
+        bench_dir = nvme_root
         using_real_nvme = True
     else:
         bench_dir = str(ctx.stage_dir / "bench_tmp")
