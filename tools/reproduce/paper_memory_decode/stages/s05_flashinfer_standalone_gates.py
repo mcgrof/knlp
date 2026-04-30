@@ -1,3 +1,4 @@
+import sys
 """Stage 05: FlashInfer asymmetric K/V standalone gate.
 
 Runs gate_flashinfer_asym.py to verify the asym-prefill-refactor-stage
@@ -40,7 +41,7 @@ def run(ctx: StageContext) -> StageResult:
         return StageResult(name=ctx.name, status="skipped", reason=reason)
 
     rc = ctx.run_subprocess(
-        ["python3", str(_GATE)],
+        [sys.executable, str(_GATE)],
         extra_env={
             "FLASHINFER_DISABLE_VERSION_CHECK": "1",
             "FLASHINFER_EXPERIMENTAL_ASYM_PREFILL": "1",
