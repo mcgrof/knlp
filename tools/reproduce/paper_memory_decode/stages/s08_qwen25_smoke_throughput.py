@@ -1,3 +1,4 @@
+import sys
 """Stage 08: Qwen2.5-7B smoke throughput measurement.
 
 Runs gate_qwen_smoke.py to measure tok/s for FP16 / FP8-sym / asym
@@ -34,7 +35,7 @@ def run(ctx: StageContext) -> StageResult:
     result_path = ctx.stage_dir / "qwen_smoke_results.json"
 
     rc = ctx.run_subprocess(
-        ["python3", str(_GATE)],
+        [sys.executable, str(_GATE)],
         extra_env={
             "FLASHINFER_DISABLE_VERSION_CHECK": "1",
             "FLASHINFER_EXPERIMENTAL_ASYM_PREFILL": "1",

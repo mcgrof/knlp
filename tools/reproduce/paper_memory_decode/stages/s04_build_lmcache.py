@@ -1,3 +1,4 @@
+import sys
 """Stage 04: build LMCache (editable install).
 
 Installs the mcgrof/LMCache asymmetric-kv-codec branch as an editable
@@ -81,7 +82,7 @@ def run(ctx: StageContext) -> StageResult:
     try:
         r = subprocess.run(
             [
-                "python3",
+                sys.executable,
                 "-c",
                 "import lmcache; print(getattr(lmcache, '__version__', 'dev'))",
             ],

@@ -1,3 +1,4 @@
+import sys
 """Stage 03: build vLLM (editable install) then re-pin FlashInfer.
 
 vLLM's pip install pulls flashinfer from PyPI (currently 0.6.6) and
@@ -90,7 +91,7 @@ def run(ctx: StageContext) -> StageResult:
     fi_ver = "unknown"
     try:
         r = subprocess.run(
-            ["python3", "-c", "import vllm; print(vllm.__version__)"],
+            [sys.executable, "-c", "import vllm; print(vllm.__version__)"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -100,7 +101,7 @@ def run(ctx: StageContext) -> StageResult:
         pass
     try:
         r = subprocess.run(
-            ["python3", "-c", "import flashinfer; print(flashinfer.__version__)"],
+            [sys.executable, "-c", "import flashinfer; print(flashinfer.__version__)"],
             capture_output=True,
             text=True,
             timeout=30,
