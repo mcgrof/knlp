@@ -1,0 +1,43 @@
+# Reproduce the split-tier NVMe traffic-ratio claim from paper-memory-decode
+# (Section V-D, Table III).
+#
+# This profile builds only LMCache (no vllm / flashinfer) and runs
+# stage 10 (s10_lmcache_split_tier_microbench) to verify:
+#
+#   nvme_ratio = V8 / (K16 + V8) = 1/3  (hardware-independent)
+#
+# Throughput numbers (write / read MB/s) are logged as informational
+# metrics and vary with storage hardware.
+#
+# On a RunPod H100 SECURE pod, set KNLP_NVME_PATH=/runpod-volume/s10
+# before running, or add CONFIG_KNLP_NVME_PATH="/runpod-volume/s10"
+# to a local .config overlay.  Without it the stage falls back to a
+# tmpdir and still validates the ratio.
+#
+# Estimated runtime: 5-10 min (lmcache install + bench).
+# GPU not required.
+CONFIG_KNLP_REPRODUCE_DECODE=y
+CONFIG_KNLP_REPRODUCE_PROFILE="decode-nvme-tier"
+CONFIG_KNLP_WORKTREE_ROOT=".."
+CONFIG_KNLP_RESULTS_ROOT="./results/decode-nvme-tier"
+CONFIG_KNLP_BUILD_ROOT="./build/decode"
+# vllm and flashinfer are not needed for this profile.
+# Empty URLs cause the fetch stage to skip them.
+CONFIG_KNLP_VLLM_REPO=""
+CONFIG_KNLP_VLLM_REF=""
+CONFIG_KNLP_VLLM_DIR="vllm"
+CONFIG_KNLP_FLASHINFER_REPO=""
+CONFIG_KNLP_FLASHINFER_REF=""
+CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
+CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_LMCACHE_REF="asymmetric-kv-codec"
+CONFIG_KNLP_LMCACHE_DIR="lmcache"
+# NVMe mount point for the split-tier bench.
+# Override with the actual mount on your machine / pod.
+CONFIG_KNLP_NVME_PATH=""
+CONFIG_KNLP_ENABLE_WANDB=n
+CONFIG_KNLP_ENABLE_TRACKERIO=n
+CONFIG_KNLP_UPLOAD_ARTIFACTS=n
+CONFIG_KNLP_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_FAIL_ON_DIRTY_GIT=y
+CONFIG_KNLP_REQUIRE_PINNED_REFS=n
