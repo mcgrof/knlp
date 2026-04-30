@@ -92,7 +92,7 @@ def main() -> int:
             model=MODEL_ID,
             dtype="bfloat16",
             enforce_eager=True,
-            max_model_len=max(CTX_LENGTHS) + 128,
+            max_model_len=max(CTX_LENGTHS),
             gpu_memory_utilization=0.90,
         )
     except Exception as e:
