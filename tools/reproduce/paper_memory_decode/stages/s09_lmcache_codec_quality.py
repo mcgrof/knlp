@@ -1,4 +1,3 @@
-import sys
 """Stage 09: LMCache AsymK16V8Codec quality gate.
 
 Runs gate_lmcache_codec.py to verify the storage-tier claims:
@@ -18,6 +17,7 @@ Reference results (2026-04-25 H100, 24-cell grid):
 
 from __future__ import annotations
 
+import sys
 import re
 from pathlib import Path
 

@@ -1,4 +1,3 @@
-import sys
 """Stage 08: Qwen2.5-7B smoke throughput measurement.
 
 Runs gate_qwen_smoke.py to measure tok/s for FP16 / FP8-sym / asym
@@ -13,6 +12,7 @@ Reference results (2026-04-27 H100 SXM, enforce_eager=True):
 
 from __future__ import annotations
 
+import sys
 import re
 from pathlib import Path
 

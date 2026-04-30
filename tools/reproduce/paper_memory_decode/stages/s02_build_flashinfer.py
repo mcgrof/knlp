@@ -1,4 +1,3 @@
-import sys
 """Stage 02: build FlashInfer (editable install).
 
 Installs the mcgrof/flashinfer asym-prefill-refactor-stage branch as
@@ -16,6 +15,7 @@ Requires:
 
 from __future__ import annotations
 
+import sys
 import shutil
 from pathlib import Path
 
