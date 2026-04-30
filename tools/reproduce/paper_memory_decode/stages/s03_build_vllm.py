@@ -41,6 +41,10 @@ def run(ctx: StageContext) -> StageResult:
             reason=f"vLLM source dir not found: {vllm_path}",
         )
 
+    # Ensure setuptools_scm is present — vLLM's pyproject.toml requires it
+    # at metadata-generation time even with --no-build-isolation.
+    ctx.run_subprocess([pip, "install", "setuptools_scm"], timeout=120)
+
     # Build vLLM editable.
     rc = ctx.run_subprocess(
         [pip, "install", "--no-build-isolation", "-e", "."],
