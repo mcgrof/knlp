@@ -229,6 +229,17 @@ REGISTRY: dict[str, Callable[[StageContext], StageResult]] = {
         "stages.sat_b_vs_bt_model_comparison", "run"
     )(ctx),
     "sat_figures": lambda ctx: _load("stages.sat_figures", "run")(ctx),
+    "static_calibration_battery": lambda ctx: _load(
+        "stages.static_calibration_battery", "run"
+    )(ctx),
+    "niah_16k_32k": lambda ctx: _load("stages.niah_16k_32k", "run")(ctx),
+    "turboquant_stress": lambda ctx: _load("stages.turboquant_stress", "run")(ctx),
+    "spec_decode_interaction": lambda ctx: _load(
+        "stages.spec_decode_interaction", "run"
+    )(ctx),
+    "large_model_lanes": lambda ctx: _load("stages.large_model_lanes", "run")(ctx),
+    "cross_gpu_lanes": lambda ctx: _load("stages.cross_gpu_lanes", "run")(ctx),
+    "full_storage_grid": lambda ctx: _load("stages.full_storage_grid", "run")(ctx),
 }
 
 
