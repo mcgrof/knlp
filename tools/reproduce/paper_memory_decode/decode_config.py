@@ -95,7 +95,6 @@ class DecodeConfig:
             lmcache_repo=get("CONFIG_KNLP_LMCACHE_REPO", cls.lmcache_repo),
             lmcache_ref=get("CONFIG_KNLP_LMCACHE_REF", cls.lmcache_ref),
             lmcache_dir=get("CONFIG_KNLP_LMCACHE_DIR", cls.lmcache_dir),
-
             qwen25_7b=get("CONFIG_KNLP_MODEL_QWEN25_7B", cls.qwen25_7b),
             wikitext=get("CONFIG_KNLP_DATASET_WIKITEXT", cls.wikitext),
             gsm8k=get("CONFIG_KNLP_DATASET_GSM8K", cls.gsm8k),
