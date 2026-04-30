@@ -1,4 +1,3 @@
-import sys
 """Stage 05: FlashInfer asymmetric K/V standalone gate.
 
 Runs gate_flashinfer_asym.py to verify the asym-prefill-refactor-stage
@@ -14,6 +13,7 @@ Skips with structured skip entry when GPU is sm89- or absent.
 
 from __future__ import annotations
 
+import sys
 import re
 from pathlib import Path
 

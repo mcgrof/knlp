@@ -1,4 +1,3 @@
-import sys
 """Stage 03: build vLLM (editable install) then re-pin FlashInfer.
 
 vLLM's pip install pulls flashinfer from PyPI (currently 0.6.6) and
@@ -13,6 +12,7 @@ Build env vars:
 
 from __future__ import annotations
 
+import sys
 import shutil
 from pathlib import Path
 
@@ -50,8 +50,14 @@ def run(ctx: StageContext) -> StageResult:
     # building.  The default pod image ships an older torch that causes
     # cmake CUDA shorthash failures during the vLLM editable build.
     ctx.run_subprocess(
-        [pip, "install", "torch==2.10.0", "torchvision==0.25.0",
-         "--index-url", "https://download.pytorch.org/whl/cu126"],
+        [
+            pip,
+            "install",
+            "torch==2.10.0",
+            "torchvision==0.25.0",
+            "--index-url",
+            "https://download.pytorch.org/whl/cu126",
+        ],
         timeout=600,
     )
 
