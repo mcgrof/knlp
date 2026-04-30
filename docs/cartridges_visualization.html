@@ -84,6 +84,7 @@ footer a { color: var(--cyan); text-decoration: none; }
   <div class="tab" onclick="showTab('prefix')">Prefix Tuning</div>
   <div class="tab" onclick="showTab('vllm')">vLLM Integration</div>
   <div class="tab" onclick="showTab('cross')">Cross-Model</div>
+  <div class="tab" onclick="showTab('validation')">Validation</div>
 </div>
 
 <!-- ============================================================ -->
@@ -326,9 +327,111 @@ footer a { color: var(--cyan); text-decoration: none; }
   <a href="https://arxiv.org/abs/2508.17032">CARTRIDGE paper</a> &middot;
   <a href="https://arxiv.org/abs/2101.00190">Prefix Tuning (Li &amp; Liang, 2021)</a> &middot;
   <a href="https://github.com/mcgrof/knlp/blob/main/docs/cartridges.md">Documentation</a> &middot;
-  <a href="https://github.com/mcgrof/vllm/tree/20260415-cartridges-v0.4">vllm branch</a> &middot;
+  <a href="https://github.com/mcgrof/vllm/tree/20260429-cartridges-code-only">vllm branch</a> &middot;
   <a href="https://mcgrof.github.io/knlp/">knlp</a>
 </footer>
+
+<!-- ============================================================ -->
+<div id="tab-validation" class="panel">
+<h2>CartridgeConnector Serving Validation</h2>
+<p>Full validation of the <a href="https://github.com/mcgrof/vllm/tree/20260429-cartridges-code-only">20260429-cartridges-code-only</a> branch.
+Validates cartridge KV injection, per-request dispatch, manifest validation, GPU residency, and serving correctness.</p>
+
+<div class="stat-grid">
+  <div class="stat"><div class="val">178</div><div class="label">Unit tests passed</div></div>
+  <div class="stat"><div class="val">10/10</div><div class="label">Context questions correct</div></div>
+  <div class="stat"><div class="val">16/16</div><div class="label">Concurrent requests</div></div>
+  <div class="stat"><div class="val">50/50</div><div class="label">Stability requests</div></div>
+  <div class="stat"><div class="val">5</div><div class="label">Bugs found &amp; fixed</div></div>
+</div>
+
+<h3>Tier results</h3>
+<table>
+<tr><th>Tier</th><th>Test</th><th>Method</th><th>Result</th></tr>
+<tr><td>-1</td><td>Unit / static</td><td><code>pytest tests/v1/core/test_cartridge*.py</code></td><td class="hi">178/178 PASS</td></tr>
+<tr><td>0</td><td>Single-cart smoke</td><td><code>vllm serve</code> + CartridgeConnector + 10 requests</td><td class="hi">PASS</td></tr>
+<tr><td>0.5</td><td>Prefill canary</td><td>HF model.forward() vs cartridge KV &mdash; top-1 token match, logit diff 0.16</td><td class="hi">PASS</td></tr>
+<tr><td>1</td><td>Context verification</td><td>10 factual medical questions via chat API</td><td class="hi">10/10 PASS</td></tr>
+<tr><td>1b</td><td>Generated token logprobs</td><td><code>/v1/completions</code> with <code>logprobs=1</code></td><td class="hi">PASS</td></tr>
+<tr><td>2</td><td>16 concurrent requests</td><td>8-thread pool, same cartridge</td><td class="hi">16/16 PASS</td></tr>
+<tr><td>3</td><td>Multi-cart dispatch</td><td>3 carts, ExplicitCartridgeRouter, per-request routing</td><td class="hi">PASS</td></tr>
+<tr><td>3 (cross)</td><td>No cross-contamination</td><td>Ask cart_a about cart_b data</td><td class="hi">PASS</td></tr>
+<tr><td>3b</td><td>Qwen cross-model</td><td>Qwen3-14B + Qwen cartridge (server starts, cart loads)</td><td class="hi">PASS</td></tr>
+<tr><td>4</td><td>50 sequential stability</td><td>Server alive after 50 requests</td><td class="hi">50/50 PASS</td></tr>
+<tr><td>5</td><td>Error handling</td><td>Empty prompt, short prompt</td><td class="hi">PASS</td></tr>
+<tr><td>6</td><td>TP=2 smoke</td><td>Llama + cartridge on 2&times;H100 &mdash; TP KV head sharding fixed (commit 99ee4e9)</td><td class="hi">PASS (sharding fixed)</td></tr>
+<tr><td>6</td><td>bf16 dtype</td><td>Default in all tiers</td><td class="hi">PASS</td></tr>
+</table>
+
+<h3>Bugs found &amp; fixed</h3>
+<table>
+<tr><th>Bug</th><th>Severity</th><th>Fix</th><th>Commit</th></tr>
+<tr><td>Stale <code>triton_reshape_and_cache_flash</code> import</td><td class="warn">Build</td><td><code>ops.reshape_and_cache_flash</code></td><td><a href="https://github.com/mcgrof/vllm/commit/43714e764">43714e7</a></td></tr>
+<tr><td><code>kv_cache_config</code> kwarg not in base class</td><td class="warn">Init</td><td>Remove from <code>__init__</code></td><td><a href="https://github.com/mcgrof/vllm/commit/1059e6622">1059e66</a></td></tr>
+<tr><td><code>_kv_transfer_config</code> not set by base</td><td class="warn">Init</td><td>Set from <code>vllm_config</code></td><td><a href="https://github.com/mcgrof/vllm/commit/1059e6622">1059e66</a></td></tr>
+<tr><td>All prompt tokens claimed as external</td><td style="color:var(--red)">Runtime</td><td>Cap at <code>len(prompt_ids) - 1</code></td><td><a href="https://github.com/mcgrof/vllm/commit/43a24bb18">43a24bb</a></td></tr>
+<tr><td><code>LogprobsTensors</code> OverflowError</td><td style="color:var(--red)">Runtime</td><td><code>torch.zeros</code> instead of <code>torch.empty</code></td><td><a href="https://github.com/mcgrof/vllm/commit/0211fb499">0211fb4</a></td></tr>
+<tr><td>TP&gt;1 KV head sharding</td><td style="color:var(--red)">Runtime</td><td>Slice cart KV heads to <code>[tp_rank*H/tp : (tp_rank+1)*H/tp]</code></td><td><a href="https://github.com/mcgrof/vllm/commit/99ee4e982">99ee4e9</a></td></tr>
+</table>
+
+<div class="chart-wrap"><canvas id="chartValidation"></canvas></div>
+
+<h3>Unit test coverage</h3>
+<p>All tests run CPU-only via <code>pytest tests/v1/core/test_cartridge*.py</code>. No GPU required.</p>
+<table>
+<tr><th>File</th><th>Tests</th><th>What it covers</th></tr>
+<tr><td><code>test_cartridge_connector.py</code></td><td>CPU fake-writer, slot mapping, KV injection shapes</td><td>Core inject path correctness</td></tr>
+<tr><td><code>test_cartridge_connector_integration.py</code></td><td>Scheduler API: get_num_new_matched_tokens, update_state_after_alloc, build_connector_meta</td><td>State machine correctness</td></tr>
+<tr><td><code>test_cartridge_manifest.py</code></td><td>JSON load, model/shape/checksum validation</td><td>Manifest safety checks</td></tr>
+<tr><td><code>test_cartridge_registry.py</code></td><td>SQLite insert/get/list/label lookup</td><td>Registry operations</td></tr>
+<tr><td><code>test_cartridge_store.py</code></td><td>Load/get/evict, refcount, pin, thread safety, memory tracking</td><td>Store lifecycle</td></tr>
+<tr><td><code>test_cartridge_router.py</code></td><td>Explicit/static/label/composite routers, config builder</td><td>Per-request dispatch routing</td></tr>
+<tr><td><code>test_cartridge_routing.py</code></td><td>Metadata carries cart_id, two-request isolation, kernel-level no-stomp</td><td>Multi-cart dispatch correctness</td></tr>
+<tr><td><code>test_cartridge_fault.py</code></td><td>Missing file, shape mismatch, registry errors</td><td>Error path safety</td></tr>
+<tr><td><code>test_cartridge_gpu_residency.py</code></td><td>LRU eviction, refcount, capacity, pin/unpin, memory stability</td><td>GPU memory management</td></tr>
+<tr><td><code>test_cartridge_lmcache_plugin.py</code></td><td>Optional import, plugin reject, key mapping</td><td>LMCache integration safety</td></tr>
+</table>
+
+<h3>How to reproduce</h3>
+<pre style="background:var(--bg2); padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; color:var(--text2);">
+<span style="color:var(--text3)"># Clone the branch</span>
+git clone --branch 20260429-cartridges-code-only https://github.com/mcgrof/vllm.git
+cd vllm
+
+<span style="color:var(--text3)"># Unit tests (no GPU needed)</span>
+uv venv --python 3.12 && source .venv/bin/activate
+VLLM_USE_PRECOMPILED=1 uv pip install -e . --torch-backend=auto
+pytest tests/v1/core/test_cartridge*.py -v
+
+<span style="color:var(--text3)"># Smoke serve (needs GPU + trained cartridge .pt)</span>
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --kv-transfer-config '{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridge_path": "/path/to/cartridge.pt"
+    },
+    "kv_role": "kv_both"
+  }'
+
+<span style="color:var(--text3)"># Multi-cartridge dispatch</span>
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --kv-transfer-config '{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridges": [
+        {"cartridge_id": "doc_a", "path": "/path/to/cart_a.pt"},
+        {"cartridge_id": "doc_b", "path": "/path/to/cart_b.pt"}
+      ],
+      "router": {"type": "explicit"}
+    },
+    "kv_role": "kv_both"
+  }'
+</pre>
+</div>
 
 <script>
 function showTab(id) {
@@ -340,6 +443,7 @@ function showTab(id) {
   if (id === 'speedup' && !window._speedupRendered) { renderSpeedup(); window._speedupRendered = true; }
   if (id === 'quality' && !window._qualityRendered) { renderQuality(); window._qualityRendered = true; }
   if (id === 'cross' && !window._crossRendered) { renderCross(); window._crossRendered = true; }
+  if (id === 'validation' && !window._validationRendered) { renderValidation(); window._validationRendered = true; }
 }
 
 const chartOpts = { responsive: true, plugins: { legend: { labels: { color: '#7a8ea0', font: { family: "'JetBrains Mono',monospace", size: 11 } } } },
@@ -386,6 +490,25 @@ function renderCross() {
       { label: 'p=256 checkpoint (MB)', data: [15, 7, 128], backgroundColor: ['#00e87c80','#4090e880','#f0a03080'], borderColor: ['#00e87c','#4090e8','#f0a030'], borderWidth: 1 },
     ]}, options: { ...chartOpts, indexAxis: 'y', scales: { x: { ...chartOpts.scales.x, title: { display: true, text: 'Checkpoint size (MB)', color: '#7a8ea0' } }, y: chartOpts.scales.y },
     plugins: { ...chartOpts.plugins, title: { display: true, text: 'Checkpoint Size at p=256 by Architecture', color: '#c8d6e5', font: { size: 14 } } } } });
+}
+
+function renderValidation() {
+  const ctx = document.getElementById('chartValidation');
+  if (!ctx) return;
+  new Chart(ctx.getContext('2d'), { type: 'bar', data: {
+    labels: ['Unit\nTests','Smoke','Canary','Context\n(10Q)','Logprobs','Concurrent\n(16)','Multi-Cart\nDispatch','Stability\n(50)','Errors'],
+    datasets: [{
+      label: 'Pass rate (%)',
+      data: [100, 100, 100, 100, 100, 100, 100, 100, 100],
+      backgroundColor: '#00e87c80', borderColor: '#00e87c', borderWidth: 1
+    }]
+  }, options: { ...chartOpts,
+    scales: { ...chartOpts.scales, y: { ...chartOpts.scales.y, min: 0, max: 110,
+      title: { display: true, text: 'Pass rate (%)', color: '#7a8ea0' } } },
+    plugins: { ...chartOpts.plugins,
+      title: { display: true, text: 'CartridgeConnector Validation — Tier Pass Rates',
+        color: '#c8d6e5', font: { size: 14 } } }
+  } });
 }
 </script>
 </body>
