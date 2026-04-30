@@ -6,6 +6,7 @@
 #   make defconfig-decode-sat       saturation sweep + Hill fit (1xH100, 18-36h)
 #   make defconfig-decode-full      everything, multi-GPU, days
 #   make defconfig-decode-nvme-tier split-tier NVMe ratio only (no GPU, ~10 min)
+#   make defconfig-decode-storage   full storage matrix: raw+API+model+stress
 # writes .config and enables CONFIG_KNLP_REPRODUCE_DECODE.  Plain `make`
 # after that runs decode-doctor → decode-fetch → decode-build →
 # decode-run → decode-report → optional decode-upload.
@@ -14,12 +15,20 @@
 #   make defconfig-decode-nvme-tier
 #   echo 'CONFIG_KNLP_NVME_PATH="/runpod-volume/s10"' >> .config
 #   make
+#
+# For decode-storage device comparison (e.g., Samsung vs FADU):
+#   make defconfig-decode-storage
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_NVME_PATH="/runpod-volume/storage"
+#   CONFIG_KNLP_STORAGE_DEVICE_LABEL="samsung_990pro_4tb"
+#   EOF
+#   make
 
 DECODE_ORCH := python3 -m tools.reproduce.paper_memory_decode.run
 
 .PHONY: decode-doctor decode-estimate decode-fetch decode-build \
         decode-run decode-report decode-upload decode-clean \
-        decode-clobber decode-provider-info decode
+        decode-clobber decode-provider-info decode decode-storage
 
 # When CONFIG_KNLP_REPRODUCE_DECODE=y, plain `make` defaults to the
 # decode pipeline.  Otherwise the existing all: target is unaffected.
@@ -65,3 +74,9 @@ decode-clean:
 
 decode-clobber:
 	@$(DECODE_ORCH) clobber --config .config
+
+# Convenience alias: run the storage matrix profile directly without
+# switching .config.  Passes KNLP_NVME_PATH and KNLP_STORAGE_DEVICE_LABEL
+# from the environment (or .config if set there).
+decode-storage:
+	@$(DECODE_ORCH) run --config .config --profile decode-storage

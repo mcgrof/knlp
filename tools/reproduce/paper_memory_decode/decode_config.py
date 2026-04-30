@@ -75,10 +75,17 @@ class DecodeConfig:
     parallel_gpus: str = "auto"
     max_parallel_gpu_jobs: int = 8
 
-    # Optional real NVMe mount for the split-tier microbench (stage 10).
+    # Optional real NVMe mount for the split-tier microbench (stage 10)
+    # and the storage matrix profile (s11-s14).
     # Set CONFIG_KNLP_NVME_PATH to the mount point (e.g. /runpod-volume/s10).
     # When empty the stage falls back to a tmpdir inside the run directory.
     nvme_path: str = ""
+
+    # Human-readable label for the storage device under test.
+    # Used in result JSONs and comparison tables.  If empty, the stage
+    # records lsblk/nvme-list output but cannot match rows across devices.
+    # Example: "fadu_delta_u2_7t_raid0x8"
+    storage_device_label: str = ""
 
     raw: dict[str, Any] = None  # type: ignore[assignment]
 
@@ -119,6 +126,7 @@ class DecodeConfig:
             parallel_gpus=get("CONFIG_KNLP_PARALLEL_GPUS", "auto"),
             max_parallel_gpu_jobs=int(get("CONFIG_KNLP_MAX_PARALLEL_GPU_JOBS", 8)),
             nvme_path=get("CONFIG_KNLP_NVME_PATH", ""),
+            storage_device_label=get("CONFIG_KNLP_STORAGE_DEVICE_LABEL", ""),
             raw=raw,
         )
 
