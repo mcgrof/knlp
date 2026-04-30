@@ -95,5 +95,18 @@ def run(ctx: StageContext) -> StageResult:
         pass
 
     ctx.log_metric("lmcache_version", lmc_ver)
+
+    # Install Python packages needed by the gate scripts in later stages.
+    # These are not pulled in by vLLM or lmcache directly.
+    ctx.run_subprocess(
+        [
+            pip,
+            "install",
+            "datasets",
+            "accelerate",
+        ],
+        timeout=300,
+    )
+
     ctx.mark_done({"lmcache_version": lmc_ver, "path": str(lmc_path)})
     return StageResult(name=ctx.name, status="passed")
