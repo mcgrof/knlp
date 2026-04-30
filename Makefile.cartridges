@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: MIT
+# Make targets for CartridgeConnector vLLM serving validation.
+#
+# Selecting:
+#   make defconfig DEFCONFIG=cartridges-vllm-tests
+# writes .config and enables CONFIG_KNLP_REPRODUCE_CARTRIDGES.
+# Then plain `make` runs the full validation pipeline.
+
+CART_ORCH := python3 -m tools.reproduce.cartridges_vllm.run
+
+.PHONY: cartridges-doctor cartridges-fetch cartridges-build \
+        cartridges-test cartridges-report cartridges-clean cartridges
+
+# When CONFIG_KNLP_REPRODUCE_CARTRIDGES=y, plain `make` defaults to
+# the cartridges pipeline.
+ifeq ($(CONFIG_KNLP_REPRODUCE_CARTRIDGES),y)
+.DEFAULT_GOAL := cartridges
+endif
+
+cartridges: cartridges-doctor cartridges-fetch cartridges-build cartridges-test cartridges-report
+
+cartridges-doctor:
+	@$(CART_ORCH) doctor --config .config
+
+cartridges-fetch:
+	@$(CART_ORCH) fetch --config .config
+
+cartridges-build:
+	@$(CART_ORCH) build --config .config
+
+cartridges-test:
+	@if [ -n "$(TIER)" ]; then \
+		$(CART_ORCH) test --config .config --tier "$(TIER)"; \
+	else \
+		$(CART_ORCH) test --config .config; \
+	fi
+
+cartridges-report:
+	@$(CART_ORCH) report --config .config
+
+cartridges-clean:
+	@$(CART_ORCH) clean --config .config
