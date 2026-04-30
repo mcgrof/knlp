@@ -1,0 +1,52 @@
+# Storage matrix profile: full storage characterization for device
+# comparison (FADU, Samsung, etc).
+#
+# Runs the canonical paper storage API stage (s10) plus:
+#   s11  raw NVMe envelope (not a paper claim, device characterization)
+#   s12  model-shaped KV storage (Qwen/Llama shapes)
+#   s13  concurrency + pinned-memory stress
+#   s14  optional vLLM+LMCache prefix-cache replay (skipped if no GPU/model)
+#
+# Usage on a pod with real NVMe at /runpod-volume:
+#   make defconfig-decode-storage
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_NVME_PATH="/runpod-volume/storage"
+#   CONFIG_KNLP_STORAGE_DEVICE_LABEL="fadu_delta_u2_7t_raid0x8"
+#   EOF
+#   make
+#
+# To compare Samsung drives:
+#   KNLP_NVME_PATH=/mnt/samsung \
+#   KNLP_STORAGE_DEVICE_LABEL=samsung_990pro_4tb \
+#   make decode-run
+#
+# Then pass both result JSONs to the comparison tool:
+#   python3 tools/reproduce/paper_memory_decode/compare_storage.py \
+#     results/fadu.json results/samsung.json
+CONFIG_KNLP_REPRODUCE_DECODE=y
+CONFIG_KNLP_REPRODUCE_PROFILE="decode-storage"
+CONFIG_KNLP_WORKTREE_ROOT=".."
+CONFIG_KNLP_RESULTS_ROOT="./results/decode-storage"
+CONFIG_KNLP_BUILD_ROOT="./build/decode"
+# vllm and flashinfer not required for storage-only stages.
+CONFIG_KNLP_VLLM_REPO=""
+CONFIG_KNLP_VLLM_REF=""
+CONFIG_KNLP_VLLM_DIR="vllm"
+CONFIG_KNLP_FLASHINFER_REPO=""
+CONFIG_KNLP_FLASHINFER_REF=""
+CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
+CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_LMCACHE_REF="asymmetric-kv-codec"
+CONFIG_KNLP_LMCACHE_DIR="lmcache"
+# NVMe mount point for storage benchmarks.
+# Override per device-under-test.
+CONFIG_KNLP_NVME_PATH=""
+# Human-readable storage device label for result comparison.
+# Example: fadu_delta_u2_7t_raid0x8  samsung_990pro_4tb
+CONFIG_KNLP_STORAGE_DEVICE_LABEL=""
+CONFIG_KNLP_ENABLE_WANDB=n
+CONFIG_KNLP_ENABLE_TRACKERIO=n
+CONFIG_KNLP_UPLOAD_ARTIFACTS=n
+CONFIG_KNLP_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_FAIL_ON_DIRTY_GIT=y
+CONFIG_KNLP_REQUIRE_PINNED_REFS=n
