@@ -85,6 +85,7 @@ footer a { color: var(--cyan); text-decoration: none; }
   <div class="tab" onclick="showTab('vllm')">vLLM Integration</div>
   <div class="tab" onclick="showTab('cross')">Cross-Model</div>
   <div class="tab" onclick="showTab('validation')">Validation</div>
+  <div class="tab" onclick="showTab('reproduce')">Reproduce</div>
 </div>
 
 <!-- ============================================================ -->
@@ -431,6 +432,120 @@ vllm serve meta-llama/Llama-3.2-3B-Instruct \
     "kv_role": "kv_both"
   }'
 </pre>
+</div>
+
+<!-- ============================================================ -->
+<div id="tab-reproduce" class="panel">
+<h2>Reproducing the Tests</h2>
+<p>Full guide: <a href="cartridges_reproduce.md">cartridges_reproduce.md</a></p>
+
+<h3>Automated (knlp pipeline)</h3>
+<pre style="background:var(--bg2); padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; color:var(--text2);">
+<span style="color:var(--green);"># Clone knlp, select cartridges config, run everything</span>
+git clone https://github.com/mcgrof/knlp.git && cd knlp
+make defconfig-cartridges-vllm-tests
+make
+
+<span style="color:var(--text3);"># Pipeline: doctor &rarr; fetch &rarr; build &rarr; test &rarr; report
+# Reuses existing vllm checkout if present (no re-clone)
+# Runs 178 unit tests (no GPU needed for Tier -1)</span>
+
+<span style="color:var(--green);"># Run a single tier</span>
+make cartridges-test TIER=-1   <span style="color:var(--text3);"># unit tests only</span>
+make cartridges-test TIER=6    <span style="color:var(--text3);"># TP=2 only (needs 2 GPUs)</span>
+</pre>
+
+<h3>Manual: unit tests (no GPU)</h3>
+<pre style="background:var(--bg2); padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; color:var(--text2);">
+git clone --branch 20260429-cartridges-code-only \
+  https://github.com/mcgrof/vllm.git && cd vllm
+VLLM_USE_PRECOMPILED=1 uv venv --python 3.12
+source .venv/bin/activate
+VLLM_USE_PRECOMPILED=1 uv pip install -e . --torch-backend=auto
+uv pip install transformers==4.55.4 pytest pytest-timeout tblib
+
+pytest tests/v1/core/test_cartridge*.py -v --timeout=120
+<span style="color:var(--text3);"># Expected: 178 passed</span>
+</pre>
+
+<h3>Manual: serve with cartridge (needs GPU)</h3>
+<pre style="background:var(--bg2); padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; color:var(--text2);">
+<span style="color:var(--green);"># Single cartridge</span>
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --kv-transfer-config '{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridge_path": "/path/to/cartridge.pt"
+    },
+    "kv_role": "kv_both"
+  }'
+
+<span style="color:var(--green);"># Multi-cartridge with per-request dispatch</span>
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --kv-transfer-config '{
+    "kv_connector": "CartridgeConnector",
+    "kv_connector_module_path":
+      "vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector",
+    "kv_connector_extra_config": {
+      "cartridges": [
+        {"cartridge_id": "doc_a", "path": "cart_a.pt"},
+        {"cartridge_id": "doc_b", "path": "cart_b.pt"}
+      ],
+      "router": {"type": "explicit"}
+    },
+    "kv_role": "kv_both"
+  }'
+
+<span style="color:var(--green);"># TP=2 (needs 2 GPUs)</span>
+vllm serve meta-llama/Llama-3.2-3B-Instruct \
+  --tensor-parallel-size 2 \
+  --kv-transfer-config '{...same as above...}'
+</pre>
+
+<h3>Building a test cartridge from any text</h3>
+<pre style="background:var(--bg2); padding:16px; border-radius:8px; overflow-x:auto; font-size:12px; color:var(--text2);">
+<span style="color:var(--text3);"># No trained cartridge needed &mdash; prefill any text to create one</span>
+python3 -c "
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+
+tok = AutoTokenizer.from_pretrained('meta-llama/Llama-3.2-3B-Instruct')
+model = AutoModelForCausalLM.from_pretrained(
+    'meta-llama/Llama-3.2-3B-Instruct',
+    torch_dtype=torch.bfloat16).to('cuda').eval()
+
+text = 'Your document text here. The model will use this as context.'
+ids = tok.encode(text, add_special_tokens=False)
+cache = DynamicCache()
+with torch.no_grad():
+    model(input_ids=torch.tensor([ids], device='cuda'),
+          past_key_values=cache, use_cache=True, return_dict=True)
+
+Ks, Vs = [], []
+for li in range(len(cache.layers)):
+    layer = cache.layers[li]
+    k = layer.keys.cpu() if hasattr(layer, 'keys') else layer.key_cache[0].cpu()
+    v = layer.values.cpu() if hasattr(layer, 'values') else layer.value_cache[0].cpu()
+    Ks.append(k); Vs.append(v)
+
+torch.save({'trainable_keys': Ks, 'trainable_values': Vs,
+            'frozen_keys': [], 'frozen_values': []}, 'my_cartridge.pt')
+print(f'Saved: {len(Ks)} layers, {Ks[0].shape[-2]} tokens')
+"
+</pre>
+
+<h3>Key points for AI assistants reproducing these tests</h3>
+<ul style="color:var(--text2); font-size:13px;">
+<li>Branch: <code>20260429-cartridges-code-only</code> on <code>mcgrof/vllm</code></li>
+<li>The tokenizer needs a one-line patch for <code>all_special_tokens_extended</code> (fork-point compat &mdash; automated in the knlp pipeline)</li>
+<li>Use <code>VLLM_USE_PRECOMPILED=1</code> to avoid compiling C extensions from source</li>
+<li>Prompts must include the document text as prefix for the cartridge context to work</li>
+<li>The CartridgeConnector replaces KV for the first N tokens of the prompt &mdash; it does not add tokens</li>
+<li>TP&gt;1 works: the connector shards KV heads across ranks automatically</li>
+<li>Unit tests are CPU-only and cover connector, manifest, registry, store, router, dispatch, residency, LMCache plugin, and fault paths</li>
+</ul>
 </div>
 
 <script>
