@@ -57,6 +57,22 @@ PROFILE_STAGES: dict[str, list[str]] = {
         "10_lmcache_split_tier_microbench",
         "11_report",
     ],
+    # Storage matrix profile: full storage characterization for device
+    # comparison (FADU, Samsung, etc).  Runs the canonical API stage plus
+    # raw envelope, model-shaped KV, and concurrency stress.
+    # Set KNLP_NVME_PATH and KNLP_STORAGE_DEVICE_LABEL for meaningful
+    # cross-device comparisons.
+    "decode-storage": [
+        "00_doctor",
+        "01_fetch_repos",
+        "04_build_lmcache",
+        "10_lmcache_split_tier_microbench",
+        "s11_raw_nvme_envelope",
+        "s12_model_shaped_kv_storage",
+        "s13_lmcache_concurrency_stress",
+        "s14_optional_vllm_lmcache_replay",
+        "11_report",
+    ],
     "decode-full": [
         # superset; cross-GPU lanes are skipped with reason if hardware absent
         "00_doctor",
@@ -252,6 +268,16 @@ REGISTRY: dict[str, Callable[[StageContext], StageResult]] = {
     "large_model_lanes": lambda ctx: _load("stages.large_model_lanes", "run")(ctx),
     "cross_gpu_lanes": lambda ctx: _load("stages.cross_gpu_lanes", "run")(ctx),
     "full_storage_grid": lambda ctx: _load("stages.full_storage_grid", "run")(ctx),
+    "s11_raw_nvme_envelope": lambda ctx: _load("stages.s11_raw_nvme_envelope", "run")(ctx),
+    "s12_model_shaped_kv_storage": lambda ctx: _load(
+        "stages.s12_model_shaped_kv_storage", "run"
+    )(ctx),
+    "s13_lmcache_concurrency_stress": lambda ctx: _load(
+        "stages.s13_lmcache_concurrency_stress", "run"
+    )(ctx),
+    "s14_optional_vllm_lmcache_replay": lambda ctx: _load(
+        "stages.s14_optional_vllm_lmcache_replay", "run"
+    )(ctx),
 }
 
 
