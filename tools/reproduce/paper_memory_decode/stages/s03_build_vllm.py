@@ -45,6 +45,15 @@ def run(ctx: StageContext) -> StageResult:
     # at metadata-generation time even with --no-build-isolation.
     ctx.run_subprocess([pip, "install", "setuptools_scm"], timeout=120)
 
+    # Install the torch version pinned by vLLM's requirements before
+    # building.  The default pod image ships an older torch that causes
+    # cmake CUDA shorthash failures during the vLLM editable build.
+    ctx.run_subprocess(
+        [pip, "install", "torch==2.10.0", "torchvision==0.25.0",
+         "--index-url", "https://download.pytorch.org/whl/cu126"],
+        timeout=600,
+    )
+
     # Build vLLM editable.
     rc = ctx.run_subprocess(
         [pip, "install", "--no-build-isolation", "-e", "."],
