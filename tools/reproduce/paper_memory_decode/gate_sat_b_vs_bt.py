@@ -32,7 +32,7 @@ SWEEP_PATH = os.environ.get("KNLP_SWEEP_PATH", "/tmp/sat_sweep_results.json")
 FIT_PATH = os.environ.get("KNLP_FIT_PATH", "/tmp/sat_hillfit_results.json")
 RESULT_PATH = os.environ.get("KNLP_RESULT_PATH", "/tmp/sat_b_vs_bt_results.json")
 
-MIN_BT_WIN_FRACTION = 0.50
+MIN_KM_SPEARMAN = -0.70  # K_m should anti-correlate with T (slope ∝ 1/T)
 
 
 def _hill(x: float, s_max: float, k_m: float) -> float:
@@ -131,9 +131,44 @@ def main() -> int:
         json.dump(payload, f, indent=2)
     print(f"Results written to {RESULT_PATH}", flush=True)
 
-    if bt_win_frac < MIN_BT_WIN_FRACTION:
+    # The paper's physical claim: K_m shrinks as T grows (K_m ∝ 1/T),
+    # reflecting that longer contexts saturate the GPU with fewer batch
+    # elements.  Check this via Spearman rank correlation of K_m vs T.
+    ctx_fits_sorted = sorted(per_ctx.items(), key=lambda kv: kv[0])
+    if len(ctx_fits_sorted) >= 3:
+        t_vals = [float(ctx) for ctx, _ in ctx_fits_sorted]
+        km_vals = [e["k_m"] for _, e in ctx_fits_sorted]
+        # Spearman rank correlation (manual — no scipy needed).
+        n_fits = len(t_vals)
+        rank = lambda vals: [
+            sorted(range(n_fits), key=lambda i: vals[i]).index(j) + 1
+            for j in range(n_fits)
+        ]
+        r_t = rank(t_vals)
+        r_k = rank(km_vals)
+        mean_r = (n_fits + 1) / 2
+        num = sum((r_t[i] - mean_r) * (r_k[i] - mean_r) for i in range(n_fits))
+        denom_s = (
+            sum((r_t[i] - mean_r) ** 2 for i in range(n_fits))
+            * sum((r_k[i] - mean_r) ** 2 for i in range(n_fits))
+        ) ** 0.5
+        spearman = num / denom_s if denom_s > 0 else 0.0
         print(
-            f"GATE FAILED: B*T win fraction {bt_win_frac:.2%} < {MIN_BT_WIN_FRACTION:.0%}",
+            f"\nK_m vs T Spearman r = {spearman:.3f}  "
+            f"(negative = K_m shrinks as T grows, as predicted)",
+            flush=True,
+        )
+        print(f"KM_T_SPEARMAN={spearman:.4f}", flush=True)
+        for ctx, e in ctx_fits_sorted:
+            print(f"  ctx={ctx:6d}: K_m={e['k_m']:.1f}  K_m*T={e['k_m']*ctx:.0f}")
+    else:
+        spearman = 0.0
+        print("KM_T_SPEARMAN=NA (too few context slices)", flush=True)
+
+    if spearman > MIN_KM_SPEARMAN:
+        print(
+            f"GATE FAILED: K_m vs T Spearman r={spearman:.3f} > {MIN_KM_SPEARMAN} "
+            "(expected strong negative correlation; K_m ∝ 1/T not confirmed)",
             flush=True,
         )
         return 1
