@@ -1,3 +1,4 @@
+import sys
 """Stage 07: Qwen2.5-7B full-stack quality battery.
 
 Runs gate_qwen_quality.py to measure GSM8K accuracy (n=200) and
@@ -43,7 +44,7 @@ def run(ctx: StageContext) -> StageResult:
     result_path = ctx.stage_dir / "qwen_quality_results.json"
 
     rc = ctx.run_subprocess(
-        ["python3", str(_GATE)],
+        [sys.executable, str(_GATE)],
         extra_env={
             "FLASHINFER_DISABLE_VERSION_CHECK": "1",
             "FLASHINFER_EXPERIMENTAL_ASYM_PREFILL": "1",
