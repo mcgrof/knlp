@@ -1,4 +1,3 @@
-import sys
 """Stage 06: vLLM asymmetric KV cache writer correctness gate.
 
 Runs gate_writer_asym.py to verify the K-lossless / V-FP8 write
@@ -14,6 +13,7 @@ Pass criteria (all four sub-tests must pass):
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from ..stages import StageContext, StageResult

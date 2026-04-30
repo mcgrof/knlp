@@ -1,4 +1,3 @@
-import sys
 """Stage 04: build LMCache (editable install).
 
 Installs the mcgrof/LMCache asymmetric-kv-codec branch as an editable
@@ -8,6 +7,7 @@ AsymK16V8Codec and split-tier storage tier are intact.
 
 from __future__ import annotations
 
+import sys
 import shutil
 from pathlib import Path
 
