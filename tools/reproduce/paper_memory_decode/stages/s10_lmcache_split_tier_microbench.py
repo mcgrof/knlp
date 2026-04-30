@@ -261,7 +261,7 @@ def _bench_policy(
     v_rel_err = float("inf")
     quality_warn = []
     try:
-        k2, v2 = codec.decode(last_enc)
+        k2, v2, *_ = codec.decode(last_enc)
         k_exact = torch.equal(k, k2)
         if not k_exact:
             quality_warn.append("K round-trip not bit-exact")
