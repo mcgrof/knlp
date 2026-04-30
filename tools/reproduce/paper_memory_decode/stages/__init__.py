@@ -45,6 +45,18 @@ PROFILE_STAGES: dict[str, list[str]] = {
         "sat_figures",
         "11_report",
     ],
+    # Minimal profile: only the split-tier NVMe traffic-ratio claim.
+    # Set KNLP_NVME_PATH (or CONFIG_KNLP_NVME_PATH) to a real NVMe mount
+    # to get meaningful throughput numbers; omitting it uses a tmpdir and
+    # only validates the nvme_ratio=1/3 math.
+    # Does not build vllm or flashinfer -- only lmcache is fetched.
+    "decode-nvme-tier": [
+        "00_doctor",
+        "01_fetch_repos",
+        "04_build_lmcache",
+        "10_lmcache_split_tier_microbench",
+        "11_report",
+    ],
     "decode-full": [
         # superset; cross-GPU lanes are skipped with reason if hardware absent
         "00_doctor",

@@ -2,12 +2,18 @@
 # Make targets for paper-memory-decode reproduction profiles.
 #
 # Selecting one of:
-#   make defconfig-decode
-#   make defconfig-decode-sat
-#   make defconfig-decode-full
+#   make defconfig-decode           full-stack quality + impl gates (1xH100)
+#   make defconfig-decode-sat       saturation sweep + Hill fit (1xH100, 18-36h)
+#   make defconfig-decode-full      everything, multi-GPU, days
+#   make defconfig-decode-nvme-tier split-tier NVMe ratio only (no GPU, ~10 min)
 # writes .config and enables CONFIG_KNLP_REPRODUCE_DECODE.  Plain `make`
 # after that runs decode-doctor → decode-fetch → decode-build →
 # decode-run → decode-report → optional decode-upload.
+#
+# For decode-nvme-tier on a pod with real NVMe at /runpod-volume:
+#   make defconfig-decode-nvme-tier
+#   echo 'CONFIG_KNLP_NVME_PATH="/runpod-volume/s10"' >> .config
+#   make
 
 DECODE_ORCH := python3 -m tools.reproduce.paper_memory_decode.run
 
