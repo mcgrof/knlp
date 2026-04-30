@@ -36,6 +36,9 @@ PROFILE_STAGES: dict[str, list[str]] = {
         "01_fetch_repos",
         "02_build_flashinfer",
         "03_build_vllm",
+        "04_build_lmcache",
+        "07_qwen25_fullstack_quality",
+        "08_qwen25_smoke_throughput",
         "sat_h100_sweep",
         "sat_hill_fit",
         "sat_b_vs_bt_model_comparison",
@@ -220,6 +223,12 @@ REGISTRY: dict[str, Callable[[StageContext], StageResult]] = {
         "stages.s10_lmcache_split_tier_microbench", "run"
     )(ctx),
     "11_report": lambda ctx: _load("stages.s11_report", "run")(ctx),
+    "sat_h100_sweep": lambda ctx: _load("stages.sat_h100_sweep", "run")(ctx),
+    "sat_hill_fit": lambda ctx: _load("stages.sat_hill_fit", "run")(ctx),
+    "sat_b_vs_bt_model_comparison": lambda ctx: _load(
+        "stages.sat_b_vs_bt_model_comparison", "run"
+    )(ctx),
+    "sat_figures": lambda ctx: _load("stages.sat_figures", "run")(ctx),
 }
 
 
