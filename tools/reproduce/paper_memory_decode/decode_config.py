@@ -75,6 +75,11 @@ class DecodeConfig:
     parallel_gpus: str = "auto"
     max_parallel_gpu_jobs: int = 8
 
+    # Optional real NVMe mount for the split-tier microbench (stage 10).
+    # Set CONFIG_KNLP_NVME_PATH to the mount point (e.g. /runpod-volume/s10).
+    # When empty the stage falls back to a tmpdir inside the run directory.
+    nvme_path: str = ""
+
     raw: dict[str, Any] = None  # type: ignore[assignment]
 
     @classmethod
@@ -113,6 +118,7 @@ class DecodeConfig:
             require_pinned_refs=bool(get("CONFIG_KNLP_REQUIRE_PINNED_REFS", False)),
             parallel_gpus=get("CONFIG_KNLP_PARALLEL_GPUS", "auto"),
             max_parallel_gpu_jobs=int(get("CONFIG_KNLP_MAX_PARALLEL_GPU_JOBS", 8)),
+            nvme_path=get("CONFIG_KNLP_NVME_PATH", ""),
             raw=raw,
         )
 
@@ -124,9 +130,14 @@ class DecodeConfig:
         return bool(self.raw and self.raw.get("CONFIG_KNLP_REPRODUCE_DECODE"))
 
     def repos(self) -> list[tuple[str, str, str, str]]:
-        """Return [(name, repo_url, ref, abs_clone_path), ...]."""
+        """Return [(name, repo_url, ref, abs_clone_path), ...].
+
+        Repos with an empty URL are omitted so that defconfigs that only
+        need a subset (e.g. decode-nvme-tier only needs lmcache) can set
+        CONFIG_KNLP_VLLM_REPO="" to skip the heavyweight clone.
+        """
         wt = Path(self.worktree_root).resolve()
-        return [
+        candidates = [
             ("vllm", self.vllm_repo, self.vllm_ref, str(wt / self.vllm_dir)),
             (
                 "flashinfer",
@@ -141,3 +152,4 @@ class DecodeConfig:
                 str(wt / self.lmcache_dir),
             ),
         ]
+        return [(n, u, r, p) for n, u, r, p in candidates if u]
