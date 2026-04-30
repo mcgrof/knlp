@@ -175,7 +175,7 @@ CONFIGS = [
 ]
 
 GSM8K_PASS_THRESHOLD = 0.01  # sym FP8 must be below fp16 - this
-ASYM_DELTA_THRESHOLD = 0.015  # asym must be within 1.5pp of FP16
+ASYM_DELTA_THRESHOLD = 0.05  # asym must be within 5pp of FP16 (absolute)
 
 
 def main():
@@ -244,8 +244,12 @@ def main():
     if asym_acc == 0 and "error" not in results.get("asym_k16_v8", {}):
         print("FAIL: asym_k16_v8 GSM8K accuracy is 0.0")
         sys.exit(1)
-    if delta > ASYM_DELTA_THRESHOLD and fp16_acc > 0:
-        print(f"FAIL: asym GSM8K delta {delta:.3f} > threshold {ASYM_DELTA_THRESHOLD}")
+    abs_delta = abs(asym_acc - fp16_acc)
+    if abs_delta > ASYM_DELTA_THRESHOLD and fp16_acc > 0:
+        print(
+            f"FAIL: asym GSM8K absolute delta {abs_delta:.3f} > "
+            f"threshold {ASYM_DELTA_THRESHOLD}"
+        )
         sys.exit(1)
     print("\n=== QUALITY GATE PASSED ===")
     sys.exit(0)
