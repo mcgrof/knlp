@@ -52,22 +52,30 @@ def run(ctx: StageContext) -> StageResult:
         timeout=120,
     )
 
-    bt_win_frac = rss_ratio = None
+    bt_win_frac = rss_ratio = km_spearman = None
     try:
         text = ctx.stdout_path.read_text()
-        m = re.search(r"BT_WIN_FRACTION=([0-9.]+)", text)
-        if m:
-            bt_win_frac = float(m.group(1))
-        m = re.search(r"RSS_RATIO=([0-9.]+)", text)
-        if m:
-            rss_ratio = float(m.group(1))
+        for tag, var in [
+            ("BT_WIN_FRACTION", "bt_win_frac"),
+            ("RSS_RATIO", "rss_ratio"),
+            ("KM_T_SPEARMAN", "km_spearman"),
+        ]:
+            m = re.search(rf"{tag}=([0-9.\-]+)", text)
+            if m:
+                locals()[var] = float(m.group(1))
+        bt_win_frac = locals().get("bt_win_frac")
+        rss_ratio = locals().get("rss_ratio")
+        km_spearman = locals().get("km_spearman")
     except Exception:
         pass
 
-    if bt_win_frac is not None:
-        ctx.log_metric("bt_win_fraction", bt_win_frac)
-    if rss_ratio is not None:
-        ctx.log_metric("rss_ratio", rss_ratio)
+    for name, val in [
+        ("bt_win_fraction", bt_win_frac),
+        ("rss_ratio", rss_ratio),
+        ("km_t_spearman", km_spearman),
+    ]:
+        if val is not None:
+            ctx.log_metric(name, val)
 
     if rc == 2:
         reason = "prerequisite data missing"
@@ -79,13 +87,14 @@ def run(ctx: StageContext) -> StageResult:
             name=ctx.name,
             status="failed",
             reason=f"gate_sat_b_vs_bt.py returned rc={rc}; "
-            f"bt_win_fraction={bt_win_frac}",
+            f"km_t_spearman={km_spearman}",
         )
 
     ctx.mark_done(
         {
             "bt_win_fraction": bt_win_frac,
             "rss_ratio": rss_ratio,
+            "km_t_spearman": km_spearman,
             "result_path": str(result_path),
         }
     )
