@@ -1,3 +1,4 @@
+import sys
 """Stage 06: vLLM asymmetric KV cache writer correctness gate.
 
 Runs gate_writer_asym.py to verify the K-lossless / V-FP8 write
@@ -22,7 +23,7 @@ _GATE = Path(__file__).resolve().parents[1] / "gate_writer_asym.py"
 
 def run(ctx: StageContext) -> StageResult:
     rc = ctx.run_subprocess(
-        ["python3", str(_GATE)],
+        [sys.executable, str(_GATE)],
         timeout=120,
     )
 

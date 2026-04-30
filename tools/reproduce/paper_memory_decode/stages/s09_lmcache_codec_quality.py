@@ -1,3 +1,4 @@
+import sys
 """Stage 09: LMCache AsymK16V8Codec quality gate.
 
 Runs gate_lmcache_codec.py to verify the storage-tier claims:
@@ -29,7 +30,7 @@ def run(ctx: StageContext) -> StageResult:
     result_path = ctx.stage_dir / "lmcache_codec_results.json"
 
     rc = ctx.run_subprocess(
-        ["python3", str(_GATE)],
+        [sys.executable, str(_GATE)],
         extra_env={"KNLP_RESULT_PATH": str(result_path)},
         timeout=300,
     )

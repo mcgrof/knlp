@@ -1,3 +1,4 @@
+import sys
 """Stage 02: build FlashInfer (editable install).
 
 Installs the mcgrof/flashinfer asym-prefill-refactor-stage branch as
@@ -68,7 +69,7 @@ def run(ctx: StageContext) -> StageResult:
 
     try:
         result = subprocess.run(
-            ["python3", "-c", "import flashinfer; print(flashinfer.__version__)"],
+            [sys.executable, "-c", "import flashinfer; print(flashinfer.__version__)"],
             capture_output=True,
             text=True,
             timeout=30,
