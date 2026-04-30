@@ -33,6 +33,14 @@ SPLIT_TIER_NVME_TOL = 0.02
 
 def _import_codec():
     """Return (AsymK16V8Codec class, error_string).  None on import failure."""
+    # Canonical path in mcgrof/LMCache asymmetric-kv-codec branch.
+    try:
+        from lmcache.v1.kv_codec import AsymK16V8Codec  # type: ignore[import-not-found]
+
+        return AsymK16V8Codec, None
+    except ImportError:
+        pass
+    # Legacy path (older lmcache builds).
     try:
         from lmcache.storage_backend.serde.cachegen_encoder import (  # type: ignore[import-not-found]
             AsymK16V8Codec,
@@ -41,15 +49,13 @@ def _import_codec():
         return AsymK16V8Codec, None
     except ImportError:
         pass
-    # Try alternate import path.
+    # Last-resort: scan top-level lmcache namespace.
     try:
         import lmcache  # type: ignore[import-not-found]
 
-        # Walk the module looking for the codec.
-        for attr in ("AsymK16V8Codec",):
-            obj = getattr(lmcache, attr, None)
-            if obj is not None:
-                return obj, None
+        obj = getattr(lmcache, "AsymK16V8Codec", None)
+        if obj is not None:
+            return obj, None
         return None, "AsymK16V8Codec not found in lmcache"
     except ImportError as e:
         return None, str(e)
