@@ -1,4 +1,3 @@
-import sys
 """Stage 07: Qwen2.5-7B full-stack quality battery.
 
 Runs gate_qwen_quality.py to measure GSM8K accuracy (n=200) and
@@ -18,6 +17,7 @@ Reference results (2026-04-27 H100):
 
 from __future__ import annotations
 
+import sys
 import json
 import re
 from pathlib import Path
