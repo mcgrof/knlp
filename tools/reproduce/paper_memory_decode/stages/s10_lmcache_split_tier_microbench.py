@@ -3,32 +3,38 @@
 Measures the split-tier NVMe-traffic ratio and throughput for the
 asymmetric K16/V8 codec across chunk sizes (1 MB, 8 MB, 32 MB, 64 MB).
 
-Two policies are compared:
+Three storage policies are compared:
 
-  ALL_NVME          -- full encoded object (header + K + V + scales) to disk
-  SPLIT_K_CPU_V_NVME -- K stays in pinned CPU RAM; only header + V + scales
-                        go to disk (~1/3 of the ALL_NVME byte count)
+  FP16_BASELINE      raw BF16 K+V bytes to disk (no codec, no compression)
+  ALL_NVME           K16/V8 encoded object (header + K + V + scales) to disk
+  SPLIT_K_CPU_V_NVME K stays in pinned CPU RAM; only header + V + scales
+                     go to disk (~1/3 of the ALL_NVME byte count)
 
-The NVMe path is taken from the environment variable KNLP_NVME_PATH
-(default: a tmpdir inside the run directory).  On a pod with real NVMe
-mounted at /runpod-volume, set KNLP_NVME_PATH=/runpod-volume/s10_bench.
+Byte ratios vs FP16_BASELINE:
+  ALL_NVME:   ~0.75x  (3X of 4X bytes)
+  SPLIT_TIER: ~0.25x  (1X of 4X bytes)
+
+The NVMe path is taken from CONFIG_KNLP_NVME_PATH in .config (set by
+the defconfig), falling back to the KNLP_NVME_PATH environment variable,
+then a tmpdir inside the run directory.  On a pod with real NVMe mounted
+at /runpod-volume, add CONFIG_KNLP_NVME_PATH="/runpod-volume/s10" to
+.config or use the decode-nvme-tier defconfig.
 
 Pass criterion: nvme_ratio within 0.005 of 1/3 on every chunk.
 The ratio is a mathematical consequence of the K16/V8 layout and is
-hardware-independent.  Throughput numbers are logged as informational
-metrics only -- they vary with storage hardware.
+hardware-independent.  All throughput numbers are informational -- they
+vary with storage hardware and are not part of the pass criterion.
 
 The EncodedKV object returned by AsymK16V8Codec.encode() has:
   .header_bytes   -- fixed-size metadata (~213 bytes)
   .payload        -- k_payload | v_payload | scales (contiguous bytes)
-  .k_payload_len  -- length of K portion
-  .v_payload_len  -- length of V portion
+  .k_payload_len  -- length of K portion in payload
+  .v_payload_len  -- length of V portion in payload
   .scale_payload_len
 
-ALL_NVME bytes  = len(header) + len(payload)
-SPLIT NVMe bytes = len(header) + v_payload_len + scale_payload_len
-                 = len(header) + len(payload) - k_payload_len
-nvme_ratio      = SPLIT / ALL  ≈ 1/3
+ALL_NVME bytes   = len(header) + len(payload)
+SPLIT NVMe bytes = len(header) + len(payload) - k_payload_len
+nvme_ratio       = SPLIT / ALL  ≈ 1/3
 
 Writes results to stage_dir/split_tier_results.json.
 """
@@ -90,41 +96,57 @@ def _make_kv(fp16_target_bytes: int):
     return k, v, (k.numel() + v.numel()) * 2
 
 
-def _bench_chunk(codec, k, v, bench_dir: str) -> dict:
-    """Run ALL_NVME and SPLIT_K_CPU_V_NVME bench for one (k, v) pair."""
+def _kv_to_bytes(t: "torch.Tensor") -> bytes:
+    """Serialize a BF16 tensor to raw bytes without numpy BF16 limitation."""
+    return bytes(t.contiguous().view(torch.uint8).numpy().tobytes())
+
+
+def _bench_chunk(codec, k: "torch.Tensor", v: "torch.Tensor", bench_dir: str) -> dict:
+    """Run FP16_BASELINE, ALL_NVME, and SPLIT_K_CPU_V_NVME bench for one (k,v)."""
+    import torch
+
+    # --- FP16 baseline: raw BF16 tensor bytes, no codec ---
+    fp16_data = _kv_to_bytes(k) + _kv_to_bytes(v)
+    fp16_size = len(fp16_data)
+
+    # --- Asymmetric K16/V8 encode ---
     enc = codec.encode(k, v)
     header: bytes = enc.header_bytes
     payload: bytes = enc.payload
     k_len: int = enc.k_payload_len
 
-    full_bytes = header + payload
-    # SPLIT NVMe payload: header + everything after K in payload
-    split_bytes = header + payload[k_len:]
+    full_bytes = header + payload  # ALL_NVME
+    split_bytes = header + payload[k_len:]  # SPLIT: V8 + scales + header only
 
     total_enc = len(full_bytes)
     nvme_split = len(split_bytes)
     nvme_ratio = nvme_split / total_enc
 
+    fpath_fp16 = os.path.join(bench_dir, "fp16.bin")
     fpath_all = os.path.join(bench_dir, "all.bin")
     fpath_split = os.path.join(bench_dir, "split_v.bin")
 
-    # Warmup
-    for _ in range(N_WARMUP):
-        with open(fpath_all, "wb") as f:
-            f.write(full_bytes)
-            f.flush()
-            os.fsync(f.fileno())
-        with open(fpath_split, "wb") as f:
-            f.write(split_bytes)
-            f.flush()
-            os.fsync(f.fileno())
+    # Warmup all three
+    for path, data in (
+        (fpath_fp16, fp16_data),
+        (fpath_all, full_bytes),
+        (fpath_split, split_bytes),
+    ):
+        for _ in range(N_WARMUP):
+            with open(path, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
 
+    fp16_write_s = _timed_write(fp16_data, fpath_fp16, N_MEASURE)
     all_write_s = _timed_write(full_bytes, fpath_all, N_MEASURE)
     split_write_s = _timed_write(split_bytes, fpath_split, N_MEASURE)
+
+    fp16_read_s = _timed_read(fpath_fp16, N_MEASURE)
     all_read_s = _timed_read(fpath_all, N_MEASURE)
     split_read_s = _timed_read(fpath_split, N_MEASURE)
 
-    for p in (fpath_all, fpath_split):
+    for p in (fpath_fp16, fpath_all, fpath_split):
         try:
             os.unlink(p)
         except OSError:
@@ -134,14 +156,19 @@ def _bench_chunk(codec, k, v, bench_dir: str) -> dict:
         return (nbytes * N_MEASURE / 1e6) / secs if secs > 0 else 0.0
 
     return {
+        "fp16_size": fp16_size,
         "total_enc_bytes": total_enc,
         "nvme_split_bytes": nvme_split,
+        "storage_ratio_all": total_enc / fp16_size,
+        "storage_ratio_split": nvme_split / fp16_size,
         "k_payload_len": k_len,
         "v_payload_len": enc.v_payload_len,
         "scale_payload_len": enc.scale_payload_len,
         "nvme_ratio": nvme_ratio,
+        "fp16_write_mbps": mbps(fp16_size, fp16_write_s),
         "all_write_mbps": mbps(total_enc, all_write_s),
         "split_write_mbps": mbps(nvme_split, split_write_s),
+        "fp16_read_mbps": mbps(fp16_size, fp16_read_s),
         "all_read_mbps": mbps(total_enc, all_read_s),
         "split_read_mbps": mbps(nvme_split, split_read_s),
     }
@@ -214,18 +241,35 @@ def run(ctx: StageContext) -> StageResult:
                 )
 
             print(
-                f"    nvme_ratio={r['nvme_ratio']:.4f}  "
-                f"all_write={r['all_write_mbps']:.1f} MB/s  "
-                f"split_write={r['split_write_mbps']:.1f} MB/s  "
-                f"all_read={r['all_read_mbps']:.1f} MB/s  "
-                f"split_read={r['split_read_mbps']:.1f} MB/s",
+                f"    bytes:  fp16={r['fp16_size'] / 1e6:.2f} MB  "
+                f"all={r['total_enc_bytes'] / 1e6:.2f} MB "
+                f"({r['storage_ratio_all']:.4f}x)  "
+                f"split={r['nvme_split_bytes'] / 1e6:.2f} MB "
+                f"({r['storage_ratio_split']:.4f}x)  "
+                f"nvme_ratio={r['nvme_ratio']:.4f}",
+                flush=True,
+            )
+            print(
+                f"    write:  fp16={r['fp16_write_mbps']:.1f}  "
+                f"all={r['all_write_mbps']:.1f}  "
+                f"split={r['split_write_mbps']:.1f} MB/s",
+                flush=True,
+            )
+            print(
+                f"    read:   fp16={r['fp16_read_mbps']:.1f}  "
+                f"all={r['all_read_mbps']:.1f}  "
+                f"split={r['split_read_mbps']:.1f} MB/s",
                 flush=True,
             )
 
-            # Log nvme_ratio as a pass/fail metric; throughput is informational.
+            # nvme_ratio is the pass/fail metric; everything else is informational.
             ctx.log_metric(f"nvme_ratio_{label}", r["nvme_ratio"])
+            ctx.log_metric(f"storage_ratio_all_{label}", r["storage_ratio_all"])
+            ctx.log_metric(f"storage_ratio_split_{label}", r["storage_ratio_split"])
+            ctx.log_metric(f"fp16_write_mbps_{label}", r["fp16_write_mbps"])
             ctx.log_metric(f"all_write_mbps_{label}", r["all_write_mbps"])
             ctx.log_metric(f"split_write_mbps_{label}", r["split_write_mbps"])
+            ctx.log_metric(f"fp16_read_mbps_{label}", r["fp16_read_mbps"])
             ctx.log_metric(f"all_read_mbps_{label}", r["all_read_mbps"])
             ctx.log_metric(f"split_read_mbps_{label}", r["split_read_mbps"])
 
