@@ -274,7 +274,7 @@ def plot_put_latency_by_chunk(data: dict, out: Path) -> None:
     ax.set_yscale("log")
     ax.set_xlabel("Chunk size (MB)")
     ax.set_ylabel("Write latency p50 (ms)")
-    ax.set_title("put() latency — FADU 8× RAID-0 (device-specific)")
+    ax.set_title("put() latency — RunPod cloud-local NVMe (device-specific)")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
 
@@ -311,7 +311,7 @@ def plot_get_latency_by_chunk(data: dict, out: Path) -> None:
     ax.set_yscale("log")
     ax.set_xlabel("Chunk size (MB)")
     ax.set_ylabel("Read latency p50 (ms)")
-    ax.set_title("get() latency — FADU 8× RAID-0 (device-specific)")
+    ax.set_title("get() latency — RunPod cloud-local NVMe (device-specific)")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
 
@@ -337,7 +337,7 @@ def plot_raw_nvme_envelope(data: dict, out: Path) -> None:
     ax.set_xscale("log")
     ax.set_xlabel("Chunk size (MB)")
     ax.set_ylabel("Throughput (MB/s)")
-    ax.set_title("Raw NVMe envelope — 8× FADU RAID-0, 100 GB XFS slice")
+    ax.set_title("Raw file-I/O envelope — RunPod cloud-local NVMe (XFS)")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
 
@@ -424,7 +424,7 @@ def plot_model_shaped_latency(data: dict, out: Path) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(configs, fontsize=8)
     ax.set_ylabel("Latency p50 (ms)")
-    ax.set_title("Model-shaped KV latency — FADU 8× RAID-0 (device-specific)")
+    ax.set_title("Model-shaped KV latency — RunPod cloud-local NVMe (device-specific)")
     ax.legend(fontsize=8, ncol=2)
     ax.grid(axis="y", alpha=0.3)
 
