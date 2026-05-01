@@ -341,25 +341,29 @@ def plot_raw_nvme_envelope(data: dict, out: Path) -> None:
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
 
-    # annotate peak write
+    bbox_style = dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85)
+
+    # annotate peak write — text placed left of the peak to avoid right edge
     peak_w_i = int(np.argmax(write_mbps))
     ax.annotate(
         f"peak write\n{write_mbps[peak_w_i]:.0f} MB/s",
         xy=(sizes_mb[peak_w_i], write_mbps[peak_w_i]),
-        xytext=(sizes_mb[peak_w_i] * 2, write_mbps[peak_w_i] * 0.9),
+        xytext=(sizes_mb[peak_w_i] / 5, write_mbps[peak_w_i] * 1.05),
         arrowprops=dict(arrowstyle="->", color=C_RAW_W, lw=0.8),
         fontsize=8,
         color=C_RAW_W,
+        bbox=bbox_style,
     )
-    # annotate peak read
+    # annotate peak read — text placed below the peak to avoid the legend
     peak_r_i = int(np.argmax(read_mbps))
     ax.annotate(
         f"peak read\n{read_mbps[peak_r_i]:.0f} MB/s",
         xy=(sizes_mb[peak_r_i], read_mbps[peak_r_i]),
-        xytext=(sizes_mb[peak_r_i] * 2, read_mbps[peak_r_i] * 1.05),
+        xytext=(sizes_mb[peak_r_i] * 4, read_mbps[peak_r_i] * 0.68),
         arrowprops=dict(arrowstyle="->", color=C_RAW_R, lw=0.8),
         fontsize=8,
         color=C_RAW_R,
+        bbox=bbox_style,
     )
 
     _save(fig, out, "raw_nvme_envelope.pdf")
