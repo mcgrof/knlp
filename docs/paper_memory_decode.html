@@ -766,7 +766,6 @@
     <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer</a>
     <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache</a>
-    <a href="https://github.com/mcgrof/paper-memory-decode">Paper</a>
     <a href="#related-papers">Related</a>
     <a href="#reproduce">Reproduce</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
@@ -807,11 +806,6 @@
       <span class="rl-icon">⎇</span>
       <span class="rl-repo">mcgrof/LMCache</span>
       <span class="rl-branch">asymmetric-kv-codec</span>
-    </a>
-    <a class="repo-link" href="https://github.com/mcgrof/paper-memory-decode">
-      <span class="rl-icon">⎇</span>
-      <span class="rl-repo">mcgrof/paper-memory-decode</span>
-      <span class="rl-branch">main</span>
     </a>
   </div>
   <div style="margin-top:10px;">
@@ -1617,8 +1611,8 @@ llm = LLM(
   </div>
   <p class="panel-body">
     The full-stack vLLM + FlashInfer asymmetric K16/V8 result depends on three modified serving-stack
-    repos plus the paper LaTeX source. All four are public on GitHub with the exact branches the paper
-    measurements were taken on.
+    repos.  All three are public on GitHub with the exact branches the paper measurements were taken
+    on.
   </p>
 
   <div class="kr-table" style="margin:16px 0;">
@@ -1641,15 +1635,10 @@ llm = LLM(
           <td style="padding:10px 16px;"><code>asym-prefill-refactor-stage</code></td>
           <td style="padding:10px 16px;">FI-1..FI-5 CUDA template refactor for independent K/V dtypes in prefill+decode</td>
         </tr>
-        <tr style="border-bottom:1px solid var(--border);">
+        <tr>
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">mcgrof/LMCache</a></td>
           <td style="padding:10px 16px;"><code>asymmetric-kv-codec</code></td>
           <td style="padding:10px 16px;">K16/V8 codec, split-tier placement, serde, 74 CPU unit tests</td>
-        </tr>
-        <tr>
-          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/paper-memory-decode">mcgrof/paper-memory-decode</a></td>
-          <td style="padding:10px 16px;"><code>main</code></td>
-          <td style="padding:10px 16px;">LaTeX source, figures, data, generate scripts</td>
         </tr>
       </tbody>
     </table>
@@ -1666,7 +1655,7 @@ make</code></pre>
     battery + standalone FlashInfer gates + LMCache codec checks),
     <code>defconfig-decode-sat</code> (saturation model + Hill fit), and
     <code>defconfig-decode-full</code> (everything possible from the paper, with structured skip reports
-    when cross-GPU hardware is missing). Each defconfig pins exact git refs, clones the four repos into
+    when cross-GPU hardware is missing). Each defconfig pins exact git refs, clones the three forks into
     the parent directory, builds the modified serving stack, runs the configured stages, and writes
     machine-readable artifacts to <code>results/decode/&lt;run_id&gt;/</code>. Local JSONL telemetry is
     canonical; W&amp;B and trackerio are optional mirrors. See
@@ -1683,7 +1672,6 @@ make</code></pre>
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
-    <a href="https://github.com/mcgrof/paper-memory-decode">Paper Repo</a>
     <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer Fork</a>
     <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM Fork</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache Fork</a>
