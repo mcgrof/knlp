@@ -41,6 +41,13 @@
     padding: 0;
   }
 
+  /* Default link color — overrides the browser-default dark blue
+     so plain <a> tags read clearly on the dark background.
+     Class-styled links (.site-nav a, .paper-link, .repo-link, etc.)
+     keep their own color and are unaffected. */
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { color: #6cf3e6; text-decoration: underline; }
+
   .site-header {
     border-bottom: 1px solid var(--border);
     padding: 12px 32px;
@@ -145,6 +152,45 @@
   }
 
   .paper-link:hover { background: rgba(0,232,124,0.12); }
+
+  /* Hero repo button: shows a forked repo and the exact branch the
+     paper was measured on.  Visually distinct from .paper-link so
+     readers can tell they are real source-code refs. */
+  .repo-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--cyan);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    border: 1px solid rgba(0,212,200,0.35);
+    padding: 5px 12px;
+    border-radius: 4px;
+    background: rgba(0,212,200,0.05);
+    transition: background 0.15s, border-color 0.15s;
+    margin-right: 8px;
+    margin-bottom: 6px;
+  }
+
+  .repo-link:hover {
+    background: rgba(0,212,200,0.12);
+    border-color: rgba(0,212,200,0.7);
+    text-decoration: none;
+  }
+
+  .repo-link .rl-icon { color: var(--text2); font-weight: 700; }
+  .repo-link .rl-repo { color: var(--text); }
+  .repo-link .rl-branch {
+    color: var(--amber);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(240,160,48,0.10);
+    border: 1px solid rgba(240,160,48,0.25);
+  }
 
   /* ── PREAMBLE ── */
   .preamble {
@@ -721,6 +767,7 @@
     <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache</a>
     <a href="https://github.com/mcgrof/paper-memory-decode">Paper</a>
+    <a href="#related-papers">Related</a>
     <a href="#reproduce">Reproduce</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
   </nav>
@@ -746,10 +793,31 @@
     plus FP8 e4m3 values; the Qwen2.5-7B vLLM runs use BF16 K + FP8 V.
   </p>
   <div>
-    <a class="paper-link" href="https://github.com/mcgrof/paper-memory-decode">paper-memory-decode repo ↗</a>
-    <a class="paper-link" href="https://github.com/mcgrof/flashinfer">FlashInfer fork ↗</a>
+    <a class="repo-link" href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">
+      <span class="rl-icon">⎇</span>
+      <span class="rl-repo">mcgrof/vllm</span>
+      <span class="rl-branch">asymmetric-kv-plumbing</span>
+    </a>
+    <a class="repo-link" href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">
+      <span class="rl-icon">⎇</span>
+      <span class="rl-repo">mcgrof/flashinfer</span>
+      <span class="rl-branch">asym-prefill-refactor-stage</span>
+    </a>
+    <a class="repo-link" href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">
+      <span class="rl-icon">⎇</span>
+      <span class="rl-repo">mcgrof/LMCache</span>
+      <span class="rl-branch">asymmetric-kv-codec</span>
+    </a>
+    <a class="repo-link" href="https://github.com/mcgrof/paper-memory-decode">
+      <span class="rl-icon">⎇</span>
+      <span class="rl-repo">mcgrof/paper-memory-decode</span>
+      <span class="rl-branch">main</span>
+    </a>
+  </div>
+  <div style="margin-top:10px;">
+    <a class="paper-link" href="#reproduce">Reproduce ↗</a>
     <a class="paper-link" href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs ↗</a>
-    <a class="paper-link" href="https://arxiv.org/abs/2602.21548">DualPath ↗</a>
+    <a class="paper-link" href="#related-papers">Related papers ↗</a>
   </div>
 </section>
 
@@ -1441,19 +1509,6 @@ llm = LLM(
   </p>
 
   <div class="future-grid">
-    <a class="future-card" href="https://arxiv.org/abs/2602.21548">
-      <div class="fc-label" style="color:var(--amber);">DualPath — arXiv:2602.21548</div>
-      <div class="fc-title">Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</div>
-      <div class="fc-desc">
-        Addresses external KV-cache storage I/O in agentic disaggregated serving.
-        ~95–98% token reuse rates in multi-turn workloads means warm caches,
-        but per-step KV reads inside the attention kernel are unchanged.
-        DualPath provides the system-level scheduling complement to this paper's kernel-level result.
-        <br><br><strong style="color:var(--amber);">Connection:</strong> This paper establishes the instantaneous bandwidth
-        requirement that DualPath-style systems must route around. The tiering projections (P7) are the
-        quantitative input to that scheduling problem.
-      </div>
-    </a>
     <a class="future-card" href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md">
       <div class="fc-label" style="color:var(--purple);">MXFP8 on Blackwell</div>
       <div class="fc-title">Block-Scaled Microscaling FP8 as a Blackwell-Native Closure</div>
@@ -1497,6 +1552,60 @@ llm = LLM(
     <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs</a> ·
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md">hardware notes</a> ·
     <a href="https://github.com/mcgrof/knlp/blob/main/scripts/bpa_h100_exp4_ratio_classifier.py">ratio_classifier.py</a>
+  </div>
+</section>
+
+<!-- RELATED PAPERS -->
+<section class="panel-section" id="related-papers">
+  <div class="panel-header">
+    <span class="panel-id" style="background:rgba(240,160,48,0.15);color:var(--amber);border-color:rgba(240,160,48,0.5);">RP</span>
+    <span class="panel-title">Related Papers</span>
+  </div>
+  <p class="panel-body">
+    External work that addresses adjacent points in the decode-bottleneck design space.  These are
+    the systems whose constraints are quoted or whose results are used as scaffolding throughout the
+    paper; this is not an exhaustive related-work survey.
+  </p>
+
+  <div class="future-grid">
+    <a class="future-card" href="https://arxiv.org/abs/2602.21548">
+      <div class="fc-label" style="color:var(--amber);">DualPath — arXiv:2602.21548</div>
+      <div class="fc-title">Wu et al. 2026 — Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</div>
+      <div class="fc-desc">
+        External KV-cache storage I/O for agentic disaggregated serving.  ~95–98% token reuse rates
+        in multi-turn workloads mean warm prefix caches, but per-step KV reads inside the attention
+        kernel are unchanged.  DualPath is the system-level scheduling complement to this paper's
+        kernel-level result.
+        <br><br><strong style="color:var(--amber);">Connection:</strong> our work establishes the
+        instantaneous bandwidth requirement DualPath-style systems must route around; the tiering
+        projections (P7) are the quantitative input to that scheduling problem.
+      </div>
+    </a>
+    <a class="future-card" href="https://arxiv.org/abs/2510.09665">
+      <div class="fc-label" style="color:var(--amber);">LMCache — arXiv:2510.09665</div>
+      <div class="fc-title">Liu et al. 2025 — KV Reuse for Long-Context LLM Serving</div>
+      <div class="fc-desc">
+        Hierarchical KV-cache reuse across GPU, CPU, and storage tiers with pipelined transfers.
+        Treats long-context inference as a cache-sharing problem instead of a per-request
+        recomputation problem.
+        <br><br><strong style="color:var(--amber);">Connection:</strong> the asymmetric K16/V8
+        codec and the split-tier K-host / V-NVMe placement (P7, Section IX-E) are implemented on
+        the LMCache <code>asymmetric-kv-codec</code> branch and reuse the LMCache
+        <code>SplitTierStore</code> directly.
+      </div>
+    </a>
+    <a class="future-card" href="https://arxiv.org/abs/2511.16273">
+      <div class="fc-label" style="color:var(--amber);">CXL-SpecKV</div>
+      <div class="fc-title">Liu et al. 2026 — Disaggregated KV with FPGA-Attached CXL Memory</div>
+      <div class="fc-desc">
+        Disaggregates the KV cache to FPGA-attached CXL memory and uses speculative prefetching to
+        hide the slower-than-HBM tier behind draft-model lookahead.
+        <br><br><strong style="color:var(--amber);">Connection:</strong> a concrete proposal for
+        the kind of overlap-the-cold-tier scheduling our P7 bandwidth bound implies is necessary —
+        synchronous dense decode cannot wait on CXL latency, but asynchronous prefetch backed by
+        speculation can.
+      </div>
+    </a>
   </div>
 </section>
 
