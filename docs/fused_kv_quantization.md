@@ -41,10 +41,9 @@ document areas:
   — dated provenance notes
 
 **Paper**
-- [`github.com/mcgrof/paper-memory-decode`](https://github.com/mcgrof/paper-memory-decode)
-  — *Memory-Traffic Saturation in Autoregressive Transformer Decode*
-- [`knlp.io/decode`](https://knlp.io/decode) — interactive landing
-  page with the main findings
+- [`knlp.io/decode`](https://knlp.io/decode) — *Memory-Traffic
+  Saturation in Autoregressive Transformer Decode* — interactive
+  landing page with the main findings
 
 ## Why this page was retired
 
