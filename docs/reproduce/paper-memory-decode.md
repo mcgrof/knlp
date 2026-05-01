@@ -1,9 +1,11 @@
 # Reproducing *Memory-Traffic Saturation in Autoregressive Transformer Decode*
 
 This document tells a human or AI coding agent how to reproduce the
-paper's findings using the `knlp` defconfig system. The paper itself
-lives at <https://github.com/mcgrof/paper-memory-decode>; the companion
-page is <https://knlp.io/decode>.
+paper's findings using the `knlp` defconfig system. The companion
+page is <https://knlp.io/decode>; the LaTeX source for the paper
+itself is kept in a private repository and is not required to
+reproduce the empirical findings — every claim is reproducible from
+the public forks below.
 
 ## Quick start
 
@@ -21,7 +23,7 @@ decode-doctor → decode-fetch → decode-build → decode-run → decode-report
 ```
 
 `decode-doctor` checks GPU/CUDA/cmake/disk/HF-token before any clone or
-build. `decode-fetch` clones the four companion repos into `..` (the
+build. `decode-fetch` clones the three companion forks into `..` (the
 parent of the `knlp` checkout). `decode-build` installs FlashInfer,
 vLLM, and LMCache as editable Python packages, in the order required
 to dodge the "vLLM pulls flashinfer-python from PyPI and overwrites the
@@ -39,7 +41,6 @@ marker.
 | <https://github.com/mcgrof/vllm> | `asymmetric-kv-plumbing` | `../vllm` | Tuple K/V cache, FlashAttn writer patch, asym dtype plumbing |
 | <https://github.com/mcgrof/flashinfer> | `asym-prefill-refactor-stage` | `../flashinfer` | FI-1..FI-5 CUDA template refactor for independent K/V dtypes |
 | <https://github.com/mcgrof/LMCache> | `asymmetric-kv-codec` | `../lmcache` | K16/V8 codec, split-tier placement, serde, 74 CPU unit tests |
-| <https://github.com/mcgrof/paper-memory-decode> | `main` | `../paper-memory-decode` | LaTeX source, figures, generate scripts |
 
 You can override branches/URLs/paths by editing the corresponding
 `CONFIG_KNLP_*` values in `.config` after running the defconfig.
@@ -277,7 +278,6 @@ failures.
 
 - Paper companion site: <https://knlp.io/decode> (reads off the same
   result files)
-- Paper repo: <https://github.com/mcgrof/paper-memory-decode>
 - vLLM fork: <https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing>
 - FlashInfer fork: <https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage>
 - LMCache fork: <https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec>
