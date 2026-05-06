@@ -36,6 +36,11 @@ from ..stages import StageContext, StageResult
 _TEST_FILES = [
     "tests/v1/distributed/serde/test_multi.py",
     "tests/v1/distributed/serde/test_asym_k16_v8_multi.py",
+    # Mode 2 / split-tier tests landed in commit bc0d5873 on the
+    # serde-multi-output-extensions branch.  Older checkouts of the
+    # branch (without that commit) will not have this file; the
+    # pre-flight existence check below skips it gracefully.
+    "tests/v1/distributed/serde/test_asym_k16_v8_v_only.py",
     "tests/v1/distributed/serde/test_fp8.py",
     "tests/v1/distributed/serde/test_utils.py",
 ]
@@ -63,23 +68,41 @@ def run(ctx: StageContext) -> StageResult:
             reason="pytest not found in PATH; lmcache install incomplete",
         )
 
-    # Verify the test files exist on the checked-out branch (they
-    # only live on serde-multi-output-extensions; if we are on a
-    # different branch this is the actionable error).
-    missing = [t for t in _TEST_FILES if not (lmc_path / t).exists()]
-    if missing:
+    # Verify the core test files exist on the checked-out branch
+    # (they only live on serde-multi-output-extensions; if we are on
+    # a different branch this is the actionable error).  The Mode 2
+    # / V-only test file landed mid-branch in commit bc0d5873; treat
+    # its absence as a soft warning and run the rest, so an older
+    # checkout of the same branch still gates correctly.
+    _CORE = {
+        "tests/v1/distributed/serde/test_multi.py",
+        "tests/v1/distributed/serde/test_asym_k16_v8_multi.py",
+        "tests/v1/distributed/serde/test_fp8.py",
+        "tests/v1/distributed/serde/test_utils.py",
+    }
+    present = [t for t in _TEST_FILES if (lmc_path / t).exists()]
+    missing_core = [
+        t for t in _TEST_FILES if t in _CORE and not (lmc_path / t).exists()
+    ]
+    if missing_core:
         return StageResult(
             name=ctx.name,
             status="failed",
             reason=(
-                "missing test files (wrong lmcache branch?): "
-                + ", ".join(missing)
+                "missing core test files (wrong lmcache branch?): "
+                + ", ".join(missing_core)
                 + "; expected branch serde-multi-output-extensions"
             ),
         )
+    if "tests/v1/distributed/serde/test_asym_k16_v8_v_only.py" not in present:
+        ctx.stderr_path.open("a").write(
+            "WARN: test_asym_k16_v8_v_only.py absent on this branch "
+            "(likely pre-bc0d5873); skipping Mode 2 unit-test gate. "
+            "Mode 1 tests still gate codec correctness.\n"
+        )
 
     rc = ctx.run_subprocess(
-        [pytest, "-q", "--tb=line", *_TEST_FILES],
+        [pytest, "-q", "--tb=line", *present],
         cwd=str(lmc_path),
         timeout=300,
     )
