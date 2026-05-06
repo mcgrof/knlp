@@ -82,6 +82,9 @@ _EXPECTED_RATIOS = {
     "bf16_baseline": 1.0,
     "sym_fp8": 0.5,
     "asym_k16_v8": 0.75,
+    # Mode 2 / split-tier: V_8 only on disk; K stays in host RAM.
+    # Layout invariant: V_8 / (K_16 + V_16) = 1/4 (paper Eq. 4).
+    "asym_v_only": 0.25,
 }
 
 
@@ -308,7 +311,13 @@ def _measure_cell(name, encode_fn, decode_fn, k, v, target_dir: Path, seed: int)
     v_diff = (v_out.float() - v.float()).abs()
     v_rel = (v_diff / (v.float().abs() + 1e-6)).median().item()
     v_rel_max = (v_diff / (v.float().abs() + 1e-6)).max().item()
-    k_diff = (k_out.float() - k.float()).abs().max().item()
+    # Mode 2 / split-tier returns ``k_out is None`` because K is not
+    # in the blob.  Record None instead of failing — the pass-criteria
+    # check below skips the bit-exact-K assertion for that lane.
+    if k_out is None:
+        k_diff = None
+    else:
+        k_diff = (k_out.float() - k.float()).abs().max().item()
 
     return {
         "encoding": name,
@@ -399,10 +408,31 @@ def run(ctx: StageContext) -> StageResult:
 
     AsymK16V8MultiSerializer = asym_serde_mod.AsymK16V8MultiSerializer
     AsymK16V8MultiDeserializer = asym_serde_mod.AsymK16V8MultiDeserializer
+    # The V-only / split-tier classes are sibling additions to the
+    # same module on the serde-multi-output-extensions branch.
+    # ``getattr`` with a default lets older checkouts of the branch
+    # (without commit bc0d5873) skip Mode 2 cleanly rather than
+    # blowing up with AttributeError.
+    AsymK16V8VOnlyMultiSerializer = getattr(
+        asym_serde_mod, "AsymK16V8VOnlyMultiSerializer", None
+    )
+    AsymK16V8VOnlyMultiDeserializer = getattr(
+        asym_serde_mod, "AsymK16V8VOnlyMultiDeserializer", None
+    )
     MemoryLayoutDesc = sys.modules["lmcache.v1.distributed.api"].MemoryLayoutDesc
 
     asym_s = AsymK16V8MultiSerializer()
     asym_d = AsymK16V8MultiDeserializer()
+    asym_v_only_s = (
+        AsymK16V8VOnlyMultiSerializer()
+        if AsymK16V8VOnlyMultiSerializer is not None
+        else None
+    )
+    asym_v_only_d = (
+        AsymK16V8VOnlyMultiDeserializer()
+        if AsymK16V8VOnlyMultiDeserializer is not None
+        else None
+    )
 
     def _encode_asym(k, v):
         layout = (
@@ -423,6 +453,27 @@ def run(ctx: StageContext) -> StageResult:
         v_out = _FakeMemoryObj(tensor=torch.zeros(v_shape, dtype=dtype))
         asym_d.deserialize(src, (k_out, v_out))
         return k_out.tensor, v_out.tensor
+
+    def _encode_asym_v_only(k, v):
+        # Mode 2 / split-tier: K is NOT written to the byte buffer
+        # (it stays in CPU-pinned host RAM in real deployment).
+        layout = (None, MemoryLayoutDesc(shapes=[v.shape], dtypes=[v.dtype]))
+        cap = asym_v_only_s.estimate_serialized_size(layout)
+        buf = _byte_buffer(cap)
+        n = asym_v_only_s.serialize((None, _FakeMemoryObj(tensor=v)), buf)
+        return bytes(buf.tensor[:n].numpy().tobytes())
+
+    def _decode_asym_v_only(blob, k_shape, v_shape, dtype):
+        # Returns ``(None, V_dq)`` — K is not in the blob.  The bench
+        # records ``k_max_abs_err = None`` for this lane and the pass-
+        # criteria check skips the bit-exact-K assertion accordingly.
+        import torch
+        src = _FakeMemoryObj(
+            tensor=torch.frombuffer(bytearray(blob), dtype=torch.uint8)
+        )
+        v_out = _FakeMemoryObj(tensor=torch.zeros(v_shape, dtype=dtype))
+        asym_v_only_d.deserialize(src, (None, v_out))
+        return None, v_out.tensor
 
     # Bench sweep.
     import torch
@@ -458,6 +509,13 @@ def run(ctx: StageContext) -> StageResult:
                         lambda b: _decode_asym(b, k_shape, v_shape, cfg_model["native_dtype"]),
                     ),
                 }
+                if asym_v_only_s is not None and asym_v_only_d is not None:
+                    encs["asym_v_only"] = (
+                        _encode_asym_v_only,
+                        lambda b: _decode_asym_v_only(
+                            b, k_shape, v_shape, cfg_model["native_dtype"]
+                        ),
+                    )
                 for name, (enc_fn, dec_fn) in encs.items():
                     r = _measure_cell(name, enc_fn, dec_fn, k, v, target_dir, seed)
                     r.update({
@@ -518,7 +576,11 @@ def run(ctx: StageContext) -> StageResult:
                 f"V rel err median {r['v_rel_err_median']:.4f} "
                 f"exceeds {_V_REL_ERR_TOL}"
             )
-        if r["encoding"] == "asym_k16_v8" and r["k_max_abs_err"] != 0.0:
+        if (
+            r["encoding"] == "asym_k16_v8"
+            and r["k_max_abs_err"] is not None
+            and r["k_max_abs_err"] != 0.0
+        ):
             fails.append(
                 f"asym_k16_v8 chunk={r['chunk_seqlen']} seed={r['seed']} "
                 f"K not bit-exact (max abs err {r['k_max_abs_err']})"
