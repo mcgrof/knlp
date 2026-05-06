@@ -11,6 +11,22 @@ from .hardware import HostInfo
 # Minimum disk requirements per profile (GB).
 MIN_DISK_GB = {"decode": 200, "decode-sat": 100, "decode-full": 500}
 
+# Profiles that do not build vLLM / FlashInfer and therefore do not
+# need cmake.  Keep this list in sync with the ones that set
+# CONFIG_KNLP_VLLM_REPO="" / CONFIG_KNLP_FLASHINFER_REPO="" in their
+# defconfigs.
+_LMCACHE_ONLY_PROFILES = {
+    "decode-nvme-tier",
+    "decode-storage",
+    "decode-serdes",
+}
+
+# Profiles that do not need a GPU at all.
+_CPU_ONLY_PROFILES = {
+    "decode-nvme-tier",
+    "decode-serdes",
+}
+
 
 def run_checks(cfg: DecodeConfig, host: HostInfo) -> tuple[list[str], list[str]]:
     """Return (errors, warnings).  errors non-empty means the stage fails.
@@ -18,23 +34,27 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> tuple[list[str], list[str]]
     issues: list[str] = []
     warnings: list[str] = []
 
+    needs_cuda_build = cfg.profile not in _LMCACHE_ONLY_PROFILES
+    needs_gpu = cfg.profile not in _CPU_ONLY_PROFILES
+
     # --- Tools ----------------------------------------------------------
     if not host.has_git:
         issues.append("git not found in PATH")
     if not host.has_pip:
         issues.append("pip/pip3 not found in PATH")
-    if not host.has_cmake:
-        issues.append("cmake not found in PATH")
-    elif host.cmake_version:
-        try:
-            major = int(host.cmake_version.split(".")[0])
-            if major < 4:
-                issues.append(
-                    f"cmake {host.cmake_version} is too old; vLLM build wants cmake>=4. "
-                    "Run: pip install --upgrade cmake"
-                )
-        except ValueError:
-            pass
+    if needs_cuda_build:
+        if not host.has_cmake:
+            issues.append("cmake not found in PATH")
+        elif host.cmake_version:
+            try:
+                major = int(host.cmake_version.split(".")[0])
+                if major < 4:
+                    issues.append(
+                        f"cmake {host.cmake_version} is too old; vLLM build "
+                        "wants cmake>=4. Run: pip install --upgrade cmake"
+                    )
+            except ValueError:
+                pass
 
     # --- Hardware -------------------------------------------------------
     if host.gpu_count == 0:
@@ -42,8 +62,9 @@ def run_checks(cfg: DecodeConfig, host: HostInfo) -> tuple[list[str], list[str]]
             issues.append(
                 "no GPU detected; decode/decode-full profiles require an NVIDIA H100"
             )
-    else:
-        # Memory sanity for 7B
+    elif needs_gpu:
+        # Memory sanity for 7B (only when the profile actually exercises
+        # full-stack 7B serving).
         if host.gpu_memory_mb and max(host.gpu_memory_mb) < 70_000:
             issues.append(
                 f"GPU memory {max(host.gpu_memory_mb)} MB < 70 GB; "
