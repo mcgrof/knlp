@@ -146,6 +146,26 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
     # under 3.10 would not see torch / lmcache.
     pip_cmd = [sys.executable, "-m", "pip"]
 
+    # Preflight: install the build-time dependencies that lmcache's
+    # setup.py imports during metadata generation (torch is needed
+    # for the cuda_extension probe).  --no-build-isolation downstream
+    # then uses these.  We deliberately only install a small set so
+    # the runtime resolver (the editable install below) gets to pin
+    # the rest from the package's pyproject.toml.
+    print("=== preflight: install build-time deps for lmcache metadata phase ===")
+    rc = subprocess.call(
+        pip_cmd + [
+            "install",
+            "--quiet",
+            "--break-system-packages",
+            "--upgrade",
+            "pip", "wheel", "setuptools",
+            "torch==2.6.0", "numpy",
+        ],
+    )
+    if rc != 0:
+        print(f"WARN: preflight install rc={rc} (continuing)")
+
     def install(path: Path, *, optional: bool) -> int:
         """Install one editable repo.  ``optional=True`` returns 0 when
         the path is absent — this happens for profiles that set the
