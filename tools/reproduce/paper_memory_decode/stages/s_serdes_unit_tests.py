@@ -60,13 +60,47 @@ def run(ctx: StageContext) -> StageResult:
             "run stage 01_fetch_repos first",
         )
 
-    pytest = shutil.which("pytest")
-    if not pytest:
-        return StageResult(
-            name=ctx.name,
-            status="failed",
-            reason="pytest not found in PATH; lmcache install incomplete",
+    # Resolve pytest:
+    #   1. Standalone ``pytest`` on PATH (typical when lmcache.[dev]
+    #      extras pulled it in).
+    #   2. ``python3 -m pytest`` of the orchestrator's interpreter
+    #      (works when pytest is just an installed package).
+    #   3. Final fallback: install pytest into the orchestrator's
+    #      interpreter, then re-resolve.  This keeps ``make
+    #      defconfig-decode-serdes && make`` working on stock images
+    #      where pytest isn't part of the lmcache install (the
+    #      branch's pyproject.toml does not declare a ``[dev]``
+    #      extra at the moment).
+    import sys
+    pytest_path = shutil.which("pytest")
+    if pytest_path:
+        pytest_cmd = [pytest_path]
+    else:
+        rc_probe = ctx.run_subprocess(
+            [sys.executable, "-m", "pytest", "--version"],
+            timeout=30,
         )
+        if rc_probe == 0:
+            pytest_cmd = [sys.executable, "-m", "pytest"]
+        else:
+            ctx.stderr_path.open("a").write(
+                "INFO: pytest not present; installing into orchestrator interpreter\n"
+            )
+            ctx.run_subprocess(
+                [sys.executable, "-m", "pip", "install", "--quiet", "pytest"],
+                timeout=180,
+            )
+            rc_probe2 = ctx.run_subprocess(
+                [sys.executable, "-m", "pytest", "--version"],
+                timeout=30,
+            )
+            if rc_probe2 != 0:
+                return StageResult(
+                    name=ctx.name,
+                    status="failed",
+                    reason="pytest could not be installed",
+                )
+            pytest_cmd = [sys.executable, "-m", "pytest"]
 
     # Verify the core test files exist on the checked-out branch
     # (they only live on serde-multi-output-extensions; if we are on
@@ -102,7 +136,7 @@ def run(ctx: StageContext) -> StageResult:
         )
 
     rc = ctx.run_subprocess(
-        [pytest, "-q", "--tb=line", *present],
+        pytest_cmd + ["-q", "--tb=line", *present],
         cwd=str(lmc_path),
         timeout=300,
     )
