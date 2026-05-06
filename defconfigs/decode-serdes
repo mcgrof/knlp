@@ -13,6 +13,20 @@
 #                               on the user-supplied NVMe path
 #   11_report                 — JSON summary
 #
+# Lanes gated by the bench (all four are MANDATORY; missing any one
+# fails the run with a coverage error):
+#   bf16_baseline   raw fp16 K + V (reference)
+#   sym_fp8         upstream LMCache Fp8QuantizationSerializer shape
+#   asym_k16_v8     Mode 1 / all-NVMe (paper Eq. 3, 0.75x FP16)
+#   asym_v_only     Mode 2 / split-tier (paper Eq. 4, 0.25x FP16,
+#                   = 1/3 of Mode 1; K stays in CPU-pinned host RAM)
+#
+# The bench also gates the unit tests for both modes
+# (test_asym_k16_v8_multi.py + test_asym_k16_v8_v_only.py) — a stale
+# CONFIG_KNLP_LMCACHE_REF that predates Mode 2's bc0d5873 commit on
+# serde-multi-output-extensions fails the unit-test stage with an
+# actionable error.
+#
 # Storage path resolution:
 #   CONFIG_KNLP_NVME_PATH > KNLP_NVME_PATH env > tmpdir inside run_dir
 #
