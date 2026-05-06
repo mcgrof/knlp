@@ -166,7 +166,14 @@ def _install_serde_shim(lmc_path: Path):
         lmc_path / "lmcache/v1/kv_codec/asym_k16_v8.py",
     )
     kv_pkg.AsymK16V8Codec = asym_codec.AsymK16V8Codec
-    kv_pkg.ScaleScope = sys.modules["lmcache.v1.kv_codec.encoded_kv"].ScaleScope
+    _enc = sys.modules["lmcache.v1.kv_codec.encoded_kv"]
+    kv_pkg.ScaleScope = _enc.ScaleScope
+    # The Mode 2 / V-only serde imports ``EncodedKV`` directly from
+    # ``lmcache.v1.kv_codec`` to construct a manual blob with
+    # ``k_payload_len = 0``.  The stub package needs that attribute
+    # too, otherwise ``from lmcache.v1.kv_codec import EncodedKV``
+    # raises during the V-only module load.
+    kv_pkg.EncodedKV = _enc.EncodedKV
 
     _load(
         "lmcache.v1.distributed.serde.base",
