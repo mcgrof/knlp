@@ -415,31 +415,36 @@ def run(ctx: StageContext) -> StageResult:
 
     AsymK16V8MultiSerializer = asym_serde_mod.AsymK16V8MultiSerializer
     AsymK16V8MultiDeserializer = asym_serde_mod.AsymK16V8MultiDeserializer
-    # The V-only / split-tier classes are sibling additions to the
-    # same module on the serde-multi-output-extensions branch.
-    # ``getattr`` with a default lets older checkouts of the branch
-    # (without commit bc0d5873) skip Mode 2 cleanly rather than
-    # blowing up with AttributeError.
-    AsymK16V8VOnlyMultiSerializer = getattr(
-        asym_serde_mod, "AsymK16V8VOnlyMultiSerializer", None
-    )
-    AsymK16V8VOnlyMultiDeserializer = getattr(
-        asym_serde_mod, "AsymK16V8VOnlyMultiDeserializer", None
-    )
+    # Mode 2 (split-tier / V-only) classes are required by this
+    # profile.  Their absence means the lmcache checkout predates
+    # commit bc0d5873 on serde-multi-output-extensions, which is
+    # not a valid configuration for this reproducer — the whole
+    # point of decode-serdes is to validate Mode 1 + Mode 2 byte
+    # ratios end-to-end through the new multi-output API.  Fail
+    # loudly with an actionable error rather than silently
+    # skipping the lane.
+    try:
+        AsymK16V8VOnlyMultiSerializer = asym_serde_mod.AsymK16V8VOnlyMultiSerializer
+        AsymK16V8VOnlyMultiDeserializer = asym_serde_mod.AsymK16V8VOnlyMultiDeserializer
+    except AttributeError as e:
+        return StageResult(
+            name=ctx.name,
+            status="failed",
+            reason=(
+                "Mode 2 (V-only / split-tier) serde classes not found in "
+                "the loaded module.  The decode-serdes profile requires "
+                "lmcache@serde-multi-output-extensions at commit bc0d5873 "
+                "or later (which adds AsymK16V8VOnlyMulti{Serializer,"
+                "Deserializer}).  Update CONFIG_KNLP_LMCACHE_REF or pull "
+                f"the branch tip.  Underlying error: {e}"
+            ),
+        )
     MemoryLayoutDesc = sys.modules["lmcache.v1.distributed.api"].MemoryLayoutDesc
 
     asym_s = AsymK16V8MultiSerializer()
     asym_d = AsymK16V8MultiDeserializer()
-    asym_v_only_s = (
-        AsymK16V8VOnlyMultiSerializer()
-        if AsymK16V8VOnlyMultiSerializer is not None
-        else None
-    )
-    asym_v_only_d = (
-        AsymK16V8VOnlyMultiDeserializer()
-        if AsymK16V8VOnlyMultiDeserializer is not None
-        else None
-    )
+    asym_v_only_s = AsymK16V8VOnlyMultiSerializer()
+    asym_v_only_d = AsymK16V8VOnlyMultiDeserializer()
 
     def _encode_asym(k, v):
         layout = (
@@ -515,14 +520,13 @@ def run(ctx: StageContext) -> StageResult:
                         _encode_asym,
                         lambda b: _decode_asym(b, k_shape, v_shape, cfg_model["native_dtype"]),
                     ),
-                }
-                if asym_v_only_s is not None and asym_v_only_d is not None:
-                    encs["asym_v_only"] = (
+                    "asym_v_only": (
                         _encode_asym_v_only,
                         lambda b: _decode_asym_v_only(
                             b, k_shape, v_shape, cfg_model["native_dtype"]
                         ),
-                    )
+                    ),
+                }
                 for name, (enc_fn, dec_fn) in encs.items():
                     r = _measure_cell(name, enc_fn, dec_fn, k, v, target_dir, seed)
                     r.update({
@@ -549,8 +553,38 @@ def run(ctx: StageContext) -> StageResult:
                         r["read_MBps"],
                     )
 
-    # Pass criteria: byte ratio + V quality.
+    # Pass criteria — three layers, all enforced:
+    #
+    #   1. Coverage: every expected lane × target × chunk × seed
+    #      cell must appear in ``rows``.  Catches silent lane skips
+    #      (e.g., the bench loop didn't run Mode 2 because of a
+    #      branch / shim regression).
+    #   2. Byte ratio: each non-baseline lane's bytes/baseline must
+    #      equal the layout-invariant target within
+    #      _BYTE_RATIO_TOL.
+    #   3. Quality: V relative error must stay below the FP8 noise
+    #      threshold; asym_k16_v8 K must be bit-exact.
     fails: List[str] = []
+
+    expected_lanes = set(_EXPECTED_RATIOS.keys())  # {bf16, sym, asym, v_only}
+    targets_run = sorted({r["target_label"] for r in rows})
+    seen_cells: dict = {}
+    for r in rows:
+        seen_cells.setdefault(
+            (r["target_label"], r["chunk_seqlen"], r["seed"]), set()
+        ).add(r["encoding"])
+    for (tg, ch, seed), encs_seen in seen_cells.items():
+        if tg != "vm_disk":
+            continue  # coverage gate: only the storage target is gated
+        missing = expected_lanes - encs_seen
+        if missing:
+            fails.append(
+                f"COVERAGE: vm_disk chunk={ch} seed={seed} did not run "
+                f"lanes {sorted(missing)}; the decode-serdes profile "
+                f"requires all of {sorted(expected_lanes)} (bf16 baseline "
+                f"plus sym FP8 plus asym Mode 1 plus asym Mode 2)"
+            )
+
     for r in rows:
         if r["target_label"] != "vm_disk":
             continue  # tmpfs only used for codec-cost characterization
