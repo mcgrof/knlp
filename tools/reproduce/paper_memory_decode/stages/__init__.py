@@ -57,6 +57,20 @@ PROFILE_STAGES: dict[str, list[str]] = {
         "10_lmcache_split_tier_microbench",
         "11_report",
     ],
+    # Multi-output serde profile: validates the new
+    # AsymK16V8MultiSerializer / AsymK16V8MultiDeserializer architecture
+    # on the LMCache serde-multi-output-extensions branch and runs a
+    # Llama-3.1-8B-shaped storage bench against the user-supplied
+    # CONFIG_KNLP_NVME_PATH (or tmpdir fallback).  No vLLM, no
+    # FlashInfer, no GPU required.
+    "decode-serdes": [
+        "00_doctor",
+        "01_fetch_repos",
+        "04_build_lmcache",
+        "s_serdes_unit_tests",
+        "s_serdes_storage_bench",
+        "11_report",
+    ],
     # Storage matrix profile: full storage characterization for device
     # comparison (FADU, Samsung, etc).  Runs the canonical API stage plus
     # raw envelope, model-shaped KV, and concurrency stress.
@@ -277,6 +291,12 @@ REGISTRY: dict[str, Callable[[StageContext], StageResult]] = {
     )(ctx),
     "s14_optional_vllm_lmcache_replay": lambda ctx: _load(
         "stages.s14_optional_vllm_lmcache_replay", "run"
+    )(ctx),
+    "s_serdes_unit_tests": lambda ctx: _load(
+        "stages.s_serdes_unit_tests", "run"
+    )(ctx),
+    "s_serdes_storage_bench": lambda ctx: _load(
+        "stages.s_serdes_storage_bench", "run"
     )(ctx),
 }
 
