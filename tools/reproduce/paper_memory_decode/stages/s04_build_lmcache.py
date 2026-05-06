@@ -69,6 +69,19 @@ def run(ctx: StageContext) -> StageResult:
     # can fail with collection errors unrelated to codec correctness.
     # Instead, run the union of {kv_codec, distributed/serde} that
     # actually exists, and require at least one to pass.
+    # The e2e and fs_e2e suites need a running lmcache MP server with
+    # the C extension built (or the python_only fallback configured a
+    # specific way) and the multiprocess l1 manager wired up.  They
+    # are environment-sensitive and pass-or-fail differently across
+    # pods depending on CUDA toolkit availability and pinned-memory
+    # budget.  The codec / serde *unit* tests (multi.py, asym
+    # multi.py, fp8.py, utils.py, factory.py, async_processor.py)
+    # are pure-Python correctness checks that do not depend on any
+    # of that, and they are what this stage should gate on.
+    _IGNORE_PATHS = [
+        "tests/v1/distributed/serde/test_serde_e2e.py",
+        "tests/v1/distributed/serde/test_serde_fs_e2e.py",
+    ]
     pytest = shutil.which("pytest")
     candidate_dirs = [
         "tests/v1/kv_codec",
@@ -76,8 +89,12 @@ def run(ctx: StageContext) -> StageResult:
     ]
     present_dirs = [d for d in candidate_dirs if (lmc_path / d).is_dir()]
     if pytest and present_dirs:
+        ignore_args: list[str] = []
+        for p in _IGNORE_PATHS:
+            if (lmc_path / p).exists():
+                ignore_args += [f"--ignore={p}"]
         rc = ctx.run_subprocess(
-            [pytest, "-x", "-q", "--no-header", *present_dirs],
+            [pytest, "-x", "-q", "--no-header", *ignore_args, *present_dirs],
             cwd=str(lmc_path),
             timeout=300,
         )
