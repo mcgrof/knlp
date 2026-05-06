@@ -145,8 +145,7 @@ def run(ctx: StageContext) -> StageResult:
     # Install Python packages needed by the gate scripts in later stages.
     # These are not pulled in by vLLM or lmcache directly.
     ctx.run_subprocess(
-        [
-            pip,
+        pip_cmd + [
             "install",
             "datasets",
             "accelerate",
