@@ -54,11 +54,30 @@ def run(ctx: StageContext) -> StageResult:
                 reason=f"lmcache editable install failed (rc={rc})",
             )
 
-    # Run the unit tests (CPU-only; no GPU needed).
+    # Run the codec / serde unit tests (CPU-only; no GPU needed).
+    # The exact set of tests that exist depends on which lmcache
+    # branch is checked out:
+    #
+    #   asymmetric-kv-codec branch    has tests/v1/kv_codec/ (74 CPU tests)
+    #   serde-multi-output-extensions has tests/v1/distributed/serde/
+    #                                 multi + asym multi + fp8 + utils tests
+    #   upstream/dev                  has tests/v1/distributed/serde/
+    #                                 fp8 + factory + utils tests
+    #
+    # We do NOT run pytest tests/ wholesale: that pulls in CLI / xpu /
+    # connector benchmark suites that require optional deps and that
+    # can fail with collection errors unrelated to codec correctness.
+    # Instead, run the union of {kv_codec, distributed/serde} that
+    # actually exists, and require at least one to pass.
     pytest = shutil.which("pytest")
-    if pytest:
+    candidate_dirs = [
+        "tests/v1/kv_codec",
+        "tests/v1/distributed/serde",
+    ]
+    present_dirs = [d for d in candidate_dirs if (lmc_path / d).is_dir()]
+    if pytest and present_dirs:
         rc = ctx.run_subprocess(
-            [pytest, "-x", "-q", "tests/"],
+            [pytest, "-x", "-q", "--no-header", *present_dirs],
             cwd=str(lmc_path),
             timeout=300,
         )
@@ -66,10 +85,20 @@ def run(ctx: StageContext) -> StageResult:
             return StageResult(
                 name=ctx.name,
                 status="failed",
-                reason=f"lmcache unit tests failed (rc={rc}); "
-                "see stages/04_build_lmcache/stdout.log",
+                reason=(
+                    f"lmcache unit tests failed (rc={rc}) in "
+                    f"{', '.join(present_dirs)}; "
+                    "see stages/04_build_lmcache/stdout.log"
+                ),
             )
         ctx.log_metric("unit_tests_passed", 1)
+        ctx.log_metric("test_dirs", ",".join(present_dirs))
+    elif pytest and not present_dirs:
+        ctx.stderr_path.open("a").write(
+            "WARN: neither tests/v1/kv_codec nor tests/v1/distributed/serde "
+            "present on this branch; skipping unit-test gate\n"
+        )
+        ctx.log_metric("unit_tests_passed", 0)
     else:
         ctx.stderr_path.open("a").write(
             "WARN: pytest not found; skipping unit test run\n"
