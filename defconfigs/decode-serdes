@@ -1,0 +1,72 @@
+# Reproduce the multi-output serde architecture and storage bench
+# from the LMCache serde-multi-output-extensions branch.
+#
+# Scope: lmcache only.  Skips vllm + flashinfer entirely (the
+# multi-output serde is pure Python; no CUDA kernel build needed).
+#
+# Stages:
+#   00_doctor                 — basic env check
+#   01_fetch_repos            — clone mcgrof/LMCache@serde-multi-output-extensions
+#   04_build_lmcache          — pip install -e .  (skips C-ext build via env hint)
+#   s_serdes_unit_tests       — pytest tests/v1/distributed/serde/
+#   s_serdes_storage_bench    — Llama-3.1-8B-Instruct shaped storage bench
+#                               on the user-supplied NVMe path
+#   11_report                 — JSON summary
+#
+# Storage path resolution:
+#   CONFIG_KNLP_NVME_PATH > KNLP_NVME_PATH env > tmpdir inside run_dir
+#
+# The bench always also runs against /dev/shm (tmpfs) as a RAM
+# upper-bound so codec cost is separable from storage cost.
+#
+# Setup of the NVMe mount itself is left to the user.  The stage
+# does not mkfs / mount / format — it writes into whatever path is
+# configured.  Document the underlying device, filesystem, and mount
+# options separately when reporting absolute throughput numbers.
+#
+# Usage:
+#
+#   make defconfig-decode-serdes
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_NVME_PATH="/mnt/my-nvme/serdes-bench"
+#   CONFIG_KNLP_STORAGE_DEVICE_LABEL="micron_7400_894g"
+#   EOF
+#   make
+#
+# On a RunPod / Prime Intellect pod where there is no controlled
+# NVMe (the container disk is overlayfs on the host's storage),
+# leave CONFIG_KNLP_NVME_PATH empty.  The stage falls back to a
+# tmpdir under the run directory and emits a warning that absolute
+# throughput is container-stack dependent; the byte-ratio claims
+# (sym fp8 = 0.5x, asym K16/V8 = 0.75x) are still validated.
+#
+# Estimated runtime: 5-10 min total (pip install + 17 pytest tests
+# + 72-cell bench sweep).  GPU not required.
+CONFIG_KNLP_REPRODUCE_DECODE=y
+CONFIG_KNLP_REPRODUCE_PROFILE="decode-serdes"
+CONFIG_KNLP_WORKTREE_ROOT=".."
+CONFIG_KNLP_RESULTS_ROOT="./results/decode-serdes"
+CONFIG_KNLP_BUILD_ROOT="./build/decode"
+# vllm + flashinfer not needed for the serdes-multi-output bench.
+CONFIG_KNLP_VLLM_REPO=""
+CONFIG_KNLP_VLLM_REF=""
+CONFIG_KNLP_VLLM_DIR="vllm"
+CONFIG_KNLP_FLASHINFER_REPO=""
+CONFIG_KNLP_FLASHINFER_REF=""
+CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
+CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_LMCACHE_REF="serde-multi-output-extensions"
+CONFIG_KNLP_LMCACHE_DIR="lmcache"
+# NVMe mount point for the bench.  Override per device-under-test;
+# leave empty to fall back to a tmpdir (still validates byte ratios
+# and round-trip quality, but absolute throughput is container-stack
+# dependent and not portable).
+CONFIG_KNLP_NVME_PATH=""
+# Human-readable storage device label for result comparison.
+CONFIG_KNLP_STORAGE_DEVICE_LABEL=""
+CONFIG_KNLP_ENABLE_WANDB=n
+CONFIG_KNLP_ENABLE_TRACKERIO=n
+CONFIG_KNLP_UPLOAD_ARTIFACTS=n
+CONFIG_KNLP_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_FAIL_ON_DIRTY_GIT=y
+CONFIG_KNLP_REQUIRE_PINNED_REFS=n
