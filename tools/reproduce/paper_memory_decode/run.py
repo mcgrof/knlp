@@ -122,9 +122,15 @@ def cmd_fetch(args, cfg: DecodeConfig) -> int:
 
 
 def cmd_build(args, cfg: DecodeConfig) -> int:
-    """Install editable copies of FlashInfer, vLLM, LMCache.  Order
-    matters: vLLM pulls flashinfer-python from PyPI and overwrites the
-    editable, so we reinstall flashinfer-src last."""
+    """Install editable copies of FlashInfer, vLLM, LMCache.
+
+    Profiles that set ``CONFIG_KNLP_VLLM_REPO=""`` /
+    ``CONFIG_KNLP_FLASHINFER_REPO=""`` (decode-nvme-tier,
+    decode-storage, decode-serdes) skip those installs cleanly; they
+    only need lmcache.  Order otherwise matters: vLLM pulls
+    flashinfer-python from PyPI and overwrites the editable, so we
+    reinstall flashinfer-src last when both are present.
+    """
     _require_decode_enabled(cfg)
     wt = Path(cfg.worktree_root).resolve()
     flashinfer = wt / cfg.flashinfer_dir
@@ -136,10 +142,18 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
         print("ERROR: pip not found in PATH")
         return 4
 
-    def install(path: Path) -> int:
+    def install(path: Path, *, optional: bool) -> int:
+        """Install one editable repo.  ``optional=True`` returns 0 when
+        the path is absent — this happens for profiles that set the
+        corresponding REPO config to "" so the fetch stage skipped
+        cloning it (decode-nvme-tier, decode-storage, decode-serdes
+        skip vllm + flashinfer).
+        """
         if not path.exists():
-            print(f"SKIP: {path} not present (run decode-fetch first)")
-            return 5
+            kind = "skipped" if optional else "ERROR"
+            print(f"{kind}: {path} not present "
+                  f"({'profile does not need it' if optional else 'run decode-fetch first'})")
+            return 0 if optional else 5
         print(f"\n=== pip install -e {path} ===")
         env = dict(os.environ)
         env.setdefault("MAX_JOBS", "32")
@@ -149,12 +163,17 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
             env=env,
         )
 
+    has_flashinfer_cfg = bool(cfg.flashinfer_repo)
+    has_vllm_cfg = bool(cfg.vllm_repo)
     rc = 0
-    rc |= install(flashinfer)
-    rc |= install(vllm)
-    rc |= install(lmcache)
-    # Reinstall flashinfer last because vllm may overwrite it from PyPI
-    rc |= install(flashinfer)
+    rc |= install(flashinfer, optional=not has_flashinfer_cfg)
+    rc |= install(vllm, optional=not has_vllm_cfg)
+    rc |= install(lmcache, optional=not bool(cfg.lmcache_repo))
+    # Reinstall flashinfer last only if both vllm and flashinfer are
+    # configured for this profile (vllm's PyPI dep may have replaced
+    # the editable install).
+    if has_flashinfer_cfg and has_vllm_cfg:
+        rc |= install(flashinfer, optional=False)
     return rc
 
 
