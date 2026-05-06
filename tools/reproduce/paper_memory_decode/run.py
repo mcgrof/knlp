@@ -137,10 +137,14 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
     vllm = wt / cfg.vllm_dir
     lmcache = wt / cfg.lmcache_dir
 
-    pip = shutil.which("pip3") or shutil.which("pip")
-    if not pip:
-        print("ERROR: pip not found in PATH")
-        return 4
+    # Use ``sys.executable -m pip`` so the install always lands in the
+    # same interpreter the orchestrator runs in.  On RunPod's stock
+    # Ubuntu image ``pip3`` resolves to a Python 3.12 pip while
+    # ``python3`` is Python 3.10, and the Makefile invokes the
+    # orchestrator as ``python3 -m ...`` — ``shutil.which("pip3")``
+    # would silently install into 3.12 and downstream stages running
+    # under 3.10 would not see torch / lmcache.
+    pip_cmd = [sys.executable, "-m", "pip"]
 
     def install(path: Path, *, optional: bool) -> int:
         """Install one editable repo.  ``optional=True`` returns 0 when
@@ -154,12 +158,12 @@ def cmd_build(args, cfg: DecodeConfig) -> int:
             print(f"{kind}: {path} not present "
                   f"({'profile does not need it' if optional else 'run decode-fetch first'})")
             return 0 if optional else 5
-        print(f"\n=== pip install -e {path} ===")
+        print(f"\n=== {' '.join(pip_cmd)} install -e {path} ===")
         env = dict(os.environ)
         env.setdefault("MAX_JOBS", "32")
         env.setdefault("NVCC_THREADS", "2")
         return subprocess.call(
-            [pip, "install", "--no-build-isolation", "-e", str(path)],
+            pip_cmd + ["install", "--no-build-isolation", "-e", str(path)],
             env=env,
         )
 
