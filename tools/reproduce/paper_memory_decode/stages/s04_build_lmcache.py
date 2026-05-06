@@ -21,11 +21,11 @@ def run(ctx: StageContext) -> StageResult:
         "CONFIG_KNLP_LMCACHE_DIR", "lmcache"
     )
 
-    pip = shutil.which("pip3") or shutil.which("pip")
-    if not pip:
-        return StageResult(
-            name=ctx.name, status="failed", reason="pip/pip3 not found in PATH"
-        )
+    # Match the build stage: install via ``sys.executable -m pip`` so
+    # the editable lmcache lands in the same interpreter the
+    # orchestrator runs in.  Avoids the ``python3 != pip3 python``
+    # split observed on RunPod (system python3=3.10, pip3=python3.12).
+    pip_cmd = [sys.executable, "-m", "pip"]
 
     if not lmc_path.is_dir():
         return StageResult(
@@ -36,14 +36,14 @@ def run(ctx: StageContext) -> StageResult:
 
     # Install editable.
     rc = ctx.run_subprocess(
-        [pip, "install", "-e", ".[dev]"],
+        pip_cmd + ["install", "-e", ".[dev]"],
         cwd=str(lmc_path),
         timeout=600,
     )
     if rc != 0:
         # Try without [dev] extras in case the extras spec differs.
         rc = ctx.run_subprocess(
-            [pip, "install", "-e", "."],
+            pip_cmd + ["install", "-e", "."],
             cwd=str(lmc_path),
             timeout=600,
         )
