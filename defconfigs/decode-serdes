@@ -47,6 +47,14 @@
 #   EOF
 #   make
 #
+# To run the bench against a feature branch instead of the pinned
+# ref, pass LMCACHE_REF / VLLM_REF / FLASHINFER_REF on the make line
+# (Kconfig sees these via scripts/check-cli-set-var.sh and overrides
+# the defaults):
+#
+#   make defconfig-decode-serdes LMCACHE_REF=20260513-serdes-asym
+#   make
+#
 # On a RunPod / Prime Intellect pod where there is no controlled
 # NVMe (the container disk is overlayfs on the host's storage),
 # leave CONFIG_KNLP_NVME_PATH empty.  The stage falls back to a
@@ -69,7 +77,16 @@ CONFIG_KNLP_FLASHINFER_REPO=""
 CONFIG_KNLP_FLASHINFER_REF=""
 CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
 CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
-CONFIG_KNLP_LMCACHE_REF="serde-multi-output-extensions"
+# LMCache ref is sourced from Kconfig.decode (default
+# "serde-multi-output-extensions" when CONFIG_KNLP_REPRODUCE_PROFILE
+# is "decode-serdes"). Override on the make line for a feature
+# branch:
+#
+#   make defconfig-decode-serdes LMCACHE_REF=20260513-serdes-asym
+#
+# Do not hardcode it here -- Kconfig's default-chain handles both
+# the canonical pin and the CLI override; pinning here would shadow
+# the CLI variable.
 CONFIG_KNLP_LMCACHE_DIR="lmcache"
 # NVMe mount point for the bench.  Override per device-under-test;
 # leave empty to fall back to a tmpdir (still validates byte ratios
