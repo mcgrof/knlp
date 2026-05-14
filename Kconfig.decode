@@ -46,8 +46,15 @@ config KNLP_VLLM_REPO
 	string "vLLM repo URL"
 	default "https://github.com/mcgrof/vllm.git"
 
+# CLI override for the vLLM git ref:
+#   make defconfig-<profile> VLLM_REF=my-branch
+config KNLP_VLLM_REF_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh VLLM_REF)
+
 config KNLP_VLLM_REF
 	string "vLLM git ref (branch, tag, or commit)"
+	default "$(VLLM_REF)" if KNLP_VLLM_REF_SET_BY_CLI
 	default "asymmetric-kv-plumbing"
 
 config KNLP_VLLM_DIR
@@ -58,8 +65,15 @@ config KNLP_FLASHINFER_REPO
 	string "FlashInfer repo URL"
 	default "https://github.com/mcgrof/flashinfer.git"
 
+# CLI override for the FlashInfer git ref:
+#   make defconfig-<profile> FLASHINFER_REF=my-branch
+config KNLP_FLASHINFER_REF_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh FLASHINFER_REF)
+
 config KNLP_FLASHINFER_REF
 	string "FlashInfer git ref"
+	default "$(FLASHINFER_REF)" if KNLP_FLASHINFER_REF_SET_BY_CLI
 	default "asym-prefill-refactor-stage"
 
 config KNLP_FLASHINFER_DIR
@@ -70,8 +84,18 @@ config KNLP_LMCACHE_REPO
 	string "LMCache repo URL"
 	default "https://github.com/mcgrof/LMCache.git"
 
+# CLI override detection for the LMCache git ref. Lets a one-off
+# bench point at a feature branch without hand-editing .config:
+#   make defconfig-decode-serdes LMCACHE_REF=my-branch
+#   make
+config KNLP_LMCACHE_REF_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh LMCACHE_REF)
+
 config KNLP_LMCACHE_REF
 	string "LMCache git ref"
+	default "$(LMCACHE_REF)" if KNLP_LMCACHE_REF_SET_BY_CLI
+	default "serde-multi-output-extensions" if KNLP_REPRODUCE_PROFILE = "decode-serdes"
 	default "asymmetric-kv-codec"
 
 config KNLP_LMCACHE_DIR
