@@ -31,32 +31,77 @@ def download_prompt(dataset_name: str, instructions: str):
     sys.exit(1)
 
 
-def load_dgraphfin(root: str = ".") -> Data:
+def fetch_dgraphfin(root: str = ".") -> str:
+    """Download dgraphfin.npz from HuggingFace into ``root``.
+
+    Returns the local path on success. Raises on failure so the caller
+    can decide whether to fall back to printed instructions.
+    """
+    from huggingface_hub import hf_hub_download
+
+    os.makedirs(root, exist_ok=True)
+    print(
+        "Fetching DGraphFin (dgraphfin.npz, ~270 MB) from HuggingFace "
+        "dataset YinzhenWan/DGraphFin ..."
+    )
+    return hf_hub_download(
+        repo_id="YinzhenWan/DGraphFin",
+        filename="dgraphfin.npz",
+        repo_type="dataset",
+        local_dir=root,
+    )
+
+
+def load_dgraphfin(root: str = ".", auto_fetch: Optional[bool] = None) -> Data:
     """Load DGraphFin financial fraud detection dataset.
 
     Args:
         root: Directory containing dgraphfin.npz
+        auto_fetch: Download the dataset from HuggingFace if it is missing.
+            When None (default), honour the GNN_AUTO_FETCH environment
+            variable (enabled unless set to 0/n/no/false).
 
     Returns:
         PyG Data object with x, edge_index, y, train_mask, val_mask, test_mask
     """
+    if auto_fetch is None:
+        auto_fetch = os.environ.get("GNN_AUTO_FETCH", "1").lower() not in (
+            "0",
+            "n",
+            "no",
+            "false",
+            "",
+        )
+
     npz_path = os.path.join(root, "dgraphfin.npz")
 
+    if not os.path.exists(npz_path) and auto_fetch:
+        try:
+            fetch_dgraphfin(root)
+        except Exception as exc:  # network down, no hub auth, etc.
+            print(f"  Auto-fetch failed ({exc}); falling back to instructions.")
+
     if not os.path.exists(npz_path):
-        download_prompt("DGraphFin", f"""
+        download_prompt(
+            "DGraphFin",
+            f"""
 DGraphFin is a financial fraud detection graph dataset with 3.7M nodes.
 
-To download via HuggingFace:
+Auto-fetch is available (enabled by default):
+    GNN_AUTO_FETCH=1 python gnn/datasets.py --dataset dgraphfin --root {root}
+
+To download manually via HuggingFace:
     pip install huggingface_hub
     python -c "from huggingface_hub import hf_hub_download; \\
         hf_hub_download('YinzhenWan/DGraphFin', 'dgraphfin.npz', \\
-        local_dir='{root}')"
+        repo_type='dataset', local_dir='{root}')"
 
-Or manually download from:
+Or from the dataset page:
     https://huggingface.co/datasets/YinzhenWan/DGraphFin
 
 Expected file: {npz_path}
-""")
+""",
+        )
 
     print(f"Loading DGraphFin from {npz_path}...")
     npz_data = np.load(npz_path)
@@ -87,7 +132,9 @@ Expected file: {npz_path}
     print(f"  Edges: {edge_index.shape[1]:,}")
     print(f"  Features: {x.shape[1]}")
     print(f"  Classes: 4")
-    print(f"  Train/Val/Test: {train_mask.sum():,}/{val_mask.sum():,}/{test_mask.sum():,}")
+    print(
+        f"  Train/Val/Test: {train_mask.sum():,}/{val_mask.sum():,}/{test_mask.sum():,}"
+    )
 
     return data
 
@@ -107,7 +154,9 @@ def load_yelpchi(root: str = ".", edge_type: str = "net_rtr") -> Data:
     mat_path = os.path.join(root, "fraud", "YelpChi.mat")
 
     if not os.path.exists(mat_path):
-        download_prompt("YelpChi", f"""
+        download_prompt(
+            "YelpChi",
+            f"""
 YelpChi is a review spam detection dataset with 45K review nodes.
 
 To download:
@@ -116,7 +165,8 @@ To download:
     unzip /tmp/FraudYelp.zip -d {root}/fraud/
 
 Expected file: {mat_path}
-""")
+""",
+        )
 
     print(f"Loading YelpChi from {mat_path} (edge_type={edge_type})...")
     mat_data = scipy.io.loadmat(mat_path)
@@ -142,8 +192,8 @@ Expected file: {mat_path}
     test_mask = torch.zeros(num_nodes, dtype=torch.bool)
 
     train_mask[perm[:train_size]] = True
-    val_mask[perm[train_size:train_size+val_size]] = True
-    test_mask[perm[train_size+val_size:]] = True
+    val_mask[perm[train_size : train_size + val_size]] = True
+    test_mask[perm[train_size + val_size :]] = True
 
     data = Data(x=x, y=y, edge_index=edge_index)
     data.train_mask = train_mask
@@ -174,7 +224,9 @@ def load_amazon(root: str = ".", edge_type: str = "net_upu") -> Data:
     mat_path = os.path.join(root, "fraud", "Amazon.mat")
 
     if not os.path.exists(mat_path):
-        download_prompt("Amazon", f"""
+        download_prompt(
+            "Amazon",
+            f"""
 Amazon is a product fraud detection dataset with 11K user nodes.
 
 To download:
@@ -183,7 +235,8 @@ To download:
     unzip /tmp/FraudAmazon.zip -d {root}/fraud/
 
 Expected file: {mat_path}
-""")
+""",
+        )
 
     print(f"Loading Amazon from {mat_path} (edge_type={edge_type})...")
     mat_data = scipy.io.loadmat(mat_path)
@@ -207,8 +260,8 @@ Expected file: {mat_path}
     test_mask = torch.zeros(num_nodes, dtype=torch.bool)
 
     train_mask[perm[:train_size]] = True
-    val_mask[perm[train_size:train_size+val_size]] = True
-    test_mask[perm[train_size+val_size:]] = True
+    val_mask[perm[train_size : train_size + val_size]] = True
+    test_mask[perm[train_size + val_size :]] = True
 
     data = Data(x=x, y=y, edge_index=edge_index)
     data.train_mask = train_mask
@@ -236,7 +289,9 @@ def load_elliptic(root: str = ".") -> Data:
     data_dir = os.path.join(root, "elliptic_bitcoin_dataset")
 
     if not os.path.exists(data_dir):
-        download_prompt("Elliptic", f"""
+        download_prompt(
+            "Elliptic",
+            f"""
 Elliptic is a Bitcoin transaction fraud detection dataset with 203K nodes.
 
 To download from Kaggle:
@@ -248,13 +303,14 @@ Or manually download from:
     https://www.kaggle.com/datasets/ellipticco/elliptic-data-set
 
 Expected directory: {data_dir}
-""")
+""",
+        )
 
     print(f"Loading Elliptic from {data_dir}...")
 
     # Load features
     features_path = os.path.join(data_dir, "elliptic_txs_features.csv")
-    features_df = np.loadtxt(features_path, delimiter=',', skiprows=1)
+    features_df = np.loadtxt(features_path, delimiter=",", skiprows=1)
     node_ids = features_df[:, 0].astype(int)
     x = torch.from_numpy(features_df[:, 1:]).float()
 
@@ -263,7 +319,7 @@ Expected directory: {data_dir}
 
     # Load edges
     edges_path = os.path.join(data_dir, "elliptic_txs_edgelist.csv")
-    edges_df = np.loadtxt(edges_path, delimiter=',', skiprows=1, dtype=int)
+    edges_df = np.loadtxt(edges_path, delimiter=",", skiprows=1, dtype=int)
 
     # Filter edges to only include nodes in features
     valid_edges = []
@@ -274,16 +330,16 @@ Expected directory: {data_dir}
 
     # Load labels (1=illicit, 2=licit, unknown otherwise)
     classes_path = os.path.join(data_dir, "elliptic_txs_classes.csv")
-    with open(classes_path, 'r') as f:
+    with open(classes_path, "r") as f:
         next(f)  # skip header
         labels = {}
         for line in f:
-            parts = line.strip().split(',')
+            parts = line.strip().split(",")
             node_id = int(parts[0])
             label = parts[1]
-            if label == '1':
+            if label == "1":
                 labels[node_id] = 1  # illicit
-            elif label == '2':
+            elif label == "2":
                 labels[node_id] = 0  # licit
             # unknown stays as -1
 
@@ -306,8 +362,8 @@ Expected directory: {data_dir}
     test_mask = torch.zeros(num_nodes, dtype=torch.bool)
 
     train_mask[perm[:train_size]] = True
-    val_mask[perm[train_size:train_size+val_size]] = True
-    test_mask[perm[train_size+val_size:]] = True
+    val_mask[perm[train_size : train_size + val_size]] = True
+    test_mask[perm[train_size + val_size :]] = True
 
     data = Data(x=x, y=y, edge_index=edge_index)
     data.train_mask = train_mask
@@ -336,17 +392,20 @@ def load_ogbn_products(root: str = ".") -> Data:
     try:
         from ogb.nodeproppred import PygNodePropPredDataset
     except ImportError:
-        download_prompt("ogbn-products", """
+        download_prompt(
+            "ogbn-products",
+            """
 OGB (Open Graph Benchmark) package required.
 
 To install:
     pip install ogb
 
 Then run again - the dataset will download automatically (~1.5GB).
-""")
+""",
+        )
 
     print("Loading ogbn-products...")
-    dataset = PygNodePropPredDataset(name='ogbn-products', root=root)
+    dataset = PygNodePropPredDataset(name="ogbn-products", root=root)
     data = dataset[0]
 
     split_idx = dataset.get_idx_split()
@@ -356,9 +415,9 @@ Then run again - the dataset will download automatically (~1.5GB).
     val_mask = torch.zeros(num_nodes, dtype=torch.bool)
     test_mask = torch.zeros(num_nodes, dtype=torch.bool)
 
-    train_mask[split_idx['train']] = True
-    val_mask[split_idx['valid']] = True
-    test_mask[split_idx['test']] = True
+    train_mask[split_idx["train"]] = True
+    val_mask[split_idx["valid"]] = True
+    test_mask[split_idx["test"]] = True
 
     data.train_mask = train_mask
     data.val_mask = val_mask
@@ -386,24 +445,28 @@ def load_ogbn_proteins(root: str = ".") -> Data:
     try:
         from ogb.nodeproppred import PygNodePropPredDataset
     except ImportError:
-        download_prompt("ogbn-proteins", """
+        download_prompt(
+            "ogbn-proteins",
+            """
 OGB (Open Graph Benchmark) package required.
 
 To install:
     pip install ogb
 
 Then run again - the dataset will download automatically.
-""")
+""",
+        )
 
     print("Loading ogbn-proteins...")
-    dataset = PygNodePropPredDataset(name='ogbn-proteins', root=root)
+    dataset = PygNodePropPredDataset(name="ogbn-proteins", root=root)
     data = dataset[0]
 
     # ogbn-proteins uses edge features as node features
     # Aggregate edge features to node features
     from torch_geometric.utils import scatter
+
     row, col = data.edge_index
-    data.x = scatter(data.edge_attr, col, dim=0, reduce='mean')
+    data.x = scatter(data.edge_attr, col, dim=0, reduce="mean")
 
     split_idx = dataset.get_idx_split()
     num_nodes = data.x.size(0)
@@ -412,9 +475,9 @@ Then run again - the dataset will download automatically.
     val_mask = torch.zeros(num_nodes, dtype=torch.bool)
     test_mask = torch.zeros(num_nodes, dtype=torch.bool)
 
-    train_mask[split_idx['train']] = True
-    val_mask[split_idx['valid']] = True
-    test_mask[split_idx['test']] = True
+    train_mask[split_idx["train"]] = True
+    val_mask[split_idx["valid"]] = True
+    test_mask[split_idx["test"]] = True
 
     data.train_mask = train_mask
     data.val_mask = val_mask
@@ -431,12 +494,12 @@ Then run again - the dataset will download automatically.
 
 # Dataset registry
 DATASETS = {
-    'dgraphfin': load_dgraphfin,
-    'yelpchi': load_yelpchi,
-    'amazon': load_amazon,
-    'elliptic': load_elliptic,
-    'ogbn-products': load_ogbn_products,
-    'ogbn-proteins': load_ogbn_proteins,
+    "dgraphfin": load_dgraphfin,
+    "yelpchi": load_yelpchi,
+    "amazon": load_amazon,
+    "elliptic": load_elliptic,
+    "ogbn-products": load_ogbn_products,
+    "ogbn-proteins": load_ogbn_proteins,
 }
 
 
@@ -461,6 +524,7 @@ def load_dataset(name: str, root: str = ".", **kwargs) -> Data:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Test dataset loading")
     parser.add_argument("--dataset", default="dgraphfin", choices=list(DATASETS.keys()))
     parser.add_argument("--root", default=".")
