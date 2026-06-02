@@ -32,7 +32,11 @@ endif
 
 # Define what the default target does based on configuration
 .PHONY: all
-ifeq ($(CONFIG_OPTIMIZER_MODE_MULTIPLE),y)
+# The GNN workload is not an optimizer/pruning sweep, so model selection
+# wins over the optimizer/model multiple-mode test matrix.
+ifeq ($(CONFIG_MODEL_GNN),y)
+all: check-config gnn-run
+else ifeq ($(CONFIG_OPTIMIZER_MODE_MULTIPLE),y)
 all: check-config test-matrix
 else ifeq ($(CONFIG_MODEL_MODE_MULTIPLE),y)
 all: check-config test-matrix
@@ -287,6 +291,29 @@ train: check-config generate-config prepare-datasets
 		echo "============================================================"; \
 		$(MAKE) mechint; \
 	fi
+
+# GNN (DGraphFin page-aware / force-ssd) dispatch. When CONFIG_MODEL_GNN=y
+# the default 'all' target routes here instead of the GPT-2 test matrix.
+.PHONY: gnn-run gnn-dry-run gnn-setup
+gnn-run: check-config generate-config
+	@echo "Running GNN workload from .config (gnn/run_gnn.py)..."
+	@if [ "$(CONFIG_MODEL_GNN)" != "y" ]; then \
+		echo "Error: GNN model not selected in current configuration."; \
+		echo "Load a GNN defconfig first:"; \
+		echo "  make defconfig-gnn-dgraphfin"; \
+		echo "  make defconfig-gnn-dgraphfin-force-ssd"; \
+		exit 1; \
+	fi
+	python3 gnn/run_gnn.py
+
+# Print the plan (deps, fetch, layout, benchmark) without running anything
+# heavy. Useful to validate wiring without a GPU or the dataset.
+gnn-dry-run: generate-config
+	python3 gnn/run_gnn.py --dry-run
+
+# Install GNN Python deps and build the C++ page samplers in place.
+gnn-setup:
+	python3 gnn/scripts/setup_gnn_deps.py
 
 # RA+MLA training targets
 .PHONY: train-ra-mla train-ra-mla-baseline train-ra-mla-full train-ra-mla-ablation
