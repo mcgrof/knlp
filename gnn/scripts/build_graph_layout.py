@@ -6,9 +6,14 @@ Uses the actual graph structure (edge_index) to group connected nodes
 into pages. This ensures neighbors sampled together during GNN training
 are likely on the same page, reducing read amplification.
 
-Two methods are available:
+Four methods are available:
+  - natural: Identity order (no optimization) - baseline
+  - random: Scrambled order (seeded) - worst-ish baseline
   - bfs: Simple BFS from high-degree seeds (43% improvement)
   - metis: Hierarchical Metis partitioning + BFS (55% improvement)
+
+The natural/random baselines exist so the force-ssd harness can show
+the value of locality optimization and the gaps it leaves open.
 
 Usage:
     python scripts/build_graph_layout.py --data-dir ./data --output layout.npz
@@ -28,6 +33,7 @@ import torch
 
 # Import dataset loaders from datasets.py
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datasets import (
     load_dgraphfin,
@@ -346,6 +352,72 @@ def build_metis_layout(edge_index, num_nodes, nodes_per_page=60, num_partitions=
     return node_order, page_id, summary
 
 
+def build_natural_layout(edge_index, num_nodes, nodes_per_page=60):
+    """Identity layout: features stored in original node-id order.
+
+    This is the no-optimization baseline. Storage position equals node
+    id, so page i holds nodes [i*nodes_per_page, (i+1)*nodes_per_page).
+    Read amplification here reflects whatever locality the raw node
+    numbering happens to have, with no graph-aware help. node_order is
+    returned in storage order (storage_pos -> original_id), matching the
+    bfs/metis builders.
+    """
+    print(f"Building natural (identity) layout for {num_nodes:,} nodes...")
+    node_order = torch.arange(num_nodes, dtype=torch.long)
+    # storage_pos == node_id for the identity layout.
+    page_id = (np.arange(num_nodes, dtype=np.int64) // nodes_per_page).astype(np.int64)
+
+    src, dst = edge_index[0].numpy(), edge_index[1].numpy()
+    num_edges = len(src)
+    intra_edges = int((page_id[src] == page_id[dst]).sum())
+
+    summary = {
+        "method": "natural",
+        "num_nodes": num_nodes,
+        "num_edges": num_edges,
+        "nodes_per_page_target": nodes_per_page,
+        "num_pages": int(np.ceil(num_nodes / nodes_per_page)),
+        "intra_page_edges": intra_edges,
+        "intra_edge_fraction": float(intra_edges / num_edges) if num_edges else 0.0,
+        "created": datetime.now().isoformat(),
+    }
+    return node_order, page_id, summary
+
+
+def build_random_layout(edge_index, num_nodes, nodes_per_page=60, seed=0):
+    """Random layout: nodes shuffled across pages (scrambled baseline).
+
+    A deterministic worst-ish case used to bracket the value of the
+    graph-aware layouts: any locality is accidental. The permutation is
+    seeded for reproducibility. node_order is the storage order
+    (storage_pos -> original_id).
+    """
+    print(f"Building random layout for {num_nodes:,} nodes (seed={seed})...")
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(num_nodes)  # storage_pos -> original_id
+    node_order = torch.from_numpy(order).long()
+
+    page_id = np.zeros(num_nodes, dtype=np.int64)
+    page_id[order] = np.arange(num_nodes, dtype=np.int64) // nodes_per_page
+
+    src, dst = edge_index[0].numpy(), edge_index[1].numpy()
+    num_edges = len(src)
+    intra_edges = int((page_id[src] == page_id[dst]).sum())
+
+    summary = {
+        "method": "random",
+        "num_nodes": num_nodes,
+        "num_edges": num_edges,
+        "nodes_per_page_target": nodes_per_page,
+        "num_pages": int(np.ceil(num_nodes / nodes_per_page)),
+        "seed": seed,
+        "intra_page_edges": intra_edges,
+        "intra_edge_fraction": float(intra_edges / num_edges) if num_edges else 0.0,
+        "created": datetime.now().isoformat(),
+    }
+    return node_order, page_id, summary
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build graph-based layout")
     parser.add_argument(
@@ -385,9 +457,17 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["bfs", "metis"],
+        choices=["natural", "random", "bfs", "metis"],
         default="metis",
-        help="Layout method: bfs (43%% improvement) or metis (55%% improvement)",
+        help="Layout method: natural (identity baseline), random "
+        "(scrambled baseline), bfs (43%% improvement) or metis "
+        "(55%% improvement)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for the random layout (--method random)",
     )
     parser.add_argument(
         "--metis-partitions",
@@ -459,8 +539,16 @@ def main():
         node_order, page_id, summary = build_metis_layout(
             edge_index, num_nodes, nodes_per_page, args.metis_partitions
         )
-    else:
+    elif args.method == "bfs":
         node_order, page_id, summary = build_bfs_layout(
+            edge_index, num_nodes, nodes_per_page
+        )
+    elif args.method == "random":
+        node_order, page_id, summary = build_random_layout(
+            edge_index, num_nodes, nodes_per_page, args.seed
+        )
+    else:  # natural
+        node_order, page_id, summary = build_natural_layout(
             edge_index, num_nodes, nodes_per_page
         )
 
