@@ -893,6 +893,83 @@
       );
     }
 
+    // Reproduce & Verify Section
+    function ReproduceSection() {
+      const pushButton = `make defconfig-gnn-dgraphfin
+make`;
+      const forceSsd = `make defconfig-gnn-dgraphfin-force-ssd
+# point the store at the device you want to watch:
+#   make menuconfig -> GNN -> Force-SSD -> store directory
+make`;
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Reproduce &amp; Verify Read Amplification</h2>
+          <p className="text-gray-400 mb-6">
+            The whole DGraphFin comparison is wired into the build. One defconfig
+            and <code className="text-cyan-400">make</code> prepares dependencies,
+            fetches the dataset, builds the METIS layout, and runs NeighborLoader
+            vs Page-Aware. A GPU is optional — it falls back to CPU.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">Run the comparison</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-emerald-300 font-mono overflow-x-auto">{pushButton}</pre>
+              <p className="text-gray-500 text-sm mt-2">
+                Read amplification here is <em>modeled</em>: the sampler counts the
+                4 KB pages a batch would touch while features stay in RAM. No
+                block-device reads are issued.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">Make the reads real</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-cyan-300 font-mono overflow-x-auto">{forceSsd}</pre>
+              <p className="text-gray-500 text-sm mt-2">
+                The force-ssd harness serves features from an SSD and reads each
+                batch's pages with <code className="text-cyan-400">O_DIRECT</code>,
+                so every page read hits the device regardless of dataset size.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gray-900 rounded-lg p-4 border border-gray-800">
+            <h3 className="font-semibold text-emerald-400 mb-2">Verify with your own tooling</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              We don't run eBPF in the repo — the harness only produces the reads.
+              Attach your own observer to the device and confirm the per-I/O read
+              intent and amplification independently:
+            </p>
+            <div className="grid sm:grid-cols-2 gap-2 text-sm text-gray-400">
+              <div><code className="text-cyan-400">biosnoop</code> / <code className="text-cyan-400">biolatency</code> — per-I/O trace and latency</div>
+              <div><code className="text-cyan-400">blktrace</code> / <code className="text-cyan-400">btt</code> — block-layer request stream</div>
+              <div><code className="text-cyan-400">iostat -x</code> — device throughput and r/s</div>
+              <div><code className="text-cyan-400">results/gnn/force_ssd_ra.json</code> — our counts to cross-check</div>
+            </div>
+          </div>
+
+          <div className="mt-6 grid md:grid-cols-2 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <h3 className="font-semibold text-emerald-400 mb-2">neighbor access → the value</h3>
+              <p className="text-gray-400 text-sm">
+                Random training seeds expanded to their neighborhood. A locality-aware
+                layout keeps neighbors on a few pages, so RA_fetch falls from
+                <strong> natural</strong> to <strong> metis</strong> — fewer device
+                reads per useful byte.
+              </p>
+            </div>
+            <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4">
+              <h3 className="font-semibold text-purple-400 mb-2">page access → the gap</h3>
+              <p className="text-gray-400 text-sm">
+                Page-aligned sweep over training pages. RA_fetch is ~1× for every
+                layout, but only a fraction of nodes per page are supervised, so
+                RA_signal stays near the <strong>~4.3× floor</strong> no layout can close.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // Main App
     function App() {
       return (
@@ -907,6 +984,7 @@
           <FIMGuidedRASection />
           <ConclusionsSection />
           <TrainingSection />
+          <ReproduceSection />
 
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
             <p>
