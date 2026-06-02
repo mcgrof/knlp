@@ -364,9 +364,22 @@ def main():
     print_table(results)
 
     if args.out_json:
+        meta = {
+            "dataset": "synthetic-smoke" if args.smoke else args.dataset,
+            "smoke": bool(args.smoke),
+            "layouts": layouts,
+            "direct_requested": not args.no_direct,
+            "drop_caches": bool(args.drop_caches),
+            "fanouts": opts["fanouts"],
+            "batch_size": opts["batch_size"],
+            "pages_per_batch": opts["pages_per_batch"],
+            "replicas": opts["replicas"],
+            "time_limit": opts["time_limit"],
+        }
+        payload = {"meta": meta, "results": results}
         os.makedirs(os.path.dirname(os.path.abspath(args.out_json)), exist_ok=True)
         with open(args.out_json, "w") as fh:
-            json.dump(results, fh, indent=2)
+            json.dump(payload, fh, indent=2)
         print(f"\nwrote {args.out_json}")
 
     if args.smoke:
