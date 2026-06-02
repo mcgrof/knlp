@@ -1,0 +1,7 @@
+transformers>=4.40
+datasets>=2.18
+tokenizers>=0.19
+safetensors>=0.4
+tqdm
+numpy
+einops
