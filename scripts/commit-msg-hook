@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# MACP-lite commit-msg validator.
+#
+# A lighter profile of the Multi-AI Collaboration Protocol
+# (https://github.com/linux-kdevops/agents) for projects that want the
+# trailer discipline and MCP-agent provenance without the full 9-field
+# AI-* handoff format. It enforces what the project's CLAUDE.md documents:
+#
+#   - a model-explicit `Generated-by` immediately followed by `Signed-off-by`
+#   - the bare `Co-Authored-By: Claude` and `Generated with [Claude Code]`
+#     / robot-emoji lines are rejected (a model-explicit Co-Authored-By is fine)
+#   - subject line <= 70 chars (hard); body lines > 70 are warnings
+#   - when an `MCP-*` block is present, its core fields are sanity-checked (warn)
+#
+# Merge / WIP / fixup! / squash! commits skip validation.
+set -u
+
+MSG_FILE="$1"
+CONTENT="$(grep -v '^#' "$MSG_FILE")"
+FIRST="$(printf '%s\n' "$CONTENT" | sed -n '1p')"
+
+case "$FIRST" in
+  Merge*|WIP:*|fixup!*|squash!*)
+    echo "macp-lite: skipping validation ($FIRST)"; exit 0 ;;
+esac
+
+errors=0; warns=0
+err()  { echo "❌ $*"; errors=$((errors+1)); }
+warn() { echo "⚠  $*"; warns=$((warns+1)); }
+
+# --- subject length ---
+if [ "${#FIRST}" -gt 70 ]; then
+  err "subject is ${#FIRST} chars (>70): $FIRST"
+fi
+
+# --- Generated-by present + model-explicit ---
+GENBY="$(printf '%s\n' "$CONTENT" | grep -m1 '^Generated-by:' | sed 's/^Generated-by:[[:space:]]*//')"
+if [ -z "$GENBY" ]; then
+  err "missing 'Generated-by:' trailer"
+elif [ "$GENBY" = "Claude AI" ]; then
+  err "Generated-by must name the model (e.g. 'Claude Opus 4.8 (1M context)'), not the bare 'Claude AI'"
+fi
+
+# --- Signed-off-by present ---
+printf '%s\n' "$CONTENT" | grep -q '^Signed-off-by:' || err "missing 'Signed-off-by:' trailer"
+
+# --- Generated-by immediately followed by Signed-off-by ---
+GLINE="$(printf '%s\n' "$CONTENT" | grep -n '^Generated-by:'  | head -1 | cut -d: -f1)"
+SLINE="$(printf '%s\n' "$CONTENT" | grep -n '^Signed-off-by:' | head -1 | cut -d: -f1)"
+if [ -n "$GLINE" ] && [ -n "$SLINE" ] && [ "$SLINE" -ne "$((GLINE + 1))" ]; then
+  err "Generated-by (line $GLINE) must be immediately followed by Signed-off-by (line $SLINE)"
+fi
+
+# --- banned co-author / attribution forms ---
+if printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude[[:space:]]*$'; then
+  err "generic 'Co-Authored-By: Claude' is banned; name the model or drop the trailer"
+fi
+if printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude[[:space:]]*<'; then
+  printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude (Opus|Sonnet|Haiku)' \
+    || err "Co-Authored-By must name the model (e.g. 'Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+fi
+printf '%s\n' "$CONTENT" | grep -qE '^[[:space:]]*🤖' \
+  && err "robot-emoji auto-footer (🤖 Generated with [Claude Code]) is banned"
+
+# --- body line length (warning only; URLs/tables/code allowed) ---
+printf '%s\n' "$CONTENT" | tail -n +2 | while IFS= read -r ln; do
+  [ "${#ln}" -gt 70 ] && echo "⚠  body line >70 chars: ${ln:0:64}..."
+done
+
+# --- MCP block sanity (warning only) ---
+if printf '%s\n' "$CONTENT" | grep -q '^MCP-Server:'; then
+  for f in MCP-Model MCP-Usage-Receipt MCP-Token-Usage; do
+    printf '%s\n' "$CONTENT" | grep -q "^$f:" || warn "MCP block present but missing $f"
+  done
+fi
+
+if [ "$errors" -gt 0 ]; then
+  echo "macp-lite: FAILED with $errors error(s)"
+  exit 1
+fi
+echo "macp-lite: OK"
+exit 0
