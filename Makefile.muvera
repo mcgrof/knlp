@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: MIT
+# muvera-small: reproducible byte-floor benchmark for retrieval vectors.
+#
+# Selecting:
+#   make defconfig-muvera-small
+# writes .config from configs/defconfig-muvera-small.
+#
+# Then:
+#   make muvera-small         # full pipeline (setup + systems + retrieval + plots + report)
+#   make muvera-small-systems # just the systems byte-floor part
+#   make muvera-small-retrieval
+#   make muvera-small-plots
+#   make muvera-small-report
+#
+# Optional, off by default:
+#   make muvera-small-nvme-cold
+
+MUVERA_SCRIPTS := benchmarks/muvera/scripts
+MUVERA_DEFCONFIG := configs/defconfig-muvera-small
+
+# Python -- assume system python3 with the env activated by the user
+MUVERA_PY ?= python3
+
+# Read .config if present and pass it through to scripts. Each script also
+# accepts CLI overrides; .config provides the defaults.
+MUVERA_CONFIG := .config
+
+.PHONY: defconfig-muvera-small
+defconfig-muvera-small:
+	@cp $(MUVERA_DEFCONFIG) $(MUVERA_CONFIG)
+	@echo "wrote $(MUVERA_CONFIG) from $(MUVERA_DEFCONFIG)"
+
+.PHONY: muvera-small
+muvera-small: muvera-small-setup muvera-small-systems muvera-small-retrieval \
+              muvera-small-plots muvera-small-report
+	@echo ""
+	@echo "MUVERA small benchmark complete."
+	@echo ""
+	@echo "Report:"
+	@echo "  See the latest run dir under \$$CONFIG_MUVERA_OUTPUT_BASE"
+	@echo ""
+	@echo "To reproduce:"
+	@echo "  make defconfig-muvera-small"
+	@echo "  make muvera-small"
+	@echo ""
+	@echo "Optional cold NVMe test:"
+	@echo "  set CONFIG_MUVERA_ENABLE_NVME_COLD_BENCH=y"
+	@echo "  set CONFIG_MUVERA_NVME_BENCH_PATH=/path/to/nvme"
+	@echo "  make muvera-small-nvme-cold"
+
+.PHONY: muvera-small-setup
+muvera-small-setup:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/fetch_scifact.py --config $(MUVERA_CONFIG)
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/build_colbertv2_embeddings.py --config $(MUVERA_CONFIG)
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/build_bge_embeddings.py --config $(MUVERA_CONFIG)
+
+.PHONY: muvera-small-systems
+muvera-small-systems:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/run_systems_byte_bench.py --config $(MUVERA_CONFIG)
+
+.PHONY: muvera-small-nvme-cold
+muvera-small-nvme-cold:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/run_nvme_cold_bench.py --config $(MUVERA_CONFIG)
+
+.PHONY: muvera-small-retrieval
+muvera-small-retrieval:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/run_retrieval_bench.py --config $(MUVERA_CONFIG)
+
+.PHONY: muvera-small-plots
+muvera-small-plots:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/plot_stage5_results.py --config $(MUVERA_CONFIG)
+
+.PHONY: muvera-small-report
+muvera-small-report:
+	$(MUVERA_PY) $(MUVERA_SCRIPTS)/write_report.py --config $(MUVERA_CONFIG)
