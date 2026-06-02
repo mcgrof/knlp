@@ -51,13 +51,12 @@ if [ -n "$GLINE" ] && [ -n "$SLINE" ] && [ "$SLINE" -ne "$((GLINE + 1))" ]; then
   err "Generated-by (line $GLINE) must be immediately followed by Signed-off-by (line $SLINE)"
 fi
 
-# --- banned co-author / attribution forms ---
+# --- attribution: model belongs in Generated-by, not a duplicate Co-Authored-By ---
 if printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude[[:space:]]*$'; then
-  err "generic 'Co-Authored-By: Claude' is banned; name the model or drop the trailer"
+  err "generic 'Co-Authored-By: Claude' is banned; AI attribution belongs in Generated-by"
 fi
-if printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude[[:space:]]*<'; then
-  printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:[[:space:]]*Claude (Opus|Sonnet|Haiku)' \
-    || err "Co-Authored-By must name the model (e.g. 'Claude Opus 4.8 (1M context) <noreply@anthropic.com>')"
+if printf '%s\n' "$CONTENT" | grep -qiE '^Co-Authored-By:.*(Claude|GPT|Gemini|Codex|gpt-[0-9])'; then
+  warn "Co-Authored-By names an AI model — that attribution belongs in Generated-by; drop the redundant Co-Authored-By (reserve Co-Authored-By for human co-authors)"
 fi
 printf '%s\n' "$CONTENT" | grep -qE '^[[:space:]]*🤖' \
   && err "robot-emoji auto-footer (🤖 Generated with [Claude Code]) is banned"
