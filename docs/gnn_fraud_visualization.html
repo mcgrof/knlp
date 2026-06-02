@@ -821,6 +821,112 @@
       );
     }
 
+    // Apply-to-your-own-GNN recipe (portable Reciprocal Attention)
+    function ApplyRASection() {
+      const raCode = `# Reciprocal Attention aggregation, portable to any
+# message-passing GNN. Standard attention has a node QUERY its
+# neighbors (Q@K.T); reciprocal flips it so neighbors QUERY the
+# node (K@Q.T). It is a drop-in replacement for mean/sum
+# aggregation inside one conv layer.
+import torch
+from torch_scatter import scatter_add, scatter_mean, scatter_softmax
+
+def reciprocal_aggregate(x, edge_index):
+    # x: [N, D] node features; edge_index: [2, E] as (src, dst)
+    src, dst = edge_index
+    x_src, x_dst = x[src], x[dst]            # per-edge endpoints
+    scale = x.size(-1) ** -0.5
+
+    # score each edge as neighbor . center (the reciprocal direction)
+    logits = (x_src * x_dst).sum(-1) * scale          # [E]
+    attn = scatter_softmax(logits, dst, dim=0)        # softmax per center
+    msg = scatter_add(x_src * attn.unsqueeze(-1), dst,
+                      dim=0, dim_size=x.size(0))
+    return msg                               # [N, D] weighted neighbors
+
+# Optional variance residual: keeps neighbor DISAGREEMENT as signal
+# (helps when a useful minority of neighbors would be averaged away).
+def variance_residual(x, edge_index, var_proj):
+    src, dst = edge_index
+    mean = scatter_mean(x[src], dst, dim=0, dim_size=x.size(0))
+    var = scatter_mean((x[src] - mean[dst]) ** 2, dst,
+                       dim=0, dim_size=x.size(0))
+    return var_proj(var)                     # add to layer output`;
+
+      const fimCode = `# FIM-guided variant: spend attention only where the model is
+# UNCERTAIN. The FIM trace per node is just grad^2 of its hidden
+# state, captured for free during the normal backward pass.
+hidden.register_hook(
+    lambda g: accumulate(node_ids, (g ** 2).sum(-1)))  # FIM trace
+
+# After a few steps, route the bottom 33% (most uncertain) to RA
+# and leave confident nodes on cheap mean aggregation:
+thresh = torch.quantile(fim_trace, 0.33)
+ra_mask = fim_trace <= thresh                          # [N] bool
+msg = torch.where(ra_mask.unsqueeze(-1),
+                  reciprocal_aggregate(x, edge_index),
+                  scatter_mean(x[src], dst, dim=0, dim_size=x.size(0)))`;
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Apply Reciprocal Attention to Your Own GNN</h2>
+          <p className="text-gray-400 mb-6">
+            Reciprocal Attention is architecture-agnostic: it replaces the neighbor-aggregation
+            step in a single message-passing layer. If your model uses mean or sum aggregation
+            (GraphSAGE, GCN, GIN), you can swap in the function below and A/B test it without
+            touching the rest of your pipeline. Code mirrors <code className="text-cyan-400">gnn/benchmark_ra.py</code>.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">1. Drop-in aggregation</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-xs text-cyan-300 font-mono overflow-x-auto whitespace-pre">{raCode}</pre>
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">2. Optional FIM gating</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-xs text-emerald-300 font-mono overflow-x-auto whitespace-pre">{fimCode}</pre>
+            </div>
+          </div>
+
+          <div className="bg-gray-900 rounded-lg p-4 border border-gray-800 mb-6">
+            <h3 className="font-semibold text-emerald-400 mb-2">How to evaluate it fairly</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              Hold everything else fixed — same data, splits, epochs, learning rate, and seed —
+              and change only the aggregator. Compare on a metric that respects your class balance
+              (F1 / PR-AUC for imbalanced fraud-style tasks, not raw accuracy). Try the variants
+              in increasing order of complexity and stop at the first that wins:
+            </p>
+            <ol className="text-sm text-gray-400 space-y-1 list-decimal list-inside">
+              <li><strong className="text-white">Plain RA</strong> — reciprocal aggregation on all nodes.</li>
+              <li><strong className="text-white">RA + variance residual</strong> — add the disagreement signal.</li>
+              <li><strong className="text-white">FIM-guided RA</strong> — apply RA only to the uncertain bottom 33%.</li>
+            </ol>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <h3 className="font-semibold text-emerald-400 mb-2">When it tends to help</h3>
+              <p className="text-gray-400 text-sm">
+                Neighbor quality varies and a uniform mean washes out a useful minority — e.g. a
+                fraud node with mostly benign neighbors and one telling connection. Attention can
+                up-weight the informative edge; the variance residual preserves the disagreement.
+                Measured here: <strong className="text-white">+7% relative F1</strong> on DGraphFin.
+              </p>
+            </div>
+            <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
+              <h3 className="font-semibold text-red-400 mb-2">When it won't (don't expect magic)</h3>
+              <p className="text-gray-400 text-sm">
+                Strongly homophilous graphs where neighbors already agree — mean is near-optimal and
+                attention only adds parameters. And if you are <em>I/O-bound</em>, this is the wrong RA
+                to reach for: fix storage layout first (see Read Amplification above). Gains are real
+                but modest; validate on your own metric before adopting.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // Conclusions Section
     function ConclusionsSection() {
       return (
@@ -1010,6 +1116,7 @@ make`;
           <RAMetricsSection />
           <ResultsSection />
           <FIMGuidedRASection />
+          <ApplyRASection />
           <ConclusionsSection />
           <TrainingSection />
           <ReproduceSection />
