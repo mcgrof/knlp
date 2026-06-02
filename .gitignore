@@ -235,3 +235,7 @@ scripts/visualize_kvsplice_strategy.py
 .claude/
 .flash/
 .runpod/
+
+# GNN force-ssd feature store (real-IO read-amplification harness)
+gnn_ssd_store/
+**/gnn_ssd_store/
