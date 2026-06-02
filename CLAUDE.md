@@ -24,9 +24,12 @@ file.py: brief description of change
 Detailed explanation of what was changed and why, in prose.
 
 Generated-by: Claude Opus 4.8 (1M context)
-Signed-off-by: Luis Chamberlain <mcgrof@kernel.org>
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
 ```
 
+- **SIGN-OFF EMAIL**: use `mcgrof@do-not-panic.com` for knlp's own
+  (non-upstream) commits. Reserve `mcgrof@kernel.org` only for patches
+  submitted to an upstream project (e.g. the Linux kernel).
 - **LINE LENGTH**: 70 characters max per line (subject and body) for clean
   display in git log, email patches, and terminals.
 - **Generated-by**: name the actual model and context window (e.g.
@@ -43,6 +46,20 @@ Signed-off-by: Luis Chamberlain <mcgrof@kernel.org>
   not its self-report.
 - **STYLE**: terse prose paragraphs explaining the change, rationale, and
   technical details. No shopping-list bullet dumps.
+
+**Enforcement.** knlp ships an MACP-lite `commit-msg` validator at
+`scripts/commit-msg-hook` (the lighter profile of the agents protocol: it
+checks the model-explicit `Generated-by` → `Signed-off-by` pair, bans the
+generic `Co-Authored-By: Claude` / robot-emoji footer, caps the subject at
+70 chars, and sanity-checks any `MCP-*` block — it does not require the full
+9-field MACP `AI-*` set). Install it once per clone:
+
+```
+cp scripts/commit-msg-hook .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+```
+
+Merge/WIP/fixup commits skip validation; use `git commit --no-verify` to
+bypass it for a one-off (e.g. a purely manual commit).
 
 ## Cross-Agent Access
 
