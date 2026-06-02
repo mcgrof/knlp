@@ -12,25 +12,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Test that code runs successfully before committing
 
 ### Commit Messages
-- **MANDATORY**: Always use this exact format for ALL commits:
-  ```
-  file.py: brief description of change
 
-  Detailed explanation of what was changed and why.
-  Include technical details about the implementation.
+knlp follows the Multi-AI Collaboration Protocol (MACP) and its MCP-agent
+extension, documented at https://github.com/linux-kdevops/agents. Every
+commit ends with a model-explicit `Generated-by` immediately followed by
+`Signed-off-by`:
 
-  Generated-by: Claude AI
-  Signed-off-by: Luis Chamberlain <mcgrof@kernel.org>
-  ```
+```
+file.py: brief description of change
 
-- **LINE LENGTH**: Maximum 70 characters per line in commit messages
-  - Subject line (first line): 70 characters max
-  - Body paragraphs: 70 characters max per line
-  - Ensures proper display in git log, email patches, and terminal output
-- **CRITICAL**: Never use "🤖 Generated with [Claude Code]" or "Co-Authored-By: Claude"
-- **REQUIRED**: Every commit MUST have both "Generated-by: Claude AI" and "Signed-off-by: Luis Chamberlain <mcgrof@kernel.org>"
-- **NO EXCEPTIONS**: This format is mandatory for ALL commits, no matter how small
-- **STYLE**: Be terse and to the point. NO shopping-list style bullet points. Write in paragraphs explaining the change, rationale, and technical details concisely. Avoid verbose enumeration unless absolutely necessary for clarity.
+Detailed explanation of what was changed and why, in prose.
+
+Generated-by: Claude Opus 4.8 (1M context)
+Signed-off-by: Luis Chamberlain <mcgrof@kernel.org>
+```
+
+- **LINE LENGTH**: 70 characters max per line (subject and body) for clean
+  display in git log, email patches, and terminals.
+- **Generated-by**: name the actual model and context window (e.g.
+  `Generated-by: Claude Opus 4.8 (1M context)`), not the bare `Claude AI`.
+  It must be immediately followed by `Signed-off-by`.
+- **Co-Authored-By**: a model-explicit trailer such as `Co-Authored-By:
+  Claude Opus 4.8 (1M context) <noreply@anthropic.com>` is allowed and
+  preferred when used (it is explicit about the model). Never use the
+  generic `Co-Authored-By: Claude` or `🤖 Generated with [Claude Code]`.
+- **MCP / Collab trailers**: when a second model is consulted in-band (e.g.
+  Codex over MCP), add the `MCP-*` receipt and `Collab-*` plan-grading
+  trailers above the `Generated-by`/`Signed-off-by` pair per the agents
+  extension; token counts come from the consulted model's usage receipt,
+  not its self-report.
+- **STYLE**: terse prose paragraphs explaining the change, rationale, and
+  technical details. No shopping-list bullet dumps.
 
 ## Cross-Agent Access
 
@@ -656,142 +668,12 @@ When implementing gating based on attention statistics:
 
 ## WandB Helper Scripts
 
-When analyzing experiment results or comparing GPU performance across
-runs, use the W&B query scripts in the scripts/ directory. These
-require the micromamba environment.
-
-### Environment Setup
-
-Before running any W&B query scripts:
-
-```bash
-source ~/bin/wl700-ml  # Activates w7900-ml micromamba environment
-```
-
-This provides wandb, pandas, and other dependencies needed for
-querying experiment data.
-
-### Available Scripts
-
-**scripts/inspect_wandb_keys.py**: Discover available metrics in a run
-
-Usage for inspecting what data is available:
-```bash
-python scripts/inspect_wandb_keys.py \
-  --entity mcgrof-citizen \
-  --project gpt2-bitter9-compiled-b200x4 \
-  --run-name gpt2_adamwprune_bitter9_state_50
-```
-
-**scripts/query_wandb_gpu.py**: Query GPU metrics from training history
-
-Usage for checking GPU memory and compute utilization:
-```bash
-python scripts/query_wandb_gpu.py \
-  --entity mcgrof-citizen \
-  --project gpt2-bitter9-compiled-b200x4 \
-  --run-name gpt2_adamwprune_bitter9_state_50
-```
-
-**scripts/query_wandb_gpu_full.py**: Query detailed GPU metrics from
-system events
-
-Usage for detailed system metrics including power and temperature:
-```bash
-python scripts/query_wandb_gpu_full.py \
-  --entity mcgrof-citizen \
-  --project gpt2-bitter9-compiled-b200x4 \
-  --run-name gpt2_adamwprune_bitter9_state_50
-```
-
-**scripts/plot_torch_compile_impact.py**: Generate publication-quality
-visualizations comparing GPU performance across runs
-
-This is a reusable visualization script that queries W&B and
-generates four graphs showing performance comparisons. Used to
-prove torch.compile() was the bottleneck.
-
-Usage:
-```bash
-source ~/bin/wl700-ml
-python scripts/plot_torch_compile_impact.py
-```
-
-The script is hardcoded to query
-`mcgrof-citizen/gpt2-bitter8-nocompile-w7900` but can be easily
-adapted for other projects by editing the `project` variable in
-`main()`.
-
-Generated graphs (300 DPI, publication quality):
-- `torch_compile_comparison.png`: Side-by-side memory and compute
-  comparison
-- `torch_compile_grouped.png`: All runs in grouped bar chart with
-  color coding
-- `torch_compile_before_after.png`: Dramatic before/after horizontal
-  bars with annotations
-- `bitter8_vs_baseline.png`: Spotlight showing minimal overhead of
-  state-based pruning
-
-The script demonstrates the pattern for:
-1. Querying W&B API for multiple runs
-2. Extracting system.gpu.* metrics from event stream
-3. Computing averages across runs
-4. Creating matplotlib visualizations with annotations
-5. Using color coding (red=bad, green=good) for clarity
-
-When to use this script:
-- After GPU profiling reveals performance differences
-- To prove bottleneck hypotheses with visual evidence
-- To compare optimization variants systematically
-- To generate graphs for documentation or papers
-
-Customization tips:
-- Edit `project` variable to query different W&B project
-- Modify `fetch_wandb_data()` to extract different metrics
-- Update graph functions to change visual style
-- Add new graph types by creating new functions following existing
-  patterns
-
-### Comparing Runs
-
-To compare GPU performance across multiple runs (baseline vs
-optimizations), write a custom Python script using the W&B API.
-See docs/tracker.md for detailed examples.
-
-Pattern for comparing runs:
-```python
-import wandb
-
-api = wandb.Api()
-project = "mcgrof-citizen/gpt2-bitter9-compiled-b200x4"
-
-run_names = ["baseline", "bitter8", "bitter9"]
-
-for name in run_names:
-    runs = api.runs(project, filters={"config.run_name": name})
-    if runs:
-        run = runs[0]
-        history = run.history(
-            keys=["gpu/memory_util_avg", "gpu/compute_util_avg"],
-            samples=1000
-        )
-        if not history.empty:
-            print(f"{name}:")
-            print(f"  Memory: {history['gpu/memory_util_avg'].mean():.2f}%")
-            print(f"  Compute: {history['gpu/compute_util_avg'].mean():.2f}%")
-```
-
-### Key Metrics to Check
-
-When analyzing GPU performance issues:
-
-- `gpu/memory_util_avg`: Memory bandwidth utilization (%)
-- `gpu/compute_util_avg`: Compute utilization (%)
-- `gpu/memory_used_avg_gb`: Average memory per GPU (GB)
-
-Low memory utilization (<20%) indicates memory bandwidth bottleneck.
-Low compute utilization (<50%) indicates compute bottleneck.
-Compare optimization runs to baseline to verify improvements.
+When analyzing experiment results or comparing GPU performance across runs,
+use the W&B query/plot helpers in `scripts/` (`inspect_wandb_keys.py`,
+`query_wandb_gpu*.py`, `plot_torch_compile_impact.py`). They need the
+micromamba env: `source ~/bin/wl700-ml`. Script usage, the run-comparison
+pattern, and the key GPU metrics to check are in
+[docs/wandb-helpers.md](docs/wandb-helpers.md) (see also `docs/tracker.md`).
 
 ## Publishing Results
 
@@ -832,35 +714,10 @@ When publishing statistics or performance comparisons:
 
 ### W&B Verification Script Pattern
 
-Use this pattern to verify hyperparameter consistency:
-
-```python
-import wandb
-
-api = wandb.Api()
-project = "mcgrof-citizen/your-project"
-run_names = ["baseline", "method_a", "method_b"]
-
-configs = {}
-for name in run_names:
-    runs = api.runs(project, filters={"display_name": name})
-    if runs:
-        run = runs[0]
-        configs[name] = {
-            "batch_size": run.config.get("batch_size"),
-            "gradient_accumulation": run.config.get("gradient_accumulation"),
-            "learning_rate": run.config.get("learning_rate"),
-            "max_time": run.config.get("max_time"),
-            "compile": run.config.get("compile_model"),
-            "commit": run.config.get("git_commit"),
-        }
-
-# Verify all configs match on critical hyperparameters
-for key in ["batch_size", "gradient_accumulation", "learning_rate"]:
-    values = [c[key] for c in configs.values()]
-    if len(set(values)) > 1:
-        print(f"WARNING: {key} differs across runs: {configs}")
-```
+Before publishing, query all runs via the W&B API and assert the critical
+hyperparameters (batch size, gradient accumulation, learning rate, max_time,
+compile status, git_commit) match across the comparison. The ready-to-use
+script pattern is in [docs/wandb-helpers.md](docs/wandb-helpers.md).
 
 ### Publication Requirements
 
@@ -880,146 +737,12 @@ checklist.
 
 ## KVSplice Verification
 
-KVSplice is a learned KV cache compression layer that achieves 12x
-total compression (6x from MLA + 2x from KVSplice). Before claiming
-compression ratios or memory savings, verify both training quality
-and inference memory reduction.
-
-### Training Verification
-
-When evaluating KVSplice training results:
-
-1. **Compare across GPU types**: Run ablation on multiple GPUs (W7900,
-   A100, H100) to verify consistency and detect hardware-specific
-   issues
-
-2. **Check transform parameter learning**: Extract scale/shift values
-   from checkpoints to verify the learned monotonic transform is
-   actually training (not stuck at initialization)
-   ```bash
-   python scripts/extract_kvsplice_params.py \
-     --checkpoint path/to/checkpoint.pt
-   ```
-
-3. **Monitor KVSplice metrics in W&B**: Verify that scale_mean,
-   scale_std, shift_mean, shift_std are logged during training. If
-   missing, check architecture detection in
-   `_compute_kvsplice_param_metrics()`
-
-4. **Verify compression ratio setting**: Confirm CONFIG_MLA_COMPRESSION_RATIO
-   is set correctly in defconfig and matches W&B config. Default is
-   0.5 (2x compression on top of MLA)
-
-5. **Quality degradation tolerance**: KVSplice should add only
-   0.5-1.4% quality loss compared to MLA alone. Larger degradation
-   indicates a bug
-
-### Inference Verification
-
-Before publishing inference memory savings claims:
-
-1. **Run direct cache measurement**: Use
-   `scripts/verify_kvsplice_memory.py` to measure actual cache tensor
-   sizes across sequence lengths
-   ```bash
-   python scripts/verify_kvsplice_memory.py
-   ```
-
-2. **Verify cache tensor shapes**: Inspect returned cache objects to
-   confirm dimensions:
-   - MLA: `[B, T, d_latent]` where d_latent=256
-   - KVSplice: `[B, T, d_compressed]` where d_compressed=128 (ratio=0.5)
-
-3. **Check compression ratio accuracy**: Memory savings should match
-   theoretical predictions within 5%:
-   - Expected savings: `compression_ratio * 100%`
-   - Example: ratio=0.5 should give 50% cache reduction vs MLA
-
-4. **Test multiple sequence lengths**: Verify compression holds across
-   256, 512, and 1024 token sequences. Savings should scale linearly
-
-5. **Calculate production throughput**: Estimate how many parallel
-   sequences fit in GPU memory with compressed cache vs standard
-   cache. Include model weights in calculation
-
-### Transform Parameter Analysis
-
-KVSplice uses a learned monotonic transform before low-rank
-projection. To verify it's learning:
-
-1. **Extract parameters from checkpoint**:
-   ```bash
-   python scripts/extract_kvsplice_params.py \
-     --checkpoint test_matrix_results_*/checkpoint.pt
-   ```
-
-2. **Check for variance across dimensions**: If all scale values are
-   identical and all shift values are zero, parameters are not
-   learning
-
-3. **Initial values to expect**:
-   - Scale: softplus(1.0) ≈ 1.3133 (initialization)
-   - Shift: 0.0 (initialization)
-   - After training: should show variance across 256 dimensions
-
-4. **Pruning candidates**: Dimensions with scale < 0.1 after training
-   are low-importance and candidates for pruning
-
-5. **LayerNorm impact**: If transform parameters don't learn, try
-   adding LayerNorm to latent space to stabilize gradients
-
-### Known Issues
-
-**Transform parameters not learning**: Current experiments show
-KVSplice transform parameters remain at initialization values (scale
-≈ 1.3133, shift = 0.0) even after 1000+ iterations. This means
-KVSplice is working purely via low-rank projection (compress/expand
-layers), not the learned transform. This may be optimal if the
-compress/expand layers can learn the mapping directly.
-
-**Architecture detection for metrics**: Early versions failed to log
-KVSplice metrics because code only checked for `raw_model.transformer`
-(standard GPT-2) but MLA uses `raw_model.blocks`. Fixed in commit
-that added dual architecture detection.
-
-**Memory measurement pitfalls**: Don't measure cache memory by running
-full forward passes (passing all previous tokens). This defeats the
-purpose of caching. Instead, extract cache objects from blocks with
-`use_cache=True` and measure tensor sizes directly.
-
-### Verification Scripts
-
-- `scripts/verify_kvsplice_memory.py`: Measure cache tensor sizes
-- `scripts/extract_kvsplice_params.py`: Extract learned transform
-  parameters
-- `scripts/compare_kvsplice_gpus.py`: Compare results across GPU types
-- `scripts/plot_kvsplice_inference_memory.py`: Generate visualization
-  plots
-
-### Documentation Updates
-
-After verification, update documentation with plots and results:
-
-1. **Add inference verification section** to `docs/kvsplice.md`:
-   - Include cache memory comparison plots
-   - Show compression breakdown visualization
-   - Document cache tensor shapes
-   - Provide memory savings table
-
-2. **Update GPU comparison summary** in
-   `docs/kvsplice/gpu-comparison-summary.md`:
-   - Add inference verification results
-   - Compare theoretical vs actual compression
-   - Document production implications
-
-3. **Generate publication-quality plots** (300 DPI):
-   ```bash
-   python scripts/plot_kvsplice_inference_memory.py
-   ```
-
-See `docs/kvsplice.md` for complete inference verification results
-with plots showing 50% cache reduction (12 MB → 6 MB at 1024 tokens)
-and 83.3% total reduction vs standard GPT-2 (36 MB → 6 MB).
+KVSplice is a learned KV-cache compression layer (~12x total: 6x MLA + 2x
+KVSplice). Before claiming compression ratios or memory savings, verify
+both training quality and inference memory reduction. The full protocol —
+transform-parameter extraction, cache-tensor measurement, per-model
+compression checks, verification scripts, and known issues — is in
+[docs/kvsplice-verification.md](docs/kvsplice-verification.md).
 
 ## Documentation
 - Keep changes well-documented in commit messages
@@ -1063,97 +786,6 @@ git push prune branch:refs/heads/branch-monster-YYYY-MM-DD
 
 Key results archive: `prune:/data/knlp-key-results/flashinfer-asym-e2e-20260427/`
 
-### Building the asym serving stack on a GPU pod
-
-The vLLM asym branch requires torch >= 2.10, cmake >= 4.0, and the
-FlashInfer cutlass submodule initialized.  The tested recipe (H100
-SECURE pod, RunPod):
-
-```bash
-# 1. FlashInfer
-cd /root && git clone --branch asym-prefill-refactor-stage \
-    https://github.com/mcgrof/flashinfer.git flashinfer-src
-cd flashinfer-src && git submodule update --init --recursive
-pip install --no-build-isolation -e .
-
-# 2. vLLM (pulls torch and rebuilds _C; ~60 min CUDA compile)
-cd /root && git clone --branch asymmetric-kv-plumbing \
-    https://github.com/mcgrof/vllm.git vllm-src
-cd vllm-src && MAX_JOBS=32 NVCC_THREADS=2 \
-    pip install --no-build-isolation -e .
-
-# 3. Reinstall flashinfer editable (vllm pip overwrites with PyPI 0.6.6)
-cd /root/flashinfer-src && pip install --no-build-isolation -e .
-
-# 4. Verify
-FLASHINFER_DISABLE_VERSION_CHECK=1 python -c "import vllm, flashinfer"
-```
-
-The asym K16/V8 production recipe in Python:
-
-```python
-from vllm import LLM
-llm = LLM(
-    model="Qwen/Qwen2.5-7B-Instruct",
-    dtype="bfloat16",
-    kv_cache_dtype=("auto", "fp8_e4m3"),
-    attention_config={"backend": "FLASHINFER"},
-)
-```
-
-`VLLM_ATTENTION_BACKEND` env var is **not honored** in this vLLM
-build; pass `attention_config={"backend": "FLASHINFER"}` to the LLM
-constructor.  Auto-selection picks FlashAttention, which lacks the
-asym tuple writer.
-
-### Paper build
-
-```bash
-cd /home/mcgrof/devel/paper-memory-decode && make
-```
-
-Generates figures via Python scripts, then runs pdflatex (3 passes
-for cross-refs).  Always verify the rendered PDF with:
-
-```bash
-pdftotext paper.pdf - | grep -nE '<pattern>'
-```
-
-Source-level grep misses issues in figure PDFs and broken LaTeX label
-resolution (e.g., `Table V-C0c` from a `\label` inside `\begin{center}`
-instead of `\begin{table}`).
-
-## Reproducibility System (paper-memory-decode)
-
-The knlp defconfig system is being extended with paper reproduction
-profiles.  The planned targets:
-
-```bash
-make defconfig-decode       # Core asym claims (1×H100, 4-8h warm)
-make defconfig-decode-sat   # Saturation model (1×H100, 18-36h)
-make defconfig-decode-full  # Everything (multi-GPU, days)
-```
-
-After selecting a defconfig, `make` runs:
-
-```text
-decode-doctor → decode-fetch → decode-build →
-decode-run → decode-report → decode-upload (optional)
-```
-
-The orchestrator lives under `tools/reproduce/paper_memory_decode/`.
-Each stage writes results to `results/decode/<run_id>/stages/<stage>/`
-with `DONE`, `metrics.jsonl`, `stdout.log`, `stderr.log`.  Rerunning
-`make` resumes from the first missing `DONE`.
-
-Telemetry: local JSONL is mandatory and canonical.  W&B and trackerio
-are optional mirrors controlled by `.config` flags and env vars
-(`WANDB_API_KEY`, `HF_TOKEN`).
-
-The defconfigs pin exact git refs for vllm, flashinfer, lmcache, and
-paper-memory-decode, and clone/fetch them into `../` (the parent
-directory).
-
-# Memory
-
-I want you to remember most of our conversations about this project.
+The asym serving-stack build recipe (FlashInfer + vLLM on a GPU pod), the
+paper build steps, and the planned `make defconfig-decode*` reproducibility
+system are documented in [docs/decode-reproduction.md](docs/decode-reproduction.md).
