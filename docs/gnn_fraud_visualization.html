@@ -907,9 +907,13 @@ msg = torch.where(ra_mask.unsqueeze(-1),
             <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
               <h3 className="font-semibold text-emerald-400 mb-2">When it tends to help</h3>
               <p className="text-gray-400 text-sm">
-                Neighbor quality varies and a uniform mean washes out a useful minority — e.g. a
-                fraud node with mostly benign neighbors and one telling connection. Attention can
-                up-weight the informative edge; the variance residual preserves the disagreement.
+                The predictive signal lives in a <strong className="text-white">minority of a node's
+                neighbors</strong> — an outlier edge that uniform mean-pooling averages away.
+                Reciprocal attention can up-weight that informative neighbor (or down-weight a noisy
+                majority — the same operation), while the variance residual flags that the
+                neighborhood disagrees at all, which is itself a signal. Classic case: a fraud node
+                with mostly benign neighbors and one telling connection. Note it is
+                <em> intra-neighborhood</em> outliers that matter, not global dataset outliers.
                 Measured here: <strong className="text-white">+7% relative F1</strong> on DGraphFin.
               </p>
             </div>
