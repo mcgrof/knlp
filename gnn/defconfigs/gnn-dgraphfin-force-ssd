@@ -1,0 +1,61 @@
+# GNN: DGraphFin Force-SSD read-amplification verification
+#
+# Serves DGraphFin features from an on-disk store and reads them back
+# with real I/O (O_DIRECT) so external tooling (eBPF biosnoop /
+# biolatency, blktrace, iostat) can verify the read intent per I/O and
+# confirm read amplification independently of our in-RAM counter.
+#
+# It runs the full sweep for each layout (natural, bfs, metis) and
+# contrasts them: the neighbor access shows the value of locality
+# (RA_fetch drops natural -> metis) and the page-aligned access shows
+# the gap no layout can close (RA_signal stays near the ~4.3x floor).
+#
+# Point CONFIG_GNN_FRAUD_SSD_DIR at the device you want to observe. We
+# do NOT run eBPF here; this defconfig only produces the real reads so
+# someone with their own tooling can attach and measure.
+#
+# Usage:
+#   make defconfig-gnn-dgraphfin-force-ssd
+#   make
+CONFIG_MODEL_MODE_SINGLE=y
+CONFIG_MODEL_SELECT_GNN=y
+CONFIG_GNN_FRAUD=y
+CONFIG_MODEL="gnn"
+
+# Dataset: DGraphFin (real financial fraud network)
+CONFIG_GNN_FRAUD_DATASET_DGRAPHFIN=y
+CONFIG_GNN_FRAUD_DATASET="dgraphfin"
+CONFIG_GNN_FRAUD_DATA_DIR="."
+
+# Auto-fetch the dataset and prepare deps so make is push-button
+CONFIG_GNN_FRAUD_AUTO_FETCH=y
+CONFIG_GNN_FRAUD_AUTO_DEPS=y
+
+# Method Both exposes the neighbor + page-aware knobs the harness reads
+CONFIG_GNN_FRAUD_METHOD_BOTH=y
+CONFIG_GNN_FRAUD_METHOD="both"
+
+# Per-layout/access wall-clock cap (one epoch usually finishes sooner)
+CONFIG_GNN_FRAUD_TIME_LIMIT=3600
+
+# Model / access parameters
+CONFIG_GNN_FRAUD_HIDDEN_CHANNELS=128
+CONFIG_GNN_FRAUD_LEARNING_RATE="0.003"
+CONFIG_GNN_FRAUD_WEIGHT_DECAY_BASELINE="5e-7"
+CONFIG_GNN_FRAUD_WEIGHT_DECAY_PAGEAWARE="5e-7"
+
+# Neighbor sampling fanout (the locality-sensitive access)
+CONFIG_GNN_FRAUD_NUM_NEIGHBORS="10,5"
+CONFIG_GNN_FRAUD_BATCH_SIZE=1024
+
+# Page-aware sweep
+CONFIG_GNN_FRAUD_PAGES_PER_BATCH=32
+CONFIG_GNN_FRAUD_BOUNDARY_BUDGET="0.0"
+CONFIG_GNN_FRAUD_LAYOUT_PATH="layout_metis_bfs.npz"
+
+# Force-SSD harness: real device I/O for read-amplification verification
+CONFIG_GNN_FRAUD_FORCE_SSD=y
+CONFIG_GNN_FRAUD_SSD_DIR="./gnn_ssd_store"
+CONFIG_GNN_FRAUD_SSD_DIRECT=y
+CONFIG_GNN_FRAUD_SSD_INFLATE_GB=0
+CONFIG_GNN_FRAUD_SSD_LAYOUTS="natural,bfs,metis"
