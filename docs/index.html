@@ -214,6 +214,26 @@
             <a href="gnn_fraud_visualization.html" class="text-rose-400 hover:underline">Interactive Demo</a>
           </div>
         </div>
+        <!-- KRI-FT -->
+        <div class="highlight-card border-teal-500 rounded-lg p-5">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-lg text-teal-400 mb-2">KRI-FT</h3>
+              <p class="text-gray-400 text-sm mb-3">
+                Fine-tuning a model under a KV-cache routing mask so it tolerates
+                aggressive cache pruning at inference. On GPT-2 small:
+                <strong class="text-white">8&times; fewer KV blocks</strong> for the same
+                quality and <strong class="text-white">3&ndash;6&times; lower KL</strong>
+                under every KRI router, across 3 seeds. The honest limit: the win
+                shrinks on modern small models that already tolerate routing.
+              </p>
+            </div>
+          </div>
+          <div class="mt-3 flex gap-3 text-xs">
+            <a href="https://github.com/mcgrof/knlp/tree/main/gpt2-kri-ft" class="text-blue-400 hover:underline">Documentation</a>
+            <a href="kri_ft_visualization.html" class="text-teal-400 hover:underline">Interactive Demo</a>
+          </div>
+        </div>
       </div>
 
       <!-- Unified FIM table -->
