@@ -94,6 +94,25 @@ config GNN_FRAUD_DATA_DIR
 	  Directory containing dataset files (e.g., dgraphfin.npz).
 	  Default is current directory.
 
+config GNN_FRAUD_AUTO_FETCH
+	bool "Auto-fetch dataset if missing"
+	default y
+	help
+	  Download the selected dataset automatically when it is not present
+	  in the data directory. DGraphFin is pulled from the
+	  YinzhenWan/DGraphFin HuggingFace dataset repo. Disable to require a
+	  manually-provided dataset file (sets GNN_AUTO_FETCH=0 for the run).
+
+config GNN_FRAUD_AUTO_DEPS
+	bool "Auto-install Python deps and build C++ sampler"
+	default y
+	help
+	  Before training, ensure torch_geometric, pymetis and
+	  huggingface_hub are importable (pip install on demand) and build
+	  the cpp_extension page samplers in place. Disable on locked-down
+	  environments where pip is unavailable; you must then provide the
+	  dependencies and a prebuilt extension yourself.
+
 choice
 	prompt "Training Method"
 	default GNN_FRAUD_METHOD_PAGEAWARE
@@ -247,6 +266,69 @@ config GNN_FRAUD_SYNTH_FRAUD_RATE
 	default "0.02"
 	help
 	  Fraction of accounts labeled as fraudulent.
+
+endmenu
+
+menu "Force-SSD read-amplification harness"
+
+config GNN_FRAUD_FORCE_SSD
+	bool "Serve features from an on-disk store (real I/O)"
+	default n
+	help
+	  Instead of indexing the feature matrix in RAM, write it to a raw
+	  file on an SSD laid out by the page layout, then read each batch's
+	  pages back with real I/O. This turns the modeled read-amplification
+	  metric into observable block-device reads, so external tools (eBPF
+	  biosnoop/biolatency, blktrace, iostat) can verify the read intent
+	  per I/O. The default in-RAM path only counts page touches.
+
+if GNN_FRAUD_FORCE_SSD
+
+config GNN_FRAUD_SSD_DIR
+	string "On-disk feature store directory"
+	default "./gnn_ssd_store"
+	help
+	  Directory on the SSD under test where per-layout feature files are
+	  written. Place this on the device you want to observe.
+
+config GNN_FRAUD_SSD_DIRECT
+	bool "Bypass the page cache with O_DIRECT"
+	default y
+	help
+	  Open the feature file with O_DIRECT so every logical page read
+	  becomes a device read regardless of dataset size. This lets a
+	  dataset that fits in RAM still exercise the SSD, so read
+	  amplification is measurable without evicting caches. Falls back to
+	  buffered reads if the filesystem rejects O_DIRECT.
+
+config GNN_FRAUD_SSD_DROP_CACHES
+	bool "Drop page cache before each layout"
+	default n
+	help
+	  Run "echo 3 > /proc/sys/vm/drop_caches" before each layout's run
+	  (needs root or passwordless sudo). Useful when O_DIRECT is
+	  unavailable on the target filesystem.
+
+config GNN_FRAUD_SSD_INFLATE_GB
+	int "Inflate on-disk store to at least N GiB (0 = off)"
+	default 0
+	range 0 4096
+	help
+	  Pad the feature file so the store genuinely exceeds RAM, forcing
+	  reads from the device even with buffered I/O. 0 relies on O_DIRECT
+	  instead. Use when you want the working set larger than page cache
+	  for a more realistic large-dataset scenario.
+
+config GNN_FRAUD_SSD_LAYOUTS
+	string "Layouts to compare (comma-separated)"
+	default "natural,bfs,metis"
+	help
+	  Page layouts to build and benchmark back-to-back so the value of
+	  locality optimization is visible: natural (original node order,
+	  worst case), bfs (graph BFS), metis (Metis+BFS, best). "random" is
+	  also available as a scrambled baseline. Each is built on demand.
+
+endif
 
 endmenu
 
