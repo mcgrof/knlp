@@ -1,0 +1,41 @@
+variant,model,dataset,R,k_sim,FDE_dim,precision,bytes_per_vector,recall_at_10,recall_at_100,lat_us_per_query,notes
+chamfer_oracle,lightonai/colbertv2.0,BeIR/scifact,-,-,-,fp32,120654,0.8066666666666666,0.9266666666666666,321049.95559901,ColBERTv2 multi-vector late interaction
+pooled-fp32,BAAI/bge-small-en-v1.5,BeIR/scifact,-,-,384,fp32,1536,0.8566666666666667,0.9533333333333334,54.69049016634623,single-vector mean-pool
+pooled-fp16,BAAI/bge-small-en-v1.5,BeIR/scifact,-,-,384,fp16,768,0.8566666666666667,0.9533333333333334,14.733249942461649,single-vector mean-pool
+pooled-int8,BAAI/bge-small-en-v1.5,BeIR/scifact,-,-,384,int8,384,0.8566666666666667,0.95,16.772374510765076,single-vector mean-pool
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,2,512,fp32,2048,0.3933333333333333,0.6033333333333334,21.542459726333618,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,2,512,fp16,1024,0.3933333333333333,0.6033333333333334,18.525682389736176,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,2,512,int8,512,0.3933333333333333,0.6033333333333334,16.83590312798818,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,2,512,pq,256,0.38666666666666666,0.6066666666666667,41.495313247044884,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,3,1024,fp32,4096,0.37,0.6166666666666667,24.186310668786366,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,3,1024,fp16,2048,0.37,0.6166666666666667,21.812133491039276,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,3,1024,int8,1024,0.36666666666666664,0.62,20.73353777329127,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,3,1024,pq,256,0.35,0.61,36.54466321070989,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,4,2048,fp32,8192,0.25666666666666665,0.53,29.831926027933758,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,4,2048,fp16,4096,0.25666666666666665,0.53,25.37056803703308,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,4,2048,int8,2048,0.2633333333333333,0.53,25.831932822863262,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,1,4,2048,pq,256,0.21333333333333335,0.44666666666666666,70.32846411069234,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,2,2560,fp32,10240,0.44666666666666666,0.6833333333333333,33.70205561319987,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,2,2560,fp16,5120,0.44666666666666666,0.6833333333333333,27.617911497751873,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,2,2560,int8,2560,0.44666666666666666,0.6833333333333333,27.970708906650543,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,2,2560,pq,256,0.33666666666666667,0.6033333333333334,78.2651330033938,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,3,5120,fp32,20480,0.4633333333333333,0.7533333333333333,46.802597741285965,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,3,5120,fp16,10240,0.4633333333333333,0.7533333333333333,41.98577255010605,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,3,5120,int8,5120,0.46,0.7533333333333333,40.042189260323845,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,3,5120,pq,256,0.33,0.61,61.16235007842382,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,4,10240,fp32,40960,0.44333333333333336,0.73,73.76253604888916,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,4,10240,fp16,20480,0.44333333333333336,0.73,62.66328195730845,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,4,10240,int8,10240,0.44666666666666666,0.73,63.300877809524536,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,5,4,10240,pq,256,0.25,0.5433333333333333,272.5233882665634,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,2,5120,fp32,20480,0.44666666666666666,0.68,46.18397603432337,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,2,5120,fp16,10240,0.44666666666666666,0.68,41.495251158873245,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,2,5120,int8,5120,0.44666666666666666,0.6766666666666666,40.36426544189453,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,2,5120,pq,256,0.2733333333333333,0.5466666666666666,60.121119022369385,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,3,10240,fp32,40960,0.5033333333333333,0.7466666666666667,68.01418960094452,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,3,10240,fp16,20480,0.5033333333333333,0.7466666666666667,63.832427064577736,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,3,10240,int8,10240,0.5033333333333333,0.7433333333333333,63.65187466144561,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,3,10240,pq,256,0.25333333333333335,0.5633333333333334,78.50257058938344,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,4,20480,fp32,81920,0.51,0.7633333333333333,103.16020498673122,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,4,20480,fp16,40960,0.51,0.7633333333333333,107.22051064173381,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,4,20480,int8,20480,0.51,0.7633333333333333,106.30543033281963,MUVERA-style FDE, multi-vec query
+FDE,lightonai/colbertv2.0,BeIR/scifact,10,4,20480,pq,256,0.2633333333333333,0.53,144.8804885149002,MUVERA-style FDE, multi-vec query

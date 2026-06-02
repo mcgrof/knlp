@@ -1,0 +1,19 @@
+hostname: prune
+timestamp: 2026-05-02 14:08:31 PDT
+uname: Linux prune 6.16.8+deb14-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.16.8-1 (2025-09-21) x86_64 GNU/Linux
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+memory:
+  total        used        free      shared  buff/cache   available
+  Mem:            91Gi        36Gi        27Gi        48Mi        28Gi        55Gi
+  Swap:           15Gi        10Gi       5.3Gi
+torch: 2.9.1+rocm6.4
+cuda available: True
+  device 0 name: AMD Radeon Pro W7900
+  sentence_transformers: 5.1.1
+  pylate: 1.4.0
+  faiss: 1.12.0
+  datasets: 3.6.0
+  transformers: 4.56.2
+  numpy: 2.1.3
+  matplotlib: 3.10.5
+  psutil: 7.0.0
