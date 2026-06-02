@@ -510,6 +510,18 @@
             When features are stored on disk in 4KB pages, accessing scattered nodes wastes I/O bandwidth.
           </p>
 
+          <div className="mb-6 bg-amber-900/20 border border-amber-700/60 rounded-lg p-4">
+            <h3 className="text-amber-400 font-semibold mb-1">⚠ "RA" means two different things on this page</h3>
+            <p className="text-gray-400 text-sm">
+              In <strong className="text-amber-300">this</strong> section (and the <code className="text-amber-300">RA</code> nav tab),
+              <strong className="text-white"> RA = Read Amplification</strong>, an I/O metric: wasted bytes read per useful byte.
+              In the <strong className="text-cyan-300">FIM-Guided RA</strong> section further down,
+              <strong className="text-white"> RA = Reciprocal Attention</strong>, a neighbor-aggregation mechanism for the model itself.
+              They are unrelated ideas that happen to share initials. Read Amplification is about <em>storage layout</em>;
+              Reciprocal Attention is about <em>how a node combines its neighbors</em>.
+            </p>
+          </div>
+
           <div className="grid md:grid-cols-2 gap-8">
             <div className="bg-gray-900 rounded-lg p-4">
               <div className="flex items-center gap-2 mb-3">
@@ -719,6 +731,17 @@
             Reciprocal Attention (K@Q.T instead of Q@K.T) transfers from transformers to GNNs.
             FIM guidance applies RA selectively to <strong className="text-white">uncertain nodes</strong> (bottom 33% by Fisher trace).
           </p>
+
+          <div className="mb-6 bg-amber-900/20 border border-amber-700/60 rounded-lg p-4">
+            <h3 className="text-amber-400 font-semibold mb-1">Note: "RA" here is Reciprocal Attention, not Read Amplification</h3>
+            <p className="text-gray-400 text-sm">
+              This section is about the <strong className="text-white">model</strong>: how a node aggregates its neighbors.
+              It is independent of the Read Amplification (I/O) metric above. You can adopt Reciprocal Attention on
+              <em> any</em> graph — large or cache-resident — regardless of how features are stored. The "FIM-guided"
+              part is an optional refinement; plain Reciprocal Attention (apply it to <em>all</em> nodes) is the simplest
+              thing to try first.
+            </p>
+          </div>
 
           <div className="grid md:grid-cols-2 gap-8">
             <div>
