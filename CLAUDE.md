@@ -35,10 +35,11 @@ Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
 - **Generated-by**: name the actual model and context window (e.g.
   `Generated-by: Claude Opus 4.8 (1M context)`), not the bare `Claude AI`.
   It must be immediately followed by `Signed-off-by`.
-- **Co-Authored-By**: a model-explicit trailer such as `Co-Authored-By:
-  Claude Opus 4.8 (1M context) <noreply@anthropic.com>` is allowed and
-  preferred when used (it is explicit about the model). Never use the
-  generic `Co-Authored-By: Claude` or `🤖 Generated with [Claude Code]`.
+- **AI attribution lives in `Generated-by` only**: name the model once,
+  there. Do NOT also add a `Co-Authored-By` that names the same AI model —
+  it is redundant. `Co-Authored-By` is reserved for an additional *human*
+  co-author. The generic `Co-Authored-By: Claude` and the `🤖 Generated with
+  [Claude Code]` footer stay banned.
 - **MCP / Collab trailers**: when a second model is consulted in-band (e.g.
   Codex over MCP), add the `MCP-*` receipt and `Collab-*` plan-grading
   trailers above the `Generated-by`/`Signed-off-by` pair per the agents
