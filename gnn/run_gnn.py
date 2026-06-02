@@ -203,7 +203,23 @@ def main():
 
     if force_ssd:
         cmd = build_ssd_cmd(cfg, dataset, data_dir)
-        return runcmd(cmd, cwd=HERE, dry=args.dry_run)
+        rc = runcmd(cmd, cwd=HERE, dry=args.dry_run)
+        # Render a local HTML report next to the JSON after a real run.
+        report = abspath_in_repo("results/gnn/force_ssd_report.html")
+        gen = [
+            sys.executable,
+            os.path.join("scripts", "gen_ssd_report.py"),
+            "--json",
+            abspath_in_repo("results/gnn/force_ssd_ra.json"),
+            "--out",
+            report,
+        ]
+        if args.dry_run or rc == 0:
+            runcmd(gen, cwd=HERE, dry=args.dry_run)
+        if rc == 0 and not args.dry_run:
+            print(f"report: {report}")
+            print("publish to the site with: make gnn-ssd-report")
+        return rc
 
     ensure_layout(dataset, data_dir, layout_path, args.dry_run)
     cmd = build_inram_cmd(cfg, dataset, data_dir, layout_path)

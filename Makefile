@@ -294,7 +294,7 @@ train: check-config generate-config prepare-datasets
 
 # GNN (DGraphFin page-aware / force-ssd) dispatch. When CONFIG_MODEL_GNN=y
 # the default 'all' target routes here instead of the GPT-2 test matrix.
-.PHONY: gnn-run gnn-dry-run gnn-setup
+.PHONY: gnn-run gnn-dry-run gnn-setup gnn-ssd-report
 gnn-run: check-config generate-config
 	@echo "Running GNN workload from .config (gnn/run_gnn.py)..."
 	@if [ "$(CONFIG_MODEL_GNN)" != "y" ]; then \
@@ -314,6 +314,14 @@ gnn-dry-run: generate-config
 # Install GNN Python deps and build the C++ page samplers in place.
 gnn-setup:
 	python3 gnn/scripts/setup_gnn_deps.py
+
+# Render the latest force-ssd results JSON into a publishable HTML report
+# (docs/gnn_ssd_report.html, linked from the GNN Fraud visualization page).
+gnn-ssd-report:
+	python3 gnn/scripts/gen_ssd_report.py \
+		--json results/gnn/force_ssd_ra.json \
+		--out docs/gnn_ssd_report.html
+	@echo "Report: docs/gnn_ssd_report.html"
 
 # RA+MLA training targets
 .PHONY: train-ra-mla train-ra-mla-baseline train-ra-mla-full train-ra-mla-ablation
