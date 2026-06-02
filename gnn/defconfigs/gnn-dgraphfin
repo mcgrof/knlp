@@ -14,6 +14,13 @@
 # Usage:
 #   make defconfig-gnn-dgraphfin
 #   make
+#
+# make now runs the workload end to end: it prepares the GNN deps
+# (torch_geometric, pymetis, C++ samplers), fetches dgraphfin.npz,
+# builds the metis layout, and runs the NeighborLoader vs Page-Aware
+# comparison. A GPU is optional (CPU fallback). Read amplification here
+# is the in-RAM modeled metric; for real device I/O that eBPF can
+# verify, use defconfig-gnn-dgraphfin-force-ssd.
 CONFIG_MODEL_MODE_SINGLE=y
 CONFIG_MODEL_SELECT_GNN=y
 CONFIG_GNN_FRAUD=y
@@ -23,6 +30,10 @@ CONFIG_MODEL="gnn"
 CONFIG_GNN_FRAUD_DATASET_DGRAPHFIN=y
 CONFIG_GNN_FRAUD_DATASET="dgraphfin"
 CONFIG_GNN_FRAUD_DATA_DIR="."
+
+# Auto-fetch the dataset and prepare deps so make is push-button
+CONFIG_GNN_FRAUD_AUTO_FETCH=y
+CONFIG_GNN_FRAUD_AUTO_DEPS=y
 
 # Training method: Both for comparison
 CONFIG_GNN_FRAUD_METHOD_BOTH=y
