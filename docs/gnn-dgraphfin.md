@@ -102,23 +102,87 @@ The 85.1x for neighbor_sampler combines poor locality with [10,5] fanout.
 - FEATURE_BYTES = 68 bytes (17 float32 features)
 - NODES_PER_PAGE = 60
 
-## Usage
+## Reproduce
+
+The workload is wired into the Kconfig build, so a checkout reproduces it
+without manual setup:
 
 ```bash
-# Run ablation (all three samplers)
-python gnn/benchmark_fim.py --time 3600 --boundary-hops 2 --ablation \
-  --wandb-project gnn-fraud-fim
-
-# Run single sampler
-python gnn/benchmark_fim.py --time 3600 --boundary-hops 2 --only page_batch
-
-# With class weighting
-python gnn/benchmark_fim.py --time 3600 --boundary-hops 2 --weighted-loss
+make defconfig-gnn-dgraphfin
+make
 ```
+
+`make` prepares the Python dependencies (torch_geometric, pymetis) and the
+C++ page samplers, fetches `dgraphfin.npz` from HuggingFace if it is
+missing, builds the metis page layout, then runs the NeighborLoader
+baseline against the Page-Aware sampler. A GPU is optional: the code falls
+back to CPU, the ~250 MB feature matrix fits in RAM, and the
+read-amplification metric is computed CPU-side regardless. `make
+gnn-dry-run` prints the plan without downloading or training, and `make
+gnn-setup` only prepares dependencies.
+
+Read amplification in this path is the in-RAM *modeled* metric: the sampler
+counts which 4 KiB pages a batch would touch (`bytes_read = pages_touched x
+4096`) while the features actually live in DRAM. That is enough to compare
+samplers, but it issues no block-device reads. To make the reads real and
+externally verifiable, use the force-ssd variant below.
+
+You can still run the scripts directly — for example the FIM ablation
+harness:
+
+```bash
+python gnn/benchmark_fim.py --time 3600 --boundary-hops 2 --ablation
+```
+
+## Verifying read amplification with real I/O
+
+`make defconfig-gnn-dgraphfin-force-ssd` answers a fair objection to the
+numbers above: the read amplification is computed, not measured. The
+force-ssd harness writes the feature matrix to a raw file on an SSD, laid
+out by the page layout, and reads each batch's 4 KiB pages back with real
+I/O. With `O_DIRECT` every logical page read becomes a device read
+regardless of dataset size, so an operator can attach their own tooling —
+eBPF [`biosnoop`](https://github.com/iovisor/bcc)/`biolatency`, `blktrace`,
+or plain `iostat` — and confirm the per-I/O read intent and the resulting
+amplification independently. We deliberately do not run eBPF in the repo;
+the harness only produces the reads.
+
+```bash
+make defconfig-gnn-dgraphfin-force-ssd
+# point the store at the device you want to observe:
+#   make menuconfig -> GNN -> Force-SSD -> On-disk feature store directory
+make
+```
+
+For each layout the harness replays two access patterns and reports the
+measured device read amplification:
+
+| Access | What it shows |
+|--------|---------------|
+| neighbor | locality *value*: RA_fetch drops from `natural` to `metis` |
+| page | the *gap*: RA_signal stays near the ~4.3x floor for every layout |
+
+The neighbor pattern expands random training seeds to their sampled
+neighborhood, so a locality-aware layout keeps those neighbors on a few
+pages and the device serves far fewer reads. The page pattern sweeps whole
+training pages; there RA_fetch is ~1x for any layout, but only a fraction
+of nodes per page are supervised, so RA_signal — bytes read per supervised
+node — cannot drop below the ~4.3x floor no matter how good the layout is.
+That floor is the gap the layout work leaves open, and it is exactly what
+an external observer should be able to confirm with their own counters.
+
+Results land in `results/gnn/force_ssd_ra.json` next to the printed table.
+To force the working set past page cache without O_DIRECT, set
+`CONFIG_GNN_FRAUD_SSD_INFLATE_GB` (replicates the store) or
+`CONFIG_GNN_FRAUD_SSD_DROP_CACHES`.
 
 ## Files
 
-- `gnn/benchmark_fim.py` - Main benchmark script
-- `gnn/fim_sampler.py` - FIM-guided sampler
-- `gnn/fim_importance.py` - Backward hook importance tracking
-- `gnn/page_batch_sampler.py` - C++ accelerated page-aware sampler
+- `gnn/run_gnn.py` — config-driven entry point (what `make` runs)
+- `gnn/benchmark.py` — NeighborLoader vs Page-Aware (in-RAM)
+- `gnn/benchmark_ssd.py` — force-ssd real-I/O layout comparison
+- `gnn/ssd_feature_store.py` — on-disk feature store (O_DIRECT reads)
+- `gnn/benchmark_fim.py` — FIM ablation harness
+- `gnn/scripts/build_graph_layout.py` — layout builder (natural/random/bfs/metis)
+- `gnn/scripts/setup_gnn_deps.py` — dependency and C++ extension setup
+- `gnn/page_batch_sampler.py` — C++ accelerated page-aware sampler
