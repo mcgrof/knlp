@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DGraphFin Force-SSD Read-Amplification Report</title>
+<style>
+* { box-sizing: border-box; }
+body { margin:0; background:#0b0f17; color:#e5e7eb;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+.wrap { max-width: 1000px; margin: 0 auto; padding: 40px 24px 64px; }
+h1 { font-size: 30px; margin: 0 0 6px; }
+h2 { font-size: 20px; margin: 30px 0 14px; color:#34d399; }
+.sub { color:#9ca3af; margin: 0 0 22px; }
+.card { background:#111827; border:1px solid #1f2937; border-radius:14px;
+  padding:20px; margin-bottom:22px; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:760px){ .grid2{ grid-template-columns:1fr; } }
+.banner { background:#3b2f0b; border:1px solid #b45309; color:#fcd34d;
+  border-radius:12px; padding:14px 18px; margin-bottom:22px; font-size:14px; }
+.kpi { display:flex; gap:18px; flex-wrap:wrap; }
+.kpi .box { background:#0f172a; border:1px solid #1f2937; border-radius:12px;
+  padding:14px 18px; flex:1; min-width:160px; }
+.kpi .v { font-size:26px; font-weight:800; }
+.kpi .l { color:#9ca3af; font-size:12.5px; margin-top:4px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th,td { text-align:right; padding:8px 10px; border-bottom:1px solid #1f2937; }
+th:first-child,td:first-child { text-align:left; }
+th { color:#9ca3af; font-weight:600; }
+code { background:#0f172a; padding:2px 6px; border-radius:5px; color:#22d3ee; }
+.meta { color:#6b7280; font-size:12.5px; }
+a { color:#34d399; }
+.foot { color:#4b5563; font-size:12px; border-top:1px solid #1f2937;
+  margin-top:30px; padding-top:18px; }
+</style></head>
+<body><div class="wrap">
+<h1>DGraphFin Force-SSD Read-Amplification Report</h1>
+<p class="sub">Real device I/O measured per page layout. Cross-check these
+numbers with your own eBPF/blktrace/iostat counters.</p>
+<div class="banner"><b>Illustrative report — synthetic smoke data, not a DGraphFin measurement.</b> Generated from a small synthetic community graph to demonstrate the report. Regenerate with a real run: <code>make defconfig-gnn-dgraphfin-force-ssd && make</code>, then <code>make gnn-ssd-report</code>.</div>
+<p class="meta">dataset <b>synthetic-smoke</b> · O_DIRECT · layouts natural,random · fanout 10,5 · batch 128 · pages/batch 8 · replicas 1 · generated 2026-06-02 13:32</p>
+<div class="card"><div class="kpi"><div class="box"><div class="v" style="color:#34d399">2.5x</div><div class="l">fewer device reads, random → natural (neighbor RA_fetch)</div></div><div class="box"><div class="v" style="color:#a78bfa">10.2x–10.2x</div><div class="l">page RA_signal range — the floor no layout closes</div></div><div class="box"><div class="v" style="color:#22d3ee">0.1 GB</div><div class="l">real device reads issued across layouts</div></div></div></div>
+
+<h2>The value: locality lowers device reads</h2>
+<div class="grid2">
+  <div class="card"><svg viewBox="0 0 660 360" width="100%" preserveAspectRatio="xMidYMid meet" role="img"><rect x="0" y="0" width="660" height="360" rx="14" fill="#111827"/><text x="52" y="30" fill="#e5e7eb" font-size="17" font-weight="700">Neighbor access — read amplification by layout</text><text x="52" y="50" fill="#9ca3af" font-size="12.5">RA_fetch, lower is better. This is the value of a locality-aware layout.</text><line x1="52" y1="294.0" x2="642" y2="294.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="298.0" fill="#6b7280" font-size="10.5" text-anchor="end">0.00x</text><line x1="52" y1="240.0" x2="642" y2="240.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="244.0" fill="#6b7280" font-size="10.5" text-anchor="end">2.08x</text><line x1="52" y1="186.0" x2="642" y2="186.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="190.0" fill="#6b7280" font-size="10.5" text-anchor="end">4.16x</text><line x1="52" y1="132.0" x2="642" y2="132.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="136.0" fill="#6b7280" font-size="10.5" text-anchor="end">6.24x</text><line x1="52" y1="78.0" x2="642" y2="78.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="82.0" fill="#6b7280" font-size="10.5" text-anchor="end">8.33x</text><rect x="169.5" y="221.1" width="60.0" height="72.9" rx="5" fill="#fb7185"/><text x="199.5" y="215.1" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">2.81x</text><text x="199.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">natural</text><rect x="464.5" y="110.9" width="60.0" height="183.1" rx="5" fill="#f59e0b"/><text x="494.5" y="104.9" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">7.06x</text><text x="494.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">random</text><text x="52" y="344" fill="#6b7280" font-size="11.5">bytes read from device / useful feature bytes</text></svg></div>
+  <div class="card"><svg viewBox="0 0 660 360" width="100%" preserveAspectRatio="xMidYMid meet" role="img"><rect x="0" y="0" width="660" height="360" rx="14" fill="#111827"/><text x="52" y="30" fill="#e5e7eb" font-size="17" font-weight="700">Measured vs modeled (neighbor RA_fetch)</text><text x="52" y="50" fill="#9ca3af" font-size="12.5">Real O_DIRECT device reads vs the in-RAM page-touch metric.</text><line x1="52" y1="294.0" x2="642" y2="294.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="298.0" fill="#6b7280" font-size="10.5" text-anchor="end">0.00x</text><line x1="52" y1="240.0" x2="642" y2="240.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="244.0" fill="#6b7280" font-size="10.5" text-anchor="end">2.08x</text><line x1="52" y1="186.0" x2="642" y2="186.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="190.0" fill="#6b7280" font-size="10.5" text-anchor="end">4.16x</text><line x1="52" y1="132.0" x2="642" y2="132.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="136.0" fill="#6b7280" font-size="10.5" text-anchor="end">6.24x</text><line x1="52" y1="78.0" x2="642" y2="78.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="82.0" fill="#6b7280" font-size="10.5" text-anchor="end">8.33x</text><rect x="135.5" y="221.1" width="60.0" height="72.9" rx="5" fill="#34d399"/><text x="165.5" y="215.1" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">2.81x</text><rect x="203.5" y="221.4" width="60.0" height="72.6" rx="5" fill="#64748b"/><text x="233.5" y="215.4" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">2.80x</text><text x="199.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">natural</text><rect x="430.5" y="110.9" width="60.0" height="183.1" rx="5" fill="#34d399"/><text x="460.5" y="104.9" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">7.06x</text><rect x="498.5" y="111.0" width="60.0" height="183.0" rx="5" fill="#64748b"/><text x="528.5" y="105.0" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">7.05x</text><text x="494.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">random</text><rect x="52" y="334" width="12" height="12" rx="3" fill="#34d399"/><text x="70" y="344" fill="#9ca3af" font-size="12">measured (device)</text><rect x="218" y="334" width="12" height="12" rx="3" fill="#64748b"/><text x="236" y="344" fill="#9ca3af" font-size="12">modeled (in-RAM)</text></svg></div>
+</div>
+<p class="sub">The neighbor pattern expands random training seeds to their
+sampled neighborhood. A locality-aware layout (metis) keeps those neighbors
+on a few 4&nbsp;KiB pages, so the device serves far fewer reads per useful
+byte. The measured O_DIRECT amplification tracks the in-RAM modeled metric,
+which is exactly the agreement an external observer should confirm.</p>
+
+<h2>The gap: the supervised-read floor</h2>
+<div class="card"><svg viewBox="0 0 660 360" width="100%" preserveAspectRatio="xMidYMid meet" role="img"><rect x="0" y="0" width="660" height="360" rx="14" fill="#111827"/><text x="52" y="30" fill="#e5e7eb" font-size="17" font-weight="700">Page access — supervised read amplification</text><text x="52" y="50" fill="#9ca3af" font-size="12.5">RA_signal stays near the floor for every layout. This is the gap.</text><line x1="52" y1="294.0" x2="642" y2="294.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="298.0" fill="#6b7280" font-size="10.5" text-anchor="end">0.0x</text><line x1="52" y1="240.0" x2="642" y2="240.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="244.0" fill="#6b7280" font-size="10.5" text-anchor="end">3.0x</text><line x1="52" y1="186.0" x2="642" y2="186.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="190.0" fill="#6b7280" font-size="10.5" text-anchor="end">6.0x</text><line x1="52" y1="132.0" x2="642" y2="132.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="136.0" fill="#6b7280" font-size="10.5" text-anchor="end">9.0x</text><line x1="52" y1="78.0" x2="642" y2="78.0" stroke="#1f2937" stroke-width="1"/><text x="44" y="82.0" fill="#6b7280" font-size="10.5" text-anchor="end">12.0x</text><rect x="169.5" y="110.9" width="60.0" height="183.1" rx="5" fill="#fb7185"/><text x="199.5" y="104.9" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">10.2x</text><text x="199.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">natural</text><rect x="464.5" y="110.9" width="60.0" height="183.1" rx="5" fill="#f59e0b"/><text x="494.5" y="104.9" fill="#e5e7eb" font-size="11.5" font-weight="600" text-anchor="middle">10.2x</text><text x="494.5" y="314.0" fill="#cbd5e1" font-size="12.5" text-anchor="middle">random</text><text x="52" y="344" fill="#6b7280" font-size="11.5">bytes read / supervised-node bytes — a floor no layout closes</text></svg></div>
+<p class="sub">The page-aligned sweep reads whole training pages. RA_fetch is
+~1x for any layout, but only a fraction of nodes per page are supervised, so
+RA_signal — bytes read per supervised node — cannot drop below the ~4.3x
+floor no matter how good the layout is. That floor is the gap the layout work
+leaves open.</p>
+
+<h2>All metrics</h2>
+<div class="card"><table><tr><th>layout</th><th>nbr RA_fetch</th><th>nbr RA_signal</th><th>page RA_fetch</th><th>page RA_signal</th><th>nbr pages</th><th>nbr read ops</th><th>GB read</th><th>MB/s</th><th>O_DIRECT</th></tr><tr><td style="color:#fb7185;font-weight:700">natural</td><td>2.81x</td><td>94.0x</td><td>1.99x</td><td>10.2x</td><td>9,130</td><td>3,128</td><td>0.04</td><td>26</td><td>yes</td></tr><tr><td style="color:#f59e0b;font-weight:700">random</td><td>7.06x</td><td>235.9x</td><td>1.99x</td><td>10.2x</td><td>22,926</td><td>49</td><td>0.09</td><td>76</td><td>yes</td></tr></table></div>
+
+<h2>Verify it yourself</h2>
+<p class="sub">We do not run eBPF here; the harness only issues the reads.
+Attach <code>biosnoop</code>/<code>biolatency</code>, <code>blktrace</code>
+or <code>iostat -x</code> to the device backing the store and confirm the
+per-I/O read intent and amplification independently.</p>
+
+<div class="foot">Generated by <code>make gnn-ssd-report</code> ·
+<a href="gnn_fraud_visualization.html">GNN Fraud visualization</a> ·
+<a href="gnn-dgraphfin.md">DGraphFin doc</a></div>
+</div></body></html>
