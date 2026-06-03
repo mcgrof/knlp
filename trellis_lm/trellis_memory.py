@@ -35,6 +35,9 @@ def run_trellis_memory(
     phi,                        # callable over last dim (M)
     read_mode: str,             # "M_q" | "M_T_r"
     training: bool,
+    exact_inner: bool = True,   # True: backprop through the inner VJP (2nd order,
+                                # slow/exact). False: stale-gradient (detach u from
+                                # the param graph) — the sanctioned fast mode.
     M_init: Optional[torch.Tensor] = None,   # [B,H,M,D] carried state (generation)
     return_state: bool = False,
 ):
@@ -60,7 +63,7 @@ def run_trellis_memory(
         # Build the double-graph only when z is actually in a grad graph (real
         # training); otherwise compute the VJP on a detached, grad-enabled copy
         # so it still works for plain-tensor / eval calls.
-        make_graph = create_graph and z.requires_grad
+        make_graph = create_graph and z.requires_grad and exact_inner
         z_req = z if z.requires_grad else z.detach().requires_grad_(True)
         with torch.enable_grad():
             pred = phi(z_req)                        # [B,H,M]
