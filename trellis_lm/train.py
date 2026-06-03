@@ -68,6 +68,7 @@ def run_recall(args, device, dt):
         max_seq_len=2 * n_pairs + 8, dtype=args.dtype, activation=args.activation,
         alpha_mode=args.alpha_mode, beta_mode=args.beta_mode,
         forget_gate=not args.no_forget, use_short_conv_qk=not args.no_conv,
+        exact_inner=not args.stale,
     )
     model = build_model(cfg, args.model).to(device)
     if args.dtype != "fp32":
@@ -124,6 +125,7 @@ def run_lm(args, device, dt):
         max_seq_len=args.seq_len, dtype=args.dtype, activation=args.activation,
         alpha_mode=args.alpha_mode, beta_mode=args.beta_mode,
         forget_gate=not args.no_forget, use_short_conv_qk=not args.no_conv,
+        exact_inner=not args.stale,
     )
     model = build_model(cfg, args.model).to(device)
     if args.dtype != "fp32":
@@ -172,6 +174,7 @@ def main():
     p.add_argument("--beta_mode", default="scalar_per_head")
     p.add_argument("--no_forget", action="store_true")
     p.add_argument("--no_conv", action="store_true")
+    p.add_argument("--stale", action="store_true", help="stale-gradient inner step (exact_inner=False); fast path for long context")
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--dtype", default="fp32", choices=["bf16", "fp16", "fp32"])
     p.add_argument("--log_every", type=int, default=25)
