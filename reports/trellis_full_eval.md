@@ -97,29 +97,107 @@ relative to pairs. These map directly onto the planned diagnostics (beta/gamma
 distributions, alpha entropy, slot-collapse, read-before-write vs
 write-before-read, activation and m sweeps).
 
-## 6. Staged rollout (Phases 1–4) — not yet run
+## 6. Phase 1 — TinyStories smoke (W7900)
 
-- **Phase 1** TinyStories LM smoke: Trellis vs matched dense at 256/512/1024
-  (train loss, val PPL, tok/s, peak memory). `make trellis-smoke`.
-- **Phase 2** scratch comparison at matched params/tokens/context across
-  512–8192; ablations (no-forget, softmax, m∈{32,64,128}, conv on/off,
-  read order). This is where "beats dense at 4k+" is decided. Pod-worthy.
-- **Phase 3** RULER/NIAH long-context recall incl. repeated-key; accuracy vs
-  context and vs memory bytes. `eval_long_context.py`.
-- **Phase 4** retrofit/distillation from GPT-2/SmolLM2 vs KRI-FT and dense PEFT,
-  matched trainable params and steps; KL-to-teacher.
-- Optional systems/compression baselines (NVIDIA kvpress) and architecture
-  baselines (Mamba2/DeltaNet) only with reliable open implementations.
+Matched scratch comparison, gpt2-tokenized TinyStories, exact Trellis vs dense
+(same d_model=256/4-layer/4-head/d_head 64, SwiGLU, RMSNorm).
 
-## 7. Recommendation
+| model | seq | val PPL | tok/s | memory state |
+|---|---:|---:|---:|---|
+| Trellis | 256 | 67.2 | 962 | 262 KB (flat in T) |
+| Trellis | 512 | 41.2 | 934 | 262 KB |
+| dense | 256 | 47.4 | 116K | grows with T (KV) |
+| dense | 512 | 48.1 | 131K | grows with T |
 
-**Continue.** The architecture is faithful, correct, tested, and bounded, and it
-demonstrably binds — the Phase-0 minimum bar. It is currently weaker than dense
-on the toy, which is the expected starting point for a from-scratch minimal
-implementation and is exactly what Phases 1–2 (matched-budget training +
-the diagnostics + the chunked update for speed) exist to resolve. Do not claim
-a win until Phase 2 shows scratch-Trellis beating same-size dense at long
-context under matched compute/memory, or Phase 4 shows TrellisRetrofit beating
-KRI-FT at matched memory/params. Phase 1 (TinyStories smoke, both models) is the
-cheap next step and runs on the W7900; Phase 2's long-context sweep is the first
-pod-worthy run.
+Trellis PPL falls sharply with context (67→41) and crosses below dense at 512,
+while dense is flat (~47–48). The per-token recurrence is ~125× slower than
+dense (the speed wall). Stale-gradient mode (exact_inner=False) was then
+validated: it learns the recall toy better (acc 0.53 vs exact 0.22) and is
+~2.4× faster at seq 1024 (1094 vs 448 tok/s), so Phase 2 uses it.
+
+## 7. Phase 2 — matched scratch comparison + ablations (W7900, stale)
+
+Matched tokens (steps 500, batch 8, same seq per length for both models).
+
+| seq | Trellis val PPL | dense val PPL | Trellis vs dense |
+|---:|---:|---:|---:|
+| 512 | **31.0** | 45.8 | −32% |
+| 1024 | **23.4** | 39.0 | −40% |
+
+**Scratch Trellis beats same-size dense at both lengths under matched tokens,
+and the advantage widens with context** (ratio 0.68 → 0.60). This is the
+headline positive and the direct bounded-memory signal.
+
+Ablations (Trellis stale, seq 512; baseline is the 500-step run, the others are
+300-step — note the step mismatch when comparing to baseline):
+
+| variant | val PPL |
+|---|---:|
+| baseline (n_slots 64, ln_silu, forget on; 500 steps) | 31.0 |
+| no forget gate (300 steps) | 49.0 |
+| softmax phi instead of ln_silu (300 steps) | 42.5 |
+| n_slots 32 (300 steps) | 35.7 |
+| n_slots 128 (300 steps) | 34.4 |
+
+The **forget gate is load-bearing** (removing it is the worst single change),
+**ln_silu ≫ softmax** for the inner activation, and **slot count 32–128 barely
+matters** at this scale. Caveats: tiny model, single seed, TinyStories (weak
+long-range structure), Trellis carries ~8% more params (the alpha projection),
+and Trellis ran in stale mode vs the dense standard path.
+
+## 8. Phase 3 — long-context recall (inconclusive on LM-trained tinies)
+
+`eval_long_context.py` on the Phase-2 checkpoints, associative recall with
+0/8/32/64 filler tokens and a repeated-key condition. **Recall accuracy was
+0.000 (chance) for every model and condition**, trellis and dense alike. These
+checkpoints were trained for language modeling on TinyStories, not for a recall
+objective, and are tiny, so they cannot do this synthetic retrieval — the eval
+is honest but uninformative here. A real recall test needs models trained on a
+recall objective at length, which is loop-speed-gated.
+
+## 9. Phase 4 — GPT-2 retrofit + distillation (weak warm-start)
+
+`TrellisRetrofit.from_gpt2` warm-starts a 124M Trellis from GPT-2 (transfers
+wte, tied lm_head, and attention q/k/v/o) and distills against the frozen GPT-2
+full-cache teacher (CE + KL). Bounded memory state 2.36 MB/seq (flat in T).
+
+| mode | trainable | CE @1 | CE @200 | KL @200 | tok/s |
+|---|---:|---:|---:|---:|---:|
+| full FT | 166 M | 20.7 | **5.95** | 3.42 | 343 |
+| LoRA r16 | 1.6 M | 20.9 | 20.8 (stuck) | 17.6 | 347 |
+
+The warm-start CE (~20.8) is **worse than random** (log 50257 ≈ 10.8): pouring
+GPT-2's attention weights into the bounded-memory operator does not produce
+attention-like behavior (different operator; Trellis also has no positional
+embedding). **LoRA cannot move it** (the transferred mixer is frozen garbage),
+while **full fine-tune recovers** (CE 20.7→5.95) — but that is the mixer
+learning essentially from scratch, not a cheap adaptation. So GPT-2→Trellis
+retrofit is **not a cheap PEFT win like KRI-FT**; a useful retrofit needs
+substantial full training, which is loop-speed-gated.
+
+## 10. Overall verdict
+
+Bounded-memory Trellis is **genuinely promising**: it is faithfully implemented
+and correct (Phase 0), trains stably, keeps memory bounded and flat in
+sequence length, and — the real positive — **beats a same-size dense
+Transformer at matched tokens at 512 and 1024, with the gap widening as context
+grows** (Phase 2). The forget gate and ln_silu activation are the load-bearing
+design choices.
+
+But it is **not yet decisively validated**, and every decisive next test is
+blocked by the same wall: the exact/stale **per-token recurrence is too slow**
+(W7900 ~1094 tok/s stale @1024; an A100 pod was 4× *slower* — this is a
+kernel-launch-bound Python loop, so a bigger GPU does not help). Consequently
+the strong-bar test (beats dense at ≥4k context) and a real Phase-4
+retrofit-vs-KRI-FT at scale **cannot be run** with the current loop. The
+**chunked stale-gradient kernel** (parallelize the recurrence within chunks,
+validated against the exact version) is the single gating build that unlocks
+both. Phase 3's recall test also needs recall-objective training at length,
+again gated on that speed.
+
+**Recommendation: build the chunked kernel next, or park here.** The Phase-2
+matched win justifies the investment; without the chunked kernel, Trellis stays
+at "promising at 512–1024, undecided at the lengths that matter." Park is
+defensible too — the result is documented and reproducible (`make
+defconfig-trellis-tiny && make trellis`). Not recommended: more single-GPU
+per-token-loop runs (they cannot reach the deciding regime).
