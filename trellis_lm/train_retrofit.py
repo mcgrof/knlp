@@ -71,13 +71,16 @@ def main():
     teacher = GPT2LMHeadModel.from_pretrained(a.gpt2).to(device).eval()
     for pr in teacher.parameters():
         pr.requires_grad_(False)
-    student = TrellisRetrofit.from_gpt2(a.gpt2, n_slots=a.n_slots, dtype=a.dtype).to(device)
-    if a.dtype != "fp32":
-        student = student.to(dt); teacher = teacher.to(dt)
+    # build + attach LoRA on CPU, THEN move everything to device so the new
+    # adapter params (and their trainable references) land on the GPU too.
+    student = TrellisRetrofit.from_gpt2(a.gpt2, n_slots=a.n_slots, dtype=a.dtype)
     if a.mode == "lora":
         trainable = freeze_to_lora(student, rank=a.lora_rank)
     else:
         trainable = [pr for pr in student.parameters() if pr.requires_grad]
+    student = student.to(device)
+    if a.dtype != "fp32":
+        student = student.to(dt); teacher = teacher.to(dt)
     n_train = sum(pr.numel() for pr in trainable)
     opt = torch.optim.AdamW(trainable, lr=a.lr)
     data = packed(a.dataset, "train", a.seq_len, a.steps * a.batch, tok)
