@@ -100,10 +100,11 @@ class TrellisMixer(nn.Module):
         gamma = F.softplus(self.gamma_raw)        # [H], positive
 
         # key pass: write=k, read=q -> yhat [B,H,T,M]
-        yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training)
+        ex = cfg.exact_inner
+        yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training, exact_inner=ex)
         r = self.f(yhat)                          # [B,H,T,M]
         # value pass: write=v, read=r -> y [B,H,T,D]
-        y = run_trellis_memory(v, r, alpha, beta, gamma, self.phi, "M_T_r", training)
+        y = run_trellis_memory(v, r, alpha, beta, gamma, self.phi, "M_T_r", training, exact_inner=ex)
 
         y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)   # merge heads
         out = self.out_proj(y)
