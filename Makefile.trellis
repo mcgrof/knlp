@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: MIT
+# Trellis bounded-memory LM — Kconfig-driven build/eval targets.
+#
+#   make defconfig-trellis-tiny   # writes .config
+#   make trellis                  # Phase 0: unit tests + recall toy (trellis vs dense)
+#   make trellis-test             # unit tests only
+#   make trellis-recall           # synthetic associative-recall toy (both models)
+#   make trellis-smoke            # TinyStories LM smoke (both models)
+#   make trellis-bench            # memory + latency: trellis bounded vs dense KV
+
+TRELLIS_DEFCONFIG := configs/defconfig-trellis-tiny
+TRELLIS_PY ?= python3
+CFG := .config
+
+# pull settings from .config with sane fallbacks (proper Kconfig flow)
+_tr_str = $(shell grep -E '^$(1)=' $(CFG) 2>/dev/null | cut -d'"' -f2)
+_tr_num = $(shell grep -E '^$(1)=' $(CFG) 2>/dev/null | cut -d= -f2)
+TR_MODEL   := $(or $(call _tr_str,CONFIG_TRELLIS_MODEL),trellis)
+TR_DMODEL  := $(or $(call _tr_num,CONFIG_TRELLIS_D_MODEL),128)
+TR_LAYERS  := $(or $(call _tr_num,CONFIG_TRELLIS_N_LAYERS),2)
+TR_HEADS   := $(or $(call _tr_num,CONFIG_TRELLIS_N_HEADS),4)
+TR_DHEAD   := $(or $(call _tr_num,CONFIG_TRELLIS_D_HEAD),32)
+TR_SLOTS   := $(or $(call _tr_num,CONFIG_TRELLIS_N_SLOTS),64)
+TR_ACT     := $(or $(call _tr_str,CONFIG_TRELLIS_ACTIVATION),ln_silu)
+TR_ALPHA   := $(or $(call _tr_str,CONFIG_TRELLIS_ALPHA_MODE),linear)
+TR_BETA    := $(or $(call _tr_str,CONFIG_TRELLIS_BETA_MODE),scalar_per_head)
+TR_DTYPE   := $(or $(call _tr_str,CONFIG_TRELLIS_DTYPE),fp32)
+TR_RSTEPS  := $(or $(call _tr_num,CONFIG_TRELLIS_RECALL_STEPS),400)
+TR_RPAIRS  := $(or $(call _tr_num,CONFIG_TRELLIS_RECALL_PAIRS),8)
+TR_LMSTEPS := $(or $(call _tr_num,CONFIG_TRELLIS_LM_STEPS),300)
+TR_SEQ     := $(or $(call _tr_num,CONFIG_TRELLIS_SEQ_LEN),256)
+TR_BATCH   := $(or $(call _tr_num,CONFIG_TRELLIS_BATCH),16)
+TR_LR      := $(or $(call _tr_num,CONFIG_TRELLIS_LR),0.003)
+TR_DATASET := $(or $(call _tr_str,CONFIG_TRELLIS_DATASET),roneneldan/TinyStories)
+TR_BENCHL  := $(or $(call _tr_str,CONFIG_TRELLIS_BENCH_SEQ_LENS),256,512,1024,2048)
+TR_OUT     := $(or $(call _tr_str,CONFIG_TRELLIS_OUTPUT_BASE),/data/knlp-key-results/trellis-lm)
+
+TR_ARGS := --d_model $(TR_DMODEL) --n_layers $(TR_LAYERS) --n_heads $(TR_HEADS) \
+           --d_head $(TR_DHEAD) --n_slots $(TR_SLOTS) --activation $(TR_ACT) \
+           --alpha_mode $(TR_ALPHA) --beta_mode $(TR_BETA) --dtype $(TR_DTYPE)
+
+.PHONY: defconfig-trellis-tiny
+defconfig-trellis-tiny:
+	@cp $(TRELLIS_DEFCONFIG) $(CFG)
+	@echo "wrote $(CFG) from $(TRELLIS_DEFCONFIG)"
+
+.PHONY: trellis-test
+trellis-test:
+	$(TRELLIS_PY) -m pytest trellis_lm/tests -q
+
+.PHONY: trellis-recall
+trellis-recall:
+	@mkdir -p $(TR_OUT)
+	$(TRELLIS_PY) trellis_lm/train.py --task recall --model trellis $(TR_ARGS) \
+	  --steps $(TR_RSTEPS) --n_pairs $(TR_RPAIRS) --out $(TR_OUT)/recall_trellis.json
+	$(TRELLIS_PY) trellis_lm/train.py --task recall --model dense $(TR_ARGS) \
+	  --steps $(TR_RSTEPS) --n_pairs $(TR_RPAIRS) --out $(TR_OUT)/recall_dense.json
+
+.PHONY: trellis-smoke
+trellis-smoke:
+	@mkdir -p $(TR_OUT)
+	$(TRELLIS_PY) trellis_lm/train.py --task lm --model trellis $(TR_ARGS) \
+	  --steps $(TR_LMSTEPS) --seq_len $(TR_SEQ) --batch $(TR_BATCH) --lr $(TR_LR) \
+	  --dataset $(TR_DATASET) --out $(TR_OUT)/lm_trellis.json
+	$(TRELLIS_PY) trellis_lm/train.py --task lm --model dense $(TR_ARGS) \
+	  --steps $(TR_LMSTEPS) --seq_len $(TR_SEQ) --batch $(TR_BATCH) --lr $(TR_LR) \
+	  --dataset $(TR_DATASET) --out $(TR_OUT)/lm_dense.json
+
+.PHONY: trellis-bench
+trellis-bench:
+	@mkdir -p $(TR_OUT)
+	$(TRELLIS_PY) trellis_lm/bench_memory_latency.py --seq_lens $(TR_BENCHL) \
+	  --d_model $(TR_DMODEL) --n_layers $(TR_LAYERS) --n_heads $(TR_HEADS) \
+	  --d_head $(TR_DHEAD) --n_slots $(TR_SLOTS) --output $(TR_OUT)/bench.json
+
+.PHONY: trellis
+trellis: trellis-test trellis-recall
+	@echo ""
+	@echo "Trellis Phase 0 complete (unit tests + recall toy)."
+	@echo "Next: make trellis-smoke (TinyStories LM), make trellis-bench (memory/latency)."
