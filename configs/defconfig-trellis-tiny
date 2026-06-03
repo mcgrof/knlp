@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+# Tiny Phase-0 config for the Trellis bounded-memory LM.
+# Apply via:  make defconfig-trellis-tiny
+
+CONFIG_TRELLIS=y
+
+# Model
+CONFIG_TRELLIS_MODEL="trellis"
+CONFIG_TRELLIS_D_MODEL=128
+CONFIG_TRELLIS_N_LAYERS=2
+CONFIG_TRELLIS_N_HEADS=4
+CONFIG_TRELLIS_D_HEAD=32
+CONFIG_TRELLIS_N_SLOTS=64
+CONFIG_TRELLIS_ACTIVATION="ln_silu"
+CONFIG_TRELLIS_ALPHA_MODE="linear"
+CONFIG_TRELLIS_BETA_MODE="scalar_per_head"
+CONFIG_TRELLIS_DTYPE="fp32"
+
+# Phase 0: synthetic associative recall (correctness proof)
+CONFIG_TRELLIS_RECALL_STEPS=400
+CONFIG_TRELLIS_RECALL_PAIRS=8
+
+# Phase 1: TinyStories LM smoke
+CONFIG_TRELLIS_LM_STEPS=300
+CONFIG_TRELLIS_SEQ_LEN=256
+CONFIG_TRELLIS_BATCH=16
+CONFIG_TRELLIS_LR=0.003
+CONFIG_TRELLIS_DATASET="roneneldan/TinyStories"
+
+# Bench
+CONFIG_TRELLIS_BENCH_SEQ_LENS="256,512,1024,2048"
+
+# Output base. /data/knlp-key-results is the results tree; any writable dir works.
+CONFIG_TRELLIS_OUTPUT_BASE="/data/knlp-key-results/trellis-lm"
