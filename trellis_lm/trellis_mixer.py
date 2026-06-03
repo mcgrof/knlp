@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 from .config import TrellisConfig
 from .activations import get_activation
-from .trellis_memory import run_trellis_memory
+from .trellis_memory import run_trellis_memory, run_trellis_memory_chunked
 
 
 class RMSNorm(nn.Module):
@@ -99,12 +99,19 @@ class TrellisMixer(nn.Module):
             beta = torch.ones_like(beta)
         gamma = F.softplus(self.gamma_raw)        # [H], positive
 
-        # key pass: write=k, read=q -> yhat [B,H,T,M]
-        ex = cfg.exact_inner
-        yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training, exact_inner=ex)
-        r = self.f(yhat)                          # [B,H,T,M]
-        # value pass: write=v, read=r -> y [B,H,T,D]
-        y = run_trellis_memory(v, r, alpha, beta, gamma, self.phi, "M_T_r", training, exact_inner=ex)
+        # key pass -> yhat; value pass -> y. Chunked stale path when chunk_size>1
+        # and beta is per-head; else the exact/stale sequential path.
+        use_chunk = cfg.chunk_size > 1 and cfg.beta_mode == "scalar_per_head"
+        if use_chunk:
+            cs = cfg.chunk_size
+            yhat = run_trellis_memory_chunked(k, q, alpha, beta, gamma, self.phi, "M_q", cs)
+            r = self.f(yhat)
+            y = run_trellis_memory_chunked(v, r, alpha, beta, gamma, self.phi, "M_T_r", cs)
+        else:
+            ex = cfg.exact_inner
+            yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training, exact_inner=ex)
+            r = self.f(yhat)                      # [B,H,T,M]
+            y = run_trellis_memory(v, r, alpha, beta, gamma, self.phi, "M_T_r", training, exact_inner=ex)
 
         y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)   # merge heads
         out = self.out_proj(y)
