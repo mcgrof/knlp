@@ -29,7 +29,7 @@ class TrellisConfig:
     gamma_init: float = 1e-2             # learning-rate of the inner OGD step
     exact_inner: bool = True             # exact sequential VJP (Phase 0)
     chunk_size: int = 1                  # 1 = pure sequential
-    chunk_refine: int = 1                # intra-chunk z refinement passes (faithful chunkwise)
+    chunk_refine: int = 0                # intra-chunk z refinement passes (faithful chunkwise)
     post_gate: bool = True               # SwiGLU-style post gate on mixer output
     forget_gate: bool = True             # if False, beta is forced to 1 (no decay)
 
