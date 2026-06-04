@@ -105,21 +105,45 @@ def run_trellis_memory_chunked(
     phi,
     read_mode: str,             # "M_q" | "M_T_r"
     chunk_size: int,
-    refine_passes: int = 2,
+    refine_passes: int = 0,
 ):
     """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
     The state recurrence within a chunk is handled exactly via segmented decay
     products (Mstate is reconstructed as M_t = P_t*M0 - gamma*sum_{s<=t}
     (P_t/P_s) u_s w_s), which turns readout + update into matmuls. The only
-    approximation is the inner code z_t = M_{t-1} @ w_t: a "true-stale" version
-    uses M0 for all t (cheap but lossy). Here we REFINE it -- reconstruct
-    M_{t-1} from the in-chunk updates and recompute z (and u) `refine_passes`
-    times -- which recovers most of the sequential quality. Exact (==sequential
-    stale) at chunk_size=1 for any refine_passes (the in-chunk correction is
-    empty). u is detached from M (no 2nd-order) but keeps the alpha gradient;
-    outer backprop flows through the chunkwise matmuls. T/C sequential steps.
+    approximation is the inner code z_t = M_{t-1} @ w_t.
+
+    Two regimes, and only two are sane (see reports/trellis_full_eval.md sec 11):
+
+      refine_passes == 0   "true-stale": z_t uses the chunk-start state M0 for
+                           all t. Cheapest (T/C inner steps -> ~15x speedup) but
+                           lossy (+35-46% PPL): it discards within-chunk state
+                           evolution.
+
+      refine_passes <  0   "exact": auto-sets passes = chunk_size-1. The inner
+                           dependency z_t<-u_{s<t} is strictly lower-triangular,
+                           so Jacobi iteration is NILPOTENT: after k passes the
+                           first k tokens are bit-exact, and C-1 passes reproduce
+                           the sequential forward exactly (verified < 1e-3). This
+                           is a correctness ORACLE, not a speed win -- it costs
+                           (T/C)*(C-1) ~= T inner steps, same as the sequential
+                           loop. A single-pass closed-form solve would need the
+                           inner step to be linear in z; Trellis's nonlinear phi
+                           forfeits that delta-rule free lunch, so there is no
+                           cheap-AND-exact chunkwise form for this architecture.
+
+    Any fixed 0 < refine_passes < C-1 is a TRAP: Jacobi's converged prefix is
+    only `refine_passes` tokens long and the unconverged tail is erratic (the
+    non-monotone transient), which is why intermediate values trained worse than
+    true-stale. Use 0 (fast/lossy) or <0 (exact/slow); nothing between.
+
+    Exact (== sequential stale) at chunk_size=1 for any refine_passes (the
+    in-chunk correction is empty). u is detached from M (no 2nd-order) but keeps
+    the alpha gradient; outer backprop flows through the chunkwise matmuls.
     """
+    if refine_passes < 0:
+        refine_passes = chunk_size - 1
     assert beta.shape[-1] == 1, "chunked path supports per-head beta only"
     B, H, T, D = write.shape
     M = alpha.shape[-1]
