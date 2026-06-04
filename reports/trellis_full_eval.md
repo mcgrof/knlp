@@ -256,11 +256,19 @@ penalty (28.2→41.3 at matched budget). Second, the ≥4k trellis-beats-dense
 result in section 11 used C=64, i.e. Trellis was *handicapped* — so that win is
 conservative; a smaller chunk (or the exact path) would only help Trellis.
 
-The fix for speed *without* the penalty is the paper's more faithful chunkwise
-form (intra-chunk state via segmented decay products), which my v1 simplified to
-the cruder true-stale shortcut. That faithful chunkwise is the natural follow-on
-if Trellis is pursued; for now, use a small chunk for quality-sensitive runs and
-a large chunk for fast exploration.
+We tried to remove the penalty with an intra-chunk refinement: reconstruct
+M_{t-1} from the in-chunk updates (segmented decay products) and refine z/u by
+fixed-point iteration. On a random forward probe one pass cut the
+divergence-vs-sequential ~7–40× — but **it did not improve trained quality**:
+matched @1024, refine=1 gave C16 48.2 (worse than the true-stale 38.2) and C64
+41.9 (≈ the true-stale 41.3), vs sequential 28.2. And refine>1 oscillates (the
+fixed point is not contractive). So the cheap refinement is a **dead end**;
+the default reverts to no refinement (`chunk_refine=0`, the true-stale path,
+which is cheaper and at least as good for training). The proper fix for
+speed-without-penalty is the exact within-chunk solve (UT-transform /
+forward-substitution, as DeltaNet does for the linear case) — a larger build,
+not done. For now: chunked = ~15× speed at a +35–46% quality cost; use the
+exact sequential path for final-quality numbers, chunked for fast exploration.
 
 ## 12. Where it stands / next
 
@@ -268,9 +276,10 @@ The chunked kernel — the gating build — is done and validated, and the ≥4k
 comparison is now measurable: **Trellis wins at 4k and 8k at matched tokens**,
 which is the real positive, tempered by noisy margins and a tiny/short/
 single-seed/weak-corpus setup. To turn the PARTIAL into a clean result:
-(1) the faithful chunkwise form (intra-chunk segmented decay products) to get
-the ~15× speed without the +35–46% quality penalty the true-stale shortcut
-costs — or just use a small chunk for quality-sensitive runs; (2)
+(1) the exact within-chunk solve (UT-transform / forward-substitution) to get
+the ~15× speed without the +35–46% penalty — the cheap fixed-point refinement
+was tried and failed (see §11); for now use the exact sequential path for
+final-quality numbers; (2)
 multi-seed + more steps so the per-length margins are trustworthy; (3) a real
 long-range corpus (PG19/code) where the bounded-memory advantage should be
 larger and the gap should genuinely widen; (4) re-run Phase 3 recall now that
