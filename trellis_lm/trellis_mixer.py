@@ -104,9 +104,9 @@ class TrellisMixer(nn.Module):
         use_chunk = cfg.chunk_size > 1 and cfg.beta_mode == "scalar_per_head"
         if use_chunk:
             cs = cfg.chunk_size
-            yhat = run_trellis_memory_chunked(k, q, alpha, beta, gamma, self.phi, "M_q", cs)
+            yhat = run_trellis_memory_chunked(k, q, alpha, beta, gamma, self.phi, "M_q", cs, cfg.chunk_refine)
             r = self.f(yhat)
-            y = run_trellis_memory_chunked(v, r, alpha, beta, gamma, self.phi, "M_T_r", cs)
+            y = run_trellis_memory_chunked(v, r, alpha, beta, gamma, self.phi, "M_T_r", cs, cfg.chunk_refine)
         else:
             ex = cfg.exact_inner
             yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training, exact_inner=ex)
