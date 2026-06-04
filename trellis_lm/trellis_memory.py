@@ -105,17 +105,20 @@ def run_trellis_memory_chunked(
     phi,
     read_mode: str,             # "M_q" | "M_T_r"
     chunk_size: int,
+    refine_passes: int = 2,
 ):
-    """Chunked stale-gradient form of run_trellis_memory (per-head beta only).
+    """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
-    Within a chunk the inner code z_t = M @ write_t is computed from the
-    CHUNK-START state M0 (stale), which makes all C tokens' u_t parallel and
-    turns the gated rank-1 recurrence into matmuls + a causal cumulative-decay
-    mask. Exact (== sequential stale) at chunk_size=1; an approximation for
-    C>1 that tightens as C->1. u is detached from the parameter graph (stale);
-    outer backprop flows through the chunkwise matmuls.
-
-    Memory state is bounded and carried across chunks: T/C sequential steps.
+    The state recurrence within a chunk is handled exactly via segmented decay
+    products (Mstate is reconstructed as M_t = P_t*M0 - gamma*sum_{s<=t}
+    (P_t/P_s) u_s w_s), which turns readout + update into matmuls. The only
+    approximation is the inner code z_t = M_{t-1} @ w_t: a "true-stale" version
+    uses M0 for all t (cheap but lossy). Here we REFINE it -- reconstruct
+    M_{t-1} from the in-chunk updates and recompute z (and u) `refine_passes`
+    times -- which recovers most of the sequential quality. Exact (==sequential
+    stale) at chunk_size=1 for any refine_passes (the in-chunk correction is
+    empty). u is detached from M (no 2nd-order) but keeps the alpha gradient;
+    outer backprop flows through the chunkwise matmuls. T/C sequential steps.
     """
     assert beta.shape[-1] == 1, "chunked path supports per-head beta only"
     B, H, T, D = write.shape
@@ -124,6 +127,17 @@ def run_trellis_memory_chunked(
     Mstate = torch.zeros(B, H, M, D, device=dev, dtype=dt)
     g = gamma.view(1, H, 1, 1)
     outs = []
+
+    def _vjp(zin, A):
+        zr = zin.detach().requires_grad_(True)    # cut M 2nd-order
+        cg = A.requires_grad
+        with torch.enable_grad():
+            pred = phi(zr)
+            err = pred - A                        # keep alpha -> alpha_proj trains
+            (uu,) = torch.autograd.grad(pred, zr, grad_outputs=err,
+                                        create_graph=cg, retain_graph=True)
+        return uu if cg else uu.detach()
+
     for c0 in range(0, T, chunk_size):
         c1 = min(c0 + chunk_size, T)
         C = c1 - c0
@@ -131,20 +145,23 @@ def run_trellis_memory_chunked(
         R = read[:, :, c0:c1, :]                  # [B,H,C,*]
         A = alpha[:, :, c0:c1, :]                 # [B,H,C,M]
         b = beta[:, :, c0:c1, :]                  # [B,H,C,1]
-        # stale inner code from chunk-start state
-        z = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)        # [B,H,C,M]
-        zr = z.detach().requires_grad_(True)      # cut M 2nd-order (stale)
-        cg = A.requires_grad
-        with torch.enable_grad():
-            pred = phi(zr)
-            err = pred - A                        # keep alpha -> alpha_proj trains
-            (u,) = torch.autograd.grad(pred, zr, grad_outputs=err,
-                                       create_graph=cg, retain_graph=True)
-        if not cg:
-            u = u.detach()                        # [B,H,C,M]
         # cumulative inclusive decay P_t = prod_{i<=t} b_i  (per head)
         P = torch.cumprod(b, dim=2)                           # [B,H,C,1]
         tri = torch.tril(torch.ones(C, C, device=dev, dtype=dt))  # s<=t
+        # inner code: stale from M0, then refine to z_t = M_{t-1} @ w_t using
+        # the in-chunk segmented-product reconstruction of M_{t-1}.
+        M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)      # M0 @ w_t  (= stale z)
+        u = _vjp(M0W, A)
+        if refine_passes > 0 and C > 1:
+            Pprev = P / (b + 1e-12)                           # P_{t-1}
+            WW = torch.einsum("bhtd,bhsd->bhts", W, W)        # w_t . w_s
+            strict = torch.tril(torch.ones(C, C, device=dev, dtype=dt), diagonal=-1)
+            WWs = WW * strict.view(1, 1, C, C)                # s < t
+            for _ in range(refine_passes):
+                Util = u / (P + 1e-12)
+                corr = torch.einsum("bhts,bhsm->bhtm", WWs, Util)  # sum_{s<t}
+                z = Pprev * (M0W - g * corr)                  # z_t = M_{t-1} @ w_t
+                u = _vjp(z, A)
         if read_mode == "M_q":
             M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)  # [B,H,C,M]
             S = torch.einsum("bhtd,bhsd->bhts", R, W)         # S[t,s]=q_t.w_s
