@@ -233,9 +233,34 @@ PPLs are higher than Phase 2 because the token budget here is ~2.5× smaller
 
 Caveats: single seed, tiny 4M model, TinyStories (weak long-range structure — a
 real strong-bar result wants PG19/code), Trellis ~8% more params, and the C=64
-stale-within-chunk approximation. A matched-budget chunked-vs-sequential check
-at 1024 (sequential-stale vs C16 vs C64) is running to confirm the chunked
-approximation does not degrade training quality.
+stale-within-chunk approximation.
+
+### Chunked-quality cross-check (matched budget, @1024)
+
+Same budget (batch 4, steps 400), Trellis only, three inner modes:
+
+| mode | val PPL |
+|---|---:|
+| sequential-stale (chunk 1, exact recurrence) | 28.2 |
+| chunk 16 | 38.2 (+35%) |
+| chunk 64 | 41.3 (+46%) |
+
+**The chunked kernel is a speed/quality tradeoff, not free.** The
+stale-within-chunk shortcut (use the chunk-start state for every token's inner
+code) loses running-state information, and the cost grows monotonically with
+chunk size: +35% PPL at C=16, +46% at C=64 versus the exact recurrence at
+matched tokens. Two consequences. First, the earlier 23.4 (Phase 2, seq-stale)
+vs 41.3 (Phase 2x, C=64) gap is **both** the token budget (Phase 2 used ~2.5×
+more tokens: seq-stale drops 28.2→23.4 with more data) **and** the chunking
+penalty (28.2→41.3 at matched budget). Second, the ≥4k trellis-beats-dense
+result in section 11 used C=64, i.e. Trellis was *handicapped* — so that win is
+conservative; a smaller chunk (or the exact path) would only help Trellis.
+
+The fix for speed *without* the penalty is the paper's more faithful chunkwise
+form (intra-chunk state via segmented decay products), which my v1 simplified to
+the cruder true-stale shortcut. That faithful chunkwise is the natural follow-on
+if Trellis is pursued; for now, use a small chunk for quality-sensitive runs and
+a large chunk for fast exploration.
 
 ## 12. Where it stands / next
 
@@ -243,7 +268,9 @@ The chunked kernel — the gating build — is done and validated, and the ≥4k
 comparison is now measurable: **Trellis wins at 4k and 8k at matched tokens**,
 which is the real positive, tempered by noisy margins and a tiny/short/
 single-seed/weak-corpus setup. To turn the PARTIAL into a clean result:
-(1) confirm chunked == sequential training quality at matched budget; (2)
+(1) the faithful chunkwise form (intra-chunk segmented decay products) to get
+the ~15× speed without the +35–46% quality penalty the true-stale shortcut
+costs — or just use a small chunk for quality-sensitive runs; (2)
 multi-seed + more steps so the per-length margins are trustworthy; (3) a real
 long-range corpus (PG19/code) where the bounded-memory advantage should be
 larger and the gap should genuinely widen; (4) re-run Phase 3 recall now that
