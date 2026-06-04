@@ -43,6 +43,22 @@ def test_chunked_cgt1_finite_and_bounded():
         assert y.abs().max().item() < 1e4, f"C={C} blew up"
 
 
+def test_chunked_exact_mode_matches_sequential():
+    # refine_passes < 0 -> auto C-1 passes. The within-chunk dependency is
+    # strictly lower-triangular, so C-1 Jacobi passes are NILPOTENT and the
+    # chunked forward must reproduce the (stale) sequential forward exactly.
+    phi = get_activation("ln_silu")
+    w, rd, rv, a, b, g = _inputs(T=16)
+    for mode, read in (("M_q", rd), ("M_T_r", rv)):
+        seq = run_trellis_memory(w, read, a, b, g, phi, mode, training=False, exact_inner=False)
+        for C in (2, 4, 8, 16):
+            ck = run_trellis_memory_chunked(w, read, a, b, g, phi, mode, C, refine_passes=-1)
+            d = (seq - ck).abs().max().item()
+            # fp32 carry accumulates over T/C chunks; nilpotent-exact still puts
+            # this ~5 orders of magnitude below the stale gap (~1e2).
+            assert d < 1e-2, f"{mode} C={C} exact-mode diff {d} (not nilpotent-exact)"
+
+
 def test_chunked_model_causal():
     torch.manual_seed(0)
     cfg = tiny_cfg(chunk_size=4, beta_mode="scalar_per_head")

@@ -256,32 +256,76 @@ penalty (28.2→41.3 at matched budget). Second, the ≥4k trellis-beats-dense
 result in section 11 used C=64, i.e. Trellis was *handicapped* — so that win is
 conservative; a smaller chunk (or the exact path) would only help Trellis.
 
-We tried to remove the penalty with an intra-chunk refinement: reconstruct
-M_{t-1} from the in-chunk updates (segmented decay products) and refine z/u by
-fixed-point iteration. On a random forward probe one pass cut the
-divergence-vs-sequential ~7–40× — but **it did not improve trained quality**:
-matched @1024, refine=1 gave C16 48.2 (worse than the true-stale 38.2) and C64
-41.9 (≈ the true-stale 41.3), vs sequential 28.2. And refine>1 oscillates (the
-fixed point is not contractive). So the cheap refinement is a **dead end**;
-the default reverts to no refinement (`chunk_refine=0`, the true-stale path,
-which is cheaper and at least as good for training). The proper fix for
-speed-without-penalty is the exact within-chunk solve (UT-transform /
-forward-substitution, as DeltaNet does for the linear case) — a larger build,
-not done. For now: chunked = ~15× speed at a +35–46% quality cost; use the
-exact sequential path for final-quality numbers, chunked for fast exploration.
+### The exact within-chunk solve: built, and why it can't be cheap
+
+We then built and fully characterized the exact within-chunk solve. The key
+structural fact: in the sequential path the forward `z_t = M_{t-1} @ w_t` uses
+the *true* M_{t-1} — "stale" there refers only to detaching u from the gradient
+graph (no 2nd-order), the forward is exact. So the chunked forward *can* match
+the sequential forward exactly; the only approximation is using the chunk-start
+state M0 for z inside a chunk. The within-chunk dependency z_t ← u_{s<t} is
+strictly lower-triangular, so a Jacobi (all-at-once) iteration on it is
+**nilpotent**: after k passes the first k tokens are bit-exact, and `C-1` passes
+reproduce the sequential forward exactly. The earlier "oscillation" was a
+red herring — it is the transient of Jacobi (the max over not-yet-converged
+tokens bounces while the converged *prefix* grows by one per pass); the failed
+experiment simply used too few passes (refine=1 at C=16 is 14 short of exact).
+
+This is now implemented as `refine_passes < 0` → auto `C-1` (a verified-exact
+oracle; new test `test_chunked_exact_mode_matches_sequential`). The convergence
+curve (W7900, fp32, random probe) confirms it:
+
+```
+ C  refine   div_vs_sequential
+ 4    1         2.7     (prefix of 1 exact)
+ 4    3         1e-5    (exact: C-1)
+16    1         5.0
+16    2       160       (transient bounce, NOT divergence)
+16   12         7e-5    (exact: C-1)
+```
+
+But exactness here buys no speed, and the wall-clock proves it (W7900, T=1024,
+B4·H4·D64·M64, M_q pass):
+
+```
+            sequential   stale (r0)      exact (r=C-1)
+ C=16          240 ms     22 ms (11×)     250 ms  (≈ seq, +4%)
+ C=64          240 ms      6 ms (40×)     251 ms  (numerically broken)
+```
+
+The reason is structural: the refine loop is a Python loop *inside* the per-chunk
+loop, so exact costs `(T/C)·(C-1) ≈ T` inner steps — the same count as the
+sequential loop. A *single-pass* closed-form solve (one `(I − A)⁻¹`, as DeltaNet
+uses) exists only when the inner step is **linear** in z. Trellis's nonlinear φ
+makes u_t = J_φ(z_t)ᵀ(φ(z_t) − α_t) nonlinear in z, which forfeits that
+delta-rule free lunch: there is **no cheap-and-exact chunkwise form for this
+architecture**. A Gauss-Newton linearization would restore a single solve, but
+only to first order (still approximate) and at a block-triangular `(C·M)²`
+cost. Separately, the segmented-product reconstruction `P = cumprod(β)`
+underflows in fp32 for large chunks (0.5⁶⁴ ≈ 5e-20), so even the exact oracle is
+numerically usable only up to C ≈ 32 — a second, independent ceiling.
+
+**Verdict.** The chunked kernel has exactly two sane regimes and nothing in
+between (any fixed `0 < refine < C-1` is a trap — erratic unconverged tail):
+`chunk_refine=0` (true-stale: 11–40× faster, +35–46% PPL) for fast exploration,
+and `chunk_refine=-1` (exact oracle: bit-exact to sequential, but ≈ sequential
+cost and C≲32) for validation. For final-quality numbers use the sequential
+path. Speed and exactness are mutually exclusive for Trellis's nonlinear inner
+step — that is a property of the architecture, not an implementation gap.
 
 ## 12. Where it stands / next
 
 The chunked kernel — the gating build — is done and validated, and the ≥4k
 comparison is now measurable: **Trellis wins at 4k and 8k at matched tokens**,
 which is the real positive, tempered by noisy margins and a tiny/short/
-single-seed/weak-corpus setup. To turn the PARTIAL into a clean result:
-(1) the exact within-chunk solve (UT-transform / forward-substitution) to get
-the ~15× speed without the +35–46% penalty — the cheap fixed-point refinement
-was tried and failed (see §11); for now use the exact sequential path for
-final-quality numbers; (2)
-multi-seed + more steps so the per-length margins are trustworthy; (3) a real
+single-seed/weak-corpus setup. The chunked-kernel direction is now closed: the
+exact within-chunk solve was built and proven nilpotent-exact but costs
+sequential time (§11), and no cheap-and-exact form exists for the nonlinear
+inner step — so the speed/quality choice (stale-fast vs sequential-exact) is
+fundamental, not a missing optimization. To turn the PARTIAL into a clean
+result the remaining levers are all on the science side: (1)
+multi-seed + more steps so the per-length margins are trustworthy; (2) a real
 long-range corpus (PG19/code) where the bounded-memory advantage should be
-larger and the gap should genuinely widen; (4) re-run Phase 3 recall now that
-recall-objective training at length is feasible; (5) the external baselines
+larger and the gap should genuinely widen; (3) re-run Phase 3 recall now that
+recall-objective training at length is feasible; (4) the external baselines
 (kvpress, Mamba2/DeltaNet). The retrofit (Phase 4) remains a weak warm-start.
