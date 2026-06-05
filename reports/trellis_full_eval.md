@@ -401,14 +401,36 @@ simpler *linear* model crushes dense by ~5× that margin. The irony is sharp:
 Gated DeltaNet is linear in state, so it also gets the cheap exact chunkwise
 kernel Trellis cannot have (§11) — it is faster, exact, *and* better quality.
 
-Caveats, stated fairly: our Trellis is a from-paper reimplementation (no official
-code; it may miss recipe details), and the paper claims Trellis wins *at scale*
-with its full setup — at this tiny 4–5M-param / 400-step / single-corpus scale
-the nonlinear machinery may not pay off while the leaner gated model trains
-efficiently. We cannot adjudicate the scale question here. But on the comparison
-we *can* run, the verdict is clear: **for a bounded-memory model that beats
-dense, Gated DeltaNet is the better vehicle than our Trellis** — simpler, faster,
-exact-chunkable, lower-variance, and substantially better quality. Data:
+**Why Trellis underperforms here — checked against the paper.** This is a
+toy-scale, untuned statement, NOT an architecture verdict, and the Trellis paper
+(arXiv:2512.23852) explains why:
+
+- *Scale.* The paper's SMALLEST model is 125M params / 2.4B tokens; there are no
+  small-scale results. We ran 4–5M params / ~1–3M tokens — ~25–30× below their
+  param floor and ~1000× below their token budget. Even at their smallest scale
+  the Trellis edge over Gated DeltaNet is modest: 125M/2.4B Pile-2k 10.87 vs
+  11.31 (+0.44 ppl); 350M/7.5B 20.28 vs 21.40 (+1.12). A nonlinear
+  test-time-training memory needs capacity + tokens to amortize; at toy scale the
+  leaner linear model wins. Our ordering is exactly what their scaling story
+  predicts — it neither refutes the paper nor validates our Trellis at scale.
+- *Untuned inner loop.* The inner-loop step size γ and forget-decay λ are never
+  specified in the paper (no init, no schedule); we used `gamma_init=1e-2`
+  untuned. DeltaNet/Gated DeltaNet have no such inner-loop knob, so Trellis is
+  uniquely exposed to a mis-set inner lr. Our *outer* lr (3e-3) matches the
+  paper's 125M setting. A small γ/inner-lr sweep is the cheapest thing that could
+  move our Trellis numbers; the architecture verdict should wait for it.
+- *Implementation: mostly faithful.* We match the big choices — one GD step/token,
+  single linear memory M, m=64 (their default), forget gate, two-pass, normalized
+  -SiLU; their ablation confirms what we found load-bearing (nonlinearity −0.8 to
+  −1.8 ppl, forget gate −0.4). No momentum/Muon in either. One possible minor
+  discrepancy to check: the paper distinguishes φ (compression activation in
+  α≈φ(Mk)) from f (inter-pass normalized-SiLU) and leaves φ's exact form unstated;
+  we may use the same function for both.
+
+So the honest verdict is scoped: **at the scale we can actually train, Gated
+DeltaNet is the better bounded-memory vehicle** — simpler, faster, exact-chunkable,
+lower-variance, better quality. Whether Trellis's nonlinear memory pays off is a
+scale + inner-lr question this setup cannot answer. Data:
 `knlp-key-results/trellis-lm/firmup-20260603/pg19_L*_linbaselines.json`.
 
 ## 14. Where it stands / next
