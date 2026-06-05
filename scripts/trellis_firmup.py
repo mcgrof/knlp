@@ -88,7 +88,7 @@ def make_cfg(vocab, seq_len, mode, args):
         n_heads=args.n_heads, d_head=args.d_head, n_slots=args.n_slots,
         max_seq_len=seq_len, dtype="fp32", activation="ln_silu",
         alpha_mode="linear", beta_mode="scalar_per_head",
-        forget_gate=True, use_short_conv_qk=True,
+        forget_gate=True, use_short_conv_qk=True, gamma_init=args.gamma_init,
         exact_inner=not stale, chunk_size=chunk_size, chunk_refine=chunk_refine,
     )
 
@@ -149,6 +149,8 @@ def main():
     p.add_argument("--d_head", type=int, default=64)
     p.add_argument("--n_slots", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-3)
+    p.add_argument("--gamma_init", type=float, default=1e-2,
+                   help="Trellis inner-loop step size (paper-unspecified knob)")
     p.add_argument("--n_val", type=int, default=48)
     p.add_argument("--log_every", type=int, default=100)
     p.add_argument("--out", required=True)
@@ -199,6 +201,7 @@ def _dump(args, train_rows, val_rows, runs, final=False):
     Path(args.out).write_text(json.dumps({
         "dataset": args.dataset, "seq_len": args.seq_len, "mode": args.mode,
         "steps": args.steps, "batch": args.batch, "lr": args.lr,
+        "gamma_init": args.gamma_init,
         "seeds": args.seeds, "n_train_rows": len(train_rows),
         "n_val_rows": len(val_rows), "tokens_per_run": args.steps * args.batch
         * args.seq_len, "dims": {"d_model": args.d_model, "n_layers": args.n_layers,
