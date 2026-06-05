@@ -377,26 +377,64 @@ operator is at least as good as exact sequential, and the dense-beating result
 holds for both." The §11 "+35–46% penalty" should be understood as
 corpus-specific, not universal.
 
-## 13. Where it stands / next
+## 13. External baselines — the linear-attention family (the sobering result)
 
-The ≥4k comparison is now a **clean multi-seed win on PG19** (§12), and the
-full-strength sequential re-run confirmed it is **not a chunking artifact**:
-matched-size Trellis beats matched dense at every long length under both
-operators (−6% to −18%, multi-seed, non-overlapping seeds at 2048/4096). That is
-the strongest positive so far. The chunked-kernel direction is closed: the exact
-within-chunk solve was built and proven nilpotent-exact but costs sequential time
-(§11), and no cheap-and-exact form exists for the nonlinear inner step — so the
-speed↔exactness choice is fundamental, not a missing optimization. A genuine
-surprise from the confirmation: on PG19 the chunked operator trains to *better*
-PPL than exact sequential and far more stably, reversing the earlier-corpus
-penalty — the chunking quality effect is corpus-dependent, not fixed.
+"Beats matched dense" is necessary but weak. The pointed question is whether
+Trellis's *nonlinear* inner step buys anything over its *linear* cousins —
+DeltaNet and Gated DeltaNet, the same gated-delta-rule fast-weight memory with a
+linear inner step (added in `trellis_lm/linear_baselines.py`). Same harness,
+same untuned lr=3e-3, matched size/tokens/seeds, full-strength sequential, PG19:
 
-Levers (1) multi-seed + held-out PPL, (2) a real long-range corpus, and (3) the
-full-strength confirmation are now all done. What remains: (1) more steps — 400
-leaves the ≤1024 cells undertrained (PPL ~1500) and the sequential path
-high-variance, so longer training + a small per-operator lr sweep would settle
-whether seq can match chunk16 and sharpen all margins; (2) external baselines
-(Mamba2/DeltaNet, kvpress) so "beats matched dense" becomes "competitive with the
-linear-attention family" — the most important remaining step for a real claim;
-(3) re-run Phase 3 recall now that recall-objective training at length is
-feasible. The retrofit (Phase 4) remains a weak warm-start.
+```
+            L1024 (vs dense)        L2048 (vs dense)
+ dense        1635                    621
+ trellis      1517  (-7.3%)          585  (-5.9%)
+ DeltaNet     1393  (-14.8%)         502  (-19.1%)
+ GatedDelta   1188  (-27.4%)         423  (-31.8%)
+```
+
+The ordering is **GatedDelta ≪ DeltaNet ≪ Trellis < dense.** Our Trellis is the
+*weakest* member of the family: Gated DeltaNet beats it by +27% (1024) and +38%
+(2048) at matched size, with far lower variance (σ 2.7 vs 8.6). So the
+celebrated "Trellis beats dense" margin is the *smallest* in the family, and a
+simpler *linear* model crushes dense by ~5× that margin. The irony is sharp:
+Gated DeltaNet is linear in state, so it also gets the cheap exact chunkwise
+kernel Trellis cannot have (§11) — it is faster, exact, *and* better quality.
+
+Caveats, stated fairly: our Trellis is a from-paper reimplementation (no official
+code; it may miss recipe details), and the paper claims Trellis wins *at scale*
+with its full setup — at this tiny 4–5M-param / 400-step / single-corpus scale
+the nonlinear machinery may not pay off while the leaner gated model trains
+efficiently. We cannot adjudicate the scale question here. But on the comparison
+we *can* run, the verdict is clear: **for a bounded-memory model that beats
+dense, Gated DeltaNet is the better vehicle than our Trellis** — simpler, faster,
+exact-chunkable, lower-variance, and substantially better quality. Data:
+`knlp-key-results/trellis-lm/firmup-20260603/pg19_L*_linbaselines.json`.
+
+## 14. Where it stands / next
+
+Trellis beats matched dense on PG19 at long context (§12), robustly across
+operators — that part is solid. But the external baselines (§13) recontextualize
+it: Trellis is the *weakest* member of the linear-attention family, and Gated
+DeltaNet beats it decisively (+27–38%) while being simpler, lower-variance, and
+exact-chunkable. So the honest headline is not "Trellis is great" but "the
+bounded-memory / linear-attention family beats matched dense at long context, and
+**Gated DeltaNet is the standout — our Trellis underperforms its own cousins.**"
+
+The chunked-kernel direction is closed: the exact within-chunk solve was built
+and proven nilpotent-exact but costs sequential time (§11), and no cheap-and-exact
+form exists for the nonlinear inner step. Note that this whole limitation is a
+*Trellis-specific* tax: Gated DeltaNet, being linear, has the exact chunkwise
+kernel for free — another reason it is the better vehicle.
+
+What remains, reprioritized by §13: (1) **decide whether to keep pursuing our
+Trellis at all** — the matched comparison says Gated DeltaNet is the better
+bounded-memory model on every axis we measured; the case for Trellis now rests
+entirely on the unverified "wins at scale with the full recipe" claim, which is
+expensive to test and not clearly worth it. (2) If a bounded-memory model is the
+goal, **ship / extend Gated DeltaNet from scratch**, not Trellis. (3) Trellis is
+worth keeping only as (a) a faithful reference reimplementation of the paper and
+(b) a teaching example of why a nonlinear inner step forfeits the parallel-kernel
+free lunch. (4) Remaining hygiene if anyone continues the matched study: more
+steps + per-operator lr (400 undertrains ≤1024); kvpress / Mamba2 to round out
+the family. The retrofit (Phase 4) remains a weak warm-start.
