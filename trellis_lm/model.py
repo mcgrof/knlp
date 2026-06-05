@@ -178,4 +178,7 @@ def build_model(cfg: TrellisConfig, kind: str):
         return TrellisLM(cfg)
     if kind == "dense":
         return DenseTransformerTiny(cfg)
+    if kind in ("delta", "gated_delta"):
+        from .linear_baselines import build_linear_baseline
+        return build_linear_baseline(cfg, gated=(kind == "gated_delta"))
     raise ValueError(kind)
