@@ -322,8 +322,10 @@ actually matter), three seeds, and **held-out validation PPL on a disjoint
 slice** (driver `scripts/trellis_firmup.py`). Matched-size Trellis vs the dense
 tiny baseline (≈4.3–5.2M params each, same d_model/layers/heads, same tokens),
 400 steps, W7900 fp32. L512 uses the full-strength sequential operator; the
-longer lengths use the *handicapped* true-stale chunked operator (the only
-tractable choice at 4k), so a Trellis win there is conservative.
+longer lengths use the true-stale chunked operator (the only tractable choice at
+4k). It turns out the chunked operator is *not* a handicap on this corpus — see
+the full-strength confirmation below, which re-runs 1024/2048 sequentially and
+finds the win holds either way.
 
 ```
  length  operator            trellis ppl       dense ppl     trellis vs dense
@@ -335,33 +337,66 @@ tractable choice at 4k), so a Trellis win there is conservative.
 
 Two honest reads. (1) **The win is real and it is a long-context effect.** At
 2048 and 4096 the seeds are tight and non-overlapping — Trellis's *worst* seed
-beats dense's *best* — so the 12–13% margin is signal, not noise, and it is
-*handicapped* Trellis (chunked); full strength would likely widen it. This
-turns the noisy single-seed ≥4k PARTIAL into a clean multi-seed result on a
-standard long-range benchmark. (2) **The short-length "clean win" does NOT
-replicate on this harder corpus.** At 512, full strength, it is a tie (dense
-σ=131 — one lucky seed at 1399); PG19-512 is short-context and undertrained
-(PPL ~1500), so bounded memory has little to exploit. The earlier "−32% at 512"
-was on an easier corpus. A secondary observation: Trellis is consistently the
-*lower-variance* learner (σ 1.5–31 vs dense's 5–131), i.e. bounded memory
-trains more stably here. Data: `knlp-key-results/trellis-lm/firmup-20260603/`.
+beats dense's *best* — so the 12–13% margin is signal, not noise. This turns the
+noisy single-seed ≥4k PARTIAL into a clean multi-seed result on a standard
+long-range benchmark. (2) **The short-length "clean win" does NOT replicate on
+this harder corpus.** At 512, full strength, it is a tie (dense σ=131 — one lucky
+seed at 1399); PG19-512 is short-context and undertrained (PPL ~1500), so
+bounded memory has little to exploit. The earlier "−32% at 512" was on an easier
+corpus. Data: `knlp-key-results/trellis-lm/firmup-20260603/`.
+
+### Full-strength confirmation — and a reversed assumption
+
+The long-length cells above used the chunked operator. To check that the win is
+not a chunking artifact, we re-ran 1024 and 2048 with the full-strength exact
+sequential operator (Trellis at its strongest), same seeds/steps/tokens:
+
+```
+ length  operator      trellis ppl       dense ppl     trellis vs dense
+  1024   chunk16       1359 +-  6       1665 +- 114        -18.4%
+  1024   seq (full)    1517 +- 91       1635 +-  69         -7.3%
+  2048   chunk16        534 +- 31        616 +-  11        -13.3%
+  2048   seq (full)     585 +-  9        621 +-  11         -5.9%
+```
+
+Two things, one expected and one not. **Expected:** full-strength Trellis still
+beats matched dense at both lengths (−7.3%, −5.9%), so the core "beats dense at
+length" result is *not* an artifact of the chunked operator — the most important
+robustness check passes. **Unexpected:** full strength is *worse* than the
+chunked operator here (seq is +11.6% at 1024 and +9.5% at 2048 above chunk16),
+the opposite of the assumption that chunked is a conservative handicap. This also
+*reverses* the earlier-corpus chunking penalty quoted in §11 (where sequential
+beat true-stale chunked). So the chunked operator's quality effect is
+**corpus-dependent, not a fixed penalty**: on PG19 the stale-within-chunk write
+trains to *better* held-out PPL — regularizer-like — and far more stably (chunk16
+σ 6–31 vs the sequential path's σ 9–91). Caveat: lr=3e-3 was not tuned per
+operator, and the high sequential variance at 1024 suggests the exact path is
+partly under-tuned here, so do not read "chunked is fundamentally better" as
+settled — read it as "at matched untuned hyperparameters on PG19, the chunked
+operator is at least as good as exact sequential, and the dense-beating result
+holds for both." The §11 "+35–46% penalty" should be understood as
+corpus-specific, not universal.
 
 ## 13. Where it stands / next
 
-The chunked kernel — the gating build — is done and validated, and the ≥4k
-comparison is now a **clean multi-seed win on PG19** (§12): −12% at 4096 with
-σ=1.5 vs 5, non-overlapping seeds, and handicapped — the strongest positive so
-far, and it grows with length (tie at 512 → −12–18% at ≥1024). The chunked-kernel direction is now closed: the
-exact within-chunk solve was built and proven nilpotent-exact but costs
-sequential time (§11), and no cheap-and-exact form exists for the nonlinear
-inner step — so the speed/quality choice (stale-fast vs sequential-exact) is
-fundamental, not a missing optimization. Multi-seed + held-out PPL and a real
-long-range corpus are now done (§12) and the long-context win held up. The
-remaining levers: (1) a **full-strength (sequential) confirmation at 1024–2048**
-to remove the chunked handicap caveat from the headline cells (≈50–100 min/run
-on the W7900, so cheap enough); (2) more steps — 400 leaves the ≤1024 cells
-undertrained (PPL ~1500), so longer training should sharpen the short-length
-picture and likely the margins; (3) the external baselines (Mamba2/DeltaNet,
-kvpress) so "beats matched dense" becomes "competitive with the linear-attention
-family"; (4) re-run Phase 3 recall now that recall-objective training at length
-is feasible. The retrofit (Phase 4) remains a weak warm-start.
+The ≥4k comparison is now a **clean multi-seed win on PG19** (§12), and the
+full-strength sequential re-run confirmed it is **not a chunking artifact**:
+matched-size Trellis beats matched dense at every long length under both
+operators (−6% to −18%, multi-seed, non-overlapping seeds at 2048/4096). That is
+the strongest positive so far. The chunked-kernel direction is closed: the exact
+within-chunk solve was built and proven nilpotent-exact but costs sequential time
+(§11), and no cheap-and-exact form exists for the nonlinear inner step — so the
+speed↔exactness choice is fundamental, not a missing optimization. A genuine
+surprise from the confirmation: on PG19 the chunked operator trains to *better*
+PPL than exact sequential and far more stably, reversing the earlier-corpus
+penalty — the chunking quality effect is corpus-dependent, not fixed.
+
+Levers (1) multi-seed + held-out PPL, (2) a real long-range corpus, and (3) the
+full-strength confirmation are now all done. What remains: (1) more steps — 400
+leaves the ≤1024 cells undertrained (PPL ~1500) and the sequential path
+high-variance, so longer training + a small per-operator lr sweep would settle
+whether seq can match chunk16 and sharpen all margins; (2) external baselines
+(Mamba2/DeltaNet, kvpress) so "beats matched dense" becomes "competitive with the
+linear-attention family" — the most important remaining step for a real claim;
+(3) re-run Phase 3 recall now that recall-objective training at length is
+feasible. The retrofit (Phase 4) remains a weak warm-start.
