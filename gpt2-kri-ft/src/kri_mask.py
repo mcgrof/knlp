@@ -53,9 +53,11 @@ class KRIConfig:
     def sample(self, rng: torch.Generator) -> "KRIConfig":
         """Return a copy with prefill_split / local_window / topk
         sampled fresh from the *_choices fields."""
+
         def pick(choices):
             i = int(torch.randint(0, len(choices), (1,), generator=rng).item())
             return choices[i]
+
         c = KRIConfig(**self.__dict__)
         c.prefill_split = pick(self.prefill_split_choices)
         c.local_window_tokens = pick(self.local_window_choices)
@@ -71,7 +73,9 @@ def block_index_of(t: int, block_size: int) -> int:
     return t // block_size
 
 
-def _block_summaries(k: torch.Tensor, v: torch.Tensor, block_size: int) -> Tuple[torch.Tensor, torch.Tensor]:
+def _block_summaries(
+    k: torch.Tensor, v: torch.Tensor, block_size: int
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Compute per-block key centroid and value-energy.
 
     Args:
@@ -128,7 +132,9 @@ def _recency_bonus(num_blocks_total: int, t_block: int, device, dtype) -> torch.
     return torch.clamp(idx / max(1, t_block), min=0.0, max=1.0)
 
 
-def _novelty_bonus(kc_prefix: torch.Tensor, protected_idx: Sequence[int], local_idx: Sequence[int]) -> torch.Tensor:
+def _novelty_bonus(
+    kc_prefix: torch.Tensor, protected_idx: Sequence[int], local_idx: Sequence[int]
+) -> torch.Tensor:
     """Approximate 1 - max cosine to already-selected blocks.
 
     Args:
@@ -190,7 +196,7 @@ def select_kri_blocks(
     kc, ve = _block_summaries(k, v, bs)
     # cosine(q, kc) — q_vec is not pre-normalized; normalize for cosine
     q_n = torch.nn.functional.normalize(q_vec, dim=-1)  # [B,H,D]
-    cos = torch.einsum("bhd,bhnd->bhn", q_n, kc)        # [B,H,NB]
+    cos = torch.einsum("bhd,bhnd->bhn", q_n, kc)  # [B,H,NB]
 
     rec = _recency_bonus(NB, t_block, device=k.device, dtype=k.dtype)  # [NB]
     rec_b = rec.view(1, 1, -1).expand(B, H, NB)
@@ -199,14 +205,16 @@ def select_kri_blocks(
     # and not in the protected set; protected blocks are added by the
     # mask builder).
     eligible = torch.zeros(NB, device=k.device, dtype=torch.bool)
-    eligible[: local_first_block] = True
+    eligible[:local_first_block] = True
     for p in cfg.protected_blocks:
         if 0 <= p < NB:
             eligible[p] = False
 
     score = cfg.w_cos * cos + cfg.w_value_energy * ve + cfg.w_recency * rec_b
     if cfg.use_novelty:
-        nov = _novelty_bonus(kc, cfg.protected_blocks, list(range(local_first_block, t_block + 1)))
+        nov = _novelty_bonus(
+            kc, cfg.protected_blocks, list(range(local_first_block, t_block + 1))
+        )
         score = score + cfg.w_novelty * nov
     # Protected bonus is a positive nudge but we keep protected blocks
     # out of `sel` and add them separately in the mask builder.
@@ -231,6 +239,7 @@ def build_kri_mask(
     v_per_layer: Optional[List[torch.Tensor]] = None,
     q_per_layer: Optional[List[torch.Tensor]] = None,
     device: Optional[torch.device] = None,
+    select_fn=None,
 ) -> torch.Tensor:
     """Build a [B, H, T, T] boolean mask for KRI-pruned attention.
 
@@ -258,7 +267,9 @@ def build_kri_mask(
         mask: [B, H, T, T] bool. True = attend, False = masked.
     """
     if device is None:
-        device = k_per_layer[0].device if k_per_layer is not None else torch.device("cpu")
+        device = (
+            k_per_layer[0].device if k_per_layer is not None else torch.device("cpu")
+        )
     B, H = batch_size, n_head
     T = seq_len
     bs = cfg.block_size
@@ -301,8 +312,8 @@ def build_kri_mask(
     # 4) Add the block that contains t itself (current block).
     #    Helps avoid degenerate attention when t is at the start of a
     #    new block and the local window doesn't cover the whole block.
-    t_block_of = (idx_t // bs)  # [T]
-    k_block_of = (idx_k // bs)  # [T]
+    t_block_of = idx_t // bs  # [T]
+    k_block_of = idx_k // bs  # [T]
     same_block = (t_block_of.view(T, 1) == k_block_of.view(1, T)) & causal
     mask = mask | (same_block & rows_decode.view(T, 1)).view(1, 1, T, T)
 
@@ -329,14 +340,18 @@ def build_kri_mask(
     else:
         # Use the configured score layer's K, V, q.
         i_layer = min(cfg.score_layer_index, len(k_per_layer) - 1)
-        k = k_per_layer[i_layer]      # [B,H,T,D]
-        v = v_per_layer[i_layer]      # [B,H,T,D]
-        q = q_per_layer[i_layer]      # [B,H,T,D]
+        k = k_per_layer[i_layer]  # [B,H,T,D]
+        v = v_per_layer[i_layer]  # [B,H,T,D]
+        q = q_per_layer[i_layer]  # [B,H,T,D]
 
-        # Score and pick once per query position in decode region.
+        # Score and pick once per query position in decode region. A custom
+        # select_fn (same signature as select_kri_blocks) plugs in an
+        # alternative router — e.g. Lattice-KRI — reusing all of this
+        # sink/recent/current/causal assembly unchanged.
+        sel_fn = select_fn if select_fn is not None else select_kri_blocks
         for t in range(prefill_split + 1, T):
             q_t = q[:, :, t, :]
-            sel = select_kri_blocks(q_t, k, v, cfg, t_query=t)  # [B,H,K]
+            sel = sel_fn(q_t, k, v, cfg, t_query=t)  # [B,H,K]
             if cfg.per_head:
                 # Per-head selection: each head gets its own visible set.
                 for b in range(B):
@@ -438,7 +453,8 @@ def fixed_policy_mask(
             local_start_block = max(0, t - local_window_tokens + 1) // bs
             cur_block = t // bs
             eligible = [
-                b for b in range(local_start_block)
+                b
+                for b in range(local_start_block)
                 if b not in protected and b != cur_block
             ]
             if not eligible:
@@ -483,8 +499,13 @@ def fixed_policy_mask(
             protected_blocks=tuple(range(sink_blocks)),
         )
         kri = build_kri_mask(
-            cfg, T, B, H,
-            k_per_layer=k_per_layer, v_per_layer=v_per_layer, q_per_layer=q_per_layer,
+            cfg,
+            T,
+            B,
+            H,
+            k_per_layer=k_per_layer,
+            v_per_layer=v_per_layer,
+            q_per_layer=q_per_layer,
             device=device,
         )
         mask = mask | kri
