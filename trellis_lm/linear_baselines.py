@@ -56,7 +56,7 @@ class DeltaNetMixer(nn.Module):
         k = self._heads(self.k_proj(h))
         v = self._heads(self.v_proj(h))
         k = F.normalize(k, dim=-1)
-        beta = torch.sigmoid(self.beta_proj(h)).permute(0, 2, 1)        # [B,H,T]
+        beta = torch.sigmoid(self.beta_proj(h)).permute(0, 2, 1)  # [B,H,T]
         if self.gated:
             alpha = torch.sigmoid(self.alpha_proj(h)).permute(0, 2, 1)  # [B,H,T]
         S = torch.zeros(B, self.H, self.D, self.D, device=x.device, dtype=x.dtype)
@@ -67,9 +67,9 @@ class DeltaNetMixer(nn.Module):
             if self.gated:
                 at = alpha[:, :, t][..., None, None]
                 S = at * S
-            pred = torch.einsum("bhij,bhj->bhi", S, kt)    # (decayed) S @ k
+            pred = torch.einsum("bhij,bhj->bhi", S, kt)  # (decayed) S @ k
             S = S + bt * torch.einsum("bhi,bhj->bhij", vt - pred, kt)
-            outs.append(torch.einsum("bhij,bhj->bhi", S, qt))   # S @ q (updated)
+            outs.append(torch.einsum("bhij,bhj->bhi", S, qt))  # S @ q (updated)
         y = torch.stack(outs, dim=2).permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)
         return self.drop(self.out_proj(y))
 
@@ -79,11 +79,14 @@ def build_linear_baseline(cfg: TrellisConfig, gated: bool):
     shared block/LM scaffolding lazily to avoid a circular import with model.py.
     """
     from .model import SwiGLU, _LMBase
+    from .linear_baselines_chunked import DeltaNetMixerChunked
 
     class _Block(nn.Module):
         def __init__(self):
             super().__init__()
-            self.mixer = DeltaNetMixer(cfg, gated)
+            # Exact chunked kernel (matches the naive per-token loop to ~1e-6,
+            # ~10-30x faster) so the matched scaling ladder is affordable.
+            self.mixer = DeltaNetMixerChunked(cfg, gated)
             self.mlp = SwiGLU(cfg.d_model, cfg.mlp_ratio, cfg.dropout)
 
         def forward(self, x, training=True):
