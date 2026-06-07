@@ -48,6 +48,30 @@ def ln_silu_vjp(z: torch.Tensor, err: torch.Tensor) -> torch.Tensor:
     return silu_grad * ds
 
 
+def ln_silu_vjp_from_alpha(z: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Fused phi(z)=ln_silu(z) AND u = J_phi^T(phi(z)-alpha) in one pass.
+
+    The Trellis inner step needs both phi(z) (to form the error) and the VJP;
+    computing them separately recomputes SiLU/mean/var/y twice. This shares that
+    work. Reductions are done in fp32 for bf16 stability, then cast back.
+    """
+    # upcast only low precision (bf16/fp16) to fp32; keep fp32/fp64 as given
+    work = torch.float32 if z.dtype in (torch.bfloat16, torch.float16) else z.dtype
+    z32 = z.to(work)
+    sig = torch.sigmoid(z32)
+    s = z32 * sig  # silu(z)
+    silu_grad = sig + s * (1.0 - sig)  # d silu / d z
+    mean = s.mean(dim=-1, keepdim=True)
+    var = s.var(dim=-1, unbiased=False, keepdim=True)
+    std = torch.sqrt(var + _EPS)
+    y = (s - mean) / std  # = ln_silu(z)
+    err = y - alpha.to(work)  # alpha kept in graph -> u differentiable in alpha
+    ds = (
+        err - err.mean(dim=-1, keepdim=True) - y * (err * y).mean(dim=-1, keepdim=True)
+    ) / std
+    return (silu_grad * ds).to(z.dtype)
+
+
 def l2_silu(x: torch.Tensor) -> torch.Tensor:
     """SiLU(x) / (||SiLU(x)|| + eps) over the last dim."""
     s = F.silu(x)
