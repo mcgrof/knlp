@@ -39,10 +39,10 @@ class CausalDWConv1d(nn.Module):
 
     def forward(self, x):  # x: [B,H,T,D]
         B, H, T, D = x.shape
-        xt = x.permute(0, 1, 3, 2).reshape(B, H * D, T)     # [B, C=H*D, T]
-        xt = F.pad(xt, (self.kernel - 1, 0))                # left pad = causal
-        out = self.conv(xt)                                 # [B, C, T]
-        out = out.reshape(B, H, D, T).permute(0, 1, 3, 2)   # [B,H,T,D]
+        xt = x.permute(0, 1, 3, 2).reshape(B, H * D, T)  # [B, C=H*D, T]
+        xt = F.pad(xt, (self.kernel - 1, 0))  # left pad = causal
+        out = self.conv(xt)  # [B, C, T]
+        out = out.reshape(B, H, D, T).permute(0, 1, 3, 2)  # [B,H,T,D]
         return out
 
 
@@ -83,37 +83,55 @@ class TrellisMixer(nn.Module):
         cfg = self.cfg
         B, T, d = x.shape
         h = self.norm(x)
-        q = self._heads(self.q_proj(h), self.D)   # [B,H,T,D]
+        q = self._heads(self.q_proj(h), self.D)  # [B,H,T,D]
         k = self._heads(self.k_proj(h), self.D)
         v = self._heads(self.v_proj(h), self.D)
         if self.use_conv:
             q = self.q_conv(q)
             k = self.k_conv(k)
-        alpha = self._heads(self.alpha_proj(h), self.M)        # [B,H,T,M]
+        alpha = self._heads(self.alpha_proj(h), self.M)  # [B,H,T,M]
         alpha = self.alpha_act(alpha)
         if cfg.beta_mode == "scalar_per_head":
-            beta = torch.sigmoid(self.beta_proj(h)).view(B, T, self.H, 1).permute(0, 2, 1, 3)
+            beta = (
+                torch.sigmoid(self.beta_proj(h))
+                .view(B, T, self.H, 1)
+                .permute(0, 2, 1, 3)
+            )
         else:
             beta = torch.sigmoid(self._heads(self.beta_proj(h), self.M))  # [B,H,T,M]
         if not cfg.forget_gate:
             beta = torch.ones_like(beta)
-        gamma = F.softplus(self.gamma_raw)        # [H], positive
+        gamma = F.softplus(self.gamma_raw)  # [H], positive
 
-        # key pass -> yhat; value pass -> y. Chunked stale path when chunk_size>1
-        # and beta is per-head; else the exact/stale sequential path.
+        # key pass -> yhat; value pass -> y. The Trellis memory is overhead-bound
+        # and numerically sensitive (the chunk recurrence): bf16 measured BOTH
+        # slower (0.82x, overhead not FLOPs) and ~41% inaccurate here, so run it
+        # in fp32 regardless of any outer autocast. The output rejoins autocast
+        # at out_proj. Chunked stale path when chunk_size>1 and beta is per-head.
         use_chunk = cfg.chunk_size > 1 and cfg.beta_mode == "scalar_per_head"
-        if use_chunk:
-            cs = cfg.chunk_size
-            yhat = run_trellis_memory_chunked(k, q, alpha, beta, gamma, self.phi, "M_q", cs, cfg.chunk_refine)
-            r = self.f(yhat)
-            y = run_trellis_memory_chunked(v, r, alpha, beta, gamma, self.phi, "M_T_r", cs, cfg.chunk_refine)
-        else:
-            ex = cfg.exact_inner
-            yhat = run_trellis_memory(k, q, alpha, beta, gamma, self.phi, "M_q", training, exact_inner=ex)
-            r = self.f(yhat)                      # [B,H,T,M]
-            y = run_trellis_memory(v, r, alpha, beta, gamma, self.phi, "M_T_r", training, exact_inner=ex)
+        qf, kf, vf = q.float(), k.float(), v.float()
+        af, bf, gf = alpha.float(), beta.float(), gamma.float()
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            if use_chunk:
+                cs = cfg.chunk_size
+                yhat = run_trellis_memory_chunked(
+                    kf, qf, af, bf, gf, self.phi, "M_q", cs, cfg.chunk_refine
+                )
+                r = self.f(yhat)
+                y = run_trellis_memory_chunked(
+                    vf, r, af, bf, gf, self.phi, "M_T_r", cs, cfg.chunk_refine
+                )
+            else:
+                ex = cfg.exact_inner
+                yhat = run_trellis_memory(
+                    kf, qf, af, bf, gf, self.phi, "M_q", training, exact_inner=ex
+                )
+                r = self.f(yhat)  # [B,H,T,M]
+                y = run_trellis_memory(
+                    vf, r, af, bf, gf, self.phi, "M_T_r", training, exact_inner=ex
+                )
 
-        y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)   # merge heads
+        y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)  # merge heads
         out = self.out_proj(y)
         if self.post_gate:
             out = out * F.silu(self.gate_proj(h))
