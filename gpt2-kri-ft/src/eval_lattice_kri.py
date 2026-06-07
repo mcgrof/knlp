@@ -150,6 +150,20 @@ def _route_per_position(
             ),
             None,
         )
+    if name == "h2o":
+        return (
+            _per_position_h2o(
+                k,
+                L,
+                block_size,
+                local_window,
+                sink_blocks,
+                topk,
+                prefill_split,
+                device,
+            ),
+            None,
+        )
     if name == "trellis_kri":
         return (
             _per_position_trellis(
@@ -182,6 +196,51 @@ def _route_per_position(
         cfg.prefill_split = prefill_split
         sel_fn = select_kri_blocks
     return build_kri_mask(cfg, L, B, H, select_fn=sel_fn, **kw), None
+
+
+def _per_position_h2o(
+    k, L, block_size, local_window, sink_blocks, topk, prefill_split, device
+):
+    """Per-position H2O (Heavy-Hitter Oracle) baseline: keep the top-K blocks by
+    ACCUMULATED attention mass (summed attention from every prior query up to t),
+    plus the sink+recent base. Attention uses K as the query proxy (the eval's
+    convention) and a shared-over-(B,H) ranking, like the random control. This is
+    the real deployed-SOTA bar -- residual_rel has to beat this, not just KRI."""
+    import math
+
+    B, H, T, D = k.shape
+    bs = block_size
+    cfg = KRIConfig(
+        block_size=bs,
+        local_window_tokens=local_window,
+        global_topk_blocks=0,
+        prefill_split=prefill_split,
+        protected_blocks=tuple(range(sink_blocks)),
+    )
+    mask = build_kri_mask(
+        cfg, L, B, H, k_per_layer=[k], v_per_layer=[k], q_per_layer=[k], device=device
+    )
+    nb = (T + bs - 1) // bs
+    scores = torch.einsum("bhid,bhjd->bhij", k, k) * (1.0 / math.sqrt(D))
+    causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
+    scores = scores.masked_fill(~causal.view(1, 1, T, T), float("-inf"))
+    a = torch.softmax(scores, dim=-1)  # [B,H,T,T]
+    pad = nb * bs - T
+    if pad:
+        a = torch.nn.functional.pad(a, (0, pad))
+    a_blk = a.view(B, H, T, nb, bs).sum(-1)  # block-sum over keys -> [B,H,T,NB]
+    cum = a_blk.cumsum(dim=2).mean(dim=(0, 1))  # accumulated, shared -> [T,NB]
+    for t in range(prefill_split + 1, L):
+        local_first = max(0, t - local_window + 1) // bs
+        elig = [b for b in range(local_first) if b >= sink_blocks]
+        if not elig:
+            continue
+        sc = cum[t, torch.tensor(elig, device=device)]
+        for i in sc.topk(min(topk, len(elig))).indices.tolist():
+            lo = elig[i] * bs
+            hi = min(L, (elig[i] + 1) * bs)
+            mask[:, :, t, lo:hi] = True
+    return mask
 
 
 def _per_position_random(
@@ -308,6 +367,25 @@ def route_mask(
         order = torch.randperm(len(elig))[:keff].tolist()
         sel = torch.tensor([elig[i] for i in order], device=device)
         sel = sel.view(1, 1, keff).expand(B, H, keff)
+    elif name == "h2o":
+        # Heavy-Hitter Oracle: top-K eligible blocks by TOTAL accumulated
+        # attention mass (per head, K as query proxy). The deployed-SOTA bar
+        # residual_rel must beat -- not just the internal KRI baselines.
+        sc = torch.einsum("bhid,bhjd->bhij", k, k) * (1.0 / math.sqrt(D))
+        cm = torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
+        a = torch.softmax(sc.masked_fill(~cm.view(1, 1, T, T), float("-inf")), dim=-1)
+        nb = (T + block_size - 1) // block_size
+        if nb * block_size > T:
+            a = torch.nn.functional.pad(a, (0, nb * block_size - T))
+        mass = a.view(B, H, T, nb, block_size).sum(-1).sum(2)  # [B,H,NB]
+        lf = max(0, (L - 1) - local_window) // block_size
+        keff = min(topk, max(0, lf - sink_blocks))
+        if keff == 0:
+            return base, None
+        mass[:, :, lf:] = -1.0
+        if sink_blocks:
+            mass[:, :, :sink_blocks] = -1.0
+        sel = mass.topk(keff, dim=-1).indices  # [B,H,keff]
     elif name == "trellis_kri":
         cfg = KRIConfig(
             block_size=block_size,
