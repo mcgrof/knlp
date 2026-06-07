@@ -25,7 +25,7 @@ from typing import Optional
 
 import torch
 
-from .activations import ln_silu, ln_silu_vjp
+from .activations import ln_silu, ln_silu_vjp, ln_silu_vjp_from_alpha
 
 
 def run_trellis_memory(
@@ -160,10 +160,10 @@ def run_trellis_memory_chunked(
     def _vjp(zin, A):
         z = zin.detach()  # cut M 2nd-order
         if phi is ln_silu:
-            # closed-form J_phi^T(phi(z)-A): exact, no per-chunk autograd graph
-            # (this was the kernel's dominant overhead). Linear in A, so the
-            # outer backward to alpha_proj still flows.
-            return ln_silu_vjp(z, phi(z) - A)
+            # fused closed-form phi(z) + J_phi^T(phi(z)-A): exact, no per-chunk
+            # autograd graph (the kernel's dominant overhead) and no double
+            # LN/SiLU. Linear in A, so the outer backward to alpha_proj flows.
+            return ln_silu_vjp_from_alpha(z, A)
         zr = z.requires_grad_(True)
         cg = A.requires_grad
         with torch.enable_grad():
@@ -174,6 +174,8 @@ def run_trellis_memory_chunked(
             )
         return uu if cg else uu.detach()
 
+    # masks are shape-fixed per call (chunk_size, dev, dt) -> allocate once
+    tri_full = torch.tril(torch.ones(chunk_size, chunk_size, device=dev, dtype=dt))
     for c0 in range(0, T, chunk_size):
         c1 = min(c0 + chunk_size, T)
         C = c1 - c0
@@ -183,7 +185,7 @@ def run_trellis_memory_chunked(
         b = beta[:, :, c0:c1, :]  # [B,H,C,1]
         # cumulative inclusive decay P_t = prod_{i<=t} b_i  (per head)
         P = torch.cumprod(b, dim=2)  # [B,H,C,1]
-        tri = torch.tril(torch.ones(C, C, device=dev, dtype=dt))  # s<=t
+        tri = tri_full[:C, :C]  # s<=t (cached)
         # inner code: stale from M0, then refine to z_t = M_{t-1} @ w_t using
         # the in-chunk segmented-product reconstruction of M_{t-1}.
         M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)  # M0 @ w_t  (= stale z)
