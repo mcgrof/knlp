@@ -183,14 +183,23 @@ def run_trellis_memory_chunked(
         R = read[:, :, c0:c1, :]  # [B,H,C,*]
         A = alpha[:, :, c0:c1, :]  # [B,H,C,M]
         b = beta[:, :, c0:c1, :]  # [B,H,C,1]
-        # cumulative inclusive decay P_t = prod_{i<=t} b_i  (per head)
-        P = torch.cumprod(b, dim=2)  # [B,H,C,1]
+        # cumulative inclusive decay P_t = prod_{i<=t} b_i, in log space so the
+        # bounded ratio rmat[t,s] = P_t/P_s (<=1 for s<=t) replaces every u/P and
+        # P/P division -- overflow-safe and bf16-friendly (Codex review).
+        logP = torch.cumsum(torch.log(b.clamp_min(1e-9)), dim=2)  # [B,H,C,1]
+        P = torch.exp(logP)
         tri = tri_full[:C, :C]  # s<=t (cached)
+        lp = logP.squeeze(-1)  # [B,H,C]
+        rmat = torch.exp((lp[..., :, None] - lp[..., None, :]).clamp_max(0.0))
+        rmat = rmat * tri.view(1, 1, C, C)  # [B,H,C,C] = P_t/P_s for s<=t
         # inner code: stale from M0, then refine to z_t = M_{t-1} @ w_t using
         # the in-chunk segmented-product reconstruction of M_{t-1}.
         M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)  # M0 @ w_t  (= stale z)
         u = _vjp(M0W, A)
         if refine_passes > 0 and C > 1:
+            # exact-mode only (not the ladder path); kept in the original u/P
+            # form, which is verified-exact. The bounded rewrite above covers
+            # the readouts + state advance that the true-stale ladder uses.
             Pprev = P / (b + 1e-12)  # P_{t-1}
             WW = torch.einsum("bhtd,bhsd->bhts", W, W)  # w_t . w_s
             strict = torch.tril(torch.ones(C, C, device=dev, dtype=dt), diagonal=-1)
@@ -202,26 +211,20 @@ def run_trellis_memory_chunked(
                 u = _vjp(z, A)
         if read_mode == "M_q":
             M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)  # [B,H,C,M]
-            S = torch.einsum("bhtd,bhsd->bhts", R, W)  # S[t,s]=q_t.w_s
-            S = S * tri.view(1, 1, C, C)
-            Util = u / (P + 1e-12)  # u_s / P_s
-            term2 = torch.einsum("bhts,bhsm->bhtm", S, Util)  # sum_{s<=t}
-            y = P * (M0q - g * term2)  # [B,H,C,M]
+            S = torch.einsum("bhtd,bhsd->bhts", R, W) * rmat  # (q_t.w_s)(P_t/P_s)
+            term2 = torch.einsum("bhts,bhsm->bhtm", S, u)  # sum_{s<=t}
+            y = P * M0q - g * term2  # [B,H,C,M]
         elif read_mode == "M_T_r":
             first = P * torch.einsum("bhcm,bhmd->bhcd", R, Mstate)  # P_t (r_t@M0)
-            G = torch.einsum("bhtm,bhsm->bhts", R, u)  # G[t,s]=r_t.u_s
-            Pmat = P.squeeze(-1).unsqueeze(-1) / (
-                P.squeeze(-1).unsqueeze(-2) + 1e-12
-            )  # [B,H,C(t),C(s)] = P_t/P_s
-            G = G * Pmat * tri.view(1, 1, C, C)
+            G = torch.einsum("bhtm,bhsm->bhts", R, u) * rmat  # (r_t.u_s)(P_t/P_s)
             term2 = torch.einsum("bhts,bhsd->bhtd", G, W)
             y = first - g * term2  # [B,H,C,D]
         else:
             raise ValueError(read_mode)
         outs.append(y)
-        # advance state to chunk end: M_end = P_last M0 - gamma sum (P_last/P_s) u_s w_s
+        # advance state: M_end = P_C M0 - gamma sum_s (P_C/P_s) u_s w_s
         Plast = P[:, :, -1:, :]  # [B,H,1,1]
-        coef = Plast / (P + 1e-12)  # [B,H,C,1]
-        upd = torch.einsum("bhcm,bhcd->bhmd", u * coef, W)  # weighted outer sum
+        rC = rmat[:, :, -1, :].unsqueeze(-1)  # [B,H,C,1] = P_C/P_s
+        upd = torch.einsum("bhcm,bhcd->bhmd", u * rC, W)
         Mstate = Plast * Mstate - g * upd
     return torch.cat(outs, dim=2)  # [B,H,T,*]
