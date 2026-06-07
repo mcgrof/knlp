@@ -133,8 +133,10 @@ def eval_ppl(model, val, micro_batch, device):
     tot_loss, tot_tok = 0.0, 0
     for i in range(0, val.size(0) - micro_batch + 1, micro_batch):
         idx = val[i : i + micro_batch].to(device)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            _, loss = model(idx, labels=idx, training=False)
+        # fp32 throughout: bf16 is slower + ~41% inaccurate for the Trellis
+        # memory (overhead-bound, sensitive recurrence), so the matched
+        # comparison runs fp32 for every model -- fair and accurate.
+        _, loss = model(idx, labels=idx, training=False)
         tot_loss += loss.float().item() * idx.numel()
         tot_tok += idx.numel()
     return math.exp(min(20, tot_loss / max(1, tot_tok)))
@@ -162,8 +164,7 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
         loss_val = 0.0
         for _ in range(accum):
             idx = next(gen).to(device)
-            with torch.autocast("cuda", dtype=torch.bfloat16):
-                _, loss = model(idx, labels=idx, training=True)
+            _, loss = model(idx, labels=idx, training=True)  # fp32 (see eval_ppl)
             (loss / accum).backward()
             loss_val += loss.float().item() / accum
             seen_tokens += idx.numel()
