@@ -22,21 +22,31 @@ def naive(q, k, v, beta, alpha=None):
 
 def run():
     torch.manual_seed(0)
-    B, H, T, D = 2, 3, 40, 8
+    B, H, T, D = 2, 3, 70, 8
     q = torch.randn(B, H, T, D)
     k = torch.nn.functional.normalize(torch.randn(B, H, T, D), dim=-1)
     v = torch.randn(B, H, T, D)
     beta = torch.sigmoid(torch.randn(B, H, T))
+    # cases: plain, gated (normal gate), gated-small (gate driven small — the
+    # regime that overflowed the 1/a rescale and diverged training).
+    cases = [
+        ("plain", None),
+        ("gated", torch.sigmoid(torch.randn(B, H, T))),
+        ("gated-small", torch.sigmoid(torch.randn(B, H, T) - 4.0)),
+    ]
     ok = True
-    for gated in (False, True):
-        alpha = torch.sigmoid(torch.randn(B, H, T)) if gated else None
-        ref = naive(q, k, v, beta, alpha)
-        got = chunked_delta_rule(q, k, v, beta, alpha, chunk_size=16)
-        err = (ref - got).abs().max().item()
-        verdict = "PASS" if err < 1e-3 else "FAIL"
-        if err >= 1e-3:
-            ok = False
-        print(f"gated={gated}  max_abs_err={err:.2e}  {verdict}")
+    for cs in (16, 32):
+        for name, alpha in cases:
+            ref = naive(q, k, v, beta, alpha)
+            got = chunked_delta_rule(q, k, v, beta, alpha, chunk_size=cs)
+            err = (ref - got).abs().max().item()
+            finite = torch.isfinite(got).all().item()
+            verdict = "PASS" if (err < 1e-3 and finite) else "FAIL"
+            if verdict == "FAIL":
+                ok = False
+            print(
+                f"chunk{cs:<3} {name:12s} max_abs_err={err:.2e} finite={finite}  {verdict}"
+            )
     print("ALL PASS" if ok else "SOME FAILED")
     return ok
 
