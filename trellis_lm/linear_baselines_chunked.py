@@ -56,20 +56,37 @@ def chunked_delta_rule(q, k, v, beta, alpha=None, chunk_size=16):
     outs = []
     for c in range(nC):
         Kc, Vc, Qc, Bc = k[:, :, c], v[:, :, c], q[:, :, c], beta[:, :, c]
-        if alpha is not None:
-            a = torch.cumprod(alpha[:, :, c], dim=-1)  # [B,H,C] inclusive
-            Vc = Vc / a[..., None]
-        KKt = Kc @ Kc.transpose(-1, -2)  # [B,H,C,C]
-        M = torch.tril(Bc[..., None] * KKt, -1)
+        KKt = Kc @ Kc.transpose(-1, -2)  # [B,H,C,C]: k_t . k_s
+        QKt = Qc @ Kc.transpose(-1, -2)  # q_t . k_s
         Sk = Kc @ S.transpose(-1, -2)  # [B,H,C,D] rows = (S k_t)^T
-        rhs = Bc[..., None] * (Vc - Sk)
-        U = torch.linalg.solve_triangular(eye + M, rhs, upper=False, unitriangular=True)
-        QKt = Qc @ Kc.transpose(-1, -2)
-        Oc = Qc @ S.transpose(-1, -2) + torch.tril(QKt, 0) @ U
-        S = S + U.transpose(-1, -2) @ Kc
         if alpha is not None:
-            Oc = Oc * a[..., None]
-            S = S * a[..., -1][..., None, None]
+            # Numerically-stable gated form: keep the decay as bounded ratios
+            # a_t/a_s (<=1 for s<=t) inside the matmuls, never the 1/a rescale.
+            la = torch.cumsum(torch.log(alpha[:, :, c].clamp_min(1e-6)), dim=-1)
+            a = torch.exp(la)  # cumprod of the gate, in (0,1]
+            ratio = torch.exp((la[..., :, None] - la[..., None, :]).clamp_max(0.0))
+            M = torch.tril(Bc[..., None] * ratio * KKt, -1)
+            rhs = Bc[..., None] * (Vc - a[..., None] * Sk)
+            U = torch.linalg.solve_triangular(
+                eye + M, rhs, upper=False, unitriangular=True
+            )
+            Oc = (
+                a[..., None] * (Qc @ S.transpose(-1, -2))
+                + torch.tril(ratio * QKt, 0) @ U
+            )
+            ratioC = torch.exp((la[..., -1:] - la).clamp_max(0.0))  # a_C / a_s
+            S = (
+                a[..., -1][..., None, None] * S
+                + (ratioC[..., None] * U).transpose(-1, -2) @ Kc
+            )
+        else:
+            M = torch.tril(Bc[..., None] * KKt, -1)
+            rhs = Bc[..., None] * (Vc - Sk)
+            U = torch.linalg.solve_triangular(
+                eye + M, rhs, upper=False, unitriangular=True
+            )
+            Oc = Qc @ S.transpose(-1, -2) + torch.tril(QKt, 0) @ U
+            S = S + U.transpose(-1, -2) @ Kc
         outs.append(Oc)
     o = torch.cat(outs, dim=2)[:, :, :T]
     return o.to(in_dtype)
