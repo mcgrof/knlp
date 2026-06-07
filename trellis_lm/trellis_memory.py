@@ -153,7 +153,9 @@ def run_trellis_memory_chunked(
     B, H, T, D = write.shape
     M = alpha.shape[-1]
     dev, dt = write.device, write.dtype
-    Mstate = torch.zeros(B, H, M, D, device=dev, dtype=dt)
+    # state accumulates over chunks -> keep it fp32 even under bf16 autocast
+    # (Codex review); the matmuls still run bf16 via autocast for the speed.
+    Mstate = torch.zeros(B, H, M, D, device=dev, dtype=torch.float32)
     g = gamma.view(1, H, 1, 1)
     outs = []
 
