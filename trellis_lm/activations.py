@@ -25,6 +25,29 @@ def ln_silu(x: torch.Tensor) -> torch.Tensor:
     return (s - mean) / torch.sqrt(var + _EPS)
 
 
+def ln_silu_vjp(z: torch.Tensor, err: torch.Tensor) -> torch.Tensor:
+    """Closed-form J_phi(z)^T @ err for phi = ln_silu, over the last dim.
+
+    Equals torch.autograd.grad(ln_silu(z), z, grad_outputs=err) but with no
+    autograd graph. The Trellis inner step computes exactly this VJP once per
+    chunk; the per-chunk autograd.grad was the kernel's dominant overhead.
+    `err` carries the alpha dependence (err = phi(z) - alpha with z treated as a
+    constant), and the result is linear in err so the outer backward to alpha
+    still flows.
+    """
+    sig = torch.sigmoid(z)
+    s = z * sig  # silu(z)
+    silu_grad = sig + s * (1.0 - sig)  # d silu / d z
+    mean = s.mean(dim=-1, keepdim=True)
+    var = s.var(dim=-1, unbiased=False, keepdim=True)
+    std = torch.sqrt(var + _EPS)
+    y = (s - mean) / std  # = ln_silu(z)
+    ds = (
+        err - err.mean(dim=-1, keepdim=True) - y * (err * y).mean(dim=-1, keepdim=True)
+    ) / std
+    return silu_grad * ds
+
+
 def l2_silu(x: torch.Tensor) -> torch.Tensor:
     """SiLU(x) / (||SiLU(x)|| + eps) over the last dim."""
     s = F.silu(x)

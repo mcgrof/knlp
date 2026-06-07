@@ -25,20 +25,22 @@ from typing import Optional
 
 import torch
 
+from .activations import ln_silu, ln_silu_vjp
+
 
 def run_trellis_memory(
-    write: torch.Tensor,        # [B,H,T,D]
-    read: torch.Tensor,         # [B,H,T,D] (key pass) or [B,H,T,M] (value pass)
-    alpha: torch.Tensor,        # [B,H,T,M]
-    beta: torch.Tensor,         # [B,H,T,1] or [B,H,T,M]
-    gamma: torch.Tensor,        # [H] positive
-    phi,                        # callable over last dim (M)
-    read_mode: str,             # "M_q" | "M_T_r"
+    write: torch.Tensor,  # [B,H,T,D]
+    read: torch.Tensor,  # [B,H,T,D] (key pass) or [B,H,T,M] (value pass)
+    alpha: torch.Tensor,  # [B,H,T,M]
+    beta: torch.Tensor,  # [B,H,T,1] or [B,H,T,M]
+    gamma: torch.Tensor,  # [H] positive
+    phi,  # callable over last dim (M)
+    read_mode: str,  # "M_q" | "M_T_r"
     training: bool,
-    exact_inner: bool = True,   # True: backprop through the inner VJP (2nd order,
-                                # slow/exact). False: stale-gradient (detach u from
-                                # the param graph) — the sanctioned fast mode.
-    M_init: Optional[torch.Tensor] = None,   # [B,H,M,D] carried state (generation)
+    exact_inner: bool = True,  # True: backprop through the inner VJP (2nd order,
+    # slow/exact). False: stale-gradient (detach u from
+    # the param graph) — the sanctioned fast mode.
+    M_init: Optional[torch.Tensor] = None,  # [B,H,M,D] carried state (generation)
     return_state: bool = False,
 ):
     B, H, T, D = write.shape
@@ -54,9 +56,9 @@ def run_trellis_memory(
     create_graph = training and torch.is_grad_enabled()
 
     for t in range(T):
-        w = write[:, :, t, :]                       # [B,H,D]
-        a = alpha[:, :, t, :]                        # [B,H,M]
-        b = beta[:, :, t, :]                         # [B,H,1] or [B,H,M]
+        w = write[:, :, t, :]  # [B,H,D]
+        a = alpha[:, :, t, :]  # [B,H,M]
+        b = beta[:, :, t, :]  # [B,H,1] or [B,H,M]
         # z_t = M_state @ write_t
         z = torch.einsum("bhmd,bhd->bhm", Mstate, w)  # [B,H,M]
         # u_t = J_phi(z)^T (phi(z) - alpha) via VJP.
@@ -68,11 +70,14 @@ def run_trellis_memory(
         z_req = z if exact else z.detach().requires_grad_(True)
         cg = z.requires_grad
         with torch.enable_grad():
-            pred = phi(z_req)                        # [B,H,M]
-            err = pred - a                           # alpha stays in graph
+            pred = phi(z_req)  # [B,H,M]
+            err = pred - a  # alpha stays in graph
             (u,) = torch.autograd.grad(
-                pred, z_req, grad_outputs=err,
-                create_graph=cg, retain_graph=True,
+                pred,
+                z_req,
+                grad_outputs=err,
+                create_graph=cg,
+                retain_graph=True,
             )
         if not cg:
             u = u.detach()
@@ -83,27 +88,27 @@ def run_trellis_memory(
         # readout from UPDATED state (write-before-read)
         r = read[:, :, t, :]
         if read_mode == "M_q":
-            y = torch.einsum("bhmd,bhd->bhm", Mstate, r)   # [B,H,M]
+            y = torch.einsum("bhmd,bhd->bhm", Mstate, r)  # [B,H,M]
         elif read_mode == "M_T_r":
-            y = torch.einsum("bhmd,bhm->bhd", Mstate, r)   # [B,H,D]
+            y = torch.einsum("bhmd,bhm->bhd", Mstate, r)  # [B,H,D]
         else:
             raise ValueError(read_mode)
         outs.append(y)
 
-    out = torch.stack(outs, dim=2)                   # [B,H,T,*]
+    out = torch.stack(outs, dim=2)  # [B,H,T,*]
     if return_state:
         return out, Mstate
     return out
 
 
 def run_trellis_memory_chunked(
-    write: torch.Tensor,        # [B,H,T,D]
-    read: torch.Tensor,         # [B,H,T,D] (key) or [B,H,T,M] (value)
-    alpha: torch.Tensor,        # [B,H,T,M]
-    beta: torch.Tensor,         # [B,H,T,1]  (per-head only)
-    gamma: torch.Tensor,        # [H]
+    write: torch.Tensor,  # [B,H,T,D]
+    read: torch.Tensor,  # [B,H,T,D] (key) or [B,H,T,M] (value)
+    alpha: torch.Tensor,  # [B,H,T,M]
+    beta: torch.Tensor,  # [B,H,T,1]  (per-head only)
+    gamma: torch.Tensor,  # [H]
     phi,
-    read_mode: str,             # "M_q" | "M_T_r"
+    read_mode: str,  # "M_q" | "M_T_r"
     chunk_size: int,
     refine_passes: int = 0,
 ):
@@ -153,59 +158,68 @@ def run_trellis_memory_chunked(
     outs = []
 
     def _vjp(zin, A):
-        zr = zin.detach().requires_grad_(True)    # cut M 2nd-order
+        z = zin.detach()  # cut M 2nd-order
+        if phi is ln_silu:
+            # closed-form J_phi^T(phi(z)-A): exact, no per-chunk autograd graph
+            # (this was the kernel's dominant overhead). Linear in A, so the
+            # outer backward to alpha_proj still flows.
+            return ln_silu_vjp(z, phi(z) - A)
+        zr = z.requires_grad_(True)
         cg = A.requires_grad
         with torch.enable_grad():
             pred = phi(zr)
-            err = pred - A                        # keep alpha -> alpha_proj trains
-            (uu,) = torch.autograd.grad(pred, zr, grad_outputs=err,
-                                        create_graph=cg, retain_graph=True)
+            err = pred - A  # keep alpha -> alpha_proj trains
+            (uu,) = torch.autograd.grad(
+                pred, zr, grad_outputs=err, create_graph=cg, retain_graph=True
+            )
         return uu if cg else uu.detach()
 
     for c0 in range(0, T, chunk_size):
         c1 = min(c0 + chunk_size, T)
         C = c1 - c0
-        W = write[:, :, c0:c1, :]                 # [B,H,C,D]
-        R = read[:, :, c0:c1, :]                  # [B,H,C,*]
-        A = alpha[:, :, c0:c1, :]                 # [B,H,C,M]
-        b = beta[:, :, c0:c1, :]                  # [B,H,C,1]
+        W = write[:, :, c0:c1, :]  # [B,H,C,D]
+        R = read[:, :, c0:c1, :]  # [B,H,C,*]
+        A = alpha[:, :, c0:c1, :]  # [B,H,C,M]
+        b = beta[:, :, c0:c1, :]  # [B,H,C,1]
         # cumulative inclusive decay P_t = prod_{i<=t} b_i  (per head)
-        P = torch.cumprod(b, dim=2)                           # [B,H,C,1]
+        P = torch.cumprod(b, dim=2)  # [B,H,C,1]
         tri = torch.tril(torch.ones(C, C, device=dev, dtype=dt))  # s<=t
         # inner code: stale from M0, then refine to z_t = M_{t-1} @ w_t using
         # the in-chunk segmented-product reconstruction of M_{t-1}.
-        M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)      # M0 @ w_t  (= stale z)
+        M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)  # M0 @ w_t  (= stale z)
         u = _vjp(M0W, A)
         if refine_passes > 0 and C > 1:
-            Pprev = P / (b + 1e-12)                           # P_{t-1}
-            WW = torch.einsum("bhtd,bhsd->bhts", W, W)        # w_t . w_s
+            Pprev = P / (b + 1e-12)  # P_{t-1}
+            WW = torch.einsum("bhtd,bhsd->bhts", W, W)  # w_t . w_s
             strict = torch.tril(torch.ones(C, C, device=dev, dtype=dt), diagonal=-1)
-            WWs = WW * strict.view(1, 1, C, C)                # s < t
+            WWs = WW * strict.view(1, 1, C, C)  # s < t
             for _ in range(refine_passes):
                 Util = u / (P + 1e-12)
                 corr = torch.einsum("bhts,bhsm->bhtm", WWs, Util)  # sum_{s<t}
-                z = Pprev * (M0W - g * corr)                  # z_t = M_{t-1} @ w_t
+                z = Pprev * (M0W - g * corr)  # z_t = M_{t-1} @ w_t
                 u = _vjp(z, A)
         if read_mode == "M_q":
             M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)  # [B,H,C,M]
-            S = torch.einsum("bhtd,bhsd->bhts", R, W)         # S[t,s]=q_t.w_s
+            S = torch.einsum("bhtd,bhsd->bhts", R, W)  # S[t,s]=q_t.w_s
             S = S * tri.view(1, 1, C, C)
-            Util = u / (P + 1e-12)                            # u_s / P_s
+            Util = u / (P + 1e-12)  # u_s / P_s
             term2 = torch.einsum("bhts,bhsm->bhtm", S, Util)  # sum_{s<=t}
-            y = P * (M0q - g * term2)                         # [B,H,C,M]
+            y = P * (M0q - g * term2)  # [B,H,C,M]
         elif read_mode == "M_T_r":
-            first = P * torch.einsum("bhcm,bhmd->bhcd", R, Mstate)   # P_t (r_t@M0)
-            G = torch.einsum("bhtm,bhsm->bhts", R, u)         # G[t,s]=r_t.u_s
-            Pmat = P.squeeze(-1).unsqueeze(-1) / (P.squeeze(-1).unsqueeze(-2) + 1e-12)  # [B,H,C(t),C(s)] = P_t/P_s
+            first = P * torch.einsum("bhcm,bhmd->bhcd", R, Mstate)  # P_t (r_t@M0)
+            G = torch.einsum("bhtm,bhsm->bhts", R, u)  # G[t,s]=r_t.u_s
+            Pmat = P.squeeze(-1).unsqueeze(-1) / (
+                P.squeeze(-1).unsqueeze(-2) + 1e-12
+            )  # [B,H,C(t),C(s)] = P_t/P_s
             G = G * Pmat * tri.view(1, 1, C, C)
             term2 = torch.einsum("bhts,bhsd->bhtd", G, W)
-            y = first - g * term2                             # [B,H,C,D]
+            y = first - g * term2  # [B,H,C,D]
         else:
             raise ValueError(read_mode)
         outs.append(y)
         # advance state to chunk end: M_end = P_last M0 - gamma sum (P_last/P_s) u_s w_s
-        Plast = P[:, :, -1:, :]                               # [B,H,1,1]
-        coef = (Plast / (P + 1e-12))                          # [B,H,C,1]
-        upd = torch.einsum("bhcm,bhcd->bhmd", u * coef, W)    # weighted outer sum
+        Plast = P[:, :, -1:, :]  # [B,H,1,1]
+        coef = Plast / (P + 1e-12)  # [B,H,C,1]
+        upd = torch.einsum("bhcm,bhcd->bhmd", u * coef, W)  # weighted outer sum
         Mstate = Plast * Mstate - g * upd
-    return torch.cat(outs, dim=2)                             # [B,H,T,*]
+    return torch.cat(outs, dim=2)  # [B,H,T,*]
