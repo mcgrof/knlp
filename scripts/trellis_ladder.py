@@ -4,8 +4,10 @@ Our toy 4-5M Trellis loses to Gated DeltaNet; the paper (arXiv:2512.23852)
 claims Trellis WINS at 125M-1B. That is a testable scaling hypothesis, not a
 conclusion. This driver climbs a parameter ladder with a *leading* training
 recipe (AdamW betas 0.9/0.95, wd 0.1, linear warmup + cosine decay, grad clip,
-bf16 autocast, near-Chinchilla tokens, tuned inner-lr gamma=0.1, chunk16
-operator) and trains the same four models -- dense / DeltaNet / Gated DeltaNet /
+near-Chinchilla tokens, gamma=0.1, chunk16 operator). Precision: fp32 master
+weights; pass --amp-bf16 for bf16 mixed precision on every model (dense FA2,
+fla native, Trellis bf16 inputs with fp32 decay/state -- head-on PPL-neutral).
+Trains the same four models -- dense / DeltaNet / Gated DeltaNet /
 Trellis -- at each rung on C4, reporting val PPL and the Trellis-minus-GatedDelta
 gap vs model size. If that gap closes toward 125M the scale story holds; if it
 stays flat the paper does not reproduce at the scale we can reach.
@@ -44,6 +46,16 @@ def get_tokenizer():
 
     tok = AutoTokenizer.from_pretrained("openai-community/gpt2")
     return tok
+
+
+# bf16 mixed precision for every model: dense gets FlashAttention-2, fla runs
+# native, Trellis takes bf16 inputs while its decay/state/gamma stay fp32 (mixer
+# guards those). Validated PPL-neutral for Trellis by the head-on test.
+_AMP = False
+
+
+def _amp_ctx(device):
+    return torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=_AMP)
 
 
 def stream_text(dataset: str, split: str):
@@ -107,7 +119,8 @@ def make_cfg(d_model, n_layers, seq_len, args):
         d_head=64,
         n_slots=args.n_slots,
         max_seq_len=seq_len,
-        dtype="fp32",  # master weights fp32; compute is bf16 via autocast
+        dtype="fp32",  # fp32 MASTER weights; --amp-bf16 adds bf16 autocast
+        # compute (Trellis decay/state stay fp32 via the mixer guard)
         activation="ln_silu",
         alpha_mode="linear",
         beta_mode="scalar_per_head",
@@ -133,10 +146,8 @@ def eval_ppl(model, val, micro_batch, device):
     tot_loss, tot_tok = 0.0, 0
     for i in range(0, val.size(0) - micro_batch + 1, micro_batch):
         idx = val[i : i + micro_batch].to(device)
-        # fp32 throughout: bf16 is slower + ~41% inaccurate for the Trellis
-        # memory (overhead-bound, sensitive recurrence), so the matched
-        # comparison runs fp32 for every model -- fair and accurate.
-        _, loss = model(idx, labels=idx, training=False)
+        with _amp_ctx(device):
+            _, loss = model(idx, labels=idx, training=False)
         tot_loss += loss.float().item() * idx.numel()
         tot_tok += idx.numel()
     return math.exp(min(20, tot_loss / max(1, tot_tok)))
@@ -164,7 +175,8 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
         loss_val = 0.0
         for _ in range(accum):
             idx = next(gen).to(device)
-            _, loss = model(idx, labels=idx, training=True)  # fp32 (see eval_ppl)
+            with _amp_ctx(device):
+                _, loss = model(idx, labels=idx, training=True)
             (loss / accum).backward()
             loss_val += loss.float().item() / accum
             seen_tokens += idx.numel()
@@ -217,7 +229,32 @@ def main():
     p.add_argument("--log_every", type=int, default=50)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
+    p.add_argument(
+        "--bf16-inputs",
+        action="store_true",
+        help="round Trellis write/read/alpha to bf16 (decay/state/gamma stay "
+        "fp32) -- the head-on bf16 test vs the default fp32",
+    )
+    p.add_argument(
+        "--amp-bf16",
+        action="store_true",
+        help="bf16 mixed precision for ALL models (autocast): dense->FA2, fla "
+        "native, Trellis bf16 inputs w/ fp32 decay/state. The clean unified path.",
+    )
     args = p.parse_args()
+
+    if args.bf16_inputs:
+        import trellis_lm.trellis_mixer as _tm
+
+        _tm.BF16_INPUTS = True
+        print("BF16_INPUTS=True (Trellis inputs bf16, decay/state fp32)", flush=True)
+    if args.amp_bf16:
+        global _AMP
+        _AMP = True
+        print(
+            "AMP bf16 ON: dense FA2 / fla native / Trellis bf16-in fp32-state",
+            flush=True,
+        )
 
     device = torch.device("cuda")
     print(f"device: {torch.cuda.get_device_name(0)}", flush=True)
