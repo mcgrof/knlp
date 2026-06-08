@@ -80,13 +80,21 @@ def build_linear_baseline(cfg: TrellisConfig, gated: bool):
     """
     from .model import SwiGLU, _LMBase
     from .linear_baselines_chunked import DeltaNetMixerChunked
+    from .linear_baselines_fla import FLADeltaNetMixer, HAS_FLA
+
+    def _make_mixer():
+        # fla's Triton chunked-scan is ~76-107x faster than our bmm kernel and
+        # actually faster than dense attention at T=2048 (linear O(T) beats the
+        # O(T^2) softmax). Use it on the CUDA pods; fall back to the bmm kernel
+        # on monster/prune (no fla) so the same code runs everywhere.
+        if HAS_FLA:
+            return FLADeltaNetMixer(cfg, gated)
+        return DeltaNetMixerChunked(cfg, gated)
 
     class _Block(nn.Module):
         def __init__(self):
             super().__init__()
-            # Exact chunked kernel (matches the naive per-token loop to ~1e-6,
-            # ~10-30x faster) so the matched scaling ladder is affordable.
-            self.mixer = DeltaNetMixerChunked(cfg, gated)
+            self.mixer = _make_mixer()
             self.mlp = SwiGLU(cfg.d_model, cfg.mlp_ratio, cfg.dropout)
 
         def forward(self, x, training=True):
