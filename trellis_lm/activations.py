@@ -48,6 +48,30 @@ def ln_silu_vjp(z: torch.Tensor, err: torch.Tensor) -> torch.Tensor:
     return silu_grad * ds
 
 
+def ln_silu_alpha_adjoint(z: torch.Tensor, bar_u: torch.Tensor) -> torch.Tensor:
+    """Adjoint of u = ln_silu_vjp_from_alpha(z, alpha) w.r.t. alpha (z fixed).
+
+    Since u = J_phi(z)^T (phi(z) - alpha) is linear in alpha with z constant,
+    the cotangent for alpha is bar_alpha = -(J_phi(z) @ bar_u) = -LNop(silu'(z) *
+    bar_u). Used by the fused state-evolution kernel's backward, where z is
+    detached so the only gradient from u flows to alpha.
+    """
+    work = torch.float32 if z.dtype in (torch.bfloat16, torch.float16) else z.dtype
+    z32 = z.to(work)
+    sig = torch.sigmoid(z32)
+    s = z32 * sig
+    silu_grad = sig + s * (1.0 - sig)
+    mean = s.mean(dim=-1, keepdim=True)
+    var = s.var(dim=-1, unbiased=False, keepdim=True)
+    std = torch.sqrt(var + _EPS)
+    y = (s - mean) / std
+    h = silu_grad * bar_u.to(work)
+    lnop = (
+        h - h.mean(dim=-1, keepdim=True) - y * (h * y).mean(dim=-1, keepdim=True)
+    ) / std
+    return (-lnop).to(z.dtype)
+
+
 def ln_silu_vjp_from_alpha(z: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     """Fused phi(z)=ln_silu(z) AND u = J_phi^T(phi(z)-alpha) in one pass.
 
