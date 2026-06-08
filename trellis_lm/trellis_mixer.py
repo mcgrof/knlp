@@ -15,7 +15,13 @@ import torch.nn.functional as F
 
 from .config import TrellisConfig
 from .activations import get_activation
-from .trellis_memory import run_trellis_memory, run_trellis_memory_chunked
+from .trellis_memory import (
+    run_trellis_memory,
+    run_trellis_memory_chunked,
+    trellis_chunk_decay,
+    run_trellis_memory_chunked_state_evolution,
+    run_trellis_memory_chunked_batched_readout,
+)
 
 
 class RMSNorm(nn.Module):
@@ -112,7 +118,48 @@ class TrellisMixer(nn.Module):
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
         with torch.autocast(device_type=x.device.type, enabled=False):
-            if use_chunk:
+            if use_chunk and cfg.chunk_refine == 0:
+                # Phase-1 fast path: evolve key+value states stacked on a 2x
+                # batch axis (neither depends on r), then batched readouts.
+                cs = cfg.chunk_size
+                P, rmat, _ = trellis_chunk_decay(bf, cs)
+                nC = P.shape[2]
+                write2 = (
+                    torch.stack((kf, vf), dim=0)
+                    .reshape(2 * B, self.H, T, self.D)
+                    .contiguous()
+                )
+                alpha2 = (
+                    af.unsqueeze(0)
+                    .expand(2, B, self.H, T, self.M)
+                    .reshape(2 * B, self.H, T, self.M)
+                    .contiguous()
+                )
+                P2 = (
+                    P.unsqueeze(0)
+                    .expand(2, B, self.H, nC, cs, 1)
+                    .reshape(2 * B, self.H, nC, cs, 1)
+                    .contiguous()
+                )
+                rmat2 = (
+                    rmat.unsqueeze(0)
+                    .expand(2, B, self.H, nC, cs, cs)
+                    .reshape(2 * B, self.H, nC, cs, cs)
+                    .contiguous()
+                )
+                M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
+                    write2, alpha2, None, gf, self.phi, cs, P=P2, rmat=rmat2
+                )
+                M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
+                u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
+                yhat = run_trellis_memory_chunked_batched_readout(
+                    kf, qf, M0_2[0], u_2[0], P, rmat, gf, "M_q", cs, T_out=T
+                )
+                r = self.f(yhat)
+                y = run_trellis_memory_chunked_batched_readout(
+                    vf, r, M0_2[1], u_2[1], P, rmat, gf, "M_T_r", cs, T_out=T
+                )
+            elif use_chunk:
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
                     kf, qf, af, bf, gf, self.phi, "M_q", cs, cfg.chunk_refine
