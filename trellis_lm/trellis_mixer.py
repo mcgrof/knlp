@@ -28,6 +28,13 @@ try:
 except Exception:  # pragma: no cover
     HAS_TRITON = False
 
+# Head-on bf16 test (Codex-advised recipe): round the write/read/alpha inputs to
+# bf16 while the decay (beta->P/rmat), gamma, the resident Mstate and all the
+# LN-SiLU reductions stay fp32 (the kernel accumulates in fp32 internally). This
+# is the autocast-bf16 regime for Trellis without a fully-bf16 operator. Off by
+# default; the ladder/test flips it to compare PPL vs fp32.
+BF16_INPUTS = False
+
 
 class RMSNorm(nn.Module):
     def __init__(self, d, eps=1e-6):
@@ -102,26 +109,34 @@ class TrellisMixer(nn.Module):
             k = self.k_conv(k)
         alpha = self._heads(self.alpha_proj(h), self.M)  # [B,H,T,M]
         alpha = self.alpha_act(alpha)
-        if cfg.beta_mode == "scalar_per_head":
-            beta = (
-                torch.sigmoid(self.beta_proj(h))
-                .view(B, T, self.H, 1)
-                .permute(0, 2, 1, 3)
-            )
-        else:
-            beta = torch.sigmoid(self._heads(self.beta_proj(h), self.M))  # [B,H,T,M]
-        if not cfg.forget_gate:
-            beta = torch.ones_like(beta)
-        gamma = F.softplus(self.gamma_raw)  # [H], positive
+        # Decay (beta) and inner-LR (gamma) stay fp32 regardless of any outer
+        # autocast: bf16 decay precision is poor (Codex) and the head-on bf16
+        # test kept these fp32 (q/k/v/alpha may be bf16, which it validated).
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            hf = h.float()
+            if cfg.beta_mode == "scalar_per_head":
+                beta = (
+                    torch.sigmoid(self.beta_proj(hf))
+                    .view(B, T, self.H, 1)
+                    .permute(0, 2, 1, 3)
+                )
+            else:
+                beta = torch.sigmoid(self._heads(self.beta_proj(hf), self.M))
+            if not cfg.forget_gate:
+                beta = torch.ones_like(beta)
+            gamma = F.softplus(self.gamma_raw.float())  # [H], positive
 
-        # key pass -> yhat; value pass -> y. The Trellis memory is overhead-bound
-        # and numerically sensitive (the chunk recurrence): bf16 measured BOTH
-        # slower (0.82x, overhead not FLOPs) and ~41% inaccurate here, so run it
-        # in fp32 regardless of any outer autocast. The output rejoins autocast
-        # at out_proj. Chunked stale path when chunk_size>1 and beta is per-head.
+        # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
+        # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
+        # inputs are fine -- the head-on test showed bf16 PPL ~ fp32). Output
+        # rejoins any outer autocast at out_proj. Chunked stale path when
+        # chunk_size>1 and beta is per-head.
         use_chunk = cfg.chunk_size > 1 and cfg.beta_mode == "scalar_per_head"
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
+        if BF16_INPUTS:
+            # round inputs to bf16 precision (decay bf/gf stay fp32)
+            qf, kf, vf, af = (t.bfloat16().float() for t in (qf, kf, vf, af))
         with torch.autocast(device_type=x.device.type, enabled=False):
             if use_chunk and cfg.chunk_refine == 0:
                 # Phase-1 fast path: evolve key+value states stacked on a 2x
