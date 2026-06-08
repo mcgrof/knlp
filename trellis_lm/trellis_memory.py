@@ -27,6 +27,147 @@ import torch
 
 from .activations import ln_silu, ln_silu_vjp, ln_silu_vjp_from_alpha
 
+# --- Phase-1 iso-wall-clock refactor (Codex collab): split the true-stale
+# chunked operator into a sequential state-evolution (returns per-chunk
+# start-states + u) and a batched-over-chunks readout, so the readout einsums
+# leave the Python loop and the two passes' states evolve stacked on a 2x batch
+# axis. Math is identical to run_trellis_memory_chunked(refine_passes=0); proven
+# by the fp64 A/B test in tests/test_trellis_phase1.py.
+
+
+def _pad_time(x: torch.Tensor, pad: int, value: float = 0.0) -> torch.Tensor:
+    if pad == 0:
+        return x
+    shape = list(x.shape)
+    shape[2] = pad
+    return torch.cat([x, x.new_full(shape, value)], dim=2)
+
+
+def _trellis_vjp(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    z = zin.detach()
+    if phi is ln_silu:
+        return ln_silu_vjp_from_alpha(z, alpha)
+    zr = z.requires_grad_(True)
+    cg = alpha.requires_grad
+    with torch.enable_grad():
+        pred = phi(zr)
+        err = pred - alpha
+        (u,) = torch.autograd.grad(
+            pred, zr, grad_outputs=err, create_graph=cg, retain_graph=True
+        )
+    return u if cg else u.detach()
+
+
+def trellis_chunk_decay(beta: torch.Tensor, chunk_size: int):
+    """beta [B,H,T,1] -> P [B,H,nC,C,1], rmat [B,H,nC,C,C], pad."""
+    assert beta.shape[-1] == 1, "chunked path supports per-head beta only"
+    B, H, T, _ = beta.shape
+    C = chunk_size
+    pad = (C - T % C) % C
+    bp = _pad_time(beta, pad, value=1.0)
+    nC = bp.shape[2] // C
+    b = bp.view(B, H, nC, C, 1)
+    logP = torch.cumsum(torch.log(b.clamp_min(1e-9)), dim=3)
+    P = torch.exp(logP)
+    lp = logP.squeeze(-1)
+    tri = torch.tril(torch.ones(C, C, device=beta.device, dtype=beta.dtype))
+    rmat = torch.exp((lp[..., :, None] - lp[..., None, :]).clamp_max(0.0))
+    rmat = rmat * tri.view(1, 1, 1, C, C)
+    return P, rmat, pad
+
+
+def run_trellis_memory_chunked_state_evolution(
+    write, alpha, beta, gamma, phi, chunk_size, P=None, rmat=None
+):
+    """True-stale chunk state evolution. No readout. Returns per-chunk
+    start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad."""
+    B, H, T, D = write.shape
+    M = alpha.shape[-1]
+    C = chunk_size
+    if P is None or rmat is None:
+        if beta is None:
+            raise ValueError("beta required when P/rmat are not supplied")
+        P, rmat, pad = trellis_chunk_decay(beta, C)
+    else:
+        pad = P.shape[2] * C - T
+    nC = P.shape[2]
+    Wp = _pad_time(write, pad, 0.0).contiguous().view(B, H, nC, C, D)
+    Ap = _pad_time(alpha, pad, 0.0).contiguous().view(B, H, nC, C, M)
+    Mstate = torch.zeros(B, H, M, D, device=write.device, dtype=write.dtype)
+    g = gamma.view(1, H, 1, 1)
+    N = B * H
+    M0s, us = [], []
+    for c in range(nC):
+        M0 = Mstate
+        W = Wp[:, :, c]
+        A = Ap[:, :, c]
+        Wf = W.reshape(N, C, D)
+        M0f = M0.reshape(N, M, D).to(Wf.dtype)
+        M0W = torch.bmm(Wf, M0f.transpose(1, 2)).view(B, H, C, M)
+        u = _trellis_vjp(phi, M0W, A)
+        rC = rmat[:, :, c, -1, :].unsqueeze(-1)
+        upd = torch.bmm((u * rC).reshape(N, C, M).transpose(1, 2), Wf).view(B, H, M, D)
+        Plast = P[:, :, c, -1:, :]
+        Mstate = Plast * Mstate - g * upd
+        M0s.append(M0)
+        us.append(u)
+    return torch.stack(M0s, dim=2), torch.stack(us, dim=2), P, rmat, pad
+
+
+def run_trellis_memory_chunked_batched_readout(
+    write, read, M0s, us, P, rmat, gamma, read_mode, chunk_size, T_out=None
+):
+    B, H, T, D = write.shape
+    C = chunk_size
+    nC = M0s.shape[2]
+    M = M0s.shape[-2]
+    T_out = T if T_out is None else T_out
+    pad = nC * C - T
+    Wp = _pad_time(write, pad, 0.0).contiguous().view(B, H, nC, C, D)
+    Rp = _pad_time(read, pad, 0.0).contiguous()
+    N = B * H * nC
+    Wf = Wp.reshape(N, C, D)
+    M0f = M0s.reshape(N, M, D)
+    uf = us.reshape(N, C, M)
+    Pf = P.reshape(N, C, 1)
+    rf = rmat.reshape(N, C, C)
+    gf = gamma.view(1, H, 1, 1, 1).expand(B, H, nC, 1, 1).reshape(N, 1, 1)
+    if read_mode == "M_q":
+        Rf = Rp.view(B, H, nC, C, D).reshape(N, C, D)
+        M0q = torch.bmm(Rf, M0f.transpose(1, 2).to(Rf.dtype))
+        S = torch.bmm(Rf, Wf.transpose(1, 2)) * rf
+        y = Pf * M0q - gf * torch.bmm(S, uf)
+        return y.view(B, H, nC, C, M).reshape(B, H, nC * C, M)[:, :, :T_out]
+    if read_mode == "M_T_r":
+        Rf = Rp.view(B, H, nC, C, M).reshape(N, C, M)
+        first = Pf * torch.bmm(Rf, M0f.to(Rf.dtype))
+        G = torch.bmm(Rf, uf.transpose(1, 2)) * rf
+        y = first - gf * torch.bmm(G, Wf)
+        return y.view(B, H, nC, C, D).reshape(B, H, nC * C, D)[:, :, :T_out]
+    raise ValueError(read_mode)
+
+
+def run_trellis_memory_chunked_phase1(
+    write, read, alpha, beta, gamma, phi, read_mode, chunk_size
+):
+    """True-stale equivalent of run_trellis_memory_chunked(refine_passes=0)."""
+    P, rmat, _ = trellis_chunk_decay(beta, chunk_size)
+    M0s, us, P, rmat, _ = run_trellis_memory_chunked_state_evolution(
+        write, alpha, beta, gamma, phi, chunk_size, P=P, rmat=rmat
+    )
+    return run_trellis_memory_chunked_batched_readout(
+        write,
+        read,
+        M0s,
+        us,
+        P,
+        rmat,
+        gamma,
+        read_mode,
+        chunk_size,
+        T_out=write.shape[2],
+    )
+
 
 def run_trellis_memory(
     write: torch.Tensor,  # [B,H,T,D]
@@ -153,9 +294,9 @@ def run_trellis_memory_chunked(
     B, H, T, D = write.shape
     M = alpha.shape[-1]
     dev, dt = write.device, write.dtype
-    # state accumulates over chunks -> keep it fp32 even under bf16 autocast
-    # (Codex review); the matmuls still run bf16 via autocast for the speed.
-    Mstate = torch.zeros(B, H, M, D, device=dev, dtype=torch.float32)
+    # state in the input dtype; TrellisMixer forces fp32 inputs (bf16 is a dead
+    # end here), so this is fp32 in practice and fp64 A/B tests still work.
+    Mstate = torch.zeros(B, H, M, D, device=dev, dtype=dt)
     g = gamma.view(1, H, 1, 1)
     outs = []
 
