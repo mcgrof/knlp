@@ -25,7 +25,12 @@ from typing import Optional
 
 import torch
 
-from .activations import ln_silu, ln_silu_vjp, ln_silu_vjp_from_alpha
+from .activations import (
+    ln_silu,
+    ln_silu_vjp,
+    ln_silu_vjp_from_alpha,
+    ln_silu_alpha_adjoint,
+)
 
 # --- Phase-1 iso-wall-clock refactor (Codex collab): split the true-stale
 # chunked operator into a sequential state-evolution (returns per-chunk
@@ -145,6 +150,82 @@ def run_trellis_memory_chunked_batched_readout(
         y = first - gf * torch.bmm(G, Wf)
         return y.view(B, H, nC, C, D).reshape(B, H, nC * C, D)[:, :, :T_out]
     raise ValueError(read_mode)
+
+
+class TrellisStateEvolutionFn(torch.autograd.Function):
+    """Phase-2 layer 1: the true-stale state-evolution with an explicit
+    hand-derived backward (no autograd through the chunk loop). Same forward as
+    run_trellis_memory_chunked_state_evolution; the explicit backward is the
+    foundation the Triton/HIP kernels will implement. ln_silu / chunk_size=16
+    only (the fused-kernel regime). z is detached, so u's only gradient is to
+    alpha (ln_silu_alpha_adjoint)."""
+
+    @staticmethod
+    def forward(ctx, write, alpha, P, rmat, gamma):
+        B, H, T, D = write.shape
+        M = alpha.shape[-1]
+        nC, C = P.shape[2], P.shape[3]
+        pad = nC * C - T
+        Wp = _pad_time(write, pad, 0.0).contiguous().view(B, H, nC, C, D)
+        Ap = _pad_time(alpha, pad, 0.0).contiguous().view(B, H, nC, C, M)
+        Mstate = torch.zeros(B, H, M, D, device=write.device, dtype=write.dtype)
+        g = gamma.view(1, H, 1, 1)
+        N = B * H
+        M0s, us, zs = [], [], []
+        for c in range(nC):
+            M0 = Mstate
+            W = Wp[:, :, c]
+            Wf = W.reshape(N, C, D)
+            z = torch.bmm(Wf, M0.reshape(N, M, D).transpose(1, 2)).view(B, H, C, M)
+            u = ln_silu_vjp_from_alpha(z, Ap[:, :, c])
+            rC = rmat[:, :, c, -1, :].unsqueeze(-1)
+            upd = torch.bmm((u * rC).reshape(N, C, M).transpose(1, 2), Wf).view(
+                B, H, M, D
+            )
+            Mstate = P[:, :, c, -1:, :] * Mstate - g * upd
+            M0s.append(M0)
+            us.append(u)
+            zs.append(z)
+        M0s = torch.stack(M0s, dim=2)
+        us = torch.stack(us, dim=2)
+        zs = torch.stack(zs, dim=2)
+        ctx.save_for_backward(Wp, P, rmat, gamma, M0s, us, zs)
+        ctx.dims = (B, H, T, D, M, nC, C, pad)
+        return M0s, us
+
+    @staticmethod
+    def backward(ctx, grad_M0s, grad_us):
+        Wp, P, rmat, gamma, M0s, us, zs = ctx.saved_tensors
+        B, H, T, D, M, nC, C, pad = ctx.dims
+        g4 = gamma.view(1, H, 1, 1)
+        g3 = gamma.view(1, H, 1)
+        grad_W = torch.zeros_like(Wp)
+        grad_A = torch.zeros(B, H, nC, C, M, device=Wp.device, dtype=Wp.dtype)
+        grad_P = torch.zeros_like(P)
+        grad_rmat = torch.zeros_like(rmat)
+        grad_gamma = torch.zeros(H, device=gamma.device, dtype=gamma.dtype)
+        bar_M = torch.zeros(B, H, M, D, device=Wp.device, dtype=Wp.dtype)
+        for c in reversed(range(nC)):
+            bar_M1 = bar_M
+            W = Wp[:, :, c]  # [B,H,C,D]
+            u = us[:, :, c]  # [B,H,C,M]
+            M0 = M0s[:, :, c]  # [B,H,M,D]
+            rC = rmat[:, :, c, -1, :]  # [B,H,C]
+            Plast = P[:, :, c, -1:, :]  # [B,H,1,1]
+            BW = torch.einsum("bhmd,bhcd->bhcm", bar_M1, W)  # bar_M1 @ W_s
+            UB = torch.einsum("bhcm,bhmd->bhcd", u, bar_M1)  # u_s @ bar_M1
+            grad_W[:, :, c] = -g4 * rC.unsqueeze(-1) * UB
+            bar_u_state = -g4 * rC.unsqueeze(-1) * BW
+            ub = (u * BW).sum(-1)  # <bar_M1, outer(u_s,W_s)> per s -> [B,H,C]
+            grad_rmat[:, :, c, -1, :] = -g3 * ub
+            grad_gamma += (-(rC * ub).sum(-1)).sum(0)
+            grad_P[:, :, c, -1, 0] = (bar_M1 * M0).sum((-1, -2))
+            bar_u_total = grad_us[:, :, c] + bar_u_state
+            grad_A[:, :, c] = ln_silu_alpha_adjoint(zs[:, :, c], bar_u_total)
+            bar_M = grad_M0s[:, :, c] + Plast * bar_M1
+        gw = grad_W.reshape(B, H, nC * C, D)[:, :, :T]
+        ga = grad_A.reshape(B, H, nC * C, M)[:, :, :T]
+        return gw, ga, grad_P, grad_rmat, grad_gamma
 
 
 def run_trellis_memory_chunked_phase1(
