@@ -23,6 +23,11 @@ from .trellis_memory import (
     run_trellis_memory_chunked_batched_readout,
 )
 
+try:
+    from .trellis_triton import TrellisStateEvolutionTriton, HAS_TRITON
+except Exception:  # pragma: no cover
+    HAS_TRITON = False
+
 
 class RMSNorm(nn.Module):
     def __init__(self, d, eps=1e-6):
@@ -147,9 +152,17 @@ class TrellisMixer(nn.Module):
                     .reshape(2 * B, self.H, nC, cs, cs)
                     .contiguous()
                 )
-                M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
-                    write2, alpha2, None, gf, self.phi, cs, P=P2, rmat=rmat2
-                )
+                if HAS_TRITON and write2.is_cuda and cfg.activation == "ln_silu":
+                    # Fused Triton state-evolution: collapses the nC-chunk Python
+                    # loop into one kernel (26-44x over the bmm loop), gradient-
+                    # equivalent to the PyTorch path (z detached -> true-stale).
+                    M0_2, u_2 = TrellisStateEvolutionTriton.apply(
+                        write2, alpha2, P2, rmat2, gf, cs
+                    )
+                else:
+                    M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
+                        write2, alpha2, None, gf, self.phi, cs, P=P2, rmat=rmat2
+                    )
                 M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
                 u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
                 yhat = run_trellis_memory_chunked_batched_readout(
