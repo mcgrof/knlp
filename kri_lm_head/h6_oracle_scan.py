@@ -54,28 +54,23 @@ def build_kmeans_l2(W_U: torch.Tensor, C: int, seed: int) -> torch.Tensor:
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     Xn = X / norms
-    # Full Lloyd k-means converges to balanced clusters at this vocab size;
-    # MiniBatch collapses (empty clusters + one mega-cluster). Fall back to
-    # MiniBatch only for very large vocabularies where full Lloyd is too slow.
+    # Full Lloyd k-means converges to balanced clusters; MiniBatch collapses
+    # into one mega-cluster even with reassignment, on both 50k and 128k-152k
+    # vocabularies. Use full Lloyd at every size, with cheaper init/iter counts
+    # for very large vocabularies to keep the runtime tractable.
+    from sklearn.cluster import KMeans
+
     if Xn.shape[0] <= 60000:
-        from sklearn.cluster import KMeans
-
-        km = KMeans(
-            n_clusters=C, random_state=seed, n_init=4, max_iter=300, init="k-means++"
-        )
+        n_init, max_iter = 4, 300
     else:
-        from sklearn.cluster import MiniBatchKMeans
-
-        km = MiniBatchKMeans(
-            n_clusters=C,
-            random_state=seed,
-            batch_size=16384,
-            n_init=5,
-            max_iter=500,
-            max_no_improvement=50,
-            reassignment_ratio=0.05,
-            init="k-means++",
-        )
+        n_init, max_iter = 2, 100
+    km = KMeans(
+        n_clusters=C,
+        random_state=seed,
+        n_init=n_init,
+        max_iter=max_iter,
+        init="k-means++",
+    )
     labels = km.fit_predict(Xn)
     return torch.from_numpy(labels).long()
 
