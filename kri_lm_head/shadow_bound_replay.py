@@ -47,7 +47,20 @@ from predictor_baseline import load_split, capture
 
 
 @torch.no_grad()
-def build_basis(kind, H, W_U, r, device, vchunk=16384):
+def topk_importance(H, W_U, device, K=64, hchunk=256, vchunk=16384):
+    """Per-token count of being in the dense top-K across captured positions."""
+    Hd = H.float().to(device)
+    Wt = W_U.float().to(device).t().contiguous()
+    weight = torch.zeros(W_U.shape[0], device=device)
+    for s in range(0, Hd.shape[0], hchunk):
+        lg = Hd[s : s + hchunk] @ Wt
+        tk = lg.topk(K, dim=1).indices.reshape(-1)
+        weight.scatter_add_(0, tk, torch.ones_like(tk, dtype=weight.dtype))
+    return weight
+
+
+@torch.no_grad()
+def build_basis(kind, H, W_U, r, device, lam=0.5, vchunk=16384):
     d = W_U.shape[1]
     if kind == "random":
         g = torch.randn(d, r, device=device)
@@ -61,6 +74,17 @@ def build_basis(kind, H, W_U, r, device, vchunk=16384):
         for s in range(0, W_U.shape[0], vchunk):
             Wc = W_U[s : s + vchunk].float().to(device)
             M += Wc.t() @ Wc
+    elif kind == "logit_aware":
+        # blend hidden-state directions (small rho) with importance-weighted
+        # W_U directions (small delta for tokens that actually reach the top).
+        Hd = H.float().to(device)
+        Mh = Hd.t() @ Hd
+        w = topk_importance(H, W_U, device).clamp(min=0).sqrt()  # [V]
+        Mw = torch.zeros(d, d, device=device)
+        for s in range(0, W_U.shape[0], vchunk):
+            Wc = W_U[s : s + vchunk].float().to(device) * w[s : s + vchunk].unsqueeze(1)
+            Mw += Wc.t() @ Wc
+        M = Mh / Mh.norm() + lam * Mw / Mw.norm()
     else:
         raise ValueError(kind)
     evals, evecs = torch.linalg.eigh(M)  # ascending
@@ -168,6 +192,7 @@ def main():
     ap.add_argument("--bases", default="hidden_pca,w_svd,random")
     ap.add_argument("--rs", default="16,32,64,128,256")
     ap.add_argument("--shadow-bits", type=int, default=16)
+    ap.add_argument("--laware-lambda", type=float, default=0.5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -206,7 +231,7 @@ def main():
     rs = [int(x) for x in args.rs.split(",")]
     for basis in args.bases.split(","):
         for r in rs:
-            B = build_basis(basis, H, W_U, r, device)
+            B = build_basis(basis, H, W_U, r, device, lam=args.laware_lambda)
             a, delta = shadow_precompute(W_U, B, device)
             aq_err = 0.0
             if args.shadow_bits < 16:
