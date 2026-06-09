@@ -82,8 +82,19 @@ def shadow_precompute(W_U, B, device, vchunk=16384):
     return a, delta
 
 
+def quantize_cols(a, bits):
+    """Per-column symmetric quantization of the shadow coefficients, with the
+    L2 norm of the worst-case quantization error so the bound stays valid:
+    |(a - ahat).q| <= ||a - ahat|| * ||q|| <= err_norm * ||q||."""
+    qmax = 2 ** (bits - 1) - 1
+    scale = (a.abs().amax(0) / qmax).clamp(min=1e-12)  # [r]
+    ahat = torch.round(a / scale).clamp(-qmax, qmax) * scale
+    err_norm = (scale / 2).norm().item()  # sqrt(sum_j (scale_j/2)^2)
+    return ahat, err_norm
+
+
 @torch.no_grad()
-def replay(H, W_U, B, a, delta, cof, C, device, pchunk=64):
+def replay(H, W_U, B, a, delta, cof, C, device, aq_err_norm=0.0, pchunk=64):
     V, d = W_U.shape
     sizes = torch.bincount(cof, minlength=C).float()
     Wt = W_U.float().to(device).t().contiguous()
@@ -100,7 +111,14 @@ def replay(H, W_U, B, a, delta, cof, C, device, pchunk=64):
         logits = Hc @ Wt  # [nc,V] real logits (no bias: tied / bias-free heads)
         q = Hc @ B  # [nc,r]
         rho = (Hc - q @ Bt).norm(dim=1)  # [nc]
-        U = q @ a.t() + rho.unsqueeze(1) * delta.unsqueeze(0)  # [nc,V] upper bound
+        qnorm = q.norm(dim=1)  # [nc]
+        # outward slack from shadow quantization (0 when fp16): added to every
+        # token equally, so it raises the bar the incumbent must beat.
+        U = (
+            q @ a.t()
+            + rho.unsqueeze(1) * delta.unsqueeze(0)
+            + (aq_err_norm * qnorm).unsqueeze(1)
+        )  # [nc,V] upper bound
         idx = cof.unsqueeze(0).expand(nc, V)
         ml = torch.full((nc, C), float("-inf"), device=device)
         ml.scatter_reduce_(1, idx, logits, reduce="amax", include_self=True)
@@ -149,6 +167,7 @@ def main():
     ap.add_argument("--clusters", type=int, default=256)
     ap.add_argument("--bases", default="hidden_pca,w_svd,random")
     ap.add_argument("--rs", default="16,32,64,128,256")
+    ap.add_argument("--shadow-bits", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -189,12 +208,17 @@ def main():
         for r in rs:
             B = build_basis(basis, H, W_U, r, device)
             a, delta = shadow_precompute(W_U, B, device)
-            m = replay(H, W_U, B, a, delta, cof, C, device)
-            shadow_ratio = (r + 1) / d
+            aq_err = 0.0
+            if args.shadow_bits < 16:
+                a, aq_err = quantize_cols(a, args.shadow_bits)
+            m = replay(H, W_U, B, a, delta, cof, C, device, aq_err_norm=aq_err)
+            # shadow bytes: a is V*r at shadow_bits, delta is V scalars at fp16
+            shadow_ratio = (r * (args.shadow_bits / 16.0) + 1) / d
             total_ratio = shadow_ratio + m["fetched_mean"]
             rec = {
                 "basis": basis,
                 "r": r,
+                "shadow_bits": args.shadow_bits,
                 "shadow_byteratio": shadow_ratio,
                 "total_byteratio": total_ratio,
                 **m,
