@@ -109,6 +109,7 @@ class TrellisLM(_LMBase):
 
 # --- matched dense baseline ---
 
+
 class CausalMHA(nn.Module):
     def __init__(self, cfg: TrellisConfig):
         super().__init__()
@@ -122,7 +123,7 @@ class CausalMHA(nn.Module):
         B, T, d = x.shape
         h = self.norm(x)
         qkv = self.qkv(h).view(B, T, 3, self.H, self.D).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]                 # [B,H,T,D]
+        q, k, v = qkv[0], qkv[1], qkv[2]  # [B,H,T,D]
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)
         return self.drop(self.o(y))
@@ -180,5 +181,12 @@ def build_model(cfg: TrellisConfig, kind: str):
         return DenseTransformerTiny(cfg)
     if kind in ("delta", "gated_delta"):
         from .linear_baselines import build_linear_baseline
+
         return build_linear_baseline(cfg, gated=(kind == "gated_delta"))
+    if kind in ("delta_ref", "gated_delta_ref"):
+        # Kernel-fair headline baselines: fla's REFERENCE DeltaNet/GatedDeltaNet
+        # (short conv + qk-norm + output gate), matched width to the ladder.
+        from .linear_baselines_fla_ref import build_linear_baseline_ref
+
+        return build_linear_baseline_ref(cfg, gated=(kind == "gated_delta_ref"))
     raise ValueError(kind)
