@@ -51,7 +51,7 @@ def block_centroids(cache, bs):
     NB = (T + bs - 1) // bs
     D = keys[0].shape[3]
     # global key per token = mean over layers, heads -> [T, D]
-    kt = torch.stack([k[0].mean(0) for k in keys], 0).mean(0)  # [T, D]
+    kt = torch.stack([k[0].float().mean(0) for k in keys], 0).mean(0)  # [T, D] fp32
     kt = F.normalize(kt, dim=-1)
     cent = torch.zeros(NB, D, device=kt.device)
     cnt = torch.zeros(NB, device=kt.device)
@@ -112,22 +112,50 @@ def keep_mask_from_blocks(blocks, NB, T, bs, sink_blocks, recent_blocks):
     return tok
 
 
+def slice_cache(past, kept_idx):
+    """Fresh DynamicCache keeping only kept token positions (real eviction). The
+    kept keys retain their original RoPE (baked in at prefill), so attention with
+    a true-position query stays correct."""
+    from transformers import DynamicCache
+
+    new = DynamicCache()
+    for i, layer in enumerate(past.layers):
+        new.update(
+            layer.keys[:, :, kept_idx, :].clone(),
+            layer.values[:, :, kept_idx, :].clone(),
+            i,
+        )
+    return new
+
+
 @torch.no_grad()
-def decode_with_mask(model, last_id, past, keep_tok, device, max_new=20):
-    T = keep_tok.numel()
+def decode_evicted(model, last_id, past, keep_tok, device, T, max_new=20):
+    """Evict (drop) non-kept KV, decode the answer with true position_ids so the
+    kept keys' original RoPE gives correct relative positions."""
+    kept_idx = keep_tok.nonzero(as_tuple=True)[0].to(device)
+    cur = slice_cache(past, kept_idx)
+    cache_len = int(kept_idx.numel())
     ids = last_id.view(1, 1).to(device)
-    cur = past
     gen = []
-    kept = keep_tok.to(device)
-    for step in range(max_new):
-        total = T + step + 1  # cache(T+step) + current
-        am = torch.ones(1, total, device=device)
-        am[0, :T] = kept.float()
-        out = model(ids, past_key_values=cur, attention_mask=am, use_cache=True)
+    for s in range(max_new):
+        # position_ids = TRUE position (for RoPE vs the kept keys' original RoPE);
+        # cache_position = actual slot in the evicted cache (so HF sizes the mask
+        # to the small cache, not the large true position).
+        pos = torch.tensor([[T + s]], device=device)
+        cpos = torch.tensor([cache_len + s], device=device)
+        out = model(
+            ids,
+            past_key_values=cur,
+            position_ids=pos,
+            cache_position=cpos,
+            use_cache=True,
+        )
         nxt = out.logits[0, -1].argmax()
         gen.append(int(nxt))
         cur = out.past_key_values
         ids = nxt.view(1, 1)
+    del cur, out
+    torch.cuda.empty_cache()
     return gen
 
 
@@ -179,8 +207,8 @@ def main():
         NB = (T + bs - 1) // bs
         cent, q, kt, idx = block_centroids(past, bs)
         # full baseline
-        gen = decode_with_mask(
-            model, ids[-1], past, torch.ones(T, dtype=torch.bool), device
+        gen = decode_evicted(
+            model, ids[-1], past, torch.ones(T, dtype=torch.bool), device, T
         )
         agg["full"][0][0] += correct(gen, val)
         agg["full"][0][1] += T
@@ -201,9 +229,11 @@ def main():
                 keep = keep_mask_from_blocks(
                     blocks, NB, T, bs, args.sink_blocks, args.recent_blocks
                 )
-                gen = decode_with_mask(model, ids[-1], past, keep, device)
+                gen = decode_evicted(model, ids[-1], past, keep, device, T)
                 agg[r][b][0] += correct(gen, val)
                 agg[r][b][1] += int(keep.sum())
+        del past, cent, q, kt, idx
+        torch.cuda.empty_cache()
 
     n = len(samples)
     result = {"model": args.model, "length": args.length, "eval": n, "arms": {}}
