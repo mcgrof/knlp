@@ -38,7 +38,60 @@ sys.path.insert(0, str(ROOT))
 from trellis_lm.config import TrellisConfig  # noqa: E402
 from trellis_lm.model import build_model  # noqa: E402
 
-KINDS = ["dense", "delta", "gated_delta", "trellis"]
+# Headline set uses the fla REFERENCE DeltaNet/GatedDeltaNet (short conv + qk-norm
+# + output gate) so the linear cousins are not crippled relative to Trellis. The
+# minimal-mixer kinds (delta/gated_delta) stay available as a Tier-B reference.
+KINDS = ["dense", "delta_ref", "gated_delta_ref", "trellis"]
+ALL_KINDS = ["dense", "delta", "gated_delta", "delta_ref", "gated_delta_ref", "trellis"]
+# Which kinds MUST run on the fla Triton kernel (silent bmm fallback = unfair).
+_FLA_KINDS = {"delta", "gated_delta", "delta_ref", "gated_delta_ref"}
+
+
+def verify_backends(kinds, cfg, device):
+    """Build a 1-layer probe of each kind and confirm the intended compute
+    backend is actually active, failing loudly otherwise. The unfairness risk is
+    a silent fallback: an fla kind dropping to the bmm chunked kernel (~100x
+    slower) or Trellis dropping off its fused Triton path. Returns a per-kind
+    backend descriptor dict for the manifest.
+    """
+    from trellis_lm.linear_baselines_fla import HAS_FLA
+    from trellis_lm.linear_baselines_fla_ref import HAS_FLA_REF, FLARefMixer
+    from trellis_lm.linear_baselines_fla import FLADeltaNetMixer
+    from trellis_lm.trellis_mixer import HAS_TRITON
+
+    desc = {}
+    probe_cfg = TrellisConfig.from_dict({**cfg.to_dict(), "n_layers": 1})
+    for kind in kinds:
+        m = build_model(probe_cfg, kind).to(device)
+        blk = m.blocks[0]
+        if kind == "dense":
+            # DenseTransformerTiny attends via F.scaled_dot_product_attention,
+            # which dispatches to the FlashAttention-2 kernel for bf16 on Ampere+.
+            assert hasattr(blk, "attn") or hasattr(blk, "mixer"), "dense block shape"
+            desc[kind] = "sdpa(flash-capable)"
+        elif kind in ("delta", "gated_delta"):
+            assert HAS_FLA, f"{kind}: fla Triton op missing -> bmm fallback is unfair"
+            assert isinstance(blk.mixer, FLADeltaNetMixer), f"{kind}: wrong mixer"
+            desc[kind] = "fla.ops.chunk_(gated_)delta_rule [Triton]"
+        elif kind in ("delta_ref", "gated_delta_ref"):
+            assert HAS_FLA_REF, f"{kind}: fla reference layers unavailable"
+            assert isinstance(blk.mixer, FLARefMixer), f"{kind}: wrong mixer"
+            lt = type(blk.mixer.layer).__name__
+            want = "GatedDeltaNet" if "gated" in kind else "DeltaNet"
+            assert lt == want, f"{kind}: layer is {lt}, want {want}"
+            desc[kind] = f"fla.layers.{lt} [Triton + short-conv + qk-norm]"
+        elif kind == "trellis":
+            assert HAS_TRITON, "trellis: fused Triton state-evolution kernel missing"
+            assert cfg.activation == "ln_silu", (
+                "trellis: fused Triton path needs activation=ln_silu, "
+                f"got {cfg.activation}"
+            )
+            desc[kind] = "trellis_triton fused fwd+bwd [Triton]"
+        else:
+            raise ValueError(kind)
+        del m
+        torch.cuda.empty_cache()
+    return desc
 
 
 def get_tokenizer():
@@ -133,6 +186,87 @@ def make_cfg(d_model, n_layers, seq_len, args):
     )
 
 
+def _git_commit():
+    import os
+    import subprocess
+
+    env = os.environ.get("KNLP_GIT_COMMIT")
+    if env:
+        return env.strip()
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=str(ROOT), stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        return "unknown"
+
+
+def write_manifest(out, args, kinds, backend_map, device):
+    """Per-run provenance: versions, GPU, git commit, the verified backend per
+    kind, and the full hyperparameter set. Lets anyone reproduce the exact run
+    and confirm the baselines ran on their intended (Triton) kernels."""
+    import platform
+
+    import transformers
+
+    try:
+        import triton
+
+        triton_ver = triton.__version__
+    except Exception:
+        triton_ver = "n/a"
+    try:
+        import fla
+
+        fla_ver = getattr(fla, "__version__", "installed")
+    except Exception:
+        fla_ver = "n/a"
+    manifest = {
+        "git_commit": _git_commit(),
+        "gpu": torch.cuda.get_device_name(0),
+        "versions": {
+            "torch": torch.__version__,
+            "cuda": torch.version.cuda,
+            "triton": triton_ver,
+            "transformers": transformers.__version__,
+            "fla": fla_ver,
+            "python": platform.python_version(),
+        },
+        "kinds": kinds,
+        "backends": backend_map,
+        "short_conv_kernel": "pytorch-fallback (use_fast_conv1d=False; math-identical)",
+        "precision": "fp32 master weights; bf16 autocast" if args.amp_bf16 else "fp32",
+        "hparams": {
+            k: getattr(args, k)
+            for k in (
+                "dataset",
+                "seq_len",
+                "rungs",
+                "tokens_per_param",
+                "base_lr",
+                "gamma_init",
+                "n_slots",
+                "eff_tokens",
+                "micro_batch",
+                "warmup_frac",
+                "min_lr_frac",
+                "val_rows",
+                "vocab",
+                "seed",
+                "amp_bf16",
+                "bf16_inputs",
+            )
+        },
+    }
+    fn = out / "manifest.json"
+    fn.write_text(json.dumps(manifest, indent=2))
+    print(f"  wrote manifest {fn}", flush=True)
+
+
 def lr_at(step, total, peak, warmup, min_frac):
     if step < warmup:
         return peak * (step + 1) / max(1, warmup)
@@ -191,6 +325,15 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
             )
     ppl = eval_ppl(model, val, micro, device)
     total_params = sum(p.numel() for p in model.parameters())
+    # Decode-time memory accounting: linear/Trellis keep a BOUNDED recurrent
+    # state (independent of context length); dense keeps a KV cache that GROWS
+    # with context. Report both so the comparison is on equal footing.
+    state_bytes = model.memory_state_bytes(1)
+    if kind == "dense":
+        # full-context bf16 KV cache for one sequence (K+V, all layers/heads)
+        dense_kv = 2 * cfg.n_layers * cfg.n_heads * cfg.d_head * cfg.max_seq_len * 2
+    else:
+        dense_kv = 0
     res = {
         "kind": kind,
         "val_ppl": ppl,
@@ -200,6 +343,8 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
         "total_steps": total_steps,
         "peak_lr": peak,
         "train_min": (time.time() - t0) / 60.0,
+        "state_bytes_per_seq": state_bytes,
+        "dense_kv_bytes_per_seq_at_maxlen": dense_kv,
     }
     del model, opt
     torch.cuda.empty_cache()
@@ -262,6 +407,20 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     tok = get_tokenizer()
     kinds = args.kinds.split(",")
+
+    # Kernel-fairness gate: verify every kind's compute backend BEFORE spending
+    # GPU hours, on a 1-layer probe at the first rung's width. A silent fla->bmm
+    # fallback or Trellis dropping its fused kernel would make the comparison
+    # unfair; fail loudly here instead.
+    first_rung = args.rungs.split(",")[0]
+    fd_model, fn_layers = (int(x) for x in first_rung.lower().split("x"))
+    probe_cfg = make_cfg(fd_model, fn_layers, args.seq_len, args)
+    print("verifying compute backends (kernel-fairness gate) ...", flush=True)
+    backend_map = verify_backends(kinds, probe_cfg, device)
+    for k, b in backend_map.items():
+        print(f"  {k:16s} -> {b}", flush=True)
+    write_manifest(out, args, kinds, backend_map, device)
+
     print(f"packing {args.val_rows} val rows from {args.dataset} ...", flush=True)
     val = pack_val(args.dataset, tok, args.seq_len, args.val_rows)
     print(f"  val rows: {val.size(0)}", flush=True)
