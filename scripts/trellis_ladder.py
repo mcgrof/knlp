@@ -112,28 +112,60 @@ def _amp_ctx(device):
 
 
 def stream_text(dataset: str, split: str):
-    """Yield raw text strings from a streaming corpus, re-opening forever."""
+    """Yield raw text strings from a streaming corpus, re-opening forever.
+
+    Survives transient HF network errors (the HfHubHTTPError 408 that killed an
+    earlier ladder): on a transient failure we back off and re-open the stream
+    rather than letting the exception propagate and crash the run."""
+    import time
+
     from datasets import load_dataset
 
-    while True:
+    try:
+        from huggingface_hub.errors import HfHubHTTPError
+    except Exception:  # older hub layout
+        from huggingface_hub.utils import HfHubHTTPError
+    import requests
+
+    transient = (
+        HfHubHTTPError,
+        requests.exceptions.RequestException,
+        ConnectionError,
+        OSError,
+    )
+
+    def _open():
         if dataset == "c4":
-            ds = load_dataset("allenai/c4", "en", split=split, streaming=True)
-        elif dataset == "wikitext103":
-            ds = load_dataset(
+            return load_dataset("allenai/c4", "en", split=split, streaming=True)
+        if dataset == "wikitext103":
+            return load_dataset(
                 "wikitext", "wikitext-103-raw-v1", split=split, streaming=True
             )
-        elif dataset == "pile":
-            ds = load_dataset(
+        if dataset == "pile":
+            return load_dataset(
                 "monology/pile-uncopyrighted", split=split, streaming=True
             )
-        else:
-            raise ValueError(dataset)
-        for ex in ds:
-            t = ex.get("text") or ""
-            if t:
-                yield t
-        if split != "train":
-            return  # don't loop a finite val stream
+        raise ValueError(dataset)
+
+    attempt = 0
+    while True:
+        try:
+            ds = _open()
+            for ex in ds:
+                t = ex.get("text") or ""
+                if t:
+                    yield t
+                attempt = 0  # reset backoff once data is flowing
+            if split != "train":
+                return  # don't loop a finite val stream
+        except transient as e:
+            wait = min(60, 2 ** min(attempt, 5) * 2)
+            attempt += 1
+            print(
+                f"[stream] transient {type(e).__name__} ({e}); reopen in {wait}s",
+                flush=True,
+            )
+            time.sleep(wait)
 
 
 def batch_stream(dataset, split, tok, seq_len, micro_batch):
@@ -180,6 +212,9 @@ def make_cfg(d_model, n_layers, seq_len, args):
         forget_gate=True,
         use_short_conv_qk=True,
         gamma_init=args.gamma_init,
+        beta_init=args.beta_init,  # forget-gate retention init (0.5=legacy/crippled)
+        output_path=args.output_path,
+        value_readout_act=args.value_readout_act,
         exact_inner=False,  # chunk16 stale-gradient operator (fast)
         chunk_size=16,
         chunk_refine=0,
@@ -249,6 +284,9 @@ def write_manifest(out, args, kinds, backend_map, device):
                 "tokens_per_param",
                 "base_lr",
                 "gamma_init",
+                "beta_init",
+                "output_path",
+                "value_readout_act",
                 "n_slots",
                 "eff_tokens",
                 "micro_batch",
@@ -364,6 +402,16 @@ def main():
     p.add_argument("--tokens_per_param", type=float, default=20.0)
     p.add_argument("--base_lr", type=float, default=3e-3)
     p.add_argument("--gamma_init", type=float, default=0.1)
+    p.add_argument(
+        "--beta_init",
+        type=float,
+        default=0.5,
+        help="Trellis forget-gate retention init; 0.5=legacy, ~0.99=fixed",
+    )
+    p.add_argument("--output_path", default="current", choices=["current", "paper"])
+    p.add_argument(
+        "--value_readout_act", default="none", choices=["none", "ln_silu", "l2_silu"]
+    )
     p.add_argument("--n_slots", type=int, default=64)
     p.add_argument("--eff_tokens", type=int, default=262144)
     p.add_argument("--micro_batch", type=int, default=8)
