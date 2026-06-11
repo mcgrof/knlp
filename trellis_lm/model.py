@@ -74,6 +74,11 @@ class TrellisLM(_LMBase):
         self._init_head()
         self.blocks = nn.ModuleList([TrellisBlock(cfg) for _ in range(cfg.n_layers)])
         self.apply(self._init_weights)
+        # _init_weights zeros every Linear bias; restore the forget-gate
+        # retention bias afterwards so beta_init actually takes effect.
+        for m in self.modules():
+            if isinstance(m, TrellisMixer):
+                m.reset_beta_bias()
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):

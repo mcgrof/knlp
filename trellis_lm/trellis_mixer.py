@@ -77,13 +77,26 @@ class TrellisMixer(nn.Module):
         self.alpha_proj = nn.Linear(d, H * M, bias=False)
         beta_out = H if cfg.beta_mode == "scalar_per_head" else H * M
         self.beta_proj = nn.Linear(d, beta_out, bias=True)
+        self.reset_beta_bias()
         # gamma positive per head via softplus(raw); init so softplus(raw)=gamma_init
         raw0 = math.log(math.expm1(cfg.gamma_init))
         self.gamma_raw = nn.Parameter(torch.full((H,), raw0))
         self.out_proj = nn.Linear(H * D, d, bias=False)
+        self.output_path = cfg.output_path
         self.post_gate = cfg.post_gate
-        if cfg.post_gate:
+        if cfg.output_path == "paper":
+            # Fig 1 order: Trellis -> PostNorm -> GeLU gate -> out_proj. The gate
+            # lives in the inner_dim (H*D) space, applied BEFORE out_proj.
+            self.post_norm = RMSNorm(H * D)
+            self.gate_in = nn.Linear(d, H * D, bias=False)
+        elif cfg.post_gate:
             self.gate_proj = nn.Linear(d, d, bias=False)
+        # final phi on the value-pass readout y = phi(M^T r) (paper); None=legacy
+        self.value_readout_act = (
+            get_activation(cfg.value_readout_act)
+            if cfg.value_readout_act != "none"
+            else None
+        )
         self.drop = nn.Dropout(cfg.dropout)
         self.use_conv = cfg.use_short_conv_qk
         if self.use_conv:
@@ -92,6 +105,16 @@ class TrellisMixer(nn.Module):
         self.phi = get_activation(cfg.activation)
         self.f = get_activation(cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
+
+    def reset_beta_bias(self):
+        """Set beta_proj bias = logit(beta_init) so the forget gate STARTS near
+        beta_init, not 0.5. beta~0.5 (zero bias) is ~1-token memory half-life;
+        the paper wants beta near 1 (ChatGPT-Pro suspect #2). Must be called
+        AFTER the model-wide _init_weights (which zeros all Linear biases),
+        else it is silently clobbered."""
+        with torch.no_grad():
+            b0 = math.log(self.cfg.beta_init / (1.0 - self.cfg.beta_init))
+            self.beta_proj.bias.fill_(b0)
 
     def _heads(self, x, last):  # [B,T,H*last] -> [B,H,T,last]
         B, T, _ = x.shape
@@ -206,8 +229,18 @@ class TrellisMixer(nn.Module):
                     vf, r, af, bf, gf, self.phi, "M_T_r", training, exact_inner=ex
                 )
 
+        # final phi on the value-pass readout (paper: y = phi(M^T r)). Applied
+        # over the head dim D, on the fp32 memory output before head-merge.
+        if self.value_readout_act is not None:
+            y = self.value_readout_act(y)
+
         y = y.permute(0, 2, 1, 3).reshape(B, T, self.H * self.D)  # merge heads
-        out = self.out_proj(y)
-        if self.post_gate:
-            out = out * F.silu(self.gate_proj(h))
+        if self.output_path == "paper":
+            yn = self.post_norm(y)
+            g = F.gelu(self.gate_in(h))
+            out = self.out_proj(yn * g)
+        else:
+            out = self.out_proj(y)
+            if self.post_gate:
+                out = out * F.silu(self.gate_proj(h))
         return self.drop(out)
