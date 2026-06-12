@@ -693,6 +693,51 @@ micromamba env: `source ~/bin/wl700-ml`. Script usage, the run-comparison
 pattern, and the key GPU metrics to check are in
 [docs/wandb-helpers.md](docs/wandb-helpers.md) (see also `docs/tracker.md`).
 
+## Cloud Spend Tracking & Bill Reporting
+
+Cloud GPU spend (RunPod, Verda, etc.) is tracked in `knlp-key-results` with
+**annotated git tags**, one per spend event, and `runpod-billing/` holds the
+monthly bill-justification reports. The RunPod API exposes only current balance,
+not historical billing, and scraping result directories for cost mentions is
+unreliable (it missed the employer-billed CLEAR campaign entirely once), so the
+tags are the authoritative per-event record.
+
+Tag name: `spend/<YYYY-MM-DD>/<vendor>/<slug>` (e.g.
+`spend/2026-05-23/runpod/avf-vonly-eval`). The annotated message is a
+machine-parseable key:value block read by the report generator:
+
+```
+vendor: runpod          # runpod | verda | ...
+gpu: H100-80GB
+hours: 24               # GPU-hours (optional)
+cost_usd: 72            # best estimate if credits are fungible
+project: AVF Fabric R&D
+billing: research       # research | employer  -- who the cost is charged to
+usecase: V-only KV-cache offloading eval (15 runs, 130+ cells)
+pod: i0y8s14om91zz6     # pod id (optional)
+```
+
+Create tags with the helper (run inside `knlp-key-results`):
+
+```
+runpod-billing/tag_spend.sh <date> <vendor> <slug> <gpu> <cost_usd> \
+    <billing> <project> "<usecase>" [hours] [pod] [commit]
+```
+
+The `billing:` field is the important one — it separates **employer-billed** work
+(e.g. the CLEAR ransomware reproduction) from personal **research** spend, which
+is exactly the split an expense team needs. The generator
+`runpod-billing/gen_runpod_report.py --month YYYY-MM` reads `spend/<month>*` tags
+into an authoritative ledger (totals by billing owner and by project), merges a
+curated per-month `narrative.md`, and renders a PDF. Tags are refs, not files —
+they are not picked up by `git add`; push them with `git push --tags` when
+publishing.
+
+Practice: tag each cloud run at the commit that archived its results, with the
+**actual** cost recorded at pod termination (note the cost in the run's summary
+too). Default everything to the free personal home AMD W7900 GPU; reserve cloud
+(and a `spend/*` tag) for what genuinely needs it.
+
 ## Publishing Results
 
 Before publishing experimental results in documentation, papers, or
