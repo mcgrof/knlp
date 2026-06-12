@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +101,67 @@ def _kri_config(name, block_size, local_window, topk, sink_blocks):
     ):  # the full internal KRI-Q+N curriculum (cos+value+recency+novelty)
         return KRIConfig(**common)
     raise ValueError(name)
+
+
+def capture_q_probe(model, ids, li, recent_window=16):
+    """Pre-RoPE Q probes at score layer `li`, GQA-aggregated to kv heads.
+
+    Mirrors collect_kv's pre-hook trick (k_proj on the layer's hidden states),
+    so probe and key centroids live in the same PRE-RoPE space the canonical
+    surface already uses. Returns dict with 'last' and 'recent_mean' probes,
+    each [B, Hkv, D] L2-normalised.
+    """
+    grabbed = {}
+    Hq, Hkv = model.cfg_n_head, model.cfg_n_kv_head
+    attn = list(model._attn_module_iter())[li]
+
+    def hook(module, args, kwargs):
+        hidden = kwargs.get("hidden_states")
+        if hidden is None and args:
+            hidden = args[0]
+        if hidden is None:
+            return
+        B, T, _ = hidden.shape
+        q = module.q_proj(hidden)
+        D = q.shape[-1] // Hq
+        grabbed["q"] = q.view(B, T, Hq, D).transpose(1, 2).detach()  # [B,Hq,T,D]
+
+    h = attn.register_forward_pre_hook(hook, with_kwargs=True)
+    try:
+        with torch.no_grad():
+            model.forward(ids)
+    finally:
+        h.remove()
+    q = grabbed["q"].float()
+    B, _, T, D = q.shape
+    g = Hq // Hkv
+    qn = F.normalize(q.view(B, Hkv, g, T, D), dim=-1)
+    last = F.normalize(qn[:, :, :, -1, :].mean(2), dim=-1)  # [B,Hkv,D]
+    w = min(recent_window, T)
+    recent = F.normalize(qn[:, :, :, T - w :, :].mean(dim=(2, 3)), dim=-1)
+    return {"last": last, "recent_mean": recent}
+
+
+def capture_attn_block_mass(model, ids, li, block_size):
+    """EXACT accumulated attention mass per (kv-head, block) at layer `li`,
+    from the eager-attention softmax itself (output_attentions) -- the true
+    H2O statistic, replacing the K-as-query proxy. Returns [B, Hkv, NB]."""
+    Hq, Hkv = model.cfg_n_head, model.cfg_n_kv_head
+    with torch.no_grad():
+        out = model.hf(input_ids=ids, output_attentions=True, use_cache=False)
+    a = out.attentions[li].float()  # [B,Hq,T,T] post-softmax
+    del out
+    B, _, T, _ = a.shape
+    tokmass = a.sum(dim=2)  # mass received per key token [B,Hq,T]
+    del a
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    g = Hq // Hkv
+    tokmass = tokmass.view(B, Hkv, g, T).sum(2)  # [B,Hkv,T]
+    nb = (T + block_size - 1) // block_size
+    if nb * block_size > T:
+        tokmass = torch.nn.functional.pad(tokmass, (0, nb * block_size - T))
+    return tokmass.view(B, Hkv, nb, block_size).sum(-1)  # [B,Hkv,NB]
 
 
 def _route_per_position(
@@ -325,14 +387,23 @@ def route_mask(
     lattice_kwargs=None,
     surface="canonical",
     prefill_split=0,
+    q_override=None,
+    mass_override=None,
 ):
     """Return (mask [B,H,L,L] bool, sel [B,H,K] or None) for one router.
 
     surface="canonical": one selection per (B,H) from the last-position probe
     (cheap, matches eval_canonical_kri). surface="per_position": route each
-    decode position by its own query via build_kri_mask (faithful)."""
+    decode position by its own query via build_kri_mask (faithful).
+
+    Probe-test routers (Phase A-minus part 2): `relq_recent`/`residq_recent`
+    select with `q_override` (pre-RoPE recent-Q group-mean probe, [B,H,D])
+    instead of the last-position Key; `h2o_true` ranks blocks by
+    `mass_override` (exact attention mass from the eager softmax)."""
     B, H, T, D = k.shape
     if surface == "per_position":
+        if name in ("relq_recent", "residq_recent", "h2o_true"):
+            raise ValueError(f"{name} supports the canonical surface only")
         return _route_per_position(
             name,
             k,
@@ -386,6 +457,28 @@ def route_mask(
         if sink_blocks:
             mass[:, :, :sink_blocks] = -1.0
         sel = mass.topk(keff, dim=-1).indices  # [B,H,keff]
+    elif name in ("relq_recent", "residq_recent"):
+        assert q_override is not None, f"{name} needs q_override"
+        cfg = LatticeConfig(
+            block_size=block_size,
+            local_window_tokens=local_window,
+            global_topk_blocks=topk,
+            protected_blocks=tuple(range(sink_blocks)),
+            variant="rel_only" if name == "relq_recent" else "residual_rel",
+            **(lattice_kwargs or {}),
+        )
+        sel = select_lattice_blocks(q_override.to(k.dtype), k, v, cfg, t_query=L - 1)
+    elif name == "h2o_true":
+        assert mass_override is not None, "h2o_true needs mass_override"
+        mass = mass_override.clone()
+        lf = max(0, (L - 1) - local_window) // block_size
+        keff = min(topk, max(0, lf - sink_blocks))
+        if keff == 0:
+            return base, None
+        mass[:, :, lf:] = -1.0
+        if sink_blocks:
+            mass[:, :, :sink_blocks] = -1.0
+        sel = mass.topk(keff, dim=-1).indices
     elif name == "trellis_kri":
         cfg = KRIConfig(
             block_size=block_size,
@@ -548,6 +641,27 @@ def main():
             flush=True,
         )
 
+        # Phase A-minus part 2: precompute per-batch probe/mass overrides once
+        # (they depend on the model + batch, not the router/topk).
+        needs_q = any(r in ("relq_recent", "residq_recent") for r in routers)
+        needs_mass = "h2o_true" in routers
+        overrides = []
+        if needs_q or needs_mass:
+            li0 = min(KRIConfig().score_layer_index, model.cfg_n_layer - 1)
+            for batch in cached:
+                ids = batch["input_ids"][:, :L].to(device)
+                ov = {}
+                if needs_q:
+                    ov["q"] = capture_q_probe(model, ids, li0)["recent_mean"]
+                if needs_mass:
+                    ov["mass"] = capture_attn_block_mass(
+                        model, ids, li0, args.block_size
+                    )
+                overrides.append(ov)
+            print(f"  precomputed probe/mass overrides at layer {li0}", flush=True)
+        else:
+            overrides = [{} for _ in cached]
+
         for router in routers:
             # routers with no global-block budget don't vary with topk
             budgets = topks if router not in ("full", "recent", "sink_recent") else [0]
@@ -561,7 +675,7 @@ def main():
                     "ret_decode": 0.0,
                     "kept_tok": 0.0,
                 }
-                for batch in cached:
+                for bi, batch in enumerate(cached):
                     ids = batch["input_ids"][:, :L].to(device)
                     labels = batch["labels"][:, :L].to(device)
                     full_lp, _ = _full_log_probs(model, ids, dtype, device)
@@ -582,6 +696,8 @@ def main():
                         lattice_kwargs,
                         surface=args.surface,
                         prefill_split=prefill_split,
+                        q_override=overrides[bi].get("q"),
+                        mass_override=overrides[bi].get("mass"),
                     )
                     stats = _stats_under_mask(
                         model, ids, labels, mask, full_lp, dtype, device, prefill_split
