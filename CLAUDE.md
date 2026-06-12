@@ -728,7 +728,11 @@ runpod-billing/tag_spend.sh <date> <vendor> <slug> <gpu> <cost_usd> \
 research-vs-employer split; the only real distinction is **neocloud vs the free
 local GPU**, and the local GPU carries no cost and gets no tag. So `billing` is
 uniformly `employer` and the report groups spend by **project** (CLEAR, AVF
-Fabric R&D, KV-routing, LM-head decode, …), not by billing owner. The generator
+Fabric R&D, KV-routing, LM-head decode, …), not by billing owner. In the rendered
+PDF, state once (in the intro) that the whole bill is employer-backed neocloud
+spend; never append an `(employer-billed)` parenthetical to an individual project,
+table row, or heading — singling out one project as employer-backed is confusing
+when all of it is. The generator
 `runpod-billing/gen_runpod_report.py --month YYYY-MM` reads `spend/<month>*` tags
 into an authoritative by-project ledger, merges a curated per-month
 `narrative.md`, and renders a PDF. Tags are refs, not files — they are not picked
