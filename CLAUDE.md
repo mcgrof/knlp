@@ -711,8 +711,8 @@ vendor: runpod          # runpod | verda | ...
 gpu: H100-80GB
 hours: 24               # GPU-hours (optional)
 cost_usd: 72            # best estimate if credits are fungible
-project: AVF Fabric R&D
-billing: research       # research | employer  -- who the cost is charged to
+project: AVF Fabric R&D # grouping axis for the report
+billing: employer       # always employer -- all neocloud spend is employer-paid
 usecase: V-only KV-cache offloading eval (15 runs, 130+ cells)
 pod: i0y8s14om91zz6     # pod id (optional)
 ```
@@ -724,19 +724,20 @@ runpod-billing/tag_spend.sh <date> <vendor> <slug> <gpu> <cost_usd> \
     <billing> <project> "<usecase>" [hours] [pod] [commit]
 ```
 
-The `billing:` field is the important one — it separates **employer-billed** work
-(e.g. the CLEAR ransomware reproduction) from personal **research** spend, which
-is exactly the split an expense team needs. The generator
+**All neocloud (cloud-GPU) spend is employer-billed.** There is no
+research-vs-employer split; the only real distinction is **neocloud vs the free
+local GPU**, and the local GPU carries no cost and gets no tag. So `billing` is
+uniformly `employer` and the report groups spend by **project** (CLEAR, AVF
+Fabric R&D, KV-routing, LM-head decode, …), not by billing owner. The generator
 `runpod-billing/gen_runpod_report.py --month YYYY-MM` reads `spend/<month>*` tags
-into an authoritative ledger (totals by billing owner and by project), merges a
-curated per-month `narrative.md`, and renders a PDF. Tags are refs, not files —
-they are not picked up by `git add`; push them with `git push --tags` when
-publishing.
+into an authoritative by-project ledger, merges a curated per-month
+`narrative.md`, and renders a PDF. Tags are refs, not files — they are not picked
+up by `git add`; push them with `git push --tags` when publishing.
 
 Practice: tag each cloud run at the commit that archived its results, with the
 **actual** cost recorded at pod termination (note the cost in the run's summary
-too). Default everything to the free personal home AMD W7900 GPU; reserve cloud
-(and a `spend/*` tag) for what genuinely needs it.
+too). Default everything to the free local GPU; reserve neocloud (and a `spend/*`
+tag) for what genuinely needs it.
 
 ## Publishing Results
 
