@@ -325,6 +325,37 @@ def eval_ppl(model, val, micro_batch, device):
     return math.exp(min(20, tot_loss / max(1, tot_tok)))
 
 
+def _save_ckpt(out, kind, step, model, opt, seen_tokens):
+    """Atomic resumable checkpoint (tmp + rename so a kill mid-write can't
+    corrupt the file the watchdog mirrors off)."""
+    import os
+
+    d = Path(out)
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / f"{kind}_latest.pt.tmp"
+    torch.save(
+        {
+            "step": step,
+            "seen_tokens": seen_tokens,
+            "kind": kind,
+            "model": model.state_dict(),
+            "opt": opt.state_dict(),
+        },
+        tmp,
+    )
+    os.replace(tmp, d / f"{kind}_latest.pt")
+
+
+def _log_eval(out, kind, step, ppl, seen_tokens):
+    with open(Path(out) / f"{kind}_evals.jsonl", "a") as f:
+        f.write(
+            json.dumps(
+                {"kind": kind, "step": step, "val_ppl": ppl, "seen_tokens": seen_tokens}
+            )
+            + "\n"
+        )
+
+
 def train_one(kind, cfg, gen, val, total_tokens, args, device):
     torch.manual_seed(args.seed)
     model = build_model(cfg, kind).to(device)
@@ -340,7 +371,19 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
     model.train()
     t0 = time.time()
     seen_tokens = 0
-    for step in range(total_steps):
+    start_step = 0
+    ckpt_path = Path(args.out) / f"{kind}_latest.pt"
+    if args.resume and ckpt_path.exists():
+        ck = torch.load(ckpt_path, map_location=device)
+        model.load_state_dict(ck["model"])
+        opt.load_state_dict(ck["opt"])
+        start_step = int(ck["step"])
+        seen_tokens = int(ck["seen_tokens"])
+        print(
+            f"    {kind} RESUME from step {start_step} ({seen_tokens/1e6:.0f}M tok)",
+            flush=True,
+        )
+    for step in range(start_step, total_steps):
         for g in opt.param_groups:
             g["lr"] = lr_at(step, total_steps, peak, warmup, args.min_lr_frac)
         opt.zero_grad()
@@ -361,7 +404,23 @@ def train_one(kind, cfg, gen, val, total_tokens, args, device):
                 f"({seen_tokens / 1e6:.0f}M tok, {(time.time() - t0) / 60:.1f} min)",
                 flush=True,
             )
+        if args.ckpt_every and (step + 1) % args.ckpt_every == 0:
+            _save_ckpt(args.out, kind, step + 1, model, opt, seen_tokens)
+        if args.eval_every and (step + 1) % args.eval_every == 0:
+            ppl_i = eval_ppl(model, val, micro, device)
+            model.train()
+            _log_eval(args.out, kind, step + 1, ppl_i, seen_tokens)
+            print(
+                f"    {kind} EVAL step {step + 1}: val_ppl {ppl_i:.3f} "
+                f"({seen_tokens / 1e6:.0f}M tok)",
+                flush=True,
+            )
+    # always leave a final resumable checkpoint + recorded eval on disk
+    if args.ckpt_every or args.eval_every:
+        _save_ckpt(args.out, kind, total_steps, model, opt, seen_tokens)
     ppl = eval_ppl(model, val, micro, device)
+    if args.ckpt_every or args.eval_every:
+        _log_eval(args.out, kind, total_steps, ppl, seen_tokens)
     total_params = sum(p.numel() for p in model.parameters())
     # Decode-time memory accounting: linear/Trellis keep a BOUNDED recurrent
     # state (independent of context length); dense keeps a KV cache that GROWS
@@ -420,6 +479,25 @@ def main():
     p.add_argument("--val_rows", type=int, default=128)
     p.add_argument("--vocab", type=int, default=50257)
     p.add_argument("--log_every", type=int, default=50)
+    p.add_argument(
+        "--ckpt_every",
+        type=int,
+        default=0,
+        help="save a resumable {kind}_latest.pt every N steps (0=off). A "
+        "capped/crashed pod is then resumable instead of a total loss.",
+    )
+    p.add_argument(
+        "--eval_every",
+        type=int,
+        default=0,
+        help="run val_ppl every N steps and append to {kind}_evals.jsonl "
+        "(0=off). Guarantees an evaluable number even if training is capped.",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume each kind from {out}/{kind}_latest.pt if present.",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
     p.add_argument(
