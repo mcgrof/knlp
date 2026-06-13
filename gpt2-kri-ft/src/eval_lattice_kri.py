@@ -65,6 +65,14 @@ from src.lattice_kri import (
     select_lattice_blocks,
 )  # noqa: E402
 from src.trellis_kri import score_trellis_blocks, select_trellis_blocks  # noqa: E402
+from src.kri_mask import _block_summaries  # noqa: E402
+from src.portfolio import (  # noqa: E402
+    compose,
+    parse_pf_name,
+    pf_valid,
+    qualified_pool,
+    spec_n,
+)
 from src.utils import pick_device, pick_dtype, report_device, set_seed  # noqa: E402
 
 # The default comparison set. Order = baselines, KRI family, Lattice, controls.
@@ -402,7 +410,9 @@ def route_mask(
     `mass_override` (exact attention mass from the eager softmax)."""
     B, H, T, D = k.shape
     if surface == "per_position":
-        if name in ("relq_recent", "residq_recent", "h2o_true"):
+        if name in ("relq_recent", "residq_recent", "h2o_true") or name.startswith(
+            "pf_"
+        ):
             raise ValueError(f"{name} supports the canonical surface only")
         return _route_per_position(
             name,
@@ -479,6 +489,76 @@ def route_mask(
         if sink_blocks:
             mass[:, :, :sink_blocks] = -1.0
         sel = mass.topk(keff, dim=-1).indices
+    elif name.startswith("pf_"):
+        # Phase-A protected portfolio: R reserve (multi-probe) -> H reserve
+        # (exact mass) -> D fill (residual order, relevance-qualified pool).
+        assert q_override is not None and mass_override is not None
+        ms, hs = parse_pf_name(name)
+        m_n, h_n = spec_n(ms, topk), spec_n(hs, topk)
+        NBv = (T + block_size - 1) // block_size
+        lf = max(0, (L - 1) - local_window) // block_size
+        elig = torch.zeros(NBv, dtype=torch.bool, device=device)
+        elig[:lf] = True
+        if sink_blocks:
+            elig[:sink_blocks] = False
+        NE = int(elig.sum())
+        keff = min(topk, NE)
+        if keff == 0:
+            return base, None
+        cent = _block_summaries(k, k, block_size)[0].float()  # [B,H,NB,D]
+        nbig = float("-inf")
+
+        def order_from(scores):
+            s = scores.masked_fill(~elig.view(1, 1, NBv), nbig)
+            return s.argsort(dim=-1, descending=True)[:, :, :NE]
+
+        r1o = order_from(
+            torch.einsum("bhd,bhnd->bhn", F.normalize(q_override.float(), dim=-1), cent)
+        )
+        r2o = order_from(
+            torch.einsum(
+                "bhd,bhnd->bhn", F.normalize(k[:, :, -1, :].float(), dim=-1), cent
+            )
+        )
+        ho = order_from(mass_override.float())
+        # qualified pool per head: union of each relevance list's top-2K
+        pool_mask = torch.zeros(B, H, NBv, dtype=torch.bool, device=device)
+        pool_mask.scatter_(2, r1o[:, :, : 2 * keff], True)
+        pool_mask.scatter_(2, r2o[:, :, : 2 * keff], True)
+        # D order: vectorised residual sequence over the pool (last-K probe)
+        q_resid = F.normalize(k[:, :, -1, :].float(), dim=-1)
+        chosen = torch.zeros(B, H, NBv, dtype=torch.bool, device=device)
+        d_seq = []
+        for _ in range(keff):
+            sc = torch.einsum("bhd,bhnd->bhn", F.normalize(q_resid, dim=-1), cent)
+            sc = sc.masked_fill(~(pool_mask & elig.view(1, 1, NBv)) | chosen, nbig)
+            pick = sc.argmax(dim=-1)  # [B,H]
+            d_seq.append(pick)
+            chosen.scatter_(2, pick.unsqueeze(-1), True)
+            kc = torch.gather(
+                cent, 2, pick.view(B, H, 1, 1).expand(B, H, 1, cent.shape[-1])
+            ).squeeze(2)
+            q_resid = q_resid - (q_resid * kc).sum(-1, keepdim=True) * kc
+        d_seq = torch.stack(d_seq, dim=-1)  # [B,H,keff]
+        sel_rows = []
+        for b in range(B):
+            row = []
+            for hh in range(H):
+                r1l = r1o[b, hh].tolist()
+                r2l = r2o[b, hh].tolist()
+                kept = compose(
+                    r1l,
+                    r2l,
+                    ho[b, hh].tolist(),
+                    d_seq[b, hh].tolist(),
+                    keff,
+                    m_n,
+                    h_n,
+                    pool=qualified_pool(r1l, r2l, keff),
+                )
+                row.append(kept)
+            sel_rows.append(row)
+        sel = torch.tensor(sel_rows, dtype=torch.long, device=device)  # [B,H,keff]
     elif name == "trellis_kri":
         cfg = KRIConfig(
             block_size=block_size,
@@ -643,8 +723,11 @@ def main():
 
         # Phase A-minus part 2: precompute per-batch probe/mass overrides once
         # (they depend on the model + batch, not the router/topk).
-        needs_q = any(r in ("relq_recent", "residq_recent") for r in routers)
-        needs_mass = "h2o_true" in routers
+        needs_q = any(
+            r in ("relq_recent", "residq_recent") or r.startswith("pf_")
+            for r in routers
+        )
+        needs_mass = "h2o_true" in routers or any(r.startswith("pf_") for r in routers)
         overrides = []
         if needs_q or needs_mass:
             li0 = min(KRIConfig().score_layer_index, model.cfg_n_layer - 1)
@@ -666,6 +749,8 @@ def main():
             # routers with no global-block budget don't vary with topk
             budgets = topks if router not in ("full", "recent", "sink_recent") else [0]
             for topk in budgets:
+                if router.startswith("pf_") and not pf_valid(router, topk):
+                    continue  # m+h > 0.75K -- rejected combo
                 agg = {
                     "kl_mean": 0.0,
                     "kl_decode": 0.0,
