@@ -397,6 +397,7 @@ def route_mask(
     prefill_split=0,
     q_override=None,
     mass_override=None,
+    roles_row=None,
 ):
     """Return (mask [B,H,L,L] bool, sel [B,H,K] or None) for one router.
 
@@ -410,8 +411,8 @@ def route_mask(
     `mass_override` (exact attention mass from the eager softmax)."""
     B, H, T, D = k.shape
     if surface == "per_position":
-        if name in ("relq_recent", "residq_recent", "h2o_true") or name.startswith(
-            "pf_"
+        if name in ("relq_recent", "residq_recent", "h2o_true", "headrole") or (
+            name.startswith("pf_")
         ):
             raise ValueError(f"{name} supports the canonical surface only")
         return _route_per_position(
@@ -489,12 +490,15 @@ def route_mask(
         if sink_blocks:
             mass[:, :, :sink_blocks] = -1.0
         sel = mass.topk(keff, dim=-1).indices
-    elif name.startswith("pf_"):
-        # Phase-A protected portfolio: R reserve (multi-probe) -> H reserve
-        # (exact mass) -> D fill (residual order, relevance-qualified pool).
+    elif name.startswith("pf_") or name == "headrole":
+        # Phase-A protected portfolio / Phase-B head-role router.
         assert q_override is not None and mass_override is not None
-        ms, hs = parse_pf_name(name)
-        m_n, h_n = spec_n(ms, topk), spec_n(hs, topk)
+        if name == "headrole":
+            assert roles_row is not None, "headrole needs --roles_json"
+            m_n = h_n = 0  # per-head below
+        else:
+            ms, hs = parse_pf_name(name)
+            m_n, h_n = spec_n(ms, topk), spec_n(hs, topk)
         NBv = (T + block_size - 1) // block_size
         lf = max(0, (L - 1) - local_window) // block_size
         elig = torch.zeros(NBv, dtype=torch.bool, device=device)
@@ -522,9 +526,12 @@ def route_mask(
         )
         ho = order_from(mass_override.float())
         # qualified pool per head: union of each relevance list's top-2K
-        pool_mask = torch.zeros(B, H, NBv, dtype=torch.bool, device=device)
-        pool_mask.scatter_(2, r1o[:, :, : 2 * keff], True)
-        pool_mask.scatter_(2, r2o[:, :, : 2 * keff], True)
+        if name == "headrole":
+            pool_mask = elig.view(1, 1, NBv).expand(B, H, NBv).clone()
+        else:
+            pool_mask = torch.zeros(B, H, NBv, dtype=torch.bool, device=device)
+            pool_mask.scatter_(2, r1o[:, :, : 2 * keff], True)
+            pool_mask.scatter_(2, r2o[:, :, : 2 * keff], True)
         # D order: vectorised residual sequence over the pool (last-K probe)
         q_resid = F.normalize(k[:, :, -1, :].float(), dim=-1)
         chosen = torch.zeros(B, H, NBv, dtype=torch.bool, device=device)
@@ -546,16 +553,29 @@ def route_mask(
             for hh in range(H):
                 r1l = r1o[b, hh].tolist()
                 r2l = r2o[b, hh].tolist()
-                kept = compose(
-                    r1l,
-                    r2l,
-                    ho[b, hh].tolist(),
-                    d_seq[b, hh].tolist(),
-                    keff,
-                    m_n,
-                    h_n,
-                    pool=qualified_pool(r1l, r2l, keff),
-                )
+                dl = d_seq[b, hh].tolist()
+                if name == "headrole":
+                    role = roles_row[hh]
+                    if role == "R":
+                        kept = compose(r1l, r2l, ho[b, hh].tolist(), dl, keff, keff, 0)
+                    elif role == "H":
+                        hn = max(1, -(-keff // 4))
+                        kept = compose(
+                            r1l, r2l, ho[b, hh].tolist(), dl, keff, keff - hn, hn
+                        )
+                    else:
+                        kept = dl[:keff]
+                else:
+                    kept = compose(
+                        r1l,
+                        r2l,
+                        ho[b, hh].tolist(),
+                        dl,
+                        keff,
+                        m_n,
+                        h_n,
+                        pool=qualified_pool(r1l, r2l, keff),
+                    )
                 row.append(kept)
             sel_rows.append(row)
         sel = torch.tensor(sel_rows, dtype=torch.long, device=device)  # [B,H,keff]
@@ -651,6 +671,7 @@ def parse_args():
         help="canonical: one last-position probe per (B,H); per_position: "
         "route each decode token by its own query (faithful, slower)",
     )
+    p.add_argument("--roles_json", type=str, default=None)
     p.add_argument("--output", type=str, required=True)
     p.add_argument("--seed", type=int, default=0)
     return p.parse_args()
@@ -723,11 +744,18 @@ def main():
 
         # Phase A-minus part 2: precompute per-batch probe/mass overrides once
         # (they depend on the model + batch, not the router/topk).
+        roles_all = None
+        if args.roles_json:
+            roles_all = json.load(open(args.roles_json))["roles"]
         needs_q = any(
-            r in ("relq_recent", "residq_recent") or r.startswith("pf_")
+            r in ("relq_recent", "residq_recent", "headrole") or r.startswith("pf_")
             for r in routers
         )
-        needs_mass = "h2o_true" in routers or any(r.startswith("pf_") for r in routers)
+        needs_mass = (
+            "h2o_true" in routers
+            or "headrole" in routers
+            or any(r.startswith("pf_") for r in routers)
+        )
         overrides = []
         if needs_q or needs_mass:
             li0 = min(KRIConfig().score_layer_index, model.cfg_n_layer - 1)
@@ -783,6 +811,7 @@ def main():
                         prefill_split=prefill_split,
                         q_override=overrides[bi].get("q"),
                         mass_override=overrides[bi].get("mass"),
+                        roles_row=(roles_all[li] if roles_all else None),
                     )
                     stats = _stats_under_mask(
                         model, ids, labels, mask, full_lp, dtype, device, prefill_split

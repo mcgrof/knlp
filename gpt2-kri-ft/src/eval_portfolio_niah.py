@@ -72,6 +72,9 @@ def main():
     ap.add_argument("--recent-window", type=int, default=16)
     ap.add_argument("--mass-probes", type=int, default=48)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--roles", default=None, help="head-roles JSON -> adds the headrole router"
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -92,6 +95,10 @@ def main():
     bs = args.block_size
 
     combos = [f"pf_m{m}_h{h}" for m in M_SPECS for h in H_SPECS]
+    roles = None
+    if args.roles:
+        roles = json.load(open(args.roles))["roles"]
+        combos = combos + ["headrole"]
     hits = {c: {K: [0, 0] for K in BUDGETS} for c in combos}
     for r in REFS:
         hits[r] = {K: [0, 0] for K in BUDGETS}
@@ -139,6 +146,10 @@ def main():
             pool_mask.scatter_(1, r1o[:, : 2 * Kmax], True)
             pool_mask.scatter_(1, r2o[:, : 2 * Kmax], True)
             d_seq = resid_sequence(cent, p_lastk, pool_mask, Kmax)
+            d_un = None
+            if roles is not None:
+                allmask = torch.ones(Hkv, NB, dtype=torch.bool, device=device)
+                d_un = resid_sequence(cent, p_lastk, allmask, Kmax).tolist()
 
             r1l = r1o.tolist()
             r2l = r2o.tolist()
@@ -155,6 +166,19 @@ def main():
                     ):
                         hits[r][K][0] += int(bool(ans_set & set(order[:K])))
                         hits[r][K][1] += 1
+                    if roles is not None:
+                        role = roles[li][hh]
+                        if role == "R":
+                            kept = compose(r1l[hh], r2l[hh], hl[hh], dl[hh], K, K, 0)
+                        elif role == "H":
+                            hn = max(1, -(-K // 4))
+                            kept = compose(
+                                r1l[hh], r2l[hh], hl[hh], dl[hh], K, K - hn, hn
+                            )
+                        else:
+                            kept = d_un[hh][:K]
+                        hits["headrole"][K][0] += int(bool(ans_set & set(kept)))
+                        hits["headrole"][K][1] += 1
                     for m in M_SPECS:
                         m_n = spec_n(m, K)
                         for h in H_SPECS:
