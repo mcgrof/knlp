@@ -94,10 +94,12 @@ def verify_backends(kinds, cfg, device):
     return desc
 
 
-def get_tokenizer():
+def get_tokenizer(name="openai-community/gpt2"):
     from transformers import AutoTokenizer
 
-    tok = AutoTokenizer.from_pretrained("openai-community/gpt2")
+    tok = AutoTokenizer.from_pretrained(name)
+    if tok.eos_token_id is None:
+        tok.eos_token = tok.pad_token or "<|endoftext|>"
     return tok
 
 
@@ -134,6 +136,15 @@ def stream_text(dataset: str, split: str):
         OSError,
     )
 
+    # The Pile (monology/pile-uncopyrighted) ships ONLY a train split, so we
+    # carve a DETERMINISTIC, disjoint held-out validation set from the train
+    # stream by a stable per-document hash (crc32 % 20): val = bucket 0 (~5%),
+    # train = buckets 1..19. Stable across processes (unlike Python hash()), so
+    # train and val never overlap. c4/wikitext keep their real splits.
+    import zlib
+
+    pile_holdout = dataset == "pile"
+
     def _open():
         if dataset == "c4":
             return load_dataset("allenai/c4", "en", split=split, streaming=True)
@@ -143,20 +154,27 @@ def stream_text(dataset: str, split: str):
             )
         if dataset == "pile":
             return load_dataset(
-                "monology/pile-uncopyrighted", split=split, streaming=True
+                "monology/pile-uncopyrighted", split="train", streaming=True
             )
         raise ValueError(dataset)
 
+    def _keep(text):
+        if not pile_holdout:
+            return True
+        in_val = (zlib.crc32(text.encode("utf-8", "ignore")) % 20) == 0
+        return in_val if split == "validation" else not in_val
+
+    finite_val = (split != "train") and not pile_holdout
     attempt = 0
     while True:
         try:
             ds = _open()
             for ex in ds:
                 t = ex.get("text") or ""
-                if t:
+                if t and _keep(t):
                     yield t
                 attempt = 0  # reset backoff once data is flowing
-            if split != "train":
+            if finite_val:
                 return  # don't loop a finite val stream
         except transient as e:
             wait = min(60, 2 ** min(attempt, 5) * 2)
@@ -477,7 +495,17 @@ def main():
     p.add_argument("--warmup_frac", type=float, default=0.02)
     p.add_argument("--min_lr_frac", type=float, default=0.1)
     p.add_argument("--val_rows", type=int, default=128)
-    p.add_argument("--vocab", type=int, default=50257)
+    p.add_argument(
+        "--vocab",
+        type=int,
+        default=0,
+        help="0 = take vocab from the tokenizer (recommended).",
+    )
+    p.add_argument(
+        "--tokenizer",
+        default="openai-community/gpt2",
+        help="HF tokenizer id. Pile reproduction uses EleutherAI/gpt-neox-20b.",
+    )
     p.add_argument("--log_every", type=int, default=50)
     p.add_argument(
         "--ckpt_every",
@@ -531,7 +559,13 @@ def main():
     print(f"device: {torch.cuda.get_device_name(0)}", flush=True)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    tok = get_tokenizer()
+    tok = get_tokenizer(args.tokenizer)
+    if not args.vocab:
+        # round up to a multiple of 8 for tensor-core friendliness
+        args.vocab = ((len(tok) + 7) // 8) * 8
+    print(
+        f"tokenizer {args.tokenizer} -> vocab {args.vocab} (len {len(tok)})", flush=True
+    )
     kinds = args.kinds.split(",")
 
     # Kernel-fairness gate: verify every kind's compute backend BEFORE spending
