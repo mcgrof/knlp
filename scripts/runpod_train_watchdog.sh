@@ -39,10 +39,11 @@ mirror(){  # pull checkpoints + evals + logs (best-effort, bounded)
   timeout 600 $SCP -r "root@$IP:$RDIR" "$DEST/" 2>/dev/null || true
   timeout 60  $SCP "root@$IP:$LOG" "$DEST/" 2>/dev/null || true
 }
-have_artifact(){  # 0 == an evaluable artifact is present locally
-  ls "$DEST"/*/*_evals.jsonl "$DEST"/*_evals.jsonl >/dev/null 2>&1 && \
-     [ -s "$(ls "$DEST"/*/*_evals.jsonl "$DEST"/*_evals.jsonl 2>/dev/null | head -1)" ] && return 0
-  ls "$DEST"/*/rung_*.json "$DEST"/rung_*.json >/dev/null 2>&1 && return 0
+have_artifact(){  # 0 == an evaluable artifact is present locally (any depth)
+  local f
+  f=$(find "$DEST" -name '*_evals.jsonl' -size +0c 2>/dev/null | head -1)
+  [ -n "$f" ] && return 0
+  find "$DEST" -name 'rung_*.json' 2>/dev/null | grep -q . && return 0
   return 1
 }
 terminate(){ echo "$1 $(date -u)" > "$DEST/outcome.txt"
