@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 import re
 from pathlib import Path
@@ -100,7 +101,11 @@ ROUTERS = (
     "residual_rel",
     "sink_recent",
     "random",
+    "snapkv",
 )
+
+# SnapKV max-pool kernel (1 = no pooling). Set from --snap-pool in main.
+SNAP_POOL = [7]
 
 
 def resid_sequence(cent, probe, pool_mask, steps):
@@ -155,6 +160,22 @@ def per_head_orders(model, ids_t, device, bs, recent_window, mass_probes):
         d_seq = resid_sequence(cent, p_lastk, pool_mask, Kmax)
         allmask = torch.ones(Hkv, NB, dtype=torch.bool, device=device)
         d_un = resid_sequence(cent, p_lastk, allmask, Kmax)
+        # SnapKV (Li et al. 2024): the native token-level selector. Observation
+        # window = the recent prompt queries; importance = their summed softmax
+        # attention over all keys; 1D max-pool (kernel SNAP_POOL[0]) to keep
+        # contiguous clusters; then top tokens. Post-RoPE Q vs cached post-RoPE K
+        # (the same query source as Recent-Q -- the A/B isolates scoring:
+        # attention+pool vs block-centroid cosine).
+        q_obs = ql[:, ridx, :].view(Hkv, group, len(recent), -1)  # [Hkv,g,W,D]
+        D = q_obs.shape[-1]
+        sc = torch.einsum("hgwd,htd->hgwt", q_obs, kl.float()) / math.sqrt(D)
+        imp = sc.softmax(dim=-1).sum(dim=(1, 2))  # [Hkv,T] obs-attention mass
+        pk = SNAP_POOL[0]
+        if pk > 1:
+            imp = F.max_pool1d(
+                imp.unsqueeze(1), kernel_size=pk, stride=1, padding=pk // 2
+            ).squeeze(1)[:, :T]
+        snap_order = imp.argsort(dim=-1, descending=True)  # [Hkv,T] token ranks
         lists.append(
             dict(
                 r1=r1o.tolist(),
@@ -162,6 +183,7 @@ def per_head_orders(model, ids_t, device, bs, recent_window, mass_probes):
                 h=ho.tolist(),
                 d=d_seq.tolist(),
                 d_un=d_un.tolist(),
+                snap=snap_order.tolist(),
             )
         )
     return past, T, NB, Hkv, lists
@@ -176,6 +198,24 @@ def keep_mask_for(
     out = []
     for li in range(nL):
         L = lists[li]
+        # SnapKV is TOKEN-level (no resurrection): keep the top budget=K*bs
+        # selected tokens + the sink and recent token windows -- matched RESIDENT
+        # memory to a K-block router (K*bs + sink*bs + recent_b*bs tokens).
+        if router == "snapkv":
+            km = torch.zeros(Hkv, T, dtype=torch.bool)
+            budget = K * bs
+            lo_sink, hi_recent = sink * bs, max(0, T - recent_b * bs)
+            for hh in range(Hkv):
+                # faithful SnapKV: select the top-budget important PREFIX tokens
+                # (the sink + observation/recent windows are kept separately, so
+                # spending budget on them -- where raw attention mass piles up --
+                # would starve the actual content selection).
+                sel = [t for t in L["snap"][hh] if lo_sink <= t < hi_recent][:budget]
+                km[hh, sel] = True
+                km[hh, :lo_sink] = True
+                km[hh, hi_recent:] = True
+            out.append(km.to(device))
+            continue
         keep_blocks = [None] * Hkv
         for hh in range(Hkv):
             if router == "full":
@@ -268,8 +308,12 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--roles_json", default=None)
     ap.add_argument("--routers", default=",".join(ROUTERS))
+    ap.add_argument(
+        "--snap-pool", type=int, default=7, help="SnapKV max-pool kernel (1=no pooling)"
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
+    SNAP_POOL[0] = args.snap_pool
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
