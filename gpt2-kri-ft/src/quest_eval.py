@@ -55,10 +55,30 @@ def quest_attention(
         Tp, NB, K = st["Tp"], st["NB"], st["K"]
         Hkv = key.shape[1]
         q = query[:, :, 0, :].view(Bn, Hkv, g, -1).mean(2).float()  # [B,Hkv,D]
-        if st["mode"] == "box":
+        if st["mode"] == "box":  # vanilla Quest: full axis-aligned min/max box
             qk = q.unsqueeze(2)  # [B,Hkv,1,D]
             ub = torch.where(qk > 0, qk * st["kmax"], qk * st["kmin"]).sum(-1)
-        else:  # proj
+        elif st["mode"] == "sparq":  # RocketKV/SparQ: top-k1 |q| coords, box on those
+            k1 = st["k1"]
+            sel = q.abs().topk(min(k1, q.shape[-1]), dim=-1).indices  # [B,Hkv,k1]
+            qs = torch.gather(q, 2, sel)
+            kmx = torch.gather(
+                st["kmax"].unsqueeze(0).expand(Bn, -1, -1, -1),
+                3,
+                sel.unsqueeze(2).expand(-1, -1, NB, -1),
+            )
+            kmn = torch.gather(
+                st["kmin"].unsqueeze(0).expand(Bn, -1, -1, -1),
+                3,
+                sel.unsqueeze(2).expand(-1, -1, NB, -1),
+            )
+            qe = qs.unsqueeze(2)
+            ub = torch.where(qe > 0, qe * kmx, qe * kmn).sum(-1)  # [B,Hkv,NB]
+        elif st["mode"] == "projbox":  # rotated query-PCA min/max box (ChatGPT-Pro)
+            qp = torch.einsum("bhd,hdr->bhr", q, st["B"])  # [B,Hkv,r]
+            qe = qp.unsqueeze(2)
+            ub = torch.where(qe > 0, qe * st["zmax"], qe * st["zmin"]).sum(-1)
+        else:  # proj: token-level projected max (known-dead, kept for reference)
             qp = torch.einsum("bhd,hdr->bhr", q, st["B"])  # [B,Hkv,r]
             ts = torch.einsum("bhr,htr->bht", qp, st["Bk"])  # [B,Hkv,Tp]
             ub = ts.new_full((Bn, Hkv, NB), NEG)
@@ -163,17 +183,22 @@ def fit_basis(model, tok, sents, rng, length, needles, n, bs, device, r):
     return B, nL, Hkv
 
 
-def read_bytes_per_tok(mode, K, NB, bs, d, r, sink, recent):
+def read_bytes_per_tok(mode, K, NB, bs, d, r, sink, recent, k1=0):
     """d-element reads per generated token, per (layer, kv-head). Resident memory
-    is unchanged for all (full cache kept); only read traffic differs."""
+    is unchanged for all (full cache kept); only the selection-scan + selected
+    K/V read traffic differs."""
     pages = min(K + sink + recent, NB)
     sel_kv = 2 * pages * bs * d  # K+V of selected pages
     if mode == "full":
         return 2 * NB * bs * d
-    if mode == "box":
-        return 2 * NB * d + sel_kv  # per-page min/max scan + selected K+V
-    if mode == "proj":
-        return NB * bs * r + sel_kv  # B^T k scan (r per token) + selected K+V
+    if mode == "box":  # full per-page min/max scan (2d/page)
+        return 2 * NB * d + sel_kv
+    if mode == "sparq":  # RocketKV: top-k1 coords of per-page min/max (2*k1/page)
+        return 2 * NB * k1 + sel_kv
+    if mode == "projbox":  # rotated query-PCA min/max box (2r/page)
+        return 2 * NB * r + sel_kv
+    if mode == "proj":  # token-level projected scan (r/token) -- known-dead
+        return NB * bs * r + sel_kv
     raise ValueError(mode)
 
 
@@ -188,6 +213,7 @@ def main():
     ap.add_argument("--calib", type=int, default=200)
     ap.add_argument("--eval", type=int, default=80)
     ap.add_argument("--rank", type=int, default=0, help="0 = head_dim/2")
+    ap.add_argument("--k1", type=int, default=32, help="SparQ top-k1 query coords")
     ap.add_argument("--budgets", default="8,16,32")
     ap.add_argument("--sink", type=int, default=1)
     ap.add_argument("--recent", type=int, default=8)
@@ -221,7 +247,7 @@ def main():
     )
     mods = {m.layer_idx: m for m in attn_mods(model)}
 
-    methods = ["full", "box", "proj"]
+    methods = ["full", "box", "sparq", "projbox"]
     acc = {m: {K: [0, 0] for K in budgets} for m in methods}
     n_used = 0
     for ei in range(args.eval):
@@ -248,8 +274,14 @@ def main():
             kmin.scatter_reduce_(1, t2, kl, reduce="amin", include_self=True)
             kmax.scatter_reduce_(1, t2, kl, reduce="amax", include_self=True)
             Bm = torch.stack([Bbasis[li][hh] for hh in range(Hkv)], 0)  # [Hkv,D,r]
-            Bk = torch.einsum("htd,hdr->htr", kl, Bm)  # [Hkv,T,r]
-            layer_st.append((kmin, kmax, Bm, Bk))
+            Bk = torch.einsum("htd,hdr->htr", kl, Bm)  # [Hkv,T,r]  (= z)
+            rr = Bk.shape[-1]
+            zmin = Bk.new_full((Hkv, NB, rr), 1e30)
+            zmax = Bk.new_full((Hkv, NB, rr), -1e30)
+            t2r = tok2page.view(1, T, 1).expand(Hkv, T, rr)
+            zmin.scatter_reduce_(1, t2r, Bk, reduce="amin", include_self=True)
+            zmax.scatter_reduce_(1, t2r, Bk, reduce="amax", include_self=True)
+            layer_st.append((kmin, kmax, Bm, Bk, zmin, zmax))
         n_used += 1
         for K in budgets:
             for mode in methods:
@@ -258,13 +290,16 @@ def main():
                         m._quest = None
                 else:
                     for li, m in mods.items():
-                        kmin, kmax, Bm, Bk = layer_st[li]
+                        kmin, kmax, Bm, Bk, zmin, zmax = layer_st[li]
                         m._quest = dict(
                             mode=mode,
                             kmin=kmin,
                             kmax=kmax,
                             B=Bm,
                             Bk=Bk,
+                            zmin=zmin,
+                            zmax=zmax,
+                            k1=args.k1,
                             tok2page=tok2page,
                             NB=NB,
                             K=K,
@@ -299,7 +334,9 @@ def main():
         cells, pareto = [], {}
         for K in budgets:
             a = acc[mode][K][0] / max(1, acc[mode][K][1])
-            rb = read_bytes_per_tok(mode, K, NB, bs, d, r, args.sink, args.recent)
+            rb = read_bytes_per_tok(
+                mode, K, NB, bs, d, r, args.sink, args.recent, k1=args.k1
+            )
             frac = rb / full_rb
             pareto[f"K{K}"] = {"acc": a, "read_frac": frac}
             cells.append(f"{a:.2f}@{frac*100:4.1f}%")
