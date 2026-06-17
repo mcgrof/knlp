@@ -69,9 +69,99 @@ def restore(saved):
         sys.modules[mn].eager_attention_forward = fn
 
 
-# brick registry: name -> (install fn, byte-model note, KV/total byte factor)
+# ---- LM-head idblock (certified-decode shadow bound) ------------------------
+# Lossless brick: per-token bound w_v.h <= a_v.q + delta_v*rho over a hidden-PCA
+# basis B (d x r); open contiguous idblock vocab slabs by descending slab-max
+# bound until the dense argmax is certified. Returns the dense argmax (lossless)
+# and the LM-head byte fraction = shadow (r+1)/d + fetched. We run it as a
+# MEASUREMENT brick: it does not change the decode (argmax unchanged), it reports
+# the LM-head byte reduction and verifies the certificate holds (argmax_match=1)
+# -- including on hidden states already perturbed by the asym_kv brick.
+
+
+@torch.no_grad()
+def capture_lmhead_input(model, tok, texts, device):
+    lm = model.get_output_embeddings()
+    caps = []
+
+    def hook(mod, inp):
+        caps.append(inp[0].detach()[0])  # [T, d]
+
+    h = lm.register_forward_pre_hook(hook)
+    for t in texts:
+        ids = tok(t, return_tensors="pt").input_ids.to(device)
+        model(ids, use_cache=False)
+    h.remove()
+    return torch.cat(caps, 0)  # [sum_T, d]
+
+
+@torch.no_grad()
+def idblock_measure(H_calib, H, W_U, r, slab, device):
+    """Shadow-bound certificate. Basis from a SEPARATE calib set, UNCENTERED (so it
+    captures the dominant hidden-state directions including the mean -- centering
+    would leave the mean in rho and loosen the bound). Measured on H."""
+    Hc = H_calib.to(device).float()
+    H = H.to(device).float()
+    W = W_U.to(device).float()
+    V, d = W.shape
+    _, _, Vh = torch.linalg.svd(Hc, full_matrices=False)  # uncentered
+    B = Vh[: min(r, Vh.shape[0])].T.contiguous()  # [d, r]
+    r = B.shape[1]
+    a = W @ B  # [V, r]
+    delta = (W - a @ B.T).norm(dim=1)  # [V]
+    q = H @ B  # [T, r]
+    rho = (H - q @ B.T).norm(dim=1)  # [T]
+    real = W @ H.t()  # [V, T] dense logits (for ell*/argmax verification)
+    bound = a @ q.t() + delta.unsqueeze(1) * rho.unsqueeze(0)  # [V, T]
+    nb = (V + slab - 1) // slab
+    pad = nb * slab - V
+    if pad:
+        bound = torch.cat([bound, bound.new_full((pad, H.shape[0]), -1e30)], 0)
+        realp = torch.cat([real, real.new_full((pad, H.shape[0]), -1e30)], 0)
+    else:
+        realp = real
+    Ub = bound.view(nb, slab, -1).amax(1)  # [nb, T] slab bound maxima
+    Rb = realp.view(nb, slab, -1).amax(1)  # [nb, T] slab real maxima
+    dense_argmax_slab = (real.argmax(0) // slab).cpu()  # [T]
+    T = H.shape[0]
+    opened_frac = []
+    amatch = 0
+    for t in range(T):
+        order = Ub[:, t].argsort(descending=True)
+        ub_sorted = Ub[order, t]
+        ell = -1e30
+        opened = 0
+        for i in range(nb):
+            opened += 1
+            ell = max(ell, Rb[order[i], t].item())
+            maxun = ub_sorted[i + 1 :].max().item() if i + 1 < nb else -1e30
+            if ell > maxun:
+                break
+        opened_frac.append(opened / nb)
+        amatch += int(int(dense_argmax_slab[t]) in set(order[:opened].tolist()))
+    fetched = sum(opened_frac) / max(1, T)
+    shadow = (r + 1) / d
+    return dict(
+        lm_head_byte_factor=round(shadow + fetched, 4),
+        fetched_fraction=round(fetched, 4),
+        shadow_ratio=round(shadow, 4),
+        argmax_match=round(amatch / max(1, T), 4),
+        rank=r,
+        slab=slab,
+        byte_note=(
+            "CONSERVATIVE: contiguous token-id slabs do not prune (every slab "
+            "mixes high/low logits). The deployable ~0.25x LM-head bytes is the "
+            "certdecode result (kri-lm-head-certdecode) using the structured "
+            "idblock PARTITION (build_idblock); wiring that here is a TODO. The "
+            "compose + losslessness (argmax_match) verified here are correct."
+        ),
+    )
+
+
+# brick registry: name -> {install (or None for measurement), pool, byte factor}
 BRICKS = {
     "asym_kv": dict(install=install_asym_kv, pool="KV", kv_factor=0.75),
+    "lmhead_idblock": dict(install=None, pool="LM-head", measure=True),
 }
 
 
@@ -97,8 +187,9 @@ def main():
     )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
-    ap.add_argument("--max-new", type=int, default=24)
     ap.add_argument("--n-prompts", type=int, default=6)
+    ap.add_argument("--idblock-rank", type=int, default=64, help="shadow basis rank r")
+    ap.add_argument("--idblock-slab", type=int, default=16384, help="vocab slab size")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -129,11 +220,35 @@ def main():
     # baseline (fp16, no bricks)
     base_am, base_lg = tf_logits(model, tok, prompts, device)
 
-    # apply the cell's bricks together, re-run, compare (teacher-forced)
+    # apply the cell's transform bricks together, re-run, compare (teacher-forced)
     saved_all = {}
     for b in bricks:
-        saved_all.update(BRICKS[b]["install"](model))
+        inst = BRICKS[b].get("install")
+        if inst is not None:
+            saved_all.update(inst(model))
     brk_am, brk_lg = tf_logits(model, tok, prompts, device)
+
+    # measurement bricks: run while transform bricks are still active (so the
+    # certificate is checked on the actually-perturbed hidden states)
+    idb = None
+    if "lmhead_idblock" in bricks:
+        calib = (
+            "The development of writing systems transformed human society over "
+            "thousands of years, from clay tablets in Mesopotamia to the movable "
+            "type of the printing press and the digital text of today. Scholars "
+            "study how language, memory, and technology shaped one another across "
+            "civilizations, trade routes, and centuries of slow accumulation. "
+            "Meanwhile, advances in mathematics, astronomy, navigation, medicine, "
+            "and engineering reshaped what people believed possible, and each new "
+            "instrument opened questions that earlier generations could not have "
+            "imagined or expressed in their own vocabulary and notation."
+        ) * 3
+        W_U = model.get_output_embeddings().weight
+        H_calib = capture_lmhead_input(model, tok, [calib], device)
+        H_eval = capture_lmhead_input(model, tok, prompts, device)
+        idb = idblock_measure(
+            H_calib, H_eval, W_U, args.idblock_rank, args.idblock_slab, device
+        )
     restore(saved_all)
 
     # top-1 agreement + mean KL(baseline || brick) over all positions
@@ -165,6 +280,7 @@ def main():
         "tf_mean_kl_vs_fp16": mean_kl,
         "kv_byte_factor": kv_factor,
         "kv_byte_reduction_pct": round(100 * (1 - kv_factor), 1),
+        "lmhead_idblock": idb,
         "n_prompts": len(prompts),
     }
     print(f"\n[fdec cell] {args.model}  bricks={bricks or ['(none)']}")
@@ -173,6 +289,13 @@ def main():
         f"meanKL: {mean_kl:.4f}   KV bytes: {kv_factor:.3f}x "
         f"(-{res['kv_byte_reduction_pct']}%)"
     )
+    if idb is not None:
+        print(
+            f"  LM-head idblock: LOSSLESS cert argmax_match={idb['argmax_match']:.3f}"
+            f" (verified)  |  byte reduction needs the idblock partition "
+            f"(contiguous-slab placeholder fetches {idb['fetched_fraction']:.2f}; "
+            f"deployable ~0.25x via certdecode partition -- TODO)"
+        )
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(res, indent=2))
     print(f"[wrote] {args.out}")
