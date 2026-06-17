@@ -1,18 +1,25 @@
-"""KV-cache quantization eval: can symmetric FP8-K/FP8-V be enabled on Qwen?
+"""KV-cache quantization eval: can sub-16-bit symmetric KV keys be enabled on Qwen?
 
-Our K16/V8 finding kept keys at 16 bits because post-RoPE Qwen keys have outlier
-channels that collapse under FP8. This harness measures that directly (fp16 cache vs
-K16/V8 vs symmetric K8/V8) and tests two enablers:
+Our K16/V8 finding kept keys at 16 bits because post-RoPE Qwen keys collapse under
+FP8. First-round result: symmetric E4M3 per-token keys die (ppl x123); a QK-invariant
+Hadamard rotation helps (x10.6) but does not rescue, and the per-channel oracle only
+reaches x6.2. That ruled out E4M3+per-token+Hadamard+per-channel, NOT "keys need >8
+bits". This round adds the levers that attack the OTHER axes of the failure:
 
-  1. weight-side SmoothQuant+GPTQ -- predicted NOT to help, because our SmoothQuant is
-     output-preserving (folds into RMSNorm + k_proj columns), so the keys are
-     bit-identical and FP8-K quantizes the same;
-  2. (phase 2, separate) a QK-invariant per-channel KEY smoothing -- the actual cache
-     analog of SmoothQuant: scale outlier key channels down and query channels up so
-     q.k is preserved but the keys become FP8-friendly.
+  - softmax-null centering: subtract a fixed per-(layer,kv_head) vector mu from all
+    keys. q.(k-mu) = q.k - q.mu, and q.mu is constant across the attention row, so
+    softmax (hence the fp16 output) is EXACTLY unchanged, but the centered keys lose
+    the large fixed mean/bias component that wastes FP8 range. (cf. SageAttention2
+    Q/K mean subtraction.) Qwen2.5 has QKV bias, a prime suspect.
+  - INT8 (symmetric / asymmetric-zeropoint) keys: separates "FP8-format problem"
+    (3 mantissa bits) from "8-bit problem". INT8 has ~7 uniform bits.
+  - per-channel granularity (KIVI-style oracle) and sink-token carve-out (keep the
+    first few keys in fp16) to test the attention-sink axis.
 
-FP8 = e4m3, per-token scale. Eval = teacher-forced top-1 / KL / perplexity vs the
-fp16-cache fp16-weight reference on wikitext-2 test.
+FP8 = e4m3 (max 448), INT8 = max 127. Eval = teacher-forced prefill, 4096 tokens of
+WikiText-2 test; metrics top-1 / KL(fp16||q) / perplexity ratio vs the fp16-cache
+fp16-weight reference. Centering mu here is the ORACLE (mean over the eval sequence);
+a deployable version would calibrate mu offline.
 """
 
 import argparse
@@ -35,34 +42,24 @@ from fdec_quant_eval import (  # noqa: E402
     logprobs,
 )
 
-# global read by the patched attention (HF calls eager_attention_forward as a
+# config read by the patched attention (HF calls eager_attention_forward as a
 # module-level function, so config travels via this dict)
-_KV = {"scheme": "fp16", "kchan": None}
-
-
-def _fp8_pertoken(x):
-    # per-token (per [B,H,T] vector over the head_dim) symmetric e4m3
-    scale = x.abs().amax(-1, keepdim=True).clamp(min=1e-6) / 448.0
-    return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
-
-
-def _fp8_perchannel(x):
-    # per-channel (scale over the token dim) -- the KIVI-style key ceiling. Needs all
-    # tokens, so it is an oracle/upper-bound for a streaming decode cache, not directly
-    # deployable, but it isolates whether 8-bit keys are achievable at all.
-    scale = x.abs().amax(-2, keepdim=True).clamp(min=1e-6) / 448.0
-    return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
-
+_KV = {
+    "kfmt": None,
+    "kgran": "tok",
+    "center": False,
+    "sink": 0,
+    "vq": False,
+    "had": False,
+}
 
 _HAD = {}
+_CMU = {}  # calibrated per-layer key mean: layer_idx -> [1, Hkv, 1, D]
 
 
 def _get_hadamard(n, device, dtype):
-    """Normalized Sylvester-Hadamard [n,n] (n a power of 2), orthonormal so q@H,k@H
-    preserve q.k exactly while spreading any axis-aligned outlier across all channels
-    -- the parameter-free, calibration-free cache analog of SmoothQuant (QuaRot-style).
-    Applied POST-RoPE to both q and k, so the dot product (hence the model) is
-    unchanged; only the to-be-quantized key is rotated into a range-uniform basis."""
+    """Normalized Sylvester-Hadamard [n,n] (orthonormal); q@H,k@H preserve q.k exactly
+    while spreading axis-aligned outliers (QuaRot-style)."""
     key = (n, device, str(dtype))
     if key not in _HAD:
         H = torch.ones(1, 1)
@@ -72,32 +69,61 @@ def _get_hadamard(n, device, dtype):
     return _HAD[key]
 
 
+def _fp8_pertoken(x):
+    scale = x.abs().amax(-1, keepdim=True).clamp(min=1e-6) / 448.0
+    return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
+
+
+def _quant_key(k, fmt, gran):
+    """fmt: fp8 (e4m3) | int8 (symmetric) | int8a (asymmetric zero-point).
+    gran: tok (per key vector over channels) | chan (per channel over tokens; oracle).
+    """
+    dim = -1 if gran == "tok" else -2
+    if fmt == "fp8":
+        scale = k.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 448.0
+        return (k / scale).to(torch.float8_e4m3fn).to(k.dtype) * scale
+    if fmt == "int8":
+        scale = k.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 127.0
+        return torch.round(k / scale).clamp(-127, 127) * scale
+    if fmt == "int8a":
+        mx = k.amax(dim, keepdim=True)
+        mn = k.amin(dim, keepdim=True)
+        scale = (mx - mn).clamp(min=1e-6) / 255.0
+        zp = torch.round(-mn / scale)
+        q = (torch.round(k / scale) + zp).clamp(0, 255)
+        return (q - zp) * scale
+    raise ValueError(fmt)
+
+
 def kv_quant_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):
     g = module.num_key_value_groups
-    s = _KV["scheme"]
+    c = _KV
     q, k, v = query, key, value
-    if s == "k8v8_had":
-        # rotate head_dim of q and k (orthonormal -> q.k preserved); only k is quantized
+    if c["had"]:
         Hn = _get_hadamard(k.shape[-1], k.device, k.dtype)
         q = torch.matmul(q, Hn)
         k = torch.matmul(k, Hn)
-    quant_k = s in ("k8v8", "k8v16", "k8v8_had", "k8v8_pck", "k8v8_had_pck")
-    quant_v = s in ("k16v8", "k8v8", "k8v8_had", "k8v8_pck", "k8v8_had_pck")
-    if s == "k8v8_had_pck":
-        Hn = _get_hadamard(k.shape[-1], k.device, k.dtype)
-        q = torch.matmul(q, Hn)
-        k = torch.matmul(k, Hn)
-    if quant_k:
-        k = (
-            _fp8_perchannel(k)
-            if s in ("k8v8_pck", "k8v8_had_pck")
-            else _fp8_pertoken(k)
-        )
+    if _KV.get("_collect"):
+        # record the per-(kv_head,channel) post-RoPE key mean for calibrated centering
+        _CMU[module.layer_idx] = k.mean(dim=(0, 2), keepdim=True).detach()
+    if c["center"] == "oracle":
+        # softmax-null: q.(k-mu) shifts the whole attention row by the constant q.mu,
+        # invisible to softmax. ORACLE mu = mean over the EVAL sequence (leaks future
+        # tokens into the quant error; diagnostic only).
+        k = k - k.mean(dim=-2, keepdim=True)
+    elif c["center"] == "calib":
+        # DEPLOYABLE: fixed mu calibrated on a disjoint sequence; no eval leakage.
+        k = k - _CMU[module.layer_idx]
+    if c["kfmt"] is not None and not _KV.get("_collect"):
+        kq = _quant_key(k, c["kfmt"], c["kgran"])
+        if c["sink"] > 0:
+            kq[..., : c["sink"], :] = k[..., : c["sink"], :]  # keep first keys fp16
+        k = kq
     ks = k.repeat_interleave(g, dim=1)
     vs = v.repeat_interleave(g, dim=1)
-    if quant_v:
+    if c["vq"]:
         vs = _fp8_pertoken(vs)
     aw = torch.matmul(q, ks.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -122,23 +148,34 @@ def install_kv(model):
     return saved
 
 
-# cell -> (kv scheme, weight transform)
+def _cfg(kfmt=None, kgran="tok", center="", sink=0, vq=False, had=False, wq=None):
+    return dict(kfmt=kfmt, kgran=kgran, center=center, sink=sink, vq=vq, had=had, wq=wq)
+
+
+# cell -> config. center: "" | "oracle" (eval-seq mean, leaky) | "calib" (deployable)
 CELLS = {
-    "fp16": ("fp16", None),
-    "k16v8": ("k16v8", None),
-    "k8v16": ("k8v16", None),  # isolate: keys-only FP8 (Codex ablation)
-    "k8v8": ("k8v8", None),
-    "k8v8_w_sqgptq": ("k8v8", "sqgptq"),
-    "k8v8_had": ("k8v8_had", None),  # Hadamard-rotated keys (the cache analog)
-    "k8v8_pck": ("k8v8_pck", None),  # per-channel key FP8 (KIVI-style ceiling)
-    "k8v8_had_pck": ("k8v8_had_pck", None),  # Hadamard + per-channel keys
+    "fp16": _cfg(),
+    "k16v8": _cfg(vq=True),  # keys fp16, values fp8 (the deployable bar)
+    "k8v8": _cfg(kfmt="fp8", vq=True),  # symmetric e4m3 per-token (collapses)
+    "k8v8_pck": _cfg(kfmt="fp8", kgran="chan", vq=True),  # per-channel oracle
+    "ki8v8": _cfg(kfmt="int8", vq=True),  # INT8 sym per-token (the real enabler)
+    "ki8v8a": _cfg(kfmt="int8a", vq=True),  # INT8 asymmetric (zero-point)
+    "ki8v8_pck": _cfg(kfmt="int8", kgran="chan", vq=True),
+    # oracle centering (leaky -- diagnostic)
+    "k8v8_center": _cfg(kfmt="fp8", center="oracle", vq=True),
+    "ki8v8_center": _cfg(kfmt="int8", center="oracle", vq=True),
+    # DEPLOYABLE calibrated centering (no eval leakage)
+    "k8v8_ccenter": _cfg(kfmt="fp8", center="calib", vq=True),
+    "ki8v8_ccenter": _cfg(kfmt="int8", center="calib", vq=True),
+    "ki8v8_ccenter_pck": _cfg(kfmt="int8", kgran="chan", center="calib", vq=True),
+    "k8v8_sink4": _cfg(kfmt="fp8", sink=4, vq=True),  # keep first 4 keys fp16
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--cells", default="fp16,k16v8,k8v8,k8v8_w_sqgptq")
+    ap.add_argument("--cells", default="fp16,k16v8,k8v8,k8v8_center,ki8v8")
     ap.add_argument("--eval-tokens", type=int, default=4096)
     ap.add_argument("--gptq-calib-tokens", type=int, default=16384)
     ap.add_argument("--gptq-calib-source", default="c4", choices=["wikitext", "c4"])
@@ -157,38 +194,55 @@ def main():
     print(f"[kv-eval] {args.model}  positions={inp.shape[1]}")
 
     cells = [c.strip() for c in args.cells.split(",") if c.strip()]
-    need_w = any(CELLS[c][1] for c in cells)
+    need_w = any(CELLS[c]["wq"] for c in cells)
+    need_calib_mu = any(CELLS[c]["center"] == "calib" for c in cells)
     gptq_calib = (
         load_gptq_calib(tok, args.gptq_calib_tokens, args.gptq_calib_source)
         if need_w
         else None
     )
 
-    # fp16 reference: fp16 cache + fp16 weights
+    def set_cfg(cfg):
+        for k in ("kfmt", "kgran", "center", "sink", "vq", "had", "wq"):
+            _KV[k] = cfg[k]
+
+    # fp16 reference
     model = load_model(args.model, device, args.dtype)
     install_kv(model)
-    _KV["scheme"] = "fp16"
+    set_cfg(CELLS["fp16"])
     ref_lp = F.log_softmax(logprobs(model, inp, device), dim=-1).to("cpu").half()
+    # calibrate mu on a DISJOINT C4 sequence (no eval leakage) while this model is up
+    if need_calib_mu:
+        calib_ids = (
+            tok(load_gptq_calib(tok, args.eval_tokens, "c4"), return_tensors="pt")
+            .input_ids[:, : args.eval_tokens]
+            .to(device)
+        )
+        _CMU.clear()
+        _KV["_collect"] = True
+        with torch.no_grad():
+            model(calib_ids)
+        _KV["_collect"] = False
+        print(f"[calib] mu collected for {len(_CMU)} layers")
     del model
     torch.cuda.empty_cache()
 
     rows = []
     for cell in cells:
-        scheme, wq = CELLS[cell]
+        cfg = CELLS[cell]
         model = load_model(args.model, device, args.dtype)
-        if wq == "sqgptq":
+        if cfg["wq"] == "sqgptq":
             smoothquant_transform(model, tok, gptq_calib, args.sq_alpha, device)
             gptq_quantize_model(model, tok, gptq_calib, 8, 0.0, 128, device=device)
         install_kv(model)
-        _KV["scheme"] = scheme
+        set_cfg(cfg)
         lp = logprobs(model, inp, device).to("cpu")
         m = eval_against_ref(lp, ref_lp, gold)
         m["cell"] = cell
         rows.append(m)
         print(
-            f"  {cell:<16} kv={scheme:<6} w={wq or 'fp16':<6} "
-            f"top1={m['top1']:.3f} top5={m['top5']:.3f} KL={m['meanKL']:.4f} "
-            f"pplq={m['ppl_q']:.3f} pplratio={m['ppl_ratio']:.3f}"
+            f"  {cell:<18} top1={m['top1']:.3f} top5={m['top5']:.3f} "
+            f"KL={m['meanKL']:.4f} pplq={m['ppl_q']:.3f} pplratio={m['ppl_ratio']:.3f}"
         )
         del model
         torch.cuda.empty_cache()
