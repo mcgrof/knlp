@@ -46,31 +46,30 @@ def latency_ms(total_mb):
 def assess(ctx):
     w, kv, lmh = W_MB, kv_mb(ctx), LMH_MB
     base = w + kv + lmh
-    rows = [("baseline (bf16)", w, kv, lmh)]
-    rows.append(("+ weights int8", w * F_W_INT8, kv, lmh))
-    rows.append(("+ KV K8/V8 pre-bias", w * F_W_INT8, kv * F_KV_K8V8, lmh))
-    rows.append(
-        ("+ LM-head idblock", w * F_W_INT8, kv * F_KV_K8V8, lmh * F_LMH_IDBLOCK)
-    )
+    wi = w * F_W_INT8
+    # the two KV rows are ALTERNATIVES (pick one), shown for comparison
+    rows = [
+        ("baseline (bf16)", w, kv, lmh),
+        ("+ weights int8", wi, kv, lmh),
+        ("+ KV K16/V8 (alt)", wi, kv * F_KV_K16V8, lmh),
+        ("+ KV K8/V8 pre-bias (alt)", wi, kv * F_KV_K8V8, lmh),
+        ("+ LM-head idblock", wi, kv * F_KV_K8V8, lmh * F_LMH_IDBLOCK),
+    ]
     print(f"\n=== {MODEL}  ctx={ctx}  (KV pool = {kv:,.0f} MB) ===")
     print(
-        f"{'cumulative brick':<22}{'W':>8}{'KV':>8}{'LMh':>7}"
+        f"{'cumulative brick':<27}{'W':>8}{'KV':>8}{'LMh':>7}"
         f"{'total MB':>10}{'lat ms':>8}{'vs base':>9}"
     )
-    print("-" * 72)
+    print("-" * 77)
     for name, a, b, c in rows:
         tot = a + b + c
         print(
-            f"{name:<22}{a:>8.0f}{b:>8.0f}{c:>7.0f}{tot:>10.0f}"
+            f"{name:<27}{a:>8.0f}{b:>8.0f}{c:>7.0f}{tot:>10.0f}"
             f"{latency_ms(tot):>8.2f}{(tot/base-1)*100:>8.1f}%"
         )
-    # alt: the older K16/V8 KV brick, for comparison at this ctx
-    altkv = kv * F_KV_K16V8
-    alt = W_MB * F_W_INT8 + altkv + LMH_MB
     print(
-        f"  (for ref: weights int8 + KV K16/V8 = {alt:,.0f} MB / "
-        f"{latency_ms(alt):.2f} ms; pre-bias K8/V8 saves the extra "
-        f"{altkv - kv*F_KV_K8V8:,.0f} MB of KV)"
+        "  (the two KV rows are alternatives; pre-bias K8/V8 saves an extra "
+        f"{kv*F_KV_K16V8 - kv*F_KV_K8V8:,.0f} MB of KV vs K16/V8 here)"
     )
 
 
@@ -81,6 +80,27 @@ def main():
         print(f"  {k:<20} {v}")
     for ctx in (4096, 32768, 131072):
         assess(ctx)
+    # context sweep: roofline ms (and -%) per ctx, with the K16/V8 column added
+    print("\n=== context sweep (roofline ms, % vs baseline) ===")
+    print(
+        f"{'ctx':>8}{'baseline':>11}{'+w int8':>13}{'+KV K16/V8':>15}"
+        f"{'+KV K8/V8':>15}"
+    )
+    print("-" * 62)
+    for ctx in (4096, 32768, 131072):
+        kv = kv_mb(ctx)
+        base = W_MB + kv + LMH_MB
+        wi = W_MB * F_W_INT8 + kv + LMH_MB
+        k16 = W_MB * F_W_INT8 + kv * F_KV_K16V8 + LMH_MB
+        k8 = W_MB * F_W_INT8 + kv * F_KV_K8V8 + LMH_MB
+
+        def cell(x):
+            return f"{latency_ms(x):.2f} ({(x/base-1)*100:+.0f}%)"
+
+        print(
+            f"{ctx:>8}{latency_ms(base):>10.2f} {cell(wi):>12}{cell(k16):>15}"
+            f"{cell(k8):>15}"
+        )
     print(
         "\nNote: roofline = bytes/HBM, a memory-bound projection. Weights dominate at "
         "short ctx (int8 is the big lever); KV grows with ctx and pre-bias K8/V8 "
