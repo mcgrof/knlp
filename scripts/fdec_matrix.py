@@ -73,7 +73,7 @@ def compute_act_scales(model, tok, calib, lins, lm, device):
 
 
 def fim_fake_quant(
-    model, tok, calib, base_bits, upgrade_frac, group, awq_alpha, device
+    model, tok, calib, base_bits, upgrade_frac, group, awq_alpha, device, pin_proj=()
 ):
     """FIM-guided weight quant: diagonal Fisher per linear layer (grad^2 on a calib
     pass), upgrade the most-sensitive upgrade_frac of layers to int8 and quantize the
@@ -101,6 +101,15 @@ def fim_fake_quant(
     model.zero_grad(set_to_none=True)
     ranked = sorted(fisher, key=lambda k: fisher[k], reverse=True)
     upgrade = set(ranked[: int(upgrade_frac * len(ranked))])
+    # Asym-calibration knowledge: our K16/V8 finding says key (and value)
+    # projections are the fragile ones. Force them to int8 regardless of where
+    # the Fisher map landed them -- 'key-aware' weight quant on top of FIM. Nearly
+    # free in bytes: GQA already shrank k_proj/v_proj (e.g. [512,3584] vs q's
+    # [3584,3584] on Qwen2.5-7B).
+    if pin_proj:
+        for n in fisher:
+            if any(n.endswith(p) for p in pin_proj):
+                upgrade.add(n)
     orig = {}
     tot_bits = tot_w = 0
     with torch.no_grad():
@@ -333,6 +342,12 @@ def main():
     ap.add_argument(
         "--fim-awq-alpha", type=float, default=0.0, help="AWQ act-scale; 0=off"
     )
+    ap.add_argument(
+        "--fim-pin-proj",
+        default="",
+        help="comma list of proj suffixes forced to int8 from asym-calib knowledge "
+        "(e.g. k_proj,v_proj for key-aware quant); empty=off",
+    )
     ap.add_argument("--fim-base-bits", type=int, default=4)
     ap.add_argument("--fim-upgrade-frac", type=float, default=0.2)
     ap.add_argument(
@@ -386,6 +401,7 @@ def main():
                 "Caching frequently accessed data reduces database latency.",
             ]
         )
+        pin_proj = tuple(p for p in args.fim_pin_proj.split(",") if p)
         fim_orig, weight_f = fim_fake_quant(
             model,
             tok,
@@ -395,6 +411,7 @@ def main():
             args.fim_group_size,
             args.fim_awq_alpha,
             device,
+            pin_proj,
         )
 
     # apply the cell's transform bricks together, re-run, compare (teacher-forced)
