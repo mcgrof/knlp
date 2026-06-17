@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fdec_matrix import fim_fake_quant  # noqa: E402
+from fdec_matrix import fim_fake_quant, gptq_quantize_model  # noqa: E402
 
 # calib for Fisher / AWQ -- diverse single-topic sentences, DISJOINT from wikitext
 CALIB = " ".join(
@@ -50,25 +50,38 @@ CONFIGS = {
         awq_alpha=0.5,
         pin_proj=("k_proj", "v_proj"),
     ),
+    # GPTQ path (real Hessian error compensation); no awq_alpha here
+    "int4_gptq": dict(base_bits=4, upgrade_frac=0.2, group=128),
+    "int4_gptq_kvpin": dict(
+        base_bits=4, upgrade_frac=0.2, group=128, pin_proj=("k_proj", "v_proj")
+    ),
 }
 
 
-def load_eval_ids(tok, n_tokens):
+def _wikitext(split):
     from datasets import load_dataset
 
-    ds = None
     for name, cfg in [
         ("Salesforce/wikitext", "wikitext-2-raw-v1"),
         ("wikitext", "wikitext-2-raw-v1"),
     ]:
         try:
-            ds = load_dataset(name, cfg, split="test")
-            break
+            ds = load_dataset(name, cfg, split=split)
+            return "\n".join(t for t in ds["text"] if t and not t.isspace())
         except Exception as e:
-            print(f"[load {name}] {e}")
-    text = "\n".join(t for t in ds["text"] if t and not t.isspace())
-    ids = tok(text, return_tensors="pt").input_ids[0][: n_tokens + 1]
+            print(f"[load {name}/{split}] {e}")
+    raise RuntimeError("could not load wikitext")
+
+
+def load_eval_ids(tok, n_tokens):
+    ids = tok(_wikitext("test"), return_tensors="pt").input_ids[0][: n_tokens + 1]
     return ids.unsqueeze(0)
+
+
+def load_gptq_calib(tok, n_tokens):
+    # wikitext TRAIN -- disjoint from the test eval set used for scoring
+    ids = tok(_wikitext("train"), return_tensors="pt").input_ids[0][:n_tokens]
+    return tok.decode(ids)
 
 
 @torch.no_grad()
@@ -130,6 +143,7 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--configs", default="int8,int4,int4_awq")
     ap.add_argument("--eval-tokens", type=int, default=4096)
+    ap.add_argument("--gptq-calib-tokens", type=int, default=2048)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
@@ -143,6 +157,13 @@ def main():
     inp = ids[:, :-1]  # [1, T]
     print(f"[eval] {args.model}  positions={inp.shape[1]}  vocab={len(tok)}")
 
+    cfgs = [c.strip() for c in args.configs.split(",") if c.strip()]
+    gptq_calib = (
+        load_gptq_calib(tok, args.gptq_calib_tokens)
+        if any("gptq" in c for c in cfgs)
+        else None
+    )
+
     # fp16 reference (the ground truth), store log-probs on CPU fp16
     model = load_model(args.model, device, args.dtype)
     ref_lp = F.log_softmax(logprobs(model, inp, device), dim=-1).to("cpu").half()
@@ -150,10 +171,13 @@ def main():
     torch.cuda.empty_cache()
 
     rows = []
-    for cfg in [c.strip() for c in args.configs.split(",") if c.strip()]:
+    for cfg in cfgs:
         kw = CONFIGS[cfg]
         model = load_model(args.model, device, args.dtype)
-        _, wf = fim_fake_quant(model, tok, CALIB, device=device, **kw)
+        if "gptq" in cfg:
+            _, wf = gptq_quantize_model(model, tok, gptq_calib, device=device, **kw)
+        else:
+            _, wf = fim_fake_quant(model, tok, CALIB, device=device, **kw)
         lp = logprobs(model, inp, device).to("cpu")
         m = eval_against_ref(lp, ref_lp, gold)
         m["cfg"] = cfg
