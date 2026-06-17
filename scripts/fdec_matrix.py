@@ -142,6 +142,143 @@ def fim_restore(model, orig):
                 m.weight.data = orig[n]
 
 
+@torch.no_grad()
+def _gptq_quant_layer(W, H, bits, group, percdamp=0.01):
+    """Faithful GPTQ (Frantar et al. 2022) for one weight matrix W [out, in] given
+    the input-covariance Hessian H = X^T X [in, in]. Quantizes columns left-to-right;
+    after rounding each column, pushes its error into the not-yet-quantized columns
+    via the inverse Hessian (Cholesky / OBS), so later columns round to values that
+    partly cancel earlier rounding error. Group-wise symmetric scales per (output
+    channel, contiguous input group). Natural column order (act-order off -- a known
+    refinement). Returns the quantized W (float)."""
+    out_f, in_f = W.shape
+    W = W.float().clone()
+    H = H.clone()
+    qmax = 2 ** (bits - 1) - 1
+    dead = torch.diag(H) == 0
+    H[dead, dead] = 1.0
+    W[:, dead] = 0.0
+    idx = torch.arange(in_f, device=W.device)
+    damp = percdamp * torch.mean(torch.diag(H))
+    H[idx, idx] += damp
+    # upper-triangular inverse-Hessian factor (the auto-gptq trick)
+    L = torch.linalg.cholesky(H)
+    Hinv = torch.cholesky_inverse(L)
+    Hinv = torch.linalg.cholesky(Hinv, upper=True)
+    bs = group if group > 0 else 128
+    Q = torch.zeros_like(W)
+    scales = {}
+
+    def col_scale(col):
+        if group <= 0:
+            if "full" not in scales:
+                scales["full"] = (W.abs().amax(dim=1, keepdim=True) / qmax).clamp(
+                    min=1e-8
+                )
+            return scales["full"]
+        g = col // group
+        if g not in scales:
+            gs, ge = g * group, min(g * group + group, in_f)
+            scales[g] = (W[:, gs:ge].abs().amax(dim=1, keepdim=True) / qmax).clamp(
+                min=1e-8
+            )
+        return scales[g]
+
+    for i1 in range(0, in_f, bs):
+        i2 = min(i1 + bs, in_f)
+        W1 = W[:, i1:i2].clone()
+        Q1 = torch.zeros_like(W1)
+        Err1 = torch.zeros_like(W1)
+        Hinv1 = Hinv[i1:i2, i1:i2]
+        for i in range(i2 - i1):
+            col = i1 + i
+            w = W1[:, i]
+            d = Hinv1[i, i]
+            sc = col_scale(col)[:, 0]
+            q = torch.clamp(torch.round(w / sc), -qmax, qmax) * sc
+            Q1[:, i] = q
+            err = (w - q) / d
+            W1[:, i:] -= err.unsqueeze(1) * Hinv1[i, i:].unsqueeze(0)
+            Err1[:, i] = err
+        Q[:, i1:i2] = Q1
+        if i2 < in_f:
+            W[:, i2:] -= Err1 @ Hinv[i1:i2, i2:]
+    return Q
+
+
+def gptq_quantize_model(
+    model, tok, calib, base_bits, upgrade_frac, group, device, damp=0.01, pin_proj=()
+):
+    """FIM + GPTQ: rank decoder linears by diagonal Fisher (upgrade top frac to int8,
+    plus any pinned projections), then GPTQ-quantize block by block using a real
+    input-covariance Hessian per layer. Excludes the LM-head. In place; returns
+    (None, weight_byte_factor)."""
+    import re
+
+    lin_map = {
+        n: m
+        for n, m in model.named_modules()
+        if isinstance(m, nn.Linear) and ".layers." in n
+    }
+    # Fisher (one backward on calib) for the int8-upgrade allocation
+    model.zero_grad(set_to_none=True)
+    ids = tok(calib, return_tensors="pt").input_ids.to(device)
+    with torch.enable_grad():
+        loss = model(ids, labels=ids).loss
+        loss.backward()
+    fisher = {
+        n: float((m.weight.grad.float() ** 2).mean())
+        for n, m in lin_map.items()
+        if m.weight.grad is not None
+    }
+    model.zero_grad(set_to_none=True)
+    ranked = sorted(fisher, key=lambda k: fisher[k], reverse=True)
+    upgrade = set(ranked[: int(upgrade_frac * len(ranked))])
+    if pin_proj:
+        for n in fisher:
+            if any(n.endswith(p) for p in pin_proj):
+                upgrade.add(n)
+    nlayers = 1 + max(int(re.search(r"\.layers\.(\d+)\.", n).group(1)) for n in lin_map)
+    tot_bits = tot_w = 0
+    for li in range(nlayers):
+        block = {n: m for n, m in lin_map.items() if f".layers.{li}." in n}
+        H = {
+            n: torch.zeros(
+                m.weight.shape[1], m.weight.shape[1], device=device, dtype=torch.float32
+            )
+            for n, m in block.items()
+        }
+        hooks = []
+
+        def mk(name):
+            def hk(mod, inp):
+                x = inp[0].detach().reshape(-1, inp[0].shape[-1]).float()
+                H[name] += x.t() @ x
+
+            return hk
+
+        for n, m in block.items():
+            hooks.append(m.register_forward_pre_hook(mk(n)))
+        with torch.no_grad():
+            model(ids)
+        for h in hooks:
+            h.remove()
+        with torch.no_grad():
+            for n, m in block.items():
+                if n not in fisher:
+                    continue
+                b = 8 if n in upgrade else base_bits
+                Q = _gptq_quant_layer(m.weight.data, H[n], b, group, damp)
+                m.weight.data = Q.to(m.weight.dtype)
+                eff = b + (16.0 / group if group > 0 else 0.0)
+                tot_bits += eff * m.weight.numel()
+                tot_w += m.weight.numel()
+        del H
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    return None, round((tot_bits / max(1, tot_w)) / 16.0, 4)
+
+
 def asym_kv_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):
