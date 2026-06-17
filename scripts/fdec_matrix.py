@@ -26,9 +26,62 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 # ---- bricks -----------------------------------------------------------------
+
+
+@torch.no_grad()
+def _fake_quant_per_channel(w, bits):
+    qmax = 2 ** (bits - 1) - 1
+    scale = (w.abs().amax(dim=1, keepdim=True) / qmax).clamp(min=1e-8)
+    return (torch.round(w / scale).clamp(-qmax, qmax) * scale).to(w.dtype)
+
+
+def fim_fake_quant(model, tok, calib, base_bits, upgrade_frac, device):
+    """FIM-guided weight quant: diagonal Fisher per linear layer (grad^2 on a calib
+    pass), upgrade the most-sensitive upgrade_frac of layers to int8 and quantize
+    the rest to base_bits, per-channel. Excludes the LM-head (its own pool). Fake-
+    quantizes in place; returns (originals, weight_byte_factor vs bf16)."""
+    lm = model.get_output_embeddings()
+    lins = [
+        (n, m)
+        for n, m in model.named_modules()
+        if isinstance(m, nn.Linear) and m is not lm
+    ]
+    model.zero_grad(set_to_none=True)
+    ids = tok(calib, return_tensors="pt").input_ids.to(device)
+    with torch.enable_grad():
+        loss = model(ids, labels=ids).loss
+        loss.backward()
+    fisher = {}
+    for n, m in lins:
+        if m.weight.grad is not None:
+            fisher[n] = float((m.weight.grad.float() ** 2).mean())
+    model.zero_grad(set_to_none=True)
+    ranked = sorted(fisher, key=lambda k: fisher[k], reverse=True)
+    upgrade = set(ranked[: int(upgrade_frac * len(ranked))])
+    orig = {}
+    tot_bits = tot_w = 0
+    with torch.no_grad():
+        for n, m in lins:
+            if n not in fisher:
+                continue
+            b = 8 if n in upgrade else base_bits
+            orig[n] = m.weight.data.clone()
+            m.weight.data = _fake_quant_per_channel(m.weight.data, b)
+            tot_bits += b * m.weight.numel()
+            tot_w += m.weight.numel()
+    avg_bits = tot_bits / max(1, tot_w)
+    return orig, round(avg_bits / 16.0, 4)
+
+
+def fim_restore(model, orig):
+    with torch.no_grad():
+        for n, m in model.named_modules():
+            if n in orig:
+                m.weight.data = orig[n]
 
 
 def asym_kv_attention(
@@ -149,11 +202,15 @@ def idblock_measure(H_calib, H, W_U, r, slab, device):
         rank=r,
         slab=slab,
         byte_note=(
-            "CONSERVATIVE: contiguous token-id slabs do not prune (every slab "
-            "mixes high/low logits). The deployable ~0.25x LM-head bytes is the "
-            "certdecode result (kri-lm-head-certdecode) using the structured "
-            "idblock PARTITION (build_idblock); wiring that here is a TODO. The "
-            "compose + losslessness (argmax_match) verified here are correct."
+            "FINDING (TODO resolved): the LM-head byte win is IN-SAMPLE. With the "
+            "shadow basis built from the SAME hiddens it measures (--idblock-insample) "
+            "rho~0 and the certificate prunes to ~0.01 fetched. OUT-OF-SAMPLE (a "
+            "separate calib set) on Qwen2.5-7B it does NOT generalize -- fetched ~0.95, "
+            "no reduction -- because the hidden states are not low-rank enough for the "
+            "basis to transfer (Qwen2.5 massive activations). So certdecode's ~0.25x "
+            "is in-sample-optimistic on this model; the deployable byte number is "
+            "model-dependent and unproven out-of-sample here. Losslessness "
+            "(argmax_match) and compose are correct in both regimes."
         ),
     )
 
@@ -162,7 +219,35 @@ def idblock_measure(H_calib, H, W_U, r, slab, device):
 BRICKS = {
     "asym_kv": dict(install=install_asym_kv, pool="KV", kv_factor=0.75),
     "lmhead_idblock": dict(install=None, pool="LM-head", measure=True),
+    "fim_weight_quant": dict(install=None, pool="weights", weight_brick=True),
 }
+
+
+def decode_byte_model(model, ctx, db, kv_f, lm_f, w_f, hbm_gbps):
+    """Per-token decode byte budget across the three pools, and the byte-bound
+    roofline latency (decode is memory-bound: latency ~ bytes / HBM bandwidth).
+    Pools are disjoint: weights = non-LM-head params; LM-head = unembedding GEMV;
+    KV grows with ctx. Factors apply each brick's reduction."""
+    cfg = model.config
+    nparam = sum(p.numel() for p in model.parameters())
+    L = cfg.num_hidden_layers
+    Hkv = getattr(cfg, "num_key_value_heads", None) or cfg.num_attention_heads
+    d = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
+    vocab, hidden = cfg.vocab_size, cfg.hidden_size
+    lmhead_params = vocab * hidden
+    w = (nparam - lmhead_params) * db * w_f
+    kv = L * Hkv * ctx * d * 2 * db * kv_f
+    lm = lmhead_params * db * lm_f
+    tot = w + kv + lm
+    return dict(
+        weights_mb=w / 1e6,
+        kv_mb=kv / 1e6,
+        lmhead_mb=lm / 1e6,
+        total_mb=tot / 1e6,
+        latency_ms=1e3 * tot / (hbm_gbps * 1e9),
+        ctx=ctx,
+        hbm_gbps=hbm_gbps,
+    )
 
 
 @torch.no_grad()
@@ -190,6 +275,16 @@ def main():
     ap.add_argument("--n-prompts", type=int, default=6)
     ap.add_argument("--idblock-rank", type=int, default=64, help="shadow basis rank r")
     ap.add_argument("--idblock-slab", type=int, default=16384, help="vocab slab size")
+    ap.add_argument(
+        "--ctx", type=int, default=32768, help="context len for KV byte model"
+    )
+    ap.add_argument("--dtype-bytes", type=int, default=2)
+    ap.add_argument("--idblock-insample", action="store_true")
+    ap.add_argument("--fim-base-bits", type=int, default=4)
+    ap.add_argument("--fim-upgrade-frac", type=float, default=0.2)
+    ap.add_argument(
+        "--hbm-gbps", type=float, default=3350.0, help="roofline HBM BW (H100)"
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -220,6 +315,15 @@ def main():
     # baseline (fp16, no bricks)
     base_am, base_lg = tf_logits(model, tok, prompts, device)
 
+    # FIM weight quant (compute Fisher on the clean model, then fake-quant in place)
+    fim_orig = None
+    weight_f = 1.0
+    if "fim_weight_quant" in bricks:
+        fim_calib = "The quick brown fox jumps over the lazy dog near the river."
+        fim_orig, weight_f = fim_fake_quant(
+            model, tok, fim_calib, args.fim_base_bits, args.fim_upgrade_frac, device
+        )
+
     # apply the cell's transform bricks together, re-run, compare (teacher-forced)
     saved_all = {}
     for b in bricks:
@@ -232,24 +336,49 @@ def main():
     # certificate is checked on the actually-perturbed hidden states)
     idb = None
     if "lmhead_idblock" in bricks:
-        calib = (
-            "The development of writing systems transformed human society over "
-            "thousands of years, from clay tablets in Mesopotamia to the movable "
-            "type of the printing press and the digital text of today. Scholars "
-            "study how language, memory, and technology shaped one another across "
-            "civilizations, trade routes, and centuries of slow accumulation. "
-            "Meanwhile, advances in mathematics, astronomy, navigation, medicine, "
-            "and engineering reshaped what people believed possible, and each new "
-            "instrument opened questions that earlier generations could not have "
-            "imagined or expressed in their own vocabulary and notation."
-        ) * 3
+        # DIVERSE calib (distinct topics, not a repeated passage) so the
+        # hidden-PCA basis spans the real hidden manifold -> small rho ->
+        # tight bound -> pruning. Repeated text gives redundant hiddens.
+        calib_sents = [
+            "The mitochondria generate ATP through oxidative phosphorylation in the cell.",
+            "Beethoven composed his ninth symphony after he had already gone deaf.",
+            "A recursive function calls itself with a smaller subproblem until a base case.",
+            "The Amazon river discharges more water than the next seven rivers combined.",
+            "Inflation erodes purchasing power when the money supply grows faster than output.",
+            "Photosynthesis converts carbon dioxide and water into glucose using sunlight.",
+            "The Treaty of Westphalia in 1648 established the modern system of sovereign states.",
+            "Quicksort partitions an array around a pivot and recurses on each side.",
+            "Tectonic plates drift a few centimeters per year over the molten mantle.",
+            "A balanced diet includes proteins, carbohydrates, fats, vitamins, and minerals.",
+            "The speed of light in a vacuum is roughly three hundred thousand kilometers per second.",
+            "Shakespeare wrote thirty seven plays and a hundred fifty four sonnets.",
+            "Neural networks learn by adjusting weights through gradient descent on a loss.",
+            "Mount Everest rises about eight thousand eight hundred forty nine meters above sea level.",
+            "Supply and demand curves intersect at the market clearing equilibrium price.",
+            "Antibiotics kill bacteria but have no effect on viral infections like the flu.",
+            "The French Revolution began in 1789 with the storming of the Bastille prison.",
+            "A hash table offers average constant time lookups by mapping keys to buckets.",
+            "Volcanic eruptions can cool the planet by injecting aerosols into the stratosphere.",
+            "Regular exercise strengthens the heart and improves circulation over time.",
+            "Jupiter is the largest planet and has a great red spot larger than the Earth.",
+            "Compound interest grows savings exponentially as returns accrue on prior returns.",
+            "DNA stores genetic information in sequences of four nucleotide bases.",
+            "The Renaissance revived classical art, science, and humanism across Europe.",
+            "Caching frequently accessed data reduces latency and load on the database.",
+        ]
+        calib = " ".join(calib_sents)
         W_U = model.get_output_embeddings().weight
-        H_calib = capture_lmhead_input(model, tok, [calib], device)
         H_eval = capture_lmhead_input(model, tok, prompts, device)
+        if args.idblock_insample:
+            H_calib = H_eval  # basis from the measured hiddens (rho~0, optimistic)
+        else:
+            H_calib = capture_lmhead_input(model, tok, [calib], device)
         idb = idblock_measure(
             H_calib, H_eval, W_U, args.idblock_rank, args.idblock_slab, device
         )
     restore(saved_all)
+    if fim_orig is not None:
+        fim_restore(model, fim_orig)
 
     # top-1 agreement + mean KL(baseline || brick) over all positions
     total = matched = 0
@@ -283,6 +412,24 @@ def main():
         "lmhead_idblock": idb,
         "n_prompts": len(prompts),
     }
+    # decode byte model + roofline latency, baseline vs this cell
+    # (weight_f set above by the FIM brick if enabled, else 1.0)
+    lm_f = idb["lm_head_byte_factor"] if idb is not None else 1.0
+    base_bm = decode_byte_model(
+        model, args.ctx, args.dtype_bytes, 1.0, 1.0, 1.0, args.hbm_gbps
+    )
+    cell_bm = decode_byte_model(
+        model, args.ctx, args.dtype_bytes, kv_factor, lm_f, weight_f, args.hbm_gbps
+    )
+    saved_pct = round(100 * (1 - cell_bm["total_mb"] / base_bm["total_mb"]), 1)
+    res["decode_byte_model"] = {
+        "ctx": args.ctx,
+        "hbm_gbps": args.hbm_gbps,
+        "baseline": base_bm,
+        "cell": cell_bm,
+        "total_bytes_saved_pct": saved_pct,
+        "roofline_latency_saved_pct": saved_pct,
+    }
     print(f"\n[fdec cell] {args.model}  bricks={bricks or ['(none)']}")
     print(
         f"  composes: yes   teacher-forced top-1 agreement: {match_rate:.3f}   "
@@ -290,12 +437,22 @@ def main():
         f"(-{res['kv_byte_reduction_pct']}%)"
     )
     if idb is not None:
+        regime = "IN-SAMPLE" if args.idblock_insample else "out-of-sample"
         print(
             f"  LM-head idblock: LOSSLESS cert argmax_match={idb['argmax_match']:.3f}"
-            f" (verified)  |  byte reduction needs the idblock partition "
-            f"(contiguous-slab placeholder fetches {idb['fetched_fraction']:.2f}; "
-            f"deployable ~0.25x via certdecode partition -- TODO)"
+            f" (verified)  |  {regime} fetched={idb['fetched_fraction']:.2f} "
+            f"(in-sample ~0.01 / OOS-Qwen2.5 ~0.95: byte win is in-sample-only here)"
         )
+    bb, cb = base_bm, cell_bm
+    print(
+        f"  decode bytes/tok @ctx{args.ctx}: {bb['total_mb']:.0f} MB -> "
+        f"{cb['total_mb']:.0f} MB  (-{saved_pct}%)   "
+        f"[W {cb['weights_mb']:.0f} / KV {cb['kv_mb']:.0f} / LMh {cb['lmhead_mb']:.0f}]"
+    )
+    print(
+        f"  roofline latency @H100 {args.hbm_gbps:.0f}GB/s: "
+        f"{bb['latency_ms']:.2f} ms -> {cb['latency_ms']:.2f} ms/tok (-{saved_pct}%)"
+    )
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(res, indent=2))
     print(f"[wrote] {args.out}")
