@@ -33,23 +33,62 @@ import torch.nn.functional as F
 
 
 @torch.no_grad()
-def _fake_quant_per_channel(w, bits):
+def _fake_quant_groupwise(w, bits, group):
+    """Group-wise symmetric int quant: a separate scale per (output channel, input
+    group of `group` elements) -- the core of real int4 (GPTQ/AWQ-style), so a
+    single outlier only widens its own group's scale, not the whole row's. Falls
+    back to per-channel if the input dim is not divisible by group."""
     qmax = 2 ** (bits - 1) - 1
-    scale = (w.abs().amax(dim=1, keepdim=True) / qmax).clamp(min=1e-8)
-    return (torch.round(w / scale).clamp(-qmax, qmax) * scale).to(w.dtype)
+    out, inn = w.shape
+    if group <= 0 or inn % group != 0:
+        scale = (w.abs().amax(dim=1, keepdim=True) / qmax).clamp(min=1e-8)
+        return (torch.round(w / scale).clamp(-qmax, qmax) * scale).to(w.dtype)
+    wg = w.view(out, inn // group, group)
+    scale = (wg.abs().amax(dim=-1, keepdim=True) / qmax).clamp(min=1e-8)
+    return (
+        (torch.round(wg / scale).clamp(-qmax, qmax) * scale).view(out, inn).to(w.dtype)
+    )
 
 
-def fim_fake_quant(model, tok, calib, base_bits, upgrade_frac, device):
+@torch.no_grad()
+def compute_act_scales(model, tok, calib, lins, lm, device):
+    """Per-input-channel mean |activation| for each linear (AWQ salience signal)."""
+    scales = {}
+    hooks = []
+
+    def mk(n):
+        def h(mod, inp):
+            x = inp[0].detach().abs().float().reshape(-1, inp[0].shape[-1]).mean(0)
+            scales[n] = torch.maximum(scales[n], x) if n in scales else x
+
+        return h
+
+    for n, m in lins:
+        hooks.append(m.register_forward_pre_hook(mk(n)))
+    ids = tok(calib, return_tensors="pt").input_ids.to(device)
+    model(ids, use_cache=False)
+    for h in hooks:
+        h.remove()
+    return scales
+
+
+def fim_fake_quant(
+    model, tok, calib, base_bits, upgrade_frac, group, awq_alpha, device
+):
     """FIM-guided weight quant: diagonal Fisher per linear layer (grad^2 on a calib
-    pass), upgrade the most-sensitive upgrade_frac of layers to int8 and quantize
-    the rest to base_bits, per-channel. Excludes the LM-head (its own pool). Fake-
-    quantizes in place; returns (originals, weight_byte_factor vs bf16)."""
+    pass), upgrade the most-sensitive upgrade_frac of layers to int8 and quantize the
+    rest to base_bits, GROUP-WISE. Optional AWQ activation-aware scaling (alpha>0)
+    protects salient channels -- the lever for Qwen's massive activations. Excludes
+    the LM-head. Fake-quantizes in place; returns (originals, weight_byte_factor)."""
     lm = model.get_output_embeddings()
     lins = [
         (n, m)
         for n, m in model.named_modules()
         if isinstance(m, nn.Linear) and m is not lm
     ]
+    act = (
+        compute_act_scales(model, tok, calib, lins, lm, device) if awq_alpha > 0 else {}
+    )
     model.zero_grad(set_to_none=True)
     ids = tok(calib, return_tensors="pt").input_ids.to(device)
     with torch.enable_grad():
@@ -69,9 +108,19 @@ def fim_fake_quant(model, tok, calib, base_bits, upgrade_frac, device):
             if n not in fisher:
                 continue
             b = 8 if n in upgrade else base_bits
-            orig[n] = m.weight.data.clone()
-            m.weight.data = _fake_quant_per_channel(m.weight.data, b)
-            tot_bits += b * m.weight.numel()
+            w = m.weight.data
+            orig[n] = w.clone()
+            if awq_alpha > 0 and n in act:
+                # AWQ: scale up salient input channels before quant, unscale after,
+                # so high-activation channels carry less relative quant error
+                s = act[n].to(w.dtype).clamp(min=1e-4) ** awq_alpha
+                s = (s / s.mean()).unsqueeze(0)  # [1, in], normalized
+                m.weight.data = (_fake_quant_groupwise(w * s, b, group) / s).to(w.dtype)
+            else:
+                m.weight.data = _fake_quant_groupwise(w, b, group)
+            # effective bits include the per-group fp16 scale (16/group per weight)
+            eff = b + (16.0 / group if group > 0 else 0.0)
+            tot_bits += eff * m.weight.numel()
             tot_w += m.weight.numel()
     avg_bits = tot_bits / max(1, tot_w)
     return orig, round(avg_bits / 16.0, 4)
@@ -280,6 +329,10 @@ def main():
     )
     ap.add_argument("--dtype-bytes", type=int, default=2)
     ap.add_argument("--idblock-insample", action="store_true")
+    ap.add_argument("--fim-group-size", type=int, default=128)
+    ap.add_argument(
+        "--fim-awq-alpha", type=float, default=0.0, help="AWQ act-scale; 0=off"
+    )
     ap.add_argument("--fim-base-bits", type=int, default=4)
     ap.add_argument("--fim-upgrade-frac", type=float, default=0.2)
     ap.add_argument(
@@ -319,9 +372,29 @@ def main():
     fim_orig = None
     weight_f = 1.0
     if "fim_weight_quant" in bricks:
-        fim_calib = "The quick brown fox jumps over the lazy dog near the river."
+        fim_calib = " ".join(
+            [
+                "The mitochondria generate ATP through oxidative phosphorylation.",
+                "Quicksort partitions an array around a pivot and recurses.",
+                "Inflation erodes purchasing power as the money supply grows.",
+                "Photosynthesis converts carbon dioxide and water into glucose.",
+                "Neural networks learn by gradient descent on a loss function.",
+                "The French Revolution began in 1789 at the Bastille prison.",
+                "Antibiotics kill bacteria but not viruses like the influenza.",
+                "Compound interest grows savings as returns accrue on returns.",
+                "Tectonic plates drift a few centimeters per year over the mantle.",
+                "Caching frequently accessed data reduces database latency.",
+            ]
+        )
         fim_orig, weight_f = fim_fake_quant(
-            model, tok, fim_calib, args.fim_base_bits, args.fim_upgrade_frac, device
+            model,
+            tok,
+            fim_calib,
+            args.fim_base_bits,
+            args.fim_upgrade_frac,
+            args.fim_group_size,
+            args.fim_awq_alpha,
+            device,
         )
 
     # apply the cell's transform bricks together, re-run, compare (teacher-forced)
