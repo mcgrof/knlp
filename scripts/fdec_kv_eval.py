@@ -250,6 +250,10 @@ def _pr(fmt, gran="tok", prebias=False, static=False):
 # cell -> config. center: "" | "oracle" (eval-seq mean, leaky) | "calib" (deployable)
 CELLS = {
     "fp16": _cfg(),
+    # cumulative-stack composition (int8 weights + pre-bias K8/V8)
+    "w8": _cfg(wq="gptq8"),  # int8 weights only, fp16 KV
+    "w8_k8v8pb": _cfg(prerope=_pr("fp8", "head", prebias=True), vq=True, wq="gptq8"),
+    "w8_ki8v8pb": _cfg(prerope=_pr("int8", "head", prebias=True), vq=True, wq="gptq8"),
     "k16v8": _cfg(vq=True),  # keys fp16, values fp8 (the deployable bar)
     "k8v8": _cfg(kfmt="fp8", vq=True),  # symmetric e4m3 per-token (collapses)
     "k8v8_pck": _cfg(kfmt="fp8", kgran="chan", vq=True),  # per-channel oracle
@@ -369,6 +373,8 @@ def main():
         model = load_model(args.model, device, args.dtype)
         if cfg["wq"] == "sqgptq":
             smoothquant_transform(model, tok, gptq_calib, args.sq_alpha, device)
+            gptq_quantize_model(model, tok, gptq_calib, 8, 0.0, 128, device=device)
+        elif cfg["wq"] == "gptq8":
             gptq_quantize_model(model, tok, gptq_calib, 8, 0.0, 128, device=device)
         install_kv(model)
         install_kproj(model)
