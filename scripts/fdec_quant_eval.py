@@ -51,6 +51,7 @@ CONFIGS = {
         pin_proj=("k_proj", "v_proj"),
     ),
     # GPTQ path (real Hessian error compensation); no awq_alpha here
+    "int8_gptq": dict(base_bits=8, upgrade_frac=0.0, group=128),
     "int4_gptq": dict(base_bits=4, upgrade_frac=0.2, group=128),
     "int4_gptq_kvpin": dict(
         base_bits=4, upgrade_frac=0.2, group=128, pin_proj=("k_proj", "v_proj")
