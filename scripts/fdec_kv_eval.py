@@ -55,6 +55,8 @@ _KV = {
 
 _HAD = {}
 _CMU = {}  # calibrated per-layer key mean: layer_idx -> [1, Hkv, 1, D]
+_KSCALE = {}  # static calibrated pre-bias residual scale: layer_idx -> scale tensor
+_KPROJ_LAYER = {}  # id(k_proj module) -> layer_idx (rebuilt per model load)
 
 
 def _get_hadamard(n, device, dtype):
@@ -95,22 +97,30 @@ def _quant_key(k, fmt, gran):
     raise ValueError(fmt)
 
 
-def _quant_bt(x, fmt, gran):
-    """x: [B,T,Hkv,D]. Scale layouts (the deployability axis -- production FP8 KV uses
-    per-tensor / per-head scales, not per-token):
-      tok    = per (token) over channels         (dim -1)  -- dynamic, custom-kernel
-      chan   = per (channel) over tokens         (dim 1)
+def _scale_bt(x, fmt, gran):
+    """Scale layouts (the deployability axis -- production FP8 KV uses per-tensor /
+    per-head scales, not per-token):
+      tok    = per (token) over channels          (dim -1)  -- dynamic, custom-kernel
       head   = per (kv_head) over tokens+channels (dims 1,3) -- vLLM-style per-head
       tensor = one scale for the whole key tensor (dims 1,2,3) -- worst static case"""
     dims = {"tok": (-1,), "chan": (1,), "head": (1, 3), "tensor": (1, 2, 3)}[gran]
-    a = x.abs().amax(dim=dims, keepdim=True)
+    a = x.abs().amax(dim=dims, keepdim=True).clamp(min=1e-6)
+    return a / (448.0 if fmt == "fp8" else 127.0)
+
+
+def _apply_bt(x, scale, fmt):
     if fmt == "fp8":
-        scale = a.clamp(min=1e-6) / 448.0
-        return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
-    if fmt == "int8":
-        scale = a.clamp(min=1e-6) / 127.0
-        return torch.round(x / scale).clamp(-127, 127) * scale
-    raise ValueError(fmt)
+        # clamp to e4m3 max before the cast: with a FROZEN static scale the eval max can
+        # exceed the calib max, and e4m3fn maps out-of-range to NaN (no inf). Saturating
+        # is what a real static-FP8 path does -- a small clip, not a NaN.
+        return (x / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).to(
+            x.dtype
+        ) * scale
+    return torch.round(x / scale).clamp(-127, 127) * scale
+
+
+def _quant_bt(x, fmt, gran):
+    return _apply_bt(x, _scale_bt(x, fmt, gran), fmt)
 
 
 def kproj_hook(module, inp, out):
@@ -125,18 +135,35 @@ def kproj_hook(module, inp, out):
     D = _KV["head_dim"]
     Hkv = KV // D
     x = out.view(B, T, Hkv, D)
+    b = None
     if pr.get("prebias") and getattr(module, "bias", None) is not None:
         b = module.bias.view(1, 1, Hkv, D)
-        x = _quant_bt(x - b, pr["fmt"], pr["gran"]) + b
+        r = x - b
     else:
-        x = _quant_bt(x, pr["fmt"], pr["gran"])
+        r = x
+    li = _KPROJ_LAYER.get(id(module))
+    if _KV.get("_kcollect"):
+        # calibrate a STATIC scale on the pre-bias residual (max over calib chunks)
+        s = _scale_bt(r, pr["fmt"], pr["gran"]).amax(0, keepdim=True)
+        _KSCALE[li] = s if li not in _KSCALE else torch.maximum(_KSCALE[li], s)
+        return out
+    if pr.get("static"):
+        rq = _apply_bt(r, _KSCALE[li], pr["fmt"])  # frozen calibrated scale
+    else:
+        rq = _quant_bt(r, pr["fmt"], pr["gran"])
+    x = rq + b if b is not None else rq
     return x.reshape(B, T, KV)
 
 
 def install_kproj(model):
+    import re
+
+    _KPROJ_LAYER.clear()
     hs = []
     for n, m in model.named_modules():
         if n.endswith("k_proj") and hasattr(m, "weight"):
+            mt = re.search(r"\.layers\.(\d+)\.", n)
+            _KPROJ_LAYER[id(m)] = int(mt.group(1)) if mt else len(_KPROJ_LAYER)
             hs.append(m.register_forward_hook(kproj_hook))
     return hs
 
@@ -216,8 +243,8 @@ def _cfg(
     )
 
 
-def _pr(fmt, gran="tok", prebias=False):
-    return {"fmt": fmt, "gran": gran, "prebias": prebias}
+def _pr(fmt, gran="tok", prebias=False, static=False):
+    return {"fmt": fmt, "gran": gran, "prebias": prebias, "static": static}
 
 
 # cell -> config. center: "" | "oracle" (eval-seq mean, leaky) | "calib" (deployable)
@@ -248,6 +275,19 @@ CELLS = {
     "k8v8_prebias_tensor": _cfg(prerope=_pr("fp8", "tensor", prebias=True), vq=True),
     "ki8v8_prebias_head": _cfg(prerope=_pr("int8", "head", prebias=True), vq=True),
     "ki8v8_prebias_tensor": _cfg(prerope=_pr("int8", "tensor", prebias=True), vq=True),
+    # STATIC calibrated scales (frozen from disjoint C4) -- the deployable layout
+    "k8v8_prebias_head_st": _cfg(
+        prerope=_pr("fp8", "head", prebias=True, static=True), vq=True
+    ),
+    "k8v8_prebias_tensor_st": _cfg(
+        prerope=_pr("fp8", "tensor", prebias=True, static=True), vq=True
+    ),
+    "ki8v8_prebias_head_st": _cfg(
+        prerope=_pr("int8", "head", prebias=True, static=True), vq=True
+    ),
+    "ki8v8_prebias_tensor_st": _cfg(
+        prerope=_pr("int8", "tensor", prebias=True, static=True), vq=True
+    ),
 }
 
 
@@ -292,6 +332,15 @@ def main():
         hcfg.hidden_size // hcfg.num_attention_heads
     )
 
+    need_kstatic = any((CELLS[c]["prerope"] or {}).get("static") for c in cells)
+    kcalib_ids = (
+        tok(load_gptq_calib(tok, args.eval_tokens, "c4"), return_tensors="pt")
+        .input_ids[:, : args.eval_tokens]
+        .to(device)
+        if need_kstatic
+        else None
+    )
+
     # fp16 reference
     model = load_model(args.model, device, args.dtype)
     install_kv(model)
@@ -324,6 +373,13 @@ def main():
         install_kv(model)
         install_kproj(model)
         set_cfg(cfg)
+        if (cfg["prerope"] or {}).get("static"):
+            # freeze the static scale on the disjoint C4 calib for THIS cell's config
+            _KSCALE.clear()
+            _KV["_kcollect"] = True
+            with torch.no_grad():
+                model(kcalib_ids)
+            _KV["_kcollect"] = False
         lp = logprobs(model, inp, device).to("cpu")
         m = eval_against_ref(lp, ref_lp, gold)
         m["cell"] = cell
