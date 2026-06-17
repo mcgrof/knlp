@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT
+# fdec -- fight-decode brick composition. See docs/fdec.md.
+#
+# Names a point in the decode-optimization compatibility matrix: a model plus a
+# set of enabled bricks. The executor is scripts/fdec_matrix.py (algorithmic
+# dimension, any GPU) and the serving-stack profiles (kernel/throughput, CUDA).
+
+menu "Fight-decode (fdec) brick composition"
+
+config FDEC_ENABLE
+	bool "Enable fdec brick-composition regime"
+	default n
+	help
+	  Compose bleeding-edge decode optimizations and verify they compose
+	  without mismatch. See docs/fdec.md. Selected by defconfig-fdec.
+
+if FDEC_ENABLE
+
+config FDEC_MODEL
+	string "Model HF id (dense/GQA) or linear-attention checkpoint"
+	default "Qwen/Qwen2.5-7B-Instruct"
+
+config FDEC_ASYM_KV
+	bool "Brick: asymmetric K16/V8 KV quantization"
+	default y
+	help
+	  Keep keys at native precision, quantize values to FP8. KV-pool brick.
+	  Proven (1.38x decode, prefix-cache-safe). N/A for linear-attention models.
+
+config FDEC_LMHEAD_IDBLOCK
+	bool "Brick: LM-head idblock routing"
+	default y
+	help
+	  Certified-lossless LM-head decode routing. LM-head-pool brick.
+
+config FDEC_FIM_WEIGHT_QUANT
+	bool "Brick: FIM-guided weight quantization"
+	default n
+	help
+	  Fisher-sensitivity-guided weight quantization. Weights-pool brick.
+	  Stack-integration open (D5: GGUF/llama.cpp vs vLLM-native weight quant).
+
+config FDEC_LINEAR_ATTN
+	bool "Brick: linear-attention model class"
+	default n
+	help
+	  Use a linear-attention model (Gated DeltaNet / Trellis / Mamba2 / RWKV).
+	  Removes the KV pool -- the structural escape from the dense-attention
+	  offload bandwidth bound. Asymmetric KV quant does not apply.
+
+endif # FDEC_ENABLE
+
+endmenu

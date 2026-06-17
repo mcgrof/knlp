@@ -1,0 +1,9 @@
+# fdec: fight-decode brick composition (known-good bricks).
+# See docs/fdec.md. scripts/fdec_matrix.py is the executor; this defconfig names
+# the regime and selects the brick cell (asym KV + LM-head idblock on Qwen2.5-7B).
+CONFIG_FDEC_ENABLE=y
+CONFIG_FDEC_MODEL="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_FDEC_ASYM_KV=y
+CONFIG_FDEC_LMHEAD_IDBLOCK=y
+CONFIG_FDEC_FIM_WEIGHT_QUANT=n
+CONFIG_FDEC_LINEAR_ATTN=n
