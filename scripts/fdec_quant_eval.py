@@ -79,9 +79,29 @@ def load_eval_ids(tok, n_tokens):
     return ids.unsqueeze(0)
 
 
-def load_gptq_calib(tok, n_tokens):
-    # wikitext TRAIN -- disjoint from the test eval set used for scoring
-    ids = tok(_wikitext("train"), return_tensors="pt").input_ids[0][:n_tokens]
+def _c4_text(n_chars):
+    # stream a different domain (web text) -- the cross-domain generality check
+    from datasets import load_dataset
+
+    ds = load_dataset("allenai/c4", "en", split="train", streaming=True)
+    parts, total = [], 0
+    for ex in ds:
+        t = ex["text"]
+        parts.append(t)
+        total += len(t)
+        if total >= n_chars:
+            break
+    return "\n".join(parts)
+
+
+def load_gptq_calib(tok, n_tokens, source="wikitext"):
+    if source == "c4":
+        # C4 calib (web text), eval stays wikitext-test -> removes domain alignment
+        text = _c4_text(n_tokens * 6)
+    else:
+        # wikitext TRAIN -- disjoint from the test eval set used for scoring
+        text = _wikitext("train")
+    ids = tok(text, return_tensors="pt").input_ids[0][:n_tokens]
     return tok.decode(ids)
 
 
@@ -145,6 +165,9 @@ def main():
     ap.add_argument("--configs", default="int8,int4,int4_awq")
     ap.add_argument("--eval-tokens", type=int, default=4096)
     ap.add_argument("--gptq-calib-tokens", type=int, default=2048)
+    ap.add_argument(
+        "--gptq-calib-source", default="wikitext", choices=["wikitext", "c4"]
+    )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
@@ -160,7 +183,7 @@ def main():
 
     cfgs = [c.strip() for c in args.configs.split(",") if c.strip()]
     gptq_calib = (
-        load_gptq_calib(tok, args.gptq_calib_tokens)
+        load_gptq_calib(tok, args.gptq_calib_tokens, args.gptq_calib_source)
         if any("gptq" in c for c in cfgs)
         else None
     )
