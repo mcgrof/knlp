@@ -250,8 +250,9 @@ def _pr(fmt, gran="tok", prebias=False, static=False):
 # cell -> config. center: "" | "oracle" (eval-seq mean, leaky) | "calib" (deployable)
 CELLS = {
     "fp16": _cfg(),
-    # cumulative-stack composition (int8 weights + pre-bias K8/V8)
+    # cumulative-stack composition (int8 weights + KV brick)
     "w8": _cfg(wq="gptq8"),  # int8 weights only, fp16 KV
+    "w8_k16v8": _cfg(vq=True, wq="gptq8"),  # int8 weights + K16/V8 (keys fp16)
     "w8_k8v8pb": _cfg(prerope=_pr("fp8", "head", prebias=True), vq=True, wq="gptq8"),
     "w8_ki8v8pb": _cfg(prerope=_pr("int8", "head", prebias=True), vq=True, wq="gptq8"),
     "k16v8": _cfg(vq=True),  # keys fp16, values fp8 (the deployable bar)
