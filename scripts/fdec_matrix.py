@@ -347,6 +347,77 @@ def gptq_quantize_model(
     return None, round((tot_bits / max(1, tot_w)) / 16.0, 4)
 
 
+@torch.no_grad()
+def smoothquant_transform(model, tok, calib, alpha, device, seqlen=1024, nsamples=32):
+    """SmoothQuant (Xiao et al. 2022): migrate per-input-channel activation outliers
+    into the weights via an output-invariant per-channel rescale s_j =
+    actmax_j^alpha / wmax_j^(1-alpha), so the weights are easier to quantize. Fold 1/s
+    into the feeding RMSNorm and s into the weight columns of the norm-fed linears
+    (q/k/v via input_layernorm, gate/up via post_attention_layernorm); since RMSNorm's
+    per-channel weight commutes with the column scale, the layer output is unchanged
+    in real arithmetic. o_proj/down_proj are not norm-fed and are left to GPTQ. This is
+    the PROACTIVE outlier fix (reshape the distribution) that composes before GPTQ's
+    reactive error compensation. Modifies the model in place."""
+    layers = _find_decoder_layers(model)
+    act = {}
+    hooks = []
+
+    def mk(key):
+        def hk(mod, inp):
+            x = inp[0].detach().abs().reshape(-1, inp[0].shape[-1]).amax(0).float()
+            act[key] = torch.maximum(act[key], x) if key in act else x
+
+        return hk
+
+    for li, layer in enumerate(layers):
+        hooks.append(layer.self_attn.q_proj.register_forward_pre_hook(mk((li, "attn"))))
+        hooks.append(layer.mlp.gate_proj.register_forward_pre_hook(mk((li, "mlp"))))
+    toks = tok(calib, return_tensors="pt").input_ids.to(device)[0]
+    chunks = []
+    for i in range(nsamples):
+        s0 = i * seqlen
+        if s0 + seqlen > toks.shape[0]:
+            break
+        chunks.append(toks[s0 : s0 + seqlen].unsqueeze(0))
+    if not chunks:
+        chunks = [toks[:seqlen].unsqueeze(0)]
+    for c in chunks:
+        model(c)
+    for h in hooks:
+        h.remove()
+    eps = 1e-5
+    for li, layer in enumerate(layers):
+        groups = [
+            (
+                "attn",
+                layer.input_layernorm,
+                [
+                    layer.self_attn.q_proj,
+                    layer.self_attn.k_proj,
+                    layer.self_attn.v_proj,
+                ],
+            ),
+            (
+                "mlp",
+                layer.post_attention_layernorm,
+                [layer.mlp.gate_proj, layer.mlp.up_proj],
+            ),
+        ]
+        for key, norm, group in groups:
+            amax = act[(li, key)].clamp(min=eps)
+            wmax = (
+                torch.stack([m.weight.abs().amax(0) for m in group])
+                .amax(0)
+                .clamp(min=eps)
+            )
+            s = (amax.pow(alpha) / wmax.pow(1 - alpha)).clamp(min=eps)
+            norm.weight.data /= s.to(norm.weight.dtype)
+            for m in group:
+                m.weight.data *= s.to(m.weight.dtype).unsqueeze(0)
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+
 def asym_kv_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):

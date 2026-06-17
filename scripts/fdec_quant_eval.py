@@ -20,7 +20,11 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fdec_matrix import fim_fake_quant, gptq_quantize_model  # noqa: E402
+from fdec_matrix import (  # noqa: E402
+    fim_fake_quant,
+    gptq_quantize_model,
+    smoothquant_transform,
+)
 
 # calib for Fisher / AWQ -- diverse single-topic sentences, DISJOINT from wikitext
 CALIB = " ".join(
@@ -56,6 +60,9 @@ CONFIGS = {
     "int4_gptq_kvpin": dict(
         base_bits=4, upgrade_frac=0.2, group=128, pin_proj=("k_proj", "v_proj")
     ),
+    # SmoothQuant (proactive outlier migration) THEN GPTQ -- same gptq kwargs
+    "int8_sq_gptq": dict(base_bits=8, upgrade_frac=0.0, group=128),
+    "int4_sq_gptq": dict(base_bits=4, upgrade_frac=0.2, group=128),
 }
 
 
@@ -168,6 +175,7 @@ def main():
     ap.add_argument(
         "--gptq-calib-source", default="wikitext", choices=["wikitext", "c4"]
     )
+    ap.add_argument("--sq-alpha", type=float, default=0.5, help="SmoothQuant strength")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--dtype", default="bfloat16")
     args = ap.parse_args()
@@ -198,6 +206,8 @@ def main():
     for cfg in cfgs:
         kw = CONFIGS[cfg]
         model = load_model(args.model, device, args.dtype)
+        if "sq" in cfg:
+            smoothquant_transform(model, tok, gptq_calib, args.sq_alpha, device)
         if "gptq" in cfg:
             _, wf = gptq_quantize_model(model, tok, gptq_calib, device=device, **kw)
         else:
