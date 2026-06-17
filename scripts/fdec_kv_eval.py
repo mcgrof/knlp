@@ -96,13 +96,19 @@ def _quant_key(k, fmt, gran):
 
 
 def _quant_bt(x, fmt, gran):
-    # x: [B,T,Hkv,D]; tok = per-token over D (dim=-1), chan = per-channel over T (dim=1)
-    dim = -1 if gran == "tok" else 1
+    """x: [B,T,Hkv,D]. Scale layouts (the deployability axis -- production FP8 KV uses
+    per-tensor / per-head scales, not per-token):
+      tok    = per (token) over channels         (dim -1)  -- dynamic, custom-kernel
+      chan   = per (channel) over tokens         (dim 1)
+      head   = per (kv_head) over tokens+channels (dims 1,3) -- vLLM-style per-head
+      tensor = one scale for the whole key tensor (dims 1,2,3) -- worst static case"""
+    dims = {"tok": (-1,), "chan": (1,), "head": (1, 3), "tensor": (1, 2, 3)}[gran]
+    a = x.abs().amax(dim=dims, keepdim=True)
     if fmt == "fp8":
-        scale = x.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 448.0
+        scale = a.clamp(min=1e-6) / 448.0
         return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
     if fmt == "int8":
-        scale = x.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 127.0
+        scale = a.clamp(min=1e-6) / 127.0
         return torch.round(x / scale).clamp(-127, 127) * scale
     raise ValueError(fmt)
 
@@ -237,6 +243,11 @@ CELLS = {
     "ki8v8_prerope": _cfg(prerope=_pr("int8"), vq=True),  # INT8 control
     "ki8v8_prebias": _cfg(prerope=_pr("int8", prebias=True), vq=True),
     "ki8v8_prebias_pck": _cfg(prerope=_pr("int8", "chan", prebias=True), vq=True),
+    # scale-layout deployability matrix (pre-bias residual; per-head/per-tensor = vLLM)
+    "k8v8_prebias_head": _cfg(prerope=_pr("fp8", "head", prebias=True), vq=True),
+    "k8v8_prebias_tensor": _cfg(prerope=_pr("fp8", "tensor", prebias=True), vq=True),
+    "ki8v8_prebias_head": _cfg(prerope=_pr("int8", "head", prebias=True), vq=True),
+    "ki8v8_prebias_tensor": _cfg(prerope=_pr("int8", "tensor", prebias=True), vq=True),
 }
 
 
