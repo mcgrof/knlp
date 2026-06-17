@@ -206,25 +206,45 @@ def _gptq_quant_layer(W, H, bits, group, percdamp=0.01):
     return Q
 
 
-def gptq_quantize_model(
-    model, tok, calib, base_bits, upgrade_frac, group, device, damp=0.01, pin_proj=()
-):
-    """FIM + GPTQ: rank decoder linears by diagonal Fisher (upgrade top frac to int8,
-    plus any pinned projections), then GPTQ-quantize block by block using a real
-    input-covariance Hessian per layer. Excludes the LM-head. In place; returns
-    (None, weight_byte_factor)."""
-    import re
+def _find_decoder_layers(model):
+    """Return the ModuleList of transformer decoder blocks (Llama/Qwen/etc.)."""
+    for attr in ("model", "transformer", "gpt_neox", "language_model"):
+        sub = getattr(model, attr, None)
+        if sub is not None and hasattr(sub, "layers"):
+            return sub.layers
+    raise RuntimeError("could not locate decoder layers")
 
+
+def gptq_quantize_model(
+    model,
+    tok,
+    calib,
+    base_bits,
+    upgrade_frac,
+    group,
+    device,
+    damp=0.01,
+    pin_proj=(),
+    seqlen=1024,
+    nsamples=32,
+):
+    """FIM + GPTQ, the faithful sequential structure: rank decoder linears by diagonal
+    Fisher (top frac to int8, plus any pinned projections), then GPTQ-quantize block by
+    block where each block's inputs flow through the ALREADY-quantized earlier blocks
+    (sequential), and the per-layer Hessian H = X^T X is accumulated over many short
+    calib sequences (well-sampled, bounded attention memory). Excludes the LM-head. In
+    place; returns (None, weight_byte_factor)."""
     lin_map = {
         n: m
         for n, m in model.named_modules()
         if isinstance(m, nn.Linear) and ".layers." in n
     }
-    # Fisher (one backward on calib) for the int8-upgrade allocation
+    ids_full = tok(calib, return_tensors="pt").input_ids.to(device)
+    # Fisher (one backward on a calib chunk) for the int8-upgrade allocation
     model.zero_grad(set_to_none=True)
-    ids = tok(calib, return_tensors="pt").input_ids.to(device)
+    fclen = min(ids_full.shape[1], seqlen)
     with torch.enable_grad():
-        loss = model(ids, labels=ids).loss
+        loss = model(ids_full[:, :fclen], labels=ids_full[:, :fclen]).loss
         loss.backward()
     fisher = {
         n: float((m.weight.grad.float() ** 2).mean())
@@ -238,9 +258,51 @@ def gptq_quantize_model(
         for n in fisher:
             if any(n.endswith(p) for p in pin_proj):
                 upgrade.add(n)
-    nlayers = 1 + max(int(re.search(r"\.layers\.(\d+)\.", n).group(1)) for n in lin_map)
+
+    # split calib into up to nsamples sequences of seqlen
+    toks = ids_full[0]
+    chunks = []
+    for i in range(nsamples):
+        s = i * seqlen
+        if s + seqlen > toks.shape[0]:
+            break
+        chunks.append(toks[s : s + seqlen].unsqueeze(0))
+    if not chunks:
+        chunks = [ids_full[:, :seqlen]]
+
+    layers = _find_decoder_layers(model)
+    keep_kw = (
+        "attention_mask",
+        "position_ids",
+        "position_embeddings",
+        "cache_position",
+    )
+
+    # catch the inputs to layer 0 for each chunk (stop the forward after layer 0)
+    caught = []
+
+    class _Stop(Exception):
+        pass
+
+    def catch(mod, args, kwargs):
+        kw = {k: v for k, v in kwargs.items() if k in keep_kw}
+        caught.append((args[0].detach(), kw))
+        raise _Stop()
+
+    h = layers[0].register_forward_pre_hook(catch, with_kwargs=True)
+    for c in chunks:
+        try:
+            with torch.no_grad():
+                model(c)
+        except _Stop:
+            pass
+    h.remove()
+    hs = [a for a, _ in caught]  # [1, L, hidden] per chunk
+    kws = [k for _, k in caught]
+
     tot_bits = tot_w = 0
-    for li in range(nlayers):
+    for li in range(len(layers)):
+        layer = layers[li]
         block = {n: m for n, m in lin_map.items() if f".layers.{li}." in n}
         H = {
             n: torch.zeros(
@@ -260,9 +322,10 @@ def gptq_quantize_model(
         for n, m in block.items():
             hooks.append(m.register_forward_pre_hook(mk(n)))
         with torch.no_grad():
-            model(ids)
-        for h in hooks:
-            h.remove()
+            for c in range(len(hs)):
+                layer(hs[c], **kws[c])
+        for hk in hooks:
+            hk.remove()
         with torch.no_grad():
             for n, m in block.items():
                 if n not in fisher:
@@ -276,6 +339,11 @@ def gptq_quantize_model(
         del H
         if device.type == "cuda":
             torch.cuda.empty_cache()
+        # propagate through the now-quantized block to feed the next layer (sequential)
+        with torch.no_grad():
+            for c in range(len(hs)):
+                out = layer(hs[c], **kws[c])
+                hs[c] = (out[0] if isinstance(out, tuple) else out).detach()
     return None, round((tot_bits / max(1, tot_w)) / 16.0, 4)
 
 
