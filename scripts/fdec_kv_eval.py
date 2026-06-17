@@ -95,6 +95,46 @@ def _quant_key(k, fmt, gran):
     raise ValueError(fmt)
 
 
+def _quant_bt(x, fmt, gran):
+    # x: [B,T,Hkv,D]; tok = per-token over D (dim=-1), chan = per-channel over T (dim=1)
+    dim = -1 if gran == "tok" else 1
+    if fmt == "fp8":
+        scale = x.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 448.0
+        return (x / scale).to(torch.float8_e4m3fn).to(x.dtype) * scale
+    if fmt == "int8":
+        scale = x.abs().amax(dim, keepdim=True).clamp(min=1e-6) / 127.0
+        return torch.round(x / scale).clamp(-127, 127) * scale
+    raise ValueError(fmt)
+
+
+def kproj_hook(module, inp, out):
+    """Pre-RoPE key quantization at the k_proj output. With prebias=True, split off the
+    bias b_K (kept fp16), quantize only the residual r = XW_K, then add b_K back so RoPE
+    runs on (r_q + b_K) -- the ChatGPT-Pro/QKV-bias test: does separating the
+    deterministic key-projection bias make low-bit keys easier?"""
+    pr = _KV.get("prerope")
+    if not pr or _KV.get("_collect"):
+        return out
+    B, T, KV = out.shape
+    D = _KV["head_dim"]
+    Hkv = KV // D
+    x = out.view(B, T, Hkv, D)
+    if pr.get("prebias") and getattr(module, "bias", None) is not None:
+        b = module.bias.view(1, 1, Hkv, D)
+        x = _quant_bt(x - b, pr["fmt"], pr["gran"]) + b
+    else:
+        x = _quant_bt(x, pr["fmt"], pr["gran"])
+    return x.reshape(B, T, KV)
+
+
+def install_kproj(model):
+    hs = []
+    for n, m in model.named_modules():
+        if n.endswith("k_proj") and hasattr(m, "weight"):
+            hs.append(m.register_forward_hook(kproj_hook))
+    return hs
+
+
 def kv_quant_attention(
     module, query, key, value, attention_mask, scaling, dropout=0.0, **kw
 ):
@@ -116,7 +156,7 @@ def kv_quant_attention(
     elif c["center"] == "calib":
         # DEPLOYABLE: fixed mu calibrated on a disjoint sequence; no eval leakage.
         k = k - _CMU[module.layer_idx]
-    if c["kfmt"] is not None and not _KV.get("_collect"):
+    if c["kfmt"] is not None and not c.get("prerope") and not _KV.get("_collect"):
         kq = _quant_key(k, c["kfmt"], c["kgran"])
         if c["sink"] > 0:
             kq[..., : c["sink"], :] = k[..., : c["sink"], :]  # keep first keys fp16
@@ -148,8 +188,30 @@ def install_kv(model):
     return saved
 
 
-def _cfg(kfmt=None, kgran="tok", center="", sink=0, vq=False, had=False, wq=None):
-    return dict(kfmt=kfmt, kgran=kgran, center=center, sink=sink, vq=vq, had=had, wq=wq)
+def _cfg(
+    kfmt=None,
+    kgran="tok",
+    center="",
+    sink=0,
+    vq=False,
+    had=False,
+    wq=None,
+    prerope=None,
+):
+    return dict(
+        kfmt=kfmt,
+        kgran=kgran,
+        center=center,
+        sink=sink,
+        vq=vq,
+        had=had,
+        wq=wq,
+        prerope=prerope,
+    )
+
+
+def _pr(fmt, gran="tok", prebias=False):
+    return {"fmt": fmt, "gran": gran, "prebias": prebias}
 
 
 # cell -> config. center: "" | "oracle" (eval-seq mean, leaky) | "calib" (deployable)
@@ -169,6 +231,12 @@ CELLS = {
     "ki8v8_ccenter": _cfg(kfmt="int8", center="calib", vq=True),
     "ki8v8_ccenter_pck": _cfg(kfmt="int8", kgran="chan", center="calib", vq=True),
     "k8v8_sink4": _cfg(kfmt="fp8", sink=4, vq=True),  # keep first 4 keys fp16
+    # pre-RoPE / pre-bias residual (the QKV-bias mechanism test)
+    "k8v8_prerope": _cfg(prerope=_pr("fp8"), vq=True),  # FP8, post-bias pre-RoPE
+    "k8v8_prebias": _cfg(prerope=_pr("fp8", prebias=True), vq=True),  # FP8, pre-bias
+    "ki8v8_prerope": _cfg(prerope=_pr("int8"), vq=True),  # INT8 control
+    "ki8v8_prebias": _cfg(prerope=_pr("int8", prebias=True), vq=True),
+    "ki8v8_prebias_pck": _cfg(prerope=_pr("int8", "chan", prebias=True), vq=True),
 }
 
 
@@ -203,12 +271,20 @@ def main():
     )
 
     def set_cfg(cfg):
-        for k in ("kfmt", "kgran", "center", "sink", "vq", "had", "wq"):
+        for k in ("kfmt", "kgran", "center", "sink", "vq", "had", "wq", "prerope"):
             _KV[k] = cfg[k]
+
+    from transformers import AutoConfig
+
+    hcfg = AutoConfig.from_pretrained(args.model)
+    _KV["head_dim"] = getattr(hcfg, "head_dim", None) or (
+        hcfg.hidden_size // hcfg.num_attention_heads
+    )
 
     # fp16 reference
     model = load_model(args.model, device, args.dtype)
     install_kv(model)
+    install_kproj(model)
     set_cfg(CELLS["fp16"])
     ref_lp = F.log_softmax(logprobs(model, inp, device), dim=-1).to("cpu").half()
     # calibrate mu on a DISJOINT C4 sequence (no eval leakage) while this model is up
@@ -235,6 +311,7 @@ def main():
             smoothquant_transform(model, tok, gptq_calib, args.sq_alpha, device)
             gptq_quantize_model(model, tok, gptq_calib, 8, 0.0, 128, device=device)
         install_kv(model)
+        install_kproj(model)
         set_cfg(cfg)
         lp = logprobs(model, inp, device).to("cpu")
         m = eval_against_ref(lp, ref_lp, gold)
