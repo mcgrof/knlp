@@ -78,11 +78,19 @@ def install(model):
 
 
 @torch.no_grad()
-def decode_logit(model, ids, T, B):
-    # prefill [0:T-1] (full), then ONE decode step at position T-1 under budget B
+def decode_logit(model, ids, T, B, prefill_chunk=8192):
+    # CHUNKED prefill [0:T-1] (bounds activation memory at long ctx; flash handles
+    # cross-chunk attention so the cache is identical to a one-shot prefill), then ONE
+    # decode step at position T-1 under budget B.
     _PV["B"] = 0
-    out = model(ids[:, : T - 1], use_cache=True)
-    pkv = out.past_key_values
+    pkv = None
+    for i in range(0, T - 1, prefill_chunk):
+        out = model(
+            ids[:, i : min(i + prefill_chunk, T - 1)],
+            past_key_values=pkv,
+            use_cache=True,
+        )
+        pkv = out.past_key_values
     _PV["B"] = B
     out = model(ids[:, T - 1 : T], past_key_values=pkv, use_cache=True)
     return out.logits[0, -1].float()
