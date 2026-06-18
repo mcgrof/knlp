@@ -42,16 +42,27 @@ def harness_attn(module, q, k, v, attention_mask, scaling=None, dropout=0.0, **k
     B = _PV["B"]
     if B and B > 0:
         npg = (Tk + PAGE - 1) // PAGE
-        if B < npg:
+        # Variant 3: pin `local` most-recent pages + `sink` first pages in HBM (always
+        # resident, NOT counted in the SSD-fetch budget); B = the FETCHED older pages.
+        local = _PV.get("local", 0)
+        sink = _PV.get("sink", 0)
+        if B + local + sink < npg:
             pad = npg * PAGE - Tk
             pm = (
                 F.pad(aw, (0, pad)).view(aw.shape[0], aw.shape[1], 1, npg, PAGE).sum(-1)
             )
             tot = pm.sum(1)[:, 0, :]  # [B, npg] cross-head page mass
-            sel = tot.topk(B, dim=-1).indices  # [B, B]
-            psel = torch.zeros(aw.shape[0], npg, dtype=torch.bool, device=aw.device)
-            psel.scatter_(1, sel, True)
-            keymask = psel.repeat_interleave(PAGE, dim=1)[:, :Tk]  # [B, Tk]
+            resident = torch.zeros(aw.shape[0], npg, dtype=torch.bool, device=aw.device)
+            if sink:
+                resident[:, :sink] = True
+            if local:
+                resident[:, npg - local :] = True
+            # rank only the non-resident (older) pages, fetch top-B of those
+            tot = tot.masked_fill(resident, float("-inf"))
+            sel = tot.topk(B, dim=-1).indices
+            keep = resident.clone()
+            keep.scatter_(1, sel, True)
+            keymask = keep.repeat_interleave(PAGE, dim=1)[:, :Tk]  # [B, Tk]
             aw = aw * keymask[:, None, None, :]
             aw = aw / aw.sum(-1, keepdim=True).clamp(min=1e-9)
     o = torch.matmul(aw.to(q.dtype), vs).transpose(1, 2).contiguous()
@@ -88,8 +99,14 @@ def main():
     ap.add_argument("--ctx", type=int, default=32768)
     ap.add_argument("--chunks", type=int, default=6)
     ap.add_argument("--budgets", default="4,8,12,16,20,24,32,48,64")
+    ap.add_argument(
+        "--local-pages", type=int, default=0, help="recent pages pinned HBM"
+    )
+    ap.add_argument("--sink-pages", type=int, default=0, help="first pages pinned HBM")
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
+    _PV["local"] = args.local_pages
+    _PV["sink"] = args.sink_pages
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from datasets import load_dataset
 
