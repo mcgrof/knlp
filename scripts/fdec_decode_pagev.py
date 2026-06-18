@@ -18,7 +18,7 @@ import sys
 import torch
 import torch.nn.functional as F
 
-PAGE = 128
+PAGE = 128  # tokens per page (64KB FP8 V); overridable via --page-size
 _PV = {"B": 0, "orig": None}
 
 
@@ -111,8 +111,11 @@ def main():
         "--local-pages", type=int, default=0, help="recent pages pinned HBM"
     )
     ap.add_argument("--sink-pages", type=int, default=0, help="first pages pinned HBM")
+    ap.add_argument("--page-size", type=int, default=128, help="tokens per V-page")
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
+    global PAGE
+    PAGE = args.page_size
     _PV["local"] = args.local_pages
     _PV["sink"] = args.sink_pages
     from transformers import AutoModelForCausalLM, AutoTokenizer
