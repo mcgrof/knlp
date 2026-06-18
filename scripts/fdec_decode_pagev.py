@@ -22,9 +22,14 @@ PAGE = 128
 _PV = {"B": 0, "orig": None}
 
 
-def harness_attn(module, q, k, v, attention_mask, scaling, dropout=0.0, **kw):
+def harness_attn(module, q, k, v, attention_mask, scaling=None, dropout=0.0, **kw):
     if q.shape[2] > 1:  # PREFILL: real attention (flash/sdpa), no paging
-        return _PV["orig"](module, q, k, v, attention_mask, scaling, dropout, **kw)
+        # NB: call orig with KEYWORDS -- its signature is (..., dropout, scaling, ...),
+        # the opposite order of ours; a positional re-call silently swaps them and runs
+        # prefill with scaling=0 (uniform attention -> corrupted cache).
+        return _PV["orig"](
+            module, q, k, v, attention_mask, dropout=dropout, scaling=scaling, **kw
+        )
     # DECODE: single query, exact QK over the full cache, optional V-paging
     g = module.num_key_value_groups
     ks = k.repeat_interleave(g, dim=1)
