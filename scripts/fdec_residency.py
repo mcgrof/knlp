@@ -73,24 +73,33 @@ def pct(xs, p):
     return xs[min(len(xs) - 1, int(p / 100 * len(xs)))]
 
 
-def sim_residency(history, layers, capacity):
-    # per-layer LRU cache; return list of miss counts per token (summed across layers)
+def sim_residency(history, layers, capacity, per_layer=False):
+    # per-layer LRU cache; return list of miss counts per token (summed across layers).
+    # per_layer=True also returns the per-token per-layer miss matrix (for the deadline
+    # model, which needs the layer-serial fetch pattern, not just the token total).
     caches = {L: OrderedDict() for L in layers}
     miss_per_tok = []
+    matrix = []
     for step in range(len(history)):
         misses = 0
+        row = {}
         for L in layers:
             if L not in history[step]:
                 continue
             demand = history[step][L]
             c = caches[L]
-            misses += len(demand - set(c.keys()))
+            m = len(demand - set(c.keys()))
+            misses += m
+            row[L] = m
             for p in demand:
                 c[p] = step
                 c.move_to_end(p)
             while len(c) > capacity:
                 c.popitem(last=False)
         miss_per_tok.append(misses)
+        matrix.append(row)
+    if per_layer:
+        return miss_per_tok, matrix
     return miss_per_tok
 
 
@@ -109,6 +118,12 @@ def main():
     )
     ap.add_argument("--prefill-chunk", type=int, default=8192)
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument(
+        "--dump-trace",
+        default=None,
+        help="JSON path: raw per-token demand trace + per-layer miss matrices "
+        "(at 1x/2x/4x capacity) for the deadline model",
+    )
     args = ap.parse_args()
     global PAGE
     PAGE = args.page_size
@@ -166,11 +181,40 @@ def main():
         f"{sel_per_tok*kb/1024:.2f} MB/tok total ({args.B*kb/1024:.3f} MB/layer)"
     )
     print("residency miss rate (what actually hits SSD), per-layer LRU cache:")
+    matrices = {}
     for mult in (1, 2, 4):
-        line(
-            f"capacity {mult}xB ({mult*args.B} pg/layer)",
-            sim_residency(history, layers, mult * args.B),
-        )
+        miss, mat = sim_residency(history, layers, mult * args.B, per_layer=True)
+        matrices[mult] = mat
+        line(f"capacity {mult}xB ({mult*args.B} pg/layer)", miss)
+
+    if args.dump_trace:
+        import json
+
+        # per-token list of {layer: [sorted absolute page ids]}; the deadline model
+        # replays this against any predictor/cache policy without a GPU.
+        demand = [
+            {str(L): sorted(history[s][L]) for L in history[s]}
+            for s in range(len(history))
+        ]
+        miss_mat = {
+            str(mult): [{str(L): mat[s][L] for L in mat[s]} for s in range(len(mat))]
+            for mult, mat in matrices.items()
+        }
+        with open(args.dump_trace, "w") as f:
+            json.dump(
+                {
+                    "ctx": args.ctx,
+                    "gen": args.gen,
+                    "B": args.B,
+                    "page_kb": kb,
+                    "n_layers": nL,
+                    "layers": layers,
+                    "demand": demand,
+                    "miss_matrix": miss_mat,
+                },
+                f,
+            )
+        print(f"[dump] wrote trace -> {args.dump_trace}")
 
 
 if __name__ == "__main__":
