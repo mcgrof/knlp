@@ -84,8 +84,46 @@ def main():
         default=1.5,
         help="prefetch fetches overfetch x budget candidate pages (Scout recall cost)",
     )
+    # --- charged-model knobs (ChatGPT-Pro integration-gate audit) ---
+    # The optimistic run ignores: overfetch false-positive bytes, the SSD->host->GPU PCIe
+    # hop, the sparse-V gather/page-table kernel cost, the selector/q_hat-projection cost,
+    # and prefetch/sync queue contention. --charged turns all of these on. They matter
+    # because they are PER-LAYER and decode is 28 layers serial, so a fixed us/layer cost
+    # is multiplied by nL on the critical path.
+    ap.add_argument(
+        "--charged", action="store_true", help="enable all overhead charges"
+    )
+    ap.add_argument(
+        "--pcie-gbps",
+        type=float,
+        default=20.0,
+        help="effective SSD->host->GPU PCIe bandwidth (Gen5 x16 host-bounce); read bw "
+        "becomes min(nvme_burst, this)",
+    )
+    ap.add_argument(
+        "--pcie-lat-us",
+        type=float,
+        default=12.0,
+        help="fixed PCIe/host-bounce latency per SYNCHRONOUS read batch (per layer)",
+    )
+    ap.add_argument(
+        "--kernel-tax-us",
+        type=float,
+        default=10.0,
+        help="per-layer sparse-V gather + page-table lookup overhead (critical path)",
+    )
+    ap.add_argument(
+        "--selector-tax-us",
+        type=float,
+        default=5.0,
+        help="per-layer exact-QK page-score reduction + Scout q_hat projection",
+    )
     args = ap.parse_args()
     prefetch_sweep = [float(x) for x in args.prefetch.split(",")]
+    charged = args.charged
+    pcie_bw = args.pcie_gbps if charged else 1e9
+    pcie_lat = args.pcie_lat_us / 1e3 if charged else 0.0
+    layer_tax = (args.kernel_tax_us + args.selector_tax_us) / 1e3 if charged else 0.0
     T = json.load(open(args.trace))
     nL = T["n_layers"]
     kb = T["page_kb"]
@@ -99,13 +137,32 @@ def main():
     floor = compute_floor_ms(ctx, nL, kb, cache_pages)
     compute_per_layer = floor / nL
     page_bytes = kb * 1024
+    # charged compute floor: add per-layer kernel+selector tax (x nL, serial critical path)
+    floor_c = floor + layer_tax * nL
 
-    # SSD bytes/token is prefetch-independent (residency misses are the same set)
-    ssd_mb = []
-    for s in range(1, len(miss_mat)):
-        ssd_mb.append(sum(miss_mat[s].values()) * page_bytes / 1024 / 1024)
+    def eff_bw(depth):  # NVMe burst, capped by the PCIe host-bounce when charged
+        return min(burst_bw(depth), pcie_bw)
+
+    # SSD bytes/token: optimistic = residency misses; charged adds overfetch false positives
+    fp_per_layer_factor = max(
+        0.0, args.overfetch - 1.0
+    )  # extra candidate pages vs budget
+
+    def ssd_bytes_token(row, charge_fp):
+        b = 0.0
+        for L in layers:
+            m = row.get(L, 0)
+            if m == 0:
+                continue
+            fp = (
+                fp_per_layer_factor * B * (m / B) if charge_fp else 0.0
+            )  # FP reads scale with the per-layer demand miss fraction (m/B)
+            b += (m + fp) * page_bytes
+        return b / 1024 / 1024
 
     def sim(prefetch):
+        cpl = compute_per_layer + layer_tax  # compute window per layer (incl tax)
+        flr = floor_c
         stall_ms, tpot_ms = [], []
         for s in range(1, len(miss_mat)):  # skip cold first token
             row = miss_mat[s]
@@ -114,31 +171,43 @@ def main():
                 miss = row.get(L, 0)
                 if miss == 0:
                     continue
-                # of the miss pages, the prefetcher flags a fraction one layer ahead
-                # (HIDDEN behind the prior layer's compute) and the rest are SYNCHRONOUS.
-                hidden = miss * prefetch
-                sync = miss - hidden
-                if sync > 0:  # shallow queue, full stall
-                    tok_stall += (
-                        sync * page_bytes / (burst_bw(max(1, sync)) * 1e9) * 1e3
-                    )
-                if hidden > 0:  # overlapped; stall only overflow past 1-layer compute
-                    rt = hidden * page_bytes / (burst_bw(max(1, hidden)) * 1e9) * 1e3
-                    tok_stall += max(0.0, rt - compute_per_layer)
+                # prefetcher flags a fraction one layer ahead (HIDDEN, overlapped); the rest
+                # are SYNCHRONOUS (stall). Charged: hidden ALSO drags overfetch false
+                # positives, and every read pays the PCIe bw cap + a sync-batch latency.
+                hidden_useful = miss * prefetch
+                sync = miss - hidden_useful
+                fp = fp_per_layer_factor * miss if charged else 0.0
+                hidden = hidden_useful + fp
+                if sync > 0:  # shallow queue + fixed PCIe/host latency, full stall
+                    rt = sync * page_bytes / (eff_bw(max(1, sync)) * 1e9) * 1e3
+                    tok_stall += rt + pcie_lat
+                if (
+                    hidden > 0
+                ):  # overlapped; only the overflow past the compute window stalls
+                    rt = hidden * page_bytes / (eff_bw(max(1, hidden)) * 1e9) * 1e3
+                    tok_stall += max(0.0, rt - cpl)
             stall_ms.append(tok_stall)
-            tpot_ms.append(floor + tok_stall)
+            tpot_ms.append(flr + tok_stall)
         return stall_ms, tpot_ms
 
+    ssd_mb = [ssd_bytes_token(miss_mat[s], charged) for s in range(1, len(miss_mat))]
     budget_ms = 3.0
+    mode = "CHARGED" if charged else "optimistic"
     print(
-        f"[deadline] ctx={ctx} B={B} cache={mult}xB({cache_pages}pg/layer) page={kb}KB"
+        f"[deadline:{mode}] ctx={ctx} B={B} cache={mult}xB({cache_pages}pg/layer) page={kb}KB"
+    )
+    if charged:
+        print(
+            f"charges: overfetch={args.overfetch}x FP bytes, PCIe cap {args.pcie_gbps}GB/s "
+            f"+ {args.pcie_lat_us}us/sync-batch, kernel {args.kernel_tax_us}us + selector "
+            f"{args.selector_tax_us}us per layer (x{nL} serial)"
+        )
+    print(
+        f"compute floor: {floor_c:.2f} ms/token "
+        f"({(compute_per_layer+layer_tax)*1000:.0f} us/layer) | target budget {budget_ms:.1f} ms"
     )
     print(
-        f"compute floor (int8 W + resident KV / HBM): {floor:.2f} ms/token "
-        f"({compute_per_layer*1000:.0f} us/layer) | target budget {budget_ms:.1f} ms"
-    )
-    print(
-        f"new SSD MB/token (prefetch-independent): "
+        f"new SSD MB/token: "
         f"p50={pct(ssd_mb,50):.2f} p90={pct(ssd_mb,90):.2f} p99={pct(ssd_mb,99):.2f}\n"
     )
     print(
