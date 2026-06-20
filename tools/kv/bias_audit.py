@@ -125,6 +125,7 @@ def audit_model(model_id, dtype, device, trust_remote_code, out_dir, short_name)
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=None)
+    ap.add_argument("--short-name", default=None)
     ap.add_argument("--models-file", default=None, help="yaml with models: list")
     ap.add_argument("--seq-len", type=int, default=2048)  # unused here; uniform CLI
     ap.add_argument("--num-prompts", type=int, default=32)  # unused here
@@ -139,7 +140,9 @@ def main():
     if args.model:
         targets.append(
             dict(
-                model_id=args.model, short_name=args.model.split("/")[-1], tier="w7900"
+                model_id=args.model,
+                short_name=args.short_name or args.model.split("/")[-1],
+                tier="w7900",
             )
         )
     if args.models_file:
@@ -192,10 +195,22 @@ def main():
             )
         except Exception as e:
             print(f"[FAIL] {sn}: {type(e).__name__}: {str(e)[:120]}")
-    kbc.write_csv(
-        os.path.join(args.output_dir, "model_bias_summary.csv"), summaries, sf
+    # APPEND each summary so per-model invocations accumulate (driver calls this once per
+    # model). Caller clears the CSV before the loop to avoid stale/duplicate rows.
+    import csv as _csv
+
+    sp = os.path.join(args.output_dir, "model_bias_summary.csv")
+    os.makedirs(args.output_dir, exist_ok=True)
+    exists = os.path.exists(sp)
+    with open(sp, "a", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=sf)
+        if not exists:
+            w.writeheader()
+        for s in summaries:
+            w.writerow({k: s.get(k, "") for k in sf})
+    print(
+        f"\n[bias_audit] appended {len(summaries)} model summaries -> {args.output_dir}"
     )
-    print(f"\n[bias_audit] wrote {len(summaries)} model summaries -> {args.output_dir}")
 
 
 if __name__ == "__main__":
