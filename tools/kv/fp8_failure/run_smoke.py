@@ -216,7 +216,30 @@ def run_model(model, infos, ids_list, device, thr, short_name):
     else:
         rec_konly = None  # N/A: no bias to repair (do NOT cite as bias-fix evidence)
 
-    # ---- Phase-6 QK-gauge activation smoke (the novel piece, on a REAL model) ----
+    # ---- Phase-6 QK-gauge activation smoke (the novel piece). Isolated in try/except so an exotic
+    # architecture that breaks the gauge still keeps this model's atlas cells (the headline). ----
+    try:
+        gauge_summary, gauge_sweep = _qk_gauge_section(
+            model, infos, ids_list, device, base, base_maxabs, short_name
+        )
+    except Exception as e:  # noqa: BLE001 -- never let the gauge sink the atlas row
+        gauge_summary = dict(
+            model=short_name, gauge_error=f"{type(e).__name__}: {str(e)[:120]}"
+        )
+        gauge_sweep = []
+    gauge_summary["has_k_bias"] = has_k_bias
+    gauge_summary["n_calib_tokens"] = n_tokens
+    gauge_summary["prebias_recovery_fraction_konly"] = (
+        round(rec_konly, 4) if rec_konly is not None else "NA"
+    )
+    return rows, gauge_summary, gauge_sweep, arch
+
+
+@torch.no_grad()
+def _qk_gauge_section(model, infos, ids_list, device, base, base_maxabs, short_name):
+    """Phase-6 QK-gauge: native invariance + per-tensor/per-channel FP8-K baselines + clamp sweep.
+    Returns (gauge_summary, gauge_sweep). Raises if the model's arch breaks the probe.
+    """
     amax = capture_k_amax(model, infos, ids_list, device)
     ungauged_ratio = (
         sum(_ratio(a) for a in amax.values()) / max(len(amax), 1) if amax else 0.0
@@ -275,8 +298,6 @@ def run_model(model, infos, ids_list, device, thr, short_name):
     best = min(gauge_sweep, key=lambda r: r["fp8k_err_gauged"])
     gauge_summary = dict(
         model=short_name,
-        has_k_bias=has_k_bias,
-        n_calib_tokens=n_tokens,
         base_logit_maxabs=round(base_maxabs, 4),
         native_invariance_maxabs=round(inv_maxabs, 6),
         native_invariance_rel=round(inv_maxabs / max(base_maxabs, 1e-9), 6),
@@ -287,11 +308,8 @@ def run_model(model, infos, ids_list, device, thr, short_name):
         gauge_best_clamp=best["clamp"],
         gauge_beats_pertensor=best["gauge_beats_pertensor"],
         gauge_beats_perchannel=best["gauge_beats_perchannel"],
-        prebias_recovery_fraction_konly=(
-            round(rec_konly, 4) if rec_konly is not None else "NA"
-        ),
     )
-    return rows, gauge_summary, gauge_sweep, arch
+    return gauge_summary, gauge_sweep
 
 
 CELL_FIELDS = [
@@ -323,6 +341,7 @@ GAUGE_SUMMARY_FIELDS = [
     "gauge_beats_pertensor",
     "gauge_beats_perchannel",
     "prebias_recovery_fraction_konly",
+    "gauge_error",
 ]
 GAUGE_SWEEP_FIELDS = [
     "model",

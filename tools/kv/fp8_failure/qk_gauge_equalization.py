@@ -81,7 +81,11 @@ class QKGaugeProbe:
             info = h.by_mod.get(id(module))
             if info is not None and info["layer_idx"] in h.D:
                 D = h.D[info["layer_idx"]].to(k.dtype).to(k.device)  # [n_kv, hd]
-                g = module.num_key_value_groups
+                # GQA group count: trust the module, else derive from discovery (some arches
+                # don't expose num_key_value_groups on the attention module).
+                g = getattr(module, "num_key_value_groups", None) or (
+                    info["n_q_heads"] // info["n_kv_heads"]
+                )
                 k = k * D[None, :, None, :]  # K_i *= D_i  (per kv head/chan)
                 qD = D.repeat_interleave(g, dim=0)  # broadcast kv-head D to q heads
                 q = q / qD[None, :, None, :]  # Q_i *= 1/D_i  -> scores invariant
