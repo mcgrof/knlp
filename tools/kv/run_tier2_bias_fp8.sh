@@ -57,7 +57,7 @@ case "$PHASE" in
   all)
     run_audit
     wait_gpu; $PY "$T2/fp8_variant_probe.py" --models-file "$CFG" --skip-large --num-prompts 64 --output-dir "$ROOT/fake_quant" >> "$ROOT/tier2.log" 2>&1
-    wait_gpu; $PY "$T2/long_context_bias_probe.py" --models qwen25_7b dsr1_qwen_7b qwen25_14b phi2 --models-file "$CFG" --only qwen25_7b dsr1_qwen_7b qwen25_14b phi2 --seq-lens 2048,8192 --num-prompts 16 --output-dir "$ROOT/long_context" >> "$ROOT/tier2.log" 2>&1
+    wait_gpu; $PY "$T2/long_context_bias_probe.py" --models-file "$CFG" --only qwen25_7b dsr1_qwen_7b qwen25_14b phi2 --seq-lens 2048,8192 --num-prompts 16 --output-dir "$ROOT/long_context" >> "$ROOT/tier2.log" 2>&1
     run_alpha
     wait_gpu; $PY "$T2/hf_cache_prebias_eval.py" --models-file "$CFG" --num-prompts 24 --output-dir "$ROOT/serving" >> "$ROOT/tier2.log" 2>&1
     wait_gpu; $PY "$T2/phi_fii_diagnose.py" --models-file "$CFG" --only phi2 phi4 --num-prompts 32 --output-dir "$ROOT/phi_fii" >> "$ROOT/tier2.log" 2>&1
