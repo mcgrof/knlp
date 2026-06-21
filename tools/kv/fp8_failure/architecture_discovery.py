@@ -32,6 +32,16 @@ def rope_geometry(model):
     head_dim = getattr(cfg, "head_dim", None) or (hidden // n_q)
     rotary_dim = getattr(cfg, "rotary_dim", None)
     prf = getattr(cfg, "partial_rotary_factor", None)
+    # transformers 5.x stores the partial-rotary fraction inside the rope dict for some arches
+    # (e.g. GPT-NeoX/Pythia), not as a top-level config attr.
+    if prf is None:
+        for d in (
+            getattr(cfg, "rope_parameters", None),
+            getattr(cfg, "rope_scaling", None),
+        ):
+            if isinstance(d, dict) and d.get("partial_rotary_factor") is not None:
+                prf = d["partial_rotary_factor"]
+                break
     if rotary_dim is None and prf is not None:
         rotary_dim = int(head_dim * prf)
     if rotary_dim is None:
@@ -71,11 +81,16 @@ def discover(model):
     infos = kbc.discover_attention(model)
     rotary_dim, head_dim = rope_geometry(model)
     rot_mask, pass_mask = subspace_masks(rotary_dim, head_dim)
+    # GPT-NeoX/Pythia pack the fused QKV interleaved PER-HEAD (Q0 K0 V0 Q1 K1 V1 ...), so the
+    # contiguous-block k_slice the tier-1 discovery assumes is wrong for them -- the prebias path
+    # (the only consumer of that slice) must be skipped, not silently fed the wrong K channels.
+    interleaved = getattr(model.config, "model_type", "") == "gpt_neox"
     for info in infos:
         info["rotary_dim"] = rotary_dim
         info["is_partial_rope"] = rotary_dim < info["head_dim"]
         info["rotary_mask"] = rot_mask
         info["passthrough_mask"] = pass_mask
+        info["fused_interleaved"] = interleaved
     return infos
 
 
@@ -91,6 +106,7 @@ def summarize(infos):
         head_dim=a["head_dim"],
         gqa_groups=a["n_q_heads"] // a["n_kv_heads"],
         fused_qkv=a["fused"],
+        fused_interleaved=a.get("fused_interleaved", False),
         has_k_bias=any(i["has_k_bias"] for i in infos),
         rotary_dim=a.get("rotary_dim"),
         is_partial_rope=a.get("is_partial_rope", False),

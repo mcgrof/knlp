@@ -166,6 +166,10 @@ def run_model(model, infos, ids_list, device, thr, short_name):
     Returns (rows, gauge_summary, gauge_sweep, arch)."""
     arch = AD.summarize(infos)
     has_k_bias = bool(arch.get("has_k_bias"))
+    # The prebias path slices the K-bias out of the fused QKV output as a CONTIGUOUS block; that is
+    # wrong for an interleaved-per-head QKV (GPT-NeoX/Pythia), so skip the prebias cells there rather
+    # than quantize the wrong channels and report a meaningless recovery.
+    interleaved = bool(arch.get("fused_interleaved"))
     n_tokens = sum(max(len(ids) - 1, 0) for ids in ids_list)
     base = _logits(model, ids_list, device)
     ppl_native = _ppl_from_logits(base, ids_list)
@@ -175,6 +179,8 @@ def run_model(model, infos, ids_list, device, thr, short_name):
     rows = []
     cell_err = {}
     for name, cfg in ATLAS_CELLS.items():
+        if interleaved and cfg["prebias"]:
+            continue  # prebias path can't address an interleaved K -> skip (recovery -> NA)
         k, v = kbc.parse_spec(cfg["k"]), kbc.parse_spec(cfg["v"])
         h = kbc.FlexKVHarness(model, infos, k, v, prebias=cfg["prebias"])
         h.install()
@@ -208,13 +214,13 @@ def run_model(model, infos, ids_list, device, thr, short_name):
         )
 
     # K-only recovery (V bf16 in both arms): isolates K, no unrepairable V-FP8 in the denominator.
-    # Meaningful only when there IS a K bias -- on a biasless model prebias degenerates to K-native.
-    if has_k_bias:
+    # Meaningful only when there IS a K bias AND the prebias cell actually ran (not interleaved).
+    if has_k_bias and not interleaved and "prebias_k8v16" in cell_err:
         rec_konly = C.recovery_fraction(
             cell_err["k8v16"], cell_err["prebias_k8v16"], 0.0
         )
     else:
-        rec_konly = None  # N/A: no bias to repair (do NOT cite as bias-fix evidence)
+        rec_konly = None  # N/A: no bias to repair, or interleaved QKV (prebias slice untrustworthy)
 
     # ---- Phase-6 QK-gauge activation smoke (the novel piece). Isolated in try/except so an exotic
     # architecture that breaks the gauge still keeps this model's atlas cells (the headline). ----
@@ -440,7 +446,14 @@ def self_test(out_dir, device="cpu"):
     """Run the FULL pipeline on tiny random-weight CPU models -- no GPU, no download. Proves every
     code path (discovery, atlas cells, prebias, QK-gauge probe, capture, classify, writers).
     """
-    from transformers import PhiConfig, PhiForCausalLM, Qwen2Config, Qwen2ForCausalLM
+    from transformers import (
+        GPTNeoXConfig,
+        GPTNeoXForCausalLM,
+        PhiConfig,
+        PhiForCausalLM,
+        Qwen2Config,
+        Qwen2ForCausalLM,
+    )
 
     common = dict(
         vocab_size=64,
@@ -465,6 +478,11 @@ def self_test(out_dir, device="cpu"):
             PhiConfig(
                 num_attention_heads=4, head_dim=8, partial_rotary_factor=0.5, **common
             )
+        ),
+        # GPT-NeoX/Pythia: gpt_neox.layers path + interleaved fused QKV (prebias must be skipped) +
+        # partial RoPE from the rope dict. Proves the phase-8 legacy path GPU-free.
+        "tiny-neox-interleaved": GPTNeoXForCausalLM(
+            GPTNeoXConfig(num_attention_heads=4, rotary_pct=0.25, **common)
         ),
     }
     thr = _load_thresholds()
@@ -491,9 +509,18 @@ def self_test(out_dir, device="cpu"):
             summary["native_invariance_rel"] < 1e-4
         ), "QK-gauge must be score-invariant (fp32)"
         assert len(sweep) == len(GAUGE_CLAMPS), "clamp sweep must emit a row per clamp"
-        assert "prebias_k8v16" in {
-            r["cell"] for r in rows
-        }, "K-only prebias cell must run"
+        cells_run = {r["cell"] for r in rows}
+        if arch.get("fused_interleaved"):
+            # NeoX: prebias cells skipped (interleaved QKV), recovery NA, but atlas + gauge present
+            assert (
+                "prebias_k8v16" not in cells_run
+            ), "interleaved model must skip prebias"
+            assert summary["prebias_recovery_fraction_konly"] == "NA"
+            assert (
+                "k8v8" in cells_run
+            ), "interleaved model must still run the atlas cells"
+        else:
+            assert "prebias_k8v16" in cells_run, "K-only prebias cell must run"
         print(
             f"[self-test] {sn} OK  native={native['classification']} "
             f"inv_rel={summary['native_invariance_rel']:.2e} "

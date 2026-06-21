@@ -71,6 +71,8 @@ def get_decoder_layers(model):
         "model.model.layers",
         "transformer.h",
         "model.decoder.layers",
+        "gpt_neox.layers",  # GPT-NeoX / Pythia
+        "model.gpt_neox.layers",
     ):
         obj = model
         ok = True
