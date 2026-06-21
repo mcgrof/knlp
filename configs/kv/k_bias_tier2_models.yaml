@@ -1,0 +1,76 @@
+# Tier-2 K-bias / FP8 sensitivity validation targets. Priors to TEST, not assumptions; every
+# script discovers the actual bias from config + state_dict. tier: w7900 fits on the 48GB W7900;
+# large needs an H200/B200/CPU-offload lane (deferred / pod).
+models:
+  - short_name: qwen25_7b
+    model_id: Qwen/Qwen2.5-7B-Instruct
+    family: qwen2_5
+    expected_bias: true
+    expected_outcome: sensitive
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192, 16384]
+    notes: "Known symmetric-FP8 fragile; high K-bias stress expected."
+  - short_name: qwen25_14b
+    model_id: Qwen/Qwen2.5-14B-Instruct
+    family: qwen2_5
+    expected_bias: true
+    expected_outcome: tolerant
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192]
+    notes: "Biased tolerant Qwen control."
+  - short_name: dsr1_qwen_7b
+    model_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    family: qwen_distill
+    expected_bias: true
+    expected_outcome: sensitive
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192, 16384]
+    notes: "Distilled Qwen positive; inherited/amplified K-bias stress."
+  - short_name: phi2
+    model_id: microsoft/phi-2
+    family: phi
+    expected_bias: true
+    expected_outcome: phi_fii_counterexample
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192]
+    notes: "FII: bias present but pre-bias does not recover; non-bias FP8 failure surface."
+  - short_name: phi4
+    model_id: microsoft/phi-4
+    family: phi
+    expected_bias: unknown
+    expected_outcome: tolerant
+    priority: required_if_available
+    tier: w7900
+    max_seq_lens: [2048, 8192]
+    notes: "14B fused-QKV; verified biasless in tier-1 (0.0)."
+  - short_name: llama31_8b
+    model_id: meta-llama/Llama-3.1-8B-Instruct
+    family: llama
+    expected_bias: false
+    expected_outcome: tolerant
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192]
+    notes: "Biasless tolerant control (gated; Mistral covers if unavailable)."
+  - short_name: mistral_7b
+    model_id: mistralai/Mistral-7B-Instruct-v0.3
+    family: mistral
+    expected_bias: false
+    expected_outcome: tolerant
+    priority: required
+    tier: w7900
+    max_seq_lens: [2048, 8192]
+    notes: "Biasless tolerant control."
+  - short_name: qwen25_72b
+    model_id: Qwen/Qwen2.5-72B-Instruct
+    family: qwen2_5
+    expected_bias: true
+    expected_outcome: attenuated
+    priority: optional_h200_or_b200
+    tier: large
+    max_seq_lens: [2048]
+    notes: "Most important optional audit: low stress / non-dominant bias despite QKV bias."
