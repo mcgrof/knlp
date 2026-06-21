@@ -1,0 +1,37 @@
+# FP8 KV-cache failure atlas -- Phase 10 full-serving validation (vLLM + FlashInfer).
+#
+# The ONLY hard pod dependency: the W7900 ROCm vLLM path is brittle, so real-serving validation runs
+# on a clean-CUDA pod. The harness is build-now; only the RUNS need the pod. Narrowed (per Codex) to
+# a 3-model set -- one Qwen failure, the Phi failure, one recovered/control -- not a broad sweep.
+# The local proxy for these numbers is the validated hf_dynamic_cache real-PPL path.
+
+backend:
+  engine: vllm
+  vllm_version: ">=0.23"
+  attention_backend: flashinfer
+  kv_cache_dtype_field: kv_cache_dtype   # tuple ("auto","fp8_e4m3") = K-bf16 / V-fp8 (asym)
+
+# Mirror the fake-quant atlas cells in the real stack so the proxy<->serving gap is measurable.
+cells:
+  - {name: native,  kv_cache_dtype: auto}
+  - {name: k8v8,    kv_cache_dtype: fp8_e4m3}              # symmetric FP8 (the failure trigger)
+  - {name: k16v8,   kv_cache_dtype: ["auto", "fp8_e4m3"]}  # asym: bf16 K, fp8 V (the deployable fix)
+
+# 3 models: a Qwen failure, the Phi failure, one recovered/control.
+models:
+  - {id: Qwen/Qwen2.5-7B,         role: qwen_failure,    tp: 1, gpu: H100-80GB}
+  - {id: microsoft/phi-2,         role: phi_failure,     tp: 1, gpu: H100-80GB}
+  - {id: meta-llama/Llama-3.1-8B, role: biasless_control, tp: 1, gpu: H100-80GB}
+
+eval:
+  # serving-side measurement: per-cell quality on the SAME holdout, plus saturation/throughput.
+  holdout_ref: fp8_failure_datasets.yaml#holdout.teacher_forced
+  record: [ppl, top1_agreement, greedy_divergence_pos, saturation_count, decode_tok_s]
+  seeds: [0, 1, 2]
+
+pod:
+  provider: runpod
+  cloud_type: SECURE
+  est_cost_usd: [30, 60]   # clean-CUDA pod, 3 models; teardown armed on the crash path
+  teardown_on_crash: true
+  hf_hub_offline_for_cached: true

@@ -1,0 +1,51 @@
+# FP8 KV-cache failure atlas -- calibration / evaluation data.
+#
+# Calibration and evaluation MUST be disjoint (the brief), with fixed, saved indices so every
+# quantization configuration sees identical examples. The `smoke` tier exercises code paths on
+# CPU/tiny without a GPU; the `paper` tier is the frozen protocol for publishable numbers.
+
+# Disjoint calibration set: 64 prompts per domain at seq 2048, fixed indices.
+calibration:
+  seq_len: 2048
+  prompts_per_domain: 64
+  domains:
+    natural_language: {source: wikitext-103-raw-v1, split: train}
+    math_reasoning:   {source: gsm8k,               split: train, subset: main}
+    code:             {source: bigcode/the-stack-smol, split: train, lang: python}
+  index_file: configs/kv/fp8_calib_indices.json   # fixed indices, saved on first build
+
+# Teacher-forced holdout (disjoint from calibration), shared across all configs.
+holdout:
+  teacher_forced:
+    n: 128
+    seq_len: 2048
+    source: wikitext-103-raw-v1
+    split: test
+  long_context:
+    - {n: 32, seq_len: 8192}
+    - {n: 16, seq_len: 16384}
+  ruler_niah:
+    lengths: [16384, 32768]
+    models: tierA           # selected models only
+    prefer_natural_text: true
+
+# Autoregressive divergence (Phase: autoregressive_divergence).
+autoregressive:
+  n_prompts: 64
+  new_tokens: 128
+  decoding: greedy
+  record: [first_divergence_token, cumulative_agreement, final_quality]
+
+# Downstream confirmation -- only after mechanism probes stabilize.
+downstream:
+  gsm8k: {mode: fixed_cap, cap: 200}
+  mmlu:  {mode: fixed_cap, cap: 200}
+  niah:  {lengths: [16384, 32768]}
+
+seeds: [0, 1, 2]   # >= 3 prompt-sampling seeds for paper aggregates
+
+# Smoke tier: tiny, CPU-runnable, validates the harness emits every column before any GPU spend.
+smoke:
+  calib: {prompts_per_domain: 2, seq_len: 128}
+  holdout: {n: 4, seq_len: 128}
+  seeds: [0]

@@ -1,0 +1,54 @@
+# FP8 KV-cache failure atlas -- failure classification thresholds.
+#
+# Frozen BEFORE the paper tier (the brief's hard rule: do not tune thresholds to the result).
+# Labels are presentation aids; the continuous metrics are always retained. A cell is classified by
+# the FIRST band it falls into, evaluated catastrophic -> material -> tolerant.
+
+# Primary classification (brief's suggested starting bands, to be confirmed once and frozen).
+classification:
+  tolerant:
+    nll_increase_pct_max: 0.5        # <= 0.5% NLL increase
+    top1_agreement_min: 0.98         # and >= 0.98 top-1 agreement
+    require_no_downstream_loss: true # and no task loss outside the CI
+  material:
+    nll_increase_pct_range: [0.5, 5.0]
+    top1_agreement_range: [0.80, 0.98]
+  catastrophic:
+    nll_increase_pct_min: 5.0        # > 5% NLL increase, OR
+    ppl_multiplier_min: 2.0          # PPL x2, OR
+    top1_agreement_max: 0.80         # top-1 < 0.80, OR downstream collapse
+
+# Recovery (pre-bias / QK-gauge / split-scale). recovery_fraction in [0,1]; see common.recovery_fraction.
+recovery:
+  substantial_min: 0.70   # a repair "substantially recovers" at >= 70% of the FP8 error closed
+  partial_range: [0.30, 0.70]
+  negligible_max: 0.30
+  # A mechanism-specific claim REQUIRES the true repair to beat its negative controls by this margin.
+  control_separation_min: 0.20
+
+# Statistics (Phase 13): multiplicity control across the many atlas cells.
+statistics:
+  fdr_q: 0.05
+  bootstrap_n: 2000
+  ci_alpha: 0.05
+  min_seeds: 3            # >= 3 prompt-sampling seeds for paper-level aggregates
+
+# Continuous metrics recorded per cell (never dropped, regardless of label).
+metrics:
+  - nll
+  - ppl_delta
+  - logit_err_mean
+  - logit_err_max
+  - top1_agreement
+  - top5_agreement
+  - greedy_divergence_pos
+  - k_recon_err
+  - v_recon_err
+  - score_rmse
+  - attn_logodds_err
+  - softmax_kl
+  - softmax_jsd
+  - topk_overlap
+  - attn_entropy_delta
+  - saturation_count
+  - clip_count
