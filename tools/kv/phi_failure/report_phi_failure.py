@@ -38,14 +38,25 @@ def classify(sn, kviso, gran, sub, rope, score, layer):
     # V vs K
     if k16v8 > 0.30 and k8v16 < 0.30:
         return "value_sensitive", {"K16V8": k16v8, "K8V16": k8v16}
-    # subspace / passthrough
+    # subspace / pass-through. The DECISIVE evidence is the RoPE probe: if quantizing only the
+    # pass-through subspace (rotary in BF16) reproduces the failure while quantizing only the
+    # rotary subspace recovers it, the pass-through is the failure source -- regardless of whether
+    # its amax is the larger one (Phi-2's pass/rot amax ratio is <1, yet pass-through breaks).
     if subr:
-        por = St.mean([fnum(r, "pas_over_rot_amax", 1.0) for r in subr])
-        ev["pass_over_rot_amax"] = por
-        pas_only = rp.get("passthrough_only", 9)
-        rot_only = rp.get("rotary_only", 9)
-        if por > 3 and pas_only > rot_only and pas_only > 0.30:
+        ev["pass_over_rot_amax"] = St.mean(
+            [fnum(r, "pas_over_rot_amax", 1.0) for r in subr]
+        )
+    pas_only = rp.get("passthrough_only")
+    rot_only = rp.get("rotary_only")
+    if pas_only is not None and rot_only is not None:
+        ev["passthru_only"] = pas_only
+        ev["rotary_only"] = rot_only
+        if sc:  # the pass-through carries the extreme-magnitude channels -> huge scores
+            ev["max_bf16_score_amax"] = max(fnum(r, "bf16_score_amax") for r in sc)
+        if pas_only > 0.30 and pas_only > 2 * rot_only:
             return "rotary_pass_through_mixture", ev
+    if subr:
+        por = ev["pass_over_rot_amax"]
         if str(g.get("granularity_fixes", "")).lower() in ("true", "1") and por > 2:
             return "rotary_pass_through_mixture", ev
     # scale granularity
@@ -72,6 +83,14 @@ def main():
     ap.add_argument("--primary", default="phi2")
     args = ap.parse_args()
     R = args.root
+    # self-heal: rebuild any verdict CSV a mid-loop write-crash dropped, from phi.log (the source
+    # of truth). Only fills gaps -- real CSVs are not clobbered. Makes the artifact match the log.
+    try:
+        import parse_phi_log
+
+        parse_phi_log.reconstruct(R)
+    except Exception as e:
+        print(f"[report] log self-heal skipped: {e}")
     meta = lc(os.path.join(R, "metadata", "metadata_audit.csv"))
     kviso = lc(os.path.join(R, "kv_isolation", "kv_isolation_verdict.csv"))
     gran = lc(os.path.join(R, "scale_granularity", "scale_granularity_verdict.csv"))
