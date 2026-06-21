@@ -8,7 +8,7 @@ human-readable card.
 
 The point of this script before the pod: `--self-test` runs the WHOLE pipeline on tiny random-weight
 CPU models (no GPU, no download), so the pod only ever executes already-proven code. Smoke params
-come from configs/kv/fp8_failure_datasets.yaml (smoke tier) unless overridden.
+are CLI-driven (--num-prompts/--seq-len); the datasets.yaml smoke tier is the reference, not loaded.
 
   python3 run_smoke.py --self-test --output-dir /tmp/fp8smoke      # CPU, proves the paths
   python3 run_smoke.py --model Qwen/Qwen2.5-7B --output-dir OUT --device cuda:0
@@ -41,6 +41,9 @@ ATLAS_CELLS = {
     "prebias_k8v8": dict(
         k="fp8:per_tensor", v="fp8:per_tensor", prebias=True
     ),  # the bias fix
+    # K-only prebias (V bf16 in both this and k8v16) -> recovery isolates K, no V-FP8 in the
+    # denominator. On a biasless model prebias degenerates to K-native, so recovery is N/A there.
+    "prebias_k8v16": dict(k="fp8:per_tensor", v="bf16", prebias=True),
 }
 
 
@@ -53,8 +56,10 @@ def _logits(model, ids_list, device):
 
 
 def _metrics_vs_base(base, other):
-    """Per-cell quality vs the native baseline: logit err, top-1/5 agreement, NLL delta."""
-    me, mx, t1, t5, nll = [], [], [], [], []
+    """Per-cell quality vs the native baseline: logit err, top-1/5 agreement, NLL delta, and the
+    softmax KL(base || other) (a frozen-metrics headline; attributes degradation at the
+    distribution level, not just the argmax)."""
+    me, mx, t1, t5, nll, kl = [], [], [], [], [], []
     for b, c in zip(base, other):
         d = (b - c).abs()
         me.append(d.mean().item())
@@ -64,9 +69,12 @@ def _metrics_vs_base(base, other):
         c1 = c.argmax(-1, keepdim=True)
         t5.append((b5 == c1).any(-1).float().mean().item())
         tgt = b.argmax(-1)
-        nb = -F.log_softmax(b, -1).gather(-1, tgt.unsqueeze(-1)).mean().item()
-        nc = -F.log_softmax(c, -1).gather(-1, tgt.unsqueeze(-1)).mean().item()
+        lpb = F.log_softmax(b, -1)
+        lpc = F.log_softmax(c, -1)
+        nb = -lpb.gather(-1, tgt.unsqueeze(-1)).mean().item()
+        nc = -lpc.gather(-1, tgt.unsqueeze(-1)).mean().item()
         nll.append(nc - nb)
+        kl.append((lpb.exp() * (lpb - lpc)).sum(-1).mean().item())
     import statistics as _S
 
     return dict(
@@ -75,27 +83,18 @@ def _metrics_vs_base(base, other):
         top1_agreement=_S.mean(t1),
         top5_agreement=_S.mean(t5),
         nll_delta=_S.mean(nll),
+        softmax_kl=_S.mean(kl),
     )
 
 
-@torch.no_grad()
-def _ppl(model, ids_list, device, harness=None):
-    """Real next-token PPL over the prompts' own targets (no dataset download; works in self-test).
-    If harness is given it is installed around the forward so the quantized cache is exercised.
-    """
-    if harness is not None:
-        harness.install()
+def _ppl_from_logits(logits_list, ids_list):
+    """Next-token PPL from already-computed logits (avoids a second forward per cell)."""
     tot_nll, tot_tok = 0.0, 0
-    try:
-        for ids in ids_list:
-            t = torch.tensor(ids).unsqueeze(0).to(device)
-            lp = torch.log_softmax(model(t).logits[0, :-1].float(), dim=-1)
-            tgt = t[0, 1:]
-            tot_nll += -lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).sum().item()
-            tot_tok += tgt.numel()
-    finally:
-        if harness is not None:
-            harness.remove()
+    for lg, ids in zip(logits_list, ids_list):
+        lp = torch.log_softmax(lg[:-1].float(), dim=-1)
+        tgt = torch.tensor(ids[1:])
+        tot_nll += -lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).sum().item()
+        tot_tok += tgt.numel()
     return math.exp(tot_nll / max(tot_tok, 1))
 
 
@@ -148,13 +147,30 @@ def classify(nll_increase_pct, top1, ppl_mult, thr):
     return "tolerant"
 
 
+def _ratio(t):
+    """max/median of a flattened tensor -- how much outlier remains after gauging."""
+    a = t.float().abs().flatten()
+    med = a.median().clamp(min=1e-9)
+    return (a.max() / med).item()
+
+
+# clamp sweep for the gauge D: (0.25,4.0) is the cautious default; real Qwen post-RoPE K outliers
+# run 15-60x median, so the cautious clamp can't equalize them -> sweep up to (near-)unclamped so a
+# `gauge_reduces_err=False` is attributable to the gauge, not to a clamp artifact.
+GAUGE_CLAMPS = [(0.25, 4.0), (0.1, 10.0), (0.05, 20.0), (1e-6, 1e6)]
+
+
 @torch.no_grad()
 def run_model(model, infos, ids_list, device, thr, short_name):
-    """Core e2e pipeline for one already-loaded model. Returns (rows, gauge, arch)."""
+    """Core e2e pipeline for one already-loaded model.
+    Returns (rows, gauge_summary, gauge_sweep, arch)."""
     arch = AD.summarize(infos)
+    has_k_bias = bool(arch.get("has_k_bias"))
+    n_tokens = sum(max(len(ids) - 1, 0) for ids in ids_list)
     base = _logits(model, ids_list, device)
-    ppl_native = _ppl(model, ids_list, device)
+    ppl_native = _ppl_from_logits(base, ids_list)
     nll_native = math.log(max(ppl_native, 1e-9))
+    base_maxabs = max(b.abs().max().item() for b in base)
 
     rows = []
     cell_err = {}
@@ -164,13 +180,14 @@ def run_model(model, infos, ids_list, device, thr, short_name):
         h.install()
         try:
             lg = _logits(model, ids_list, device)
-            ppl = _ppl(model, ids_list, device)
         finally:
             h.remove()
         mt = _metrics_vs_base(base, lg)
         cell_err[name] = mt["mean_logit_err"]
-        nll_cell = math.log(max(ppl, 1e-9))
-        nll_inc_pct = 100.0 * (nll_cell - nll_native) / max(nll_native, 1e-9)
+        ppl = _ppl_from_logits(lg, ids_list)
+        nll_inc_pct = (
+            100.0 * (math.log(max(ppl, 1e-9)) - nll_native) / max(nll_native, 1e-9)
+        )
         ppl_mult = ppl / max(ppl_native, 1e-9)
         label = classify(nll_inc_pct, mt["top1_agreement"], ppl_mult, thr)
         rows.append(
@@ -185,45 +202,96 @@ def run_model(model, infos, ids_list, device, thr, short_name):
                 max_logit_err=round(mt["max_logit_err"], 5),
                 top1_agreement=round(mt["top1_agreement"], 5),
                 top5_agreement=round(mt["top5_agreement"], 5),
+                softmax_kl=round(mt["softmax_kl"], 6),
                 classification=label,
             )
         )
 
-    # recovery fraction of the pre-bias fix on the K8/V8 failure
-    rec = C.recovery_fraction(cell_err["k8v8"], cell_err["prebias_k8v8"], 0.0)
+    # K-only recovery (V bf16 in both arms): isolates K, no unrepairable V-FP8 in the denominator.
+    # Meaningful only when there IS a K bias -- on a biasless model prebias degenerates to K-native.
+    if has_k_bias:
+        rec_konly = C.recovery_fraction(
+            cell_err["k8v16"], cell_err["prebias_k8v16"], 0.0
+        )
+    else:
+        rec_konly = None  # N/A: no bias to repair (do NOT cite as bias-fix evidence)
 
     # ---- Phase-6 QK-gauge activation smoke (the novel piece, on a REAL model) ----
     amax = capture_k_amax(model, infos, ids_list, device)
-    D_by_layer = {
-        li: G.make_D_from_target_amax(a) for li, a in amax.items()
-    }  # equalize K channel range
-    # (a) native invariance: gauge with NO quant must leave logits identical (it's a true gauge)
-    with G.QKGaugeProbe(model, infos, D_by_layer=D_by_layer, quant_k=None):
+    ungauged_ratio = (
+        sum(_ratio(a) for a in amax.values()) / max(len(amax), 1) if amax else 0.0
+    )
+    # (a) native invariance with NO quant must leave logits identical -- a TRUE gauge. On bf16 the
+    # residual is rounding noise that scales with logit magnitude, so report it RELATIVE to base.
+    D_default = {li: G.make_D_from_target_amax(a) for li, a in amax.items()}
+    with G.QKGaugeProbe(model, infos, D_by_layer=D_default, quant_k=None):
         lg_inv = _logits(model, ids_list, device)
     inv_maxabs = max((a - b).abs().max().item() for a, b in zip(base, lg_inv))
-    # (b) does the gauge reduce FP8-K error?  ungauged fp8-K vs gauged fp8-K, both vs baseline
-    hk = kbc.FlexKVHarness(
-        model, infos, kbc.parse_spec("fp8:per_tensor"), kbc.parse_spec("bf16")
-    )
-    hk.install()
-    try:
-        lg_fp8k = _logits(model, ids_list, device)
-    finally:
-        hk.remove()
-    err_ungauged = _metrics_vs_base(base, lg_fp8k)["mean_logit_err"]
-    with G.QKGaugeProbe(model, infos, D_by_layer=D_by_layer, quant_k="fp8:per_tensor"):
-        lg_gauged = _logits(model, ids_list, device)
-    err_gauged = _metrics_vs_base(base, lg_gauged)["mean_logit_err"]
 
-    gauge = dict(
+    # (b) the HONEST free competitor to the gauge is per-channel FP8-K (no gauge, no Q-side cost).
+    def _kfp8_err(spec):
+        h = kbc.FlexKVHarness(
+            model, infos, kbc.parse_spec(spec), kbc.parse_spec("bf16")
+        )
+        h.install()
+        try:
+            return _metrics_vs_base(base, _logits(model, ids_list, device))[
+                "mean_logit_err"
+            ]
+        finally:
+            h.remove()
+
+    err_pertensor = _kfp8_err(
+        "fp8:per_tensor"
+    )  # the failure baseline the gauge must beat
+    err_perchannel = _kfp8_err(
+        "fp8:per_channel"
+    )  # the free competitor it must also beat
+
+    # (c) clamp sweep: gauged per-tensor FP8-K error vs both baselines, + realized outlier ratio.
+    gauge_sweep = []
+    for cl in GAUGE_CLAMPS:
+        D = {li: G.make_D_from_target_amax(a, clamp=cl) for li, a in amax.items()}
+        post_ratio = (
+            sum(_ratio(D[li] * amax[li]) for li in amax) / max(len(amax), 1)
+            if amax
+            else 0.0
+        )
+        with G.QKGaugeProbe(model, infos, D_by_layer=D, quant_k="fp8:per_tensor"):
+            err_g = _metrics_vs_base(base, _logits(model, ids_list, device))[
+                "mean_logit_err"
+            ]
+        gauge_sweep.append(
+            dict(
+                model=short_name,
+                clamp=f"{cl[0]}-{cl[1]}",
+                fp8k_err_gauged=round(err_g, 5),
+                gauge_beats_pertensor=bool(err_g < err_pertensor),
+                gauge_beats_perchannel=bool(err_g < err_perchannel),
+                post_gauge_amax_ratio=round(post_ratio, 3),
+            )
+        )
+
+    best = min(gauge_sweep, key=lambda r: r["fp8k_err_gauged"])
+    gauge_summary = dict(
         model=short_name,
+        has_k_bias=has_k_bias,
+        n_calib_tokens=n_tokens,
+        base_logit_maxabs=round(base_maxabs, 4),
         native_invariance_maxabs=round(inv_maxabs, 6),
-        fp8k_err_ungauged=round(err_ungauged, 5),
-        fp8k_err_gauged=round(err_gauged, 5),
-        gauge_reduces_err=bool(err_gauged < err_ungauged),
-        prebias_recovery_fraction=round(rec, 4),
+        native_invariance_rel=round(inv_maxabs / max(base_maxabs, 1e-9), 6),
+        ungauged_amax_ratio=round(ungauged_ratio, 3),
+        fp8k_err_pertensor=round(err_pertensor, 5),
+        fp8k_err_perchannel=round(err_perchannel, 5),
+        fp8k_err_gauged_best=round(best["fp8k_err_gauged"], 5),
+        gauge_best_clamp=best["clamp"],
+        gauge_beats_pertensor=best["gauge_beats_pertensor"],
+        gauge_beats_perchannel=best["gauge_beats_perchannel"],
+        prebias_recovery_fraction_konly=(
+            round(rec_konly, 4) if rec_konly is not None else "NA"
+        ),
     )
-    return rows, gauge, arch
+    return rows, gauge_summary, gauge_sweep, arch
 
 
 CELL_FIELDS = [
@@ -237,15 +305,32 @@ CELL_FIELDS = [
     "max_logit_err",
     "top1_agreement",
     "top5_agreement",
+    "softmax_kl",
     "classification",
 ]
-GAUGE_FIELDS = [
+GAUGE_SUMMARY_FIELDS = [
     "model",
+    "has_k_bias",
+    "n_calib_tokens",
+    "base_logit_maxabs",
     "native_invariance_maxabs",
-    "fp8k_err_ungauged",
+    "native_invariance_rel",
+    "ungauged_amax_ratio",
+    "fp8k_err_pertensor",
+    "fp8k_err_perchannel",
+    "fp8k_err_gauged_best",
+    "gauge_best_clamp",
+    "gauge_beats_pertensor",
+    "gauge_beats_perchannel",
+    "prebias_recovery_fraction_konly",
+]
+GAUGE_SWEEP_FIELDS = [
+    "model",
+    "clamp",
     "fp8k_err_gauged",
-    "gauge_reduces_err",
-    "prebias_recovery_fraction",
+    "gauge_beats_pertensor",
+    "gauge_beats_perchannel",
+    "post_gauge_amax_ratio",
 ]
 
 
@@ -255,41 +340,62 @@ def _load_thresholds():
     return CFG.load("thresholds")["classification"]
 
 
-def _write_outputs(out_dir, short_name, model_id, rows, gauge, arch, manifest):
+def _write_outputs(out_dir, short_name, model_id, rows, summary, sweep, arch, manifest):
     C.write_manifest(C.model_csv_path(out_dir, short_name, "."), manifest)
     cell_csv = C.model_csv_path(out_dir, short_name, "cells.csv")
     for r in rows:
         C.append_row(cell_csv, r, CELL_FIELDS)
     C.append_row(
-        C.model_csv_path(out_dir, short_name, "qk_gauge.csv"), gauge, GAUGE_FIELDS
+        C.model_csv_path(out_dir, short_name, "qk_gauge.csv"),
+        summary,
+        GAUGE_SUMMARY_FIELDS,
     )
+    sweep_csv = C.model_csv_path(out_dir, short_name, "qk_gauge_sweep.csv")
+    for r in sweep:
+        C.append_row(sweep_csv, r, GAUGE_SWEEP_FIELDS)
     card = C.model_csv_path(out_dir, short_name, "card.md")
     with open(card, "w") as f:
         f.write(f"# {model_id} -- FP8 KV-cache smoke\n\n")
         f.write(f"arch: {json.dumps(arch)}\n\n")
-        f.write("| cell | ppl | ppl_mult | nll_inc% | top1 | logit_err | class |\n")
-        f.write("|---|---|---|---|---|---|---|\n")
+        f.write(
+            "| cell | ppl | ppl_mult | nll_inc% | top1 | logit_err | kl | class |\n"
+        )
+        f.write("|---|---|---|---|---|---|---|---|\n")
         for r in rows:
             f.write(
                 f"| {r['cell']} | {r['ppl']} | {r['ppl_mult']} | {r['nll_increase_pct']} "
-                f"| {r['top1_agreement']} | {r['mean_logit_err']} | {r['classification']} |\n"
+                f"| {r['top1_agreement']} | {r['mean_logit_err']} | {r['softmax_kl']} "
+                f"| {r['classification']} |\n"
             )
         f.write(
-            f"\nQK-gauge: native_invariance_maxabs={gauge['native_invariance_maxabs']} "
-            f"(want ~0), fp8k err ungauged={gauge['fp8k_err_ungauged']} -> "
-            f"gauged={gauge['fp8k_err_gauged']} (reduces={gauge['gauge_reduces_err']}); "
-            f"prebias recovery={gauge['prebias_recovery_fraction']}\n"
+            f"\nQK-gauge (has_k_bias={summary['has_k_bias']}, "
+            f"n_calib_tokens={summary['n_calib_tokens']}):\n"
+            f"- native invariance: maxabs={summary['native_invariance_maxabs']} "
+            f"rel={summary['native_invariance_rel']} (bf16 residual ~ rel*|logit|, expected; "
+            f"a TRUE gauge has rel ~ 0)\n"
+            f"- FP8-K err: per-tensor={summary['fp8k_err_pertensor']} (the failure baseline), "
+            f"per-channel={summary['fp8k_err_perchannel']} (the free competitor), "
+            f"gauged-best={summary['fp8k_err_gauged_best']} @clamp {summary['gauge_best_clamp']}\n"
+            f"- gauge beats per-tensor={summary['gauge_beats_pertensor']}, "
+            f"beats per-channel={summary['gauge_beats_perchannel']} "
+            f"(K outlier ratio ungauged={summary['ungauged_amax_ratio']})\n"
+            f"- K-only prebias recovery={summary['prebias_recovery_fraction_konly']} "
+            f"(NA on biasless control -- do not cite as bias-fix evidence)\n"
         )
     return cell_csv
 
 
 def run_one(model_id, short_name, out_dir, device, dtype, n, seq_len, seed):
+    import gc
+
     torch.manual_seed(seed)
     model, tok = kbc.load_model(model_id, dtype, device)
     infos = AD.discover(model)
     ids_list = kbc.calib_prompts(tok, n=n, seq_len=seq_len)
     thr = _load_thresholds()
-    rows, gauge, arch = run_model(model, infos, ids_list, device, thr, short_name)
+    rows, summary, sweep, arch = run_model(
+        model, infos, ids_list, device, thr, short_name
+    )
     manifest = C.RunManifest(
         run_id=f"smoke-{short_name}-s{seed}",
         model_id=model_id,
@@ -299,10 +405,16 @@ def run_one(model_id, short_name, out_dir, device, dtype, n, seq_len, seed):
         seed=seed,
         eval_dataset="wikitext-103-raw-v1",
     )
-    _write_outputs(out_dir, short_name, model_id, rows, gauge, arch, manifest)
-    print(f"[smoke] {short_name}: {[ (r['cell'], r['classification']) for r in rows ]}")
-    print(f"[smoke] {short_name} gauge: {gauge}")
-    return rows, gauge
+    _write_outputs(out_dir, short_name, model_id, rows, summary, sweep, arch, manifest)
+    print(f"[smoke] {short_name}: {[(r['cell'], r['classification']) for r in rows]}")
+    print(f"[smoke] {short_name} gauge: {summary}")
+    # free the model before the next subprocess/model (cheap insurance even with the per-model
+    # subprocess driver; an in-process loop would otherwise stack and OOM a 24GB card).
+    del model, tok
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return rows, summary
 
 
 def self_test(out_dir, device="cpu"):
@@ -343,7 +455,7 @@ def self_test(out_dir, device="cpu"):
     for sn, model in builds.items():
         model = model.eval().to(device)
         infos = AD.discover(model)
-        rows, gauge, arch = run_model(model, infos, ids_list, device, thr, sn)
+        rows, summary, sweep, arch = run_model(model, infos, ids_list, device, thr, sn)
         manifest = C.RunManifest(
             run_id=f"selftest-{sn}",
             model_id=sn,
@@ -351,17 +463,23 @@ def self_test(out_dir, device="cpu"):
             device=device,
             measurement_level="fake_quant_teacher_forced",
         )
-        _write_outputs(out_dir, sn, sn, rows, gauge, arch, manifest)
-        # invariants the self-test asserts:
+        _write_outputs(out_dir, sn, sn, rows, summary, sweep, arch, manifest)
+        # invariants the self-test asserts (fp32 CPU -> the gauge is exact, rel ~ 0):
         native = [r for r in rows if r["cell"] == "native"][0]
         assert native["classification"] == "tolerant", "native must be tolerant"
         assert abs(native["mean_logit_err"]) < 1e-4, "native vs base must be ~0"
         assert (
-            gauge["native_invariance_maxabs"] < 1e-3
-        ), "QK-gauge must be score-invariant"
+            summary["native_invariance_rel"] < 1e-4
+        ), "QK-gauge must be score-invariant (fp32)"
+        assert len(sweep) == len(GAUGE_CLAMPS), "clamp sweep must emit a row per clamp"
+        assert "prebias_k8v16" in {
+            r["cell"] for r in rows
+        }, "K-only prebias cell must run"
         print(
             f"[self-test] {sn} OK  native={native['classification']} "
-            f"inv={gauge['native_invariance_maxabs']:.2e}"
+            f"inv_rel={summary['native_invariance_rel']:.2e} "
+            f"recovery_konly={summary['prebias_recovery_fraction_konly']} "
+            f"sweep={len(sweep)}"
         )
     print("[self-test] all paths exercised; CSVs at", out_dir)
     return ok
