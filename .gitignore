@@ -141,6 +141,9 @@ phase6_reproduction_wrapper.py
 test_*.py
 validate_*.py
 !tests/
+# ...but real test suites under tests/ ARE tracked (the rule above is for repo-root scratch only)
+!tests/**/test_*.py
+!tests/**/validate_*.py
 
 # Research data files
 *.npz
