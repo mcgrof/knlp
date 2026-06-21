@@ -36,6 +36,7 @@ def load_model(
     device="cuda:0",
     trust_remote_code=False,
     device_map=None,
+    max_memory=None,
 ):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -54,6 +55,8 @@ def load_model(
     )
     if device_map:  # large models that do not fit one GPU (e.g. 72B): shard GPU+CPU
         kw["device_map"] = device_map
+        # force CPU (not disk/meta) overflow so weights/biases stay real tensors
+        kw["max_memory"] = max_memory or {0: "135GiB", "cpu": "1500GiB"}
     model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
     if not device_map:
         model = model.to(device)
