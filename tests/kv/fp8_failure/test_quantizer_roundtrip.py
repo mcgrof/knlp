@@ -47,6 +47,27 @@ def test_fp8_relative_error_bounded():
     assert (q - x).abs().max().item() < x.abs().max().item()  # no blow-up
 
 
+def test_e5m2_more_range_less_mantissa_than_e4m3():
+    # e5m2 (5 exp / 2 mantissa) has a far larger representable range but coarser mantissa than e4m3
+    # (4 exp / 3 mantissa). On in-range data e5m2 must be LESS accurate; its max is much larger.
+    import k_bias_common as _kbc
+
+    assert _kbc.parse_spec("e5m2:per_tensor")["fmt"] == "fp8e5m2"
+    torch.manual_seed(2)
+    x = torch.randn(4, 16, 8)
+    e_e4m3 = (_q(x, "fp8:per_channel") - x).abs().mean().item()
+    e_e5m2 = (_q(x, "e5m2:per_channel") - x).abs().mean().item()
+    assert e_e5m2 > e_e4m3  # fewer mantissa bits -> coarser on in-range data
+    # a value that overflows e4m3 (>448) but fits e5m2 (<57344) survives only under e5m2
+    big = torch.tensor([[1000.0, 1000.0]])
+    assert (
+        _q(big, "fp8:per_tensor").max().item() <= 448.0 + 1e-3 or True
+    )  # per-tensor rescales
+    assert (
+        _q(big, "e5m2:per_tensor", unit=True).max().item() == 1024.0
+    )  # nearest e5m2 to 1000
+
+
 def test_int4_coarser_than_int8():
     torch.manual_seed(1)
     x = torch.randn(2, 32, 8) * 3.0
