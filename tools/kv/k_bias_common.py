@@ -410,18 +410,28 @@ def calib_prompts(tok, n=32, seq_len=2048):
 # per-layer filter (quantize only listed layers -- for the layer sweep).
 
 
+E5M2_MAX = 57344.0
+
+
 def _quant_lastdims(x, fmt, bits, layout, group, unit_scale):
     """x: [..., T, D] (post-RoPE K) or [..., D]. layout over the T/D structure of the last 2 dims.
-    fmt in {'fp8','int'}; bits used for int (8/6/4); fp8 is e4m3 (bits ignored)."""
+    fmt in {'fp8'(e4m3),'fp8e5m2','int'}; bits used for int (8/6/4); fp8 variants ignore bits.
+    """
     if fmt is None or bits >= 16:
         return x
     orig = x.dtype
     xf = x.float()
-    qmax = FP8_MAX if fmt == "fp8" else (2 ** (bits - 1) - 1)
+    qmax = (
+        FP8_MAX
+        if fmt == "fp8"
+        else (E5M2_MAX if fmt == "fp8e5m2" else (2 ** (bits - 1) - 1))
+    )
 
     def cast(z):
         if fmt == "fp8":
             return z.clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).float()
+        if fmt == "fp8e5m2":
+            return z.clamp(-E5M2_MAX, E5M2_MAX).to(torch.float8_e5m2).float()
         return z.round().clamp(-qmax, qmax)
 
     if unit_scale:
@@ -460,6 +470,11 @@ def parse_spec(s):
     head = parts[0]
     layout = parts[1] if len(parts) > 1 else "per_tensor"
     group = int(parts[2]) if len(parts) > 2 else 128
+    if head in (
+        "e5m2",
+        "fp8e5m2",
+    ):  # e5m2: more exponent (dynamic range), fewer mantissa bits
+        return dict(fmt="fp8e5m2", bits=8, layout=layout, group=group)
     if head.startswith("fp8"):
         return dict(fmt="fp8", bits=8, layout=layout, group=group)
     if head.startswith("int"):
