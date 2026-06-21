@@ -410,11 +410,20 @@ def _write_outputs(out_dir, short_name, model_id, rows, summary, sweep, arch, ma
     return cell_csv
 
 
-def run_one(model_id, short_name, out_dir, device, dtype, n, seq_len, seed):
+def run_one(
+    model_id, short_name, out_dir, device, dtype, n, seq_len, seed, device_map=None
+):
     import gc
 
     torch.manual_seed(seed)
-    model, tok = kbc.load_model(model_id, dtype, device)
+    # device_map="auto" shards a too-big model (e.g. Qwen2.5-72B) across GPU+CPU. max_memory forces
+    # CPU (not disk/meta) overflow so biases stay real tensors; activations ride accelerate hooks to
+    # the GPU during the forward, so the interface harness + gauge still work (atlas cells only --
+    # AR generation over an offloaded 72B would be hours, so the gauge/AR caller should keep n small).
+    if device_map:
+        model, tok = kbc.load_model(model_id, dtype, device, device_map=device_map)
+    else:
+        model, tok = kbc.load_model(model_id, dtype, device)
     infos = AD.discover(model)
     ids_list = kbc.calib_prompts(tok, n=n, seq_len=seq_len)
     thr = _load_thresholds()
@@ -542,6 +551,11 @@ def main():
     ap.add_argument("--num-prompts", type=int, default=4)
     ap.add_argument("--seq-len", type=int, default=512)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--device-map",
+        default=None,
+        help="'auto' to shard a too-big model (72B) across GPU+CPU via accelerate",
+    )
     args = ap.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
     if args.self_test:
@@ -557,6 +571,7 @@ def main():
         args.num_prompts,
         args.seq_len,
         args.seed,
+        device_map=args.device_map,
     )
 
 
