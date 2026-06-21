@@ -26,7 +26,7 @@ CELLS = {
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--models", nargs="*", required=True)
+    ap.add_argument("--models", nargs="*")
     ap.add_argument("--models-file")
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--seq-len", type=int, default=2048)

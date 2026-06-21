@@ -155,16 +155,21 @@ def main():
                 f"{fnum(r,'prebias_K'):.3f} | {r.get('top_layer','')} | **{r.get('verdict','')}** |"
             )
 
-    # ---- 72B ----
+    # ---- 72B ---- (safetensors json may omit stress/prebias fields; format defensively)
     if q72:
+        stress = q72.get("mean_bias_max_over_preK_p99")
+        stress_s = f"{stress:.2f}" if stress is not None else "n/a (read from weights)"
+        preb = q72.get("fp8_prebias_err")
+        preb_s = f", prebias {preb:.3f}" if preb is not None else ""
         md += [
             "",
-            "## Qwen2.5-72B audit (measurement_level=fake_quant + activation_audit, device_map)",
+            "## Qwen2.5-72B audit (measurement_level=weights + fake_quant, device_map)",
             "",
-            f"- has_k_bias: {q72.get('has_k_bias')}, max|K-bias|: {q72.get('max_abs_k_bias'):.1f}",
-            f"- stress (bias_max/preK_p99): {q72.get('mean_bias_max_over_preK_p99'):.2f}",
-            f"- FP8 normal err {q72.get('fp8_normal_err'):.3f}, prebias {q72.get('fp8_prebias_err'):.3f}, "
-            f"K16/V8 {q72.get('fp8_k16v8_err'):.3f}",
+            f"- has_k_bias: {q72.get('has_k_bias')}, max|K-bias|: {fnum(q72,'max_abs_k_bias'):.1f} "
+            f"(n_layers {q72.get('n_kbias_layers', q72.get('n_layers'))})",
+            f"- stress (bias_max/preK_p99): {stress_s}",
+            f"- FP8 normal err {fnum(q72,'fp8_normal_err'):.3f}{preb_s}, "
+            f"K16/V8 {fnum(q72,'fp8_k16v8_err'):.3f}",
         ]
 
     # ---- conclusions ----
@@ -195,7 +200,7 @@ def main():
         att = q72.get("fp8_normal_err", 1) < 0.30
         md.append(
             f"6. **72B supports attenuation?** {'Yes' if att else 'No'} "
-            f"(max|K-bias| {q72.get('max_abs_k_bias'):.1f}, FP8 err {q72.get('fp8_normal_err'):.3f})."
+            f"(max|K-bias| {fnum(q72,'max_abs_k_bias'):.1f}, FP8 err {fnum(q72,'fp8_normal_err'):.3f})."
         )
     else:
         md.append(
