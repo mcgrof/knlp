@@ -24,12 +24,19 @@ import json
 import os
 
 import torch
+import torch.nn.functional as F
 
 FP8_MAX = 448.0  # e4m3fn max representable magnitude
 
 
 # ----------------------------------------------------------------------------- loading
-def load_model(model_id, dtype="bfloat16", device="cuda:0", trust_remote_code=False):
+def load_model(
+    model_id,
+    dtype="bfloat16",
+    device="cuda:0",
+    trust_remote_code=False,
+    device_map=None,
+):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     dt = {
@@ -38,15 +45,18 @@ def load_model(model_id, dtype="bfloat16", device="cuda:0", trust_remote_code=Fa
         "float32": torch.float32,
     }[dtype]
     tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
+    kw = dict(
         dtype=dt,
         trust_remote_code=trust_remote_code,
         # sdpa routes through ALL_ATTENTION_FUNCTIONS so the interface hook sees post-RoPE q,k,v
         # ("eager" bypasses that registry in recent transformers). We don't need attn weights.
         attn_implementation="sdpa",
     )
-    model = model.to(device)
+    if device_map:  # large models that do not fit one GPU (e.g. 72B): shard GPU+CPU
+        kw["device_map"] = device_map
+    model = AutoModelForCausalLM.from_pretrained(model_id, **kw)
+    if not device_map:
+        model = model.to(device)
     model.eval()
     return model, tok
 
@@ -387,3 +397,215 @@ def calib_prompts(tok, n=32, seq_len=2048):
         if len(chunks) >= n:
             break
     return chunks
+
+
+# ============================================================================ TIER-2 additions
+# Flexible independent-K/V fake-quant for the FP8-variant probe and the Phi/FII diagnosis:
+# per-K and per-V {fmt, bits, layout, group}, optional pre-bias K (pre-RoPE residual), and a
+# per-layer filter (quantize only listed layers -- for the layer sweep).
+
+
+def _quant_lastdims(x, fmt, bits, layout, group, unit_scale):
+    """x: [..., T, D] (post-RoPE K) or [..., D]. layout over the T/D structure of the last 2 dims.
+    fmt in {'fp8','int'}; bits used for int (8/6/4); fp8 is e4m3 (bits ignored)."""
+    if fmt is None or bits >= 16:
+        return x
+    orig = x.dtype
+    xf = x.float()
+    qmax = FP8_MAX if fmt == "fp8" else (2 ** (bits - 1) - 1)
+
+    def cast(z):
+        if fmt == "fp8":
+            return z.clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).float()
+        return z.round().clamp(-qmax, qmax)
+
+    if unit_scale:
+        return cast(xf).to(orig)
+    # scale dims: reduce over the chosen axes of the last two dims [T, D]
+    if layout == "per_tensor":
+        scale = xf.abs().amax().clamp(min=1e-8) / qmax
+    elif (
+        layout == "per_head"
+    ):  # one scale per head (assumes head is dim -3): reduce [T,D]
+        scale = xf.abs().amax(dim=(-1, -2), keepdim=True).clamp(min=1e-8) / qmax
+    elif layout == "per_token":  # per (head, token): reduce over D
+        scale = xf.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / qmax
+    elif layout == "per_channel":  # per (head, channel): reduce over T
+        scale = xf.abs().amax(dim=-2, keepdim=True).clamp(min=1e-8) / qmax
+    elif layout == "per_group":  # per (head, token, channel-group)
+        D = xf.shape[-1]
+        g = min(group, D)
+        ng = (D + g - 1) // g
+        pad = ng * g - D
+        xp = F.pad(xf, (0, pad))
+        xg = xp.reshape(*xp.shape[:-1], ng, g)
+        sc = xg.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / qmax
+        q = cast(xg / sc) * sc
+        return q.reshape(*xp.shape)[..., :D].to(orig)
+    else:
+        raise ValueError(layout)
+    return (cast(xf / scale) * scale).to(orig)
+
+
+def parse_spec(s):
+    """'fp8:per_tensor', 'int8:per_token', 'int4:per_group:128', 'bf16' -> dict."""
+    if s in (None, "bf16", "none", "fp16"):
+        return dict(fmt=None, bits=16, layout="per_tensor", group=128)
+    parts = s.split(":")
+    head = parts[0]
+    layout = parts[1] if len(parts) > 1 else "per_tensor"
+    group = int(parts[2]) if len(parts) > 2 else 128
+    if head.startswith("fp8"):
+        return dict(fmt="fp8", bits=8, layout=layout, group=group)
+    if head.startswith("int"):
+        return dict(fmt="int", bits=int(head[3:]), layout=layout, group=group)
+    raise ValueError(s)
+
+
+class FlexKVHarness:
+    """Independent K/V fake-quant at the cache point. k_spec/v_spec are parse_spec dicts.
+    prebias=True: K quantized as the PRE-RoPE residual (k_proj_out - b_K) + b_K (faithful fix),
+    in which case k_spec applies to that residual and the post-RoPE K branch is skipped. layers:
+    set of layer indices to quantize (None = all)."""
+
+    def __init__(
+        self, model, infos, k_spec, v_spec, prebias=False, layers=None, unit_scale=False
+    ):
+        self.model = model
+        self.infos = infos
+        self.k = k_spec
+        self.v = v_spec
+        self.prebias = prebias
+        self.layers = layers
+        self.unit_scale = unit_scale
+        self.impl = model.config._attn_implementation
+        self.by_mod = {id(i["attn_module"]): i for i in infos}
+        self.orig = None
+        self.handles = []
+
+    def _kproj_hook(self, info):
+        if info["k_bias"] is None:
+            return None
+        k_slice = info["k_slice"] if info["fused"] else None
+        spec = self.k
+        us = self.unit_scale
+
+        def hook(mod, inp, out):
+            if mod.bias is None:
+                return out
+            if k_slice is not None:
+                s0, s1 = k_slice
+                ks = out[..., s0:s1]
+                bb = mod.bias[s0:s1].to(ks.dtype)
+                out = out.clone()
+                out[..., s0:s1] = (
+                    _quant_lastdims(
+                        ks - bb,
+                        spec["fmt"],
+                        spec["bits"],
+                        spec["layout"],
+                        spec["group"],
+                        us,
+                    )
+                    + bb
+                )
+                return out
+            bb = mod.bias.to(out.dtype)
+            return (
+                _quant_lastdims(
+                    out - bb,
+                    spec["fmt"],
+                    spec["bits"],
+                    spec["layout"],
+                    spec["group"],
+                    us,
+                )
+                + bb
+            )
+
+        return hook
+
+    def install(self):
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        self.orig = ALL_ATTENTION_FUNCTIONS[self.impl]
+        orig = self.orig
+        h = self
+        if self.prebias:
+            for info in self.infos:
+                if self.layers is not None and info["layer_idx"] not in self.layers:
+                    continue
+                proj = info["k_proj"] if not info["fused"] else info["qkv_proj"]
+                hk = self._kproj_hook(info)
+                if proj is not None and hk is not None:
+                    self.handles.append(proj.register_forward_hook(hk))
+
+        def hook(module, q, k, v, attention_mask, scaling=None, dropout=0.0, **kw):
+            info = h.by_mod.get(id(module))
+            if info is not None and (h.layers is None or info["layer_idx"] in h.layers):
+                if not h.prebias and h.k["fmt"] is not None:
+                    k = _quant_lastdims(
+                        k,
+                        h.k["fmt"],
+                        h.k["bits"],
+                        h.k["layout"],
+                        h.k["group"],
+                        h.unit_scale,
+                    )
+                if h.v["fmt"] is not None:
+                    v = _quant_lastdims(
+                        v,
+                        h.v["fmt"],
+                        h.v["bits"],
+                        h.v["layout"],
+                        h.v["group"],
+                        h.unit_scale,
+                    )
+            return orig(
+                module, q, k, v, attention_mask, dropout=dropout, scaling=scaling, **kw
+            )
+
+        ALL_ATTENTION_FUNCTIONS[self.impl] = hook
+        return self
+
+    def remove(self):
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        if self.orig is not None:
+            ALL_ATTENTION_FUNCTIONS[self.impl] = self.orig
+            self.orig = None
+        for hd in self.handles:
+            hd.remove()
+        self.handles = []
+
+    def __enter__(self):
+        return self.install()
+
+    def __exit__(self, *a):
+        self.remove()
+
+
+@torch.no_grad()
+def real_ppl(model, tok, device, n=16, seq_len=2048, harness=None):
+    """Real next-token PPL (NLL over the dataset's own targets) -- the near-serving metric, NOT a
+    vs-BF16 logit diff. If harness is given, it is installed around the forward (quantized cache).
+    """
+    chunks = calib_prompts(tok, n=n, seq_len=seq_len)
+    if harness is not None:
+        harness.install()
+    tot_nll, tot_tok = 0.0, 0
+    try:
+        for ids in chunks:
+            t = torch.tensor(ids).unsqueeze(0).to(device)
+            out = model(t)
+            lp = torch.log_softmax(out.logits[0, :-1].float(), dim=-1)
+            tgt = t[0, 1:]
+            nll = -lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
+            tot_nll += nll.sum().item()
+            tot_tok += tgt.numel()
+    finally:
+        if harness is not None:
+            harness.remove()
+    import math
+
+    return math.exp(tot_nll / max(tot_tok, 1)), tot_tok
