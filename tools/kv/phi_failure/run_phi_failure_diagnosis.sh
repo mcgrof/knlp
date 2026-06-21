@@ -22,7 +22,7 @@ case "$PHASE" in
   rope_placement)   wait_gpu; $PY "$HERE/phi_rope_placement_probe.py" --models $(M) --num-prompts "${NP:-32}" --output-dir "$ROOT/rope_placement" "$@" ;;
   attention_score)  wait_gpu; $PY "$HERE/phi_attention_score_diagnostics.py" --models $(M) --num-prompts "${NP:-16}" --output-dir "$ROOT/attention_score" "$@" ;;
   layer_sweep)      wait_gpu; $PY "$HERE/phi_layer_sweep.py" --models $(M) --num-prompts "${NP:-16}" --output-dir "$ROOT/layer_sweep" "$@" ;;
-  report)           $PY "$HERE/report_phi_failure.py" --root "$ROOT" ;;
+  report)           $PY "$HERE/report_phi_failure.py" --root "$ROOT" --primary microsoft/phi-2 ;;
   all)
     $PY "$HERE/phi_metadata_audit.py" --models $(M) --output-dir "$ROOT/metadata" >> "$ROOT/phi.log" 2>&1
     wait_gpu; $PY "$HERE/phi_kv_isolation_probe.py" --models $(M) --num-prompts 32 --output-dir "$ROOT/kv_isolation" >> "$ROOT/phi.log" 2>&1
@@ -31,7 +31,7 @@ case "$PHASE" in
     wait_gpu; $PY "$HERE/phi_rope_placement_probe.py" --models $(M) --num-prompts 32 --output-dir "$ROOT/rope_placement" >> "$ROOT/phi.log" 2>&1
     wait_gpu; $PY "$HERE/phi_attention_score_diagnostics.py" --models $(M) --num-prompts 16 --output-dir "$ROOT/attention_score" >> "$ROOT/phi.log" 2>&1
     wait_gpu; $PY "$HERE/phi_layer_sweep.py" --models microsoft/phi-2 Qwen/Qwen2.5-7B-Instruct mistralai/Mistral-7B-Instruct-v0.3 --num-prompts 16 --output-dir "$ROOT/layer_sweep" >> "$ROOT/phi.log" 2>&1
-    $PY "$HERE/report_phi_failure.py" --root "$ROOT" >> "$ROOT/phi.log" 2>&1
+    $PY "$HERE/report_phi_failure.py" --root "$ROOT" --primary microsoft/phi-2 >> "$ROOT/phi.log" 2>&1
     echo PHIDONE > "$ROOT/phi_status.txt" ;;
   *) echo "phases: metadata subspace kv_isolation scale_granularity rope_placement attention_score layer_sweep report all"; exit 1 ;;
 esac
