@@ -1013,6 +1013,101 @@
               )}
             </div>
 
+            {/* Scaling to Marin: status + PR cost */}
+            <div className="mt-8 pt-6 border-t border-gray-700">
+              <h3 className="text-xl font-bold text-green-400 mb-2">Scaling to Marin &mdash; what held, and what a PR would cost</h3>
+              <p className="text-sm text-gray-400 mb-4">
+                The bitter7 result above is GPT-2. Taking FIM-guided pruning toward
+                {' '}<a className="text-green-400 hover:underline" href="https://huggingface.co/marin-community/marin-8b-base">Marin</a>{' '}
+                (Stanford&rsquo;s open LLM) exposes a methodology trap worth being explicit about: the 150M run and the
+                8B run are <strong className="text-gray-200">not the same procedure</strong>.
+              </p>
+
+              <div className="grid md:grid-cols-2 gap-4 mb-5">
+                <div className="bg-gray-800 rounded-lg p-4 border border-green-700/40">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-green-300">150M &mdash; prune during training</span>
+                    <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">valid trial</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-2">
+                    Marin <code className="text-gray-300">llama_150m</code> config, TinyStories, trained from scratch with a
+                    cubic sparsity schedule. Importance = <code className="text-gray-300">|W| &times; exp_avg_sq^0.25</code>
+                    &mdash; the <strong className="text-gray-200">live Adam second moment</strong>.
+                  </p>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    <li>25%: FIM <span className="text-green-300">beats dense</span> (7.69 vs 7.73 PPL)</li>
+                    <li>FIM &gt; magnitude at every sparsity</li>
+                    <li>advantage grows: +0.6% @25% &rarr; +8.9% @90%</li>
+                  </ul>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 border border-amber-700/40">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-amber-300">Marin-8B &mdash; one-shot post-hoc</span>
+                    <span className="text-xs bg-amber-900 text-amber-300 px-2 py-0.5 rounded">not a valid test</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-2">
+                    Frozen downloaded checkpoint, weights zeroed and evaluated, <strong className="text-gray-200">no
+                    retraining</strong>. &ldquo;FIM&rdquo; here is only a per-layer sparsity allocator (fresh empirical
+                    Fisher), magnitude within each layer.
+                  </p>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    <li>magnitude-25% best: 6.349 PPL (+7.5%)</li>
+                    <li>FIM-25% slightly worse: 6.458</li>
+                    <li>random: catastrophic (1538 PPL)</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="bg-green-900/15 border border-green-700/60 rounded-lg p-4 mb-5 text-sm text-gray-300">
+                <strong className="text-green-300">Honest verdict.</strong> The 8B &ldquo;flip&rdquo; does <em>not</em>
+                refute the 150M win &mdash; it tested a different, weaker procedure. The per-weight Adam
+                <code className="text-gray-300"> exp_avg_sq</code> that wins at 150M <strong>does not exist</strong> on a
+                downloaded checkpoint, and one-shot-no-retrain is a far harsher regime where the importance metric matters
+                less. FIM-guided pruning was validly evaluated <strong>only at 150M (from scratch, positive)</strong>; it was
+                never given a fair from-scratch trial at scale. The scaling question is <strong>open, not negative</strong>.
+                No PR was ever sent to Marin.
+              </div>
+
+              <h4 className="text-base font-semibold mb-2 text-gray-200">What a Marin PR would actually take</h4>
+              <p className="text-sm text-gray-400 mb-3">
+                FIM-pruning maps cleanly onto Marin&rsquo;s training-procedure lane &mdash; it is a
+                <code className="text-gray-300"> GradientTransformation</code> over Adam&rsquo;s second moment, and Marin
+                documents adding optimizers via <strong className="text-gray-200">Optax/Levanter</strong>. The credible path is
+                the {' '}<a className="text-green-400 hover:underline" href="https://marin.community/speedrun/">Speedrun</a>{' '}
+                scaling ladder: a token-matched <strong className="text-gray-200">prune-during-training</strong> A/B vs magnitude
+                at 30M&rarr;75M&rarr;300M&rarr;1.4B, judged on the <strong className="text-gray-200">slope</strong> (Paloma C4-EN
+                bits-per-byte vs FLOPs), filed as a preregistered GitHub issue. Not an 8B-from-scratch run &mdash; Marin-8B is
+                12.7T tokens.
+              </p>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="border-b border-gray-700 text-gray-400">
+                    <th className="text-left py-2 px-3">Next scale (from scratch)</th>
+                    <th className="text-left py-2 px-3">Tokens (20&times;)</th>
+                    <th className="text-left py-2 px-3">FLOPs</th>
+                    <th className="text-left py-2 px-3">W7900 (1&times;)</th>
+                    <th className="text-left py-2 px-3">H100 (1&times;)</th>
+                  </tr></thead>
+                  <tbody className="text-gray-300">
+                    <tr className="border-b border-gray-800"><td className="py-2 px-3 font-medium text-green-300">30M</td><td className="py-2 px-3">0.6B</td><td className="py-2 px-3 font-mono text-xs">1.1e17</td><td className="py-2 px-3">~1.2 h</td><td className="py-2 px-3">~5 min</td></tr>
+                    <tr className="border-b border-gray-800"><td className="py-2 px-3 font-medium text-green-300">75M</td><td className="py-2 px-3">1.5B</td><td className="py-2 px-3 font-mono text-xs">6.8e17</td><td className="py-2 px-3">~8 h</td><td className="py-2 px-3">~28 min</td></tr>
+                    <tr className="border-b border-gray-800"><td className="py-2 px-3 font-medium text-green-300">300M</td><td className="py-2 px-3">6B</td><td className="py-2 px-3 font-mono text-xs">1.1e19</td><td className="py-2 px-3">~5 days</td><td className="py-2 px-3">~7.6 h</td></tr>
+                    <tr><td className="py-2 px-3 font-medium text-green-300">1.4B</td><td className="py-2 px-3">28B</td><td className="py-2 px-3 font-mono text-xs">2.4e20</td><td className="py-2 px-3">~110 days*</td><td className="py-2 px-3">~6.9 days*</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-gray-600 mt-3 mb-2">
+                Per single training run; an ablation needs <strong>&times;2</strong> (magnitude baseline + FIM). Assumes
+                C&nbsp;&asymp;&nbsp;6&middot;N&middot;D, Chinchilla 20&nbsp;tokens/param (Marin&rsquo;s own 1.4B@28B ablation
+                regime), one GPU. H100&nbsp;SXM 989.5&nbsp;TFLOPS&nbsp;BF16 @ 40% MFU; W7900 122.6&nbsp;TFLOPS&nbsp;BF16 @ ~20%
+                MFU (ROCm/RDNA3). <strong>*</strong>&nbsp;1.4B is impractical on one GPU &mdash; on an 8&times;H100 node it is
+                ~21&nbsp;h/arm (~$700&ndash;1000 cloud for both arms). 30M&ndash;75M run locally on the single W7900 in a day or
+                two; 300M is a multi-day W7900 grind or a cheap H100 afternoon. The real gate beyond GPU hours is the
+                Levanter/JAX port and a Marin-relevant corpus + eval suite.
+              </p>
+            </div>
+
             {/* Unified FIM Applications */}
             <div className="mt-8 pt-6 border-t border-gray-700">
               <h3 className="text-lg font-bold text-gray-200 mb-2">One Signal, Five Applications</h3>
