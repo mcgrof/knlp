@@ -552,6 +552,130 @@
             </div>
           </Section>
 
+          {/* 7b. Taxonomy */}
+          <Section id="taxonomy" kicker="The map" title="A failure taxonomy: six classes, two mechanisms">
+            <p>
+              Putting the whole fleet on one map makes the central claim concrete: <strong>the mechanism, not the model
+              name, picks the repair.</strong> Two causal families (additive K-bias stress and partial-RoPE subspace
+              mismatch) and a pair of controls account for every model we ran.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-gray-700 text-gray-400">
+                  <th className="text-left py-2 px-3">Class</th><th className="text-left py-2 px-3">Models</th>
+                  <th className="text-left py-2 px-3">Mechanism</th><th className="text-left py-2 px-3">Repair</th>
+                </tr></thead>
+                <tbody className="text-gray-300">
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-medium" style={{color:C.red}}>Additive K-bias (DC offset)</td>
+                    <td className="py-2 px-3">Qwen2 · Qwen2.5 · DeepSeek-R1-Qwen</td>
+                    <td className="py-2 px-3 text-gray-400">a large learned per-channel K-bias captures the per-tensor FP8 scale</td>
+                    <td className="py-2 px-3">pre-bias or INT8-K · K16/V8</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-medium" style={{color:C.orange}}>Pass-through tail bias</td>
+                    <td className="py-2 px-3">small Pythia (160M–410M)</td>
+                    <td className="py-2 px-3 text-gray-400">bias concentrated in the un-rotated &ldquo;pass-through&rdquo; dimensions</td>
+                    <td className="py-2 px-3">pre-bias · K16/V8</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-medium" style={{color:C.purple}}>Pass-through distribution</td>
+                    <td className="py-2 px-3">Phi-2 · Pythia-6.9B</td>
+                    <td className="py-2 px-3 text-gray-400">a hostile un-rotated <em>distribution</em>, not a removable bias (pre-bias recovers ~13%)</td>
+                    <td className="py-2 px-3">native V (Phi-2) · K16/V8</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-medium" style={{color:C.gray}}>Partial-RoPE control</td>
+                    <td className="py-2 px-3">GPT-J (biasless)</td>
+                    <td className="py-2 px-3 text-gray-400">only a mild rotary-subspace residual; pass-through is benign</td>
+                    <td className="py-2 px-3">K16/V8 (mild)</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-medium" style={{color:C.green}}>Tolerant control</td>
+                    <td className="py-2 px-3">Mistral</td>
+                    <td className="py-2 px-3 text-gray-400">no hostile key geometry — FP8-K is fine</td>
+                    <td className="py-2 px-3">none needed</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 px-3 font-medium" style={{color:C.amber}}>Biasless but K-fragile</td>
+                    <td className="py-2 px-3">Phi-4 · Qwen3-4B</td>
+                    <td className="py-2 px-3 text-gray-400">flagged fragile, mechanism not yet named</td>
+                    <td className="py-2 px-3">native K · K16/V8</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </Section>
+
+          {/* 7c. Provenance */}
+          <Section id="provenance" kicker="Where the geometry comes from" title="Provenance: two design choices about length that set up the FP8 failure">
+            <p>
+              Neither hostile key geometry is an accident. Each is the long-tail residue of a deliberate, well-motivated
+              architecture decision about <strong>positional encoding and context length</strong> — made years before
+              anyone tried to FP8 the cache. Tracing them explains why the failures cluster exactly where they do.
+            </p>
+
+            <h3 className="text-lg font-semibold text-gray-200 mt-5 mb-2">Lineage 1 — the K-bias, from &ldquo;RoPE&nbsp;+&nbsp;Bias&nbsp;=&nbsp;better length extrapolation&rdquo;</h3>
+            <p>
+              Rotary position embedding (RoPE) was created by <strong>Jianlin&nbsp;Su</strong> (苏剑林), first author of
+              <a href="https://arxiv.org/abs/2104.09864" className="text-amber-400 hover:underline"> RoFormer</a> (2021, then
+              at Zhuiyi Technology), and it grew up on his blog <a href="https://kexue.fm" className="text-amber-400 hover:underline">科学空间 / kexue.fm</a>
+              (mirror spaces.ac.cn) before it was ever a paper. The
+              Qwen team adopted the same author&rsquo;s next idea. Qwen&rsquo;s own
+              <a href="https://arxiv.org/abs/2309.16609" className="text-amber-400 hover:underline"> technical report</a> states it
+              plainly: &ldquo;<em>we add biases in the QKV layer of attention to enhance the extrapolation ability of the
+              model (Su, 2023b)</em>&rdquo; — and Su,&nbsp;2023b is his blog post literally titled
+              <a href="https://spaces.ac.cn/archives/9577" className="text-amber-400 hover:underline"> &ldquo;RoPE + Bias = better length extrapolation.&rdquo;</a>
+              So the QKV bias this atlas indicts is, by Qwen&rsquo;s own account, a length-extrapolation device sourced to
+              the RoPE author&rsquo;s blog.
+            </p>
+            <p>
+              Three honest hedges keep this from being a tidy causal arrow. It is a <em>stated rationale</em> in a tech
+              report, not a controlled ablation; the bias was a minor lever (the real long-context work was done by
+              NTK-aware scaling, LogN attention, and later YaRN); and the atlas&rsquo;s <em>emergent learned-bias
+              magnitude</em> — the thing that actually breaks FP8 — is a different object from the design flag, only loosely
+              linked to the original intent. But the loop does close cleanly at the other end: <strong>Qwen3 removed the
+              QKV bias</strong> (and added QK-Norm for training stability), and this atlas sees exactly that — Qwen3-4B is
+              biasless and merely <em>material</em>, never catastrophic. The design choice that planted the fragility was
+              retired two generations later, and the fragility went with it.
+            </p>
+
+            <h3 className="text-lg font-semibold text-gray-200 mt-5 mb-2">Lineage 2 — partial RoPE (&ldquo;RoPE offloading&rdquo;): the un-rotated pass-through subspace</h3>
+            <p>
+              The second mechanism traces to a different, older decision. <strong>GPT-J</strong> (Wang &amp; Komatsuzaki,
+              2021) rotated only the first <strong>25%</strong> of each head&rsquo;s dimensions and left the rest un-rotated.
+              <a href="https://arxiv.org/abs/2204.06745" className="text-amber-400 hover:underline"> GPT-NeoX-20B</a> adopted it
+              verbatim — &ldquo;<em>apply it only to the first 25% of embedding vector dimensions</em>&rdquo; — for a
+              strictly practical reason: &ldquo;<em>the best balance of performance and computational efficiency.</em>&rdquo;
+              Not a theory of position-free content; a compute tweak. Pythia and StableLM-Alpha inherit it
+              (<span className="kbd">rotary_pct&nbsp;0.25</span>), and Phi-1.5 / Phi-2 carry it as
+              <span className="kbd">partial_rotary_factor</span>&nbsp;0.5&nbsp;/&nbsp;0.4 (Phi-3 later moved to LongRoPE-style
+              scaling). That un-rotated block sees <em>no</em> positional rotation at all (NoPE-like) and appears to
+              function as a content/retrieval channel — and it is
+              precisely where this atlas&rsquo;s second failure lives: training deposits either a bias (the small Pythias)
+              or a hostile distribution (Phi-2) into that subspace, and one shared per-tensor FP8 scale cannot represent it.
+              A 2021 efficiency shortcut is what makes the Pythia/Phi lineage fragile today.
+            </p>
+
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400 mt-4">
+              <strong className="text-gray-200">Aside — how length extrapolation is actually done now.</strong> The
+              bias-for-extrapolation idea is a 2023 footnote; the field moved to scaling RoPE <em>frequencies</em>:
+              <a href="https://arxiv.org/abs/2306.15595" className="text-amber-400 hover:underline"> Position Interpolation</a>
+              (Meta, 2023), the community NTK-aware / Dynamic-NTK line,
+              <a href="https://arxiv.org/abs/2309.00071" className="text-amber-400 hover:underline"> YaRN</a> (Peng&nbsp;et&nbsp;al.,
+              2023; now in DeepSeek-V3 and Qwen2.5/3),
+              <a href="https://arxiv.org/abs/2402.13753" className="text-amber-400 hover:underline"> LongRoPE</a>
+              (Microsoft, used in Phi-3) and its successor
+              <a href="https://arxiv.org/abs/2502.20082" className="text-amber-400 hover:underline"> LongRoPE2</a> (2025),
+              Llama&nbsp;3.1&rsquo;s band-split <span className="kbd">rope_scaling</span>, and the
+              <a href="https://arxiv.org/abs/2305.19466" className="text-amber-400 hover:underline"> NoPE</a> idea
+              (no-positional-encoding layers), now echoed in Llama&nbsp;4&rsquo;s interleaved iRoPE, which alternates RoPE and
+              NoPE-style layers — plus ring / blockwise attention for exact long context. The throughline:
+              modern length extrapolation rescales RoPE frequencies rather than bolting on bias terms, which is also why the
+              FP8-bias failure is, mercifully, a legacy artifact rather than a property of the models being built today.
+            </div>
+          </Section>
+
           {/* 8. Scale */}
           <Section id="scale" kicker="Bigger is not worse" title="Fragility peaks at 7B and attenuates to 72B">
             <p>
