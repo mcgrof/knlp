@@ -56,11 +56,16 @@ class SubspaceKHarness:
     pass-through distribution. pass_bias_by_layer: {layer_idx: [n_kv, n_passthrough]} or None.
     """
 
-    def __init__(self, model, infos, rotary_dim, mode, pass_bias_by_layer=None):
+    def __init__(
+        self, model, infos, rotary_dim, mode, pass_bias_by_layer=None, mask=None
+    ):
         self.model = model
         self.rd = rotary_dim
         self.mode = mode
         self.pass_bias = pass_bias_by_layer or {}
+        # mask: bool [head_dim] selecting which channels to FP8 ('mask_only') -- used for the random
+        # 32/48 partition control (a random same-size channel set vs the true pass-through tail).
+        self.mask = mask
         self.impl = model.config._attn_implementation
         self.by_mod = {id(i["attn_module"]): i for i in infos}
         self.orig = None
@@ -90,6 +95,12 @@ class SubspaceKHarness:
                     elif pas.numel():
                         pas = _q_fp8(pas)
                     k = torch.cat([rot, pas], dim=-1)
+                elif h.mode == "mask_only" and h.mask is not None:
+                    m = h.mask.to(k.device)
+                    kq = _q_fp8(k)
+                    k = torch.where(
+                        m, kq, k
+                    )  # FP8 only the masked channels, rest native
             return orig(
                 module, q, k, v, attention_mask, dropout=dropout, scaling=scaling, **kw
             )
@@ -146,6 +157,102 @@ class InterleavedPrebiasHarness:
             o = o.clone()
             o[..., hd : 2 * hd] = kq
             return o.view(*shp)
+
+        return hook
+
+    def remove(self):
+        for hd in self.handles:
+            hd.remove()
+        self.handles = []
+
+    def __enter__(self):
+        return self.install()
+
+    def __exit__(self, *a):
+        self.remove()
+
+
+def control_bias(true_bias, kind, seed=0):
+    """Build a control bias from the true K-bias [n*hd]: 'true' | 'zero' | 'random_same_norm' |
+    'permuted'. random_same_norm and permuted preserve the L2 norm but destroy the per-channel
+    placement -- the negative controls that prove pre-bias recovery is BIAS-SPECIFIC, not just any
+    same-norm subtraction. Deterministic via a seeded generator."""
+    b = true_bias.detach().float()
+    if kind == "true":
+        return b.clone()
+    if kind == "zero":
+        return torch.zeros_like(b)
+    g = torch.Generator().manual_seed(seed)
+    if kind == "random_same_norm":
+        r = torch.randn(b.shape, generator=g)
+        return r * (b.norm() / r.norm().clamp(min=1e-8))
+    if kind == "permuted":
+        return b[torch.randperm(b.numel(), generator=g)]
+    raise ValueError(kind)
+
+
+class ControlledPrebiasHarness:
+    """Pre-bias FP8-K that subtracts a SPECIFIED bias vector (not the model's true bias), then adds
+    it back: quant(K - b_ctrl) + b_ctrl at the k_proj / contiguous-fused-K output (pre-RoPE). The
+    negative control for C2 -- if a random-same-norm or channel-permuted bias recovers as well as the
+    true bias, the 'pre-bias fix' is not bias-specific. bias_by_layer: {layer_idx: [n_kv*hd]}.
+    (Separate k_proj and contiguous fused QKV; NOT interleaved GPT-NeoX.)"""
+
+    def __init__(self, model, infos, bias_by_layer, k_spec):
+        self.model = model
+        self.infos = infos
+        self.bias = bias_by_layer
+        self.k = k_spec
+        self.handles = []
+
+    def install(self):
+        for info in self.infos:
+            b = self.bias.get(info["layer_idx"])
+            if b is None:
+                continue
+            if info.get("fused"):
+                proj, sl = info.get("qkv_proj"), info.get("k_slice")
+            else:
+                proj, sl = info.get("k_proj"), None
+            if proj is None:
+                continue
+            self.handles.append(proj.register_forward_hook(self._mk(sl, b)))
+        return self
+
+    def _mk(self, sl, b):
+        spec = self.k
+
+        @torch.no_grad()
+        def hook(module, inp, out):
+            if sl is None:
+                bb = b.to(out.dtype).to(out.device)
+                return (
+                    kbc._quant_lastdims(
+                        out - bb,
+                        spec["fmt"],
+                        spec["bits"],
+                        spec["layout"],
+                        spec["group"],
+                        False,
+                    )
+                    + bb
+                )
+            s0, s1 = sl
+            ks = out[..., s0:s1]
+            bb = b.to(ks.dtype).to(ks.device)
+            out = out.clone()
+            out[..., s0:s1] = (
+                kbc._quant_lastdims(
+                    ks - bb,
+                    spec["fmt"],
+                    spec["bits"],
+                    spec["layout"],
+                    spec["group"],
+                    False,
+                )
+                + bb
+            )
+            return out
 
         return hook
 
