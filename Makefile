@@ -22,6 +22,11 @@ include Makefile.decode
 # When CONFIG_KNLP_REPRODUCE_CARTRIDGES=y this overrides .DEFAULT_GOAL.
 include Makefile.cartridges
 
+# Include FP8 KV-cache failure-atlas validation targets (quant-fp8-doctor,
+# quant-fp8-run, quant-fp8-report).  When CONFIG_KNLP_QUANT_FP8=y this
+# overrides .DEFAULT_GOAL.
+include Makefile.quant
+
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
 export GPT2_MAX_TIME := $(TIME)
