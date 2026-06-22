@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the FP8 KV-cache failure-atlas validation profile.
+#
+# Selecting one of:
+#   make defconfig-quant-fp8-validate   deterministic CPU/offline lock
+#   make defconfig-quant-fp8-atlas      full GPU fake-quant fleet
+# enables CONFIG_KNLP_QUANT_FP8.  Plain `make` after that runs
+# quant-fp8-doctor -> quant-fp8-run -> quant-fp8-report.
+#
+# The orchestrator is pure stdlib and runs under the repo-default
+# python3; it subprocesses the atlas runners under the configured ML
+# interpreter (CONFIG_KNLP_QUANT_FP8_PYTHON).  HF-only; the serving
+# stack stays by-reference (make defconfig-decode).
+
+FP8_ORCH := python3 -m tools.kv.fp8_failure.validate
+
+.PHONY: quant-fp8 quant-fp8-doctor quant-fp8-selftest quant-fp8-run \
+        quant-fp8-report quant-fp8-clean
+
+# When CONFIG_KNLP_QUANT_FP8=y, plain `make` defaults to the validation
+# pipeline.  Otherwise the existing all: target is unaffected.
+ifeq ($(CONFIG_KNLP_QUANT_FP8),y)
+.DEFAULT_GOAL := quant-fp8
+endif
+
+quant-fp8: quant-fp8-doctor quant-fp8-run quant-fp8-report
+
+quant-fp8-doctor:
+	@$(FP8_ORCH) doctor --config .config
+
+quant-fp8-selftest:
+	@$(FP8_ORCH) selftest --config .config
+
+quant-fp8-run:
+	@$(FP8_ORCH) run --config .config
+
+quant-fp8-report:
+	@$(FP8_ORCH) report --config .config
+
+quant-fp8-clean:
+	@$(FP8_ORCH) clean --config .config
