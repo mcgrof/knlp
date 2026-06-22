@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The FP8 KV-Cache Failure Atlas — why FP8 keys break, and how to predict and fix it</title>
-  <meta name="description" content="A causal atlas of FP8 KV-cache quantization failures across 19 LLMs. K-cache FP8 fragility tracks K-bias magnitude (not the attention_bias flag); INT8-K rescues where FP8-K fails (format beats bit-width); K16/V8 is the deployable fix; a release-time preflight scanner flags fragile models with a 0/5 false-safe rate.">
+  <meta name="description" content="A causal atlas of FP8 KV-cache quantization failures across 19 LLMs. Failures come from learned key geometry in at least two classes: additive K-bias stress (Qwen) and partial-RoPE subspace distribution mismatch (Phi-2). INT8-K rescues the bias case (format beats bit-width); K16/V8 is the robust mechanism-agnostic fallback; a release-time preflight flagged fragile models with zero false-safes on a 5-model held-out pilot.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -170,7 +170,7 @@
       {id:'C4', v:'supported', t:'Qwen and Phi are distinct mechanisms', d:'Qwen recovers via bias (0.97), Phi via distribution (~0.13); the QK-gauge helps Phi, not Qwen; GPT-J localizes to the rotary subspace — the inverse of Phi.'},
       {id:'C5', v:'resolved',  t:'K16/V8 is a strong fallback but NOT universally lossless', d:'Phi-2 keeps a real V-side residual under K16/V8 (no V config rescues; worsens in the AR cache). Phi-2 wants native V.'},
       {id:'C6', v:'partial',   t:'Mechanism-matched repairs recover more', d:'INT8-K rescues Qwen (0.30→0.96) at the same 8 bits; pre-bias 0.97; finer FP8 granularity does not help; the QK-gauge fails on Qwen.'},
-      {id:'C7', v:'supported', t:'A cheap preflight identifies unsafe layouts on held-out models', d:'The held-out scanner scored a 0/5 false-safe rate and routed all three mechanism classes correctly. (Frozen ledger had this as not-tested.)'},
+      {id:'C7', v:'supported', t:'A cheap preflight identifies unsafe layouts on held-out models', d:'On a 5-model held-out pilot the scanner produced zero false-safes and routed the known mechanism classes correctly (unknown mechanisms escalated to native K). A pilot, not a guarantee. (Frozen ledger had this as not-tested.)'},
     ];
     const V_STYLE = {
       supported:{label:'supported', cls:'bg-emerald-900 text-emerald-300'},
@@ -235,10 +235,13 @@
               The <span className="gradient-text">FP8 KV-Cache Failure Atlas</span>
             </h1>
             <p className="text-gray-400 max-w-3xl mx-auto text-lg">
-              FP8 KV-cache safety is a property of the <strong className="text-gray-200">key cache&rsquo;s statistical geometry</strong>,
-              not a model-family flag. Across 19 open models we show that catastrophic FP8 collapse is caused
-              by the magnitude of a learned K-bias, that the same eight bits in INT8 rescue it, that the damage
-              never touches the value cache, and that a cheap scanner can flag a fragile model before you ship it.
+              FP8 KV-cache safety is a property of the model&rsquo;s <strong className="text-gray-200">learned key geometry</strong>,
+              not a model-family flag. Across 19 open models we find at least <strong className="text-gray-200">two causal
+              classes</strong> of failure — additive <strong className="text-gray-200">K-bias stress</strong> (the Qwen
+              lineage) and architecture-defined <strong className="text-gray-200">subspace distribution mismatch</strong>
+              (partial-RoPE models like Phi-2). The same eight bits in INT8 rescue the bias case, the damage is
+              overwhelmingly on the key side (with one genuine value-side exception, Phi-2), and a cheap scanner flags a
+              fragile model before you ship it.
             </p>
           </header>
 
@@ -246,7 +249,7 @@
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
             <StatCard label="Models" value="19" sub="160M – 72B" />
             <StatCard label="Worst collapse" value="12.4" unit="×" sub="PPL, Qwen2.5-7B" color={C.red}/>
-            <StatCard label="Universal fix" value="K16/V8" sub="bf16 keys, fp8 values" color={C.green}/>
+            <StatCard label="Robust default" value="K16/V8" sub="mechanism-agnostic fallback" color={C.green}/>
             <StatCard label="Preflight false-safe" value="0/5" sub="held-out models" color={C.green}/>
             <StatCard label="Cheapest repair" value="INT8-K" sub="512 B/tok, 0% meta" color={C.amber}/>
             <StatCard label="Total compute" value="~$2" sub="W7900 + cheap pods" />
@@ -265,6 +268,11 @@
               <strong className="text-white"> 0.30</strong> on Qwen2.5-7B. The fix is almost free: keep the keys in bf16
               and quantize only the values (<strong className="text-white">K16/V8</strong>), or — at the very same 8 bits —
               switch the key format from FP8 to uniform <strong className="text-white">INT8</strong>, which survives the bias.
+              That is the cleanest case. A second class — partial-RoPE models such as Phi-2 — fails through a
+              <strong className="text-white"> different route</strong>: a hostile distribution in the un-rotated key
+              subspace, not a removable bias (subtracting the bias recovers only ~13%). So the honest headline is
+              <strong className="text-white"> two mechanisms, not one</strong>, and the right repair depends on which one
+              you have; K16/V8 is the conservative fallback when you don&rsquo;t know.
             </p>
           </div>
 
@@ -280,12 +288,15 @@
               top-1 next-token agreement against the bf16 teacher.
             </p>
             <p>
-              The picture is starkly bimodal. The biasless models — Mistral-7B, Phi-4, Qwen3-4B — barely notice symmetric FP8
-              on the keys (perplexity moves by tenths of a percent). The Qwen2/2.5 lineage falls off a cliff: Qwen2.5-7B
-              degrades by <strong>12.4×</strong> in perplexity with top-1 agreement collapsing to <strong>0.30</strong> — the
-              single worst cell in the whole atlas — and Qwen2-7B, Qwen2.5-1.5B, and the DeepSeek-R1 distill all go
-              catastrophic too. Crucially, in every case the green <span className="kbd">K16/V8</span> bar snaps back to near-native:
-              the damage lives entirely in the key cache, and bf16 keys are enough to undo it.
+              The picture is starkly bimodal. The biasless models — Mistral-7B, Phi-4, Qwen3-4B — barely move in
+              perplexity under symmetric FP8 on the keys (tenths of a percent); Phi-4 and Qwen3-4B nonetheless land in the
+              <strong>material</strong> band because top-1 agreement dips just below the tolerant line — perplexity and
+              token agreement detect different severities. The Qwen2/2.5 lineage, by contrast, falls off a cliff:
+              Qwen2.5-7B degrades by <strong>12.4×</strong> in perplexity with top-1 collapsing to <strong>0.30</strong> —
+              the single worst cell in the whole atlas — and Qwen2-7B, Qwen2.5-1.5B, and the DeepSeek-R1 distill all go
+              catastrophic too. Crucially, in nearly every case the green <span className="kbd">K16/V8</span> bar snaps
+              back to near-native: the damage is overwhelmingly on the key side, and bf16 keys undo it — with Phi-2 the
+              one carve-out, where a genuine value-side sensitivity remains (covered below).
             </p>
             <ChartFrame title="Per-model next-token agreement under FP8 (sorted by K-bias magnitude)"
               sub="K8/V8 = both caches FP8 (the danger). K16/V8 = bf16 keys + FP8 values (the fix). Bars are top-1 agreement vs the bf16 teacher; higher is better.">
@@ -506,9 +517,15 @@
               <strong>GPT-J-6B</strong> is the control that separates them: it is partial-RoPE (75% pass-through) but carries
               <em> no</em> key bias. Under FP8 keys it is only <em>material</em>, never catastrophic — and its residual error lives in
               the small <strong>rotary</strong> subspace while the large pass-through subspace is <strong>benign</strong>. That is the
-              exact inverse of the biased models, where the pass-through tail (where the bias sits) is the fragile part. Conclusion:
-              partial RoPE on its own costs only a mild rotary-subspace hit; the catastrophe is always the <em>bias</em>, wherever it
-              happens to live. (GPT-J is eager-only in recent Transformers, so we patched its attention directly and verified the
+              exact inverse of the biased models, where the pass-through tail is the fragile part. The right conclusion is <em>not</em>
+              &ldquo;it&rsquo;s always the bias.&rdquo; Partial RoPE doesn&rsquo;t poison anything on its own; it creates a stable,
+              <strong> unrotated</strong> key subspace where training <em>may</em> deposit hostile statistics. Sometimes that hostility
+              is a removable additive bias (the small Pythias, rescued by pre-bias subtraction); sometimes it is the pass-through
+              <strong> distribution itself</strong> — Phi-2, where subtracting the bias recovers only ~13%, so it is a distribution
+              pathology, not a bias; and sometimes nothing bad happens at all (GPT-J). The general principle: an architecture-defined
+              key subspace becomes a quantization-risk surface whenever one shared scale is asked to represent statistically
+              incompatible components — a lens that may extend to MLA&rsquo;s positional/non-positional split and to local/global
+              attention mixtures. (GPT-J is eager-only in recent Transformers, so we patched its attention directly and verified the
               quantization actually fired — a key-nuke moved the logits by 9.95 — before trusting the numbers.)
             </p>
             <div className="grid md:grid-cols-2 gap-4">
@@ -591,13 +608,17 @@
           {/* 10. Recovery Pareto */}
           <Section id="pareto" kicker="The fix and its cost" title="Recovery Pareto: the cheapest repair that works">
             <p>
-              Quality is only half the deployment decision; the other half is bytes and side-metadata. Putting recovery against
-              key-cache cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for first —
-              per-channel FP8 scaling and the QK-gauge — both <strong>fail outright</strong> (recovery 0), because neither re-centers
-              an additive bias. The two that work at 8 bits are <strong>INT8-K</strong> (recovery 0.95, same 512 bytes, zero metadata —
-              a drop-in format swap) and <strong>FP8 pre-bias</strong> (0.97, but it must store the per-channel bias). Above 8 bits,
-              <strong> K16/V8</strong> is the zero-metadata, bit-exact-safe fallback at 1024 bytes. So: INT8-K if you must hold 8-bit
-              keys, K16/V8 if you want guaranteed safety — and skip the elegant linear-algebra &ldquo;fixes&rdquo; that do nothing here.
+              Quality is only half the deployment decision; the other half is bytes and side-metadata. This Pareto is
+              <strong> for the Qwen DC-offset mechanism</strong> (recovery measured on Qwen2.5-7B). Putting recovery against
+              key-cache cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for
+              first — per-channel FP8 scaling and the QK-gauge — both <strong>recover nothing on Qwen</strong> (recovery 0),
+              because neither re-centers an additive bias. (The QK-gauge is not useless in general — it has real value on the
+              partial-RoPE Phi-2 mechanism; it just can&rsquo;t fix a DC offset.) The two that work at 8 bits are
+              <strong> INT8-K</strong> (recovery 0.95, same 512 bytes, zero metadata — a drop-in format swap) and
+              <strong> FP8 pre-bias</strong> (0.97, but it must store the per-channel bias). Above 8 bits,
+              <strong> K16/V8</strong> is the zero-metadata fallback at 1024 bytes. So, for a Qwen-style biased model: INT8-K if
+              you must hold 8-bit keys, K16/V8 if you want the conservative default — and don&rsquo;t reach for the elegant
+              linear-algebra fixes, which do nothing for <em>this</em> mechanism.
             </p>
             <ChartFrame title="Recovery vs key-cache bytes per token (Qwen anchor)"
               sub="Up and to the left is better. Red = recovers nothing; amber/green = the working 8-bit repairs; blue = the bf16-key fallback." height={340}>
@@ -665,15 +686,17 @@
           </Section>
 
           {/* 12. Preflight */}
-          <Section id="preflight" kicker="Ship safely" title="A release-time preflight that never calls a fragile model safe">
+          <Section id="preflight" kicker="Ship safely" title="A release-time preflight: zero false-safes on a 5-model held-out pilot">
             <p>
               The practical deliverable is a cheap scanner you run before shipping an FP8 cache. It probes the model on a small
               prompt sample, classifies the K8/V8 risk, decides whether the failure is key- or value-side, reads two mechanism
               signals (the key-bias magnitude and the partial-RoPE geometry), and emits a mechanism-matched recommendation — always
               with a K16/V8 fallback. The metric that matters for a release tool is the <strong>false-safe rate</strong>: how often
-              it declares a fragile model safe. On five held-out models it scored <strong>0/5</strong>, routing all three mechanism
-              classes correctly. The biasless-but-fragile cases (Phi-4, Qwen3-4B) are the honest frontier — the scanner flags them
-              fragile and falls back to native keys without pretending to know why, which is exactly the right behavior.
+              it declares a fragile model safe. On a <strong>five-model held-out pilot</strong> it produced
+              <strong> zero false-safes</strong> — known classes were routed correctly and unknown mechanisms were safely escalated
+              to native K. Five models is a pilot, not a guarantee, but the false-safe rate is exactly the metric a release gate
+              should track. The biasless-but-fragile cases (Phi-4, Qwen3-4B) are the honest frontier — the scanner flags them
+              fragile and falls back to native keys without pretending to know why, which is the right behaviour.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -725,8 +748,9 @@
           <Section id="reproduce" kicker="Run it yourself" title="Reproduce the atlas — free, offline, in a minute">
             <p>
               The whole science ran on the free local W7900 plus about <strong>$2</strong> of cheap-pod time (an A6000 for the fleet,
-              an A100 for the controls, two H100s for the 72B slice). The fake-quant harness is locked into the build system as a
-              Kconfig reproducibility profile, so the entire suite is provable on any machine — no GPU and no model download required:
+              an A100 for the controls, two H100s for the 72B slice). The fake-quant <em>harness</em> is locked into the build
+              system as a Kconfig reproducibility profile, so its deterministic self-tests run on any machine — no GPU and no model
+              download required. This validates the <em>harness</em>, not the empirical atlas itself (that needs the GPU runs below):
             </p>
             <pre className="bg-black/40 border border-gray-800 rounded-lg p-4 text-sm overflow-x-auto text-gray-300"><code>make defconfig-quant-fp8-validate
 make            <span className="text-gray-500"># doctor → 10 runner self-tests (CPU, offline) → report</span></code></pre>
