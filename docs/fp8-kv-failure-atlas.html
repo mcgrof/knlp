@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The FP8 KV-Cache Failure Atlas — why FP8 keys break, and how to predict and fix it</title>
+  <meta name="description" content="A causal atlas of FP8 KV-cache quantization failures across 19 LLMs. K-cache FP8 fragility tracks K-bias magnitude (not the attention_bias flag); INT8-K rescues where FP8-K fails (format beats bit-width); K16/V8 is the deployable fix; a release-time preflight scanner flags fragile models with a 0/5 false-safe rate.">
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155; transition: all 0.3s ease;
+    }
+    .card:hover { border-color: #f59e0b; box-shadow: 0 4px 20px -5px rgba(245, 158, 11, 0.2); }
+    .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .prose p { margin-bottom: 0.9rem; }
+    .prose strong { color: #e2e8f0; }
+    .kbd { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 6px; color:#cbd5e1; }
+    .anchor { scroll-margin-top: 1.5rem; }
+    .pill { font-size: 0.7rem; padding: 1px 8px; border-radius: 9999px; font-weight: 600; }
+    .pill-tol { background:#064e3b; color:#6ee7b7; }
+    .pill-mat { background:#78350f; color:#fcd34d; }
+    .pill-cat { background:#7f1d1d; color:#fca5a5; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+    const {
+      LineChart, Line, BarChart, Bar, ScatterChart, Scatter,
+      XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+      ReferenceLine, ReferenceArea, Cell, ErrorBar, ZAxis, Label
+    } = Recharts;
+
+    const C = {
+      amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', green:'#10b981',
+      purple:'#a855f7', cyan:'#06b6d4', orange:'#f97316', gray:'#64748b', slate:'#334155'
+    };
+    const CLASS_COLOR = { tolerant: C.green, material: C.amber, catastrophic: C.red };
+    const FAMILY_COLOR = {
+      'Qwen2.5': C.red, 'Qwen2': C.orange, 'Qwen2.5-distill': '#dc2626',
+      'Qwen3': C.blue, 'Phi': C.purple, 'Mistral': C.green
+    };
+
+    // ───────────────────────── DATA (verbatim from the atlas result CSVs) ─────────────────────────
+
+    // Fleet: per-model K8/V8 vs K16/V8 (fake-quant, teacher-forced, 16x1024, per-tensor FP8 e4m3, wikitext-103)
+    // bias = max|K-bias| from the matched weights audit (k-bias-audit-20260620); 0 = biasless.
+    const FLEET = [
+      {model:'Mistral-7B', family:'Mistral',          bias:0,   flag:false, k8v8_top1:0.982, k8v8_mult:1.0011, k16v8_top1:0.991, klass:'tolerant'},
+      {model:'Phi-4',      family:'Phi',               bias:0,   flag:false, k8v8_top1:0.977, k8v8_mult:1.0022, k16v8_top1:0.988, klass:'material'},
+      {model:'Qwen3-4B',   family:'Qwen3',             bias:0,   flag:false, k8v8_top1:0.963, k8v8_mult:1.013,  k16v8_top1:0.985, klass:'material'},
+      {model:'Phi-2',      family:'Phi',               bias:11.9,flag:true,  k8v8_top1:0.877, k8v8_mult:1.0563, k16v8_top1:0.951, klass:'material'},
+      {model:'Qwen2.5-14B',family:'Qwen2.5',           bias:32.8,flag:true,  k8v8_top1:0.965, k8v8_mult:1.0019, k16v8_top1:0.984, klass:'material'},
+      {model:'Qwen2.5-3B', family:'Qwen2.5',           bias:91.5,flag:true,  k8v8_top1:0.898, k8v8_mult:1.0782, k16v8_top1:0.980, klass:'material'},
+      {model:'Qwen2.5-1.5B',family:'Qwen2.5',          bias:316, flag:true,  k8v8_top1:0.718, k8v8_mult:1.5809, k16v8_top1:0.980, klass:'catastrophic'},
+      {model:'Qwen2-7B',   family:'Qwen2',             bias:404, flag:true,  k8v8_top1:0.570, k8v8_mult:3.2205, k16v8_top1:0.985, klass:'catastrophic'},
+      {model:'Qwen2.5-7B', family:'Qwen2.5',           bias:414, flag:true,  k8v8_top1:0.300, k8v8_mult:12.404, k16v8_top1:0.984, klass:'catastrophic'},
+      {model:'DS-R1-Qwen-7B',family:'Qwen2.5-distill', bias:428, flag:true,  k8v8_top1:0.450, k8v8_mult:4.3828, k16v8_top1:0.976, klass:'catastrophic'},
+    ];
+
+    // Format axis — Qwen2.5-7B, K8 (V bf16), per_token scale. top1 vs native.
+    const FORMAT = [
+      {fmt:'INT4', bits:'4-bit', top1:0.014, kind:'int'},
+      {fmt:'INT6', bits:'6-bit', top1:0.100, kind:'int'},
+      {fmt:'E5M2', bits:'8-bit', top1:0.219, kind:'fp'},
+      {fmt:'FP8 e4m3', bits:'8-bit', top1:0.253, kind:'fp'},
+      {fmt:'INT8', bits:'8-bit', top1:0.961, kind:'int'},
+    ];
+    // Granularity axis — Qwen2.5-7B fp8 e4m3 K8. all catastrophic.
+    const GRAN = [
+      {g:'per-tensor', top1:0.300}, {g:'per-head', top1:0.436},
+      {g:'per-token', top1:0.253}, {g:'per-channel', top1:0.556},
+    ];
+    // Causal bias-specificity (recovery fraction). Qwen real; Phi anti-control.
+    const SPEC = [
+      {cond:'true bias',  qwen:0.969, phi:0.168},
+      {cond:'zero (none)',qwen:0.016, phi:-0.024},
+      {cond:'random·|b|', qwen:0.055, phi:0.239},
+      {cond:'permuted b', qwen:0.046, phi:0.284},
+    ];
+    // Alpha dose-response: scale the K-bias by alpha, FP8-minus-native logit error.
+    const ALPHA = [
+      {alpha:0,   qwen:0.516, phi:0.588},
+      {alpha:0.25,qwen:2.113, phi:0.611},
+      {alpha:0.5, qwen:2.827, phi:0.656},
+      {alpha:1.0, qwen:3.281, phi:0.693},
+      {alpha:1.5, qwen:3.157, phi:0.601},
+      {alpha:2.0, qwen:3.102, phi:0.585},
+    ];
+    // Multi-seed bootstrap CIs (48 pooled prompts, 2000 resamples). top1 with half-width err.
+    const mid=(lo,hi)=>(lo+hi)/2, hw=(lo,hi)=>(hi-lo)/2;
+    const MSEED = [
+      {model:'Qwen2.5-7B', k8v8:0.297, k8v8e:hw(0.284,0.310), k16v8:0.981, k16v8e:hw(0.980,0.982), k8v16:0.297, k8v16e:hw(0.284,0.311)},
+      {model:'Pythia-410M',k8v8:0.556, k8v8e:hw(0.547,0.564), k16v8:0.886, k16v8e:hw(0.882,0.889), k8v16:0.559, k8v16e:hw(0.552,0.567)},
+      {model:'Phi-2',      k8v8:0.879, k8v8e:hw(0.876,0.883), k16v8:0.954, k16v8e:hw(0.953,0.956), k8v16:0.880, k8v16e:hw(0.877,0.884)},
+      {model:'Mistral-7B', k8v8:0.982, k8v8e:hw(0.981,0.983), k16v8:0.991, k16v8e:hw(0.990,0.991), k8v16:0.983, k8v16e:hw(0.982,0.984)},
+    ];
+    // Partial-RoPE legacy fleet (all biased, 75% pass-through). k8v8 ppl_mult + classes.
+    const LEGACY = [
+      {model:'Pythia-160M', size:160,  mult:13.5403, top1:0.294, k16v8:'catastrophic', klass:'catastrophic'},
+      {model:'Pythia-410M', size:410,  mult:2.4595,  top1:0.559, k16v8:'material', klass:'catastrophic'},
+      {model:'Pythia-1.4B', size:1400, mult:1.1964,  top1:0.807, k16v8:'material', klass:'catastrophic'},
+      {model:'Pythia-2.8B', size:2800, mult:1.2208,  top1:0.800, k16v8:'material', klass:'catastrophic'},
+      {model:'Pythia-6.9B', size:6900, mult:1.2703,  top1:0.770, k16v8:'material', klass:'catastrophic'},
+      {model:'GPT-NeoX-20B',size:20000,mult:2.0383,  top1:0.629, k16v8:'material', klass:'catastrophic'},
+    ];
+    // GPT-J biasless control: subspace probes (pass-through benign, rotary residual — the inverse).
+    const GPTJ = [
+      {cell:'K8/V8 (all K)',      top1:0.972, err:0.0746, klass:'material'},
+      {cell:'rotary-only (64ch)', top1:0.975, err:0.0652, klass:'material'},
+      {cell:'pass-through (192ch)',top1:0.984, err:0.0361, klass:'tolerant'},
+      {cell:'K16/V8',             top1:0.987, err:0.0283, klass:'tolerant'},
+    ];
+    // Qwen2.5 scale curve (non-monotonic, peak at 7B). K8/V8.
+    const SCALE = [
+      {model:'1.5B', p:1.5, mult:1.5809, err:1.30444, amax:7.026,  klass:'catastrophic'},
+      {model:'3B',   p:3,   mult:1.0782, err:0.43117, amax:4.598,  klass:'material'},
+      {model:'7B',   p:7,   mult:12.404, err:3.25018, amax:10.245, klass:'catastrophic'},
+      {model:'14B',  p:14,  mult:1.0019, err:0.12357, amax:4.554,  klass:'material'},
+      {model:'72B',  p:72,  mult:1.0004, err:0.15945, amax:5.169,  klass:'material'},
+    ];
+    // Long-context: top1_vs_native for k8v8 and k16v8 across 2K/8K/16K.
+    const LONGCTX = {
+      'Qwen2.5-7B': [{ctx:'2K',k8v8:0.261,k16v8:0.984},{ctx:'8K',k8v8:0.346,k16v8:0.984},{ctx:'16K',k8v8:0.258,k16v8:0.985}],
+      'Phi-2':      [{ctx:'2K',k8v8:0.878,k16v8:0.955},{ctx:'8K',k8v8:0.778,k16v8:0.903},{ctx:'16K',k8v8:0.768,k16v8:0.905}],
+      'Pythia-410M':[{ctx:'2K',k8v8:0.540,k16v8:0.884},{ctx:'8K',k8v8:0.531,k16v8:0.826},{ctx:'16K',k8v8:0.632,k16v8:0.863}],
+      'Mistral-7B': [{ctx:'2K',k8v8:0.982,k16v8:0.990},{ctx:'8K',k8v8:0.981,k16v8:0.991},{ctx:'16K',k8v8:0.981,k16v8:0.991}],
+    };
+    // Recovery Pareto: K bytes/token vs recovery fraction (Qwen anchor).
+    const PARETO = [
+      {repair:'FP8-K per-tensor (the failure)', bytes:512, meta:0, rec:0.0, color:C.red},
+      {repair:'FP8-K per-channel', bytes:512, meta:0.0488, rec:0.0, color:C.red},
+      {repair:'QK-gauge', bytes:512, meta:0.0488, rec:0.0, color:C.red},
+      {repair:'INT8-K per-tensor', bytes:512, meta:0, rec:0.95, color:C.green},
+      {repair:'FP8-K pre-bias', bytes:512, meta:0.0488, rec:0.97, color:C.amber},
+      {repair:'K16/V8 (asym)', bytes:1024, meta:0, rec:1.0, color:C.blue},
+      {repair:'native K (bf16)', bytes:1024, meta:0, rec:1.0, color:C.gray},
+    ];
+    // Phase-10 serving-by-reference (real vLLM + FlashInfer, H100, Qwen2.5-7B-Instruct).
+    const SERVING = [
+      {config:'FP16 native', ppl:6.997, coherent:true, color:C.blue},
+      {config:'FP8-sym K8/V8', ppl:214.3, coherent:false, color:C.red},
+      {config:'asym K16/V8', ppl:6.997, coherent:true, color:C.green},
+    ];
+    // Preflight held-out, false-safe 0/5.
+    const PREFLIGHT = [
+      {model:'DS-R1-Qwen-7B', bias:'428', prope:'no',  cls:'catastrophic', rec:'pre-bias / INT8-K K · fallback K16/V8'},
+      {model:'Qwen2.5-3B',    bias:'91.5',prope:'no',  cls:'material',     rec:'pre-bias / INT8-K K · fallback K16/V8'},
+      {model:'Pythia-2.8B',   bias:'10.4',prope:'yes', cls:'catastrophic', rec:'subspace-split / per-channel · fallback K16/V8'},
+      {model:'Phi-4',         bias:'0',   prope:'no',  cls:'material',     rec:'native K · fallback K16/V8 (test V)'},
+      {model:'Qwen3-4B',      bias:'0',   prope:'no',  cls:'material',     rec:'native K · fallback K16/V8 (test V)'},
+    ];
+    const LEDGER = [
+      {id:'C1', v:'supported', t:'The attention_bias flag does NOT predict FP8-K failure', d:'Qwen2.5-14B carries a K-bias yet tolerates FP8-K; biasless GPT-J still degrades. Fragility tracks bias MAGNITUDE, not the boolean.'},
+      {id:'C2', v:'supported', t:'Large K-bias magnitude causally explains the Qwen failure', d:'True-bias subtraction recovers 0.97; a random/permuted same-norm vector recovers 0.05. Alpha dose-response: error rises 0.52→3.28 with bias scale.'},
+      {id:'C3', v:'supported', t:'Partial-RoPE pass-through subspace explains the Phi failure', d:'The pass-through tail damages more than 19/20 random partitions (95th pct); Phi’s bias controls are null and its alpha curve is flat.'},
+      {id:'C4', v:'supported', t:'Qwen and Phi are distinct mechanisms', d:'Qwen recovers via bias (0.97), Phi via distribution (~0.13); the QK-gauge helps Phi, not Qwen; GPT-J localizes to the rotary subspace — the inverse of Phi.'},
+      {id:'C5', v:'resolved',  t:'K16/V8 is a strong fallback but NOT universally lossless', d:'Phi-2 keeps a real V-side residual under K16/V8 (no V config rescues; worsens in the AR cache). Phi-2 wants native V.'},
+      {id:'C6', v:'partial',   t:'Mechanism-matched repairs recover more', d:'INT8-K rescues Qwen (0.30→0.96) at the same 8 bits; pre-bias 0.97; finer FP8 granularity does not help; the QK-gauge fails on Qwen.'},
+      {id:'C7', v:'supported', t:'A cheap preflight identifies unsafe layouts on held-out models', d:'The held-out scanner scored a 0/5 false-safe rate and routed all three mechanism classes correctly. (Frozen ledger had this as not-tested.)'},
+    ];
+    const V_STYLE = {
+      supported:{label:'supported', cls:'bg-emerald-900 text-emerald-300'},
+      resolved:{label:'resolved', cls:'bg-emerald-900 text-emerald-300'},
+      partial:{label:'partially supported', cls:'bg-amber-900 text-amber-300'},
+    };
+
+    // ───────────────────────── small components ─────────────────────────
+    function StatCard({label, value, unit, sub, color}) {
+      return (
+        <div className="stat-card rounded-lg p-4 text-center">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{color: color||'#fff'}}>{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+    function Tip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          {label !== undefined && <div className="text-gray-400 mb-1">{label}</div>}
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color || p.fill}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    function Section({id, kicker, title, children}) {
+      return (
+        <section id={id} className="anchor card rounded-xl p-6 md:p-8 mb-8">
+          {kicker && <div className="text-xs uppercase tracking-widest mb-2" style={{color:C.amber}}>{kicker}</div>}
+          <h2 className="text-2xl font-bold mb-4">{title}</h2>
+          <div className="prose text-gray-400 text-[15px] leading-relaxed max-w-none">{children}</div>
+        </section>
+      );
+    }
+    function ChartFrame({title, sub, height, children}) {
+      return (
+        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+          {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
+          {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
+          <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
+        </div>
+      );
+    }
+    const Pill = ({k}) => {
+      const m = {tolerant:'pill-tol', material:'pill-mat', catastrophic:'pill-cat'};
+      return <span className={`pill ${m[k]}`}>{k}</span>;
+    };
+
+    // ───────────────────────── the page ─────────────────────────
+    function App() {
+      return (
+        <div className="max-w-5xl mx-auto px-5 py-12">
+          {/* Header */}
+          <header className="text-center mb-10">
+            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
+              The <span className="gradient-text">FP8 KV-Cache Failure Atlas</span>
+            </h1>
+            <p className="text-gray-400 max-w-3xl mx-auto text-lg">
+              FP8 KV-cache safety is a property of the <strong className="text-gray-200">key cache&rsquo;s statistical geometry</strong>,
+              not a model-family flag. Across 19 open models we show that catastrophic FP8 collapse is caused
+              by the magnitude of a learned K-bias, that the same eight bits in INT8 rescue it, that the damage
+              never touches the value cache, and that a cheap scanner can flag a fragile model before you ship it.
+            </p>
+          </header>
+
+          {/* Key stats */}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
+            <StatCard label="Models" value="19" sub="160M – 72B" />
+            <StatCard label="Worst collapse" value="12.4" unit="×" sub="PPL, Qwen2.5-7B" color={C.red}/>
+            <StatCard label="Universal fix" value="K16/V8" sub="bf16 keys, fp8 values" color={C.green}/>
+            <StatCard label="Preflight false-safe" value="0/5" sub="held-out models" color={C.green}/>
+            <StatCard label="Cheapest repair" value="INT8-K" sub="512 B/tok, 0% meta" color={C.amber}/>
+            <StatCard label="Total compute" value="~$2" sub="W7900 + cheap pods" />
+          </div>
+
+          {/* TLDR */}
+          <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.amber}}>
+            <h3 className="font-semibold text-amber-400 mb-2">The result in one breath</h3>
+            <p className="text-gray-300 text-[15px] leading-relaxed">
+              Quantizing the KV cache to FP8 silently destroys some models and not others. The split is not random
+              and not the <span className="kbd">attention_bias</span> flag: a few models (the Qwen lineage) learn a
+              large per-channel <strong className="text-white">bias on the key projection</strong>, and under symmetric
+              per-tensor FP8 that bias hijacks the quantization scale and crushes the real, token-discriminating part of
+              each key into a handful of mantissa codes. The result is a key cache that can no longer tell tokens apart —
+              perplexity explodes up to <strong className="text-white">12.4×</strong> and next-token agreement falls to
+              <strong className="text-white"> 0.30</strong> on Qwen2.5-7B. The fix is almost free: keep the keys in bf16
+              and quantize only the values (<strong className="text-white">K16/V8</strong>), or — at the very same 8 bits —
+              switch the key format from FP8 to uniform <strong className="text-white">INT8</strong>, which survives the bias.
+            </p>
+          </div>
+
+          {/* 1. The fleet */}
+          <Section id="fleet" kicker="Who breaks" title="A heterogeneous fleet: most models are fine, a few collapse">
+            <p>
+              We pushed a fleet of ten modern open models through an end-to-end <strong>fake-quant, teacher-forced</strong>
+              harness — 16 prompts of 1024 tokens on WikiText-103, bf16 base weights, per-tensor FP8 e4m3 (clamp ±448, RNE
+              rounding) applied at cache-write time. Each model is scored under four cache layouts: <span className="kbd">native</span>
+              (bf16), <span className="kbd">K8/V8</span> (both caches FP8), <span className="kbd">K16/V8</span> (bf16 keys, FP8
+              values), and <span className="kbd">K8/V16</span> (FP8 keys, bf16 values). We classify each cell as
+              <Pill k="tolerant"/>, <Pill k="material"/>, or <Pill k="catastrophic"/> from its perplexity multiplier and its
+              top-1 next-token agreement against the bf16 teacher.
+            </p>
+            <p>
+              The picture is starkly bimodal. The biasless models — Mistral-7B, Phi-4, Qwen3-4B — barely notice symmetric FP8
+              on the keys (perplexity moves by tenths of a percent). The Qwen2/2.5 lineage falls off a cliff: Qwen2.5-7B
+              degrades by <strong>12.4×</strong> in perplexity with top-1 agreement collapsing to <strong>0.30</strong> — the
+              single worst cell in the whole atlas — and Qwen2-7B, Qwen2.5-1.5B, and the DeepSeek-R1 distill all go
+              catastrophic too. Crucially, in every case the green <span className="kbd">K16/V8</span> bar snaps back to near-native:
+              the damage lives entirely in the key cache, and bf16 keys are enough to undo it.
+            </p>
+            <ChartFrame title="Per-model next-token agreement under FP8 (sorted by K-bias magnitude)"
+              sub="K8/V8 = both caches FP8 (the danger). K16/V8 = bf16 keys + FP8 values (the fix). Bars are top-1 agreement vs the bf16 teacher; higher is better.">
+              <BarChart data={FLEET} margin={{top:8, right:16, left:0, bottom:40}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" angle={-35} textAnchor="end" height={70} interval={0} tick={{fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0,1]} label={{value:'top-1 agreement', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:8}}/>
+                <ReferenceLine y={0.98} stroke={C.green} strokeDasharray="4 4" label={{value:'tolerant ≥0.98', fill:C.green, fontSize:10, position:'right'}}/>
+                <Bar dataKey="k8v8_top1" name="K8/V8 (FP8 keys)" radius={[3,3,0,0]}>
+                  {FLEET.map((d,i)=><Cell key={i} fill={CLASS_COLOR[d.klass]}/>)}
+                </Bar>
+                <Bar dataKey="k16v8_top1" name="K16/V8 (bf16 keys)" fill={C.blue} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <p className="text-xs text-gray-500">
+              Bar color encodes the K8/V8 class (red catastrophic, amber material, green tolerant). The blue K16/V8 bar is
+              tolerant for 8 of 10 models; the two it leaves &ldquo;material&rdquo; are DS-R1 (top-1 0.976, essentially lossless)
+              and Phi-2, which carries a separate, genuine value-side sensitivity discussed below.
+            </p>
+          </Section>
+
+          {/* 2. The mechanism */}
+          <Section id="mechanism" kicker="The cause" title="It tracks K-bias magnitude, not the bias flag">
+            <p>
+              Why these models and not others? Qwen2/2.5 apply a learned <strong>bias to the key projection</strong>. That bias
+              is a near-constant per-channel DC offset, and a few of its channels are enormous relative to the token-to-token
+              variation that attention actually reads. Under <em>symmetric per-tensor</em> FP8, a single scale is chosen for the
+              whole key tensor, sized to its largest-magnitude channel. The biased channel sets that scale — for Qwen2.5-7B the
+              dominant channel&rsquo;s amplitude is <strong>~10×</strong> the typical channel — so the informative bulk of every key
+              is squeezed into the few FP8 codes near zero. The angular structure that softmax-over-keys depends on is destroyed,
+              and the model can no longer tell which token to attend to.
+            </p>
+            <p>
+              This is a <strong>magnitude</strong> story, not a flag story, and one control proves it: Qwen2.5-14B <em>also</em> has
+              a K-bias (the flag is set) yet it tolerates FP8 keys, because its bias magnitude (~33) is an order of magnitude
+              smaller than the 7B&rsquo;s (~414) and never dominates the scale. Plot every model&rsquo;s key-bias magnitude against its
+              FP8 perplexity blow-up and the structure is immediate: a flat, benign floor at bias≈0, and a steep climb into the
+              catastrophic zone as the bias grows. Architecture confirms it from the other side — Qwen3 simply <em>dropped</em> the
+              Qwen2 K-bias, and Qwen3-4B is no longer fragile.
+            </p>
+            <ChartFrame title="K-bias magnitude vs FP8 perplexity damage (each point is a model)"
+              sub="x = max |K-bias| from the weights audit; y = K8/V8 perplexity multiplier (log). Biasless models sit on the floor at ×1; damage climbs with bias magnitude." height={360}>
+              <ScatterChart margin={{top:10, right:20, left:8, bottom:36}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" dataKey="bias" name="max|K-bias|" stroke="#94a3b8" domain={[-15,450]}
+                  label={{value:'max |K-bias|  (0 = biasless)', position:'insideBottom', offset:-6, fill:'#94a3b8'}}/>
+                <YAxis type="number" dataKey="k8v8_mult" name="ppl ×" stroke="#94a3b8" scale="log" domain={[0.9,20]} allowDataOverflow
+                  ticks={[1,2,4,8,16]} label={{value:'K8/V8 ppl × (log)', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <ZAxis range={[120,120]}/>
+                <ReferenceArea y1={2} y2={20} fill={C.red} fillOpacity={0.06}/>
+                <ReferenceLine y={1.05} stroke={C.green} strokeDasharray="4 4" label={{value:'tolerant', fill:C.green, fontSize:10, position:'insideTopRight'}}/>
+                <Tooltip content={<Tip/>} cursor={{strokeDasharray:'3 3'}}/>
+                <Scatter data={FLEET} name="model">
+                  {FLEET.map((d,i)=><Cell key={i} fill={FAMILY_COLOR[d.family]||C.gray}/>)}
+                </Scatter>
+              </ScatterChart>
+            </ChartFrame>
+            <p className="text-xs text-gray-500 mb-4">
+              Colored by family (red Qwen2.5, orange Qwen2, dark-red DS-R1 distill, blue Qwen3, purple Phi, green Mistral). The
+              two outliers reward a second look: <strong>Qwen2.5-14B</strong> (bias 33) sits on the floor despite having a bias —
+              magnitude, not presence, is what matters — and <strong>Phi-2</strong> (bias 12) is mildly damaged by a
+              <em> different</em> mechanism entirely, covered later.
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">Why &ldquo;range eats mantissa.&rdquo;</strong> Both INT8 and FP8 e4m3 here use a symmetric
+              scale set by the tensor&rsquo;s absolute max. Once the bias inflates that max ~10×, the two number systems diverge: INT8
+              spends its 256 levels <em>uniformly</em>, so the near-zero bulk still lands on ~25 distinct codes; FP8 e4m3 spends bits
+              on a wide exponent range and keeps only 3 mantissa bits, so after the large scale multiplies back in, the bulk
+              collapses onto a few coarse steps. The next section turns this into a measurement.
+            </div>
+          </Section>
+
+          {/* 3. Format beats bit-width */}
+          <Section id="format" kicker="The smoking gun" title="Format beats bit-width: INT8 rescues what FP8 destroys">
+            <p>
+              If the failure were about <em>bit-width</em>, no 8-bit format would save Qwen. It isn&rsquo;t. Holding everything fixed and
+              changing only the key&rsquo;s number system, uniform <strong>INT8 rescues Qwen2.5-7B</strong> from top-1 0.25 back to
+              <strong> 0.96</strong> — at the identical eight bits and identical 512 bytes per token as the FP8 cache that failed.
+              And the comparison inside the FP8 family is the clincher: <strong>E5M2 is worse than E4M3</strong> (0.219 vs 0.253).
+              E5M2 trades a mantissa bit for an exponent bit; if the problem were not being able to <em>represent</em> the big bias,
+              the extra range would help. It hurts. That is the signature of a <strong>mantissa-precision</strong> failure under a
+              bias-captured scale, not a dynamic-range failure.
+            </p>
+            <ChartFrame title="Qwen2.5-7B — key-cache format vs next-token agreement"
+              sub="All cells quantize only the keys. Green = a uniform integer grid; red = floating-point. Same 8 bits, opposite outcomes.">
+              <BarChart data={FORMAT} layout="vertical" margin={{top:8, right:24, left:24, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" stroke="#94a3b8" domain={[0,1]} label={{value:'top-1 agreement', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
+                <YAxis type="category" dataKey="fmt" stroke="#94a3b8" width={80} tick={{fontSize:12}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="top1" name="top-1 agreement" radius={[0,3,3,0]}>
+                  {FORMAT.map((d,i)=><Cell key={i} fill={d.kind==='int'? (d.top1>0.9?C.green:C.orange) : C.red}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              The mirror image holds on the biasless control: Mistral-7B is tolerant in <em>every</em> format (FP8 0.985, E5M2
+              0.976, INT8 0.992) — there is no bias to capture the scale, so the number system barely matters. The takeaway for a
+              serving stack is concrete and slightly heretical: on a biased-key model, do not reach for a fancier FP8 mode; reach
+              for INT8, or get the bias out of the way.
+            </p>
+          </Section>
+
+          {/* 4. Granularity doesn't help */}
+          <Section id="granularity" kicker="A tempting wrong turn" title="Finer scaling can&rsquo;t fix a DC offset">
+            <p>
+              The natural first instinct is &ldquo;scale more finely.&rdquo; It does not work, because a bias is an <em>additive</em>
+              constant in each channel — every token in that channel carries the same offset — so shrinking the scale group still
+              leaves the offset sitting inside the group, dominating its max. We swept per-tensor → per-head → per-token →
+              per-channel FP8 on Qwen2.5-7B; per-channel is the finest practical key scale and it is the best of the bunch, yet it
+              is <strong>still catastrophic</strong> (top-1 0.556). You cannot rescale your way out of a re-centering problem.
+            </p>
+            <ChartFrame title="Qwen2.5-7B — FP8 key-scale granularity (all catastrophic)"
+              sub="Even per-channel, the finest practical scale, stays well below the tolerant line. A finer scale never removes an additive offset." height={260}>
+              <BarChart data={GRAN} margin={{top:8, right:16, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="g" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" domain={[0,1]} label={{value:'top-1', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <ReferenceLine y={0.98} stroke={C.green} strokeDasharray="4 4"/>
+                <ReferenceLine y={0.80} stroke={C.red} strokeDasharray="4 4" label={{value:'catastrophic ≤0.80', fill:C.red, fontSize:10, position:'right'}}/>
+                <Bar dataKey="top1" name="top-1 agreement" fill={C.red} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 5. Causal proof */}
+          <Section id="causal" kicker="From correlation to cause" title="The causal proof: it really is the bias, in those exact channels">
+            <p>
+              Correlation (&ldquo;biased models tend to fail&rdquo;) is not causation. So we intervene on the suspected cause and watch the
+              effect move. The repair under test is <strong>pre-bias subtraction</strong>: read the per-channel key bias, subtract
+              it before quantizing, then add it back. With the <em>true</em> bias this recovers <strong>0.97</strong> of the damage.
+              The controls keep the same vector norm but destroy the per-channel placement — a random Gaussian of equal norm, or a
+              channel-permuted copy of the real bias — and recovery collapses to <strong>~0.05</strong>. The fix is not &ldquo;subtract
+              any big vector&rdquo;; it needs the actual bias, in the actual channels.
+            </p>
+            <p>
+              A dose-response curve seals it. Scale a copy of the key bias by a factor α (leaving Q and V alone), recompute the
+              reference, and measure the FP8 error: it climbs monotonically from <strong>0.52 at α=0</strong> (bias surgically
+              removed — benign) to <strong>3.28 at α=1</strong> (the true bias — catastrophic), a ~6× causal increase, then
+              plateaus past α=1 as the scale saturates. Turn the bias down and Qwen&rsquo;s FP8 keys are fine; turn it up and they break.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              <ChartFrame title="Bias-specificity (recovery fraction)" sub="Qwen: only the TRUE bias recovers. Phi-2 is the anti-control — its bias controls are null." height={300}>
+                <BarChart data={SPEC} margin={{top:8, right:12, left:0, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis dataKey="cond" stroke="#94a3b8" tick={{fontSize:11}} interval={0} angle={-15} textAnchor="end" height={50}/>
+                  <YAxis stroke="#94a3b8" domain={[-0.1,1]} label={{value:'recovery', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                  <Bar dataKey="qwen" name="Qwen2.5-7B" fill={C.red} radius={[3,3,0,0]}/>
+                  <Bar dataKey="phi" name="Phi-2 (anti-control)" fill={C.purple} radius={[3,3,0,0]}/>
+                </BarChart>
+              </ChartFrame>
+              <ChartFrame title="Alpha dose-response (FP8 key error vs bias scale)" sub="Qwen: error rises ~6× as the bias grows. Phi-2: flat — its failure is not bias." height={300}>
+                <LineChart data={ALPHA} margin={{top:8, right:16, left:0, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis dataKey="alpha" stroke="#94a3b8" label={{value:'bias scale α', position:'insideBottom', offset:-4, fill:'#94a3b8'}}/>
+                  <YAxis stroke="#94a3b8" domain={[0,3.6]} label={{value:'logit error', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                  <Line type="monotone" dataKey="qwen" name="Qwen2.5-7B" stroke={C.red} strokeWidth={3} dot={{r:4}}/>
+                  <Line type="monotone" dataKey="phi" name="Phi-2" stroke={C.purple} strokeWidth={2} dot={{r:3}}/>
+                </LineChart>
+              </ChartFrame>
+            </div>
+            <p className="text-xs text-gray-500">
+              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and
+              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.
+            </p>
+          </Section>
+
+          {/* 6. K vs V */}
+          <Section id="kvsplit" kicker="Where the damage lives" title="It&rsquo;s the keys, with tight confidence intervals">
+            <p>
+              To make the K-versus-V attribution airtight, we ran the core cells across <strong>three seeds of disjoint prompts</strong>
+              (48 pooled) with a 2000-resample bootstrap. The intervals are tight and the story is unambiguous. On Qwen2.5-7B,
+              <span className="kbd">K8/V16</span> (FP8 keys, bf16 values) is just as broken as <span className="kbd">K8/V8</span>
+              — top-1 0.297 either way — while <span className="kbd">K16/V8</span> (bf16 keys, FP8 values) recovers to
+              <strong> 0.981 [0.980, 0.982]</strong>. Quantizing the values is harmless; quantizing the keys is the whole problem.
+              Mistral is the flat negative control across all three layouts, and Pythia-410M shows the partial-RoPE failure class
+              that the next section explains.
+            </p>
+            <ChartFrame title="Multi-seed top-1 agreement with 95% bootstrap CIs (3 seeds × 16 prompts)"
+              sub="K8/V16 (FP8 keys) tracks K8/V8 — the keys carry the damage. K16/V8 (bf16 keys) recovers. Error bars are bootstrap CIs.">
+              <BarChart data={MSEED} margin={{top:8, right:16, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" domain={[0,1]} label={{value:'top-1', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:8}}/>
+                <Bar dataKey="k8v8" name="K8/V8" fill={C.red} radius={[3,3,0,0]}>
+                  <ErrorBar dataKey="k8v8e" width={4} stroke="#fca5a5"/>
+                </Bar>
+                <Bar dataKey="k8v16" name="K8/V16 (FP8 keys)" fill={C.orange} radius={[3,3,0,0]}>
+                  <ErrorBar dataKey="k8v16e" width={4} stroke="#fdba74"/>
+                </Bar>
+                <Bar dataKey="k16v8" name="K16/V8 (bf16 keys)" fill={C.blue} radius={[3,3,0,0]}>
+                  <ErrorBar dataKey="k16v8e" width={4} stroke="#93c5fd"/>
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 7. Second mechanism */}
+          <Section id="partialrope" kicker="A second failure mode" title="Partial-RoPE legacy models, and the GPT-J control that splits it apart">
+            <p>
+              The Qwen bias is not the only way an FP8 key cache can fail. The partial-RoPE legacy lineage — Pythia and GPT-NeoX,
+              where only a fraction of each key&rsquo;s channels get rotated by RoPE and the rest &ldquo;pass through&rdquo; unrotated — is
+              <strong> uniformly catastrophic</strong> under FP8 keys, and (echoing the magnitude story) the <em>smallest</em> model
+              is the worst: Pythia-160M blows up <strong>13.5×</strong>. These models are confounded, though: they are
+              <em>both</em> partial-RoPE <em>and</em> biased, with the bias concentrated in the pass-through tail. Is it the partial
+              RoPE or the bias?
+            </p>
+            <p>
+              <strong>GPT-J-6B</strong> is the control that separates them: it is partial-RoPE (75% pass-through) but carries
+              <em> no</em> key bias. Under FP8 keys it is only <em>material</em>, never catastrophic — and its residual error lives in
+              the small <strong>rotary</strong> subspace while the large pass-through subspace is <strong>benign</strong>. That is the
+              exact inverse of the biased models, where the pass-through tail (where the bias sits) is the fragile part. Conclusion:
+              partial RoPE on its own costs only a mild rotary-subspace hit; the catastrophe is always the <em>bias</em>, wherever it
+              happens to live. (GPT-J is eager-only in recent Transformers, so we patched its attention directly and verified the
+              quantization actually fired — a key-nuke moved the logits by 9.95 — before trusting the numbers.)
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              <ChartFrame title="Partial-RoPE legacy fleet — K8/V8 perplexity blow-up" sub="All catastrophic; smallest is worst. K16/V8 recovers all but the 160M." height={300}>
+                <BarChart data={LEGACY} margin={{top:8, right:12, left:0, bottom:40}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis dataKey="model" stroke="#94a3b8" angle={-35} textAnchor="end" height={64} interval={0} tick={{fontSize:10}}/>
+                  <YAxis stroke="#94a3b8" scale="log" domain={[1,16]} ticks={[1,2,4,8,16]} label={{value:'ppl × (log)', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Bar dataKey="mult" name="K8/V8 ppl ×" fill={C.red} radius={[3,3,0,0]}/>
+                </BarChart>
+              </ChartFrame>
+              <ChartFrame title="GPT-J-6B (biasless) — the subspace inverts" sub="Pass-through is tolerant, rotary carries the residual: the opposite of the biased models." height={300}>
+                <BarChart data={GPTJ} layout="vertical" margin={{top:8, right:20, left:30, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis type="number" stroke="#94a3b8" domain={[0.9,1]} tick={{fontSize:11}} label={{value:'top-1', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
+                  <YAxis type="category" dataKey="cell" stroke="#94a3b8" width={120} tick={{fontSize:10}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Bar dataKey="top1" name="top-1 agreement" radius={[0,3,3,0]}>
+                    {GPTJ.map((d,i)=><Cell key={i} fill={CLASS_COLOR[d.klass]}/>)}
+                  </Bar>
+                </BarChart>
+              </ChartFrame>
+            </div>
+          </Section>
+
+          {/* 8. Scale */}
+          <Section id="scale" kicker="Bigger is not worse" title="Fragility peaks at 7B and attenuates to 72B">
+            <p>
+              Because the failure is about bias magnitude <em>relative to</em> the key&rsquo;s dynamic range — not parameter count — it does
+              not grow with model size. The Qwen2.5 family is the clean test: hold the architecture fixed and sweep size. The damage
+              is <strong>non-monotonic with a sharp peak at 7B</strong> — 1.5B catastrophic, 3B material, 7B catastrophic and worst,
+              14B material, 72B material. The 72B confirms attenuation at the very top: it still has a key bias, but its FP8 key error
+              (~0.16) is roughly <strong>20× lower</strong> than the 7B&rsquo;s (~3.25). The internal knob that tracks the failure is the
+              key&rsquo;s outlier ratio — how much the biggest channel dominates the per-tensor scale — and it is highest exactly at 7B.
+            </p>
+            <ChartFrame title="Qwen2.5 scale curve — FP8 key error and outlier dominance"
+              sub="Both the FP8 key logit error (left) and the outlier-amax ratio (right) peak at 7B, then fall. K16/V8 stays tolerant at every size." height={340}>
+              <LineChart data={SCALE} margin={{top:8, right:24, left:8, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" label={{value:'Qwen2.5 size', position:'insideBottom', offset:-4, fill:'#94a3b8'}}/>
+                <YAxis yAxisId="l" stroke={C.red} domain={[0,3.6]} label={{value:'FP8-K logit error', angle:-90, position:'insideLeft', fill:C.red}}/>
+                <YAxis yAxisId="r" orientation="right" stroke={C.amber} domain={[0,12]} label={{value:'outlier amax ratio', angle:90, position:'insideRight', fill:C.amber}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:8}}/>
+                <Line yAxisId="l" type="monotone" dataKey="err" name="FP8-K logit error" stroke={C.red} strokeWidth={3} dot={{r:5}}/>
+                <Line yAxisId="r" type="monotone" dataKey="amax" name="outlier amax ratio" stroke={C.amber} strokeWidth={2} strokeDasharray="5 4" dot={{r:4}}/>
+              </LineChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 9. Long context */}
+          <Section id="longctx" kicker="Not a 2K artifact" title="The failure and the fix both survive to 16K">
+            <p>
+              A short-context result is easy to dismiss as an artifact, so we re-ran the core cells at <strong>2K, 8K, and 16K</strong>
+              (storing only the per-position argmax so a 7B at 16K fits one 48 GB card). Both the failure <em>and</em> the repair are
+              positionally stable. Qwen2.5-7B&rsquo;s FP8 key cache stays catastrophic at every length (top-1 ~0.26) while K16/V8 holds at
+              ~0.98 throughout; Pythia stays broken and recovered the same way; Phi-2&rsquo;s residual even worsens with length; and Mistral
+              stays tolerant end-to-end. This is not a 2K paper.
+            </p>
+            <ChartFrame title="Top-1 agreement vs context length — FP8 keys (solid) vs bf16 keys (dashed)"
+              sub="Across four models, the FP8-key failure (solid, low) and the K16/V8 recovery (dashed, high) both hold from 2K to 16K." height={340}>
+              <LineChart margin={{top:8, right:20, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="ctx" type="category" allowDuplicatedCategory={false} stroke="#94a3b8"/>
+                <YAxis stroke="#94a3b8" domain={[0,1]} label={{value:'top-1 vs native', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:8, fontSize:11}}/>
+                {Object.entries(LONGCTX).map(([name, rows], i) => {
+                  const col = [C.red, C.purple, C.orange, C.green][i];
+                  return [
+                    <Line key={name+'k8'} data={rows} dataKey="k8v8" name={name+' K8/V8'} stroke={col} strokeWidth={2.5} dot={{r:3}}/>,
+                    <Line key={name+'k16'} data={rows} dataKey="k16v8" name={name+' K16/V8'} stroke={col} strokeWidth={1.5} strokeDasharray="4 3" dot={false}/>,
+                  ];
+                })}
+              </LineChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 10. Recovery Pareto */}
+          <Section id="pareto" kicker="The fix and its cost" title="Recovery Pareto: the cheapest repair that works">
+            <p>
+              Quality is only half the deployment decision; the other half is bytes and side-metadata. Putting recovery against
+              key-cache cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for first —
+              per-channel FP8 scaling and the QK-gauge — both <strong>fail outright</strong> (recovery 0), because neither re-centers
+              an additive bias. The two that work at 8 bits are <strong>INT8-K</strong> (recovery 0.95, same 512 bytes, zero metadata —
+              a drop-in format swap) and <strong>FP8 pre-bias</strong> (0.97, but it must store the per-channel bias). Above 8 bits,
+              <strong> K16/V8</strong> is the zero-metadata, bit-exact-safe fallback at 1024 bytes. So: INT8-K if you must hold 8-bit
+              keys, K16/V8 if you want guaranteed safety — and skip the elegant linear-algebra &ldquo;fixes&rdquo; that do nothing here.
+            </p>
+            <ChartFrame title="Recovery vs key-cache bytes per token (Qwen anchor)"
+              sub="Up and to the left is better. Red = recovers nothing; amber/green = the working 8-bit repairs; blue = the bf16-key fallback." height={340}>
+              <ScatterChart margin={{top:12, right:28, left:8, bottom:36}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" dataKey="bytes" name="K bytes/token" stroke="#94a3b8" domain={[400,1120]} ticks={[512,1024]}
+                  label={{value:'key-cache bytes / token', position:'insideBottom', offset:-6, fill:'#94a3b8'}}/>
+                <YAxis type="number" dataKey="rec" name="recovery" stroke="#94a3b8" domain={[-0.05,1.08]}
+                  label={{value:'recovery fraction', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <ZAxis range={[200,200]}/>
+                <Tooltip content={<Tip/>} cursor={{strokeDasharray:'3 3'}}/>
+                <Scatter data={PARETO} name="repair">
+                  {PARETO.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                </Scatter>
+              </ScatterChart>
+            </ChartFrame>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm mt-2">
+                <thead><tr className="border-b border-gray-700 text-gray-400">
+                  <th className="text-left py-2 px-3">Repair</th><th className="text-right py-2 px-3">K bytes/tok</th>
+                  <th className="text-right py-2 px-3">Metadata</th><th className="text-right py-2 px-3">Recovery</th>
+                </tr></thead>
+                <tbody className="text-gray-300">
+                  {PARETO.map((r,i)=>(
+                    <tr key={i} className="border-b border-gray-800">
+                      <td className="py-2 px-3">{r.repair}</td>
+                      <td className="py-2 px-3 text-right font-mono">{r.bytes}</td>
+                      <td className="py-2 px-3 text-right font-mono">{r.meta}%</td>
+                      <td className="py-2 px-3 text-right font-mono" style={{color: r.rec>=0.95?C.green: r.rec>0?C.amber:C.red}}>{r.rec.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+
+          {/* 11. Serving */}
+          <Section id="serving" kicker="Does it survive real serving?" title="It is a real production failure, not a fake-quant artifact">
+            <p>
+              Everything above is fake-quant (quantize/dequantize inside a teacher-forced forward). The honest worry is that a
+              simulated rescue might not transfer to a real kernel. So the directional claim is confirmed end-to-end in a real
+              <strong> vLLM + FlashInfer</strong> stack on an H100. The same Qwen2.5-7B the atlas flags collapses just as hard in
+              production — symmetric FP8 K8/V8 sends WikiText perplexity to <strong>214</strong> and the model emits garbage
+              (&ldquo;<em>This limits turn limits limits limits…</em>&rdquo;) — while asymmetric <strong>K16/V8</strong> is
+              <strong> character-for-character identical to FP16</strong>. The serving stack is even harsher than the fake-quant
+              probe (×30 vs ×12), but it points the same way, and the asymmetric cache is the real fix.
+            </p>
+            <ChartFrame title="Real serving (vLLM + FlashInfer, H100) — WikiText perplexity"
+              sub="Qwen2.5-7B-Instruct. Symmetric FP8 garbles; asymmetric K16/V8 is identical to FP16." height={260}>
+              <BarChart data={SERVING} margin={{top:8, right:16, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="config" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" scale="log" domain={[5,300]} ticks={[7,30,100,300]} label={{value:'perplexity (log)', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="ppl" name="WikiText PPL" radius={[3,3,0,0]}>
+                  {SERVING.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p className="text-xs text-gray-500">
+              The full measurement ladder agrees in direction: fake-quant teacher-forced (×12.8) → incremental HF cache (the key
+              cache corrupts generation on the <em>first</em> token, with an overturned logit margin of 8.17) → full serving (×30).
+              The fragility is real at every level, and so is the fix.
+            </p>
+          </Section>
+
+          {/* 12. Preflight */}
+          <Section id="preflight" kicker="Ship safely" title="A release-time preflight that never calls a fragile model safe">
+            <p>
+              The practical deliverable is a cheap scanner you run before shipping an FP8 cache. It probes the model on a small
+              prompt sample, classifies the K8/V8 risk, decides whether the failure is key- or value-side, reads two mechanism
+              signals (the key-bias magnitude and the partial-RoPE geometry), and emits a mechanism-matched recommendation — always
+              with a K16/V8 fallback. The metric that matters for a release tool is the <strong>false-safe rate</strong>: how often
+              it declares a fragile model safe. On five held-out models it scored <strong>0/5</strong>, routing all three mechanism
+              classes correctly. The biasless-but-fragile cases (Phi-4, Qwen3-4B) are the honest frontier — the scanner flags them
+              fragile and falls back to native keys without pretending to know why, which is exactly the right behavior.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-gray-700 text-gray-400">
+                  <th className="text-left py-2 px-3">Held-out model</th><th className="text-right py-2 px-3">max&nbsp;|K-bias|</th>
+                  <th className="text-center py-2 px-3">partial-RoPE</th><th className="text-center py-2 px-3">class</th>
+                  <th className="text-center py-2 px-3">false-safe</th><th className="text-left py-2 px-3">recommendation</th>
+                </tr></thead>
+                <tbody className="text-gray-300">
+                  {PREFLIGHT.map((r,i)=>(
+                    <tr key={i} className="border-b border-gray-800">
+                      <td className="py-2 px-3 font-medium">{r.model}</td>
+                      <td className="py-2 px-3 text-right font-mono">{r.bias}</td>
+                      <td className="py-2 px-3 text-center">{r.prope}</td>
+                      <td className="py-2 px-3 text-center"><Pill k={r.cls}/></td>
+                      <td className="py-2 px-3 text-center"><span className="pill pill-tol">no</span></td>
+                      <td className="py-2 px-3 text-gray-400 text-xs">{r.rec}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+
+          {/* 13. Claim ledger */}
+          <Section id="ledger" kicker="The receipts" title="Claim ledger (frozen before the results were read)">
+            <p>
+              The seven claims were written down <em>before</em> the paper-tier results, so the goalposts cannot move, and a claim is
+              only &ldquo;supported&rdquo; once its negative control has also run and behaved. Here is where each stands.
+            </p>
+            <div className="grid md:grid-cols-2 gap-3 mt-3">
+              {LEDGER.map((c,i)=>{
+                const vs = V_STYLE[c.v];
+                return (
+                  <div key={i} className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono text-sm text-gray-300">{c.id}</span>
+                      <span className={`pill ${vs.cls}`}>{vs.label}</span>
+                    </div>
+                    <div className="text-gray-200 text-sm font-medium mb-1">{c.t}</div>
+                    <div className="text-gray-500 text-xs leading-relaxed">{c.d}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+
+          {/* 14. Reproduce */}
+          <Section id="reproduce" kicker="Run it yourself" title="Reproduce the atlas — free, offline, in a minute">
+            <p>
+              The whole science ran on the free local W7900 plus about <strong>$2</strong> of cheap-pod time (an A6000 for the fleet,
+              an A100 for the controls, two H100s for the 72B slice). The fake-quant harness is locked into the build system as a
+              Kconfig reproducibility profile, so the entire suite is provable on any machine — no GPU and no model download required:
+            </p>
+            <pre className="bg-black/40 border border-gray-800 rounded-lg p-4 text-sm overflow-x-auto text-gray-300"><code>make defconfig-quant-fp8-validate
+make            <span className="text-gray-500"># doctor → 10 runner self-tests (CPU, offline) → report</span></code></pre>
+            <p>
+              That validates the harness deterministically. The full GPU reproduction (the real fleet, multi-seed CIs, long-context,
+              preflight, recovery Pareto) is one defconfig away: <span className="kbd">make defconfig-quant-fp8-atlas &amp;&amp; make</span>.
+              The serving-stack confirmation reuses the asymmetric <a href="https://github.com/mcgrof/flashinfer" className="text-amber-400 hover:underline">FlashInfer</a>
+              and <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing" className="text-amber-400 hover:underline">vLLM</a> forks
+              from the <a href="paper_memory_decode.html" className="text-amber-400 hover:underline">decode paper</a>.
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400 mt-3">
+              <strong className="text-gray-200">Honest open edges.</strong> The biasless-but-fragile failures (Phi-4, Qwen3-4B) are
+              contained but not yet mechanistically named. All quality numbers are fake-quant or single-model serving, not a broad
+              production sweep; INT8-K&rsquo;s rescue is a mechanism-matched finding that still wants a wider in-kernel confirmation
+              before it displaces the already-validated K16/V8. These are flagged throughout, not buried.
+            </div>
+          </Section>
+
+          {/* Takeaways */}
+          <div className="grid md:grid-cols-3 gap-4 mt-2 mb-8">
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-amber-400 mb-2">If you serve FP8 KV cache</h4>
+              <p className="text-gray-400 text-sm">Default to <strong className="text-white">K16/V8</strong> (bf16 keys, FP8 values). It is lossless on every model tested except Phi-2, costs only 2× the key bytes, and needs zero side-metadata.</p>
+            </div>
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-blue-400 mb-2">If you must hold 8-bit keys</h4>
+              <p className="text-gray-400 text-sm">Use <strong className="text-white">INT8</strong> keys, not FP8. Same bytes, but the uniform grid survives the bias that the FP8 mantissa cannot. Or subtract the per-channel key bias before quantizing.</p>
+            </div>
+            <div className="card rounded-xl p-5">
+              <h4 className="font-semibold text-red-400 mb-2">If you publish a model</h4>
+              <p className="text-gray-400 text-sm">Run the preflight. A large, concentrated key bias is a deployment foot-gun under symmetric FP8 — say so in the model card, and recommend K16/V8 or INT8-K.</p>
+            </div>
+          </div>
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
+            <p className="mb-2">
+              <a href="index.html" className="hover:text-gray-400">Home</a>
+              <span className="mx-2">&middot;</span>
+              <a href="paper_memory_decode.html" className="hover:text-gray-400">Decode paper</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://github.com/mcgrof/knlp" className="hover:text-gray-400">GitHub</a>
+            </p>
+            <p>Fake-quant teacher-forced on WikiText-103; serving confirmation on vLLM + FlashInfer (H100). Reproduce: <span className="kbd">make defconfig-quant-fp8-validate</span></p>
+            <p className="mt-1">MIT License &middot; Luis Chamberlain and contributors</p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>
