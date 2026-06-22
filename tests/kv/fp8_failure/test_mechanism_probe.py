@@ -113,6 +113,97 @@ def test_passthrough_prebias_beats_passthrough_only_when_bias_in_tail():
     ), f"prebias must beat passthrough_only with bias in tail ({e_pb} vs {e_only})"
 
 
+def test_control_bias_preserves_norm_and_destroys_placement():
+    torch.manual_seed(0)
+    true = torch.randn(32) * 3.0
+    assert torch.equal(MP.control_bias(true, "true"), true)
+    assert torch.count_nonzero(MP.control_bias(true, "zero")) == 0
+    for kind in ("random_same_norm", "permuted"):
+        c = MP.control_bias(true, kind, seed=1)
+        assert (
+            abs(c.norm().item() - true.norm().item()) < 1e-3
+        ), f"{kind} must keep the L2 norm"
+        assert not torch.equal(c.sort().values, c)  # not trivially sorted/equal
+    # permuted is a true permutation: same multiset of values
+    perm = MP.control_bias(true, "permuted", seed=1)
+    assert torch.equal(perm.sort().values, true.float().sort().values)
+
+
+def test_mask_only_subspace_quantizes_just_the_masked_channels():
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+
+    torch.manual_seed(0)
+    m = Qwen2ForCausalLM(
+        Qwen2Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+            attn_implementation="sdpa",
+            max_position_embeddings=64,
+            tie_word_embeddings=False,
+        )
+    ).eval()
+    infos = AD.discover(m)
+    hd = infos[0]["head_dim"]
+    ids = torch.randint(0, 64, (1, 6))
+    empty = torch.zeros(hd, dtype=torch.bool)
+    allm = torch.ones(hd, dtype=torch.bool)
+    with torch.no_grad():
+        base = m(ids).logits
+        with MP.SubspaceKHarness(m, infos, hd, "mask_only", mask=empty):
+            none_q = m(ids).logits
+        with MP.SubspaceKHarness(m, infos, hd, "mask_only", mask=allm):
+            all_q = m(ids).logits
+        with MP.SubspaceKHarness(m, infos, hd, "full"):
+            full = m(ids).logits
+    assert torch.equal(base, none_q), "empty mask must quantize nothing"
+    assert torch.equal(all_q, full), "all-ones mask must equal full-K quant"
+
+
+def test_controlled_prebias_zero_bias_is_pre_rope_quant():
+    # zero control bias => quant(K - 0) + 0 == pre-RoPE FP8 of the full k_proj output; must change
+    # logits (it is a real quant) and differ from the true-bias prebias on a biased model.
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+
+    torch.manual_seed(0)
+    m = Qwen2ForCausalLM(
+        Qwen2Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+            attn_implementation="sdpa",
+            max_position_embeddings=64,
+            tie_word_embeddings=False,
+        )
+    ).eval()
+    # inject a real K-bias so true vs zero differ
+    for layer in m.model.layers:
+        layer.self_attn.k_proj.bias.data.normal_(0, 5.0)
+    infos = AD.discover(m)
+    import k_bias_common as kbc
+
+    k8 = kbc.parse_spec("fp8:per_tensor")
+    ids = torch.randint(0, 64, (1, 6))
+    by_zero = {i["layer_idx"]: MP.control_bias(i["k_bias"], "zero") for i in infos}
+    by_true = {i["layer_idx"]: MP.control_bias(i["k_bias"], "true") for i in infos}
+    with torch.no_grad():
+        base = m(ids).logits
+        with MP.ControlledPrebiasHarness(m, infos, by_zero, k8):
+            z = m(ids).logits
+        with MP.ControlledPrebiasHarness(m, infos, by_true, k8):
+            t = m(ids).logits
+    assert not torch.equal(base, z), "zero-bias prebias is still a real FP8 quant"
+    assert not torch.equal(z, t), "true vs zero bias must differ on a biased model"
+
+
 def test_subspace_full_rope_passthrough_is_noop():
     # On a full-RoPE model rotary_dim == head_dim, so passthrough_only quantizes nothing -> identical
     # logits, while rotary_only quantizes everything (== full).
