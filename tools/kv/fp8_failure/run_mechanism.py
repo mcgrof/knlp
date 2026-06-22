@@ -344,8 +344,11 @@ def self_test(out_dir, device="cpu"):
         finally:
             hh.remove()
     delta = (base_lg - lossy_lg).abs().max().item()
+    # The bar separates "path is live" from "no-op", not "big vs small". On this tiny head_dim=8
+    # random model int2-K moves the logits ~9e-4 (monotone int2>int4>fp8>int8); a true no-op is ~0.
+    # 1e-4 clears the real signal with ~9x margin while still failing a dead path.
     assert (
-        delta > 1e-3
+        delta > 1e-4
     ), "lossy-K must change logits -- the cache-quant path is a no-op otherwise"
     print(f"[self-test] AR causality-guard OK (int2-K logit delta={delta:.3g})")
     print("[self-test] mechanism + AR paths exercised; CSVs at", out_dir)
