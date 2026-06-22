@@ -388,20 +388,28 @@ def write_csv(path, rows, fields):
             w.writerow({k: r.get(k, "") for k in fields})
 
 
-def calib_prompts(tok, n=32, seq_len=2048):
-    """WikiText-103 snippets, tokenized to seq_len. Deterministic."""
+def _select_chunks(ids, n, seq_len, seed=None):
+    """Pure chunk selector (offline-testable). seed=None -> first-n prefix (back-compat); seed given
+    -> n disjoint chunks from a seeded shuffle of all seq_len-aligned offsets, so different seeds give
+    independent prompt sets."""
+    import random
+
+    offsets = list(range(0, len(ids) - seq_len, seq_len))
+    if seed is not None:
+        random.Random(seed).shuffle(offsets)
+    return [ids[i : i + seq_len] for i in offsets[:n]]
+
+
+def calib_prompts(tok, n=32, seq_len=2048, seed=None):
+    """WikiText-103 snippets, tokenized to seq_len. seed=None -> deterministic first-n prefix; seed
+    given -> n DISJOINT chunks (seeded shuffle) so multi-seed runs draw independent prompts (without
+    this every seed drew identical prompts and the CIs were degenerate)."""
     from datasets import load_dataset
 
     ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="train")
     text = "\n".join(t for t in ds["text"][:200000] if t and not t.isspace())
     ids = tok(text)["input_ids"]
-    chunks = []
-    step = seq_len
-    for i in range(0, len(ids) - seq_len, step):
-        chunks.append(ids[i : i + seq_len])
-        if len(chunks) >= n:
-            break
-    return chunks
+    return _select_chunks(ids, n, seq_len, seed)
 
 
 # ============================================================================ TIER-2 additions
