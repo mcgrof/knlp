@@ -696,6 +696,58 @@
       );
     }
 
+    // Section 6: Scaling to Marin — the honest ceiling
+    function MarinScalingSection() {
+      const ladder = [
+        { scale: '~150M', lever: 'selector + head-count + mix α tuned', result: 'small gain — the largest scale where RA expresses', color: '#22c55e' },
+        { scale: '1B', lever: 'head-count lever RA-8 → RA-28, validated FIM-trace + Fisher-eigenmax selector', result: 'neutral within noise (mean +0.49% / +0.52% per step, ~1% σ)', color: '#9ca3af' },
+        { scale: '32B', lever: 'uniform-band selector (not FIM-ranked — doctrinally broken)', result: '+16 to +18% worse, but discounted as not a clean test', color: '#f87171' },
+      ];
+      return (
+        <div className="card rounded-xl p-6 mb-8 border-l-4 border-cyan-500">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Section 6: Scaling toward Marin — where RA tops out</h2>
+          <p className="text-gray-400 mb-4">
+            The lanes above are all at or below ~150M, and that turns out to be the current measured ceiling. RA has several
+            levers &mdash; <strong className="text-gray-200">which layers</strong> get it (FIM-trace selector),
+            <strong className="text-gray-200"> which heads</strong> (Fisher-eigenmax), <strong className="text-gray-200">how
+            many heads</strong> (the head-count N), and the <strong className="text-gray-200">residual mix α</strong>. We
+            scaled those levers to chase the signal upward. It did not survive.
+          </p>
+
+          <div className="overflow-x-auto mb-4">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-gray-700 text-gray-400">
+                <th className="text-left py-2 px-3">Scale</th>
+                <th className="text-left py-2 px-3">Levers pushed</th>
+                <th className="text-left py-2 px-3">What happened</th>
+              </tr></thead>
+              <tbody className="text-gray-300">
+                {ladder.map((r, i) => (
+                  <tr key={i} className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-semibold" style={{color: r.color}}>{r.scale}</td>
+                    <td className="py-2 px-3 text-gray-400">{r.lever}</td>
+                    <td className="py-2 px-3">{r.result}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-cyan-900/15 border border-cyan-700/50 rounded-lg p-4 text-sm text-gray-300">
+            <strong className="text-cyan-300">Verdict.</strong> The small-scale signal tops out around 150M.
+            Pushing the head-count lever to 1B with the validated selector left RA statistically indistinguishable from
+            baseline; the 150M&rarr;1B inverse scaling is not a &ldquo;needs more heads&rdquo; problem. A 32B run trained
+            worse, but used a broken uniform selector, so it carries no clean information either way. The mechanistic read
+            is that the protected reciprocal residual ends up mostly orthogonal to the output gradient &mdash; the branch
+            exists, but the loss does not want to move in that direction. The architecture line is parked pending a new
+            inductive-bias hypothesis, not more selector tuning. For Marin specifically, that makes RA <strong>not a
+            contribution candidate</strong> &mdash; see the
+            <a href="marin.html" className="text-cyan-400 hover:underline"> Marin fit assessment</a>.
+          </div>
+        </div>
+      );
+    }
+
     // Main App
     function App() {
       return (
@@ -727,6 +779,7 @@
           <ResultsSection />
           <MatchedLlamaSection />
           <HowItWorksSection />
+          <MarinScalingSection />
 
           {/* GNN Transfer Section */}
           <section className="mb-12">
