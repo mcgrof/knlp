@@ -471,11 +471,11 @@
             (Stanford&rsquo;s open LLM) is a more sober story, and it is worth being honest about where it actually stands.
           </p>
 
-          <div className="grid md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-900 rounded-lg p-4 border border-green-700/40">
+          <div className="mb-6">
+            <div className="bg-gray-900 rounded-lg p-4 border border-green-700/40 max-w-xl">
               <div className="flex items-center justify-between mb-2">
                 <span className="font-semibold text-green-300">150M &mdash; trained from scratch</span>
-                <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">valid trial</span>
+                <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">the one valid trial</span>
               </div>
               <p className="text-sm text-gray-400 mb-2">
                 Marin <code className="text-gray-300">llama_150m</code> config (6L/8H/512, no MLA), TinyStories,
@@ -487,29 +487,14 @@
                 <li>1.2&times; (conservative, 4&ndash;5): <span className="text-gray-200">+1.6% PPL</span></li>
               </ul>
             </div>
-            <div className="bg-gray-900 rounded-lg p-4 border border-amber-700/40">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-amber-300">Marin-8B &mdash; post-hoc only</span>
-                <span className="text-xs bg-amber-900 text-amber-300 px-2 py-0.5 rounded">not a valid test</span>
-              </div>
-              <p className="text-sm text-gray-400 mb-2">
-                Projections were inserted into the <strong className="text-gray-200">frozen</strong> downloaded checkpoint
-                (orthogonal-init, near-identity) and evaluated &mdash; <strong className="text-gray-200">never trained</strong>.
-              </p>
-              <ul className="text-sm text-gray-400 space-y-1">
-                <li>conservative 2&times;: logit-error <span className="text-gray-200">5.47</span>, agreement 1.0</li>
-                <li>broad 32-layer: much worse</li>
-                <li className="text-amber-300/90">a sensitivity probe, not a quality result</li>
-              </ul>
-            </div>
           </div>
 
           <div className="bg-orange-900/20 border border-orange-700 rounded-lg p-4 mb-6 text-sm text-gray-300">
-            <strong className="text-orange-300">Honest verdict.</strong> KVSplice was only ever <em>validly</em>
-            evaluated at 150M (from scratch, +1.6&ndash;2.7% PPL for 1.2&ndash;2&times;). It wants an
-            <strong> MLA foundation</strong> to shine; bolted onto a plain Llama config it is a modest cost. The 8B number
-            is a frozen-checkpoint perturbation, not a measurement &mdash; you cannot learn an orthogonal low-rank
-            compress/expand on a frozen model. <strong>Not Marin-PR-ready.</strong> No PR was ever sent.
+            <strong className="text-orange-300">Honest verdict.</strong> KVSplice has only been evaluated at 150M
+            (from scratch, +1.6&ndash;2.7% PPL for 1.2&ndash;2&times;) and never validly scaled beyond it &mdash; the
+            projections have to be trained, so the method cannot be measured by bolting it onto a frozen checkpoint. It also
+            wants an <strong>MLA foundation</strong> to shine; on a plain Llama config it is a modest cost.
+            <strong> Not Marin-PR-ready.</strong> No PR was ever sent.
           </div>
 
           <h3 className="text-lg font-semibold mb-2 text-gray-200">What a Marin PR would actually take</h3>
