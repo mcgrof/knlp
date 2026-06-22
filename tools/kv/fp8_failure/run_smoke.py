@@ -410,21 +410,82 @@ def _write_outputs(out_dir, short_name, model_id, rows, summary, sweep, arch, ma
     return cell_csv
 
 
+def _multi_gpu_max_memory(headroom_gib=4):
+    """Per-GPU memory cap across ALL visible GPUs, with headroom for activations -- and NO 'cpu' key,
+    so accelerate shards the model across the GPUs and RAISES if it does not fit rather than silently
+    offloading to disk/meta (the meta-tensor trap that breaks a forward on a single too-small card).
+    72B bf16 (~150 GB) needs >=2x80 GB."""
+    n = torch.cuda.device_count()
+    return {
+        i: f"{int(torch.cuda.get_device_properties(i).total_memory / (1024 ** 3)) - headroom_gib}GiB"
+        for i in range(n)
+    }
+
+
+def _kbias_from_safetensors(model_id):
+    """{layer_idx: k_proj.bias tensor} read directly from the cached safetensors (no model load) --
+    the robust fallback when a device_map'd bias is on meta and discovery cannot read it.
+    """
+    import glob
+    import re
+
+    from safetensors import safe_open
+
+    pat = "models--" + model_id.replace("/", "--")
+    snaps = glob.glob(os.path.expanduser(f"~/.cache/huggingface/hub/{pat}/snapshots/*"))
+    if not snaps:
+        return {}
+    rx = re.compile(r"layers\.(\d+)\..*k_proj\.bias$")
+    out = {}
+    for fp in glob.glob(os.path.join(snaps[0], "*.safetensors")):
+        with safe_open(fp, framework="pt") as f:
+            for k in f.keys():
+                m = rx.search(k)
+                if m:
+                    out[int(m.group(1))] = f.get_tensor(k)
+    return out
+
+
+def _repair_and_guard(model, infos, model_id):
+    """Fill any meta/None K-bias from safetensors (so prebias works), then FAIL FAST if any parameter
+    is still on meta -- a meta param means the model didn't fit on the GPUs and the forward would die
+    with a confusing mid-graph error instead of a clear one."""
+    sb = None
+    for info in infos:
+        kb = info.get("k_bias")
+        if kb is None or getattr(kb, "is_meta", False):
+            if sb is None:
+                sb = _kbias_from_safetensors(model_id)
+            if info["layer_idx"] in sb:
+                info["k_bias"] = sb[info["layer_idx"]]
+                info["has_k_bias"] = True
+    metas = [n for n, p in model.named_parameters() if p.device.type == "meta"]
+    if metas:
+        raise RuntimeError(
+            f"{len(metas)} params on meta (model did not fit -> disk/meta offload). Use more GPU "
+            f"memory (>=2x80GB for 72B). First: {metas[0]}"
+        )
+
+
 def run_one(
     model_id, short_name, out_dir, device, dtype, n, seq_len, seed, device_map=None
 ):
     import gc
 
     torch.manual_seed(seed)
-    # device_map="auto" shards a too-big model (e.g. Qwen2.5-72B) across GPU+CPU. max_memory forces
-    # CPU (not disk/meta) overflow so biases stay real tensors; activations ride accelerate hooks to
-    # the GPU during the forward, so the interface harness + gauge still work (atlas cells only --
-    # AR generation over an offloaded 72B would be hours, so the gauge/AR caller should keep n small).
+    # device_map="auto" shards a too-big model (Qwen2.5-72B) across MULTIPLE GPUs. We force a no-cpu
+    # multi-GPU max_memory so nothing offloads to meta, repair any meta bias from safetensors, and
+    # guard against a leftover meta param. Atlas cells + gauge only (no AR over a sharded 72B).
     if device_map:
-        model, tok = kbc.load_model(model_id, dtype, device, device_map=device_map)
+        mm = _multi_gpu_max_memory()
+        model, tok = kbc.load_model(
+            model_id, dtype, device, device_map=device_map, max_memory=mm
+        )
     else:
         model, tok = kbc.load_model(model_id, dtype, device)
     infos = AD.discover(model)
+    if device_map:
+        _repair_and_guard(model, infos, model_id)
     ids_list = kbc.calib_prompts(tok, n=n, seq_len=seq_len)
     thr = _load_thresholds()
     rows, summary, sweep, arch = run_model(
