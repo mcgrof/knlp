@@ -1,0 +1,23 @@
+# FP8 KV-cache failure-atlas full reproduction (GPU).
+# Runs the real fake-quant fleet -- multi-seed CIs, long-context
+# 2K/8K/16K, the preflight scanner, and the recovery Pareto -- over the
+# core model set on a CUDA device.  This is the heavy reproduction; the
+# cheap lock is defconfig-quant-fp8-validate.  HF-only; the serving
+# stack stays by-reference (make defconfig-decode).
+CONFIG_KNLP_QUANT_FP8=y
+CONFIG_KNLP_QUANT_FP8_PROFILE="atlas"
+CONFIG_KNLP_QUANT_FP8_PYTHON="~/envs/knlp-serdes/bin/python"
+CONFIG_KNLP_QUANT_FP8_RESULTS_ROOT="./results/quant-fp8"
+CONFIG_KNLP_QUANT_FP8_MODELS="core"
+CONFIG_KNLP_QUANT_FP8_DATASET="wikitext-103-raw-v1"
+CONFIG_KNLP_QUANT_FP8_SEQ_LEN=1024
+CONFIG_KNLP_QUANT_FP8_NUM_PROMPTS=16
+CONFIG_KNLP_QUANT_FP8_SEEDS="0 1 2"
+CONFIG_KNLP_QUANT_FP8_CONTEXTS="2048 8192 16384"
+CONFIG_KNLP_QUANT_FP8_DEVICE="cuda:0"
+CONFIG_KNLP_QUANT_FP8_DTYPE="bfloat16"
+CONFIG_KNLP_QUANT_FP8_RUN_MULTISEED=y
+CONFIG_KNLP_QUANT_FP8_RUN_LONGCTX=y
+CONFIG_KNLP_QUANT_FP8_RUN_PREFLIGHT=y
+CONFIG_KNLP_QUANT_FP8_RUN_RECOVERY=y
+CONFIG_KNLP_QUANT_FP8_ALLOW_HARDWARE_SKIPS=y

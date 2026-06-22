@@ -224,6 +224,7 @@ source "Kconfig.pruning"
 source "Kconfig.ra_mla"
 source "Kconfig.decode"
 source "Kconfig.fdec"
+source "Kconfig.quant"
 
 menu "Advanced Options"
 
