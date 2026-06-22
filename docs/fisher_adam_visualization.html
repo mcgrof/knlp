@@ -1017,17 +1017,17 @@
             <div className="mt-8 pt-6 border-t border-gray-700">
               <h3 className="text-xl font-bold text-green-400 mb-2">Scaling to Marin &mdash; what held, and what a PR would cost</h3>
               <p className="text-sm text-gray-400 mb-4">
-                The bitter7 result above is GPT-2. Taking FIM-guided pruning toward
+                The bitter7 result above is GPT-2. The one Marin-relevant data point is a 150M
                 {' '}<a className="text-green-400 hover:underline" href="https://huggingface.co/marin-community/marin-8b-base">Marin</a>{' '}
-                (Stanford&rsquo;s open LLM) exposes a methodology trap worth being explicit about: the 150M run and the
-                8B run are <strong className="text-gray-200">not the same procedure</strong>.
+                config trained from scratch &mdash; positive, but never scaled. Here is where it stands and what a
+                pull request would cost.
               </p>
 
-              <div className="grid md:grid-cols-2 gap-4 mb-5">
-                <div className="bg-gray-800 rounded-lg p-4 border border-green-700/40">
+              <div className="mb-5">
+                <div className="bg-gray-800 rounded-lg p-4 border border-green-700/40 max-w-xl">
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-semibold text-green-300">150M &mdash; prune during training</span>
-                    <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">valid trial</span>
+                    <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">the one valid trial</span>
                   </div>
                   <p className="text-sm text-gray-400 mb-2">
                     Marin <code className="text-gray-300">llama_150m</code> config, TinyStories, trained from scratch with a
@@ -1040,32 +1040,15 @@
                     <li>advantage grows: +0.6% @25% &rarr; +8.9% @90%</li>
                   </ul>
                 </div>
-                <div className="bg-gray-800 rounded-lg p-4 border border-amber-700/40">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-amber-300">Marin-8B &mdash; one-shot post-hoc</span>
-                    <span className="text-xs bg-amber-900 text-amber-300 px-2 py-0.5 rounded">not a valid test</span>
-                  </div>
-                  <p className="text-sm text-gray-400 mb-2">
-                    Frozen downloaded checkpoint, weights zeroed and evaluated, <strong className="text-gray-200">no
-                    retraining</strong>. &ldquo;FIM&rdquo; here is only a per-layer sparsity allocator (fresh empirical
-                    Fisher), magnitude within each layer.
-                  </p>
-                  <ul className="text-sm text-gray-400 space-y-1">
-                    <li>magnitude-25% best: 6.349 PPL (+7.5%)</li>
-                    <li>FIM-25% slightly worse: 6.458</li>
-                    <li>random: catastrophic (1538 PPL)</li>
-                  </ul>
-                </div>
               </div>
 
               <div className="bg-green-900/15 border border-green-700/60 rounded-lg p-4 mb-5 text-sm text-gray-300">
-                <strong className="text-green-300">Honest verdict.</strong> The 8B &ldquo;flip&rdquo; does <em>not</em>
-                refute the 150M win &mdash; it tested a different, weaker procedure. The per-weight Adam
-                <code className="text-gray-300"> exp_avg_sq</code> that wins at 150M <strong>does not exist</strong> on a
-                downloaded checkpoint, and one-shot-no-retrain is a far harsher regime where the importance metric matters
-                less. FIM-guided pruning was validly evaluated <strong>only at 150M (from scratch, positive)</strong>; it was
-                never given a fair from-scratch trial at scale. The scaling question is <strong>open, not negative</strong>.
-                No PR was ever sent to Marin.
+                <strong className="text-green-300">Honest verdict.</strong> FIM-guided pruning was evaluated
+                <strong> only at 150M (from scratch, positive)</strong> &mdash; it pruned during training using the live
+                Adam <code className="text-gray-300">exp_avg_sq</code> importance and beat magnitude at every sparsity. It was
+                never given a from-scratch trial at scale, so the scaling question is <strong>open, untested</strong>.
+                Crucially, that importance signal is the optimizer&rsquo;s own second-moment state, so the method only means
+                anything <em>during</em> training &mdash; it cannot be judged on a frozen checkpoint. No PR was ever sent to Marin.
               </div>
 
               <h4 className="text-base font-semibold mb-2 text-gray-200">What a Marin PR would actually take</h4>
