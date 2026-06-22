@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>knlp × Marin — a contribution fit assessment</title>
+  <meta name="description" content="An honest assessment of whether knlp's FIM-guided pruning, KVSplice, and reciprocal attention fit the Marin open-LLM project, against Marin's own contribution model and metric.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 5px; font-size:0.85em; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <!-- Shared Navigation -->
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">← Home</a>
+      <a href="fisher_adam_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-blue-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FIM-Adam</a>
+      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+      <a href="ra_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">RA</a>
+      <a href="marin.html" class="px-3 py-1.5 bg-sky-600 rounded text-sm font-medium text-white">Marin</a>
+    </div>
+  </nav>
+
+  <div class="max-w-5xl mx-auto px-6 py-12">
+
+    <header class="mb-10">
+      <h1 class="text-4xl font-bold mb-3">
+        <span class="text-sky-400">knlp &times; Marin</span>
+        <span class="text-gray-400 text-2xl ml-2">a contribution fit assessment</span>
+      </h1>
+      <p class="text-gray-400 max-w-3xl">
+        This page asks a narrow question and answers it honestly: of the knlp ideas that touch training and the KV
+        cache, which are worth contributing to <a href="https://marin.community" class="text-sky-400 hover:underline">Marin</a>,
+        Stanford&rsquo;s fully-open LLM project? It first lays out what Marin actually welcomes, then scores each
+        candidate we have evidence for against both Marin&rsquo;s architecture and Marin&rsquo;s own metric. This is a
+        fit-assessment map, which may be useful for future R&amp;D evaluation.
+      </p>
+    </header>
+
+    <!-- 1. What Marin welcomes -->
+    <section class="card rounded-xl p-6 mb-8">
+      <h2 class="text-2xl font-bold mb-3 text-sky-400">What Marin welcomes</h2>
+      <p class="text-gray-300 mb-3">
+        Marin is an &ldquo;open lab&rdquo;: a fully transparent foundation-model effort built on
+        <a href="https://github.com/marin-community/levanter" class="text-sky-400 hover:underline">Levanter</a> (JAX, on
+        TPU), where the code, data, checkpoints, and training logs are all public. It runs research the way a journal
+        runs review. Every experiment begins as a GitHub issue that acts as a small preregistration &mdash; it states the
+        hypothesis, the regime (for example, &ldquo;1.4B-parameter models for 28B tokens&rdquo;), and the metric &mdash;
+        and is then submitted as a pull request that <em>declares the experiment in code</em> as a DAG of executor steps.
+        The PR is reviewed openly, &ldquo;in the spirit of OpenReview,&rdquo; carries a small-scale sanity check plus a
+        dry run so reviewers can see the cost before it is launched, and the results land back in the issue.
+      </p>
+      <p class="text-gray-300 mb-3">
+        They are explicit that outside method work is in scope:
+        <span class="text-gray-200">&ldquo;You are encouraged to try out new architectures, optimizers, and even data
+        filtering strategies.&rdquo;</span> The lightweight entry path is the
+        <a href="https://marin.community/speedrun/" class="text-sky-400 hover:underline">Marin Speedrun</a> &mdash; pick a
+        compute budget and build the fastest method to train a model to a target quality. A submission is a training
+        config plus a results file, sent as a PR and ranked on the leaderboard by
+        <a href="https://arxiv.org/abs/2312.10523" class="text-sky-400 hover:underline">Paloma</a> C4-EN
+        <strong class="text-gray-200">bits-per-byte</strong> at a FLOPs budget. (Paloma is
+        <a href="https://allenai.org/" class="text-sky-400 hover:underline">AI2</a>&rsquo;s perplexity benchmark across
+        many text domains; the C4-EN split is the English
+        <a href="https://arxiv.org/abs/1910.10683" class="text-sky-400 hover:underline">C4</a> web-text corpus; and
+        bits-per-byte is the model&rsquo;s cross-entropy normalized by UTF-8 bytes rather than tokens, which keeps it
+        comparable across tokenizers &mdash; lower is better.) The tracks are deliberately small and laddered &mdash; 30M, 75M,
+        300M, 1.4B &mdash; and they ask that a method be judged on a <em>scaling suite</em>:
+        <span class="text-gray-200">&ldquo;assess a method based on how well it scales (what is the slope?) rather than
+        how good it is at any one scale.&rdquo;</span> Full experiment runs are scored with their fork of the
+        lm-evaluation-harness (the <span class="kbd">CORE_TASKS</span> set: ARC, HellaSwag, MMLU, and friends).
+      </p>
+      <p class="text-gray-400 text-sm">
+        The thing to hold onto: Marin&rsquo;s yardstick is <strong class="text-gray-300">training quality per unit of
+        compute</strong> &mdash; bits-per-byte at a FLOPs budget, and the slope of that curve across scales. Their own
+        wishlist points the same way (efficient linear attention, long context). A contribution lands when it moves that
+        curve. That single fact decides most of what follows.
+      </p>
+    </section>
+
+    <!-- 2. The candidates -->
+    <section class="mb-8">
+      <h2 class="text-2xl font-bold mb-2 text-sky-400">The candidates we have evidence for</h2>
+      <p class="text-gray-400 mb-5 max-w-3xl">
+        Three knlp ideas are close enough to Marin&rsquo;s training stack to be worth weighing. Each is scored on two
+        independent gates &mdash; can it even be expressed on Marin&rsquo;s architecture, and does it move
+        Marin&rsquo;s metric &mdash; followed by what we actually have.
+      </p>
+
+      <div class="overflow-x-auto mb-6">
+        <table class="w-full text-sm card rounded-lg">
+          <thead><tr class="border-b border-gray-700 text-gray-400">
+            <th class="text-left py-3 px-4">Candidate</th>
+            <th class="text-left py-3 px-4">Ports to Marin&rsquo;s architecture?</th>
+            <th class="text-left py-3 px-4">Moves Marin&rsquo;s metric (BPB/FLOP)?</th>
+            <th class="text-left py-3 px-4">Verdict</th>
+          </tr></thead>
+          <tbody class="text-gray-300">
+            <tr class="border-b border-gray-800">
+              <td class="py-3 px-4 font-medium text-green-300">FIM-guided pruning</td>
+              <td class="py-3 px-4 text-gray-400">Yes &mdash; an Optax <span class="kbd">GradientTransformation</span> over Adam&rsquo;s second moment; drops into Levanter</td>
+              <td class="py-3 px-4 text-gray-400">No &mdash; pruning during training doesn&rsquo;t cut training FLOPs or bend the loss-vs-FLOP curve</td>
+              <td class="py-3 px-4" style="color:#fbbf24">Only clean port, but off-axis</td>
+            </tr>
+            <tr class="border-b border-gray-800">
+              <td class="py-3 px-4 font-medium text-orange-300">KVSplice</td>
+              <td class="py-3 px-4 text-gray-400">No &mdash; its edge needs MLA; Marin is GQA (8B Llama, 32B Qwen3-style)</td>
+              <td class="py-3 px-4 text-gray-400">No &mdash; an inference-memory lever; KV-cache bytes aren&rsquo;t on the leaderboard</td>
+              <td class="py-3 px-4" style="color:#f87171">Architecturally blocked</td>
+            </tr>
+            <tr>
+              <td class="py-3 px-4 font-medium text-cyan-300">Reciprocal attention</td>
+              <td class="py-3 px-4 text-gray-400">In principle &mdash; a structural attention change</td>
+              <td class="py-3 px-4 text-gray-400">Unproven &mdash; the small-scale signal did not survive scale-up</td>
+              <td class="py-3 px-4" style="color:#9ca3af">Not ready &mdash; still R&amp;D</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- FIM-guided pruning -->
+      <div class="card rounded-xl p-6 mb-4 border-l-4 border-green-500">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xl font-semibold text-green-300">FIM-guided pruning &mdash; the only clean port</h3>
+          <a href="fisher_adam_visualization.html" class="text-xs text-green-400 hover:underline">method page &rarr;</a>
+        </div>
+        <p class="text-gray-300 mb-3">
+          This is the one candidate that fits Marin&rsquo;s stack without contortion. Pruning is scored by
+          <span class="kbd">|W| &times; exp_avg_sq^0.25</span> &mdash; Adam&rsquo;s own second moment, which Marin already
+          carries in Optax state &mdash; so it can be written as a custom <span class="kbd">GradientTransformation</span>
+          and dropped into a Levanter training run. We have a clean from-scratch result at a Marin
+          <span class="kbd">llama_150m</span> config: FIM-guided pruning beats magnitude pruning at every sparsity level
+          and beats the dense baseline at 25% (7.69 vs 7.73 PPL).
+        </p>
+        <p class="text-gray-400 text-sm">
+          The honest catch is the second gate. Marin ranks methods by quality at a <em>training</em>-compute budget, and
+          pruning during training reduces neither the training FLOPs (the gradients are still dense) nor the loss-vs-FLOP
+          frontier. It makes the model <em>sparser at a given quality</em> &mdash; a real inference and deployment win,
+          but one Marin&rsquo;s leaderboard does not measure. Marin would entertain it as a one-off preregistered
+          experiment; it is not something they are asking for, and it will not climb the Speedrun.
+        </p>
+      </div>
+
+      <!-- KVSplice -->
+      <div class="card rounded-xl p-6 mb-4 border-l-4 border-orange-500">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xl font-semibold text-orange-300">KVSplice &mdash; architecturally blocked</h3>
+          <a href="kvsplice_visualization.html" class="text-xs text-orange-400 hover:underline">method page &rarr;</a>
+        </div>
+        <p class="text-gray-300 mb-3">
+          KVSplice&rsquo;s whole value proposition is <em>extra</em> compression stacked on the already-latent cache of
+          Multi-head Latent Attention &mdash; the 7.2&times; = 6&times; MLA &times; 1.2&times; splice story. Marin uses no
+          MLA. Marin-8B is plain Llama with grouped-query attention (32 query / 8 KV heads, already a 4&times; KV
+          reduction); Marin-32B is Qwen3-style (Llama plus QK-norm), also GQA. Strip MLA away and KVSplice is just a
+          learned low-rank KV projection competing with the GQA Marin already ships &mdash; which is exactly what our own
+          no-MLA 150M runs showed <strong class="text-gray-200">1.2&ndash;2.0&times; KV-cache compression for a +1.6 to
+          +2.7% PPL cost</strong> &mdash; modest, and no better than the reduction GQA already gives. (Those compression
+          ratios are the measured KV-cache gain; the <a href="kvsplice_visualization.html" class="text-orange-400 hover:underline">KVSplice page</a>
+          carries the per-layer numbers and the byte-level stack.)
+        </p>
+        <p class="text-gray-400 text-sm">
+          And it fails the second gate independently: KVSplice is an inference/decode memory lever, while Marin scores
+          training quality per FLOP. Wrong architecture and wrong axis. There is no clean way to contribute it here.
+        </p>
+      </div>
+
+      <!-- RA -->
+      <div class="card rounded-xl p-6 border-l-4 border-cyan-500">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xl font-semibold text-cyan-300">Reciprocal attention &mdash; not ready</h3>
+          <a href="ra_visualization.html" class="text-xs text-cyan-400 hover:underline">method page &rarr;</a>
+        </div>
+        <p class="text-gray-300 mb-3">
+          RA is a structural attention change and is, in principle, the kind of thing Marin would review. But it is still
+          R&amp;D, and its scaling record argues against contributing it. We scaled several RA levers &mdash; layer
+          and head selectors (FIM-trace, Fisher eigenmax), head count, and the residual mix &mdash; and the small-scale
+          signal did not survive: it tops out around 150M and is neutral-to-negative by 1B. Until there is a new
+          inductive-bias hypothesis and a quality-per-FLOP gain to show, there is nothing here that would move
+          Marin&rsquo;s curve. The full scaling story is on the
+          <a href="ra_visualization.html" class="text-cyan-400 hover:underline">RA page</a>.
+        </p>
+      </div>
+    </section>
+
+    <!-- 3. What we'd need next -->
+    <section class="card rounded-xl p-6 mb-8 border border-sky-700/50">
+      <h2 class="text-2xl font-bold mb-3 text-sky-400">What we&rsquo;d need next</h2>
+      <p class="text-gray-300 mb-4">
+        Only FIM-guided pruning is worth carrying further, and only if it can be made to move Marin&rsquo;s metric. The
+        work to get there is mostly unstarted &mdash; this section is deliberately a checklist of open items, not results.
+      </p>
+      <ul class="space-y-3 text-sm text-gray-300 mb-5">
+        <li class="flex gap-3"><span class="text-sky-400 font-mono">01</span><span>Re-implement bitter7 pruning as a Levanter/Optax <span class="kbd">GradientTransformation</span> over Adam state. <span class="text-gray-500">(open)</span></span></li>
+        <li class="flex gap-3"><span class="text-sky-400 font-mono">02</span><span>Run a token-matched, prune-during-training A/B (FIM vs magnitude) across the Speedrun ladder 30M&rarr;75M&rarr;300M&rarr;1.4B, on a Marin-relevant corpus, scored on the <em>slope</em> of BPB vs FLOPs. <span class="text-gray-500">(open)</span></span></li>
+        <li class="flex gap-3"><span class="text-sky-400 font-mono">03</span><span>Find a story where the frontier actually moves &mdash; structured sparsity with real kernel speedup, or &ldquo;same BPB at lower deployed parameters&rdquo; &mdash; since unstructured prune-during-training does not. <span class="text-gray-500">(open, and the crux)</span></span></li>
+        <li class="flex gap-3"><span class="text-sky-400 font-mono">04</span><span>If the slope holds, file the preregistered issue with the sanity check and dry run, and let it go through open review. <span class="text-gray-500">(blocked on 01&ndash;03)</span></span></li>
+      </ul>
+
+      <h3 class="text-base font-semibold text-gray-200 mb-2">Cost of the from-scratch ladder</h3>
+      <p class="text-sm text-gray-400 mb-3">
+        A Marin contribution is not an 8B-from-scratch run &mdash; Marin-8B is 12.7T tokens. It is the Speedrun ladder.
+        Per single training run, token-matched at Chinchilla 20 tokens/param (Marin&rsquo;s own 1.4B@28B ablation
+        regime):
+      </p>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead><tr class="border-b border-gray-700 text-gray-400">
+            <th class="text-left py-2 px-3">Scale</th><th class="text-left py-2 px-3">Tokens (20&times;)</th>
+            <th class="text-left py-2 px-3">FLOPs</th><th class="text-left py-2 px-3">W7900 (1&times;)</th>
+            <th class="text-left py-2 px-3">H100 (1&times;)</th>
+          </tr></thead>
+          <tbody class="text-gray-300">
+            <tr class="border-b border-gray-800"><td class="py-2 px-3 font-medium text-sky-300">30M</td><td class="py-2 px-3">0.6B</td><td class="py-2 px-3 font-mono text-xs">1.1e17</td><td class="py-2 px-3">~1.2 h</td><td class="py-2 px-3">~5 min</td></tr>
+            <tr class="border-b border-gray-800"><td class="py-2 px-3 font-medium text-sky-300">75M</td><td class="py-2 px-3">1.5B</td><td class="py-2 px-3 font-mono text-xs">6.8e17</td><td class="py-2 px-3">~8 h</td><td class="py-2 px-3">~28 min</td></tr>
+            <tr class="border-b border-gray-800"><td class="py-2 px-3 font-medium text-sky-300">300M</td><td class="py-2 px-3">6B</td><td class="py-2 px-3 font-mono text-xs">1.1e19</td><td class="py-2 px-3">~5 days</td><td class="py-2 px-3">~7.6 h</td></tr>
+            <tr><td class="py-2 px-3 font-medium text-sky-300">1.4B</td><td class="py-2 px-3">28B</td><td class="py-2 px-3 font-mono text-xs">2.4e20</td><td class="py-2 px-3">~110 days*</td><td class="py-2 px-3">~6.9 days*</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-gray-500 mt-3">
+        Per single run; an A/B needs <strong>&times;2</strong> (FIM + magnitude). C&nbsp;&asymp;&nbsp;6&middot;N&middot;D;
+        H100 SXM 989.5 TFLOPS BF16 @ 40% MFU; W7900 122.6 TFLOPS BF16 @ ~20% MFU (ROCm/RDNA3). <strong>*</strong>&nbsp;1.4B
+        is impractical on one GPU &mdash; on an 8&times;H100 node ~21 h/arm. The 30M&ndash;75M rungs run locally on the
+        single W7900 in a day; 300M is a multi-day W7900 grind or a cheap H100 afternoon. The real gate, though, is item
+        03, not the GPU hours.
+      </p>
+    </section>
+
+    <!-- Bottom line -->
+    <section class="card rounded-xl p-6 mb-10 bg-[#0b1220]">
+      <h2 class="text-lg font-bold mb-2 text-gray-200">Bottom line</h2>
+      <p class="text-gray-400 text-sm">
+        By Marin&rsquo;s own yardstick &mdash; quality per training FLOP &mdash; none of these is a slam-dunk. KVSplice is
+        architecturally out (Marin isn&rsquo;t MLA), reciprocal attention is unproven at scale, and FIM-guided pruning,
+        the only one that ports cleanly, is off the axis Marin actually measures. The candidate exists; the case that it
+        would move Marin&rsquo;s curve does not yet. This page records that honestly rather than dressing a weak fit as a
+        contribution.
+      </p>
+    </section>
+
+    <footer class="text-center text-gray-600 text-sm border-t border-gray-800 pt-8">
+      <p class="mb-2">
+        <a href="index.html" class="hover:text-gray-400">&larr; knlp</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://marin.community" class="hover:text-gray-400">Marin</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://github.com/marin-community/marin" class="hover:text-gray-400">marin-community/marin</a>
+      </p>
+      <p>MIT License &middot; Luis Chamberlain and contributors</p>
+    </footer>
+
+  </div>
+</body>
+</html>
