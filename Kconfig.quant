@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: MIT
+# Configuration for the FP8 KV-cache failure-atlas validation profile.
+#
+# Selecting defconfig-quant-fp8-validate (the deterministic, hardware-light
+# reproducibility lock) or defconfig-quant-fp8-atlas (the full GPU fleet)
+# sets these values.  After defconfig selection, plain `make` runs the
+# configured profile via Makefile.quant (doctor -> run -> report).
+#
+# This is the HF-only fake-quant harness; it does NOT touch the serving
+# stack (vLLM / FlashInfer / LMCache).  That lives in the decode
+# reproduction (make defconfig-decode) and stays by-reference here.
+
+menu "FP8 KV-cache failure-atlas validation"
+
+config KNLP_QUANT_FP8
+	bool "Enable FP8 KV-cache validation profile"
+	default n
+	help
+	  Set by defconfig-quant-fp8-validate and
+	  defconfig-quant-fp8-atlas.  When set, plain `make` runs the
+	  configured fake-quant validation profile via Makefile.quant.
+
+if KNLP_QUANT_FP8
+
+config KNLP_QUANT_FP8_PROFILE
+	string "Validation profile name"
+	default "validate"
+	help
+	  One of: validate, smoke, atlas.  "validate" runs every atlas
+	  runner's --self-test (tiny in-process models, CPU, offline) as
+	  a deterministic lock.  "atlas" runs the real fake-quant fleet
+	  (multi-seed CIs, long-context, preflight, recovery) on a GPU.
+
+config KNLP_QUANT_FP8_PYTHON
+	string "Python interpreter for the runners"
+	default "~/envs/knlp-serdes/bin/python"
+	help
+	  The repo-default python3 has a broken torch; the runners are
+	  subprocessed under this interpreter.  The orchestrator itself
+	  is pure stdlib and runs under any Python.
+
+config KNLP_QUANT_FP8_RESULTS_ROOT
+	string "Results directory"
+	default "./results/quant-fp8"
+
+config KNLP_QUANT_FP8_MODELS
+	string "Models for the atlas profile"
+	default "core"
+	help
+	  "core" (catastrophic anchor + V-residual + tolerant control +
+	  partial-RoPE), "all" (every cached model), or a space-separated
+	  list of short names.  Unused by the validate profile.
+
+config KNLP_QUANT_FP8_DATASET
+	string "Eval dataset (atlas profile)"
+	default "wikitext-103-raw-v1"
+
+config KNLP_QUANT_FP8_SEQ_LEN
+	int "Prompt sequence length (atlas profile)"
+	default 1024
+
+config KNLP_QUANT_FP8_NUM_PROMPTS
+	int "Prompts per seed (atlas multi-seed)"
+	default 16
+
+config KNLP_QUANT_FP8_SEEDS
+	string "Seeds for multi-seed CIs (atlas profile)"
+	default "0 1 2"
+
+config KNLP_QUANT_FP8_CONTEXTS
+	string "Long-context lengths (atlas profile)"
+	default "2048 8192 16384"
+
+config KNLP_QUANT_FP8_DEVICE
+	string "Torch device (atlas profile)"
+	default "cuda:0"
+
+config KNLP_QUANT_FP8_DTYPE
+	string "Model dtype (atlas profile)"
+	default "bfloat16"
+
+config KNLP_QUANT_FP8_RUN_MULTISEED
+	bool "Run multi-seed CIs (atlas profile)"
+	default y
+
+config KNLP_QUANT_FP8_RUN_LONGCTX
+	bool "Run long-context 2K/8K/16K (atlas profile)"
+	default y
+
+config KNLP_QUANT_FP8_RUN_PREFLIGHT
+	bool "Run the preflight scanner (atlas profile)"
+	default y
+
+config KNLP_QUANT_FP8_RUN_RECOVERY
+	bool "Run the recovery Pareto (atlas profile)"
+	default y
+
+config KNLP_QUANT_FP8_ALLOW_HARDWARE_SKIPS
+	bool "Allow runners to skip when required hardware is missing"
+	default y
+	help
+	  When set, a missing GPU or torch downgrades to a warning and the
+	  runnable subset proceeds, instead of failing the doctor.
+
+endif # KNLP_QUANT_FP8
+
+endmenu
