@@ -177,7 +177,10 @@ def control_bias(true_bias, kind, seed=0):
     'permuted'. random_same_norm and permuted preserve the L2 norm but destroy the per-channel
     placement -- the negative controls that prove pre-bias recovery is BIAS-SPECIFIC, not just any
     same-norm subtraction. Deterministic via a seeded generator."""
-    b = true_bias.detach().float()
+    # build on CPU (the seeded CPU Generator forces CPU tensors); the harness moves the result to
+    # the model's device. Doing the norm/permute on a CUDA bias with CPU-generated indices/noise
+    # would be a device mismatch -- a GPU-only bug the CPU self-test cannot see.
+    b = true_bias.detach().float().cpu()
     if kind == "true":
         return b.clone()
     if kind == "zero":
