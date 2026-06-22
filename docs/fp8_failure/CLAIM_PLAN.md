@@ -24,8 +24,9 @@ Verdicts: **supported** / **partially-supported** / **refuted** / **not-tested**
   the FP8-minus-native error tracks α; and pre-bias must beat a **random same-norm** and a
   **channel-permuted** bias subtraction (not just any subtraction).
 - Refuted if: FP8 error does not track α, or random/permuted bias recovers as well as the true bias.
-- Level: fake_quant_teacher_forced + activation. Verdict: **partially-supported** (recovery shown;
-  alpha + random/permuted controls NOT yet run — build with `AlphaKBiasPatch`).
+- Level: fake_quant_teacher_forced + activation. Verdict: **supported** (2026-06-21 controls: true
+  bias recovers 0.97, random-same-norm 0.05, permuted 0.05 → bias-SPECIFIC; alpha dose-response
+  0.52@α=0 → 3.28@α=1 → magnitude-driven).
 
 **C3 — Partial-RoPE rotary/pass-through scale mismatch causally explains the dominant Phi-2 K-side
 failure.**
@@ -35,8 +36,9 @@ failure.**
   partitions** and **architecture-misaligned contiguous** splits, and an **artificial same-size split
   on a full-RoPE model (Mistral/Llama)** must NOT show the effect.
 - Refuted if: random partitions recover as well as the true split.
-- Level: fake_quant_teacher_forced. Verdict: **partially-supported** (subspace localization +
-  de-confounding shown; the 20-random-partition control NOT yet run).
+- Level: fake_quant_teacher_forced. Verdict: **supported** (2026-06-21: the TRUE pass-through tail
+  damages more than 19/20 random same-size partitions — 95th percentile — architecture-aligned; and
+  Phi's true-bias recovery does NOT beat random + flat alpha → not bias).
 
 **C4 — Qwen and Phi are distinct mechanisms.**
 - Supporting: Qwen recovery 0.97 (bias) vs Phi 0.13 (distribution); gauge beats per-channel on Phi
@@ -50,16 +52,21 @@ Phi-2 retains MATERIAL residual error under K16/V8.**
 - Open question (MANDATORY, see below): isolate Phi's V-side residual.
 - Refuted if: Phi's K16/V8 residual disappears under a correct measurement (then it was an artifact
   and K16/V8 *is* lossless for Phi).
-- Level: fake_quant + hf_dynamic_cache. Verdict: **partially-supported** (the non-lossless-for-Phi
-  fact is established; the *cause* of the V residual is NOT yet resolved). **Do not call K16/V8
-  universally lossless until this is closed.**
+- Level: fake_quant + hf_dynamic_cache. Verdict: **RESOLVED** (2026-06-21: no V granularity/format/
+  layer rescues Phi-2's K16/V8 and the residual WORSENS in the incremental cache (AR agreement 0.44)
+  → it is a **real V-side sensitivity, not an artifact**. Recommend **native V (or native KV) for
+  Phi-2**. K16/V8 is lossless everywhere tested EXCEPT Phi-2.)
 
 **C6 — Mechanism-specific repairs recover more compression when correctly matched.**
 - Supporting: pre-bias FP8 for Qwen (0.97); QK-gauge beats per-channel on Phi; per-channel/pre-bias
   beat the gauge on Qwen.
 - Control: every repair compared against **per-channel K** (not only per-tensor) — already enforced.
 - Refuted if: a generic per-tensor/per-channel baseline matches the matched repair everywhere.
-- Level: fake_quant_teacher_forced. Verdict: **partially-supported** (gauge/pre-bias shown;
+- NEW repair (2026-06-21): **INT8-K rescues Qwen where FP8 fails** (top1 0.30→0.96) — the failure is
+  FP8-format-specific (mantissa crushed under a bias-dominated scale), not bit-width; e5m2 is worse.
+  So int8-K is a mechanism-matched repair for the bias mechanism, and finer FP8 granularity is NOT
+  (per-channel stays catastrophic).
+- Level: fake_quant_teacher_forced. Verdict: **partially-supported** (gauge/pre-bias/int8-K shown;
   split-scale recovery for Phi + the Pareto vs storage/metadata cost NOT yet tabulated).
 
 **C7 — A cheap release-time preflight can identify unsafe FP8 layouts on held-out models.**
