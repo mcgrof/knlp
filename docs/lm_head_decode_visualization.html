@@ -280,7 +280,7 @@
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
                 <div className="text-emerald-300 font-semibold text-sm mb-1">shadow head <span className="kbd">aq</span></div>
                 <p className="text-sm text-gray-400">int8 quantize of <span className="kbd">W_U &middot; B</span>,
-                shape <span className="kbd">[V, r]</span>. With r &ll; d and int8 half of bf16, it is ~18% of the dense
+                shape <span className="kbd">[V, r]</span>. With r ≪ d and int8 half of bf16, it is ~18% of the dense
                 head's bytes &mdash; cheap enough to read in full.</p>
               </div>
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
@@ -297,7 +297,7 @@
             </p>
             <div className="formula text-sm md:text-[15px] my-4">
               <span style={{color:C.emerald}}>U<sub>v</sub></span> ={'  '}
-              <span style={{color:C.teal}}>aq[v] &middot; (scale &odot; q)</span>{'   '}+{'   '}
+              <span style={{color:C.teal}}>aq[v] &middot; (scale ⊙ q)</span>{'   '}+{'   '}
               <span style={{color:C.amber}}>&rho; &middot; delta[v]</span>{'   '}+{'   '}
               <span style={{color:C.gray}}>slack &middot; &#8214;q&#8214;</span>
               <br/>
