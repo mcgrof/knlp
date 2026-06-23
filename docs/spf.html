@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>knlp SPF</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface-2: #1a2332;
+    --border: #334155; --text: #cbd5e1; --muted: #94a3b8;
+    --green: #22c55e; --blue: #60a5fa; --purple: #c084fc;
+    --amber: #f59e0b; --cyan: #22d3ee; --rose: #fb7185;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+  .card { background: linear-gradient(145deg, var(--surface), var(--surface-2)); border: 1px solid var(--border); border-radius: 14px; }
+  .panel { background: linear-gradient(145deg, #172030, #141c2a); border: 1px solid var(--border); border-radius: 14px; }
+  .code-block { background: #0b1220; border: 1px solid #23324a; border-radius: 12px; overflow: hidden; margin: 1rem 0 1.5rem; }
+  .code-title { font-family: var(--mono); font-size: 12px; color: var(--muted); background: #10192a; border-bottom: 1px solid #23324a; padding: 10px 14px; }
+  pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #dbe7f3; }
+  code.inline { font-family: var(--mono); font-size: 0.92em; padding: 0.1rem 0.35rem; border-radius: 4px; background: #172033; border: 1px solid #253247; }
+  .kw { color: #f472b6; } .fn { color: #93c5fd; } .nm { color: #67e8f9; }
+  .cm { color: #64748b; } .str { color: #86efac; } .num { color: #fbbf24; }
+  .op { color: #cbd5e1; } .type { color: #c084fc; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: #94a3b8; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #243244; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .good { color: #4ade80; font-weight: 600; }
+  .warn { color: #fbbf24; font-weight: 600; }
+  .bad  { color: #fb7185; font-weight: 600; }
+  .info { color: #7dd3fc; font-weight: 600; }
+  .mini-note { border-left: 3px solid var(--green); background: rgba(34, 197, 94, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-warn { border-left: 3px solid var(--amber); background: rgba(245, 158, 11, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-bad { border-left: 3px solid var(--rose); background: rgba(251, 113, 133, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .section-link { color: #60a5fa; }
+  .section-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <header class="text-center mb-14">
+      <div class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs font-mono text-slate-400 mb-5">
+        knlp / serving &amp; kv cache
+      </div>
+      <h1 class="text-5xl font-semibold tracking-tight text-slate-100 mb-4">knlp SPF</h1>
+      <p class="text-lg text-slate-400 max-w-4xl mx-auto leading-8">
+        SPF is a scheduler-side speculative-prefetch experiment for vLLM's KV cache.
+        It does not clear its own survival gate on Llama-3.2-3B under cache pressure.
+        The branch is preserved so future scorers can be measured against the same bar.
+      </p>
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+        <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
+        <a href="kri.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 transition-colors">KRI</a>
+        <a href="routing.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">Routing</a>
+        <a href="kri_ft_visualization.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 transition-colors">KRI-FT</a>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-spf" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">vLLM SPF branch</a>
+      </div>
+    </header>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">What SPF tried</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Predict which KV blocks a request will need before it arrives. Touch
+          those blocks on the GPU block pool so they survive the next LRU
+          eviction round (retention mode), or initiate async promotion from a
+          slower tier (prefetch mode). The framework lives in
+          <code class="inline">vllm/v1/core/spf/</code> and is opt-in via
+          <code class="inline">VLLM_SPF_ENABLED=1</code>; the scheduler bridge
+          is a no-op when disabled.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 mt-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Mechanism</div>
+            <div class="text-3xl font-semibold text-green-400">retention</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Promote cached blocks in the free queue via
+              <code class="inline">BlockPool.touch()</code>. No allocation, no copy.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Scope</div>
+            <div class="text-3xl font-semibold text-blue-400">scheduler-side</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Scores at request arrival; never touches attention, the forward
+              path, or KV tensors.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Status</div>
+            <div class="text-3xl font-semibold text-rose-400">parked</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Did not clear the survival gate. Branch preserved so a future scorer
+              can be measured against the same arms.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The bar SPF was held to</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          The survival gate runs five arms through a real vLLM engine under cache
+          pressure. The bar is what a sophisticated scorer must clear to live in
+          the tree.
+        </p>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr><th>arm</th><th>policy</th><th>role</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code class="inline">lru</code></td><td>vLLM default prefix cache</td><td>floor</td></tr>
+              <tr><td><code class="inline">session_ttl</code></td><td>session-TTL + pinning of recently-active sessions</td><td>trivial baseline a sophisticated scorer must beat by a real margin</td></tr>
+              <tr><td><code class="inline">frequency</code></td><td>LFU-style admission</td><td>policy comparator</td></tr>
+              <tr><td><code class="inline">spf</code></td><td><code class="inline">ExpectedUtilityScorer</code> (production)</td><td>the candidate</td></tr>
+              <tr><td><code class="inline">oracle</code></td><td>Belady reuse-distance, unimplementable</td><td>ceiling</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="text-slate-300 leading-8 mb-4">A scorer earns its place in the tree iff, across at least three deterministic seeds:</p>
+        <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7 mb-4">
+          <li>p95 TTFT improvement vs <code class="inline">session_ttl</code> is at least <strong class="text-green-300">5%</strong>, OR</li>
+          <li>recomputed prefill tokens drop by at least <strong class="text-green-300">10%</strong> vs <code class="inline">session_ttl</code>,</li>
+          <li>throughput regression vs <code class="inline">lru</code> is under <strong class="text-green-300">1%</strong>,</li>
+          <li>wasted promoted bytes are under <strong class="text-green-300">10%</strong> of total promoted,</li>
+          <li>paired bootstrap CI on the headline metric excludes zero.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The result</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Run the gate on Llama-3.2-3B-Instruct under 2.3x cache pressure
+          (16 personas x 8192 token prefix each, 32 sessions x 4 turns,
+          <code class="inline">gpu_memory_utilization=0.3</code>,
+          <code class="inline">max_model_len=12288</code>, 3 seeds, L40S 48GB).
+          The five arms land within 1% of each other on every measured axis.
+        </p>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th>arm</th>
+                <th>p95 TTFT (ms)</th>
+                <th>prefill recomputed</th>
+                <th>cache hit</th>
+                <th>throughput (rps)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code class="inline">lru</code></td><td>772.90</td><td>1,064,960</td><td>0.00%</td><td>1.31</td></tr>
+              <tr><td><code class="inline">session_ttl</code></td><td>778.45</td><td>1,063,392</td><td>0.15%</td><td>1.30</td></tr>
+              <tr><td><code class="inline">frequency</code></td><td>779.53</td><td>1,063,392</td><td>0.15%</td><td>1.30</td></tr>
+              <tr><td><strong><code class="inline">spf</code></strong></td><td><strong>775.93</strong></td><td><strong>1,063,392</strong></td><td><strong>0.15%</strong></td><td><strong>1.30</strong></td></tr>
+              <tr><td><code class="inline">oracle</code></td><td>777.86</td><td>1,063,392</td><td>0.15%</td><td>1.30</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="text-slate-300 leading-8 mb-4">
+          SPF vs <code class="inline">session_ttl</code>: p95 TTFT improvement
+          <strong class="bad">+0.32%</strong> (gate &ge;5%), prefill reduction
+          <strong class="bad">0.00%</strong> (gate &ge;10%). The bridge issues
+          hints (430+ touches per run) and the controller is wired correctly;
+          the policy does not produce a useful signal in this regime.
+        </p>
+
+        <div class="mini-note-bad mb-4">
+          <strong class="text-rose-300">The oracle floor.</strong>
+          Even the Belady reuse-distance oracle lands within 0.5% of
+          <code class="inline">session_ttl</code> on round-robin pressure. The
+          selector ceiling on this workload class sits below the gate. No
+          learned scorer can rescue SPF on round-robin alone &mdash; a different
+          workload pattern (skewed sessions, bursty access, same-session
+          revisit) is required to give a scorer something to grip on.
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">What survives</h2>
+        <div class="grid md:grid-cols-3 gap-4">
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Methodology</div>
+            <div class="text-lg font-semibold text-green-300 mb-2">The survival gate</div>
+            <p class="text-sm text-slate-400 leading-7">
+              <code class="inline">benchmarks/spf_survival_ab.py</code> is the
+              reproducible kill artifact. Any future scheduler-side admission
+              or retention policy can be measured against the same arms.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Pattern</div>
+            <div class="text-lg font-semibold text-blue-300 mb-2">Disposal discipline</div>
+            <p class="text-sm text-slate-400 leading-7">
+              When an experiment cannot clear its own bar, delete the runtime,
+              preserve a single archive commit and the benchmark, document the
+              failure as a structural finding. Done with SPF.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Substrate</div>
+            <div class="text-lg font-semibold text-purple-300 mb-2">Manifest provider</div>
+            <p class="text-sm text-slate-400 leading-7">
+              <code class="inline">BlockManifest</code> +
+              <code class="inline">CartridgeKRIProvider</code> were originally
+              written for SPF consumption. The vLLM routing branch now consumes
+              them as routing-prior loaders. See
+              <a class="section-link" href="kri.html">KRI</a> and
+              <a class="section-link" href="routing.html">routing</a>.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Reproduce</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Check out the SPF branch, install vLLM precompiled, run the gate on
+          a 48GB-class GPU (L40S, A6000, A100). One model, three seeds, five
+          arms, about 90 minutes per seed on L40S.
+        </p>
+
+        <div class="code-block">
+          <div class="code-title">install</div>
+          <pre>git clone --branch 20260622-spf <span class="str">https://github.com/mcgrof/vllm.git</span>
+cd vllm
+uv venv --python 3.12
+VLLM_USE_PRECOMPILED=<span class="num">1</span> uv pip install -e . --torch-backend=auto</pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">run the survival gate</div>
+          <pre>.venv/bin/python benchmarks/spf_survival_ab.py \
+    --model meta-llama/Llama-3.2-3B-Instruct \
+    --arms lru,session_ttl,frequency,spf,oracle \
+    --seeds 42,43,44 \
+    --num-sessions <span class="num">32</span> --turns-per-session <span class="num">4</span> \
+    --num-personas <span class="num">16</span> \
+    --shared-prefix-tokens <span class="num">8192</span> \
+    --per-query-tokens <span class="num">128</span> \
+    --output-tokens <span class="num">32</span> \
+    --gpu-memory-utilization <span class="num">0.3</span> \
+    --max-model-len <span class="num">12288</span> \
+    --enforce-eager \
+    --output spf_survival_results.json</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">If you want to try</h2>
+        <ol class="list-decimal pl-6 text-slate-300 space-y-3 leading-7">
+          <li>Check out the <a class="section-link" href="https://github.com/mcgrof/vllm/tree/20260622-spf">SPF branch</a>.</li>
+          <li>Replace the scorer in
+            <code class="inline">vllm/v1/core/spf/scorer.py</code> or add a new
+            class and route it through
+            <code class="inline">SPFController._build_scorer</code>.</li>
+          <li>Run <code class="inline">benchmarks/spf_survival_ab.py</code>
+            against your scorer.</li>
+          <li>Clear the gate or document the next negative.</li>
+        </ol>
+        <p class="text-slate-400 leading-8 mt-5">
+          The bar exists so the line either delivers or stays parked. A
+          plausible direction not yet tested: skewed-popularity or
+          same-session-revisit workloads where session-recency tracking
+          should diverge from session-frequency tracking.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Branch layout</h2>
+        <div class="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-lg font-semibold text-blue-300 mb-3">github.com/mcgrof/vllm @ 20260622-spf</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              One commit on top of cart-upstream. The whole experiment.
+            </p>
+            <ul class="list-disc pl-6 text-slate-300 space-y-1 font-mono text-sm">
+              <li>vllm/v1/core/spf/controller.py</li>
+              <li>vllm/v1/core/spf/scorer.py</li>
+              <li>vllm/v1/core/spf/scheduler_integration.py</li>
+              <li>vllm/v1/core/spf/manifest.py</li>
+              <li>vllm/v1/core/spf/providers/cartridge_kri.py</li>
+              <li>vllm/v1/core/sched/scheduler.py <span class="text-slate-500"># 4-line hook</span></li>
+              <li>tests/v1/core/test_spf_*.py <span class="text-slate-500"># 18 files</span></li>
+              <li>benchmarks/spf_survival_ab.py</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-cyan-300 mb-3">Related branches</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              The substrate that originated under SPF now lives on the routing branch as well.
+            </p>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7">
+              <li>
+                <a class="section-link" href="https://github.com/mcgrof/vllm/tree/20260622-routing">20260622-routing</a>
+                &mdash; serving substrate (null_block plumbing, routing-policy
+                module, routing-prior algorithm hookpoint, xa refinement,
+                native LMCache adapter). Independent of SPF.
+              </li>
+              <li>
+                <a class="section-link" href="https://github.com/mcgrof/vllm/tree/20260430-cartridges-upstream">20260430-cartridges-upstream</a>
+                &mdash; the cartridges base both branches sit on.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-slate-500 text-sm border-t border-slate-800 pt-8 mt-14">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-300">GitHub</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-spf" class="hover:text-slate-300">vLLM SPF branch</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri.html" class="hover:text-slate-300">KRI</a>
+        <span class="mx-2">&middot;</span>
+        <a href="routing.html" class="hover:text-slate-300">Routing</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri_ft_visualization.html" class="hover:text-slate-300">KRI-FT</a>
+        <span class="mx-2">&middot;</span>
+        <a href="index.html" class="hover:text-slate-300">knlp docs</a>
+      </p>
+      <p>SPF documentation for knlp</p>
+    </footer>
+  </div>
+</body>
+</html>
