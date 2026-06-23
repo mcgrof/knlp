@@ -24,12 +24,16 @@
   --muted2:    #8090a8;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
+/* Root font bumped from the browser default 16px so the rem-based labels
+   (0.58rem etc.) render at a readable size instead of ~9px. Only text scales
+   (paddings/gaps/min-widths are in px), so the layout holds. */
+html { font-size: 20px; }
 body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 0.8rem;
+  line-height: 1.55;
 }
 .grain {
   position:fixed; inset:0; pointer-events:none; z-index:999; opacity:.025;
@@ -114,7 +118,7 @@ h1 em { color:var(--cyan); font-style:italic; }
 .rank-callout-body strong { color:var(--amber); }
 
 /* INTERACTIVE */
-.interactive-layout { display:grid; grid-template-columns:1fr 310px; height:calc(100vh - 430px); min-height:400px; }
+.interactive-layout { display:grid; grid-template-columns:1fr 340px; height:clamp(360px, calc(100vh - 520px), 540px); }
 .left-plots { display:grid; grid-template-rows:1fr 1fr; border-right:1px solid var(--border); }
 .plot-panel { display:flex; flex-direction:column; padding:10px 16px 8px; }
 .plot-panel:first-child { border-bottom:1px solid var(--border); }
