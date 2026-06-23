@@ -17,7 +17,7 @@ coverage at m=32. The headline is whether the adapter raises the deployable
 router without hurting perplexity.
 
 Usage:
-  python3 kri_lm_head/h1_cluster_lora.py --model EleutherAI/pythia-410m \
+  python3 lm_head/h1_cluster_lora.py --model EleutherAI/pythia-410m \
       --lambda-aux 0.1 --steps 300 --out OUT/h1_pythia-410m.json
 """
 

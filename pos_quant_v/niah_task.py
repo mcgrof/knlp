@@ -12,7 +12,7 @@ fraction vs context length. That fraction is the ceiling on filler-V compression
 savings.
 
 Usage:
-  python3 kri_pos_quant_v/niah_task.py --tokenizer Qwen/Qwen2.5-7B \
+  python3 pos_quant_v/niah_task.py --tokenizer Qwen/Qwen2.5-7B \
       --lengths 1024,2048,4096,8192 --needles 4 --out OUT/filler_fraction.json
 """
 

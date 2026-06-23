@@ -22,7 +22,7 @@ FRESHLY-trained router on the adapted hiddens (does ANY linear router now reach
 the oracle = is the routability limit overcome, not just this one router fit).
 
 Usage:
-  python3 kri_lm_head/h2_supervised_routing.py --model EleutherAI/pythia-410m \
+  python3 lm_head/h2_supervised_routing.py --model EleutherAI/pythia-410m \
       --clusters 256 --lambda-route 0.5 --steps 300 --out OUT/h2_pythia410m.json
 """
 

@@ -14,7 +14,7 @@ fetch fraction, true-next coverage, and top-10 coverage of the predicted top-m
 clusters, plus the gap to the oracle (read from the H6 scan JSON if present).
 
 Usage:
-  python3 kri_lm_head/predictor_baseline.py --model EleutherAI/pythia-410m \
+  python3 lm_head/predictor_baseline.py --model EleutherAI/pythia-410m \
       --oracle-json OUT/pythia-410m.json --out OUT/pred_pythia-410m.json
 """
 
