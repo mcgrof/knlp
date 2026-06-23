@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Certified LM-head decode — read a quarter of the output head, losslessly</title>
+  <meta name="description" content="A lossless decoder that returns the exact dense argmax of the LM head while reading ~25% of its bytes. A low-rank int8 shadow gives a provable per-row upper bound; contiguous vocabulary blocks are opened in descending bound and the search stops the instant the answer is certified. ~5x output-head traffic reduction, 1.97x batch-1 decode on a bandwidth-bound GPU, 1.85x on H100 via a CUDA graph, deployed as a measured Pareto switch.">
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #10b981, #14b8a6);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; transition: all 0.3s ease; }
+    .card:hover { border-color: #10b981; box-shadow: 0 4px 20px -5px rgba(16, 185, 129, 0.2); }
+    .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .prose p { margin-bottom: 0.9rem; }
+    .prose strong { color: #e2e8f0; }
+    .kbd { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 6px; color:#cbd5e1; }
+    .anchor { scroll-margin-top: 1.5rem; }
+    .formula { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:8px; padding:18px 20px; color:#e2e8f0; line-height:1.7; overflow-x:auto; }
+    .step-n { font-family:'ui-monospace',monospace; font-size:1.5rem; font-weight:700; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
+      <a href="lm_head_decode_visualization.html" class="px-3 py-1.5 bg-emerald-600 rounded text-sm font-medium text-white">LM-head decode</a>
+      <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
+      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Linear Attn</a>
+      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+    </div>
+  </nav>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      LineChart, Line, BarChart, Bar, ComposedChart, Scatter, XAxis, YAxis, CartesianGrid,
+      Tooltip, Legend, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell, Label
+    } = Recharts;
+
+    const C = {
+      emerald:'#10b981', teal:'#14b8a6', green:'#22c55e', cyan:'#06b6d4', amber:'#f59e0b',
+      red:'#ef4444', violet:'#8b5cf6', blue:'#3b82f6', gray:'#64748b', slate:'#334155', dim:'#475569'
+    };
+
+    // ───────────────────────── DATA (measured: Qwen2.5 + Pythia/Llama, W7900 + H100) ─────────────────────────
+
+    // Oracle coverage: true next token covered by the best blocks, by model scale.
+    const ORACLE = [
+      {model:'Pythia-410M', c125:0.915, c25:0.958},
+      {model:'Pythia-6.9B', c125:0.942, c25:0.973},
+      {model:'Qwen-0.5B',   c125:0.949, c25:0.980},
+      {model:'Llama-3.2-3B',c125:0.961, c25:0.984},
+      {model:'Qwen-7B',     c125:0.970, c25:0.989},
+    ];
+
+    // The certification illustration: 20 vocabulary blocks sorted by descending upper bound U_b.
+    // The first 4 are opened (true max logit revealed); the incumbent is 14.6; every unopened
+    // block's ceiling is below 14.6, so it is provably ruled out without being read.
+    const INCUMBENT = 14.6;
+    const CERT = [
+      {b:'1', ub:18.0, opened:true,  tl:11.0},
+      {b:'2', ub:16.5, opened:true,  tl:12.5},
+      {b:'3', ub:15.5, opened:true,  tl:11.8},
+      {b:'4', ub:14.8, opened:true,  tl:14.6},
+      {b:'5', ub:13.9, opened:false},
+      {b:'6', ub:13.2, opened:false},
+      {b:'7', ub:12.6, opened:false},
+      {b:'8', ub:12.0, opened:false},
+      {b:'9', ub:11.4, opened:false},
+      {b:'10',ub:10.9, opened:false},
+      {b:'11',ub:10.4, opened:false},
+      {b:'12',ub: 9.9, opened:false},
+      {b:'13',ub: 9.4, opened:false},
+      {b:'14',ub: 9.0, opened:false},
+      {b:'15',ub: 8.6, opened:false},
+      {b:'16',ub: 8.2, opened:false},
+      {b:'17',ub: 7.8, opened:false},
+      {b:'18',ub: 7.4, opened:false},
+      {b:'19',ub: 7.0, opened:false},
+      {b:'20',ub: 6.6, opened:false},
+    ];
+
+    // Byte accounting by model scale (lossless, argmax match 1.000). Stacked shadow + fetched.
+    const BYTES = [
+      {model:'0.5B', shadow:18.0, fetched:15.8, total:33.8, x:'3.0x'},
+      {model:'1.5B', shadow:18.3, fetched:4.0,  total:22.3, x:'4.5x'},
+      {model:'7B',   shadow:17.9, fetched:2.2,  total:20.1, x:'5.0x'},
+      {model:'14B',  shadow:18.0, fetched:2.4,  total:20.4, x:'4.9x'},
+    ];
+
+    // Batch-1 decode latency, W7900 (ms) + speedup.
+    const LAT = [
+      {model:'0.5B', dense:0.42, cert:0.73, x:0.58},
+      {model:'1.5B', dense:0.72, cert:0.67, x:1.08},
+      {model:'7B',   dense:1.68, cert:0.85, x:1.97},
+      {model:'14B',  dense:2.41, cert:1.37, x:1.76},
+    ];
+
+    // The Pareto switch: certified speedup vs batch, two GPUs (Qwen2.5-7B).
+    const PARETO = [
+      {batch:'1',  w7900:1.97, h100:1.85},
+      {batch:'4',  w7900:1.36, h100:0.93},
+      {batch:'8',  w7900:1.41, h100:0.92},
+      {batch:'16', w7900:1.41, h100:0.90},
+      {batch:'32', w7900:1.24, h100:0.89},
+      {batch:'64', w7900:0.78, h100:0.78},
+    ];
+
+    // ───────────────────────── components ─────────────────────────
+    function StatCard({label, value, unit, sub, color}) {
+      return (
+        <div className="stat-card rounded-lg p-4">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{color: color||'#fff'}}>{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+    function Tip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          {label !== undefined && <div className="text-gray-400 mb-1">{label}</div>}
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color || p.fill}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    function Section({id, kicker, title, children}) {
+      return (
+        <section id={id} className="anchor card rounded-xl p-6 md:p-8 mb-8">
+          {kicker && <div className="text-xs uppercase tracking-widest mb-2" style={{color:C.emerald}}>{kicker}</div>}
+          <h2 className="text-2xl font-bold mb-4">{title}</h2>
+          <div className="prose text-gray-400 text-[15px] leading-relaxed max-w-none">{children}</div>
+        </section>
+      );
+    }
+    function ChartFrame({title, sub, height, children}) {
+      return (
+        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+          {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
+          {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
+          <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div className="max-w-5xl mx-auto px-5 py-12">
+          {/* Header */}
+          <header className="text-center mb-10">
+            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
+              Certified <span className="gradient-text">LM-head decode</span>
+            </h1>
+            <p className="text-gray-400 max-w-3xl mx-auto text-lg">
+              Every generated token ends with one enormous multiply &mdash; the hidden state against a
+              <strong className="text-gray-200"> 150,000-row output head</strong> &mdash; and at batch-1 that single
+              read is the latency. This returns the <strong className="text-gray-200">exact</strong> dense answer while
+              reading about a <strong className="text-gray-200">quarter of its bytes</strong>: not by guessing which
+              rows matter, but by <strong className="text-gray-200">proving</strong> which rows cannot win and never
+              reading them.
+            </p>
+          </header>
+
+          {/* Key stats */}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
+            <StatCard label="Output head" value="150K" sub="rows, read every token" />
+            <StatCard label="Head bytes" value="20" unit="%" sub="of dense, at 7B" color={C.emerald}/>
+            <StatCard label="Reduction" value="5" unit="×" sub="lossless" color={C.emerald}/>
+            <StatCard label="Batch-1 decode" value="1.97" unit="×" sub="W7900, 7B" color={C.teal}/>
+            <StatCard label="H100 (graph)" value="1.85" unit="×" sub="batch-1, 7B" color={C.teal}/>
+            <StatCard label="Argmax match" value="1.0000" sub="provably exact" color={C.green}/>
+          </div>
+
+          {/* TLDR */}
+          <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.emerald}}>
+            <h3 className="font-semibold text-emerald-400 mb-2">The result in one breath</h3>
+            <p className="text-gray-300 text-[15px] leading-relaxed">
+              Split the vocabulary into contiguous blocks. A cheap low-rank <strong className="text-white">int8
+              shadow</strong> of the output head gives a <strong className="text-white">provable upper bound</strong> on
+              every token's logit. Open blocks in descending bound, read their true logits, and
+              <strong className="text-white"> stop the instant the best logit found beats the ceiling of every block
+              you haven't opened</strong> &mdash; at that point the dense argmax is mathematically guaranteed to be in
+              hand. On Qwen2.5-7B that closes after reading about <strong className="text-white">2%</strong> of the
+              vocabulary, on top of an 18% shadow read, for a <strong className="text-white">~5× lossless</strong>
+              reduction in output-head traffic and a <strong className="text-white">1.97×</strong> batch-1 decode win.
+              It is exact, not approximate: there is no accuracy knob and no path to a wrong answer.
+            </p>
+          </div>
+
+          {/* 1. the problem */}
+          <Section id="problem" kicker="The cost" title="The output head is a wasteful read">
+            <p>
+              The LM head computes <span className="kbd">logits = W_U &middot; h</span>, with <span className="kbd">W_U</span>
+              the <span className="kbd">[V, d]</span> output embedding (V &asymp; 152k rows for Qwen2.5-7B,
+              d = 3584) and <span className="kbd">h</span> the decode hidden state, then takes the argmax. At batch-1
+              this is memory-bound: one token per step, dominated by streaming all of <span className="kbd">W_U</span>
+              &mdash; <strong>1.09 GB</strong> at 7B &mdash; from HBM, every step. The arithmetic is trivial; the bytes
+              are the whole cost. So the question is sharp and purely about bandwidth: find the argmax without reading
+              all of <span className="kbd">W_U</span>, and never be wrong.
+            </p>
+          </Section>
+
+          {/* 2. structure */}
+          <Section id="structure" kicker="The opportunity" title="The structure is real, and it grows with scale">
+            <p>
+              A cheap oracle test settles whether the opportunity exists. Partition the vocabulary into 256 contiguous
+              <strong> blocks</strong> of neighbouring token ids &mdash; addressable with a single integer divide,
+              portable across model families. If an oracle picked the best few blocks perfectly, would the true next
+              token still be inside them? It would, overwhelmingly &mdash; and the coverage climbs with model scale.
+            </p>
+            <ChartFrame title="Oracle coverage: is the true next token in the best blocks?"
+              sub="Fraction of the time the true next token falls in the best 12.5% / 25% of blocks. Two same-tokenizer ladders (Pythia, Qwen) show it is scale, not architecture.">
+              <LineChart data={ORACLE} margin={{top:8, right:24, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0.88,1.0]} tickFormatter={v=>v.toFixed(2)} label={{value:'coverage', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Line type="monotone" dataKey="c25"  name="best 25% of blocks"   stroke={C.teal}    strokeWidth={3} dot={{r:4}}/>
+                <Line type="monotone" dataKey="c125" name="best 12.5% of blocks" stroke={C.emerald} strokeWidth={3} dot={{r:4}}/>
+              </LineChart>
+            </ChartFrame>
+            <p>
+              On Qwen2.5-7B the true next token is in the best <strong>12.5%</strong> of blocks
+              <strong> 97%</strong> of the time. Larger models concentrate the plausible next token into fewer
+              neighbourhoods, so the opportunity improves as models grow. The catch is that an <em>oracle</em> knows the
+              answer; a deployable decoder does not.
+            </p>
+          </Section>
+
+          {/* 3. prediction wall */}
+          <Section id="wall" kicker="The dead end" title="Prediction hits a wall">
+            <p>
+              The obvious move is to train a router that reads the hidden state and predicts which blocks to fetch. It
+              never reaches the oracle ceiling, and the gap is <strong>not a router-size problem</strong> &mdash; making
+              the router bigger does not close it. Pushing the routing objective into the hidden states themselves with
+              parameter-efficient fine-tuning does not close it either: an unsupervised concentration penalty did
+              nothing, and a supervised co-trained router moved the deployable gap only from <span className="kbd">0.188</span>
+              to <span className="kbd">0.140</span> while a fresh router on the adapted representation barely budged
+              (<span className="kbd">0.188 &rarr; 0.182</span>).
+            </p>
+            <p>
+              The conclusion is consistent: the predictor-to-oracle gap is a <strong>representational property of the
+              base model</strong>, not something a small adapter relocates. Any predict-then-fetch scheme is therefore
+              both lossy &mdash; it can miss the true token &mdash; and capped &mdash; it cannot be trained to stop
+              missing. So walk around it: do not predict. <strong className="text-emerald-300">Certify.</strong>
+            </p>
+          </Section>
+
+          {/* 4. THE TRICK — the centerpiece */}
+          <Section id="trick" kicker="The idea" title="Certify, don't predict">
+            <p>
+              Instead of guessing which rows could be the argmax, compute a cheap, <strong>provable upper bound</strong>
+              on every row's logit, and rule rows out. A row you can prove cannot win is a row you never read. The bound
+              comes from a low-rank shadow of the head, built once per model, offline:
+            </p>
+            <div className="grid md:grid-cols-3 gap-4 my-4">
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="text-emerald-300 font-semibold text-sm mb-1">basis <span className="kbd">B</span></div>
+                <p className="text-sm text-gray-400">An orthonormal <span className="kbd">[d, r]</span> basis,
+                r &asymp; 0.36&middot;d, from PCA on real decode hidden states. Fit to where <span className="kbd">h</span>
+                actually lives, so the part it cannot represent is tiny.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="text-emerald-300 font-semibold text-sm mb-1">shadow head <span className="kbd">aq</span></div>
+                <p className="text-sm text-gray-400">int8 quantize of <span className="kbd">W_U &middot; B</span>,
+                shape <span className="kbd">[V, r]</span>. With r &ll; d and int8 half of bf16, it is ~18% of the dense
+                head's bytes &mdash; cheap enough to read in full.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="text-emerald-300 font-semibold text-sm mb-1">residual norms <span className="kbd">delta</span></div>
+                <p className="text-sm text-gray-400"><span className="kbd">delta[v] = &#8214;W_U[v] &minus; B Bᵀ W_U[v]&#8214;</span>,
+                the size of each row's component <em>outside</em> the basis &mdash; exactly what the shadow cannot see.</p>
+              </div>
+            </div>
+            <p>
+              Now the elegant part. Project the hidden state into the basis, <span className="kbd">q = Bᵀ h</span>, and
+              measure the residual <span className="kbd">&rho; = &#8214;h &minus; B q&#8214;</span> &mdash; how much of
+              <span className="kbd">h</span> lives outside the shadow's reach. Then for <strong>every</strong> row
+              <span className="kbd">v</span>, this is a guaranteed ceiling on its true logit:
+            </p>
+            <div className="formula text-sm md:text-[15px] my-4">
+              <span style={{color:C.emerald}}>U<sub>v</sub></span> ={'  '}
+              <span style={{color:C.teal}}>aq[v] &middot; (scale &odot; q)</span>{'   '}+{'   '}
+              <span style={{color:C.amber}}>&rho; &middot; delta[v]</span>{'   '}+{'   '}
+              <span style={{color:C.gray}}>slack &middot; &#8214;q&#8214;</span>
+              <br/>
+              <span className="text-xs" style={{color:C.gray}}>{'       '}└─ exact logit inside the basis ─┘{'      '}└ most the unseen part can add ┘{'    '}└ int8 rounding ┘</span>
+            </div>
+            <p>
+              The middle term is the whole trick. The shadow score is the logit's component <em>inside</em> the basis,
+              exactly. Whatever lives <em>outside</em> the basis can add at most <span className="kbd">&rho; &middot; delta[v]</span>,
+              by Cauchy&ndash;Schwarz &mdash; <span className="kbd">&rho;</span> bounds the out-of-basis part of
+              <span className="kbd">h</span>, <span className="kbd">delta[v]</span> bounds the out-of-basis part of the
+              row. So <span className="kbd">U<sub>v</sub></span> is a true ceiling the real logit can never exceed. And
+              because <span className="kbd">h</span> lives mostly in the basis, <span className="kbd">&rho;</span> is
+              tiny, so the bound is <strong>tight</strong>: it ranks the rows almost as well as the real logits, for a
+              fraction of the bytes.
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-3 my-4">
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
+                <span className="step-n" style={{color:C.emerald}}>1</span>
+                <p className="text-sm text-gray-400">Reduce per-row bounds to a <strong>per-block</strong> ceiling
+                <span className="kbd">U_b</span> &mdash; one number per block.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
+                <span className="step-n" style={{color:C.teal}}>2</span>
+                <p className="text-sm text-gray-400"><strong>Open</strong> blocks in descending <span className="kbd">U_b</span>.
+                Opening reads a block's true logits &mdash; the only place the dense head is touched. Track the best,
+                <span className="kbd">m</span>.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
+                <span className="step-n" style={{color:C.green}}>3</span>
+                <p className="text-sm text-gray-400"><strong>Stop when proven.</strong> Once <span className="kbd">m</span>
+                beats the ceiling of every unopened block, no unopened block can win. Return <span className="kbd">m</span>.</p>
+              </div>
+            </div>
+
+            <ChartFrame title="The certificate, drawn: 20 blocks, sorted by ceiling — read 4, prove the rest cannot win"
+              sub="Bars are each block's provable ceiling U_b (descending). The 4 teal blocks are opened; the dots are the true logits found. The incumbent (best found) is 14.6 — and every gray block's ceiling sits below it, so it is ruled out unread." height={380}>
+              <ComposedChart data={CERT} margin={{top:10, right:20, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="b" stroke="#94a3b8" tick={{fontSize:10}} label={{value:'vocabulary block (sorted by ceiling)', position:'insideBottom', offset:-4, fill:'#94a3b8', fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0,20]} label={{value:'logit', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <ReferenceArea x1="5" x2="20" fill={C.gray} fillOpacity={0.07}/>
+                <ReferenceLine y={INCUMBENT} stroke={C.green} strokeWidth={2} strokeDasharray="5 4">
+                  <Label value="certified argmax = 14.6 (incumbent)" position="insideTopRight" fill={C.green} fontSize={11}/>
+                </ReferenceLine>
+                <Bar dataKey="ub" name="provable ceiling U_b" radius={[3,3,0,0]}>
+                  {CERT.map((d,i)=><Cell key={i} fill={d.opened ? C.teal : C.dim}/>)}
+                </Bar>
+                <Scatter dataKey="tl" name="true logit (read)" fill={C.green}/>
+              </ComposedChart>
+            </ChartFrame>
+            <p className="text-xs text-gray-500">
+              Read 4 of 20 blocks; the other 16 are <strong>proven</strong> irrelevant without a single byte fetched,
+              because each one's ceiling is below a logit already in hand. The answer is exact. There is no approximation
+              and no way to be wrong &mdash; if the bound were ever too loose to stop early, the search just opens more
+              blocks, in the limit recovering the full dense head.
+            </p>
+          </Section>
+
+          {/* 5. results */}
+          <Section id="results" kicker="What it buys" title="Bytes, latency, and an honest Pareto switch">
+            <p>
+              The byte reduction is a property of the bound and the model, identical on any GPU. The shadow read is ~18%
+              by construction; the exact fetch <strong>collapses with scale</strong> &mdash; from 15.8% at 0.5B to ~2.2%
+              at 7B &mdash; because larger, more low-rank hidden states separate the true argmax further, so the
+              certificate closes sooner. Total output-head traffic settles near a fifth of a dense head, losslessly.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              <ChartFrame title="Output-head bytes vs dense (lossless)" sub="Shadow read + exact fetch. Dashed line = a quantized int8 dense head (50%). Certified is well under it, and exact." height={300}>
+                <BarChart data={BYTES} margin={{top:8, right:16, left:0, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:12}}/>
+                  <YAxis stroke="#94a3b8" domain={[0,55]} label={{value:'% of dense head bytes', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                  <ReferenceLine y={50} stroke={C.gray} strokeDasharray="4 4" label={{value:'int8 dense', fill:C.gray, fontSize:10, position:'right'}}/>
+                  <Bar dataKey="shadow"  name="shadow read" stackId="a" fill={C.teal}    radius={[0,0,0,0]}/>
+                  <Bar dataKey="fetched" name="exact fetch" stackId="a" fill={C.emerald} radius={[3,3,0,0]}/>
+                </BarChart>
+              </ChartFrame>
+              <ChartFrame title="Batch-1 decode latency, W7900 (lower is better)" sub="The win grows with model size; 0.5B loses (its head is too small to be low-rank, and too cheap to beat)." height={300}>
+                <BarChart data={LAT} margin={{top:8, right:16, left:0, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:12}}/>
+                  <YAxis stroke="#94a3b8" label={{value:'ms / token', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                  <Bar dataKey="dense" name="dense head"     fill={C.gray}    radius={[3,3,0,0]}/>
+                  <Bar dataKey="cert"  name="certified head" fill={C.emerald} radius={[3,3,0,0]}/>
+                </BarChart>
+              </ChartFrame>
+            </div>
+            <ChartFrame title="The Pareto switch: certified speedup vs batch (Qwen2.5-7B)"
+              sub="Certified head wins at batch-1 on both GPUs and through low batch on a bandwidth-bound GPU. The H100's dense GEMM is already at its kernel floor, so above the crossover the dense head wins — deploy the switch, not a blanket replacement.">
+              <LineChart data={PARETO} margin={{top:8, right:24, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="batch" stroke="#94a3b8" label={{value:'batch size', position:'insideBottom', offset:-4, fill:'#94a3b8', fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0.6,2.1]} label={{value:'speedup vs dense', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <ReferenceLine y={1.0} stroke={C.red} strokeDasharray="4 4" label={{value:'parity', fill:C.red, fontSize:10, position:'right'}}/>
+                <Line type="monotone" dataKey="w7900" name="W7900 (bandwidth-bound)" stroke={C.emerald} strokeWidth={3} dot={{r:4}}/>
+                <Line type="monotone" dataKey="h100"  name="H100 (compute-rich)"     stroke={C.violet}  strokeWidth={3} dot={{r:4}}/>
+              </LineChart>
+            </ChartFrame>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">One dose of realism.</strong> The output head is only ~7% of per-token
+              decode traffic at 7B, so this head-only win dilutes to roughly <strong>+6%</strong> on the full step. It
+              becomes a real double-digit full-model gain only for small models with large vocabularies, short context,
+              and small batch &mdash; and the lossless byte reduction itself holds in every regime.
+            </div>
+          </Section>
+
+          {/* 6. kernel */}
+          <Section id="kernel" kicker="The implementation" title="The kernel">
+            <p>
+              The deployment path is a Triton kernel. Stage 1 computes the int8 shadow bound and reduces it to per-block
+              maxima entirely on-device. Stage 2 opens blocks through a fused gather-GEMV that reads <span className="kbd">W_U</span>
+              rows directly through gathered pointers &mdash; no row copy, no dtype cast &mdash; and certifies without
+              ever materialising the full logit vector. On the single-token path it matches a reference bound to
+              <span className="kbd">2.9e-6</span>, the worst bound violation is <span className="kbd">&minus;2.73</span>
+              (well under zero, so the bound holds), the argmax match is <strong>1.0000</strong>, and it runs at
+              <strong> 1.66×</strong> the dense GEMV while reading <strong>25.3%</strong> of the bytes.
+            </p>
+            <p>
+              Two numerical rules are the difference between a win and a wash. Compute the residual directly as
+              <span className="kbd">&#8214;h &minus; B q&#8214;</span>, never as
+              <span className="kbd">sqrt(&#8214;h&#8214;² &minus; &#8214;q&#8214;²)</span> &mdash; subtracting two
+              near-equal numbers manufactures a false residual and a useless bound. And time the whole certified path end
+              to end, not an isolated kernel, or a microbenchmark will report a win the full pipeline does not have.
+            </p>
+          </Section>
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
+            <p className="mb-2">
+              <a href="https://github.com/mcgrof/knlp/blob/main/docs/lm-head-decode.md" className="hover:text-gray-400">Full write-up</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://github.com/mcgrof/knlp/tree/main/lm_head/kernel" className="hover:text-gray-400">kernel code</a>
+              <span className="mx-2">&middot;</span>
+              <a href="index.html" className="hover:text-gray-400">knlp</a>
+            </p>
+            <p>Lossless by construction &mdash; the answer is the dense argmax, proven, not predicted.</p>
+          </footer>
+        </div>
+      );
+    }
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>

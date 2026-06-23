@@ -362,6 +362,25 @@
             <span class="text-gray-500"><code>make defconfig-quant-fp8-validate</code></span>
           </div>
         </a>
+        <a href="lm_head_decode_visualization.html" class="card rounded-lg p-5 block md:col-span-2">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-emerald-400">Certified LM-head decode</h3>
+            <span class="text-xs bg-emerald-900 text-emerald-300 px-2 py-1 rounded ml-3 whitespace-nowrap">lossless</span>
+          </div>
+          <p class="text-gray-500 text-sm">
+            The output head is a 150,000-row multiply rerun every token, and almost all of it is wasted.
+            A low-rank int8 <strong class="text-gray-300">shadow</strong> gives a provable upper bound on every
+            token's logit, so the decoder opens only the vocabulary blocks that could possibly win and
+            <strong class="text-gray-300">proves</strong> it found the exact dense argmax &mdash; reading
+            <strong class="text-gray-300">~20%</strong> of the head's bytes (5&times; less), at
+            <strong class="text-gray-300">1.97&times;</strong> batch-1 decode, the answer provably unchanged.
+          </p>
+          <div class="mt-3 flex gap-3 text-xs">
+            <span class="text-emerald-400">6 interactive panels</span>
+            <span class="text-gray-600">&middot;</span>
+            <span class="text-gray-500">argmax match 1.0000</span>
+          </div>
+        </a>
         <a href="linear_attention_visualization.html" class="card rounded-lg p-5 block md:col-span-2">
           <div class="flex items-start justify-between mb-2">
             <h3 class="font-semibold text-violet-400">Linear Attention &amp; Bounded Memory</h3>
