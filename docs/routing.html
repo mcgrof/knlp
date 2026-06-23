@@ -112,6 +112,115 @@
 
     <section class="mb-12">
       <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Routing has two jobs &mdash; selection and repair</h2>
+        <p class="text-slate-300 leading-8 mb-5">
+          Read the algorithm slot as two orthogonal questions, not one. Algorithms
+          that answer different questions compose; algorithms that answer the
+          same question compete. Keep them distinct in your head and in the
+          configuration.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-5 mb-6">
+          <div class="rounded-xl border-2 border-purple-500/40 bg-gradient-to-br from-purple-950/30 to-slate-900/30 p-5">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-8 h-8 rounded-full bg-purple-500 text-slate-900 font-bold flex items-center justify-center">1</div>
+              <h3 class="text-lg font-semibold text-purple-200">Selection</h3>
+              <span class="text-xs font-mono text-slate-500">which K blocks to load</span>
+            </div>
+            <p class="text-slate-300 text-sm leading-7 mb-3">
+              Decide which subset of the cartridge's blocks each request actually
+              attends to. The remaining blocks become
+              <code class="inline">null_block</code>; the attention backend
+              skips them. Selection determines the shape of the routed cache.
+            </p>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">algorithms in this slot</div>
+            <div class="flex flex-wrap gap-1 text-xs font-mono">
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-D-kv-sum</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-D</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-A</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-G</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-Q</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">KRI-T</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">kmeans_keys</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">attention_prefill</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">eigvec centrality</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">hybrid (anchor+recency)</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-200">recency-only</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-3">
+              Pick exactly one; the connector ranks blocks and lets the top K pass.
+            </div>
+          </div>
+
+          <div class="rounded-xl border-2 border-cyan-500/40 bg-gradient-to-br from-cyan-950/30 to-slate-900/30 p-5">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-8 h-8 rounded-full bg-cyan-500 text-slate-900 font-bold flex items-center justify-center">2</div>
+              <h3 class="text-lg font-semibold text-cyan-200">Repair</h3>
+              <span class="text-xs font-mono text-slate-500">optional post-load freshening</span>
+            </div>
+            <p class="text-slate-300 text-sm leading-7 mb-3">
+              After the selected blocks are injected into paged cache, identify
+              positions whose K or V have drifted relative to a fresh forward
+              and replace them. Repair fires once per request after inject and
+              before the first decode step.
+            </p>
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">algorithms in this slot</div>
+            <div class="flex flex-wrap gap-1 text-xs font-mono">
+              <span class="px-2 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/50 text-cyan-200">xa25 (CacheBlend, 25%)</span>
+              <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">future overlays</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-3">
+              Optional; compose with any selection algorithm. xa25 originates in
+              the CacheBlend paper
+              (<a class="section-link" href="https://arxiv.org/abs/2405.16444">arxiv 2405.16444</a>);
+              it is one parameterization at a fixed 25% HKVD refresh rate.
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-emerald-500/40 bg-emerald-950/15 p-5">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="text-emerald-300 text-lg">&#10142;</div>
+            <h3 class="text-base font-semibold text-emerald-200">CacheBlend &mdash; the repair algorithm xa25 implements</h3>
+          </div>
+          <p class="text-slate-300 leading-7 text-sm mb-3">
+            CacheBlend (Yao et al, 2024 &mdash;
+            <a class="section-link" href="https://arxiv.org/abs/2405.16444">arxiv 2405.16444</a>)
+            observes that, after reusing a cached KV from one context inside a
+            different surrounding context, a small fraction of positions
+            account for most of the quality loss. CacheBlend identifies those
+            positions by their Highest KV Deviation (HKVD) against a fresh
+            reference forward, then recomputes K and V at exactly those
+            positions before generation continues. The paper shows
+            cross-layer correlation of HKVD scores is high (Spearman &asymp;
+            0.9 on Mistral / Yi / Llama), so the deviation pattern measured
+            in one layer transfers to the rest.
+          </p>
+          <p class="text-slate-300 leading-7 text-sm mb-2">
+            <strong class="text-emerald-300">xa25</strong> is the production
+            parameterization knlp ships: fixed
+            <strong>HKVD refresh ratio = 25%</strong>, single-pass (the
+            iterative escalation from the paper is cut), reference forward
+            run once per request. The naming &mdash;
+            <em class="text-emerald-200">x</em>-attention,
+            <em class="text-emerald-200">a</em>cross-context,
+            <em class="text-emerald-200">25</em>% &mdash; ties the parameter
+            into the identifier so the configuration shows up in eval logs
+            without a separate column.
+          </p>
+          <p class="text-slate-400 leading-7 text-sm">
+            <strong class="text-amber-300">Important.</strong> xa25 amplifies
+            a good selector. It lifts KRI-D + structural pinning by +1.5 to
+            +3.5pp on LongHealth K=16; it stays flat on random middle
+            (&minus;0.5pp). Repair is not a free lift &mdash; it cannot rescue
+            a selector that picks the wrong blocks.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
         <h2 class="text-2xl font-semibold text-slate-100 mb-4">The algorithms</h2>
         <p class="text-slate-300 leading-8 mb-4">
           Each algorithm produces a per-block score offline and writes it as a
@@ -120,6 +229,25 @@
           <code class="inline">BlockManifestProvider</code> and resolves it
           to a top-K selection per request.
         </p>
+        <div class="rounded-xl border border-slate-700/60 bg-slate-900/40 p-4 mb-5">
+          <div class="text-xs font-mono uppercase tracking-wider text-slate-500 mb-3">how to read the tags and citations</div>
+          <div class="grid md:grid-cols-2 gap-3 text-sm">
+            <div class="flex items-start gap-2">
+              <span class="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 font-mono text-xs whitespace-nowrap mt-0.5">knlp-authored</span>
+              <span class="text-slate-300 leading-6">knlp wrote the algorithm; the cited paper is the conceptual source or family ancestor. The signal column says <em>how</em> the cited paper relates.</span>
+            </div>
+            <div class="flex items-start gap-2">
+              <span class="px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 text-amber-300 font-mono text-xs whitespace-nowrap mt-0.5">external</span>
+              <span class="text-slate-300 leading-6">algorithm comes from a published paper; we ship a direct implementation or a parameterized variant.</span>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-slate-800 text-xs text-slate-400 leading-6">
+            <strong class="text-slate-300">Training note.</strong>
+            Where a cited paper's original method required model fine-tuning, the signal column flags it explicitly &mdash;
+            knlp evaluates the <em>idea</em> training-free, on an off-the-shelf checkpoint. The leaderboard numbers are
+            therefore lower bounds on what the original recipe could deliver after training.
+          </div>
+        </div>
 
         <div class="overflow-x-auto mb-4">
           <table>
@@ -134,85 +262,85 @@
             </thead>
             <tbody>
               <tr>
-                <td><strong>KRI-D-kv-sum</strong></td>
-                <td>Sum over layers of L2 between full-cache hidden and leave-one-block-out hidden</td>
+                <td><strong>KRI-D-kv-sum</strong> <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Sum over layers of L2 between full-cache hidden and leave-one-block-out hidden. L2M-inspired &mdash; L2M (<a class="section-link" href="https://arxiv.org/abs/2503.04725">arxiv 2503.04725</a>) is an information-theoretic scaling law for long-context modeling, <em>not</em> a KV-cache method; KRI-D applies its bipartite-MI framing to per-block importance, using hidden-state L2 as the empirical proxy.</td>
                 <td>no</td>
                 <td>offline; one prefill per block</td>
                 <td class="good">production leader: K=16 + xa25 = 26.5% on LongHealth (5&sigma; vs random 21.5%, n=200)</td>
               </tr>
               <tr>
-                <td>KRI-D</td>
-                <td>KL divergence of logits, leave-one-block-out</td>
+                <td>KRI-D <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>KL divergence of logits, leave-one-block-out. L2M-inspired &mdash; the original KRI-D framing: per-block instantiation of the L2M sum rule (<a class="section-link" href="https://arxiv.org/abs/2503.04725">arxiv 2503.04725</a>), with the model itself as the bipartite-MI estimator.</td>
                 <td>no</td>
                 <td>offline; one prefill per block</td>
                 <td class="good">live; weaker than kv-sum variant</td>
               </tr>
               <tr>
-                <td>KRI-A</td>
-                <td>Prefill attention probability mass per block</td>
+                <td>KRI-A <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Prefill attention probability mass per block, query-agnostic variant. Heavy-Hitter family: H2O Heavy-Hitter Oracle (<a class="section-link" href="https://arxiv.org/abs/2306.14048">arxiv 2306.14048</a>) &mdash; training-free at inference in the original paper.</td>
                 <td>no</td>
                 <td>one prefill</td>
                 <td class="info">live baseline; recency bias</td>
               </tr>
               <tr>
-                <td>KRI-G</td>
-                <td>Gradient of LM-head loss w.r.t. block-mean K</td>
+                <td>KRI-G <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Gradient of LM-head loss w.r.t. block-mean K. No direct external ancestor.</td>
                 <td>no</td>
                 <td>one backward pass</td>
                 <td class="info">live</td>
               </tr>
               <tr>
-                <td>KRI-Q</td>
-                <td>Q&middot;K agreement against block-mean K</td>
+                <td>KRI-Q <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Q&middot;K agreement against block-mean K. Query-aware family: Quest (<a class="section-link" href="https://arxiv.org/abs/2406.10774">arxiv 2406.10774</a>) &mdash; training-free at inference in the original paper.</td>
                 <td>yes</td>
                 <td>cheap online</td>
                 <td class="info">live; flat on untrained K means</td>
               </tr>
               <tr>
-                <td>KRI-T</td>
-                <td>Pre-RoPE Q/K trigonometric factorization (TriAttention)</td>
+                <td>KRI-T <span class="block mt-1 text-xs font-mono text-amber-300">[external]</span></td>
+                <td>Pre-RoPE Q/K trigonometric factorization. Direct implementation of TriAttention (Mao et al, <a class="section-link" href="https://arxiv.org/abs/2604.04921">arxiv 2604.04921</a>).</td>
                 <td>yes</td>
                 <td>cheap online</td>
                 <td class="info">live; needs multi-needle eval</td>
               </tr>
               <tr>
-                <td>kmeans_keys</td>
-                <td>K-means cluster centroids over block-mean K</td>
+                <td>kmeans_keys <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>K-means cluster centroids over block-mean K. Borrows the block-clustering gating signal from MoBA (<a class="section-link" href="https://arxiv.org/abs/2502.13189">arxiv 2502.13189</a>). <strong class="text-amber-200">Note:</strong> MoBA's original method requires <em>training the gate</em>; knlp evaluates the signal <em>training-free</em>, applied to an off-the-shelf checkpoint at inference time.</td>
                 <td>no</td>
                 <td>one prefill + k-means</td>
                 <td class="info">live</td>
               </tr>
               <tr>
-                <td>attention_prefill</td>
-                <td>Layer-mean prefill attention (post-softmax)</td>
+                <td>attention_prefill <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Layer-mean prefill attention (post-softmax). Cousin of SnapKV's prefill-attention compression (<a class="section-link" href="https://arxiv.org/abs/2404.14469">arxiv 2404.14469</a>) &mdash; training-free at inference in the original paper.</td>
                 <td>no</td>
                 <td>one prefill</td>
                 <td class="info">live</td>
               </tr>
               <tr>
-                <td>eigenvector centrality</td>
-                <td>Dominant eigenvector of the block-level prefill attention graph</td>
+                <td>eigenvector centrality <span class="block mt-1 text-xs font-mono text-emerald-300">[knlp-authored]</span></td>
+                <td>Dominant eigenvector of the block-level prefill attention graph. No direct external ancestor.</td>
                 <td>no</td>
                 <td>one prefill + power iteration</td>
                 <td class="info">live; addresses KRI-A recency bias and KRI-D marginal-MI redundancy</td>
               </tr>
               <tr>
-                <td>hybrid (anchor + recency)</td>
-                <td>First <em>K_anchor</em> blocks + last <em>K_recent</em> blocks; middle dropped</td>
+                <td>hybrid (anchor + recency) <span class="block mt-1 text-xs font-mono text-amber-300">[external]</span></td>
+                <td>First <em>K_anchor</em> blocks + last <em>K_recent</em> blocks; middle dropped. Attention-sinks construction from StreamingLLM (Xiao et al, <a class="section-link" href="https://arxiv.org/abs/2309.17453">arxiv 2309.17453</a>).</td>
                 <td>no</td>
                 <td>none (no prior baked)</td>
                 <td class="info">live; serves as cheap policy comparator</td>
               </tr>
               <tr>
-                <td>recency</td>
-                <td>Last K blocks</td>
+                <td>recency <span class="block mt-1 text-xs font-mono text-amber-300">[external]</span></td>
+                <td>Last K blocks. Sliding window from StreamingLLM (<a class="section-link" href="https://arxiv.org/abs/2309.17453">arxiv 2309.17453</a>).</td>
                 <td>no</td>
                 <td>none</td>
                 <td class="info">live; floor for end-weighted tasks</td>
               </tr>
               <tr>
-                <td>xa25 (overlay)</td>
-                <td>Post-load refresh of top-25% HKVD positions with fresh K/V</td>
+                <td>xa25 (<strong>CacheBlend</strong> overlay) <span class="block mt-1 text-xs font-mono text-amber-300">[external]</span></td>
+                <td>Post-load refresh of top-25% HKVD positions with fresh K/V. Parameterized at 25% HKVD refresh rate; single-pass. From CacheBlend (Liu et al, <a class="section-link" href="https://arxiv.org/abs/2405.16444">arxiv 2405.16444</a>).</td>
                 <td>yes (via reference forward)</td>
                 <td>one extra forward</td>
                 <td class="good">repair overlay; lifts KRI-D + A1R2K13 by +1.5 to +3.5pp on LongHealth K=16</td>
