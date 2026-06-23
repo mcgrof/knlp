@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>knlp routing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface-2: #1a2332;
+    --border: #334155; --text: #cbd5e1; --muted: #94a3b8;
+    --green: #22c55e; --blue: #60a5fa; --purple: #c084fc;
+    --amber: #f59e0b; --cyan: #22d3ee; --rose: #fb7185;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+  .card { background: linear-gradient(145deg, var(--surface), var(--surface-2)); border: 1px solid var(--border); border-radius: 14px; }
+  .panel { background: linear-gradient(145deg, #172030, #141c2a); border: 1px solid var(--border); border-radius: 14px; }
+  .code-block { background: #0b1220; border: 1px solid #23324a; border-radius: 12px; overflow: hidden; margin: 1rem 0 1.5rem; }
+  .code-title { font-family: var(--mono); font-size: 12px; color: var(--muted); background: #10192a; border-bottom: 1px solid #23324a; padding: 10px 14px; }
+  pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #dbe7f3; }
+  code.inline { font-family: var(--mono); font-size: 0.92em; padding: 0.1rem 0.35rem; border-radius: 4px; background: #172033; border: 1px solid #253247; }
+  .kw { color: #f472b6; } .fn { color: #93c5fd; } .nm { color: #67e8f9; }
+  .cm { color: #64748b; } .str { color: #86efac; } .num { color: #fbbf24; }
+  .op { color: #cbd5e1; } .type { color: #c084fc; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: #94a3b8; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #243244; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .good { color: #4ade80; font-weight: 600; }
+  .warn { color: #fbbf24; font-weight: 600; }
+  .bad  { color: #fb7185; font-weight: 600; }
+  .info { color: #7dd3fc; font-weight: 600; }
+  .path-list li { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .mini-note { border-left: 3px solid var(--green); background: rgba(34, 197, 94, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-warn { border-left: 3px solid var(--amber); background: rgba(245, 158, 11, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .section-link { color: #60a5fa; }
+  .section-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <header class="text-center mb-14">
+      <div class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs font-mono text-slate-400 mb-5">
+        knlp / serving &amp; kv cache
+      </div>
+      <h1 class="text-5xl font-semibold tracking-tight text-slate-100 mb-4">knlp routing</h1>
+      <p class="text-lg text-slate-400 max-w-4xl mx-auto leading-8">
+        Routing decides which KV blocks each request attends to. A serving
+        substrate hosts the algorithm; the algorithm decides the blocks. Pick
+        a different algorithm and the substrate does not change. Work with
+        cartridges if you want fast experimentation; the substrate does not
+        require them.
+      </p>
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+        <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
+        <a href="kri.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 transition-colors">KRI</a>
+        <a href="kri_ft_visualization.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 transition-colors">KRI-FT</a>
+        <a href="spf.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">SPF</a>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-routing" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">vLLM routing branch</a>
+      </div>
+    </header>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">What routing is</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Read routing as two layers with a small contract between them. The
+          <strong>serving substrate</strong> in vLLM owns scheduler plumbing,
+          block selection, sparse inject, and an optional cross-attention
+          refinement side-channel. The <strong>algorithm</strong> answers a
+          single question: for this request, which K of the cartridge's blocks
+          should each KV head see? Today the algorithm slot hosts KRI variants
+          and policy-based selectors (hybrid, recency). Tomorrow it hosts
+          anything that exposes the same interface.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 mt-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Substrate</div>
+            <div class="text-3xl font-semibold text-green-400">vLLM branch</div>
+            <div class="text-sm text-slate-400 mt-2">
+              <code class="inline">CartridgeConnector</code> with routing-aware
+              sparse inject, scheduler null_block plumbing, routing-policy
+              module, thread-local routing state, xa refinement, native LMCache
+              adapter. Six clean commits.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Algorithm slot</div>
+            <div class="text-3xl font-semibold text-purple-400">routing_prior/</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Any class implementing <code class="inline">BlockManifestProvider</code>
+              plugs in. The connector resolves <code class="inline">(prefix_hash, query_hash) &rarr; BlockManifest</code>
+              at request time.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Cartridges</div>
+            <div class="text-3xl font-semibold text-amber-400">test substrate</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Cartridges shortcut algorithm testing (no prefill, deterministic
+              prefix hash). Routing does not require them long-term &mdash; the
+              substrate stays useful for any prefix-cached workload.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The algorithms</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Each algorithm produces a per-block score offline and writes it as a
+          <code class="inline">.pt</code> prior keyed by the cartridge's prefix
+          hash. At serve time the connector loads the prior through a
+          <code class="inline">BlockManifestProvider</code> and resolves it
+          to a top-K selection per request.
+        </p>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th>algorithm</th>
+                <th>signal</th>
+                <th>query-aware</th>
+                <th>cost</th>
+                <th>status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>KRI-D-kv-sum</strong></td>
+                <td>Sum over layers of L2 between full-cache hidden and leave-one-block-out hidden</td>
+                <td>no</td>
+                <td>offline; one prefill per block</td>
+                <td class="good">production leader: K=16 + xa25 = 26.5% on LongHealth (5&sigma; vs random 21.5%, n=200)</td>
+              </tr>
+              <tr>
+                <td>KRI-D</td>
+                <td>KL divergence of logits, leave-one-block-out</td>
+                <td>no</td>
+                <td>offline; one prefill per block</td>
+                <td class="good">live; weaker than kv-sum variant</td>
+              </tr>
+              <tr>
+                <td>KRI-A</td>
+                <td>Prefill attention probability mass per block</td>
+                <td>no</td>
+                <td>one prefill</td>
+                <td class="info">live baseline; recency bias</td>
+              </tr>
+              <tr>
+                <td>KRI-G</td>
+                <td>Gradient of LM-head loss w.r.t. block-mean K</td>
+                <td>no</td>
+                <td>one backward pass</td>
+                <td class="info">live</td>
+              </tr>
+              <tr>
+                <td>KRI-Q</td>
+                <td>Q&middot;K agreement against block-mean K</td>
+                <td>yes</td>
+                <td>cheap online</td>
+                <td class="info">live; flat on untrained K means</td>
+              </tr>
+              <tr>
+                <td>KRI-T</td>
+                <td>Pre-RoPE Q/K trigonometric factorization (TriAttention)</td>
+                <td>yes</td>
+                <td>cheap online</td>
+                <td class="info">live; needs multi-needle eval</td>
+              </tr>
+              <tr>
+                <td>kmeans_keys</td>
+                <td>K-means cluster centroids over block-mean K</td>
+                <td>no</td>
+                <td>one prefill + k-means</td>
+                <td class="info">live</td>
+              </tr>
+              <tr>
+                <td>attention_prefill</td>
+                <td>Layer-mean prefill attention (post-softmax)</td>
+                <td>no</td>
+                <td>one prefill</td>
+                <td class="info">live</td>
+              </tr>
+              <tr>
+                <td>eigenvector centrality</td>
+                <td>Dominant eigenvector of the block-level prefill attention graph</td>
+                <td>no</td>
+                <td>one prefill + power iteration</td>
+                <td class="info">live; addresses KRI-A recency bias and KRI-D marginal-MI redundancy</td>
+              </tr>
+              <tr>
+                <td>hybrid (anchor + recency)</td>
+                <td>First <em>K_anchor</em> blocks + last <em>K_recent</em> blocks; middle dropped</td>
+                <td>no</td>
+                <td>none (no prior baked)</td>
+                <td class="info">live; serves as cheap policy comparator</td>
+              </tr>
+              <tr>
+                <td>recency</td>
+                <td>Last K blocks</td>
+                <td>no</td>
+                <td>none</td>
+                <td class="info">live; floor for end-weighted tasks</td>
+              </tr>
+              <tr>
+                <td>xa25 (overlay)</td>
+                <td>Post-load refresh of top-25% HKVD positions with fresh K/V</td>
+                <td>yes (via reference forward)</td>
+                <td>one extra forward</td>
+                <td class="good">repair overlay; lifts KRI-D + A1R2K13 by +1.5 to +3.5pp on LongHealth K=16</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="text-slate-400 leading-8">
+          Read the production stack as: KRI-D-kv-sum for selection,
+          A1R2K13 structural pinning (anchor=1, recent=2, KRI-mid=13) at K=16,
+          xa25 as the post-load repair overlay. Validated on LongHealth K=16:
+          26.5% vs random middle 21.5%, 5&sigma; at n=200.
+        </p>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The vLLM substrate</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          The routing branch sits on top of cart-upstream and adds six commits
+          shaped around the substitution points. The CartridgeConnector consults
+          a manifest provider per request, applies the resolved selection to
+          its block table, and writes only the selected blocks into paged
+          cache through a Triton kernel; the rest stay
+          <code class="inline">null_block</code> and the attention backend
+          skips them.
+        </p>
+
+        <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-5 mb-6">
+          <div class="text-xs font-mono uppercase tracking-wider text-green-400 mb-4">Per-request data flow</div>
+          <div class="code-block">
+            <pre>request arrives
+    &darr;
+CartridgeConnector.get_num_new_matched_tokens
+    &darr; (routing config present?)
+update_state_after_alloc
+    &darr; resolve (prefix_hash, query_hash) &rarr; BlockManifest via routing_prior/
+    &darr; store per-request selection set
+get_block_skip_list
+    &darr; complement of selection within [0, num_logical_blocks)
+KVCacheManager.null_block_positions
+    &darr; mutate block_table; free the freed physical blocks
+build_connector_meta &rarr; CartridgeReqMeta carries the selection
+    &darr;
+_inject_request
+    &darr; triton_reshape_and_cache_flash on selected blocks only
+_publish_routing_state
+    &darr; thread-local RoutingPrior for the routed-decode backend
+_maybe_xa_refine
+    &darr; (opt-in) scatter fresh HKVD K/V into paged cache
+forward pass: attention sees null_block at non-selected positions, skips them</pre>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th>substitution point</th>
+                <th>where</th>
+                <th>what you swap to try a new idea</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Algorithm</td>
+                <td><code class="inline">routing_prior/</code></td>
+                <td>Implement <code class="inline">BlockManifestProvider.get_manifest(prefix_hash, query_hash, K)</code>; drop your <code class="inline">.pt</code> priors in</td>
+              </tr>
+              <tr>
+                <td>Block-selection policy</td>
+                <td><code class="inline">routing_policy/</code></td>
+                <td>Add a function that returns a list of block indices; the connector calls it directly when no prior is configured</td>
+              </tr>
+              <tr>
+                <td>Scheduler hook</td>
+                <td><code class="inline">KVConnectorBase.get_block_skip_list</code></td>
+                <td>Already generic; every connector can drive null_block. New algorithms do not touch the scheduler</td>
+              </tr>
+              <tr>
+                <td>Repair overlay</td>
+                <td><code class="inline">xa_refinement.py</code></td>
+                <td>Same side-channel shape would fit CacheBlend-style iterative escalation or any other post-load repair mechanism</td>
+              </tr>
+              <tr>
+                <td>Storage backend</td>
+                <td><code class="inline">lmcache_connector.py</code> <code class="inline">use_native</code> switch</td>
+                <td>Native adapter with sparse <code class="inline">retrieve_chunks</code>; room for additional vendored backends</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Reproduce</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Build the routing branch precompiled and run the existing cartridge
+          test suite (198 tests) to confirm the substrate works on your box.
+          Bake a KRI-D-kv-sum prior offline, register it under a cartridge id,
+          and run the connector smoke tests with routing enabled.
+        </p>
+
+        <div class="code-block">
+          <div class="code-title">install</div>
+          <pre>git clone --branch 20260622-routing <span class="str">https://github.com/mcgrof/vllm.git</span>
+cd vllm
+uv venv --python 3.12
+VLLM_USE_PRECOMPILED=<span class="num">1</span> uv pip install -e . --torch-backend=auto
+.venv/bin/python -m pytest tests/v1/core/test_cartridge_*.py -q</pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">enable routing in a serving config</div>
+          <pre>--kv-transfer-config '{
+    <span class="str">"kv_connector"</span>: <span class="str">"CartridgeConnector"</span>,
+    <span class="str">"kv_connector_module_path"</span>:
+        <span class="str">"vllm.distributed.kv_transfer.kv_connector.v1.cartridge_connector"</span>,
+    <span class="str">"kv_connector_extra_config"</span>: {
+        <span class="str">"cartridges"</span>: {<span class="str">"patient_00"</span>: <span class="str">"/path/to/cart.pt"</span>},
+        <span class="str">"routing"</span>: {
+            <span class="str">"enabled"</span>: true,
+            <span class="str">"K"</span>: <span class="num">16</span>,
+            <span class="str">"priors"</span>: {<span class="str">"patient_00"</span>: <span class="str">"/path/to/kri_d_prior.pt"</span>}
+        }
+    },
+    <span class="str">"kv_role"</span>: <span class="str">"kv_both"</span>
+}'</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Branch layout</h2>
+        <div class="grid md:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-lg font-semibold text-blue-300 mb-3">github.com/mcgrof/vllm @ 20260622-routing</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              Six commits on top of cart-upstream. Independent of SPF; sits
+              directly on the cartridges base.
+            </p>
+            <ul class="list-disc pl-6 text-slate-300 space-y-1 font-mono text-sm path-list">
+              <li>vllm/distributed/kv_transfer/kv_connector/v1/cartridge_connector.py</li>
+              <li>vllm/distributed/kv_transfer/kv_connector/v1/routing_policy/{__init__,hybrid}.py</li>
+              <li>vllm/distributed/kv_transfer/kv_connector/v1/routing_prior/{__init__,manifest,cartridge_kri}.py</li>
+              <li>vllm/distributed/kv_transfer/kv_connector/v1/xa_refinement.py</li>
+              <li>vllm/distributed/kv_transfer/kv_connector/v1/lmcache_integration/*</li>
+              <li>vllm/v1/attention/routing_state.py</li>
+              <li>vllm/v1/attention/ops/triton_reshape_and_cache_flash.py</li>
+              <li>vllm/v1/core/sched/scheduler.py</li>
+              <li>vllm/v1/core/{kv_cache_coordinator,kv_cache_manager,single_type_kv_cache_manager}.py</li>
+              <li>tests/v1/core/test_cartridge_*.py</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-cyan-300 mb-3">knlp side &mdash; algorithm work</h3>
+            <p class="text-slate-300 leading-7 mb-3">
+              Prior bakery and KRI variants live in knlp. Each algorithm reduces
+              to a <code class="inline">.pt</code> file the connector loads.
+            </p>
+            <ul class="list-disc pl-6 text-slate-300 space-y-1 font-mono text-sm path-list">
+              <li>routing/bake_kri_d_kv_prior.py</li>
+              <li>routing/bake_kri_t_prior.py</li>
+              <li>routing/eigvec_centrality_prior.py</li>
+              <li>routing/head_pool_synthetic_q.py</li>
+              <li>routing/fused_routed_attention.py (Triton kernel; standalone math layer)</li>
+              <li>tools/eval_pareto_full.py</li>
+              <li>tools/eval_niah_longctx.py</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Scope and adjacency</h2>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div class="rounded-xl border border-blue-500/40 bg-blue-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-blue-300 mb-3">Routing is</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7">
+              <li>A serving substrate for any per-request block-selection algorithm.</li>
+              <li>Useful for cartridges (fast experimentation) and for plain prefix-cached workloads.</li>
+              <li>Independent of SPF: zero SPF imports, zero shared runtime state.</li>
+              <li>Independent of cartridges long-term: the substrate stays valid for any prefix-cached path.</li>
+            </ul>
+          </div>
+          <div class="rounded-xl border border-rose-500/40 bg-rose-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-rose-300 mb-3">Routing is not</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7">
+              <li>SPF. SPF is a scheduler-side prefetch experiment that did not clear its survival gate. See <a class="section-link" href="spf.html">SPF</a>.</li>
+              <li>A training method. The <a class="section-link" href="kri_ft_visualization.html">KRI-FT</a> PEFT vehicle is a different layer.</li>
+              <li>An algorithm. <a class="section-link" href="kri.html">KRI</a> and friends are the algorithms; routing is the substrate they plug into.</li>
+              <li>A speculative-decoding analogue.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-slate-500 text-sm border-t border-slate-800 pt-8 mt-14">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-300">GitHub</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-routing" class="hover:text-slate-300">vLLM routing branch</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri.html" class="hover:text-slate-300">KRI</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri_ft_visualization.html" class="hover:text-slate-300">KRI-FT</a>
+        <span class="mx-2">&middot;</span>
+        <a href="spf.html" class="hover:text-slate-300">SPF</a>
+        <span class="mx-2">&middot;</span>
+        <a href="index.html" class="hover:text-slate-300">knlp docs</a>
+      </p>
+      <p>Routing documentation for knlp</p>
+    </footer>
+  </div>
+</body>
+</html>
