@@ -197,7 +197,7 @@
               <strong className="text-white"> stop the instant the best logit found beats the ceiling of every block
               you haven't opened</strong> &mdash; at that point the dense argmax is mathematically guaranteed to be in
               hand. On Qwen2.5-7B that closes after reading about <strong className="text-white">2%</strong> of the
-              vocabulary, on top of an 18% shadow read, for a <strong className="text-white">~5× lossless</strong>
+              vocabulary, on top of an 18% shadow read, for a <strong className="text-white">~5× lossless</strong>{" "}
               reduction in output-head traffic and a <strong className="text-white">1.97×</strong> batch-1 decode win.
               It is exact, not approximate: there is no accuracy knob and no path to a wrong answer.
             </p>
@@ -206,7 +206,7 @@
           {/* 1. the problem */}
           <Section id="problem" kicker="The cost" title="The output head is a wasteful read">
             <p>
-              The LM head computes <span className="kbd">logits = W_U &middot; h</span>, with <span className="kbd">W_U</span>
+              The LM head computes <span className="kbd">logits = W_U &middot; h</span>, with <span className="kbd">W_U</span>{" "}
               the <span className="kbd">[V, d]</span> output embedding (V &asymp; 152k rows for Qwen2.5-7B,
               d = 3584) and <span className="kbd">h</span> the decode hidden state, then takes the argmax. At batch-1
               this is memory-bound: one token per step, dominated by streaming all of <span className="kbd">W_U</span>
@@ -251,7 +251,7 @@
               never reaches the oracle ceiling, and the gap is <strong>not a router-size problem</strong> &mdash; making
               the router bigger does not close it. Pushing the routing objective into the hidden states themselves with
               parameter-efficient fine-tuning does not close it either: an unsupervised concentration penalty did
-              nothing, and a supervised co-trained router moved the deployable gap only from <span className="kbd">0.188</span>
+              nothing, and a supervised co-trained router moved the deployable gap only from <span className="kbd">0.188</span>{" "}
               to <span className="kbd">0.140</span> while a fresh router on the adapted representation barely budged
               (<span className="kbd">0.188 &rarr; 0.182</span>).
             </p>
@@ -266,7 +266,7 @@
           {/* 4. THE TRICK — the centerpiece */}
           <Section id="trick" kicker="The idea" title="Certify, don't predict">
             <p>
-              Instead of guessing which rows could be the argmax, compute a cheap, <strong>provable upper bound</strong>
+              Instead of guessing which rows could be the argmax, compute a cheap, <strong>provable upper bound</strong>{" "}
               on every row's logit, and rule rows out. A row you can prove cannot win is a row you never read. The bound
               comes from a low-rank shadow of the head, built once per model, offline:
             </p>
@@ -274,7 +274,7 @@
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
                 <div className="text-emerald-300 font-semibold text-sm mb-1">basis <span className="kbd">B</span></div>
                 <p className="text-sm text-gray-400">An orthonormal <span className="kbd">[d, r]</span> basis,
-                r &asymp; 0.36&middot;d, from PCA on real decode hidden states. Fit to where <span className="kbd">h</span>
+                r &asymp; 0.36&middot;d, from PCA on real decode hidden states. Fit to where <span className="kbd">h</span>{" "}
                 actually lives, so the part it cannot represent is tiny.</p>
               </div>
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
@@ -291,8 +291,8 @@
             </div>
             <p>
               Now the elegant part. Project the hidden state into the basis, <span className="kbd">q = Bᵀ h</span>, and
-              measure the residual <span className="kbd">&rho; = &#8214;h &minus; B q&#8214;</span> &mdash; how much of
-              <span className="kbd">h</span> lives outside the shadow's reach. Then for <strong>every</strong> row
+              measure the residual <span className="kbd">&rho; = &#8214;h &minus; B q&#8214;</span> &mdash; how much of{" "}
+              <span className="kbd">h</span> lives outside the shadow's reach. Then for <strong>every</strong> row{" "}
               <span className="kbd">v</span>, this is a guaranteed ceiling on its true logit:
             </p>
             <div className="formula text-sm md:text-[15px] my-4">
@@ -306,7 +306,7 @@
             <p>
               The middle term is the whole trick. The shadow score is the logit's component <em>inside</em> the basis,
               exactly. Whatever lives <em>outside</em> the basis can add at most <span className="kbd">&rho; &middot; delta[v]</span>,
-              by Cauchy&ndash;Schwarz &mdash; <span className="kbd">&rho;</span> bounds the out-of-basis part of
+              by Cauchy&ndash;Schwarz &mdash; <span className="kbd">&rho;</span> bounds the out-of-basis part of{" "}
               <span className="kbd">h</span>, <span className="kbd">delta[v]</span> bounds the out-of-basis part of the
               row. So <span className="kbd">U<sub>v</sub></span> is a true ceiling the real logit can never exceed. And
               because <span className="kbd">h</span> lives mostly in the basis, <span className="kbd">&rho;</span> is
@@ -317,7 +317,7 @@
             <div className="grid md:grid-cols-3 gap-3 my-4">
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
                 <span className="step-n" style={{color:C.emerald}}>1</span>
-                <p className="text-sm text-gray-400">Reduce per-row bounds to a <strong>per-block</strong> ceiling
+                <p className="text-sm text-gray-400">Reduce per-row bounds to a <strong>per-block</strong> ceiling{" "}
                 <span className="kbd">U_b</span> &mdash; one number per block.</p>
               </div>
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
@@ -328,7 +328,7 @@
               </div>
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 flex gap-3 items-start">
                 <span className="step-n" style={{color:C.green}}>3</span>
-                <p className="text-sm text-gray-400"><strong>Stop when proven.</strong> Once <span className="kbd">m</span>
+                <p className="text-sm text-gray-400"><strong>Stop when proven.</strong> Once <span className="kbd">m</span>{" "}
                 beats the ceiling of every unopened block, no unopened block can win. Return <span className="kbd">m</span>.</p>
               </div>
             </div>
@@ -355,6 +355,57 @@
               because each one's ceiling is below a logit already in hand. The answer is exact. There is no approximation
               and no way to be wrong &mdash; if the bound were ever too loose to stop early, the search just opens more
               blocks, in the limit recovering the full dense head.
+            </p>
+          </Section>
+
+          {/* 4b. the essence in code */}
+          <Section id="essence" kicker="The essence" title="The whole trick, in code">
+            <p>
+              Three ideas do the work: build the int8 shadow offline, turn it into a provable ceiling per token, then
+              open blocks until the ceiling proves you are done. The full Triton kernel is in
+              <a href="https://github.com/mcgrof/knlp/blob/main/lm_head/kernel/certdecode_kernel.py" className="text-emerald-300 hover:underline"> certdecode_kernel.py</a>;
+              this is its heart.
+            </p>
+            <div className="my-4 rounded-lg overflow-hidden border border-gray-800" style={{background:'#0a0f1a'}}>
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-800" style={{background:'#0b1220'}}>
+                <span style={{width:10,height:10,borderRadius:9999,background:'#ef4444',display:'inline-block'}}/>
+                <span style={{width:10,height:10,borderRadius:9999,background:'#f59e0b',display:'inline-block'}}/>
+                <span style={{width:10,height:10,borderRadius:9999,background:'#10b981',display:'inline-block'}}/>
+                <span className="text-xs text-gray-500 ml-2" style={{fontFamily:'ui-monospace,monospace'}}>certified_decode &mdash; the essence</span>
+              </div>
+              <div className="p-4 text-[13px] md:text-sm overflow-x-auto" style={{fontFamily:'ui-monospace,monospace', lineHeight:1.75}}>
+                {[
+                  {h:'offline  —  a low-rank int8 shadow of the output head (once per model)'},
+                  {code:'B     = pca(hidden_states)',            cm:'[d, r] orthonormal basis, r ~= 0.36*d'},
+                  {code:'aq    = int8(W_U @ B)',                 cm:'[V, r] the shadow  ~18% of the bytes'},
+                  {code:'delta = norm(W_U - B @ (B.T @ W_U))',   cm:"[V] each row's mass outside the basis"},
+                  {blank:true},
+                  {h:'per token  —  a PROVABLE upper bound on every logit'},
+                  {code:'q   = B.T @ h',                         cm:'project the hidden into the basis'},
+                  {code:'rho = norm(h - B @ q)',                 cm:"the residual the shadow can't see"},
+                  {code:'U   = aq @ (scale*q) + rho*delta + slack', cm:'U[v] >= true logit, ALWAYS', hl:true},
+                  {code:'U_b = U.reshape(NBLOCKS, -1).max(1)',   cm:'one ceiling per vocabulary block'},
+                  {blank:true},
+                  {h:'certify  —  open the best blocks, stop the instant it is proven'},
+                  {code:'m = -inf'},
+                  {code:'for b in argsort(U_b)[::-1]:',          cm:'blocks, highest ceiling first'},
+                  {code:'    m = max(m, (W_U[block(b)] @ h).max())', cm:'read THIS block  the only real read'},
+                  {code:'    if m >= U_b[unopened].max():',      cm:'nothing unread can beat m', hl:true},
+                  {code:'        return m',                      cm:'the exact dense argmax  proven, not guessed', hl:true},
+                ].map((l,i)=>(
+                  l.blank ? <div key={i} style={{height:'0.7em'}}/> :
+                  l.h ? <div key={i} style={{color:'#5eead4'}}># {l.h}</div> :
+                  <div key={i} style={{display:'flex', flexWrap:'wrap', borderLeft: l.hl?'2px solid #10b981':'2px solid transparent', paddingLeft:8, marginLeft:-10, background: l.hl?'rgba(16,185,129,0.06)':'transparent'}}>
+                    <span style={{color: l.hl?'#d1fae5':'#cbd5e1', whiteSpace:'pre'}}>{l.code}</span>
+                    {l.cm && <span style={{color:'#64748b', marginLeft:'1.2em'}}># {l.cm}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">
+              The highlighted line is the bound &mdash; <span className="kbd">U[v]</span> is a ceiling no real logit can
+              cross &mdash; and the highlighted <span className="kbd">if</span> is the certificate: once the best logit
+              found beats the ceiling of every unread block, the answer is proven. Everything else is bookkeeping.
             </p>
           </Section>
 
@@ -416,16 +467,16 @@
           <Section id="kernel" kicker="The implementation" title="The kernel">
             <p>
               The deployment path is a Triton kernel. Stage 1 computes the int8 shadow bound and reduces it to per-block
-              maxima entirely on-device. Stage 2 opens blocks through a fused gather-GEMV that reads <span className="kbd">W_U</span>
+              maxima entirely on-device. Stage 2 opens blocks through a fused gather-GEMV that reads <span className="kbd">W_U</span>{" "}
               rows directly through gathered pointers &mdash; no row copy, no dtype cast &mdash; and certifies without
               ever materialising the full logit vector. On the single-token path it matches a reference bound to
-              <span className="kbd">2.9e-6</span>, the worst bound violation is <span className="kbd">&minus;2.73</span>
+              <span className="kbd">2.9e-6</span>, the worst bound violation is <span className="kbd">&minus;2.73</span>{" "}
               (well under zero, so the bound holds), the argmax match is <strong>1.0000</strong>, and it runs at
               <strong> 1.66×</strong> the dense GEMV while reading <strong>25.3%</strong> of the bytes.
             </p>
             <p>
               Two numerical rules are the difference between a win and a wash. Compute the residual directly as
-              <span className="kbd">&#8214;h &minus; B q&#8214;</span>, never as
+              <span className="kbd">&#8214;h &minus; B q&#8214;</span>, never as{" "}
               <span className="kbd">sqrt(&#8214;h&#8214;² &minus; &#8214;q&#8214;²)</span> &mdash; subtracting two
               near-equal numbers manufactures a false residual and a useless bound. And time the whole certified path end
               to end, not an isolated kernel, or a microbenchmark will report a win the full pipeline does not have.
