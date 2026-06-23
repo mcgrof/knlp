@@ -116,7 +116,7 @@
               ))}
             </div>
           </div>
-          <p className="text-gray-500 text-sm mb-4">GPT-2 small. X is the <em>actual</em> retained-KV fraction (the honest axis). Y is log perplexity. Under naive recent-only routing KRI-FT is 6.3× lower than vanilla at ~23% retention; the gap shrinks under sink+recent, where the model — not the router — is what KRI-FT fixed.</p>
+          <p className="text-gray-500 text-sm mb-4">GPT-2 small. X is the <em>actual</em> retained-KV fraction. Y is log perplexity. Under naive recent-only routing KRI-FT is 6.3× lower than vanilla at ~23% retention; the gap shrinks under sink+recent, where the model — not the router — is what KRI-FT fixed.</p>
           <ResponsiveContainer width="100%" height={360}>
             <LineChart data={data} margin={{top: 8, right: 16, left: 24, bottom: 28}}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -208,7 +208,7 @@
     function NarrowingChart() {
       return (
         <div className="card rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-1">The Honest Limit: GPT-2 vs a Modern Small Model</h3>
+          <h3 className="text-lg font-semibold mb-1">The Scaling Limit: GPT-2 vs a Modern Small Model</h3>
           <p className="text-gray-500 text-sm mb-4">KRI-FT's KL reduction over vanilla under KRI routing. On GPT-2 small it is ~83%; on SmolLM2-360M (RoPE + grouped-query attention) it collapses to ~20% — because vanilla SmolLM2 is <em>already</em> near the routing floor. The size of the win is set by how routing-intolerant the base model is to begin with.</p>
           <ResponsiveContainer width="100%" height={360}>
             <BarChart data={DATA.narrowing} layout="vertical" margin={{top: 8, right: 24, left: 8, bottom: 24}}>
@@ -228,7 +228,7 @@
 
     function App() {
       const [tab, setTab] = useState(0);
-      const tabs = ['Routing Robustness', 'Fewer Blocks', 'Canonical Routers', 'The Mechanism', 'The Honest Limit'];
+      const tabs = ['Routing Robustness', 'Fewer Blocks', 'Canonical Routers', 'The Mechanism', 'The Scaling Limit'];
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
           <header className="text-center mb-12">
@@ -239,7 +239,7 @@
               The training-free routers are already state of the art; the question is which ideas can be
               adopted without a full retrain, and where a light fine-tune (PEFT) is the sensible compromise.
               KRI-FT is that compromise: instead of building a better router, it fine-tunes the <em>model</em>
-              under the routing mask so it learns to need fewer blocks. The honest finding is that it helps
+              under the routing mask so it learns to need fewer blocks. The finding is that it helps
               models that lack native routing tolerance — and modern small models already mostly have it.
             </p>
           </header>
@@ -250,6 +250,104 @@
             <StatCard label="Lower KL" value="3-6" unit="x" sub="every KRI router" />
             <StatCard label="Full-attn cost" value="0" unit="%" sub="9.50 vs 9.50" />
             <StatCard label="Seeds" value="3" unit="" sub="42 / 43 / 44" />
+          </div>
+
+          {/* === Routing-tolerance leaderboard === */}
+          <div className="card rounded-xl p-6 mb-8">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
+              <h3 className="text-xl font-semibold text-gray-100">Routing-tolerance leaderboard</h3>
+              <div className="text-xs font-mono text-gray-500">methods that let a model survive aggressive KV routing</div>
+            </div>
+            <p className="text-gray-400 text-sm leading-7 mb-6">
+              Ranking is by the largest demonstrated gap to vanilla under matched-budget routing.
+              KRI-FT holds the small-model bar; UNIQUE shows the recipe transfers to 8B with a soft mask and a different LoRA target.
+              The 7B/8B oracle-frontier test that would settle KRI-FT's scaling story is the open row.
+            </p>
+
+            <div className="grid md:grid-cols-3 gap-4 mb-6">
+              {/* gold */}
+              <div className="rounded-xl border-2 border-amber-400/70 bg-gradient-to-br from-amber-950/40 to-slate-900/30 p-5 relative shadow-lg shadow-amber-900/20">
+                <div className="absolute -top-3 -right-3 bg-amber-400 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#127942; 1ST</div>
+                <div className="text-xs font-mono text-amber-300 uppercase tracking-wider mb-2">Small models</div>
+                <h4 className="text-lg font-semibold text-gray-100 mb-1">KRI-FT</h4>
+                <div className="text-xs text-gray-500 mb-3">GPT-2 small (124M) &middot; routing-aware FT &middot; this work</div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <div className="text-4xl font-bold text-amber-300">6.3<span className="text-xl text-amber-400">x</span></div>
+                  <div className="text-xs text-emerald-300 font-mono">lower PPL</div>
+                </div>
+                <div className="text-xs text-gray-500 mb-3">vs vanilla under recent-only routing @ ~23% KV</div>
+                <div className="flex flex-wrap gap-1 text-xs font-mono">
+                  <span className="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">3 seeds</span>
+                  <span className="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">8x fewer blocks</span>
+                  <span className="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-300">0% dense cost</span>
+                </div>
+              </div>
+
+              {/* silver */}
+              <div className="rounded-xl border-2 border-slate-400/60 bg-gradient-to-br from-slate-800/40 to-slate-900/30 p-5 relative shadow-lg shadow-slate-900/20">
+                <div className="absolute -top-3 -right-3 bg-slate-300 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#129352; 2ND</div>
+                <div className="text-xs font-mono text-slate-300 uppercase tracking-wider mb-2">Mid-scale</div>
+                <h4 className="text-lg font-semibold text-gray-100 mb-1">UNIQUE</h4>
+                <div className="text-xs text-gray-500 mb-3">Ministral-3-8B &middot; sparsity-aware LoRA &middot; <a href="https://arxiv.org/abs/2605.27740" className="text-emerald-400 hover:underline">arxiv 2605.27740</a></div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <div className="text-4xl font-bold text-slate-200">~0<span className="text-xl text-slate-400">pp</span></div>
+                  <div className="text-xs text-emerald-300 font-mono">matches dense</div>
+                </div>
+                <div className="text-xs text-gray-500 mb-3">at fixed sparse KV budget on 8B</div>
+                <div className="flex flex-wrap gap-1 text-xs font-mono">
+                  <span className="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">8B scale</span>
+                  <span className="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">soft mask</span>
+                  <span className="px-2 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/50 text-cyan-300">external</span>
+                </div>
+              </div>
+
+              {/* bronze */}
+              <div className="rounded-xl border-2 border-orange-700/60 bg-gradient-to-br from-orange-950/40 to-slate-900/30 p-5 relative shadow-lg shadow-orange-900/20">
+                <div className="absolute -top-3 -right-3 bg-orange-400 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#129353; 3RD</div>
+                <div className="text-xs font-mono text-orange-300 uppercase tracking-wider mb-2">Modern small</div>
+                <h4 className="text-lg font-semibold text-gray-100 mb-1">KRI-FT</h4>
+                <div className="text-xs text-gray-500 mb-3">SmolLM2-360M (RoPE + GQA) &middot; same recipe ported</div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <div className="text-4xl font-bold text-orange-300">~20<span className="text-xl text-orange-400">%</span></div>
+                  <div className="text-xs text-amber-300 font-mono">KL reduction</div>
+                </div>
+                <div className="text-xs text-gray-500 mb-3">vs vanilla &middot; base already near routing floor</div>
+                <div className="flex flex-wrap gap-1 text-xs font-mono">
+                  <span className="px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 text-amber-300">narrowing</span>
+                  <span className="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">RoPE + GQA</span>
+                  <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">ceiling close</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto mb-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs uppercase tracking-wider text-gray-500 border-b border-gray-700">
+                    <th className="text-center py-2 px-3">#</th>
+                    <th className="text-left py-2 px-3">method</th>
+                    <th className="text-left py-2 px-3">model class</th>
+                    <th className="text-left py-2 px-3">routing-tolerance gain</th>
+                    <th className="text-left py-2 px-3">status</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-300">
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3 text-center text-amber-300 font-bold">1</td><td className="py-2 px-3 font-semibold"><span className="text-amber-200">KRI-FT</span></td><td className="py-2 px-3">GPT-2 small (124M)</td><td className="py-2 px-3 text-emerald-300">6.3x lower PPL @ ~23% KV; 8x fewer blocks @ L=1024</td><td className="py-2 px-3 text-emerald-300">validated, 3 seeds</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3 text-center text-slate-300 font-bold">2</td><td className="py-2 px-3 font-semibold">UNIQUE <a href="https://arxiv.org/abs/2605.27740" className="text-emerald-400 hover:underline text-xs">arxiv 2605.27740</a></td><td className="py-2 px-3">Ministral-3-8B</td><td className="py-2 px-3 text-emerald-300">matches dense baseline at fixed sparse KV</td><td className="py-2 px-3 text-cyan-300">external; mid-scale evidence</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3 text-center text-orange-300 font-bold">3</td><td className="py-2 px-3 font-semibold">KRI-FT</td><td className="py-2 px-3">SmolLM2-360M (RoPE + GQA)</td><td className="py-2 px-3 text-amber-300">~20% KL reduction (narrowing; base near floor)</td><td className="py-2 px-3 text-amber-300">conditional; depends on base</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3 text-center text-gray-500">4</td><td className="py-2 px-3 font-semibold">KRI-FT</td><td className="py-2 px-3">7B / 8B</td><td className="py-2 px-3 text-cyan-300">decisive 7B oracle-frontier experiment pending</td><td className="py-2 px-3 text-cyan-300">open &mdash; see R&amp;D table</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3 text-center text-gray-500">5</td><td className="py-2 px-3 font-semibold">Dense-FT (control)</td><td className="py-2 px-3">GPT-2 small (124M)</td><td className="py-2 px-3 text-gray-400">tied with vanilla under routing</td><td className="py-2 px-3 text-gray-500">control &mdash; isolates the FT signal</td></tr>
+                  <tr><td className="py-2 px-3 text-center text-gray-500">&mdash;</td><td className="py-2 px-3 font-semibold">Vanilla</td><td className="py-2 px-3">any</td><td className="py-2 px-3 text-gray-500">baseline; degrades sharply under aggressive routing</td><td className="py-2 px-3 text-gray-500">reference</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-gray-400 text-xs leading-6">
+              <strong className="text-gray-300">How to read this.</strong> Gain is method-specific because the targets differ: KRI-FT is measured on
+              perplexity / KL under matched routing; UNIQUE is measured on dense vs sparse-KV downstream accuracy. The bar that matters across rows
+              is &ldquo;does the method narrow the gap between routed and dense at the same KV budget?&rdquo; All three medalists do; the 7B/8B row is the
+              open question.
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6 justify-center">
@@ -274,9 +372,52 @@
               <p className="text-gray-400 text-sm">KRI-FT's late-position loss goes below its early-position loss under routing — direct evidence it pushes long-range information into recent hidden states. An oracle block selector agrees: KRI-FT is at the floor with zero global blocks where vanilla cannot reach it with sixteen.</p>
             </div>
             <div className="card rounded-xl p-5">
-              <h4 className="font-semibold text-red-400 mb-2">A conditional tool, honestly</h4>
+              <h4 className="font-semibold text-red-400 mb-2">A conditional tool</h4>
               <p className="text-gray-400 text-sm">At iso-retention the KRI score is not better than sink+recent; the win is in the model. On modern GQA models the effect shrinks to a few percent because they start near the floor. Use KRI-FT where a base model degrades under routing, skip it where it does not.</p>
             </div>
+          </div>
+
+          <div className="card rounded-xl p-6 mt-10">
+            <h3 className="text-lg font-semibold mb-3">Status: parked, viability open</h3>
+            <p className="text-gray-300 text-sm leading-7 mb-3">
+              The GPT-2 / SmolLM2 recipe did not scale cleanly past 3B with the LoRA rank, adapted projections, hard-mask training, and unrecalibrated KRI-D selector that line used. That is a finding about the recipe, not a verdict on KRI-FT in general.
+            </p>
+            <p className="text-gray-400 text-sm leading-7 mb-3">
+              Recent work cuts the other way: <a href="https://arxiv.org/abs/2605.27740" className="text-emerald-400 hover:underline">UNIQUE</a> sparsity-aware LoRA on 8B matches the dense baseline at fixed sparse budgets; sub-token routing improves with scale (99.1% at 7B, 99.8% at 72B); <a href="https://arxiv.org/abs/2508.17032" className="text-emerald-400 hover:underline">Diaz</a> finds keys stable and values absorbing learned compression, which makes a K-heavy KRI-FT objective suspect. The decisive next experiment is one 7B/8B oracle-frontier test with a soft-mask objective, the deployed K=16 mask, recalibrated KRI-D after FT, and a value-side LoRA condition.
+            </p>
+          </div>
+
+          <div className="card rounded-xl p-6 mt-6">
+            <h3 className="text-lg font-semibold mb-3">Future R&amp;D outlets</h3>
+            <p className="text-gray-400 text-sm mb-4">Each row is a concrete next experiment. Status is one of <span className="text-amber-300">required</span>, <span className="text-cyan-300">open</span>, <span className="text-gray-500">low probability</span>, or <span className="text-gray-500">defer</span>.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs uppercase tracking-wider text-gray-500 border-b border-gray-700">
+                    <th className="text-left py-2 px-3">direction</th>
+                    <th className="text-left py-2 px-3">status</th>
+                    <th className="text-left py-2 px-3">smallest decisive test</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-300">
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Oracle routability frontier at 7B/8B</td><td className="py-2 px-3 text-amber-300">required</td><td className="py-2 px-3 text-gray-400">Base vs rank-64 QKVO under oracle K=16: does the frontier move?</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">LoRA rank scaling</td><td className="py-2 px-3 text-cyan-300">open</td><td className="py-2 px-3 text-gray-400">Rank 16 / 64 / 128, normalized by model width</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">K-side vs value-side adaptation</td><td className="py-2 px-3 text-cyan-300">high priority</td><td className="py-2 px-3 text-gray-400">QK vs VO vs QKVO factorial at 7B</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Hard mask vs soft-mask training</td><td className="py-2 px-3 text-cyan-300">high priority</td><td className="py-2 px-3 text-gray-400">Same run with sigmoid boundary mask</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Selector recalibration</td><td className="py-2 px-3 text-amber-300">required</td><td className="py-2 px-3 text-gray-400">Old pre-FT KRI-D prior vs recomputed KRI-D after FT</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">End-to-end routed serving</td><td className="py-2 px-3 text-cyan-300">open</td><td className="py-2 px-3 text-gray-400">Run trained checkpoint through the <a href="routing.html" className="text-emerald-400 hover:underline">routing branch</a> at K=16</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Budget robustness</td><td className="py-2 px-3 text-cyan-300">open</td><td className="py-2 px-3 text-gray-400">Train K=16; evaluate at K=8, 16, 32</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Cross-task generalization</td><td className="py-2 px-3 text-cyan-300">open</td><td className="py-2 px-3 text-gray-400">Train on one long-context corpus, evaluate on two unseen</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">xa25 complementarity</td><td className="py-2 px-3 text-cyan-300">open</td><td className="py-2 px-3 text-gray-400">KRI-FT alone vs +xa25 at matched budget</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">K16/V8 asymmetric KV interaction</td><td className="py-2 px-3 text-gray-400">secondary</td><td className="py-2 px-3 text-gray-400">Full precision vs asymmetric KV after FT</td></tr>
+                  <tr className="border-b border-gray-800"><td className="py-2 px-3">Cross-model prior transfer</td><td className="py-2 px-3 text-gray-500">low probability</td><td className="py-2 px-3 text-gray-400">Rank-correlation of block scores across model sizes</td></tr>
+                  <tr><td className="py-2 px-3">Linear-attention models</td><td className="py-2 px-3 text-gray-500">defer</td><td className="py-2 px-3 text-gray-400">No KV-block routing analogue until a concrete state-pruning operator exists</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-gray-400 text-sm mt-4 leading-7">
+              <strong className="text-gray-300">Kill criterion.</strong> If the oracle frontier at 7B/8B does not move by at least 3 absolute points (matched task, matched mask, two seeds), kill the KRI-FT line at that scale. If the oracle moves but recomputed KRI-D does not, the training vehicle is alive and the selector is the failure.
+            </p>
           </div>
 
           <div className="card rounded-xl p-6 mt-8 text-center">
@@ -291,6 +432,12 @@
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
             <p className="mb-2">
               <a href="index.html" className="hover:text-gray-400">Home</a>
+              <span className="mx-2">&middot;</span>
+              <a href="kri.html" className="hover:text-gray-400">KRI</a>
+              <span className="mx-2">&middot;</span>
+              <a href="routing.html" className="hover:text-gray-400">Routing</a>
+              <span className="mx-2">&middot;</span>
+              <a href="spf.html" className="hover:text-gray-400">SPF</a>
               <span className="mx-2">&middot;</span>
               <a href="https://github.com/mcgrof/knlp" className="hover:text-gray-400">GitHub</a>
               <span className="mx-2">&middot;</span>

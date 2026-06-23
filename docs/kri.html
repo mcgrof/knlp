@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>knlp KRI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface-2: #1a2332;
+    --border: #334155; --text: #cbd5e1; --muted: #94a3b8;
+    --green: #22c55e; --blue: #60a5fa; --purple: #c084fc;
+    --amber: #f59e0b; --cyan: #22d3ee; --rose: #fb7185;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+  .card { background: linear-gradient(145deg, var(--surface), var(--surface-2)); border: 1px solid var(--border); border-radius: 14px; }
+  .panel { background: linear-gradient(145deg, #172030, #141c2a); border: 1px solid var(--border); border-radius: 14px; }
+  .code-block { background: #0b1220; border: 1px solid #23324a; border-radius: 12px; overflow: hidden; margin: 1rem 0 1.5rem; }
+  .code-title { font-family: var(--mono); font-size: 12px; color: var(--muted); background: #10192a; border-bottom: 1px solid #23324a; padding: 10px 14px; }
+  pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #dbe7f3; }
+  code.inline { font-family: var(--mono); font-size: 0.92em; padding: 0.1rem 0.35rem; border-radius: 4px; background: #172033; border: 1px solid #253247; }
+  .kw { color: #f472b6; } .fn { color: #93c5fd; } .nm { color: #67e8f9; }
+  .cm { color: #64748b; } .str { color: #86efac; } .num { color: #fbbf24; }
+  .op { color: #cbd5e1; } .type { color: #c084fc; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: #94a3b8; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #243244; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .good { color: #4ade80; font-weight: 600; }
+  .warn { color: #fbbf24; font-weight: 600; }
+  .bad  { color: #fb7185; font-weight: 600; }
+  .info { color: #7dd3fc; font-weight: 600; }
+  .mini-note { border-left: 3px solid var(--green); background: rgba(34, 197, 94, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-warn { border-left: 3px solid var(--amber); background: rgba(245, 158, 11, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .section-link { color: #60a5fa; }
+  .section-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <header class="text-center mb-14">
+      <div class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs font-mono text-slate-400 mb-5">
+        knlp / kv cache routing
+      </div>
+      <h1 class="text-5xl font-semibold tracking-tight text-slate-100 mb-4">KRI</h1>
+      <p class="text-lg text-slate-400 max-w-4xl mx-auto leading-8">
+        KRI is a family of training-free algorithms for picking which KV blocks
+        each request should attend to. Compute a per-block score offline, write
+        it as a <code class="inline">.pt</code> prior, load it at serve time
+        through the routing substrate, take the top K. No model changes; no
+        custom inference; the same model that produced the prior serves the
+        request. Knlp leverages
+        <a class="text-emerald-400 hover:underline" href="#why-cartridges">vLLM cartridges as the routing accelerator</a>,
+        so swapping algorithms and sweeping K becomes decode-only iteration,
+        not prefill-per-experiment.
+      </p>
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+        <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
+        <a href="routing.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">Routing substrate</a>
+        <a href="kri_ft_visualization.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 transition-colors">KRI-FT</a>
+        <a href="spf.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 transition-colors">SPF</a>
+        <a href="https://github.com/mcgrof/knlp" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors">knlp repository</a>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-routing" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">vLLM routing branch</a>
+        <a href="https://github.com/mcgrof/vllm/tree/20260622-spf" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 transition-colors">vLLM SPF branch</a>
+      </div>
+    </header>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">What KRI is</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          KRI stands for KV Routing Index &mdash; a family of training-free
+          per-block scorers. Each variant answers the same question with a
+          different signal: <em>how much does each KV block contribute to the
+          quality of the output, conditional on the rest of the cache?</em>
+          Variants split on whether the score is computed from attention
+          weights, from logit shifts under leave-one-block-out, from gradients,
+          from query-aware geometry, or from spectral structure on the block
+          graph.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          Bake the prior once per cartridge. Ship the <code class="inline">.pt</code>
+          file alongside the cartridge. Load it through the
+          <code class="inline">CartridgeKRIProvider</code> on the
+          <a class="section-link" href="routing.html">routing branch</a>; the
+          connector takes care of the top-K selection per request and the
+          sparse inject into paged cache.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 mt-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Training</div>
+            <div class="text-3xl font-semibold text-green-400">none</div>
+            <div class="text-sm text-slate-400 mt-2">
+              The model is not modified. Bake the prior with the same checkpoint
+              you serve.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Cost</div>
+            <div class="text-3xl font-semibold text-blue-400">offline</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Most variants need one prefill plus a per-block ablation. KRI-Q
+              and KRI-T compute at request time and stay cheap.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Production leader</div>
+            <div class="text-3xl font-semibold text-purple-400">KRI-D-kv-sum</div>
+            <div class="text-sm text-slate-400 mt-2">
+              K=16 on LongHealth with xa25 cross-attention refinement:
+              <strong>26.5%</strong> vs random middle <strong>21.5%</strong>,
+              5&sigma; at n=200.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-2">
+          <h2 class="text-2xl font-semibold text-slate-100">Leaderboard</h2>
+          <div class="text-xs font-mono text-slate-500">LongHealth &middot; K=16 &middot; xa25 overlay &middot; n=200 &middot; 3 seeds</div>
+        </div>
+        <p class="text-slate-400 leading-7 mb-5">
+          Where each algorithm lands on the production benchmark. The bar is &ldquo;beat
+          random middle at 5&sigma;.&rdquo; KRI-D-kv-sum holds the line; xa25 is the
+          cross-attention repair overlay applied on top of any selector
+          (it implements the CacheBlend algorithm, <a class="section-link" href="https://arxiv.org/abs/2405.16444">arxiv 2405.16444</a>,
+          at a fixed 25% HKVD refresh ratio). Numbers are the validated 2026-04
+          sweep; lower-K is harder, higher-K closes the gap to full attention.
+        </p>
+
+        <!-- what % means -->
+        <div class="rounded-xl border border-emerald-500/40 bg-emerald-950/15 p-4 mb-8">
+          <div class="flex items-start gap-3">
+            <div class="text-emerald-300 text-lg">%</div>
+            <div class="text-sm leading-7">
+              <strong class="text-emerald-200">The %, in one sentence.</strong>
+              <span class="text-slate-300">
+                Every score on this leaderboard is
+                <strong class="text-emerald-200">LongHealth question accuracy</strong> &mdash;
+                the percentage of multi-document clinical-QA questions the model answers
+                correctly when serving the routed cartridge. n=200 questions, deterministic
+                logprob scoring, 3 seeds. Higher is better. 26.5% means the model got 53 of
+                200 questions right under that routing configuration. Full attention on the
+                same slice sits near 30%; random middle sits at 21.5%; the gap between them
+                is what every algorithm on this leaderboard is trying to close at 1/8 of the
+                cache budget.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- naming-convention decoder -->
+        <div class="rounded-xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/20 via-slate-900/40 to-slate-900/40 p-5 mb-8">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="text-xs font-mono uppercase tracking-wider text-cyan-300">Naming convention</div>
+            <div class="text-xs font-mono text-slate-500">read the structural-pinning IDs</div>
+          </div>
+          <p class="text-slate-300 leading-7 mb-4 text-sm">
+            The <code class="inline">A&lt;a&gt;R&lt;r&gt;K&lt;k&gt;</code> tag
+            describes how the K-block budget is split across three regions of
+            the prefix. The cartridge prefix is divided into anchor (head),
+            mid, and recent (tail); each tag pins specific counts to each
+            region.
+          </p>
+          <div class="grid md:grid-cols-4 gap-3 mb-4 text-sm">
+            <div class="panel p-3">
+              <div class="text-xs font-mono uppercase tracking-wider text-emerald-300 mb-1">A&lt;a&gt;</div>
+              <div class="font-semibold text-slate-100">Anchor</div>
+              <div class="text-xs text-slate-400 leading-5 mt-1">First <em>a</em> blocks &mdash; system prompt, task spec, exemplars. Always kept.</div>
+            </div>
+            <div class="panel p-3">
+              <div class="text-xs font-mono uppercase tracking-wider text-amber-300 mb-1">R&lt;r&gt;</div>
+              <div class="font-semibold text-slate-100">Recent</div>
+              <div class="text-xs text-slate-400 leading-5 mt-1">Last <em>r</em> blocks &mdash; query, latest turn, tail context. Always kept.</div>
+            </div>
+            <div class="panel p-3">
+              <div class="text-xs font-mono uppercase tracking-wider text-purple-300 mb-1">K&lt;k&gt;</div>
+              <div class="font-semibold text-slate-100">KRI-mid</div>
+              <div class="text-xs text-slate-400 leading-5 mt-1">Best <em>k</em> middle blocks ranked by KRI score. Selected per request.</div>
+            </div>
+            <div class="panel p-3">
+              <div class="text-xs font-mono uppercase tracking-wider text-cyan-300 mb-1">total</div>
+              <div class="font-semibold text-slate-100">a + r + k</div>
+              <div class="text-xs text-slate-400 leading-5 mt-1">Sums to the routing budget K. For A1R2K13 that is 1 + 2 + 13 = 16.</div>
+            </div>
+          </div>
+          <div class="code-block">
+            <div class="code-title">prefix layout under A1R2K13 (K=16)</div>
+            <pre><span class="cm"># 128-block cartridge prefix, K=16 budget, A1R2K13 split:</span>
+
+block:   <span class="num">0</span>   <span class="num">1</span>   <span class="num">2</span>   <span class="num">3</span>   <span class="num">4</span>   <span class="num">5</span>   <span class="num">6</span>   <span class="num">7</span>  <span class="op">...</span>  <span class="num">120</span> <span class="num">121</span> <span class="num">122</span> <span class="num">123</span> <span class="num">124</span> <span class="num">125</span> <span class="num">126</span> <span class="num">127</span>
+         <span class="str">[A]</span> <span class="cm">[ -- pick best 13 by KRI score in the middle 125 blocks -- ]</span> <span class="str">[R][R]</span>
+         <span class="str">^ anchor=1</span>                                                              <span class="str">^^^ recent=2</span></pre>
+          </div>
+          <p class="text-slate-400 leading-7 text-sm mt-3">
+            Examples: <code class="inline">A0R0K16</code> is pure KRI selection
+            with no structural pinning. <code class="inline">A4R4K8</code>
+            pins half the budget structurally and lets KRI pick the other
+            half. <code class="inline">A1R2K13</code> is the production
+            structural choice &mdash; minimal structural anchoring, KRI does
+            most of the work.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-4 mb-8">
+          <!-- gold -->
+          <div class="rounded-xl border-2 border-amber-400/70 bg-gradient-to-br from-amber-950/40 to-slate-900/30 p-5 relative shadow-lg shadow-amber-900/20">
+            <div class="absolute -top-3 -right-3 bg-amber-400 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#127942; 1ST</div>
+            <div class="text-xs font-mono text-amber-300 uppercase tracking-wider mb-2">Production leader</div>
+            <h3 class="text-lg font-semibold text-slate-100 mb-1">KRI-D-kv-sum</h3>
+            <div class="text-xs text-slate-500 mb-3">+ A1R2K13 (1 anchor + 2 recent + 13 KRI mid) &middot; + xa25</div>
+            <div class="flex items-baseline gap-2 mb-2">
+              <div class="text-4xl font-bold text-amber-300">26.5<span class="text-xl text-amber-400">%</span></div>
+              <div class="text-xs text-emerald-300 font-mono">+5.0pp</div>
+            </div>
+            <div class="text-xs text-slate-500 mb-3">vs random middle &middot; 5&sigma; at n=200</div>
+            <div class="flex flex-wrap gap-1 text-xs font-mono">
+              <span class="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">offline</span>
+              <span class="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">query-agnostic</span>
+              <span class="px-2 py-0.5 rounded bg-purple-900/40 border border-purple-700/50 text-purple-300">5&sigma; validated</span>
+            </div>
+          </div>
+
+          <!-- silver -->
+          <div class="rounded-xl border-2 border-slate-400/60 bg-gradient-to-br from-slate-800/40 to-slate-900/30 p-5 relative shadow-lg shadow-slate-900/20">
+            <div class="absolute -top-3 -right-3 bg-slate-300 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#129352; 2ND</div>
+            <div class="text-xs font-mono text-slate-300 uppercase tracking-wider mb-2">Structural baseline</div>
+            <h3 class="text-lg font-semibold text-slate-100 mb-1">A1R2K13 hybrid</h3>
+            <div class="text-xs text-slate-500 mb-3">anchor=1 &middot; recent=2 &middot; KRI-mid=13 &middot; + xa25</div>
+            <div class="flex items-baseline gap-2 mb-2">
+              <div class="text-4xl font-bold text-slate-200">~24<span class="text-xl text-slate-400">%</span></div>
+              <div class="text-xs text-emerald-300 font-mono">+2.5pp</div>
+            </div>
+            <div class="text-xs text-slate-500 mb-3">vs random middle &middot; xa25 lifts +1.5pp</div>
+            <div class="flex flex-wrap gap-1 text-xs font-mono">
+              <span class="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">offline</span>
+              <span class="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">query-agnostic</span>
+              <span class="px-2 py-0.5 rounded bg-amber-900/40 border border-amber-700/50 text-amber-300">absorbs bad probes</span>
+            </div>
+          </div>
+
+          <!-- bronze -->
+          <div class="rounded-xl border-2 border-orange-700/60 bg-gradient-to-br from-orange-950/40 to-slate-900/30 p-5 relative shadow-lg shadow-orange-900/20">
+            <div class="absolute -top-3 -right-3 bg-orange-400 text-slate-900 text-xs font-bold font-mono px-3 py-1 rounded-full shadow">&#129353; 3RD</div>
+            <div class="text-xs font-mono text-orange-300 uppercase tracking-wider mb-2">Policy fallback</div>
+            <h3 class="text-lg font-semibold text-slate-100 mb-1">Hybrid anchor + recency</h3>
+            <div class="text-xs text-slate-500 mb-3">no prior baked &middot; pure policy</div>
+            <div class="flex items-baseline gap-2 mb-2">
+              <div class="text-4xl font-bold text-orange-300">~22<span class="text-xl text-orange-400">%</span></div>
+              <div class="text-xs text-emerald-300 font-mono">+0.5pp</div>
+            </div>
+            <div class="text-xs text-slate-500 mb-3">vs random middle &middot; zero bake cost</div>
+            <div class="flex flex-wrap gap-1 text-xs font-mono">
+              <span class="px-2 py-0.5 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">zero bake</span>
+              <span class="px-2 py-0.5 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">policy-only</span>
+              <span class="px-2 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/50 text-cyan-300">always-available</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="text-sm text-slate-400 leading-6 mb-3 px-4 py-3 rounded-lg bg-slate-900/40 border border-slate-700/50">
+          <strong class="text-slate-200">Reading the table.</strong>
+          The <em>score</em> column is LongHealth question accuracy (% of 200 questions
+          answered correctly at K=16 routing budget with xa25 overlay). The <em>vs random</em>
+          column is the gap to the random-middle baseline at 21.5%. Higher is better in both.
+        </div>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th class="text-center">#</th>
+                <th>algorithm</th>
+                <th>score</th>
+                <th>vs random</th>
+                <th>signal</th>
+                <th>regime</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-center"><strong class="text-amber-300">1</strong></td>
+                <td><strong class="text-amber-200">KRI-D-kv-sum + xa25</strong></td>
+                <td><strong class="text-amber-200">26.5%</strong></td>
+                <td class="good">+5.0pp / 5&sigma;</td>
+                <td>hidden L2 leave-one-block-out, sum across layers</td>
+                <td>multi-needle long-context</td>
+              </tr>
+              <tr>
+                <td class="text-center">2</td>
+                <td><strong>A1R2K13 + xa25</strong></td>
+                <td>~24%</td>
+                <td class="good">+2.5pp</td>
+                <td>structural (anchor + recent) + KRI-D mid blocks</td>
+                <td>regime-robust; absorbs bad probes</td>
+              </tr>
+              <tr>
+                <td class="text-center">3</td>
+                <td>Hybrid (anchor + recency)</td>
+                <td>~22%</td>
+                <td class="good">+0.5pp</td>
+                <td>position-only policy</td>
+                <td>zero-bake fallback</td>
+              </tr>
+              <tr>
+                <td class="text-center">4</td>
+                <td>attention_prefill prior + xa25</td>
+                <td>~22%</td>
+                <td class="info">flat</td>
+                <td>layer-mean prefill attention probability</td>
+                <td>recency-biased on causal attention</td>
+              </tr>
+              <tr>
+                <td class="text-center">5</td>
+                <td>eigenvector centrality + xa25</td>
+                <td>pending</td>
+                <td class="info">&mdash;</td>
+                <td>dominant eigenvector of block-attention graph</td>
+                <td>addresses KRI-A recency bias and KRI-D marginal-MI</td>
+              </tr>
+              <tr>
+                <td class="text-center">&mdash;</td>
+                <td><strong>Random middle</strong> (baseline)</td>
+                <td><strong>21.5%</strong></td>
+                <td class="info">0.0pp</td>
+                <td>uniformly sampled mid-prefix blocks</td>
+                <td>baseline; xa25 stays flat (-0.5pp)</td>
+              </tr>
+              <tr>
+                <td class="text-center">&mdash;</td>
+                <td>Recency-only (last K)</td>
+                <td>lower</td>
+                <td class="bad">&minus;</td>
+                <td>last K blocks only</td>
+                <td>end-weighted tasks; collapses on beginning-weighted</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mini-note">
+          <strong class="text-green-300">How to read this.</strong>
+          Numbers are LongHealth K=16 accuracy with xa25 cross-attention repair
+          overlay applied. Full attention on this slice is ~30%, so the gap from
+          21.5% (random) to 26.5% (production) closes about a third of the way to
+          the full-attention ceiling at 1/8 of the cache budget. xa25 lifts the
+          good selectors (KRI-D +3.5pp, A1R2K13 +1.5pp) and stays flat on bad ones
+          (random middle -0.5pp) &mdash; it is a quality amplifier, not a free lift.
+        </div>
+
+        <div class="mini-note-warn mt-4">
+          <strong class="text-amber-300">Where the leaderboard does not apply.</strong>
+          Single-needle NIAH-copy: random middle ties KRI on this workload &mdash;
+          placement carries the value, not content selection. Use the leaderboard
+          for multi-block or multi-needle long-context where content selection
+          actually moves the needle.
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The variants</h2>
+
+        <div class="overflow-x-auto mb-4">
+          <table>
+            <thead>
+              <tr>
+                <th>variant</th>
+                <th>per-block score</th>
+                <th>where computed</th>
+                <th>strength</th>
+                <th>weakness</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>KRI-D-kv-sum</strong></td>
+                <td>Sum across layers of L2 between full hidden and leave-block-out hidden</td>
+                <td>offline; one prefill per block</td>
+                <td>robust leader on multi-needle long-context</td>
+                <td>marginal-MI redundancy when needles co-occur</td>
+              </tr>
+              <tr>
+                <td>KRI-D</td>
+                <td>KL(logits_full || logits_leave-block-out)</td>
+                <td>offline; one prefill per block</td>
+                <td>direct logit-level signal</td>
+                <td>weaker than kv-sum on multi-block ablation</td>
+              </tr>
+              <tr>
+                <td>KRI-A</td>
+                <td>Mean per-layer attention probability mass per block during prefill</td>
+                <td>one prefill</td>
+                <td>baseline; cheapest after prefill</td>
+                <td>recency bias on causal attention</td>
+              </tr>
+              <tr>
+                <td>KRI-G</td>
+                <td>L2 of gradient of LM-head loss w.r.t. block-mean K</td>
+                <td>one backward</td>
+                <td>tracks loss curvature</td>
+                <td>numerically sensitive on low-precision</td>
+              </tr>
+              <tr>
+                <td>KRI-Q</td>
+                <td>Q&middot;K agreement against block-mean K (per query)</td>
+                <td>online</td>
+                <td>query-aware, free at serve time</td>
+                <td>flat on untrained block-mean K</td>
+              </tr>
+              <tr>
+                <td>KRI-T (TriAttention)</td>
+                <td>Pre-RoPE Q/K trigonometric factorization: content-stationary centers + position-modulated trig series</td>
+                <td>online</td>
+                <td>query-aware, position-aware, zero bake cost</td>
+                <td>requires multi-needle evaluation under cross-task drift</td>
+              </tr>
+              <tr>
+                <td>kmeans_keys</td>
+                <td>K-means cluster centroids over block-mean K; rank by cluster size</td>
+                <td>offline</td>
+                <td>captures structural redundancy</td>
+                <td>k-means hyper-sensitivity to init</td>
+              </tr>
+              <tr>
+                <td>attention_prefill</td>
+                <td>Layer-mean prefill attention (post-softmax) per block</td>
+                <td>one prefill</td>
+                <td>functional, prompt-conditioned signal</td>
+                <td>recency-skewed, untrained-LM-head failure mode</td>
+              </tr>
+              <tr>
+                <td>eigenvector centrality</td>
+                <td>Dominant eigenvector of the block-level prefill attention graph</td>
+                <td>one prefill + power iteration</td>
+                <td>addresses both KRI-A recency bias and KRI-D marginal-MI redundancy</td>
+                <td>head-pooling weights load-bearing; needs synthetic-Q variant</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mini-note">
+          <strong class="text-green-300">The production stack.</strong>
+          KRI-D-kv-sum for selection; structural pinning A1R2K13 (anchor=1,
+          recent=2, KRI-mid=13) at K=16; xa25 cross-attention refinement as
+          the post-load repair overlay. Run on the routing branch's
+          <code class="inline">CartridgeConnector</code> with
+          <code class="inline">CartridgeKRIProvider</code> loading the prior.
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div id="why-cartridges" class="rounded-2xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/30 via-slate-900/40 to-slate-900/30 p-6 shadow-lg shadow-emerald-950/20 scroll-mt-6">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="text-2xl">&#9889;</div>
+          <h2 class="text-2xl font-semibold text-emerald-200">Why cartridges are a routing R&amp;D accelerator</h2>
+        </div>
+        <p class="text-slate-300 leading-8 mb-5">
+          A <strong>cartridge</strong> is a pre-computed KV cache shipped
+          alongside the model. The cartridge tokens have already been pushed
+          through the transformer at bake time; the resulting K and V tensors
+          are saved to disk as fixed-size blocks. At serve time vLLM loads
+          those blocks straight into paged cache &mdash; <strong>no prefill
+          runs over the cartridge prefix</strong>. The model sees the cache
+          as if it had just finished a long prompt it never actually
+          processed.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-4 mb-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Without cartridges</div>
+            <div class="text-2xl font-semibold text-rose-300">~800 ms / request</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Each routing experiment re-prefills the 8K-token prefix every
+              time. The prefix dominates the request budget.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">With cartridges</div>
+            <div class="text-2xl font-semibold text-emerald-300">~71 ms / request</div>
+            <div class="text-sm text-slate-400 mt-2">
+              Cache hit: blocks already on disk, injected into paged cache.
+              About <strong class="text-emerald-300">11&times; faster</strong> than full prefill.
+            </div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Where the time goes</div>
+            <div class="text-2xl font-semibold text-blue-300">forward only</div>
+            <div class="text-sm text-slate-400 mt-2">
+              The query, the K decoded tokens, and the per-block selection.
+              Iteration speed becomes a function of decode, not prefill.
+            </div>
+          </div>
+        </div>
+
+        <h3 class="text-lg font-semibold text-slate-100 mb-3">What this unlocks for KRI work</h3>
+        <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7 mb-5">
+          <li>
+            <strong>Bake once, query thousands.</strong> Bake a KRI prior
+            offline once per cartridge (minutes-to-hours for the
+            leave-one-block-out variants). Every subsequent request reuses
+            both the cartridge and the prior; the per-query cost is
+            decode-only.
+          </li>
+          <li>
+            <strong>Stable block geometry.</strong> A cartridge ships with
+            a fixed number of fixed-size blocks. The block boundaries do
+            not change across requests, which means a per-block score
+            baked once stays valid for every future query against that
+            cartridge.
+          </li>
+          <li>
+            <strong>Apples-to-apples A/B.</strong> Two routing algorithms
+            evaluated on the same cartridge see exactly the same K and V
+            tensors at exactly the same positions. The only thing that
+            differs is which blocks the connector lets attention see.
+          </li>
+          <li>
+            <strong>No prefill noise.</strong> Without a cartridge, two
+            runs of the same prompt can produce slightly different KV
+            because of nondeterminism in attention kernels. With a
+            cartridge, the KV is bit-identical across runs &mdash; routing
+            comparisons stop competing with prefill jitter.
+          </li>
+          <li>
+            <strong>GPU residency keeps cartridges hot.</strong> The
+            connector pins a working set of cartridges on-GPU; sweeping
+            100 routing configurations against one cartridge does not pay
+            the load cost more than once.
+          </li>
+        </ul>
+
+        <div class="rounded-xl border border-emerald-500/50 bg-emerald-950/20 p-5 mb-5">
+          <div class="flex items-start gap-3 mb-2">
+            <div class="text-emerald-300 text-lg">&#10003;</div>
+            <div>
+              <strong class="text-emerald-200">No LMCache required.</strong>
+              <span class="text-slate-300">
+                The cartridge accelerator loop runs on the
+                <code class="inline">CartridgeConnector</code> alone &mdash; a
+                <code class="inline">.pt</code> file on local disk,
+                <code class="inline">CartridgeStore</code> loading it into
+                paged cache, and the routing-prior plugin doing block selection.
+                That is the entire stack you need to ship and compare a new
+                KRI variant.
+              </span>
+            </div>
+          </div>
+          <div class="grid md:grid-cols-2 gap-3 mt-3 text-sm">
+            <div class="panel p-3">
+              <div class="text-xs font-mono text-emerald-300 uppercase tracking-wider mb-1">Without LMCache (default)</div>
+              <p class="text-slate-300 leading-6">
+                Single-process, single-GPU, single-node. Cartridge lives on
+                local disk; the connector loads it directly. Zero external
+                dependencies beyond vLLM and the routing branch. This is what
+                every result on this page was measured with.
+              </p>
+            </div>
+            <div class="panel p-3">
+              <div class="text-xs font-mono text-cyan-300 uppercase tracking-wider mb-1">With LMCache (optional)</div>
+              <p class="text-slate-300 leading-6">
+                Add LMCache only when you want cross-process tiering,
+                persistent shared storage, or cross-node serving. The routing
+                branch ships a native adapter with sparse
+                <code class="inline">retrieve_chunks</code> on the
+                <code class="inline">use_native</code> switch &mdash;
+                deployment plumbing, not a research dependency.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-amber-500/40 bg-amber-950/15 p-4 mb-5">
+          <div class="flex items-start gap-3">
+            <div class="text-amber-300 text-lg">!</div>
+            <div>
+              <strong class="text-amber-200">The scope.</strong>
+              <span class="text-slate-300">
+                Cartridges are an R&amp;D accelerator, not the only deployment target. A routing
+                algorithm validated on cartridges still has to be checked on plain prefix-cached
+                workloads before any production claim. The
+                <a class="section-link" href="routing.html">routing branch</a>
+                substrate works for both &mdash; the cartridge path is just the fastest place to
+                rule out bad ideas.
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="code-block">
+          <div class="code-title">The cartridge accelerator loop &mdash; one full KRI iteration</div>
+          <pre><span class="cm"># Once per cartridge (offline, minutes-to-hours):</span>
+$ python routing/bake_kri_yours.py \
+      --cartridge /data/carts/patient_00.pt \
+      --model meta-llama/Llama-3.2-3B-Instruct \
+      --out      /data/priors/patient_00_kri_yours.pt
+
+<span class="cm"># Then, for every routing config you want to try (~71 ms per request):</span>
+$ vllm serve meta-llama/Llama-3.2-3B-Instruct \
+      --kv-transfer-config '{
+          "kv_connector": "CartridgeConnector",
+          "kv_connector_extra_config": {
+              "cartridges": {"patient_00": "/data/carts/patient_00.pt"},
+              "routing": {
+                  "enabled": true,
+                  "K": 16,
+                  "priors": {"patient_00": "/data/priors/patient_00_kri_yours.pt"}
+              }
+          },
+          "kv_role": "kv_both"
+      }'
+
+<span class="cm"># Same cartridge, same prior, every request: decode only. Sweep K, sweep priors,</span>
+<span class="cm"># swap algorithms by pointing routing.priors at a different .pt file.</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">How a prior moves through the system</h2>
+        <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-5 mb-6">
+          <div class="text-xs font-mono uppercase tracking-wider text-green-400 mb-4">Offline (once per cartridge)</div>
+          <div class="code-block">
+            <pre>cartridge.pt + model
+    &darr;
+KRI baker (one of: bake_kri_d_kv_prior.py, bake_kri_t_prior.py, ...)
+    &darr;
+prior.pt = {
+    block_affinities: Tensor[num_layers, num_kv_heads, num_blocks],   # KRI-D-kv-sum
+    # or:
+    kmeans_blocks_perK: dict[int, list[int]],                          # per-K block lists
+    # or:
+    kmeans_blocks: list[int],                                          # legacy single list
+}</pre>
+          </div>
+          <div class="text-xs font-mono uppercase tracking-wider text-amber-400 mb-4 mt-6">At serve time (per request)</div>
+          <div class="code-block">
+            <pre>CartridgeConnector.__init__:
+    routing.priors[cart_id] = path/to/prior.pt
+    CartridgeKRIProvider.register_prior(prefix_hash=cart_id, prior_path=...)
+
+CartridgeConnector.update_state_after_alloc(request, ...):
+    manifest = CartridgeKRIProvider.get_manifest(
+        prefix_hash=cart_id,
+        query_hash=None,         # KRI-G path; query_hash=req for KRI-Q/KRI-T
+        K=routing.K,
+    )
+    _request_selected_block_ids[req_id] = set(manifest.block_indices)
+
+CartridgeConnector.get_block_skip_list(req_id, num_logical_blocks):
+    return sorted([b for b in range(num_logical_blocks)
+                   if b not in _request_selected_block_ids[req_id]])
+
+# Scheduler turns the skip list into null_block via
+# KVCacheManager.null_block_positions.
+# Attention backend skips null_block at non-selected positions.</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Scope: where KRI lands</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          Read KRI as content selection. Earlier evaluation on NIAH-copy showed
+          that, with position-matched random blocks of equal count, the
+          measured quality matches KRI &mdash; on that workload, what
+          matters is <em>placement</em> (which positions the model can see),
+          not <em>content</em> (which blocks). KRI's placement profile carries
+          most of its value at K small. On multi-needle long-context, KRI's
+          content selection adds measurable signal: LongHealth K=16 +
+          xa25 lifts KRI-D-kv-sum 5pp over random middle at 5&sigma; (n=200).
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-4 mt-5">
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Where KRI helps</div>
+            <div class="text-lg font-semibold text-green-300 mb-2">Multi-block needles, long context</div>
+            <p class="text-sm text-slate-400 leading-7">
+              LongHealth at K=16 with xa25. Content selection contributes
+              distinctively beyond placement.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Where KRI is neutral</div>
+            <div class="text-lg font-semibold text-amber-300 mb-2">Single-needle NIAH-copy</div>
+            <p class="text-sm text-slate-400 leading-7">
+              Position-matched random blocks match KRI. Placement carries
+              the value; content selection adds nothing.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Where KRI breaks</div>
+            <div class="text-lg font-semibold text-rose-300 mb-2">High-redundancy multi-needle</div>
+            <p class="text-sm text-slate-400 leading-7">
+              KRI-D's leave-one-block-out signal underweights blocks whose
+              information appears in multiple other blocks (marginal-MI
+              failure). Use kv-sum or eigenvector variants here.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-2">
+          <h2 class="text-2xl font-semibold text-slate-100">Ship a new KRI in an afternoon</h2>
+          <div class="flex gap-2 text-xs font-mono">
+            <span class="px-2 py-1 rounded bg-emerald-900/40 border border-emerald-700/50 text-emerald-300">~4 hours</span>
+            <span class="px-2 py-1 rounded bg-blue-900/40 border border-blue-700/50 text-blue-300">~120 LoC</span>
+            <span class="px-2 py-1 rounded bg-purple-900/40 border border-purple-700/50 text-purple-300">no vLLM patch needed</span>
+          </div>
+        </div>
+        <p class="text-slate-300 leading-8 mb-6">
+          Your idea becomes a routing algorithm in four steps. Each step has one
+          concrete file to write or one concrete config knob to set. If you can
+          produce a tensor that scores cartridge blocks, you can ship a KRI.
+        </p>
+
+        <!-- the cool 4-step strip -->
+        <div class="grid md:grid-cols-4 gap-4 mb-8">
+          <div class="rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/30 to-slate-900/30 p-5 relative">
+            <div class="absolute -top-3 -left-3 w-9 h-9 rounded-full bg-emerald-500 text-slate-900 font-bold text-lg flex items-center justify-center shadow-lg">1</div>
+            <div class="text-xs font-mono text-emerald-300 uppercase tracking-wider mb-2 mt-1">bake</div>
+            <h3 class="text-base font-semibold text-slate-100 mb-2">Write your scorer</h3>
+            <p class="text-sm text-slate-400 leading-6">
+              One Python script. Input: a cartridge + a model. Output: a
+              tensor of per-block scores.
+            </p>
+            <div class="mt-3 text-xs font-mono text-slate-500">
+              <span class="text-emerald-400">file:</span> <code>routing/bake_kri_&lt;you&gt;.py</code>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-blue-500/40 bg-gradient-to-br from-blue-950/30 to-slate-900/30 p-5 relative">
+            <div class="absolute -top-3 -left-3 w-9 h-9 rounded-full bg-blue-500 text-slate-900 font-bold text-lg flex items-center justify-center shadow-lg">2</div>
+            <div class="text-xs font-mono text-blue-300 uppercase tracking-wider mb-2 mt-1">serialize</div>
+            <h3 class="text-base font-semibold text-slate-100 mb-2">Save it as a <code class="inline">.pt</code></h3>
+            <p class="text-sm text-slate-400 leading-6">
+              Pick one of three on-disk schemas. The simplest is
+              <code class="inline">block_affinities</code>: a 3-D tensor and
+              you are done.
+            </p>
+            <div class="mt-3 text-xs font-mono text-slate-500">
+              <span class="text-blue-400">artifact:</span> <code>&lt;cart_id&gt;_kri_&lt;you&gt;.pt</code>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-purple-500/40 bg-gradient-to-br from-purple-950/30 to-slate-900/30 p-5 relative">
+            <div class="absolute -top-3 -left-3 w-9 h-9 rounded-full bg-purple-500 text-slate-900 font-bold text-lg flex items-center justify-center shadow-lg">3</div>
+            <div class="text-xs font-mono text-purple-300 uppercase tracking-wider mb-2 mt-1">register</div>
+            <h3 class="text-base font-semibold text-slate-100 mb-2">Point the connector at it</h3>
+            <p class="text-sm text-slate-400 leading-6">
+              One line in <code class="inline">extra_config</code>. No vLLM
+              code change. <code class="inline">CartridgeKRIProvider</code>
+              handles loading and top-K resolution.
+            </p>
+            <div class="mt-3 text-xs font-mono text-slate-500">
+              <span class="text-purple-400">config:</span> <code>routing.priors</code>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/30 to-slate-900/30 p-5 relative">
+            <div class="absolute -top-3 -left-3 w-9 h-9 rounded-full bg-amber-500 text-slate-900 font-bold text-lg flex items-center justify-center shadow-lg">4</div>
+            <div class="text-xs font-mono text-amber-300 uppercase tracking-wider mb-2 mt-1">measure</div>
+            <h3 class="text-base font-semibold text-slate-100 mb-2">Clear the bar or kill it</h3>
+            <p class="text-sm text-slate-400 leading-6">
+              Beat the production stack on LongHealth K=16 or document the
+              negative. Both outcomes ship.
+            </p>
+            <div class="mt-3 text-xs font-mono text-slate-500">
+              <span class="text-amber-400">bar:</span> <code>+&gt;0pp vs KRI-D-kv-sum</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- step 1 detail -->
+        <div class="rounded-xl border border-slate-700 bg-slate-900/40 p-6 mb-5">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 font-bold flex items-center justify-center text-sm">1</div>
+            <h3 class="text-lg font-semibold text-emerald-200">Write your scorer</h3>
+            <span class="text-xs font-mono text-slate-500">~60 LoC</span>
+          </div>
+          <p class="text-slate-300 leading-7 mb-4">
+            Compute one score per block. The signal can be anything &mdash;
+            attention probabilities, hidden-state distance under
+            leave-one-block-out, query-aware similarity, eigenvector centrality
+            on the block graph, your own idea. The shape is what matters.
+          </p>
+          <div class="code-block">
+            <div class="code-title">routing/bake_kri_yours.py</div>
+            <pre><span class="cm"># Required output shape:</span>
+<span class="cm">#   block_affinities: Tensor[num_layers, num_kv_heads, num_blocks]</span>
+<span class="cm"># The connector mean-pools across layers/heads and takes top-K per request.</span>
+
+<span class="kw">import</span> torch
+<span class="kw">from</span> transformers <span class="kw">import</span> AutoModelForCausalLM
+
+<span class="kw">def</span> <span class="fn">bake</span>(cartridge_path: str, model_id: str) <span class="op">-&gt;</span> torch.Tensor:
+    cart <span class="op">=</span> torch.load(cartridge_path)         <span class="cm"># your cartridge</span>
+    model <span class="op">=</span> AutoModelForCausalLM.from_pretrained(model_id).eval().cuda()
+    num_layers, num_heads, num_blocks <span class="op">=</span> shapes_from(cart)
+
+    scores <span class="op">=</span> torch.zeros(num_layers, num_heads, num_blocks)
+    <span class="kw">for</span> b <span class="kw">in</span> range(num_blocks):
+        scores[:, :, b] <span class="op">=</span> <span class="fn">your_signal</span>(model, cart, block_idx<span class="op">=</span>b)
+    <span class="kw">return</span> scores
+
+<span class="kw">if</span> __name__ <span class="op">==</span> <span class="str">"__main__"</span>:
+    scores <span class="op">=</span> <span class="fn">bake</span>(<span class="str">"patient_00.pt"</span>, <span class="str">"meta-llama/Llama-3.2-3B-Instruct"</span>)
+    torch.save({<span class="str">"block_affinities"</span>: scores}, <span class="str">"patient_00_kri_yours.pt"</span>)</pre>
+          </div>
+          <div class="mini-note">
+            <strong class="text-green-300">Tip.</strong>
+            If you cannot tell what a "block" is, run
+            <code class="inline">cartridge.num_tokens // block_size</code>.
+            Cartridge tokens divide evenly into fixed-size blocks; that count
+            is your last dimension.
+          </div>
+        </div>
+
+        <!-- step 2 detail -->
+        <div class="rounded-xl border border-slate-700 bg-slate-900/40 p-6 mb-5">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/50 text-blue-300 font-bold flex items-center justify-center text-sm">2</div>
+            <h3 class="text-lg font-semibold text-blue-200">Pick a schema</h3>
+            <span class="text-xs font-mono text-slate-500">choose one</span>
+          </div>
+          <p class="text-slate-300 leading-7 mb-4">
+            Three on-disk shapes are accepted. The first is the easiest and
+            covers most variants; only fall back to the others if your
+            algorithm fundamentally produces a different shape.
+          </p>
+          <div class="overflow-x-auto mb-4">
+            <table>
+              <thead>
+                <tr>
+                  <th>key</th>
+                  <th>shape / type</th>
+                  <th>when to use</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong><code class="inline">block_affinities</code></strong></td>
+                  <td><code class="inline">Tensor[L, H, N]</code></td>
+                  <td class="good">default. Continuous per-block scores. Connector picks top-K.</td>
+                </tr>
+                <tr>
+                  <td><code class="inline">kmeans_blocks_perK</code></td>
+                  <td><code class="inline">dict[int, list[int]]</code></td>
+                  <td>Your algorithm decides differently per K (e.g. k-means with re-clustering per budget).</td>
+                </tr>
+                <tr>
+                  <td><code class="inline">kmeans_blocks</code></td>
+                  <td><code class="inline">list[int]</code></td>
+                  <td>Legacy single list, ignored beyond first K entries.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- step 3 detail -->
+        <div class="rounded-xl border border-slate-700 bg-slate-900/40 p-6 mb-5">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/50 text-purple-300 font-bold flex items-center justify-center text-sm">3</div>
+            <h3 class="text-lg font-semibold text-purple-200">Plug it into the connector</h3>
+            <span class="text-xs font-mono text-slate-500">config-only</span>
+          </div>
+          <p class="text-slate-300 leading-7 mb-4">
+            No vLLM code change. The connector loads any
+            <code class="inline">.pt</code> in the supported schema and the
+            <code class="inline">CartridgeKRIProvider</code> handles the rest.
+            Add your file path under
+            <code class="inline">extra_config.routing.priors</code> keyed by
+            cartridge id.
+          </p>
+          <div class="code-block">
+            <div class="code-title">--kv-transfer-config (one line per cartridge)</div>
+            <pre>{
+  <span class="str">"kv_connector"</span>: <span class="str">"CartridgeConnector"</span>,
+  <span class="str">"kv_connector_extra_config"</span>: {
+    <span class="str">"cartridges"</span>: {<span class="str">"patient_00"</span>: <span class="str">"/data/carts/patient_00.pt"</span>},
+    <span class="str">"routing"</span>: {
+      <span class="str">"enabled"</span>: <span class="kw">true</span>,
+      <span class="str">"K"</span>: <span class="num">16</span>,
+      <span class="str">"priors"</span>: {
+        <span class="str">"patient_00"</span>: <span class="str">"/data/priors/patient_00_kri_yours.pt"</span>
+      }
+    }
+  }
+}</pre>
+          </div>
+          <div class="mini-note">
+            <strong class="text-green-300">What happens next.</strong>
+            On request arrival, the connector calls
+            <code class="inline">CartridgeKRIProvider.get_manifest(prefix_hash, query_hash, K=16)</code>.
+            That returns a <code class="inline">BlockManifest</code> with
+            <code class="inline">block_indices</code>. The scheduler turns the
+            complement into <code class="inline">null_block</code>; attention
+            skips those positions. Sparse inject writes only the selected blocks
+            into paged cache.
+          </div>
+        </div>
+
+        <!-- step 4 detail -->
+        <div class="rounded-xl border border-slate-700 bg-slate-900/40 p-6 mb-5">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-bold flex items-center justify-center text-sm">4</div>
+            <h3 class="text-lg font-semibold text-amber-200">Measure against the bar</h3>
+            <span class="text-xs font-mono text-slate-500">5 min eval</span>
+          </div>
+          <p class="text-slate-300 leading-7 mb-4">
+            The production stack is the target. Run your prior through the
+            same eval harness used to validate KRI-D-kv-sum. Two outcomes
+            both ship: a win goes into the routing-prior table on this page;
+            a documented negative goes into the kill log so the next person
+            does not retry the same idea.
+          </p>
+          <div class="grid md:grid-cols-2 gap-4 mb-4">
+            <div class="panel p-5">
+              <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Target</div>
+              <div class="text-base font-semibold text-amber-300 mb-2">LongHealth K=16 + xa25</div>
+              <p class="text-sm text-slate-400 leading-6">
+                Production stack: KRI-D-kv-sum + A1R2K13 + xa25 at K=16.
+                <strong class="text-slate-200">26.5%</strong> vs random middle
+                <strong class="text-slate-200">21.5%</strong>, 5&sigma; at n=200.
+              </p>
+            </div>
+            <div class="panel p-5">
+              <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Bar</div>
+              <div class="text-base font-semibold text-emerald-300 mb-2">Any positive delta ships</div>
+              <p class="text-sm text-slate-400 leading-6">
+                The bar for KRI variants is competitive, not crushing.
+                A clean <strong class="text-slate-200">+0.5pp</strong> at the
+                same K with no latency regression is a credit-worthy result.
+              </p>
+            </div>
+          </div>
+          <div class="mini-note-warn">
+            <strong class="text-amber-300">If you do not beat KRI-D-kv-sum.</strong>
+            That is fine. Document the workload regime where your prior
+            <em>does</em> win &mdash; or the regime where it ties &mdash; and
+            add it to the variants table with the actual numbers. Negatives
+            are landed signal; do not bury them.
+          </div>
+        </div>
+
+        <!-- the outcome -->
+        <div class="rounded-xl border border-emerald-600/50 bg-gradient-to-r from-emerald-950/20 via-slate-900/40 to-slate-900/40 p-6">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="text-2xl">&#10004;</div>
+            <h3 class="text-lg font-semibold text-emerald-200">When you are done</h3>
+          </div>
+          <p class="text-slate-300 leading-7">
+            You have one Python file in
+            <code class="inline">routing/</code>, one
+            <code class="inline">.pt</code> artifact per cartridge, one new
+            row in the variants table on this page, and a serving config that
+            other people can drop into <code class="inline">vllm serve</code>.
+            No vLLM patch. No model fine-tuning. No custom inference. Your
+            algorithm just runs.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Adjacency</h2>
+        <div class="grid md:grid-cols-3 gap-5">
+          <div class="rounded-xl border border-purple-500/40 bg-purple-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-purple-300 mb-3">KRI &harr; routing</div>
+            <p class="text-slate-300 leading-7">
+              KRI is the algorithm; the
+              <a class="section-link" href="routing.html">routing branch</a> is
+              the substrate. The substrate also accepts non-KRI algorithms
+              through the same interface (hybrid, recency, future ScoutAttention
+              and RetrievalAttention plug-ins).
+            </p>
+          </div>
+          <div class="rounded-xl border border-teal-500/40 bg-teal-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-teal-300 mb-3">KRI &harr; KRI-FT</div>
+            <p class="text-slate-300 leading-7">
+              KRI is training-free; the
+              <a class="section-link" href="kri_ft_visualization.html">KRI-FT</a>
+              PEFT vehicle fine-tunes a model under a routing mask so it
+              tolerates more aggressive K. Use either independently. The two
+              compose in a 2&times;2 factorial (base / KRI-FT &times; dense / routed).
+            </p>
+          </div>
+          <div class="rounded-xl border border-rose-500/40 bg-rose-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-rose-300 mb-3">KRI &harr; SPF</div>
+            <p class="text-slate-300 leading-7">
+              <a class="section-link" href="spf.html">SPF</a> is a separate
+              scheduler-side prefetch experiment that did not clear its
+              survival gate. KRI and the routing branch are independent of
+              SPF; the substrate that originally hosted KRI under SPF now
+              lives on the routing branch.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-slate-500 text-sm border-t border-slate-800 pt-8 mt-14">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-300">GitHub</a>
+        <span class="mx-2">&middot;</span>
+        <a href="routing.html" class="hover:text-slate-300">Routing</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri_ft_visualization.html" class="hover:text-slate-300">KRI-FT</a>
+        <span class="mx-2">&middot;</span>
+        <a href="spf.html" class="hover:text-slate-300">SPF</a>
+        <span class="mx-2">&middot;</span>
+        <a href="index.html" class="hover:text-slate-300">knlp docs</a>
+      </p>
+      <p>KRI documentation for knlp</p>
+    </footer>
+  </div>
+</body>
+</html>
