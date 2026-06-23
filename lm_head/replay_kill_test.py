@@ -24,7 +24,7 @@ Reports, per partition, the distribution of fetched fraction (rows touched / V)
 to certify greedy argmax, and the share of tokens certified under 12.5/25/50%.
 
 Usage:
-  python3 kri_lm_head/replay_kill_test.py --model EleutherAI/pythia-410m \
+  python3 lm_head/replay_kill_test.py --model EleutherAI/pythia-410m \
       --positions 2000 --partitions idblock,kmeans_raw,kmeans_l2 --out OUT/x.json
 """
 
