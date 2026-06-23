@@ -24,7 +24,7 @@ Cluster methods:
              stronger but learned and model-specific.
 
 Usage:
-  python3 kri_lm_head/h6_oracle_scan.py --model EleutherAI/pythia-410m \
+  python3 lm_head/h6_oracle_scan.py --model EleutherAI/pythia-410m \
       --num-seqs 200 --seq-len 512 --out OUT/pythia-410m.json
 """
 

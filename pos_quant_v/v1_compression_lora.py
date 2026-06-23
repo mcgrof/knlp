@@ -19,7 +19,7 @@ compression (the base-quality gate). The win is LoRA+rank-k perplexity
 approaching base while the LoRA-no-compress gate stays near base.
 
 Usage:
-  python3 kri_pos_quant_v/v1_compression_lora.py --model Qwen/Qwen2.5-7B \
+  python3 pos_quant_v/v1_compression_lora.py --model Qwen/Qwen2.5-7B \
       --rank 8 --steps 300 --out OUT/v1_rank8.json
 """
 

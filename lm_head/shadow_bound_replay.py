@@ -29,7 +29,7 @@ token; the certified exact fetch adds the fetched fraction. Total byte ratio =
 (int8 ~0.5, int4 ~0.25), which is the baseline this must beat.
 
 Usage:
-  python3 kri_lm_head/shadow_bound_replay.py --model Qwen/Qwen2.5-7B \
+  python3 lm_head/shadow_bound_replay.py --model Qwen/Qwen2.5-7B \
       --bases hidden_pca,w_svd,random --rs 16,32,64,128,256 --out OUT/x.json
 """
 

@@ -19,7 +19,7 @@ lattice last-position-K-probe). H2O accumulates attention mass over a sample of
 query positions.
 
 Usage:
-  python3 kri_pos_quant_v/niah_evict_eval.py --model Qwen/Qwen2.5-7B-Instruct \
+  python3 pos_quant_v/niah_evict_eval.py --model Qwen/Qwen2.5-7B-Instruct \
       --length 4096 --needles 4 --eval 20 --out OUT/niah_evict.json
 """
 

@@ -10,7 +10,7 @@ effective rank of the block-centroid matrix (per layer/kv-head, averaged). Highe
 mean-sim / lower effective-rank = more redundant.
 
 Usage:
-  python3 kri_pos_quant_v/kv_redundancy.py --models Qwen/Qwen2.5-1.5B,...
+  python3 pos_quant_v/kv_redundancy.py --models Qwen/Qwen2.5-1.5B,...
 """
 
 from __future__ import annotations

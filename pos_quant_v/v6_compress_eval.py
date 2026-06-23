@@ -22,7 +22,7 @@ Per-(layer, kv-head) rank-k basis is fit by PCA on a held-out calibration set of
 contexts (a fixed shared basis, as the scheme requires).
 
 Usage:
-  python3 kri_pos_quant_v/v6_compress_eval.py --model Qwen/Qwen2.5-7B-Instruct \
+  python3 pos_quant_v/v6_compress_eval.py --model Qwen/Qwen2.5-7B-Instruct \
       --length 4096 --needles 4 --eval 20 --calib 8 --out OUT/v6.json
 """
 

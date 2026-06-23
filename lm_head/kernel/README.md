@@ -24,4 +24,4 @@ regenerated, not committed). The `*_bench.py` / `cert_graph_*` files are the
 single-token, batched, and CUDA-graph timing harnesses; `h6_oracle_scan.py`,
 `predictor_baseline.py`, and `shadow_bound_replay.py` are the snapshot of the
 routing/replay base the kernel was developed against (the maintained copies live
-one level up in `kri_lm_head/`).
+one level up in `lm_head/`).
