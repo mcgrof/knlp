@@ -21,7 +21,7 @@ Data values do not affect timing, so random tensors of the right shape/dtype are
 used (no model load needed).
 
 Usage:
-  python3 kri_lm_head/latency_bench.py --device cuda:0
+  python3 lm_head/latency_bench.py --device cuda:0
 """
 
 from __future__ import annotations
