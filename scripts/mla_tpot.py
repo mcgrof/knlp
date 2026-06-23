@@ -30,6 +30,7 @@ def main():
         kv_cache_dtype=args.kv_cache_dtype,
         gpu_memory_utilization=args.gpu_mem_util,
         enforce_eager=False,
+        enable_prefix_caching=False,  # else t_N reuses t_1's cached prefill -> negative TPOT
     )
     cfg = llm.llm_engine.model_config.hf_config
     elem = getattr(cfg, "kv_lora_rank", 0) + getattr(cfg, "qk_rope_head_dim", 0)
