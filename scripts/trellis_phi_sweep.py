@@ -40,7 +40,16 @@ CONFIGS = [
     ("gated_delta_handroll", "gated_delta", {}),                    # GDN anchor (fla-free)
     ("deltanet_handroll", "delta", {}),                            # DeltaNet anchor (fla-free)
     ("trellis_ln_silu", "trellis", dict(activation="ln_silu")),     # our default
+    # matched-LR control vs identity (identity only stable at lr 3e-4): isolates
+    # the phi nonlinearity from the LR difference.
+    ("trellis_ln_silu_lr3e4", "trellis", dict(activation="ln_silu", lr=3e-4)),
     ("trellis_identity", "trellis", dict(activation="identity")),   # delta-rule control
+    # identity (delta rule) diverges at lr 3e-3 chunk16 (phi=identity removes the
+    # LN that bounds u=Mw-alpha -> state blows up). Stabilized variants:
+    ("trellis_identity_lr1e3", "trellis", dict(activation="identity", lr=1e-3)),
+    ("trellis_identity_lr3e4", "trellis", dict(activation="identity", lr=3e-4)),
+    ("trellis_identity_exact", "trellis",
+     dict(activation="identity", lr=1e-3, chunk_size=1)),
     ("trellis_paper_stable", "trellis",
      dict(activation="ln_silu", output_path="paper",
           value_readout_act="ln_silu", beta_init=0.9)),             # fixes on
@@ -93,11 +102,14 @@ def val_ppl(model, val_seqs, device, batch, dt):
 
 def train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt):
     torch.manual_seed(args.seed)
+    ov = dict(ov)  # copy: don't mutate the module-level CONFIGS
+    lr = ov.pop("lr", args.lr)            # per-config LR override
+    chunk = ov.pop("chunk_size", args.chunk_size)
     base = dict(
         vocab_size=50257, d_model=args.d_model, n_layers=args.n_layers,
         n_heads=args.n_heads, d_head=args.d_head, n_slots=args.n_slots,
         max_seq_len=args.seq_len, dtype="bf16",
-        chunk_size=args.chunk_size, exact_inner=(args.chunk_size <= 1),
+        chunk_size=chunk, exact_inner=(chunk <= 1),
     )
     base.update(ov)
     cfg = TrellisConfig(**base)
@@ -106,7 +118,7 @@ def train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt):
     # so the model must stay fp32 -- casting it to bf16 mismatches the float()
     # beta/gamma path. autocast (below) gives the bf16 matmul speed.
     model = build_model(cfg, kind).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
     nparams = model.get_num_params()
     steps = max(1, args.train_tokens // (args.batch * args.seq_len))
     hist = []
