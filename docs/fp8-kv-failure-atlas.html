@@ -11,6 +11,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <style>
     body { background: #0f172a; }
     .gradient-text {
@@ -223,6 +225,15 @@
       const m = {tolerant:'pill-tol', material:'pill-mat', catastrophic:'pill-cat'};
       return <span className={`pill ${m[k]}`}>{k}</span>;
     };
+    // KaTeX-in-React: render a TeX string to HTML (window.katex loaded in <head>).
+    function Tex({children, block}) {
+      const src = String(children);
+      const html = (typeof window !== 'undefined' && window.katex)
+        ? window.katex.renderToString(src, {displayMode: !!block, throwOnError: false})
+        : src;
+      return <span className={block ? 'block my-3 text-center text-gray-200' : 'text-gray-200'}
+                   dangerouslySetInnerHTML={{__html: html}} />;
+    }
 
     // ───────────────────────── the page ─────────────────────────
     function App() {
@@ -423,6 +434,75 @@
                 <Bar dataKey="top1" name="top-1 agreement" fill={C.red} radius={[3,3,0,0]}/>
               </BarChart>
             </ChartFrame>
+          </Section>
+
+          {/* 4b. Dependency-range principle */}
+          <Section id="dependency" kicker="The generalized law" title="The one principle: do the summed terms share a dynamic range?">
+            <p>
+              Every cure on this page — pre-bias, per-channel / KIVI, K16 — is the same fix to the same disease. A key is
+              a sum of two terms with wildly different magnitudes: a large per-channel <strong>bias</strong> (Qwen head&nbsp;1:
+              ~414) and a small token-discriminative <strong>residual</strong> (~&plusmn;2). Quantize them <em>together</em>
+              and the small term is annihilated; split them <em>before</em> the sum and both survive.
+            </p>
+
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+              <h4 className="text-sm font-semibold text-gray-200 mb-0.5">The residual crush, on the FP8 grid near 400</h4>
+              <p className="text-gray-500 text-xs mb-2">binade [256, 512) has step 32; the &plusmn;2 residual is smaller than one grid step, so both keys snap and the recovered residual <Tex>{"\\tilde r"}</Tex> explodes to &plusmn;16</p>
+              <svg viewBox="0 0 620 150" className="w-full" style={{maxHeight:180}}>
+                <text x="300" y="18" fill="#94a3b8" fontSize="12" textAnchor="middle">key = bias(400) + residual(&plusmn;2)</text>
+                <line x1="20" y1="80" x2="600" y2="80" stroke="#334155" strokeWidth="1.5"/>
+                {[352,384,416,448].map(v=>{const x=20+(v-345)*5; return (
+                  <g key={v}>
+                    <line x1={x} y1="71" x2={x} y2="89" stroke="#64748b" strokeWidth="1.5"/>
+                    <text x={x} y="104" fill="#64748b" fontSize="11" textAnchor="middle">{v}</text>
+                  </g>);})}
+                {[[398,384,'−16'],[402,416,'+16']].map(([v,g,rt],i)=>{const x=20+(v-345)*5, gx=20+(g-345)*5; return (
+                  <g key={i}>
+                    <circle cx={x} cy="48" r="4" fill={C.red}/>
+                    <text x={x} y="36" fill={C.red} fontSize="11" textAnchor="middle">{v}</text>
+                    <line x1={x} y1="52" x2={gx} y2="74" stroke={C.red} strokeWidth="1.2" strokeDasharray="3 2"/>
+                    <text x={gx} y="124" fill={C.amber} fontSize="11" textAnchor="middle">r&#771; = {rt}</text>
+                  </g>);})}
+                <text x="300" y="144" fill="#64748b" fontSize="10" textAnchor="middle">true residual was &plusmn;2 &mdash; an 8&times; error with the sign barely intact</text>
+              </svg>
+            </div>
+
+            <p>The reason is that a float&rsquo;s precision is <strong>relative</strong>: the step between adjacent grid
+            points is a fixed fraction of the magnitude,</p>
+            <Tex block>{"\\text{step}/\\text{magnitude} = 2^{-(\\text{mantissa bits})},"}</Tex>
+            <p>so to keep a signal of size <Tex>{"\\delta"}</Tex> riding on magnitude <Tex>{"M"}</Tex> you need</p>
+            <Tex block>{"2^{-(\\text{mantissa bits})} \\;\\le\\; \\delta / M."}</Tex>
+            <p>For the Qwen key, <Tex>{"\\delta/M = 2/400 = 0.5\\%"}</Tex>, which needs ~8 mantissa bits — i.e. fp16.
+            <strong className="text-gray-200"> No FP8 variant can salvage it</strong>: e4m3 (3 mantissa bits &rarr; 12.5%
+            step) and even e3m4 (4 mantissa bits &rarr; 6.25%) are both far coarser than 0.5%.</p>
+
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-4">
+              <h4 className="text-sm font-semibold text-gray-200 mb-1">Why &ldquo;just add a mantissa bit&rdquo; fails</h4>
+              <p className="text-sm text-gray-400">In e3m4 the grid near 400 still steps by ~25, so 402 and 398 both round
+              to 400 and <Tex>{"\\tilde r = 0"}</Tex> — the residual is <em>completely</em> erased, worse than e4m3. The
+              ~200:1 bias-to-signal ratio beats any FP8 mantissa budget; more mantissa loses to the ratio.</p>
+            </div>
+
+            <p><strong className="text-gray-200">Three cures, one principle</strong> — each gives the residual a range of
+            its own:</p>
+            <ul className="list-disc ml-5 text-sm text-gray-400 space-y-1 my-2">
+              <li><strong className="text-gray-300">pre-bias</strong> — split the sum: quantize the residual alone
+              (magnitude ~2, step 0.25), keep the bias exact. <span className="text-gray-500">A captured-activation
+              replay recovers the QK logits <strong className="text-green-400">444&times;</strong> on the 414-bias head.</span></li>
+              <li><strong className="text-gray-300">per-channel scale / KIVI</strong> — give each channel its own absmax,
+              so the big-bias channels don&rsquo;t set the grid for the small ones.</li>
+              <li><strong className="text-gray-300">K16</strong> — enough mantissa (10 bits, ~0.1% step) to hold the
+              residual on the full key.</li>
+            </ul>
+
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.amber}}>
+              <p className="text-sm text-gray-300"><strong className="text-amber-400">A coordinate-system caveat.</strong>
+              {' '}The split must happen <em>before</em> RoPE. Keys are cached <em>after</em> the rotary transform, and
+              quantization is not rotation-equivariant: <Tex>{"R\\,Q(Wx) \\ne Q(R\\,Wx)"}</Tex>. So the pre-bias residual is
+              the <em>pre-RoPE</em> projection <Tex>{"r = x W_K^{\\top}"}</Tex>; a post-RoPE bias subtract-and-re-add does
+              not recover the signal. (And a pre-RoPE fake-quant proves the <em>quality</em> recovery, not the byte cost —
+              the deployable point stores the quantized residual plus the exact bias, honestly ~8-bit.)</p>
+            </div>
           </Section>
 
           {/* 5. Causal proof */}
