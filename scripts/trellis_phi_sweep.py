@@ -50,6 +50,15 @@ CONFIGS = [
     ("trellis_identity_lr3e4", "trellis", dict(activation="identity", lr=3e-4)),
     ("trellis_identity_exact", "trellis",
      dict(activation="identity", lr=1e-3, chunk_size=1)),
+    # #4 decisive test: the stale-chunk gradient is ~100% wrong for ln_silu (vs
+    # ~10% for identity, per the gradcheck), and all training used chunk16 stale.
+    # Re-run BOTH phi at exact inner (chunk1, correct gradient): if ln_silu
+    # catches up, the 2x gap was a stale-approximation artifact, not a real
+    # nonlinear deficit. Matched lr 3e-4 to the stale runs.
+    ("trellis_id_exact_lr3e4", "trellis",
+     dict(activation="identity", lr=3e-4, chunk_size=1)),
+    ("trellis_ln_exact_lr3e4", "trellis",
+     dict(activation="ln_silu", lr=3e-4, chunk_size=1)),
     # ungated linear write = same-shell DeltaNet (the paper's ACTUAL 125M
     # baseline; its small-scale table has NO Gated DeltaNet row). identity_lr3e4
     # is the GATED delta rule; this drops the forget gate (beta forced to 1) to
@@ -62,6 +71,22 @@ CONFIGS = [
           value_readout_act="ln_silu", beta_init=0.9)),             # fixes on
     ("trellis_softmax_matched", "trellis",
      dict(activation="softmax", alpha_mode="softmax")),             # simplex objective
+    # #3 paper-shell ablated ONE-AT-A-TIME (which toggle drove 260->183?). Each is
+    # asymmetric (a no-op under identity); ln_silu base, lr 3e-3 (paper_stable's lr).
+    ("trellis_ln_out_paper", "trellis",
+     dict(activation="ln_silu", output_path="paper")),
+    ("trellis_ln_vreadout", "trellis",
+     dict(activation="ln_silu", value_readout_act="ln_silu")),
+    ("trellis_ln_beta09", "trellis",
+     dict(activation="ln_silu", beta_init=0.9)),
+    # #6 key-norm (write_l2norm) variants: does it rescue the ungated DeltaNet, and
+    # does it change the identity-vs-ln_silu picture (cmcp: may help nonlinear more)?
+    ("trellis_id_nogate_knorm", "trellis",
+     dict(activation="identity", forget_gate=False, write_l2norm=True, lr=3e-4)),
+    ("trellis_id_knorm", "trellis",
+     dict(activation="identity", write_l2norm=True, lr=3e-4)),
+    ("trellis_ln_knorm", "trellis",
+     dict(activation="ln_silu", write_l2norm=True, lr=3e-4)),
 ]
 
 
