@@ -17,15 +17,19 @@ cousins at toy scale, which is where the Trellis paper says it should be, becaus
 the paper only claims a win at 125M parameters and up. We have not trained at that
 scale, and we are still working on it. A same-shell causal control we added on
 2026-06-24 — the nonlinearity removed so the write reduces to the linear delta
-rule — gets ~2× lower perplexity at matched LR and tokens (127.9 vs 248.4; 150.4
-vs 306.4 across 3 seeds). But an independent review (ChatGPT-Pro) plus a
-meta-gradient check downgrade how to read that: the stale-chunk gradient
-approximation our training used is ~100% wrong for the *nonlinear* write (vs ~10%
-for the linear one), and the nonlinear arm also carries reconstruction gaps (an
-undefined φ, a missing final readout activation, an untuned γ). So the honest
-statement is *a gated linear-delta control beats our current under-specified
-LN-SiLU reimplementation at 5M* — the direction may survive a faithful,
-separately-tuned rerun, but the 2× magnitude is probably an artifact (see
+rule — first looked like a *2×* win for linear (127.9 vs 248.4), but a ChatGPT-Pro
+review flagged that as an over-read, and a six-step validation loop (2026-06-25)
+confirmed it: the **2× was an under-specified-reimplementation artifact**. It is
+*not* a meta-gradient bug (the exact backward is bit-exact for both writes), *not*
+the stale-chunk gradient approximation (exact gradients don't close it), and *not*
+the inner step size γ (sweeping it doesn't either) — it was the **missing paper
+shell fidelity** (the final value-readout activation + output block), which once
+restored narrows the gap to **~1.3–1.4×** (ln_silu+shell 182.8 vs identity 127.9),
+robust across budgets. So the honest statement is: with fidelity restored, the
+nonlinear write is **modestly behind** the linear delta rule at 5M, consistent with
+below-crossover (the paper's nonlinear win is 125M+). One fidelity gap stays open —
+the compression φ is a guess (the paper specifies `f` but not φ) — and the decisive
+test is the gap-versus-scale ladder, not more 5M tuning (see
 [Next: forward ablation ideas](#next-forward-ablation-ideas-to-evaluate)). The
 rest of this doc lays out the architecture, our reconstruction and where it
 departs from the paper, the kernel work that made the comparison tractable, the
