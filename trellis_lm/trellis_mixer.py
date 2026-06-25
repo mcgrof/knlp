@@ -130,6 +130,12 @@ class TrellisMixer(nn.Module):
         if self.use_conv:
             q = self.q_conv(q)
             k = self.k_conv(k)
+        if cfg.write_l2norm:
+            # DeltaNet-style L2 normalization of the write vectors (keys) and the
+            # key-pass query, over head_dim, to bound gamma*||w||^2.
+            q = F.normalize(q, dim=-1)
+            k = F.normalize(k, dim=-1)
+            v = F.normalize(v, dim=-1)
         alpha = self._heads(self.alpha_proj(h), self.M)  # [B,H,T,M]
         alpha = self.alpha_act(alpha)
         # Decay (beta) and inner-LR (gamma) stay fp32 regardless of any outer
