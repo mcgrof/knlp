@@ -15,10 +15,16 @@ non-embedding parameters), our Trellis *currently* loses to both DeltaNet and
 Gated DeltaNet. That is a normal *below-crossover* result — worse than its linear
 cousins at toy scale, which is where the Trellis paper says it should be, because
 the paper only claims a win at 125M parameters and up. We have not trained at that
-scale, and we are still working on it. The rest of this doc lays out the
-architecture, our reconstruction and where it departs from the paper, the kernel
-work that made the comparison tractable, the numbers so far, and the forward
-ablations that remain to bring the reconstruction in line with the paper.
+scale, and we are still working on it. A same-shell causal control we added on
+2026-06-24 sharpens this: with the nonlinearity removed so the write reduces to
+the linear delta rule, the model gets **nearly 2× lower** perplexity at matched
+LR and tokens (127.9 vs 248.4) — so at 5M the nonlinear write is an active
+liability, not just neutral, and the gap is not a reconstruction artifact (see
+[Next: forward ablation ideas](#next-forward-ablation-ideas-to-evaluate)). The
+rest of this doc lays out the architecture, our reconstruction and where it
+departs from the paper, the kernel work that made the comparison tractable, the
+numbers so far, and the forward ablations that remain to bring the reconstruction
+in line with the paper.
 
 The phase-by-phase lab log lives in
 [reports/trellis_full_eval.md](../reports/trellis_full_eval.md); its §13–§14
@@ -273,8 +279,24 @@ budget, with the nonlinearity removed so the model reduces to the delta rule.
 That isolates "does the nonlinear write help?" cleanly — external DeltaNet differs
 in shell, normalization, gating, and convolution and so is a strong *practical*
 baseline but not the clean causal control. The paper runs exactly that ablation
-(11.65 vs 10.87); we need the equivalent in our harness, which means adding an
-identity-`φ` option (the config has none today).
+(11.65 vs 10.87).
+
+**We added the identity-`φ` option and ran it (2026-06-24), and the answer at our
+scale is the opposite of the paper's.** At matched LR, matched tokens, and the
+identical shell (d256/L4, C4, 120M tokens, held-out val PPL), the linear delta
+rule reaches **127.9** versus the nonlinear ln_silu write's **248.4** — nearly 2×
+*lower* PPL. Even ln_silu with every paper-faithful toggle on (182.8) loses to the
+plain linear write. So our Trellis's gap to its linear cousins is **not** a
+reconstruction artifact: at 4.7M parameters the nonlinear inner write is a
+*liability*, not merely below crossover. Two supporting results from the same
+sweep: turning the paper-faithful defaults on cuts ln_silu 260.6 → 182.8 (a real
+free lever), and identity only trains at LR 3e-4 (it diverges at 1e-3 / 3e-3 —
+`φ=identity` drops the LayerNorm that bounds the error code `u = Mw − α`, so the
+state blows up), meaning the nonlinearity's contribution here is *training
+stability*, not quality. The decisive remaining question is therefore the
+gap-versus-scale ladder, not more fidelity tuning at 5M: does the nonlinear
+write's deficit shrink toward a crossover by 125M, where the paper claims its win?
+Full writeup and artifacts: `knlp-key-results/trellis-fidelity-20260624/`.
 
 On scale: we are 26.6× below the paper's parameter floor but only 6.8× below its
 token floor, and at ≈75 tokens per non-embedding parameter we are if anything
