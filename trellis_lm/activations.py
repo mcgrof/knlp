@@ -106,12 +106,29 @@ def softmax(x: torch.Tensor) -> torch.Tensor:
     return F.softmax(x, dim=-1)
 
 
-_ACT = {"ln_silu": ln_silu, "l2_silu": l2_silu, "softmax": softmax}
+def identity(x: torch.Tensor) -> torch.Tensor:
+    """phi = identity: the inner objective becomes 1/2||M w - alpha||^2, whose
+    VJP is u = M w - alpha, so the gated update M <- beta M - gamma outer(u, w)
+    is exactly the (gated) linear delta rule. This is the same-shell control the
+    paper runs (its 11.65-vs-10.87 ablation): identical mixer, projections,
+    two-pass shell and parameter budget, with the nonlinear write removed --
+    isolating "does the nonlinear write help?" cleanly (unlike external DeltaNet,
+    which also differs in shell/norm/gating/conv). The generic autograd VJP in
+    trellis_memory._trellis_vjp handles it (grad(z, z, err) = err)."""
+    return x
+
+
+_ACT = {
+    "ln_silu": ln_silu,
+    "l2_silu": l2_silu,
+    "softmax": softmax,
+    "identity": identity,
+}
 
 
 def get_activation(name: str):
-    if name == "linear":
-        return lambda x: x
+    if name in ("linear", "identity"):
+        return identity
     if name not in _ACT:
         raise ValueError(f"unknown activation {name}")
     return _ACT[name]
