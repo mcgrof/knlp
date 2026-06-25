@@ -87,6 +87,21 @@ CONFIGS = [
      dict(activation="identity", write_l2norm=True, lr=3e-4)),
     ("trellis_ln_knorm", "trellis",
      dict(activation="ln_silu", write_l2norm=True, lr=3e-4)),
+    # #5 the last untested lever: gamma (inner step size, fixed 1e-2). Per-phi
+    # equal-tuning-budget -- does tuning gamma close the remaining ~1.4x gap
+    # (identity 127.9 vs ln_silu+shell 182.8)? identity @ its lr 3e-4; ln_silu with
+    # the full paper shell @ its lr 3e-3.
+    ("trellis_id_g1e3", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-3)),
+    ("trellis_id_g1e2", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-2)),
+    ("trellis_id_g1e1", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-1)),
+    ("trellis_lnp_g1e3", "trellis", dict(activation="ln_silu", output_path="paper",
+        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-3)),
+    ("trellis_lnp_g1e2", "trellis", dict(activation="ln_silu", output_path="paper",
+        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-2)),
+    ("trellis_lnp_g3e2", "trellis", dict(activation="ln_silu", output_path="paper",
+        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=3e-2)),
+    ("trellis_lnp_g1e1", "trellis", dict(activation="ln_silu", output_path="paper",
+        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-1)),
 ]
 
 
