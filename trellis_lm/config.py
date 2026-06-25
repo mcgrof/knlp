@@ -20,8 +20,10 @@ class TrellisConfig:
     # --- Trellis memory knobs ---
     conv_kernel: int = 4
     use_short_conv_qk: bool = True
-    # phi: intermediate activation applied to z = M @ write (over the slot dim)
-    activation: str = "ln_silu"  # ["ln_silu","l2_silu","softmax"]
+    # phi: intermediate activation applied to z = M @ write (over the slot dim).
+    # "identity" reduces the nonlinear write to the (gated) delta rule -- the
+    # same-shell control for "does the nonlinear write help?" (paper ablation).
+    activation: str = "ln_silu"  # ["ln_silu","l2_silu","softmax","identity"]
     # alpha: the learned write target / code
     alpha_mode: str = "linear"  # ["linear","softmax","ln_silu","l2_silu"]
     # beta: forget gate granularity
@@ -50,7 +52,12 @@ class TrellisConfig:
     tie_embeddings: bool = True
 
     def __post_init__(self):
-        assert self.activation in ("ln_silu", "l2_silu", "softmax"), self.activation
+        assert self.activation in (
+            "ln_silu",
+            "l2_silu",
+            "softmax",
+            "identity",
+        ), self.activation
         assert self.alpha_mode in (
             "linear",
             "softmax",
