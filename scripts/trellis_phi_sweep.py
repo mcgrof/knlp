@@ -50,6 +50,13 @@ CONFIGS = [
     ("trellis_identity_lr3e4", "trellis", dict(activation="identity", lr=3e-4)),
     ("trellis_identity_exact", "trellis",
      dict(activation="identity", lr=1e-3, chunk_size=1)),
+    # ungated linear write = same-shell DeltaNet (the paper's ACTUAL 125M
+    # baseline; its small-scale table has NO Gated DeltaNet row). identity_lr3e4
+    # is the GATED delta rule; this drops the forget gate (beta forced to 1) to
+    # measure both. lr 1e-3: ungated may tolerate a higher lr than gated (the
+    # gate's decay was part of what destabilized at high lr) -- screened at run.
+    ("trellis_identity_nogate", "trellis",
+     dict(activation="identity", lr=1e-4, forget_gate=False)),
     ("trellis_paper_stable", "trellis",
      dict(activation="ln_silu", output_path="paper",
           value_readout_act="ln_silu", beta_init=0.9)),             # fixes on
