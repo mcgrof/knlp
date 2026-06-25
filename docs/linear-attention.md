@@ -16,10 +16,16 @@ Gated DeltaNet. That is a normal *below-crossover* result — worse than its lin
 cousins at toy scale, which is where the Trellis paper says it should be, because
 the paper only claims a win at 125M parameters and up. We have not trained at that
 scale, and we are still working on it. A same-shell causal control we added on
-2026-06-24 sharpens this: with the nonlinearity removed so the write reduces to
-the linear delta rule, the model gets **nearly 2× lower** perplexity at matched
-LR and tokens (127.9 vs 248.4) — so at 5M the nonlinear write is an active
-liability, not just neutral, and the gap is not a reconstruction artifact (see
+2026-06-24 — the nonlinearity removed so the write reduces to the linear delta
+rule — gets ~2× lower perplexity at matched LR and tokens (127.9 vs 248.4; 150.4
+vs 306.4 across 3 seeds). But an independent review (ChatGPT-Pro) plus a
+meta-gradient check downgrade how to read that: the stale-chunk gradient
+approximation our training used is ~100% wrong for the *nonlinear* write (vs ~10%
+for the linear one), and the nonlinear arm also carries reconstruction gaps (an
+undefined φ, a missing final readout activation, an untuned γ). So the honest
+statement is *a gated linear-delta control beats our current under-specified
+LN-SiLU reimplementation at 5M* — the direction may survive a faithful,
+separately-tuned rerun, but the 2× magnitude is probably an artifact (see
 [Next: forward ablation ideas](#next-forward-ablation-ideas-to-evaluate)). The
 rest of this doc lays out the architecture, our reconstruction and where it
 departs from the paper, the kernel work that made the comparison tractable, the
@@ -145,8 +151,13 @@ details the paper leaves unspecified are our guesses.
   L2-normalized SiLU) from `φ` (the inner compression activation, never cleanly
   specified). We use one LayerNorm-SiLU for both. A change to `φ` alters the
   entire inner optimizer, not just one activation.
-- The paper's write target is `α = Softmax(Wₐ x)`; our default is a plain linear
-  projection (we have the softmax option but it is not the default).
+- The paper's Trellis write target is a plain linear projection `α = Wₐ x`, which
+  **is** our default — so this is faithful, not a departure. (A ChatGPT-Pro review
+  corrected an earlier note here: the `Softmax(Wₐ x)` target belongs to the paper's
+  ABC discussion, not the Trellis definition. We have a softmax option but it is
+  off-thesis for Trellis, and pairing it with `φ=ln_silu` explodes at init — a
+  simplex-vs-zero-mean type mismatch — so it should be dropped from any Trellis
+  conclusion.)
 - The inner step size `γ` is fixed at `1e-2` and never swept. The paper states
   no initialization for `γ` or for the forget gate at all. Our objective is
   `½‖·‖²` to the paper's `‖·‖²`, so a paper step `γ` corresponds to roughly
@@ -234,10 +245,13 @@ shows the stack is healthy, not that we have reproduced the paper's absolute los
 Verified against the arXiv HTML (arXiv:2512.23852):
 
 - **790M params / 30B tokens (C4), Table 1.** Trellis **20.28** (best) <
-  Gated DeltaNet 21.40 < Transformer++ 25.89 < TTT 27.05 < Mamba2 28.91. This is
-  the only place Trellis and Gated DeltaNet are compared head to head.
+  Gated DeltaNet 21.40 < Transformer++ 25.89 < TTT 27.05 < Mamba2 28.91.
 - **125M params (The Pile), Table 2 ablation.** Trellis **10.87** < TTT 11.44 <
-  DeltaNet 11.58. There is **no Gated DeltaNet row at 125M**. Replacing the
+  DeltaNet 11.58. There is no Gated DeltaNet row in *this ablation table* — but a
+  ChatGPT-Pro review reports Gated DeltaNet **does** appear at 125M elsewhere
+  (reportedly Table 4 at 11.31, vs Trellis 10.87 / DeltaNet 11.58), so the earlier
+  "Gated DeltaNet only at 790M" reading was wrong and needs reconciling against the
+  arXiv HTML. Replacing the
   nonlinear `φ` with the identity (reducing Trellis to the delta rule) gives
   11.65 — so the nonlinear write is worth ~0.78 ppl here. Removing the forget
   gate gives 11.28; non-chunked (`b=1`) gives 10.75, slightly *better* than the
@@ -281,22 +295,32 @@ in shell, normalization, gating, and convolution and so is a strong *practical*
 baseline but not the clean causal control. The paper runs exactly that ablation
 (11.65 vs 10.87).
 
-**We added the identity-`φ` option and ran it (2026-06-24), and the answer at our
-scale is the opposite of the paper's.** At matched LR, matched tokens, and the
-identical shell (d256/L4, C4, 120M tokens, held-out val PPL), the linear delta
-rule reaches **127.9** versus the nonlinear ln_silu write's **248.4** — nearly 2×
-*lower* PPL. Even ln_silu with every paper-faithful toggle on (182.8) loses to the
-plain linear write. So our Trellis's gap to its linear cousins is **not** a
-reconstruction artifact: at 4.7M parameters the nonlinear inner write is a
-*liability*, not merely below crossover. Two supporting results from the same
-sweep: turning the paper-faithful defaults on cuts ln_silu 260.6 → 182.8 (a real
-free lever), and identity only trains at LR 3e-4 (it diverges at 1e-3 / 3e-3 —
-`φ=identity` drops the LayerNorm that bounds the error code `u = Mw − α`, so the
-state blows up), meaning the nonlinearity's contribution here is *training
-stability*, not quality. The decisive remaining question is therefore the
-gap-versus-scale ladder, not more fidelity tuning at 5M: does the nonlinear
-write's deficit shrink toward a crossover by 125M, where the paper claims its win?
-Full writeup and artifacts: `knlp-key-results/trellis-fidelity-20260624/`.
+**We added the identity-`φ` option and ran it (2026-06-24): a gated linear-delta
+control strongly outperforms our current LN-SiLU reimplementation.** At matched
+LR, matched tokens, identical shell (d256/L4, C4, val PPL), the linear delta rule
+reaches **127.9** vs the nonlinear ln_silu write's **248.4** at 120M tokens, and
+**150.4 ± 0.8 vs 306.4 ± 3.3** across 3 seeds at 80M — a robust ~2× gap with the
+forget gate held constant. Two supporting results: turning the paper-faithful
+defaults on cuts ln_silu 260.6 → 182.8 (a real free lever, but still above
+linear), and identity only trains at LR 3e-4 (it diverges at 1e-3 / 3e-3 —
+`φ=identity` drops the LayerNorm that bounds `u = Mw − α`, so the state blows up).
+
+**But a ChatGPT-Pro review and our own meta-gradient check say this is not yet
+"linear beats Trellis" — it is "a gated linear control beats our *current
+under-specified* reimplementation."** The exact-inner backward is bit-exact
+correct for both φ (no Hessian-dropping bug), but the **stale-chunk gradient
+approximation our training used (chunk 16) is ~100% wrong for the nonlinear write
+vs ~10% for the linear one** — an asymmetric handicap that alone could inflate the
+gap. On top of that the nonlinear arm carries reconstruction gaps that are *no-ops
+under φ=identity*: the compression φ is undefined in the paper (we guessed
+LN-SiLU for both f and φ), the final value-readout activation `y=φ(Mᵀr)` is off by
+default, the output-block order differs, and γ is fixed/un-swept. The honest
+read: the *direction* may survive a faithful, separately-tuned rerun (Pro puts
+~25–30% on the full 2× surviving), but the magnitude is probably an artifact. The
+validation sequence — meta-gradient check (done: no bug), exact/chunk-1 rerun,
+one-at-a-time shell ablation, per-φ LR/γ tuning, faithful DeltaNet/GDN with
+key-norm, then the gap-versus-scale ladder — is what resolves it. Full writeup,
+caveats, and artifacts: `knlp-key-results/trellis-fidelity-20260624/`.
 
 On scale: we are 26.6× below the paper's parameter floor but only 6.8× below its
 token floor, and at ≈75 tokens per non-embedding parameter we are if anything
