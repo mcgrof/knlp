@@ -126,6 +126,8 @@ def run_lm(args, device, dt):
         alpha_mode=args.alpha_mode, beta_mode=args.beta_mode,
         forget_gate=not args.no_forget, use_short_conv_qk=not args.no_conv,
         exact_inner=not args.stale, chunk_size=args.chunk_size, chunk_refine=args.chunk_refine,
+        output_path=args.output_path, value_readout_act=args.value_readout_act,
+        beta_init=args.beta_init, gamma_init=args.gamma_init,
     )
     model = build_model(cfg, args.model).to(device)
     if args.dtype != "fp32":
@@ -159,7 +161,12 @@ def run_lm(args, device, dt):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--task", default="recall", choices=["recall", "lm"])
-    p.add_argument("--model", default="trellis", choices=["trellis", "dense"])
+    p.add_argument(
+        "--model",
+        default="trellis",
+        choices=["trellis", "dense", "delta", "gated_delta",
+                 "delta_ref", "gated_delta_ref"],
+    )
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--seq_len", type=int, default=256)
@@ -172,6 +179,13 @@ def main():
     p.add_argument("--activation", default="ln_silu")
     p.add_argument("--alpha_mode", default="linear")
     p.add_argument("--beta_mode", default="scalar_per_head")
+    # paper-faithful toggles (default off; the fidelity sweep flips them on)
+    p.add_argument("--output_path", default="current",
+                   choices=["current", "paper"])
+    p.add_argument("--value_readout_act", default="none",
+                   choices=["none", "ln_silu", "l2_silu"])
+    p.add_argument("--beta_init", type=float, default=0.5)
+    p.add_argument("--gamma_init", type=float, default=1e-2)
     p.add_argument("--no_forget", action="store_true")
     p.add_argument("--no_conv", action="store_true")
     p.add_argument("--stale", action="store_true", help="stale-gradient inner step (exact_inner=False); fast path for long context")
