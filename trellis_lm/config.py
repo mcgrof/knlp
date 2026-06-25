@@ -20,6 +20,12 @@ class TrellisConfig:
     # --- Trellis memory knobs ---
     conv_kernel: int = 4
     use_short_conv_qk: bool = True
+    # L2-normalize the write vector (and the read query) over head_dim before the
+    # memory update -- DeltaNet's contraction stabilizer (the published paper's
+    # Trellis equations use raw k; this is exploratory). Bounds gamma*||w||^2 so
+    # the ungated/aggressive-LR linear write stops detonating; may also help the
+    # nonlinear write disproportionately (variable key norm x nonlinear curvature).
+    write_l2norm: bool = False
     # phi: intermediate activation applied to z = M @ write (over the slot dim).
     # "identity" reduces the nonlinear write to the (gated) delta rule -- the
     # same-shell control for "does the nonlinear write help?" (paper ablation).
