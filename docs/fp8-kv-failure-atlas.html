@@ -809,6 +809,78 @@
             </p>
           </Section>
 
+          {/* 11b. TP validation */}
+          <Section id="tpvalid" kicker="Multi-GPU" title="The fix composes under tensor parallelism — K and V, validated">
+            <p>
+              7B+ models are served with <strong className="text-gray-200">tensor parallelism</strong>: the KV heads are split
+              across GPUs and each rank quantizes its own shard. For the asymmetric K16/V8 recipe to ship, it has to survive
+              that. We validated it end-to-end through a modified vLLM&nbsp;v1 + FlashInfer stack on 2&times;H100, comparing
+              TP=1 vs TP=2 on Qwen2.5-7B.
+            </p>
+
+            <h4 className="text-gray-200 font-semibold mt-5 mb-1">Quality composes: zero TP interaction</h4>
+            <p>
+              Teacher-forced NLL. K16/V8 is bit-identical to BF16 at both TP=1 and TP=2; the difference-in-differences
+              interaction is <strong className="text-gray-200">exactly 0</strong> (CI95 [0,0]). Symmetric FP8 collapses by
+              +1.585 / +1.586 nats — and that collapse is itself ~TP-invariant.
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-4">config</th><th className="text-right px-3">teacher-forced NLL</th><th className="text-right px-3">&Delta; vs BF16</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-4">TP1 BF16</td><td className="text-right px-3">2.67096</td><td className="text-right px-3 text-gray-500">—</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-green-400">TP1 K16/V8</td><td className="text-right px-3">2.67096</td><td className="text-right px-3 text-green-400">0.00000</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-red-400">TP1 symFP8</td><td className="text-right px-3">4.25607</td><td className="text-right px-3 text-red-400">+1.585</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-green-400">TP2 K16/V8</td><td className="text-right px-3">2.67102</td><td className="text-right px-3 text-green-400">0.00000</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-red-400">TP2 symFP8</td><td className="text-right px-3">4.25745</td><td className="text-right px-3 text-red-400">+1.586</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h4 className="text-gray-200 font-semibold mt-5 mb-1">The V side, measured in decode</h4>
+            <p>
+              Prefill NLL is K-precision-sensitive; FP8-V only surfaces when <em>decode</em> reads the fp8 V cache. In
+              autoregressive decode, K16/V8 reaches decode-NLL identical to BF16 with <strong className="text-gray-200">100%
+              token agreement</strong> at both TP=1 and TP=2 — FP8-V is lossless in decode and composes under TP as well.
+              Both halves of the recipe are rigorous, not just the keys (symFP8 decode degrades +0.184 / +0.171).
+            </p>
+
+            <h4 className="text-gray-200 font-semibold mt-5 mb-1">The causal head-permutation: fragility is head-dominated</h4>
+            <p>
+              Qwen2.5-7B&rsquo;s four KV heads carry wildly different K-bias magnitudes. Head&nbsp;1 (|bias|&nbsp;=&nbsp;414) is
+              the single catastrophic head — exactly the head-level fragility the atlas&rsquo;s bias-magnitude mechanism predicts.
+            </p>
+            <ChartFrame title="Per-KV-head max|K-bias| (Qwen2.5-7B)" sub="head 1 is the 414-magnitude catastrophic head; the others are an order of magnitude smaller" height={240}>
+              <BarChart data={[{h:'KV0',bias:171},{h:'KV1',bias:414},{h:'KV2',bias:108},{h:'KV3',bias:83.5}]} margin={{top:8,right:16,left:0,bottom:4}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
+                <XAxis dataKey="h" stroke="#64748b" tick={{fontSize:12}}/>
+                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
+                <Tooltip contentStyle={{background:'#0b1220',border:'1px solid #374151',borderRadius:8}}/>
+                <Bar dataKey="bias" radius={[4,4,0,0]}>
+                  {[171,414,108,83.5].map((v,i)=><Cell key={i} fill={v>300?C.red:C.slate}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              We built a <em>function-preserving</em> balanced permutation that moves the 414 head onto a different rank
+              (permuting the KV heads, the matching Q-group, and the k/v/q/o projection weights; BF16 output invariant to the
+              &minus;0.0005 GEMM-reorder floor). The result is decisive: <strong className="text-gray-200">K16/V8 is exactly
+              assignment-invariant</strong> (perm &minus; default = 0.0), while symFP8&rsquo;s collapse is
+              <strong className="text-gray-200"> grouping-insensitive</strong> (1.586 clustered vs 1.582 balanced). So
+              Qwen&rsquo;s FP8-K fragility <em>cannot</em> be fixed by head-sharding or scale-domain engineering — only by
+              protecting the keys, which K16/V8 does TP- and assignment-invariantly.
+            </p>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
+              <p className="text-sm text-gray-300">
+                <strong className="text-green-400">Deployable bottom line.</strong> Asymmetric K16/V8 is the answer the whole
+                atlas points to: lossless (K and V), at the byte knee (~2&times; vs K16), and invariant to tensor parallelism
+                and to head assignment. The failure is real all the way to production; so is the fix.
+              </p>
+            </div>
+          </Section>
+
           {/* 12. Preflight */}
           <Section id="preflight" kicker="Ship safely" title="A release-time preflight: zero false-safes on a 5-model held-out pilot">
             <p>
