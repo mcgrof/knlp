@@ -48,6 +48,8 @@ CONFIGS = [
     # LN that bounds u=Mw-alpha -> state blows up). Stabilized variants:
     ("trellis_identity_lr1e3", "trellis", dict(activation="identity", lr=1e-3)),
     ("trellis_identity_lr3e4", "trellis", dict(activation="identity", lr=3e-4)),
+    ("trellis_identity_lr1e4", "trellis", dict(activation="identity", lr=1e-4)),
+    ("trellis_identity_lr3e5", "trellis", dict(activation="identity", lr=3e-5)),
     ("trellis_identity_exact", "trellis",
      dict(activation="identity", lr=1e-3, chunk_size=1)),
     # #4 decisive test: the stale-chunk gradient is ~100% wrong for ln_silu (vs
@@ -71,6 +73,10 @@ CONFIGS = [
           value_readout_act="ln_silu", beta_init=0.9)),             # fixes on
     ("trellis_softmax_matched", "trellis",
      dict(activation="softmax", alpha_mode="softmax")),             # simplex objective
+    # phi-resolution m!=d write-phi screen (plain SiLU = unconstrained nonlinear)
+    ("trellis_silu", "trellis", dict(activation="silu", lr=3e-3)),
+    ("trellis_silu_paper", "trellis", dict(activation="silu", output_path="paper",
+        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3)),
     # #3 paper-shell ablated ONE-AT-A-TIME (which toggle drove 260->183?). Each is
     # asymmetric (a no-op under identity); ln_silu base, lr 3e-3 (paper_stable's lr).
     ("trellis_ln_out_paper", "trellis",
