@@ -601,6 +601,38 @@
             </div>
           </Section>
 
+          {/* 4c. Real-r empirical */}
+          <Section id="realr" kicker="Measured, not illustrative" title="The real residual: 512 tokens, one FP8 code">
+            <p>
+              The &plusmn;2 above was a teaching number; here is the measured one. We hooked Qwen2.5-7B&rsquo;s k_proj on
+              its worst channel (layer&nbsp;27, head&nbsp;1, channel&nbsp;127, bias <strong>&minus;414</strong>) and read the
+              real pre-RoPE residual <Tex>{"r = x\\,W_K^{\\top}"}</Tex> across 512 corpus tokens. The residual that carries
+              <em> all</em> the token-to-token information on this channel has standard deviation
+              <strong className="text-gray-200"> ~1.1</strong> — while the e4m3 grid step at magnitude 414 is
+              <strong className="text-red-400"> 32</strong>.
+            </p>
+            <ChartFrame title="Measured residual r on Qwen channel 127 (bias −414)" sub="r-std ≈ 1.1; the FP8 grid step there is 32 — ~30× wider than the whole residual spread, so every key rounds to one code" height={250}>
+              <BarChart data={[1,0,1,3,6,7,13,24,23,29,31,41,77,61,76,46,16,15,15,13,9,1,3,1].map((n,i)=>({r:(-7.216+(i+0.5)*0.3014).toFixed(1), n}))} margin={{top:8,right:16,left:0,bottom:14}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
+                <XAxis dataKey="r" stroke="#64748b" tick={{fontSize:10}} interval={2} label={{value:'residual r  (one FP8 step = 32, off the right edge)', position:'insideBottom', offset:-8, fill:'#64748b', fontSize:11}}/>
+                <YAxis stroke="#64748b" tick={{fontSize:11}} label={{value:'tokens', angle:-90, position:'insideLeft', fill:'#64748b', fontSize:11}}/>
+                <Tooltip contentStyle={{background:'#0b1220',border:'1px solid #374151',borderRadius:8}}/>
+                <Bar dataKey="n" fill={C.blue} radius={[2,2,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <div className="grid grid-cols-3 gap-3 my-4">
+              <div className="stat-card rounded-lg p-3 text-center"><div className="text-xs uppercase tracking-wide text-gray-500 mb-1">residual std</div><div className="text-2xl font-bold text-blue-400">1.09</div></div>
+              <div className="stat-card rounded-lg p-3 text-center"><div className="text-xs uppercase tracking-wide text-gray-500 mb-1">FP8 step @ 414</div><div className="text-2xl font-bold text-red-400">32</div></div>
+              <div className="stat-card rounded-lg p-3 text-center"><div className="text-xs uppercase tracking-wide text-gray-500 mb-1">tokens &rarr; 1 code</div><div className="text-2xl font-bold text-red-400">512 : 1</div></div>
+            </div>
+            <p className="text-sm text-gray-400">
+              All 512 tokens&rsquo; keys on this channel round to a <strong>single</strong> e4m3 code — attention can no
+              longer tell them apart. That is the residual crush, measured: a ~30:1 step-to-signal ratio annihilates the whole
+              distribution. Keep the bias exact and quantize this ~&plusmn;1 residual on its own scale (step ~0.06), and every
+              token survives — the prebias recovery, grounded in the real numbers.
+            </p>
+          </Section>
+
           {/* 5. Causal proof */}
           <Section id="causal" kicker="From correlation to cause" title="The causal proof: it really is the bias, in those exact channels">
             <p>
