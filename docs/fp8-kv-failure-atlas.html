@@ -476,6 +476,33 @@
             </p>
           </Section>
 
+          {/* 2c. Scales 101 */}
+          <Section id="scales101" kicker="Uniform vs log-spaced" title="Scales 101: INT8 is even, FP8 is not — and why 127">
+            <p>
+              The same 8 bits, two grids. <strong>INT8</strong> places its codes <em>uniformly</em>: a single scale
+              <Tex>{"s = \\text{absmax}/127"}</Tex> sets one constant step everywhere (signed int8 runs &minus;128&hellip;+127,
+              so the symmetric mapping sends absmax to code 127 — that&rsquo;s the &ldquo;127&rdquo;). <strong>FP8</strong>
+              places its codes <em>logarithmically</em>: the step grows with magnitude. On a 400-magnitude key INT8&rsquo;s
+              step stays ~3 while FP8&rsquo;s balloons to 32 — the visual proof of &ldquo;format beats bit-width.&rdquo;
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-4">
+              <svg viewBox="0 0 620 150" className="w-full" style={{maxHeight:180}}>
+                <text x="40" y="26" fill={C.green} fontSize="12" textAnchor="start">INT8 per-tensor — uniform, step &asymp; 3.3</text>
+                <line x1="40" y1="50" x2="580" y2="50" stroke="#334155" strokeWidth="1.5"/>
+                {Array.from({length:20}, (_,i)=>386+i*3.26).filter(v=>v<=447).map((v,i)=>(<line key={i} x1={40+(v-384)*8.4} y1="44" x2={40+(v-384)*8.4} y2="56" stroke={C.green} strokeWidth="1"/>))}
+                <text x="40" y="100" fill={C.red} fontSize="12" textAnchor="start">FP8 e4m3 — log-spaced, step 32 here</text>
+                <line x1="40" y1="124" x2="580" y2="124" stroke="#334155" strokeWidth="1.5"/>
+                {[384,416,448].map((v,i)=>(<g key={i}><line x1={40+(v-384)*8.4} y1="116" x2={40+(v-384)*8.4} y2="132" stroke={C.red} strokeWidth="1.6"/><text x={40+(v-384)*8.4} y="146" fill="#64748b" fontSize="10" textAnchor="middle">{v}</text></g>))}
+              </svg>
+            </div>
+            <p className="text-sm text-gray-500">
+              Granularity is the second axis — one scale per tensor, head, channel, or token. Finer scales help when the
+              outlier is <em>spread</em> across channels, but cannot fix a single DC offset every channel shares (the next
+              section). Per-channel / KIVI gives each channel its own range; per-token suits the value cache; and under
+              tensor parallelism the scale is per-rank when TP &lt; KV-heads.
+            </p>
+          </Section>
+
           {/* 3. Format beats bit-width */}
           <Section id="format" kicker="The smoking gun" title="Format beats bit-width: INT8 rescues what FP8 destroys">
             <p>
@@ -881,6 +908,44 @@
               NoPE-style layers — plus ring / blockwise attention for exact long context. The throughline:
               modern length extrapolation rescales RoPE frequencies rather than bolting on bias terms, which is also why the
               FP8-bias failure is, mercifully, a legacy artifact rather than a property of the models being built today.
+            </div>
+
+            <h3 className="text-lg font-semibold text-gray-200 mt-6 mb-2">Lineage 3 — QK-Norm, the cure that designed the bias away</h3>
+            <p>
+              The fix the field converged on is older than the problem. <strong>Query-Key Normalization</strong>
+              (<a href="https://arxiv.org/abs/2010.04245" className="text-amber-400 hover:underline">Henry et al., 2020</a>)
+              L2-normalizes Q and K along the head dimension before the dot product and replaces the fixed <Tex>{"1/\\sqrt{d}"}</Tex>
+              with a <em>learnable</em> scale — motivated not by length but by <strong>training stability</strong> (preventing
+              softmax saturation in low-resource translation).
+              <a href="https://arxiv.org/abs/2302.05442" className="text-amber-400 hover:underline"> ViT-22B (Dehghani et al., 2023)</a>
+              popularized it <em>at scale</em>, again for stability. And
+              <a href="https://arxiv.org/abs/2505.09388" className="text-amber-400 hover:underline"> Qwen3</a> states it verbatim:
+              &ldquo;<em>we remove QKV-bias used in Qwen2 (Yang et al., 2024a) and introduce QK-Norm (Dehghani et al., 2023)
+              to the attention mechanism to ensure stable training for Qwen3.</em>&rdquo; The same large key bias that once
+              helped extrapolation had also become a numerical liability — so it was designed away.
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+              <svg viewBox="0 0 620 132" className="w-full" style={{maxHeight:172}}>
+                <line x1="30" y1="66" x2="590" y2="66" stroke="#334155" strokeWidth="2"/>
+                {[{x:60,y:'2020',t:'QK-Norm',s:'Henry — stability',c:C.green,up:true},
+                  {x:185,y:'2021',t:'RoPE + Bias',s:'Su — extrapolation',c:C.red,up:false},
+                  {x:325,y:'2023',t:'ViT-22B',s:'QK-Norm at scale',c:C.green,up:true},
+                  {x:445,y:'2024',t:'Qwen2',s:'keeps QKV bias',c:C.red,up:false},
+                  {x:565,y:'2025',t:'Qwen3',s:'bias → QK-Norm',c:C.amber,up:true}].map((n,i)=>(
+                  <g key={i}>
+                    <circle cx={n.x} cy="66" r="5" fill={n.c}/>
+                    <text x={n.x} y={n.up?42:90} fill={n.c} fontSize="11" fontWeight="bold" textAnchor="middle">{n.t}</text>
+                    <text x={n.x} y={n.up?28:104} fill="#64748b" fontSize="9" textAnchor="middle">{n.s}</text>
+                    <text x={n.x} y={n.up?56:80} fill="#94a3b8" fontSize="9" textAnchor="middle">{n.y}</text>
+                  </g>))}
+              </svg>
+            </div>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.amber}}>
+              <p className="text-sm text-gray-300"><strong className="text-amber-400">The synthesis.</strong> The bias is two
+              faces of one liability. The atlas&rsquo;s <strong>prebias</strong> recipe is the &ldquo;keep the bias, make it
+              precision-safe&rdquo; answer — split it from the residual <em>before</em> quantizing. Qwen3&rsquo;s
+              <strong> QK-Norm</strong> is the &ldquo;design the bias away&rdquo; answer. Both target the same emergent
+              large-magnitude key geometry that breaks FP8 — one at quantization time, the other at architecture time.</p>
             </div>
           </Section>
 
