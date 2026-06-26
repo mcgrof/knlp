@@ -21,6 +21,7 @@ Usage:
       --batch 8 --chunk-size 16 --dataset allenai/c4 --c4-config en \
       --out /data/knlp-key-results/trellis-fidelity-20260624
 """
+
 import argparse, json, math, sys, time
 from pathlib import Path
 
@@ -37,88 +38,237 @@ from trellis_lm.model import build_model
 # reference -- the doc's fla GDN 78.49 stays the external reference). They give a
 # same-budget anchor for the Trellis-internal ablation, which is the point here.
 CONFIGS = [
-    ("gated_delta_handroll", "gated_delta", {}),                    # GDN anchor (fla-free)
-    ("deltanet_handroll", "delta", {}),                            # DeltaNet anchor (fla-free)
-    ("trellis_ln_silu", "trellis", dict(activation="ln_silu")),     # our default
+    ("gated_delta_handroll", "gated_delta", {}),  # GDN anchor (fla-free)
+    ("deltanet_handroll", "delta", {}),  # DeltaNet anchor (fla-free)
+    ("trellis_ln_silu", "trellis", dict(activation="ln_silu")),  # our default
     # matched-LR control vs identity (identity only stable at lr 3e-4): isolates
     # the phi nonlinearity from the LR difference.
     ("trellis_ln_silu_lr3e4", "trellis", dict(activation="ln_silu", lr=3e-4)),
-    ("trellis_identity", "trellis", dict(activation="identity")),   # delta-rule control
+    ("trellis_identity", "trellis", dict(activation="identity")),  # delta-rule control
     # identity (delta rule) diverges at lr 3e-3 chunk16 (phi=identity removes the
     # LN that bounds u=Mw-alpha -> state blows up). Stabilized variants:
     ("trellis_identity_lr1e3", "trellis", dict(activation="identity", lr=1e-3)),
     ("trellis_identity_lr3e4", "trellis", dict(activation="identity", lr=3e-4)),
     ("trellis_identity_lr1e4", "trellis", dict(activation="identity", lr=1e-4)),
     ("trellis_identity_lr3e5", "trellis", dict(activation="identity", lr=3e-5)),
-    ("trellis_identity_exact", "trellis",
-     dict(activation="identity", lr=1e-3, chunk_size=1)),
+    (
+        "trellis_identity_exact",
+        "trellis",
+        dict(activation="identity", lr=1e-3, chunk_size=1),
+    ),
     # #4 decisive test: the stale-chunk gradient is ~100% wrong for ln_silu (vs
     # ~10% for identity, per the gradcheck), and all training used chunk16 stale.
     # Re-run BOTH phi at exact inner (chunk1, correct gradient): if ln_silu
     # catches up, the 2x gap was a stale-approximation artifact, not a real
     # nonlinear deficit. Matched lr 3e-4 to the stale runs.
-    ("trellis_id_exact_lr3e4", "trellis",
-     dict(activation="identity", lr=3e-4, chunk_size=1)),
-    ("trellis_ln_exact_lr3e4", "trellis",
-     dict(activation="ln_silu", lr=3e-4, chunk_size=1)),
+    (
+        "trellis_id_exact_lr3e4",
+        "trellis",
+        dict(activation="identity", lr=3e-4, chunk_size=1),
+    ),
+    (
+        "trellis_ln_exact_lr3e4",
+        "trellis",
+        dict(activation="ln_silu", lr=3e-4, chunk_size=1),
+    ),
     # ungated linear write = same-shell DeltaNet (the paper's ACTUAL 125M
     # baseline; its small-scale table has NO Gated DeltaNet row). identity_lr3e4
     # is the GATED delta rule; this drops the forget gate (beta forced to 1) to
     # measure both. lr 1e-3: ungated may tolerate a higher lr than gated (the
     # gate's decay was part of what destabilized at high lr) -- screened at run.
-    ("trellis_identity_nogate", "trellis",
-     dict(activation="identity", lr=1e-4, forget_gate=False)),
-    ("trellis_paper_stable", "trellis",
-     dict(activation="ln_silu", output_path="paper",
-          value_readout_act="ln_silu", beta_init=0.9)),             # fixes on
-    ("trellis_softmax_matched", "trellis",
-     dict(activation="softmax", alpha_mode="softmax")),             # simplex objective
+    (
+        "trellis_identity_nogate",
+        "trellis",
+        dict(activation="identity", lr=1e-4, forget_gate=False),
+    ),
+    (
+        "trellis_paper_stable",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+        ),
+    ),  # fixes on
+    (
+        "trellis_softmax_matched",
+        "trellis",
+        dict(activation="softmax", alpha_mode="softmax"),
+    ),  # simplex objective
     # phi-resolution m!=d write-phi screen (plain SiLU = unconstrained nonlinear)
     ("trellis_silu", "trellis", dict(activation="silu", lr=3e-3)),
-    ("trellis_silu_paper", "trellis", dict(activation="silu", output_path="paper",
-        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3)),
+    (
+        "trellis_silu_paper",
+        "trellis",
+        dict(
+            activation="silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+        ),
+    ),
     # #3 paper-shell ablated ONE-AT-A-TIME (which toggle drove 260->183?). Each is
     # asymmetric (a no-op under identity); ln_silu base, lr 3e-3 (paper_stable's lr).
-    ("trellis_ln_out_paper", "trellis",
-     dict(activation="ln_silu", output_path="paper")),
-    ("trellis_ln_vreadout", "trellis",
-     dict(activation="ln_silu", value_readout_act="ln_silu")),
-    ("trellis_ln_beta09", "trellis",
-     dict(activation="ln_silu", beta_init=0.9)),
+    (
+        "trellis_ln_out_paper",
+        "trellis",
+        dict(activation="ln_silu", output_path="paper"),
+    ),
+    (
+        "trellis_ln_vreadout",
+        "trellis",
+        dict(activation="ln_silu", value_readout_act="ln_silu"),
+    ),
+    ("trellis_ln_beta09", "trellis", dict(activation="ln_silu", beta_init=0.9)),
     # #6 key-norm (write_l2norm) variants: does it rescue the ungated DeltaNet, and
     # does it change the identity-vs-ln_silu picture (cmcp: may help nonlinear more)?
-    ("trellis_id_nogate_knorm", "trellis",
-     dict(activation="identity", forget_gate=False, write_l2norm=True, lr=3e-4)),
-    ("trellis_id_knorm", "trellis",
-     dict(activation="identity", write_l2norm=True, lr=3e-4)),
-    ("trellis_ln_knorm", "trellis",
-     dict(activation="ln_silu", write_l2norm=True, lr=3e-4)),
+    (
+        "trellis_id_nogate_knorm",
+        "trellis",
+        dict(activation="identity", forget_gate=False, write_l2norm=True, lr=3e-4),
+    ),
+    (
+        "trellis_id_knorm",
+        "trellis",
+        dict(activation="identity", write_l2norm=True, lr=3e-4),
+    ),
+    (
+        "trellis_ln_knorm",
+        "trellis",
+        dict(activation="ln_silu", write_l2norm=True, lr=3e-4),
+    ),
     # #5 the last untested lever: gamma (inner step size, fixed 1e-2). Per-phi
     # equal-tuning-budget -- does tuning gamma close the remaining ~1.4x gap
     # (identity 127.9 vs ln_silu+shell 182.8)? identity @ its lr 3e-4; ln_silu with
     # the full paper shell @ its lr 3e-3.
-    ("trellis_id_g1e3", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-3)),
-    ("trellis_id_g1e2", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-2)),
-    ("trellis_id_g1e1", "trellis", dict(activation="identity", lr=3e-4, gamma_init=1e-1)),
-    ("trellis_lnp_g1e3", "trellis", dict(activation="ln_silu", output_path="paper",
-        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-3)),
-    ("trellis_lnp_g1e2", "trellis", dict(activation="ln_silu", output_path="paper",
-        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-2)),
-    ("trellis_lnp_g3e2", "trellis", dict(activation="ln_silu", output_path="paper",
-        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=3e-2)),
-    ("trellis_lnp_g1e1", "trellis", dict(activation="ln_silu", output_path="paper",
-        value_readout_act="ln_silu", beta_init=0.9, lr=3e-3, gamma_init=1e-1)),
+    (
+        "trellis_id_g1e3",
+        "trellis",
+        dict(activation="identity", lr=3e-4, gamma_init=1e-3),
+    ),
+    (
+        "trellis_id_g1e2",
+        "trellis",
+        dict(activation="identity", lr=3e-4, gamma_init=1e-2),
+    ),
+    (
+        "trellis_id_g1e1",
+        "trellis",
+        dict(activation="identity", lr=3e-4, gamma_init=1e-1),
+    ),
+    (
+        "trellis_lnp_g1e3",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+            gamma_init=1e-3,
+        ),
+    ),
+    (
+        "trellis_lnp_g1e2",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+            gamma_init=1e-2,
+        ),
+    ),
+    (
+        "trellis_lnp_g3e2",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+            gamma_init=3e-2,
+        ),
+    ),
+    (
+        "trellis_lnp_g1e1",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+            gamma_init=1e-1,
+        ),
+    ),
+    # === Stage-2 phi-confirmation (--only s2_*, run at 3 seeds, ~60M tok) ===
+    # Core 2x2: write-phi {SiLU, identity} x readout-phi {identity(none), SiLU},
+    # f=ln_silu shell fixed. Isolates whether the nonlinearity that matters lives
+    # in the WRITE (state management) or the READOUT. Stage-1 (m!=d screen) said
+    # plain-SiLU write 375.8 beats identity-tuned 503.0 (~1.34x); this confirms it
+    # robustly across the readout axis and 3 seeds. Identity needs lr<=1e-4 at
+    # m!=d (LR-fragility, not an axis bug -- gradcheck verified m!=d bit-exact).
+    (
+        "s2_silu_rNone",
+        "trellis",
+        dict(activation="silu", value_readout_act="none", lr=3e-3),
+    ),
+    (
+        "s2_silu_rSilu",
+        "trellis",
+        dict(activation="silu", value_readout_act="silu", lr=3e-3),
+    ),
+    (
+        "s2_id_rNone",
+        "trellis",
+        dict(activation="identity", value_readout_act="none", lr=1e-4),
+    ),
+    (
+        "s2_id_rSilu",
+        "trellis",
+        dict(activation="identity", value_readout_act="silu", lr=1e-4),
+    ),
+    # anchors tying Stage-2 back to Stage-1: bare ln_silu + the full paper shell.
+    ("s2_lnsilu", "trellis", dict(activation="ln_silu", lr=3e-3)),
+    (
+        "s2_lnsilu_paper",
+        "trellis",
+        dict(
+            activation="ln_silu",
+            output_path="paper",
+            value_readout_act="ln_silu",
+            beta_init=0.9,
+            lr=3e-3,
+        ),
+    ),
+    # alpha-geometry screen (1 seed): does normalizing the linear target alpha
+    # help the SiLU write? plain-linear alpha is the default arm (s2_silu_rNone).
+    (
+        "s2_silu_aLnsilu",
+        "trellis",
+        dict(activation="silu", alpha_mode="ln_silu", lr=3e-3),
+    ),
+    ("s2_silu_aL2", "trellis", dict(activation="silu", alpha_mode="l2_silu", lr=3e-3)),
 ]
 
 
 def get_tokenizer():
     from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained("gpt2")
+
+    # canonical repo id -- the bare "gpt2" alias has a broken cache entry on some
+    # hosts (vocab_file resolves to None); openai-community/gpt2 is the same vocab
+    tok = AutoTokenizer.from_pretrained("openai-community/gpt2")
     return tok
 
 
 def pack_stream(dataset, c4_config, split, seq_len, n_seqs, tok, seed=0):
     from datasets import load_dataset
+
     kw = {"streaming": True}
     if c4_config:
         ds = load_dataset(dataset, c4_config, split=split, **kw)
@@ -131,7 +281,8 @@ def pack_stream(dataset, c4_config, split, seq_len, n_seqs, tok, seed=0):
             continue
         buf.extend(tok(t).input_ids + [tok.eos_token_id or 0])
         while len(buf) >= seq_len:
-            out.append(buf[:seq_len]); buf = buf[seq_len:]
+            out.append(buf[:seq_len])
+            buf = buf[seq_len:]
             if len(out) >= n_seqs:
                 return out
     return out
@@ -142,13 +293,16 @@ def val_ppl(model, val_seqs, device, batch, dt):
     model.eval()
     tot, ntok = 0.0, 0
     for i in range(0, len(val_seqs), batch):
-        rows = val_seqs[i:i + batch]
+        rows = val_seqs[i : i + batch]
         if not rows:
             break
         idx = torch.tensor(rows, device=device)
-        with torch.autocast(device_type=device.type, dtype=dt, enabled=dt != torch.float32):
+        with torch.autocast(
+            device_type=device.type, dtype=dt, enabled=dt != torch.float32
+        ):
             _, loss = model(idx, labels=idx, training=False)
-        tot += loss.item() * len(rows); ntok += len(rows)
+        tot += loss.item() * len(rows)
+        ntok += len(rows)
     model.train()
     return math.exp(min(20, tot / max(1, ntok)))
 
@@ -156,13 +310,19 @@ def val_ppl(model, val_seqs, device, batch, dt):
 def train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt):
     torch.manual_seed(args.seed)
     ov = dict(ov)  # copy: don't mutate the module-level CONFIGS
-    lr = ov.pop("lr", args.lr)            # per-config LR override
+    lr = ov.pop("lr", args.lr)  # per-config LR override
     chunk = ov.pop("chunk_size", args.chunk_size)
     base = dict(
-        vocab_size=50257, d_model=args.d_model, n_layers=args.n_layers,
-        n_heads=args.n_heads, d_head=args.d_head, n_slots=args.n_slots,
-        max_seq_len=args.seq_len, dtype="bf16",
-        chunk_size=chunk, exact_inner=(chunk <= 1),
+        vocab_size=50257,
+        d_model=args.d_model,
+        n_layers=args.n_layers,
+        n_heads=args.n_heads,
+        d_head=args.d_head,
+        n_slots=args.n_slots,
+        max_seq_len=args.seq_len,
+        dtype="bf16",
+        chunk_size=chunk,
+        exact_inner=(chunk <= 1),
     )
     base.update(ov)
     cfg = TrellisConfig(**base)
@@ -175,34 +335,62 @@ def train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt):
     nparams = model.get_num_params()
     steps = max(1, args.train_tokens // (args.batch * args.seq_len))
     hist = []
-    t0 = time.time(); ntok = 0; bi = 0
+    t0 = time.time()
+    ntok = 0
+    bi = 0
     model.train()
     for step in range(1, steps + 1):
-        rows = train_seqs[bi:bi + args.batch]; bi += args.batch
+        rows = train_seqs[bi : bi + args.batch]
+        bi += args.batch
         if len(rows) < args.batch:
-            bi = 0; rows = train_seqs[bi:bi + args.batch]; bi += args.batch
+            bi = 0
+            rows = train_seqs[bi : bi + args.batch]
+            bi += args.batch
         idx = torch.tensor(rows, device=device)
-        with torch.autocast(device_type=device.type, dtype=dt, enabled=dt != torch.float32):
+        with torch.autocast(
+            device_type=device.type, dtype=dt, enabled=dt != torch.float32
+        ):
             _, loss = model(idx, labels=idx, training=True)
-        opt.zero_grad(); loss.backward()
+        opt.zero_grad()
+        loss.backward()
         gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0).item()
         opt.step()
         ntok += idx.numel()
         if step % args.log_every == 0 or step == 1:
             tps = ntok / (time.time() - t0)
-            print(f"    [{label}] step {step}/{steps} loss {loss.item():.4f} "
-                  f"gnorm {gnorm:.2f} tok/s {tps:.0f}", flush=True)
+            print(
+                f"    [{label}] step {step}/{steps} loss {loss.item():.4f} "
+                f"gnorm {gnorm:.2f} tok/s {tps:.0f}",
+                flush=True,
+            )
             hist.append({"step": step, "loss": loss.item(), "tok_s": tps})
         if not math.isfinite(loss.item()):
-            print(f"    [{label}] NON-FINITE loss at step {step} -- aborting config", flush=True)
-            return {"label": label, "kind": kind, "overrides": ov,
-                    "params": nparams, "status": "diverged", "history": hist}
+            print(
+                f"    [{label}] NON-FINITE loss at step {step} -- aborting config",
+                flush=True,
+            )
+            return {
+                "label": label,
+                "kind": kind,
+                "overrides": ov,
+                "params": nparams,
+                "status": "diverged",
+                "history": hist,
+            }
     vp = val_ppl(model, val_seqs, device, args.batch, dt)
     wall = time.time() - t0
     print(f"  [{label}] DONE val_ppl={vp:.2f} params={nparams} {wall:.0f}s", flush=True)
-    return {"label": label, "kind": kind, "overrides": ov, "params": nparams,
-            "val_ppl": round(vp, 3), "train_steps": steps, "wall_s": round(wall, 1),
-            "status": "ok", "history": hist}
+    return {
+        "label": label,
+        "kind": kind,
+        "overrides": ov,
+        "params": nparams,
+        "val_ppl": round(vp, 3),
+        "train_steps": steps,
+        "wall_s": round(wall, 1),
+        "status": "ok",
+        "history": hist,
+    }
 
 
 def main():
@@ -223,20 +411,61 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--log-every", type=int, default=50)
     ap.add_argument("--only", default=None, help="comma-list of labels to run")
+    ap.add_argument(
+        "--packed-data",
+        default=None,
+        help="dir holding pre-packed train.pt/val.pt; if absent the "
+        "data is streamed then SAVED there (pack once on a "
+        "networked host, ship the dir to an offline pod so the "
+        "run never touches HF). The corpus is fixed across "
+        "--seed so only the init seed varies.",
+    )
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dt = torch.bfloat16
-    outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
-    tok = get_tokenizer()
+    outdir = Path(args.out)
+    outdir.mkdir(parents=True, exist_ok=True)
     n_train = args.train_tokens // args.seq_len + args.batch + 1
-    print(f"[data] streaming {args.dataset}/{args.c4_config} "
-          f"train_seqs~{n_train} val_seqs={args.val_seqs} seq_len={args.seq_len}", flush=True)
-    train_seqs = pack_stream(args.dataset, args.c4_config, "train", args.seq_len,
-                             n_train, tok, args.seed)
-    val_seqs = pack_stream(args.dataset, args.c4_config, "validation", args.seq_len,
-                           args.val_seqs, tok, args.seed)
+    # Corpus is packed with a FIXED seed (0) so it is identical across --seed
+    # runs; only torch.manual_seed(args.seed) (init/dropout order) varies. This
+    # makes the 3-seed confirmation an init-variance estimate, not a data lottery.
+    pk = Path(args.packed_data) if args.packed_data else None
+    if pk and (pk / "train.pt").exists() and (pk / "val.pt").exists():
+        print(f"[data] loading pre-packed corpus from {pk}", flush=True)
+        train_seqs = torch.load(pk / "train.pt")
+        val_seqs = torch.load(pk / "val.pt")
+        if len(train_seqs) < n_train:
+            print(
+                f"[data] WARNING packed train={len(train_seqs)} < needed "
+                f"{n_train} (will wrap-around during training)",
+                flush=True,
+            )
+    else:
+        tok = get_tokenizer()
+        print(
+            f"[data] streaming {args.dataset}/{args.c4_config} "
+            f"train_seqs~{n_train} val_seqs={args.val_seqs} seq_len={args.seq_len}",
+            flush=True,
+        )
+        train_seqs = pack_stream(
+            args.dataset, args.c4_config, "train", args.seq_len, n_train, tok, 0
+        )
+        val_seqs = pack_stream(
+            args.dataset,
+            args.c4_config,
+            "validation",
+            args.seq_len,
+            args.val_seqs,
+            tok,
+            0,
+        )
+        if pk:
+            pk.mkdir(parents=True, exist_ok=True)
+            torch.save(train_seqs, pk / "train.pt")
+            torch.save(val_seqs, pk / "val.pt")
+            print(f"[data] saved packed corpus -> {pk}", flush=True)
     print(f"[data] got train={len(train_seqs)} val={len(val_seqs)}", flush=True)
 
     only = set(args.only.split(",")) if args.only else None
@@ -248,16 +477,26 @@ def main():
         try:
             r = train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt)
         except Exception as e:
-            import traceback; traceback.print_exc()
-            r = {"label": label, "kind": kind, "overrides": ov,
-                 "status": "error", "error": str(e)}
+            import traceback
+
+            traceback.print_exc()
+            r = {
+                "label": label,
+                "kind": kind,
+                "overrides": ov,
+                "status": "error",
+                "error": str(e),
+            }
         results.append(r)
-        (outdir / "SWEEP_RESULTS.json").write_text(json.dumps(
-            {"args": vars(args), "results": results}, indent=2))
+        (outdir / "SWEEP_RESULTS.json").write_text(
+            json.dumps({"args": vars(args), "results": results}, indent=2)
+        )
     print("\n=== SWEEP SUMMARY (val PPL, lower=better) ===")
     for r in sorted(results, key=lambda x: x.get("val_ppl", 9e9)):
-        print(f"  {r['label']:26s} {r.get('status'):9s} "
-              f"val_ppl={r.get('val_ppl','-')} params={r.get('params','-')}")
+        print(
+            f"  {r['label']:26s} {r.get('status'):9s} "
+            f"val_ppl={r.get('val_ppl','-')} params={r.get('params','-')}"
+        )
     print(f"[sweep] -> {outdir}/SWEEP_RESULTS.json")
 
 
