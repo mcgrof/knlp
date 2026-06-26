@@ -59,10 +59,12 @@ class TrellisConfig:
 
     def __post_init__(self):
         assert self.activation in (
+            "silu",
             "ln_silu",
             "l2_silu",
             "softmax",
             "identity",
+            "scaled_identity",
         ), self.activation
         assert self.alpha_mode in (
             "linear",

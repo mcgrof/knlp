@@ -118,11 +118,22 @@ def identity(x: torch.Tensor) -> torch.Tensor:
     return x
 
 
+def scaled_identity(x: torch.Tensor) -> torch.Tensor:
+    """phi = a*x diagnostic: a fixed-scale linear map. Tests whether a nonlinear
+    arm loses to target-SCALE mismatch (alpha unconstrained vs a normalized phi)
+    rather than to the nonlinear memory management itself. Not a faithful Trellis
+    candidate -- a control. Fixed a=1 here is just identity; the learned-scale
+    variant lives in the mixer (needs a parameter)."""
+    return x
+
+
 _ACT = {
-    "ln_silu": ln_silu,
+    "silu": silu,                 # plain SiLU -- unconstrained nonlinear phi candidate
+    "ln_silu": ln_silu,           # LayerNorm-SiLU (param-free), the current default
     "l2_silu": l2_silu,
     "softmax": softmax,
     "identity": identity,
+    "scaled_identity": scaled_identity,
 }
 
 
