@@ -76,6 +76,8 @@ class TrellisConfig:
         assert self.output_path in ("current", "paper"), self.output_path
         assert self.value_readout_act in (
             "none",
+            "silu",
+            "identity",
             "ln_silu",
             "l2_silu",
         ), self.value_readout_act
