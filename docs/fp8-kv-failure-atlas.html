@@ -908,6 +908,66 @@
             </div>
           </Section>
 
+          {/* 10b. Cross-model corrected Pareto */}
+          <Section id="crossmodel" kicker="The corrected map" title="The corrected cross-model frontier: a well-designed low-bit K avoids collapse">
+            <p>
+              The single-model story generalizes. We re-measured the full K-protection frontier across four model
+              families with <em>faithful</em> implementations — and two arms that had looked like catastrophic collapses
+              turned out to be <strong>implementation artifacts</strong>, exactly the confirmation-bias trap a self-audit
+              flagged. Corrected, every arm reproduces its method&rsquo;s real behavior.
+            </p>
+
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-3">arm &mdash; &Delta;NLL vs K16/V16</th>
+                  <th className="text-right px-2">Llama-8B</th><th className="text-right px-2">Mistral-7B</th>
+                  <th className="text-right px-2">Qwen-7B</th><th className="text-right px-2">Phi-2</th>
+                  <th className="text-right px-2 text-gray-300">worst</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">K16/V8</td><td className="text-right px-2">+0.0006</td><td className="text-right px-2">+0.0002</td><td className="text-right px-2">&minus;0.0001</td><td className="text-right px-2">&minus;0.0002</td><td className="text-right px-2 text-green-400">0.0006</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">pre-RoPE prebias-K8</td><td className="text-right px-2">+0.0029</td><td className="text-right px-2">+0.0014</td><td className="text-right px-2">+0.0022</td><td className="text-right px-2">+0.0268</td><td className="text-right px-2 text-green-400">0.027</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">K16/V2-PT+R</td><td className="text-right px-2">+0.048</td><td className="text-right px-2">+0.011</td><td className="text-right px-2">+0.066</td><td className="text-right px-2">+0.015</td><td className="text-right px-2 text-gray-300">0.066</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-amber-400">faithful KIVI (2-bit K)</td><td className="text-right px-2">+0.188</td><td className="text-right px-2">+0.064</td><td className="text-right px-2 text-amber-400">+0.446</td><td className="text-right px-2">+0.092</td><td className="text-right px-2 text-amber-400">0.446</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p>
+              <strong className="text-gray-200">Both &ldquo;collapses&rdquo; were artifacts.</strong> The
+              &ldquo;prebias&rdquo; that read +2.83 on Qwen was a mislabeled post-RoPE symmetric FP8-K (no bias handling);
+              wired to the validated <em>pre-RoPE</em> intercept it is near-lossless on all four families (Qwen
+              5.06&rarr;2.23, &Delta;+0.0022 — matching the 444&times; replay). The &ldquo;KIVI&rdquo; that read +6.19 was a
+              3-level no-residual strawman; faithful KIVI (4-level affine per-channel over token-groups + a residual window)
+              never collapses — its 2-bit-K cost just scales monotonically with key fragility:
+            </p>
+            <ChartFrame title="Faithful KIVI cost scales with key fragility — no collapse anywhere" sub="ΔNLL vs K16/V16; viable on all four families, the 2-bit-K cost rising with the model's K-bias geometry" height={240}>
+              <BarChart data={[{m:'Mistral-7B',d:0.064},{m:'Phi-2',d:0.092},{m:'Llama-8B',d:0.188},{m:'Qwen-7B',d:0.446}]} margin={{top:8,right:16,left:0,bottom:4}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
+                <XAxis dataKey="m" stroke="#64748b" tick={{fontSize:12}}/>
+                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
+                <Tooltip contentStyle={{background:'#0b1220',border:'1px solid #374151',borderRadius:8}}/>
+                <Bar dataKey="d" fill={C.amber} radius={[4,4,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
+              <p className="text-sm text-gray-300"><strong className="text-green-400">The corrected thesis (4 families).</strong>
+              {' '}K-quant failure is <strong>geometry- and placement-controlled, not bit-width alone</strong> — a
+              <em> well-designed</em> low-bit K avoids collapse. The deployable tiers: <strong>K16/V8</strong> the lossless
+              knee (~2&times; vs K16, TP-invariant); <strong>pre-RoPE prebias-K8</strong> near-lossless at ~8-bit (the bias
+              amortizes to &lt;0.07 bits/token); <strong>K16/V2</strong> a high-capacity tier; <strong>faithful KIVI</strong>
+              a viable 2-bit-K option whose cost is predictable from the model&rsquo;s bias geometry. No strawmen, no
+              self-contradiction — every arm reproduces its published behavior.</p>
+            </div>
+            <p className="text-xs text-gray-500">
+              ctx-2048 teacher-forced NLL, faithful quantizers, measured free on a W7900. Remaining extensions (labeled in
+              the source): ctx-8K + a NIAH probe, paired-doc block-bootstrap CIs, and the full per-query streaming
+              cache-lifecycle.
+            </p>
+          </Section>
+
           {/* 11. Serving */}
           <Section id="serving" kicker="Does it survive real serving?" title="It is a real production failure, not a fake-quant artifact">
             <p>
