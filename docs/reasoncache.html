@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ReasonCACHE: Reasoning Without Weight Updates | knlp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --bg2: #0e1017;
+      --surface: #141821;
+      --surface2: #191f2b;
+      --border: #2a303c;
+      --border2: #3a4353;
+      --text: #eef2f8;
+      --muted: #9aa6b8;
+      --faint: #677386;
+      --cyan: #29d3c7;
+      --green: #31d978;
+      --amber: #f5b84b;
+      --blue: #62a8ff;
+      --violet: #a98bff;
+      --red: #ff6f7d;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html {
+      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(41, 211, 199, 0.05), transparent 260px),
+        radial-gradient(circle at 50% 0%, rgba(98, 168, 255, 0.10), transparent 420px),
+        var(--bg);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.65;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; }
+    code, pre, .mono { font-family: var(--mono); }
+    .wrap { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+
+    .site-nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(9, 10, 15, 0.90);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .site-nav .wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(41, 211, 199, 0.45);
+      background: rgba(41, 211, 199, 0.10);
+      border-radius: 8px;
+      color: var(--cyan);
+    }
+    .brand strong {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      transition: 0.18s ease;
+    }
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: var(--text);
+      background: var(--surface);
+      border-color: var(--border);
+    }
+
+    .hero {
+      min-height: clamp(680px, 82vh, 880px);
+      display: grid;
+      align-items: center;
+      padding: 72px 0 48px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(360px, 0.96fr);
+      align-items: center;
+      gap: 44px;
+    }
+    .hero-grid > *,
+    .grid > * {
+      min-width: 0;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 2px;
+      background: var(--cyan);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(48px, 9vw, 116px);
+      line-height: 0.92;
+      letter-spacing: -0.06em;
+      max-width: 850px;
+    }
+    .hero h1 span {
+      color: var(--cyan);
+      text-shadow: 0 0 36px rgba(41, 211, 199, 0.18);
+    }
+    .hero-lede {
+      max-width: 690px;
+      margin: 24px 0 0;
+      color: #c6d0de;
+      font-size: clamp(19px, 2.1vw, 28px);
+      line-height: 1.32;
+      letter-spacing: -0.02em;
+    }
+    .hero-sub {
+      max-width: 700px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: 0.18s ease;
+    }
+    .button.primary {
+      background: linear-gradient(135deg, #1ac9bf, #2fb86d);
+      border-color: transparent;
+      color: #04100f;
+    }
+    .button:hover {
+      transform: translateY(-1px);
+      border-color: var(--cyan);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+    }
+
+    .hero-visual {
+      min-height: 480px;
+      min-width: 0;
+      max-width: 100%;
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background:
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(150deg, rgba(41, 211, 199, 0.13), rgba(169, 139, 255, 0.06) 44%, rgba(20, 24, 33, 0.96));
+      background-size: 26px 26px, 26px 26px, auto;
+      overflow: hidden;
+    }
+    .cache-stack {
+      position: absolute;
+      inset: 42px;
+      display: grid;
+      grid-template-rows: repeat(6, 1fr);
+      gap: 12px;
+    }
+    .layer-row {
+      display: grid;
+      grid-template-columns: 86px 1fr;
+      align-items: center;
+      gap: 12px;
+    }
+    .layer-label {
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 11px;
+      text-align: right;
+    }
+    .kv-track {
+      height: 46px;
+      position: relative;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
+      background: rgba(9, 10, 15, 0.54);
+      overflow: hidden;
+    }
+    .prefix {
+      position: absolute;
+      left: 10px;
+      top: 8px;
+      bottom: 8px;
+      width: 28%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, rgba(49, 217, 120, 0.78), rgba(41, 211, 199, 0.86));
+      box-shadow: 0 0 24px rgba(41, 211, 199, 0.22);
+    }
+    .tokens {
+      position: absolute;
+      left: calc(28% + 22px);
+      right: 10px;
+      top: 8px;
+      bottom: 8px;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 6px;
+    }
+    .tokens i {
+      display: block;
+      border-radius: 5px;
+      background: rgba(98, 168, 255, 0.22);
+      border: 1px solid rgba(98, 168, 255, 0.20);
+    }
+    .visual-caption {
+      position: absolute;
+      left: 24px;
+      right: 24px;
+      bottom: 22px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+    .visual-caption strong { color: var(--green); }
+
+    section {
+      padding: 70px 0;
+      border-top: 1px solid var(--border);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(280px, 0.55fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 26px;
+    }
+    .section-kicker {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    h2 {
+      margin: 0;
+      font-size: clamp(30px, 4.2vw, 56px);
+      line-height: 1.02;
+      letter-spacing: -0.045em;
+    }
+    .section-head p,
+    .lead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .grid .wide { grid-column: 1 / -1; }
+    .card {
+      background: linear-gradient(145deg, rgba(25, 31, 43, 0.92), rgba(17, 20, 28, 0.96));
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .card.hot { border-color: rgba(41, 211, 199, 0.48); }
+    .metric {
+      min-height: 150px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .metric .value {
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: clamp(28px, 4vw, 45px);
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+    .metric .value.green { color: var(--green); }
+    .metric .value.cyan { color: var(--cyan); }
+    .metric .value.amber { color: var(--amber); }
+    .metric .label {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .metric .source {
+      margin-top: 14px;
+      color: var(--faint);
+      font-size: 11px;
+      font-family: var(--mono);
+    }
+
+    .chart-card {
+      min-height: 360px;
+    }
+    .chart-shell {
+      height: 300px;
+      margin-top: 12px;
+    }
+    .note {
+      border-left: 3px solid var(--amber);
+      background: rgba(245, 184, 75, 0.08);
+      padding: 12px 14px;
+      color: #d4c3a1;
+      border-radius: 0 8px 8px 0;
+      font-size: 13px;
+    }
+
+    .mechanism {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+    .mechanism h3,
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: -0.015em;
+    }
+    .mechanism p,
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .flowline {
+      margin: 14px 0 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .formula {
+      padding: 16px;
+      border: 1px solid rgba(41, 211, 199, 0.26);
+      border-radius: 8px;
+      background: rgba(41, 211, 199, 0.06);
+      color: #c8fff8;
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow-x: auto;
+    }
+
+    .table-scroll {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    .table-scroll table {
+      min-width: 760px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--faint);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    td { color: var(--muted); }
+    td strong { color: var(--text); }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .cyan { color: var(--cyan); }
+    .muted { color: var(--muted); }
+    .tight-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .tight-list li + li {
+      margin-top: 4px;
+    }
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      background: rgba(255,255,255,0.035);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .status-tag.green {
+      color: #06140d;
+      background: var(--green);
+      border-color: transparent;
+    }
+    .status-tag.amber {
+      color: #171000;
+      background: var(--amber);
+      border-color: transparent;
+    }
+    .status-tag.blue {
+      color: #06101d;
+      background: var(--blue);
+      border-color: transparent;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 18px;
+    }
+    .tab {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      padding: 9px 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tab.active {
+      color: #04100f;
+      border-color: transparent;
+      background: var(--cyan);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .timeline .year {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #07080c;
+      color: #dbeafe;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 30px 0 44px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+    footer .wrap {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--cyan); }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .section-head,
+      .grid.cols-4,
+      .grid.cols-5,
+      .mechanism,
+      .timeline {
+        grid-template-columns: 1fr 1fr;
+      }
+      .hero-visual { min-height: 420px; }
+    }
+
+    @media (max-width: 720px) {
+      .wrap { width: min(100% - 28px, 1180px); }
+      .site-nav .wrap { align-items: flex-start; flex-direction: column; }
+      .nav-links { justify-content: flex-start; }
+      .hero { min-height: auto; padding: 48px 0 32px; }
+      .hero-grid,
+      .section-head,
+      .grid.cols-2,
+      .grid.cols-3,
+      .grid.cols-4,
+      .grid.cols-5,
+      .mechanism,
+      .timeline {
+        grid-template-columns: 1fr;
+      }
+      .hero-visual { min-height: 360px; }
+      .cache-stack { inset: 24px 18px 60px; }
+      .layer-row { grid-template-columns: 54px 1fr; }
+      .tokens { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .tokens i:nth-child(n+7) { display: none; }
+      h1 {
+        font-size: clamp(40px, 13vw, 52px);
+        line-height: 0.98;
+        overflow-wrap: anywhere;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="index.html">
+        <span class="brand-mark"><i class="fa-solid fa-brain"></i></span>
+        <strong>knlp / ReasonCACHE</strong>
+      </a>
+      <div class="nav-links">
+        <a class="active" href="#top"><i class="fa-solid fa-bolt"></i> ReasonCACHE</a>
+        <a href="#paper-results">Paper Result</a>
+        <a href="#mechanism">Mechanism</a>
+        <a href="#vllm">vLLM Work</a>
+        <a href="#skillsbench">SkillsBench</a>
+        <a href="#pareto">Pareto</a>
+        <a href="#lineage">Lineage</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <div class="eyebrow">arXiv:2602.02366 / Feb 2026</div>
+          <h1><span>ReasonCACHE</span><br>without weight updates</h1>
+          <p class="hero-lede">
+            A trainable KV cache that distills demonstrations into layer-wise prefixes,
+            keeping the backbone frozen while teaching the model reusable reasoning behavior.
+          </p>
+          <p class="hero-sub">
+            The page starts with ReasonCACHE itself. The PEFT lineage is still here, but
+            moved into the background: prefix tuning is the mechanism, not the headline.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://arxiv.org/abs/2602.02366" target="_blank" rel="noopener">
+              <i class="fa-solid fa-file-lines"></i> Paper
+            </a>
+            <a class="button" href="https://reasoncache.github.io/" target="_blank" rel="noopener">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i> Project page
+            </a>
+            <a class="button" href="peft_evolution.html">
+              <i class="fa-solid fa-timeline"></i> PEFT evolution
+            </a>
+            <a class="button" href="#vllm">
+              <i class="fa-solid fa-code-branch"></i> Our vLLM support
+            </a>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Layer-wise trainable KV cache diagram">
+          <div class="cache-stack">
+            <div class="layer-row"><div class="layer-label">L0</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+            <div class="layer-row"><div class="layer-label">L1</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+            <div class="layer-row"><div class="layer-label">L2</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+            <div class="layer-row"><div class="layer-label">...</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+            <div class="layer-row"><div class="layer-label">LN-1</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+            <div class="layer-row"><div class="layer-label">LN</div><div class="kv-track"><div class="prefix"></div><div class="tokens"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+          </div>
+          <div class="visual-caption">
+            <span><strong>green</strong> = learned KV prefix</span>
+            <span>blue = request tokens</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="paper-results">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Paper result</div>
+            <h2>Reasoning skill in a cache, not in the weights.</h2>
+          </div>
+          <p>
+            The paper positions ReasonCACHE as a middle path between in-context
+            learning and in-weight learning: optimize a compact KV prefix, keep the
+            pretrained model frozen, and avoid long demonstration prompts at inference.
+          </p>
+        </div>
+
+        <div class="grid cols-5">
+          <div class="card metric hot">
+            <div>
+              <div class="value cyan">41.92%</div>
+              <div class="label">GPQA-Diamond accuracy above the ICL and IWL baselines.</div>
+            </div>
+            <div class="source">project page / paper</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value green">90%</div>
+              <div class="label">Less total inference compute versus the best ICL configuration.</div>
+            </div>
+            <div class="source">inference efficiency</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value green">59%</div>
+              <div class="label">Less data than LoRA to reach 50% accuracy on GSM8K.</div>
+            </div>
+            <div class="source">data efficiency</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value green">46%</div>
+              <div class="label">Fewer trainable parameters than LoRA to reach the same target.</div>
+            </div>
+            <div class="source">parameter efficiency</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">34%</div>
+              <div class="label">Shorter GPQA-Diamond generations than SFT, with higher accuracy.</div>
+            </div>
+            <div class="source">decode efficiency</div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card chart-card">
+            <h3>ReasonCACHE wins on the axes that matter for serving</h3>
+            <p>The paper argues for a three-way efficiency gain: data, inference compute, and trainable parameter count.</p>
+            <div class="chart-shell"><canvas id="efficiencyChart"></canvas></div>
+          </div>
+          <div class="card">
+            <h3>Why this matters to KNLP</h3>
+            <p>
+              Cartridges already made the case that learned KV state can be a deployable
+              primitive for document-grounded inference. ReasonCACHE shifts the target:
+              the cache is no longer just a compressed document. It is a trained reasoning
+              interface.
+            </p>
+            <div class="note" style="margin-top:18px;">
+              Lead with ReasonCACHE and the vLLM support. Treat prefix tuning,
+              prompt tuning, and LoRA as background vocabulary.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="mechanism">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Mechanism</div>
+            <h2>It learns the cache directly.</h2>
+          </div>
+          <p>
+            ReasonCACHE uses prefix tuning specialized to reasoning. At every
+            transformer layer, learned key and value vectors are prepended to the
+            token-derived KV cache.
+          </p>
+        </div>
+
+        <div class="formula">
+          K_tilde^(l) = [ P_K^(l) ; K^(l) ] &nbsp;&nbsp;&nbsp; V_tilde^(l) = [ P_V^(l) ; V^(l) ]<br>
+          trainable: P_K, P_V &nbsp;&nbsp; frozen: model weights
+        </div>
+
+        <div class="mechanism">
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-align-left"></i> ICL</span>
+            <h3 style="margin-top:14px;">More exemplar tokens</h3>
+            <p>Behavior changes by stuffing demonstrations into the prompt. It is easy to deploy, but long prompts hit context, cost, and dilution limits.</p>
+            <div class="flowline"><span>tokens</span><span>&rarr;</span><span>runtime KV</span></div>
+          </div>
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-sliders"></i> LoRA / SFT</span>
+            <h3 style="margin-top:14px;">Update weights or adapters</h3>
+            <p>Behavior is stored in model parameters or low-rank updates. The ecosystem is mature, but the adaptation travels through input-dependent representations.</p>
+            <div class="flowline"><span>gradients</span><span>&rarr;</span><span>weights</span></div>
+          </div>
+          <div class="card hot">
+            <span class="pill"><i class="fa-solid fa-database"></i> ReasonCACHE</span>
+            <h3 style="margin-top:14px;">Optimize layer-wise KV prefixes</h3>
+            <p>Demonstrations are compressed into persistent key-value prefixes. The model consults them like learned memory without changing the backbone.</p>
+            <div class="flowline"><span>gradients</span><span>&rarr;</span><span>KV prefix</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="vllm">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Our implementation result</div>
+            <h2>vLLM accepts ReasonCACHE prefixes and passes on H100.</h2>
+          </div>
+          <p>
+            Treat this as implementation validation, not final SkillsBench quality
+            validation. The vLLM branch loads learned KV prefixes through the
+            cartridge connector path and emits Pareto reports once trained
+            ReasonCACHE runs produce result JSONs.
+          </p>
+        </div>
+
+        <div class="grid cols-4">
+          <div class="card metric hot">
+            <div>
+              <div class="value green">PASS</div>
+              <div class="label">99 targeted ReasonCACHE/cartridge tests pass locally and on H100.</div>
+            </div>
+            <div class="source">H100: NVIDIA H100 80GB HBM3</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">READY</div>
+              <div class="label">vLLM commit stack covers prefix loading, connector aliasing, placeholders, harness, and Pareto analysis.</div>
+            </div>
+            <div class="source">branch 20260622-routing</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">JSON+CSV</div>
+              <div class="label">The H100 run generated both Pareto report artifacts from the CLI path.</div>
+            </div>
+            <div class="source">H100 CLI validation</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value">NEXT</div>
+              <div class="label">Train ReasonCACHE SkillsBench checkpoints, then replace the contract input with real quality frontiers.</div>
+            </div>
+            <div class="source">quality frontier input</div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>Result components</h3>
+            <table>
+              <tr><th>Area</th><th>Status</th></tr>
+              <tr><td><strong>ReasonCacheConnector</strong></td><td class="ok">Alias registered for the cartridge connector path.</td></tr>
+              <tr><td><strong>Learned KV prefixes</strong></td><td class="ok">Checkpoint resource kind accepts ReasonCACHE / KV-prefix payloads.</td></tr>
+              <tr><td><strong>Placeholder tokens</strong></td><td class="ok">Required until vLLM grows true virtual-prefix scheduling.</td></tr>
+              <tr><td><strong>SkillsBench harness</strong></td><td class="ok">Run, compare, and normalize arm results.</td></tr>
+              <tr><td><strong>Pareto frontier</strong></td><td class="ok">Emit per-task and aggregate-by-arm JSON/CSV reports.</td></tr>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3>Commit stack</h3>
+            <table>
+              <tr><th>Commit</th><th>Patch</th></tr>
+              <tr><td><strong>757374dde</strong></td><td>Accept ReasonCACHE learned KV prefixes.</td></tr>
+              <tr><td><strong>eaf970ad4</strong></td><td>Register ReasonCacheConnector alias.</td></tr>
+              <tr><td><strong>c1babe291</strong></td><td>Require placeholders for ReasonCACHE prefixes.</td></tr>
+              <tr><td><strong>c8d95a049</strong></td><td>Add ReasonCACHE SkillsBench eval harness.</td></tr>
+              <tr><td><strong>23332ae48</strong></td><td>Add ReasonCACHE Pareto analysis.</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="skillsbench">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">SkillsBench surface</div>
+            <h2>Name the skill files before claiming a frontier.</h2>
+          </div>
+          <p>
+            These are the same SkillsBench tasks and SKILL.md files from the
+            cartridge experiments. The ReasonCACHE arm intentionally removes
+            the SKILL.md text from the online prompt and supplies the learned
+            behavior through injected KV prefix state.
+          </p>
+        </div>
+
+        <div class="grid cols-2">
+          <div class="card wide">
+            <h3>Skill files and prompt bodies under test</h3>
+            <p>
+              Character counts come from the harness that loads
+              <span class="mono">environment/skills/**/SKILL.md</span>. The
+              ReasonCACHE prompt body is the same text as the no-skill arm;
+              placeholder tokens are added separately after tokenization.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Task</th>
+                  <th>Individual SKILL.md files</th>
+                  <th>Loaded skill chars</th>
+                  <th>Full-skill prompt chars</th>
+                  <th>ReasonCACHE prompt chars</th>
+                  <th>Data files</th>
+                </tr>
+                <tr>
+                  <td><strong>Excel table into PPT</strong></td>
+                  <td>
+                    pptx: 25,534 chars / 25,552 B<br>
+                    xlsx: 5,243 chars / 5,247 B
+                  </td>
+                  <td>30,812</td>
+                  <td>31,683</td>
+                  <td class="cyan">850</td>
+                  <td>0</td>
+                </tr>
+                <tr>
+                  <td><strong>Powerlifting coefficient calculation</strong></td>
+                  <td>
+                    powerlifting: 14,857 chars / 14,910 B<br>
+                    senior-data-scientist: 5,630 chars / 5,630 B<br>
+                    xlsx: 5,243 chars / 5,247 B
+                  </td>
+                  <td>25,808</td>
+                  <td>31,050</td>
+                  <td class="cyan">5,221</td>
+                  <td>1</td>
+                </tr>
+                <tr>
+                  <td><strong>Recover missing XLSX data</strong></td>
+                  <td>
+                    data-reconciliation: 2,482 chars / 2,492 B<br>
+                    xlsx: 5,243 chars / 5,247 B
+                  </td>
+                  <td>7,775</td>
+                  <td>10,152</td>
+                  <td class="cyan">2,356</td>
+                  <td>2</td>
+                </tr>
+                <tr>
+                  <td><strong>Weighted GDP calculation</strong></td>
+                  <td>xlsx: 5,243 chars / 5,247 B</td>
+                  <td>5,260</td>
+                  <td>6,497</td>
+                  <td class="cyan">1,216</td>
+                  <td>0</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Cartridge-era SkillsBench baseline, not ReasonCACHE</h3>
+            <p>
+              These pass rates came from the older cartridge experiments on
+              the same skill files. They are useful baselines, but they do not
+              answer whether ReasonCACHE is better on these skills.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Task</th>
+                  <th>Full skill</th>
+                  <th>Truncated skill</th>
+                  <th>No skill</th>
+                  <th>Cartridge 50%</th>
+                </tr>
+                <tr>
+                  <td><strong>Excel table into PPT</strong></td>
+                  <td>0 / 8</td>
+                  <td class="ok">7 / 8</td>
+                  <td class="ok">7 / 8</td>
+                  <td class="ok">7 / 8</td>
+                </tr>
+                <tr>
+                  <td><strong>Powerlifting coefficient calculation</strong></td>
+                  <td class="ok">9 / 11</td>
+                  <td>5 / 11</td>
+                  <td>5 / 11</td>
+                  <td>5 / 11</td>
+                </tr>
+                <tr>
+                  <td><strong>Recover missing XLSX data</strong></td>
+                  <td>0 / 1</td>
+                  <td>2 / 19</td>
+                  <td>1 / 19</td>
+                  <td class="ok">14 / 19</td>
+                </tr>
+                <tr>
+                  <td><strong>Weighted GDP calculation</strong></td>
+                  <td>1 / 27</td>
+                  <td>1 / 27</td>
+                  <td>1 / 27</td>
+                  <td>1 / 27</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>ReasonCACHE comparison status</h3>
+            <p>
+              We have not run trained ReasonCACHE skill checkpoints against
+              these four SkillsBench tasks yet. The current result proves the
+              vLLM serving path and analyzer, not task quality.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr><th>Arm</th><th>Evidence today</th><th>Interpretation</th></tr>
+                <tr>
+                  <td><strong>Full SKILL.md prompt</strong></td>
+                  <td>Historical cartridge-era SkillsBench JSONs</td>
+                  <td>Regular prompt baseline is available.</td>
+                </tr>
+                <tr>
+                  <td><strong>No-skill prompt</strong></td>
+                  <td>Historical cartridge-era SkillsBench JSONs</td>
+                  <td>Prompt without skill text is available.</td>
+                </tr>
+                <tr>
+                  <td><strong>Cartridge 50%</strong></td>
+                  <td>Historical cartridge trained-cache run</td>
+                  <td>Compares learned KV state for cartridges, not ReasonCACHE.</td>
+                </tr>
+                <tr>
+                  <td><strong>ReasonCACHE serving path</strong></td>
+                  <td class="ok">99 targeted tests pass locally and on H100</td>
+                  <td>vLLM can load and schedule ReasonCACHE-style KV prefixes.</td>
+                </tr>
+                <tr>
+                  <td><strong>ReasonCACHE skill quality</strong></td>
+                  <td class="warn">Not run yet on these SkillsBench tasks</td>
+                  <td>Train checkpoints first, then compare pass rate, online prompt tokens, and latency.</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>ReasonCACHE prefix sizing contract</h3>
+            <ul class="tight-list">
+              <li><span class="status-tag green">inferred</span> Prefix length is read from the checkpoint <span class="mono">num_tokens</span>.</li>
+              <li><span class="status-tag blue">aligned</span> vLLM aligns learned-prefix length to the cache block size.</li>
+              <li><span class="status-tag amber">explicit</span> Placeholder tokens remain required until native virtual prefixes exist.</li>
+            </ul>
+            <div class="table-scroll">
+              <table>
+                <tr><th>Item</th><th>Validated value</th></tr>
+                <tr>
+                  <td><strong>Checkpoint resource kinds</strong></td>
+                  <td><span class="mono">reasoncache</span> and <span class="mono">kv_prefix</span></td>
+                </tr>
+                <tr>
+                  <td><strong>Placeholder token id</strong></td>
+                  <td>0 by default; configurable in request and connector config</td>
+                </tr>
+                <tr>
+                  <td><strong>Unit request plan</strong></td>
+                  <td>32 placeholders + 3 task prompt tokens = 35 online prompt tokens</td>
+                </tr>
+                <tr>
+                  <td><strong>Checkpoint inference test</strong></td>
+                  <td>34 raw prefix tokens align to 32 at block size 16</td>
+                </tr>
+                <tr>
+                  <td><strong>Connector fixture</strong></td>
+                  <td>2 layers, 2 KV heads, 32 prefix tokens, head dimension 4</td>
+                </tr>
+                <tr>
+                  <td><strong>Old xlsx cartridge reference</strong></td>
+                  <td>2,702 original skill tokens -> 1,351 budget tokens; 64 layers; 354,193,931 B artifact</td>
+                </tr>
+                <tr>
+                  <td><strong>Trained ReasonCACHE SkillsBench checkpoints</strong></td>
+                  <td class="warn">Pending: the harness will report each checkpoint's actual prefix length and prompt-token frontier.</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="pareto">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Pareto frontier</div>
+            <h2>Pareto analyzer for regular skills versus ReasonCACHE skills.</h2>
+          </div>
+          <p>
+            Once trained ReasonCACHE skill checkpoints exist, the analyzer will
+            maximize quality while minimizing online prompt tokens and latency.
+            It reports both per-task frontiers and aggregate-by-arm frontiers.
+          </p>
+        </div>
+
+        <div class="grid cols-2">
+          <div class="card chart-card">
+            <h3>Frontier contract example</h3>
+            <p>This chart shows the tested analyzer rule, not a SkillsBench quality claim. If ReasonCACHE ties quality with fewer online prompt tokens, it dominates the regular SKILL.md prompt.</p>
+            <div class="chart-shell"><canvas id="paretoChart"></canvas></div>
+          </div>
+          <div class="card">
+            <h3>Command path</h3>
+            <pre>python benchmarks/benchmark_reasoncache_skills.py pareto \
+  /workspace/results/*/*/result.json \
+  --output-json /workspace/results/pareto.json \
+  --output-csv /workspace/results/pareto.csv</pre>
+            <div class="note" style="margin-top:14px;">
+              The H100 validation generated Pareto JSON and CSV from this
+              command path.
+              Run trained ReasonCACHE SkillsBench checkpoints next. Feed those
+              result JSONs into this analyzer and replace the contract input with real
+              quality frontiers for the same SKILL.md files used in the cartridge
+              experiments.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="lineage">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Background, moved out of the way</div>
+            <h2>PEFT lineage as context, not the main event.</h2>
+          </div>
+          <p>
+            This material comes from the PEFT evolution starting point, but the
+            ordering is inverted for a ReasonCACHE page. Read this after the
+            results and implementation status.
+          </p>
+        </div>
+
+        <div class="actions" style="margin-top:-8px; margin-bottom:18px;">
+          <a class="button" href="peft_evolution.html">
+            <i class="fa-solid fa-timeline"></i> Full PEFT evolution history
+          </a>
+        </div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="prefix">Prefix Tuning</button>
+          <button class="tab" data-tab="prompt">Prompt Tuning</button>
+          <button class="tab" data-tab="lora">LoRA</button>
+          <button class="tab" data-tab="cartridges">Cartridges</button>
+        </div>
+
+        <div id="tab-prefix" class="tab-panel active">
+          <div class="card">
+            <h3>Prefix tuning is the ancestor that matters most here.</h3>
+            <p>
+              Prefix tuning learns continuous key-value prefixes at each transformer
+              layer while keeping the backbone frozen. ReasonCACHE specializes that
+              mechanism for reasoning: demonstrations become optimized layer-wise
+              cache state instead of long prompt tokens.
+            </p>
+          </div>
+        </div>
+
+        <div id="tab-prompt" class="tab-panel">
+          <div class="card">
+            <h3>Prompt tuning is shallower.</h3>
+            <p>
+              Prompt tuning learns input embeddings and lets the frozen model project
+              them through the stack. ReasonCACHE directly edits the attention-side
+              interface by learning key-value prefixes at every layer.
+            </p>
+          </div>
+        </div>
+
+        <div id="tab-lora" class="tab-panel">
+          <div class="card">
+            <h3>LoRA remains the deployment default, but has a different bottleneck.</h3>
+            <p>
+              LoRA stores adaptation as low-rank weight deltas. The ReasonCACHE paper
+              argues that low-rank updates are tied to input rank, while prefix tuning
+              injects additional key-value directions directly into attention.
+            </p>
+          </div>
+        </div>
+
+        <div id="tab-cartridges" class="tab-panel">
+          <div class="card">
+            <h3>Cartridges made trained KV state feel deployable.</h3>
+            <p>
+              Cartridges target knowledge retrieval and synthesis from compressed
+              document state. ReasonCACHE targets skill acquisition and reasoning.
+              Both are trained caches, but they optimize for different capabilities.
+            </p>
+            <div class="actions" style="margin-top:16px;">
+              <a class="button" href="cartridges_visualization.html">
+                <i class="fa-solid fa-box-archive"></i> KNLP cartridges page
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline" style="margin-top:14px;">
+          <div class="card">
+            <div class="year">2021</div>
+            <h3>Prefix tuning</h3>
+            <p>Layer-wise learned prefixes for frozen transformers.</p>
+          </div>
+          <div class="card">
+            <div class="year">2021</div>
+            <h3>LoRA</h3>
+            <p>Low-rank weight adaptation becomes the practical default.</p>
+          </div>
+          <div class="card">
+            <div class="year">2025</div>
+            <h3>Cartridges</h3>
+            <p>Train a KV cache as a reusable document representation.</p>
+          </div>
+          <div class="card hot">
+            <div class="year">2026</div>
+            <h3>ReasonCACHE</h3>
+            <p>Train a KV cache as a reusable reasoning interface.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <div>ReasonCACHE validation and implementation report for knlp.</div>
+      <div>
+        <a href="https://arxiv.org/abs/2602.02366" target="_blank" rel="noopener">Paper</a>
+        &nbsp;/&nbsp;
+        <a href="https://reasoncache.github.io/" target="_blank" rel="noopener">Project page</a>
+        &nbsp;/&nbsp;
+        <a href="peft_evolution.html">PEFT evolution</a>
+        &nbsp;/&nbsp;
+        <a href="cartridges_visualization.html">Cartridges</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const gridColor = "rgba(154, 166, 184, 0.16)";
+    const tickColor = "#9aa6b8";
+
+    new Chart(document.getElementById("efficiencyChart"), {
+      type: "bar",
+      data: {
+        labels: ["Inference compute", "Training data", "Trainable params", "Generation length"],
+        datasets: [{
+          label: "Reported reduction (%)",
+          data: [90, 59, 46, 34],
+          borderWidth: 1,
+          borderColor: ["#31d978", "#31d978", "#31d978", "#f5b84b"],
+          backgroundColor: [
+            "rgba(49, 217, 120, 0.55)",
+            "rgba(49, 217, 120, 0.45)",
+            "rgba(49, 217, 120, 0.35)",
+            "rgba(245, 184, 75, 0.50)"
+          ]
+        }]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.raw}% reduction`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: tickColor, maxRotation: 0, autoSkip: false } },
+          y: { beginAtZero: true, max: 100, grid: { color: gridColor }, ticks: { color: tickColor, callback: value => `${value}%` } }
+        }
+      }
+    });
+
+    new Chart(document.getElementById("paretoChart"), {
+      type: "scatter",
+      data: {
+        datasets: [
+          {
+            label: "regular full-skill prompt",
+            data: [{ x: 2000, y: 0.75 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#62a8ff"
+          },
+          {
+            label: "no-skill baseline",
+            data: [{ x: 400, y: 0.50 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#677386"
+          },
+          {
+            label: "ReasonCACHE skill",
+            data: [{ x: 450, y: 0.75 }],
+            pointRadius: 9,
+            pointHoverRadius: 11,
+            backgroundColor: "#31d978"
+          }
+        ]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: tickColor, boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: quality ${ctx.raw.y}, prompt tokens ${ctx.raw.x}`
+            }
+          }
+        },
+        scales: {
+          x: {
+            title: { display: true, text: "online prompt tokens (lower is better)", color: tickColor },
+            grid: { color: gridColor },
+            ticks: { color: tickColor }
+          },
+          y: {
+            title: { display: true, text: "quality / pass rate (higher is better)", color: tickColor },
+            min: 0.35,
+            max: 0.9,
+            grid: { color: gridColor },
+            ticks: { color: tickColor }
+          }
+        }
+      }
+    });
+
+    document.querySelectorAll(".tab").forEach(button => {
+      button.addEventListener("click", () => {
+        const target = button.dataset.tab;
+        document.querySelectorAll(".tab").forEach(tab => tab.classList.remove("active"));
+        document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.remove("active"));
+        button.classList.add("active");
+        document.getElementById(`tab-${target}`).classList.add("active");
+      });
+    });
+  </script>
+</body>
+</html>
