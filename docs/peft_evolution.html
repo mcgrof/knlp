@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PEFT Evolution: Prompt, Prefix, LoRA, and ReasonCACHE | knlp</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
+
+        :root {
+            --bg: #020617;
+            --card: #0f172a;
+            --accent: #14b8a6;
+            --accent2: #6366f1;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --border: #1e2937;
+        }
+
+        body {
+            font-family: 'Inter', system_ui, sans-serif;
+        }
+
+        .font-display {
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            font-weight: 600;
+        }
+
+        .section-header {
+            font-family: 'Space Grotesk', 'Inter', sans-serif;
+            letter-spacing: -0.025em;
+        }
+
+        .dark-card {
+            background-color: var(--card);
+            border: 1px solid var(--border);
+        }
+
+        .accent-text {
+            color: var(--accent);
+        }
+
+        .nav-active {
+            color: var(--accent);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .paper-card {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .paper-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            border-color: var(--accent);
+        }
+
+        .metric-value {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .viz-container {
+            background: linear-gradient(145deg, #0f172a 0%, #020617 100%);
+        }
+
+        .transformer-layer {
+            transition: all 0.3s ease;
+        }
+
+        .prefix-block {
+            animation: pulse-glow 2s infinite ease-in-out;
+        }
+
+        .stat-number {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .timeline-dot {
+            box-shadow: 0 0 0 4px #020617;
+        }
+
+        .method-badge {
+            font-size: 0.75rem;
+            padding: 1px 10px;
+            border-radius: 9999px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .highlight-quote {
+            background: linear-gradient(90deg, rgba(20, 184, 166, 0.08) 0%, transparent 100%);
+            border-left: 4px solid var(--accent);
+        }
+
+        .result-highlight {
+            background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+        }
+
+        .architecture-svg text {
+            font-family: 'Inter', sans-serif;
+            font-size: 11px;
+        }
+
+        .subtle-grid {
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .branch-tree {
+            display: grid;
+            grid-template-columns: minmax(260px, 0.8fr) 90px minmax(0, 1fr);
+            align-items: center;
+            gap: 24px;
+        }
+
+        .branch-node {
+            position: relative;
+            border: 1px solid var(--border);
+            background: rgba(15, 23, 42, 0.92);
+            border-radius: 24px;
+            padding: 22px;
+        }
+
+        .branch-node-root {
+            border-color: rgba(20, 184, 166, 0.42);
+            background: linear-gradient(145deg, rgba(20, 184, 166, 0.12), rgba(15, 23, 42, 0.95));
+        }
+
+        .branch-node-cartridge {
+            border-color: rgba(52, 211, 153, 0.34);
+        }
+
+        .branch-node-reasoncache {
+            border-color: rgba(20, 184, 166, 0.62);
+            box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.16);
+        }
+
+        .branch-connector {
+            position: relative;
+            height: 210px;
+        }
+
+        .branch-connector::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 36px;
+            top: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, rgba(20, 184, 166, 0.85), rgba(20, 184, 166, 0.34));
+        }
+
+        .branch-connector::after {
+            content: "";
+            position: absolute;
+            right: 36px;
+            top: 28px;
+            bottom: 28px;
+            width: 2px;
+            background: linear-gradient(180deg, rgba(52, 211, 153, 0.65), rgba(20, 184, 166, 0.82));
+        }
+
+        .branch-dot {
+            position: absolute;
+            right: 29px;
+            top: calc(50% - 8px);
+            width: 16px;
+            height: 16px;
+            border-radius: 9999px;
+            background: #14b8a6;
+            box-shadow: 0 0 0 7px rgba(20, 184, 166, 0.10);
+        }
+
+        .branch-leaves {
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            gap: 22px;
+            position: relative;
+        }
+
+        .branch-leaves::before,
+        .branch-leaves::after {
+            content: "";
+            position: absolute;
+            left: -60px;
+            width: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, rgba(20, 184, 166, 0.54), rgba(20, 184, 166, 0.86));
+        }
+
+        .branch-leaves::before {
+            top: 54px;
+        }
+
+        .branch-leaves::after {
+            bottom: 54px;
+        }
+
+        .branch-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        @media (max-width: 768px) {
+            html,
+            body {
+                overflow-x: hidden;
+            }
+
+            .max-w-screen-2xl {
+                max-width: 100% !important;
+            }
+
+            .px-8 {
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }
+
+            nav .justify-between {
+                align-items: flex-start !important;
+                flex-direction: column !important;
+                gap: 0.85rem !important;
+            }
+
+            nav .gap-x-8 {
+                column-gap: 0.8rem !important;
+                row-gap: 0.45rem !important;
+                flex-wrap: wrap !important;
+            }
+
+            nav .text-xs:last-child {
+                display: none !important;
+            }
+
+            .text-right {
+                text-align: left !important;
+            }
+
+            .items-end {
+                align-items: flex-start !important;
+            }
+
+            .text-7xl {
+                font-size: 3rem !important;
+                line-height: 1.05 !important;
+            }
+
+            .text-6xl {
+                font-size: 2.6rem !important;
+                line-height: 1.06 !important;
+            }
+
+            .text-5xl {
+                font-size: 2.25rem !important;
+                line-height: 1.08 !important;
+            }
+
+            .text-4xl {
+                font-size: 1.9rem !important;
+                line-height: 1.12 !important;
+            }
+
+            .text-3xl {
+                font-size: 1.55rem !important;
+                line-height: 1.18 !important;
+            }
+
+            .text-2xl {
+                font-size: 1.15rem !important;
+                line-height: 1.35 !important;
+            }
+
+            .h-14 {
+                height: auto !important;
+                min-height: 3rem !important;
+                padding-top: 0.65rem !important;
+                padding-bottom: 0.65rem !important;
+            }
+
+            svg {
+                max-width: 100% !important;
+                height: auto !important;
+            }
+
+            .architecture-svg {
+                width: 100% !important;
+            }
+
+            .rounded-3xl {
+                border-radius: 1rem !important;
+            }
+
+            footer .gap-x-5 {
+                flex-wrap: wrap !important;
+                row-gap: 0.5rem !important;
+                justify-content: center !important;
+            }
+
+            .branch-tree {
+                grid-template-columns: 1fr !important;
+                gap: 1rem !important;
+            }
+
+            .branch-connector {
+                height: 74px !important;
+            }
+
+            .branch-connector::before {
+                left: 50% !important;
+                right: auto !important;
+                top: 0 !important;
+                bottom: 0 !important;
+                width: 2px !important;
+                height: auto !important;
+            }
+
+            .branch-connector::after {
+                left: 22% !important;
+                right: 22% !important;
+                top: auto !important;
+                bottom: 0 !important;
+                width: auto !important;
+                height: 2px !important;
+            }
+
+            .branch-dot {
+                left: calc(50% - 8px) !important;
+                right: auto !important;
+                top: 28px !important;
+            }
+
+            .branch-leaves {
+                gap: 1rem !important;
+            }
+
+            .branch-leaves::before,
+            .branch-leaves::after {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-[#020617] text-[#e2e8f0] antialiased">
+    <!-- Top Navigation -->
+    <nav class="sticky top-0 z-50 bg-[#020617]/95 backdrop-blur-lg border-b border-[#1e2937]">
+        <div class="max-w-screen-2xl mx-auto">
+            <div class="px-8 py-4 flex items-center justify-between">
+                <div class="flex items-center gap-x-3">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-[#14b8a6] to-[#0f766e] flex items-center justify-center">
+                        <i class="fa-solid fa-brain text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <span class="font-display text-2xl font-semibold tracking-tighter">PEFT</span>
+                        <span class="font-display text-2xl font-semibold tracking-tighter text-[#14b8a6]">Evolution</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-x-8 text-sm">
+                    <a href="index.html" class="hover:text-[#14b8a6] transition-colors">Home</a>
+                    <a href="reasoncache.html" class="hover:text-[#14b8a6] transition-colors">ReasonCACHE Report</a>
+                    <a href="#timeline" class="hover:text-[#14b8a6] transition-colors">Timeline</a>
+                    <a href="#branches" class="hover:text-[#14b8a6] transition-colors">Branches</a>
+                    <a href="#prefix" class="hover:text-[#14b8a6] transition-colors">Prefix Tuning</a>
+                    <a href="#prompt" class="hover:text-[#14b8a6] transition-colors">Prompt Tuning</a>
+                    <a href="#comparison" class="hover:text-[#14b8a6] transition-colors">Compare</a>
+                    <a href="#cartridges" class="hover:text-[#14b8a6] transition-colors">Cartridges</a>
+                    <a href="#reasoncache" class="hover:text-[#14b8a6] transition-colors">ReasonCACHE</a>
+                </div>
+
+                <div class="flex items-center gap-x-2 text-xs">
+                    <div class="px-3 py-1.5 rounded-full bg-[#0f172a] border border-[#1e2937] flex items-center gap-x-2">
+                        <div class="w-2 h-2 bg-[#14b8a6] rounded-full animate-pulse"></div>
+                        <span class="text-[#64748b]">Historical context for ReasonCACHE</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <div class="max-w-screen-2xl mx-auto px-8 pt-16 pb-12">
+        <div class="max-w-4xl">
+            <div class="inline-flex items-center gap-x-2 px-4 py-1.5 rounded-2xl bg-[#0f172a] border border-[#1e2937] mb-6">
+                <span class="text-[#14b8a6] text-xs font-mono tracking-[2px]">2021 → 2026</span>
+                <span class="text-[#64748b]">•</span>
+                <span class="text-xs text-[#64748b]">THE QUIET REVIVAL OF PREFIX TUNING</span>
+            </div>
+
+            <h1 class="font-display text-7xl leading-[1.05] tracking-tighter font-semibold mb-4">
+                From Prefix Tuning<br>
+                to <span class="text-[#14b8a6]">ReasonCACHE</span>
+            </h1>
+            <p class="max-w-2xl text-2xl text-[#94a3b8] tracking-tight">
+                How an "often-overlooked" technique from 2021 became the ideal interface
+                for scaling in-context learning into genuine reasoning.
+            </p>
+
+            <div class="flex items-center gap-x-4 mt-8">
+                <a href="#reasoncache"
+                   class="inline-flex items-center justify-center gap-x-2 px-8 h-14 rounded-2xl bg-[#14b8a6] hover:bg-[#0f766e] transition-all text-white font-semibold text-sm tracking-wider">
+                    <span>JUMP TO REASONCACHE</span>
+                    <i class="fa-solid fa-arrow-right"></i>
+                </a>
+                <a href="reasoncache.html"
+                   class="inline-flex items-center justify-center gap-x-2 px-6 h-14 rounded-2xl border border-[#1e2937] hover:bg-[#0f172a] transition-all text-sm font-medium">
+                    REASONCACHE REPORT
+                </a>
+            </div>
+
+            <div class="mt-8 flex items-center gap-x-6 text-xs text-[#64748b]">
+                <div class="flex items-center gap-x-1.5">
+                    <i class="fa-solid fa-link"></i>
+                    <span>Stanford • Google • Microsoft • Stanford (again)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timeline -->
+    <div id="timeline" class="max-w-screen-2xl mx-auto px-8 pb-16 border-b border-[#1e2937]">
+        <div class="flex items-end justify-between mb-8">
+            <div>
+                <span class="text-xs font-mono tracking-[3px] text-[#14b8a6]">THE JOURNEY</span>
+                <h2 class="font-display text-4xl tracking-tighter font-semibold">A 5-Year Evolution</h2>
+            </div>
+            <div class="text-right text-sm text-[#64748b]">
+                From parameter efficiency →<br>
+                long-context compression → reasoning at scale
+            </div>
+        </div>
+
+        <div class="relative">
+            <!-- Timeline line -->
+            <div class="absolute left-0 right-0 top-7 h-px bg-gradient-to-r from-transparent via-[#1e2937] to-transparent"></div>
+
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <!-- Prefix -->
+                <div class="relative paper-card dark-card rounded-3xl p-5 border border-[#1e2937]">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="w-8 h-8 rounded-2xl bg-[#14b8a6]/10 flex items-center justify-center">
+                            <i class="fa-solid fa-layer-group text-[#14b8a6]"></i>
+                        </div>
+                        <span class="method-badge bg-[#14b8a6]/10 text-[#14b8a6]">JAN 2021</span>
+                    </div>
+                    <div class="font-semibold text-lg tracking-tight">Prefix Tuning</div>
+                    <div class="text-sm text-[#64748b] mt-0.5">Li &amp; Liang • Stanford</div>
+                    <div class="mt-3 text-xs leading-snug text-[#94a3b8]">
+                        Optimizes continuous prefixes at <span class="font-medium text-white">every Transformer layer</span>.
+                        Highly expressive auxiliary attention states.
+                    </div>
+                    <a href="https://arxiv.org/pdf/2101.00190" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-[#14b8a6] text-xs mt-4 group">
+                        READ PAPER <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                </div>
+
+                <!-- Prompt -->
+                <div class="relative paper-card dark-card rounded-3xl p-5 border border-[#1e2937]">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="w-8 h-8 rounded-2xl bg-[#6366f1]/10 flex items-center justify-center">
+                            <i class="fa-solid fa-comment-dots text-[#6366f1]"></i>
+                        </div>
+                        <span class="method-badge bg-[#6366f1]/10 text-[#6366f1]">APR 2021</span>
+                    </div>
+                    <div class="font-semibold text-lg tracking-tight">Prompt Tuning</div>
+                    <div class="text-sm text-[#64748b] mt-0.5">Lester et al. • Google</div>
+                    <div class="mt-3 text-xs leading-snug text-[#94a3b8]">
+                        "Nice job kids, but..." — simplifies to <span class="font-medium text-white">input embeddings only</span>.
+                        Extremely lightweight auxiliary embeddings.
+                    </div>
+                    <a href="https://arxiv.org/pdf/2104.08691" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-[#6366f1] text-xs mt-4 group">
+                        READ PAPER <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                </div>
+
+                <!-- LoRA -->
+                <div class="relative paper-card dark-card rounded-3xl p-5 border border-[#1e2937]">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="w-8 h-8 rounded-2xl bg-amber-500/10 flex items-center justify-center">
+                            <i class="fa-solid fa-project-diagram text-amber-400"></i>
+                        </div>
+                        <span class="method-badge bg-amber-500/10 text-amber-400">JUN 2021</span>
+                    </div>
+                    <div class="font-semibold text-lg tracking-tight">LoRA</div>
+                    <div class="text-sm text-[#64748b] mt-0.5">Hu et al. • Microsoft</div>
+                    <div class="mt-3 text-xs leading-snug text-[#94a3b8]">
+                        Low-rank weight updates. Quickly became the community favorite and practical leader in PEFT.
+                    </div>
+                    <a href="https://arxiv.org/abs/2106.09685" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-amber-400 text-xs mt-4 group">
+                        READ PAPER <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                </div>
+
+                <!-- Cartridges -->
+                <div class="relative paper-card dark-card rounded-3xl p-5 border border-[#1e2937]">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="w-8 h-8 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                            <i class="fa-solid fa-database text-emerald-400"></i>
+                        </div>
+                        <span class="method-badge bg-emerald-500/10 text-emerald-400">JUN 2025</span>
+                    </div>
+                    <div class="font-semibold text-lg tracking-tight">Cartridges</div>
+                    <div class="text-sm text-[#64748b] mt-0.5">Eyuboglu et al.</div>
+                    <div class="mt-3 text-xs leading-snug text-[#94a3b8]">
+                        Revives <span class="font-medium text-white">prefix tuning</span> for long-context
+                        knowledge compression via learnable KV-caches + Self-Study.
+                    </div>
+                    <a href="https://arxiv.org/pdf/2506.06266" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-emerald-400 text-xs mt-4 group">
+                        READ PAPER <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                </div>
+
+                <!-- ReasonCACHE -->
+                <div class="relative paper-card dark-card rounded-3xl p-5 border border-[#14b8a6] ring-1 ring-[#14b8a6]/30">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="w-8 h-8 rounded-2xl bg-[#14b8a6]/10 flex items-center justify-center">
+                            <i class="fa-solid fa-lightbulb text-[#14b8a6]"></i>
+                        </div>
+                        <span class="method-badge bg-[#14b8a6] text-white">FEB 2026</span>
+                    </div>
+                    <div class="font-semibold text-lg tracking-tight">ReasonCACHE</div>
+                    <div class="text-sm text-[#64748b] mt-0.5">arXiv:2602.02366</div>
+                    <div class="mt-3 text-xs leading-snug text-[#94a3b8]">
+                        Scales ICL into reasoning using <span class="font-medium text-white">prefix tuning</span>.
+                        Outperforms SFT &amp; LoRA with massive efficiency gains.
+                    </div>
+                    <a href="https://arxiv.org/pdf/2602.02366" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-[#14b8a6] text-xs mt-4 group">
+                        READ PAPER <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                    <a href="https://reasoncache.github.io/" target="_blank"
+                       class="inline-flex items-center gap-x-1 text-[#14b8a6] text-xs group">
+                        PROJECT SITE <i class="fa-solid fa-external-link-alt text-[10px] group-hover:translate-x-0.5 transition"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Branch Map -->
+    <div id="branches" class="max-w-screen-2xl mx-auto px-8 py-16 border-b border-[#1e2937]">
+        <div class="flex items-end justify-between gap-8 mb-8">
+            <div class="max-w-2xl">
+                <span class="text-xs font-mono tracking-[3px] text-[#14b8a6]">THE PREFIX-TUNING BRANCH</span>
+                <h2 class="font-display text-4xl tracking-tighter font-semibold">Cartridges and ReasonCACHE split from the same KV-cache trunk.</h2>
+            </div>
+            <p class="max-w-md text-sm text-[#64748b] text-right">
+                Prompt tuning and LoRA stayed closer to input embeddings and
+                weight deltas. The trained-cache line kept the prefix-tuning
+                interface and changed what the cache is trained to remember.
+            </p>
+        </div>
+
+        <div class="dark-card rounded-3xl p-8">
+            <div class="branch-tree">
+                <div class="branch-node branch-node-root">
+                    <div class="branch-label text-[#14b8a6]">
+                        <i class="fa-solid fa-layer-group"></i>
+                        <span>2021 trunk</span>
+                    </div>
+                    <div class="font-display text-3xl tracking-tight mt-3">Prefix Tuning</div>
+                    <p class="mt-3 text-sm text-[#94a3b8]">
+                        Learn layer-wise K/V prefixes while the backbone stays
+                        frozen. This is the attention-side adaptation primitive
+                        later reused by trained cache systems.
+                    </p>
+                </div>
+
+                <div class="branch-connector" aria-hidden="true">
+                    <div class="branch-dot"></div>
+                </div>
+
+                <div class="branch-leaves">
+                    <div class="branch-node branch-node-cartridge">
+                        <div class="branch-label text-emerald-400">
+                            <i class="fa-solid fa-database"></i>
+                            <span>2025 branch</span>
+                        </div>
+                        <div class="font-display text-2xl tracking-tight mt-3">Cartridges</div>
+                        <p class="mt-3 text-sm text-[#94a3b8]">
+                            Train reusable KV cache state for long-context
+                            knowledge retrieval and document synthesis. The
+                            cache stands in for a corpus.
+                        </p>
+                    </div>
+
+                    <div class="branch-node branch-node-reasoncache">
+                        <div class="branch-label text-[#14b8a6]">
+                            <i class="fa-solid fa-lightbulb"></i>
+                            <span>2026 branch</span>
+                        </div>
+                        <div class="font-display text-2xl tracking-tight mt-3">ReasonCACHE</div>
+                        <p class="mt-3 text-sm text-[#94a3b8]">
+                            Train reusable KV cache state for reasoning skill
+                            acquisition. The cache stands in for learned
+                            demonstrations and reasoning behavior.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div class="rounded-2xl border border-[#1e2937] p-4">
+                    <div class="text-[#64748b] text-xs uppercase tracking-widest">Common mechanism</div>
+                    <div class="mt-2 text-[#cbd5e1]">Layer-wise trainable KV prefixes, frozen backbone.</div>
+                </div>
+                <div class="rounded-2xl border border-emerald-900/40 p-4">
+                    <div class="text-emerald-400 text-xs uppercase tracking-widest">Cartridges objective</div>
+                    <div class="mt-2 text-[#cbd5e1]">Compress external knowledge into a reusable cache.</div>
+                </div>
+                <div class="rounded-2xl border border-[#14b8a6]/40 p-4">
+                    <div class="text-[#14b8a6] text-xs uppercase tracking-widest">ReasonCACHE objective</div>
+                    <div class="mt-2 text-[#cbd5e1]">Compress reasoning demonstrations into a reusable cache.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prefix Tuning Section -->
+    <div id="prefix" class="max-w-screen-2xl mx-auto px-8 pt-16 pb-12">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-8 gap-y-8 items-start">
+            <div class="lg:col-span-5">
+                <div class="sticky top-20">
+                    <div class="flex items-center gap-x-3 mb-3">
+                        <span class="method-badge bg-[#14b8a6]/10 text-[#14b8a6]">STANFORD • 2021</span>
+                    </div>
+                    <h2 class="font-display text-5xl tracking-tighter font-semibold leading-none">Prefix Tuning</h2>
+                    <p class="mt-3 text-xl text-[#94a3b8]">The expressive foundation that Google simplified — and that later powered long-context and reasoning breakthroughs.</p>
+
+                    <div class="mt-6 space-y-3 text-sm">
+                        <div class="flex gap-x-3">
+                            <i class="fa-solid fa-check text-[#14b8a6] mt-1"></i>
+                            <span class="text-[#cbd5e1]">Tunes only ~0.1% of parameters</span>
+                        </div>
+                        <div class="flex gap-x-3">
+                            <i class="fa-solid fa-check text-[#14b8a6] mt-1"></i>
+                            <span class="text-[#cbd5e1]">Prefixes at <strong>every layer</strong> steer attention deeply</span>
+                        </div>
+                        <div class="flex gap-x-3">
+                            <i class="fa-solid fa-check text-[#14b8a6] mt-1"></i>
+                            <span class="text-[#cbd5e1]">Excellent low-data &amp; extrapolation performance</span>
+                        </div>
+                        <div class="flex gap-x-3">
+                            <i class="fa-solid fa-check text-[#14b8a6] mt-1"></i>
+                            <span class="text-[#cbd5e1]">Modular: one frozen LM, many task prefixes</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-8 p-4 dark-card rounded-2xl border border-[#1e2937] text-xs">
+                        <div class="font-mono text-[#14b8a6] text-[10px] tracking-widest mb-1">KEY INSIGHT</div>
+                        <div class="text-[#94a3b8]">By optimizing continuous vectors that become part of the attention computation at every layer, prefix tuning gives the model a powerful, persistent "steering wheel" without touching the pretrained weights.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Diagram -->
+            <div class="lg:col-span-7">
+                <div class="dark-card rounded-3xl p-8 border border-[#1e2937]">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <span class="text-xs uppercase tracking-[2px] text-[#64748b]">ARCHITECTURE</span>
+                            <div class="font-semibold">How Prefix Tuning Works</div>
+                        </div>
+                        <div class="text-right text-xs text-[#64748b]">Li &amp; Liang, 2021</div>
+                    </div>
+
+                    <!-- SVG Diagram for Prefix Tuning -->
+                    <svg width="100%" height="280" viewBox="0 0 820 280" class="architecture-svg" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Background layers -->
+                        <rect x="40" y="30" width="740" height="220" rx="16" fill="#0a0f1e"/>
+
+                        <!-- Title -->
+                        <text x="60" y="55" fill="#64748b" font-size="11" font-weight="500">FROZEN TRANSFORMER (GPT-2 / BART)</text>
+
+                        <!-- Layer 1 -->
+                        <rect x="60" y="70" width="700" height="48" rx="8" fill="#1e2937" stroke="#334155" stroke-width="1"/>
+                        <text x="75" y="95" fill="#e2e8f0" font-size="12" font-weight="600">Layer 1 (Attention + FFN)</text>
+
+                        <!-- Prefix block for Layer 1 -->
+                        <rect x="680" y="78" width="70" height="32" rx="6" fill="#14b8a6" class="prefix-block"/>
+                        <text x="695" y="98" fill="white" font-size="10" font-weight="700">PREFIX</text>
+                        <text x="695" y="108" fill="white" font-size="8">KV</text>
+
+                        <!-- Arrow from prefix -->
+                        <path d="M680 94 L660 94" stroke="#14b8a6" stroke-width="2" stroke-dasharray="3 2"/>
+
+                        <!-- Layer 2 -->
+                        <rect x="60" y="128" width="700" height="48" rx="8" fill="#1e2937" stroke="#334155" stroke-width="1"/>
+                        <text x="75" y="153" fill="#e2e8f0" font-size="12" font-weight="600">Layer 2 (Attention + FFN)</text>
+
+                        <!-- Prefix block for Layer 2 -->
+                        <rect x="680" y="136" width="70" height="32" rx="6" fill="#14b8a6" class="prefix-block"/>
+                        <text x="695" y="156" fill="white" font-size="10" font-weight="700">PREFIX</text>
+                        <text x="695" y="166" fill="white" font-size="8">KV</text>
+
+                        <path d="M680 152 L660 152" stroke="#14b8a6" stroke-width="2" stroke-dasharray="3 2"/>
+
+                        <!-- Layer N -->
+                        <rect x="60" y="186" width="700" height="48" rx="8" fill="#1e2937" stroke="#334155" stroke-width="1"/>
+                        <text x="75" y="211" fill="#e2e8f0" font-size="12" font-weight="600">Layer N (Attention + FFN)</text>
+
+                        <!-- Prefix block for Layer N -->
+                        <rect x="680" y="194" width="70" height="32" rx="6" fill="#14b8a6" class="prefix-block"/>
+                        <text x="695" y="214" fill="white" font-size="10" font-weight="700">PREFIX</text>
+                        <text x="695" y="224" fill="white" font-size="8">KV</text>
+
+                        <path d="M680 210 L660 210" stroke="#14b8a6" stroke-width="2" stroke-dasharray="3 2"/>
+
+                        <!-- Input side -->
+                        <rect x="40" y="240" width="180" height="28" rx="6" fill="#334155"/>
+                        <text x="55" y="258" fill="#94a3b8" font-size="11">Input Tokens + [Virtual Prefix]</text>
+
+                        <!-- Legend -->
+                        <rect x="620" y="245" width="14" height="14" rx="3" fill="#14b8a6"/>
+                        <text x="640" y="257" fill="#94a3b8" font-size="10">Trainable Prefix (per layer)</text>
+                    </svg>
+
+                    <div class="text-[10px] text-[#64748b] mt-2 flex items-center gap-x-4">
+                        <div class="flex items-center gap-x-1.5"><div class="w-3 h-px bg-[#14b8a6]"></div> <span>Trainable at every layer</span></div>
+                        <div>More expressive than input-only methods</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt Tuning Section -->
+    <div id="prompt" class="max-w-screen-2xl mx-auto px-8 py-12 bg-[#0a0f1e]">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-8 gap-y-8 items-start">
+            <div class="lg:col-span-5">
+                <div class="sticky top-20">
+                    <div class="flex items-center gap-x-3 mb-3">
+                        <span class="method-badge bg-[#6366f1]/10 text-[#6366f1]">GOOGLE • APR 2021</span>
+                    </div>
+                    <h2 class="font-display text-5xl tracking-tighter font-semibold leading-none">Prompt Tuning</h2>
+                    <p class="mt-3 text-xl text-[#94a3b8]">Google's elegant simplification: "Nice job kids, but we can do this with far fewer parameters and less complexity."</p>
+
+                    <div class="mt-6 p-5 dark-card rounded-2xl border border-[#1e2937]">
+                        <div class="text-xs uppercase tracking-widest text-[#6366f1] mb-2">THE TONE</div>
+                        <div class="italic text-[#cbd5e1]">"While prefix tuning and related methods have shown promise... we propose a simpler approach that achieves strong performance with minimal overhead."</div>
+                        <div class="text-[10px] text-[#64748b] mt-3">— Lester et al., Prompt Tuning paper</div>
+                    </div>
+
+                    <div class="mt-5 text-sm text-[#94a3b8]">
+                        By tuning <strong class="text-white">only input embeddings</strong> (soft prompts), the effect naturally propagates through all layers via the frozen model.
+                        Extremely parameter efficient (&lt;0.01%).
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-7">
+                <div class="dark-card rounded-3xl p-8 border border-[#1e2937]">
+                    <div class="flex justify-between mb-6">
+                        <div>
+                            <span class="text-xs uppercase tracking-[2px] text-[#64748b]">SIMPLIFIED ARCHITECTURE</span>
+                            <div class="font-semibold">Prompt Tuning — Input Embeddings Only</div>
+                        </div>
+                        <div class="text-xs text-[#64748b]">Lester et al. 2021</div>
+                    </div>
+
+                    <!-- Prompt Tuning SVG -->
+                    <svg width="100%" height="220" viewBox="0 0 820 220" class="architecture-svg" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="40" y="20" width="740" height="180" rx="16" fill="#0a0f1e"/>
+
+                        <text x="60" y="45" fill="#64748b" font-size="11">FROZEN T5 / TRANSFORMER</text>
+
+                        <!-- Input embeddings layer -->
+                        <rect x="60" y="60" width="700" height="42" rx="8" fill="#1e2937" stroke="#475569" stroke-width="1"/>
+                        <text x="75" y="85" fill="#e2e8f0" font-size="12" font-weight="600">Input Embeddings Layer</text>
+
+                        <!-- Soft Prompt -->
+                        <rect x="80" y="68" width="110" height="26" rx="5" fill="#6366f1"/>
+                        <text x="95" y="85" fill="white" font-size="11" font-weight="700">SOFT PROMPT</text>
+
+                        <!-- Arrow showing propagation -->
+                        <path d="M190 81 L 220 81" stroke="#6366f1" stroke-width="2"/>
+                        <text x="195" y="76" fill="#6366f1" font-size="9">propagates</text>
+
+                        <!-- All layers frozen -->
+                        <rect x="60" y="115" width="700" height="42" rx="8" fill="#1e2937" stroke="#475569" stroke-width="1"/>
+                        <text x="75" y="140" fill="#94a3b8" font-size="12" font-weight="500">All Transformer Layers (Frozen)</text>
+
+                        <!-- Output -->
+                        <rect x="60" y="170" width="180" height="24" rx="6" fill="#334155"/>
+                        <text x="75" y="186" fill="#cbd5e1" font-size="11">Task Output</text>
+
+                        <!-- Legend -->
+                        <rect x="580" y="175" width="12" height="12" rx="2" fill="#6366f1"/>
+                        <text x="598" y="186" fill="#94a3b8" font-size="10">Trainable (input only)</text>
+                    </svg>
+
+                    <div class="grid grid-cols-2 gap-4 text-xs mt-4">
+                        <div class="p-3 bg-[#020617] rounded-xl">
+                            <span class="font-medium text-[#6366f1]">Best for:</span><br>
+                            <span class="text-[#94a3b8]">Simple instructions, formatting (JSON, bullets), classification at scale, domain robustness, ensembling.</span>
+                        </div>
+                        <div class="p-3 bg-[#020617] rounded-xl">
+                            <span class="font-medium text-[#6366f1]">Limitation:</span><br>
+                            <span class="text-[#94a3b8]">Less expressive for deep structural changes or very long-context adaptation because it only influences via input embeddings.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comparison Section -->
+    <div id="comparison" class="max-w-screen-2xl mx-auto px-8 py-16">
+        <div class="max-w-3xl mb-10">
+            <span class="text-xs tracking-[3px] text-[#14b8a6]">HEAD-TO-HEAD</span>
+            <h2 class="font-display text-5xl tracking-tighter font-semibold">Prompt Tuning vs Prefix Tuning</h2>
+            <p class="mt-3 text-xl text-[#94a3b8]">Your understanding is largely correct. Here's the precise technical and practical distinction.</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Prompt Tuning Card -->
+            <div class="dark-card rounded-3xl p-8 border border-[#1e2937]">
+                <div class="flex items-center gap-x-3 mb-6">
+                    <div class="w-10 h-10 rounded-2xl bg-[#6366f1]/10 flex items-center justify-center flex-shrink-0">
+                        <i class="fa-solid fa-comment-dots text-[#6366f1] text-xl"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-2xl tracking-tight">Prompt Tuning</div>
+                        <div class="text-xs text-[#6366f1]">AUXILIARY EMBEDDINGS</div>
+                    </div>
+                </div>
+
+                <div class="space-y-4 text-sm">
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-emerald-400 mt-0.5"></i>
+                        <div><span class="font-medium">Extremely lightweight</span> — often just 10k–100k parameters per task</div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-emerald-400 mt-0.5"></i>
+                        <div>Can be <span class="font-medium">offloaded and loaded on demand</span> easily</div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-emerald-400 mt-0.5"></i>
+                        <div>Like a <span class="font-medium">"whisper"</span> — perfect for stylistic control, output formatting (JSON, bullets, tone), simple behavioral instructions</div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-emerald-400 mt-0.5"></i>
+                        <div>More elegant and simpler to implement &amp; serve at massive scale</div>
+                    </div>
+                </div>
+
+                <div class="mt-6 pt-6 border-t border-[#1e2937] text-xs text-[#64748b]">
+                    Google’s key insight: You don’t need to touch every layer if the goal is high-level task conditioning.
+                </div>
+            </div>
+
+            <!-- Prefix Tuning Card -->
+            <div class="dark-card rounded-3xl p-8 border border-[#14b8a6] ring-1 ring-inset ring-[#14b8a6]/20">
+                <div class="flex items-center gap-x-3 mb-6">
+                    <div class="w-10 h-10 rounded-2xl bg-[#14b8a6]/10 flex items-center justify-center flex-shrink-0">
+                        <i class="fa-solid fa-layer-group text-[#14b8a6] text-xl"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-2xl tracking-tight">Prefix Tuning</div>
+                        <div class="text-xs text-[#14b8a6]">AUXILIARY ATTENTION STATES</div>
+                    </div>
+                </div>
+
+                <div class="space-y-4 text-sm">
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-[#14b8a6] mt-0.5"></i>
+                        <div><span class="font-medium">More expressive</span> — steers attention at every single layer</div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-[#14b8a6] mt-0.5"></i>
+                        <div>Can be <span class="font-medium">offloaded and loaded on demand</span> (still tiny)</div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-[#14b8a6] mt-0.5"></i>
+                        <div>Ideal for <span class="font-medium">long-context tasks, new knowledge injection, complex reasoning patterns</span></div>
+                    </div>
+                    <div class="flex gap-3">
+                        <i class="fa-solid fa-check-circle text-[#14b8a6] mt-0.5"></i>
+                        <div>Less "elegant" but significantly more powerful for deep adaptation</div>
+                    </div>
+                </div>
+
+                <div class="mt-6 pt-6 border-t border-[#1e2937] text-xs text-[#64748b]">
+                    The prefixes become part of the model's internal state at every depth — giving direct, layer-wise control over how information flows.
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-8 text-center">
+            <div class="inline-flex items-center gap-x-2 text-xs px-4 py-2 rounded-2xl bg-[#0f172a] border border-[#1e2937]">
+                <span class="text-[#14b8a6]">BOTH</span>
+                <span class="text-[#64748b]">are optional auxiliary modules — not always needed, and easily swappable at inference time.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- LoRA Mention -->
+    <div class="max-w-screen-2xl mx-auto px-8 pb-16">
+        <div class="dark-card rounded-3xl p-8 border border-amber-900/30 bg-[#0a0f1e]">
+            <div class="flex flex-col md:flex-row gap-y-6 items-start md:items-center justify-between">
+                <div class="max-w-md">
+                    <div class="flex items-center gap-x-3">
+                        <span class="method-badge bg-amber-500/10 text-amber-400">~2 MONTHS AFTER PROMPT TUNING</span>
+                    </div>
+                    <div class="mt-3 font-semibold text-3xl tracking-tight">LoRA quickly became the practical leader</div>
+                    <div class="mt-2 text-[#94a3b8]">Hu et al. (Microsoft, June 2021) introduced low-rank weight updates. It offered an excellent balance of performance, simplicity, and compatibility. Many early comparisons "knighted" it as the go-to PEFT method for most practitioners.</div>
+                </div>
+                <div>
+                    <a href="https://arxiv.org/abs/2106.09685" target="_blank"
+                       class="inline-flex items-center gap-x-2 px-6 py-3 rounded-2xl border border-amber-900/40 hover:bg-amber-950/30 transition text-sm font-medium">
+                        <span>LoRA Paper</span> <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cartridges Section -->
+    <div id="cartridges" class="max-w-screen-2xl mx-auto px-8 py-12 border-t border-[#1e2937]">
+        <div class="max-w-3xl mb-8">
+            <span class="text-xs tracking-[3px] text-emerald-400">SURPRISING TURN OF EVENTS • 2025</span>
+            <h2 class="font-display text-5xl tracking-tighter font-semibold">Cartridges: Why Prefix Tuning?</h2>
+            <p class="mt-3 text-xl text-[#94a3b8]">In a world dominated by LoRA, Cartridges (Eyuboglu et al.) made a deliberate choice to go back to prefix tuning for long-context knowledge compression.</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <div class="lg:col-span-3 dark-card rounded-3xl p-8 border border-[#1e2937]">
+                <div class="uppercase text-emerald-400 text-xs tracking-widest mb-4">THE RATIONALE</div>
+
+                <div class="space-y-5 text-[15px]">
+                    <div>
+                        <span class="font-semibold text-white">Better structural awareness &amp; long-range dependencies</span><br>
+                        <span class="text-[#94a3b8]">Prefix tuning directly optimizes KV states that participate in attention, allowing the model to maintain coherent representations over massive compressed contexts.</span>
+                    </div>
+                    <div>
+                        <span class="font-semibold text-white">Superior robustness in ablations</span><br>
+                        <span class="text-[#94a3b8]">When compared head-to-head with memory-matched LoRA, prefix/KV parameterization showed less degradation on out-of-domain tasks and better in-domain performance on long-document benchmarks.</span>
+                    </div>
+                    <div>
+                        <span class="font-semibold text-white">Simpler serving infrastructure</span><br>
+                        <span class="text-[#94a3b8]">No need for custom LoRA merging or runtime modifications. The learned KV cache is just prepended like a normal prefix at inference time.</span>
+                    </div>
+                    <div>
+                        <span class="font-semibold text-white">Natural fit for "Self-Study"</span><br>
+                        <span class="text-[#94a3b8]">Training via synthetic conversations + context-distillation works beautifully when optimizing the actual attention states the model will use.</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2">
+                <div class="dark-card rounded-3xl p-7 border border-emerald-900/30 h-full flex flex-col">
+                    <div class="font-semibold mb-4">Cartridges = Simplified Prefix Tuning for KV Caches</div>
+                    <div class="text-sm text-[#94a3b8] flex-1">
+                        They parameterize a small trainable KV cache (Z) of virtual tokens. This is explicitly described as "a simplified version of prefix-tuning".
+                        The cartridge is loaded at inference and prepended to the user's KV cache.
+                    </div>
+                    <div class="mt-auto pt-5 text-xs border-t border-[#1e2937]">
+                        <span class="font-mono text-emerald-400">USE CASE:</span> <span class="text-[#64748b]">Knowledge retrieval &amp; synthesis from massive corpora (legal, code, medical, financial docs)</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-6 text-xs text-[#64748b] max-w-3xl">
+            <strong class="text-white">Key takeaway from Cartridges:</strong> For tasks that require the model to deeply attend over and reason about compressed external knowledge, optimizing the attention states themselves (prefix-style) proved more effective than low-rank weight updates.
+        </div>
+    </div>
+
+    <!-- ReasonCACHE Section -->
+    <div id="reasoncache" class="max-w-screen-2xl mx-auto px-8 py-16 bg-[#0a0f1e] border-t border-b border-[#1e2937]">
+        <div class="max-w-4xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="inline-block px-4 py-1 rounded-full bg-[#14b8a6]/10 text-[#14b8a6] text-xs tracking-[2.5px] font-medium">FEB 2026 • THE BEAUTIFUL QUESTION</span>
+                <h2 class="font-display text-6xl tracking-tighter font-semibold mt-3 leading-none">ReasonCACHE</h2>
+                <p class="mt-4 text-2xl text-[#94a3b8]">Scaling In-Context Learning into a Mechanism for Reasoning</p>
+            </div>
+
+            <!-- The Beautiful Question -->
+            <div class="max-w-3xl mx-auto mb-12">
+                <div class="highlight-quote pl-8 py-1 border-l-4 border-[#14b8a6]">
+                    <div class="text-3xl leading-tight tracking-tight font-medium">"How can in-context learning be scaled into a mechanism for reasoning and what are its implications?"</div>
+                </div>
+            </div>
+
+            <!-- Bold Conclusion -->
+            <div class="max-w-3xl mx-auto mb-16">
+                <div class="dark-card rounded-3xl p-9 border border-[#14b8a6]/30">
+                    <div class="uppercase text-xs tracking-[3px] text-[#14b8a6] mb-4">THE PAPER'S CORE CLAIM</div>
+                    <div class="text-2xl leading-tight tracking-tight">
+                        "In this work, we demonstrate that <strong>prefix tuning (PT)</strong> (Li and Liang, 2021), an <strong class="text-[#14b8a6]">often-overlooked</strong> form of in-context adaptation, provides the ideal interface for scaling ICL and answering this question."
+                    </div>
+                    <div class="mt-6 text-sm text-[#64748b]">— ReasonCACHE paper (arXiv:2602.02366)</div>
+                </div>
+            </div>
+
+            <!-- Insane Results -->
+            <div class="mb-12">
+                <div class="uppercase text-xs tracking-widest text-center text-[#14b8a6] mb-6">REPORTED REASONCACHE RESULTS</div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div class="dark-card rounded-3xl p-7 text-center border border-[#1e2937]">
+                        <div class="text-5xl font-semibold tracking-tighter text-white stat-number">+11%</div>
+                        <div class="mt-1 text-sm font-medium">on GPQA-Diamond</div>
+                        <div class="text-xs text-[#64748b] mt-1">Outperforms SFT and LoRA</div>
+                    </div>
+
+                    <div class="dark-card rounded-3xl p-7 text-center border border-[#1e2937]">
+                        <div class="text-5xl font-semibold tracking-tighter text-white">59% less</div>
+                        <div class="mt-1 text-sm font-medium">training data than LoRA</div>
+                        <div class="text-xs text-[#64748b] mt-1">on GSM8K for equal/better accuracy</div>
+                    </div>
+
+                    <div class="dark-card rounded-3xl p-7 text-center border border-[#1e2937]">
+                        <div class="text-5xl font-semibold tracking-tighter text-white">46% fewer</div>
+                        <div class="mt-1 text-sm font-medium">trainable parameters</div>
+                        <div class="text-xs text-[#64748b] mt-1">vs LoRA on GSM8K</div>
+                    </div>
+                </div>
+
+                <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div class="dark-card rounded-3xl p-7 border border-[#1e2937]">
+                        <div class="flex items-baseline gap-x-2">
+                            <span class="text-5xl font-semibold tracking-tighter">34%</span>
+                            <span class="text-lg text-[#14b8a6]">shorter</span>
+                        </div>
+                        <div class="text-sm mt-1">reasoning chains on GPQA-Diamond vs SFT</div>
+                        <div class="text-xs text-[#64748b] mt-4">While also improving accuracy by 11%. Directly translates to lower inference compute and monetary cost.</div>
+                    </div>
+
+                    <div class="dark-card rounded-3xl p-7 border border-[#1e2937] flex flex-col">
+                        <div>
+                            <span class="font-semibold">Faster inference + higher accuracy</span><br>
+                            <span class="text-sm text-[#94a3b8]">ReasonCACHE generates shorter, more efficient reasoning traces while outperforming weight-updating methods.</span>
+                        </div>
+                        <div class="mt-auto pt-4 text-xs text-emerald-400">This is deployment gold: better answers, cheaper &amp; faster to serve.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 2.3 Explanation -->
+            <div class="dark-card rounded-3xl p-8 border border-[#1e2937] mb-8">
+                <div class="font-semibold mb-4 flex items-center gap-x-2">
+                    <i class="fa-solid fa-book text-[#14b8a6]"></i>
+                    <span>Section 2.3: Relationship to ICL and Prompt Tuning</span>
+                </div>
+                <div class="prose prose-invert text-sm text-[#cbd5e1] max-w-none">
+                    <p>Prefix Tuning generalizes both ICL and Prompt Tuning:</p>
+                    <ul class="list-disc pl-5 space-y-1.5 mt-3 text-sm">
+                        <li><strong>ICL</strong> creates a KV-cache from demonstration tokens (unoptimized prefixes derived from real tokens).</li>
+                        <li><strong>Prompt Tuning</strong> learns continuous input embeddings; their effect on later layers is the result of frozen model projections.</li>
+                        <li><strong>Prefix Tuning (ReasonCACHE)</strong> directly optimizes the KV vectors at every layer as free parameters. This bypasses the input rowspace constraint and frozen projections, giving significantly higher expressivity.</li>
+                    </ul>
+                    <p class="mt-4 text-xs text-[#64748b]">This is why ReasonCACHE can distill complex reasoning skills into a compact cache more effectively than either pure ICL or input-only prompt tuning.</p>
+                </div>
+            </div>
+
+            <!-- Trained Caches vs Cartridges -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="dark-card rounded-3xl p-7 border border-[#1e2937]">
+                    <div class="uppercase tracking-widest text-xs text-emerald-400 mb-3">CARTRIDGES (2025)</div>
+                    <div class="font-semibold mb-2">Knowledge Retrieval via Trained KV-Caches</div>
+                    <div class="text-sm text-[#94a3b8]">Compresses massive external contexts/documents into learnable KV prefixes using Self-Study (synthetic conversations + distillation). Goal: faithful retrieval and synthesis from a specific corpus.</div>
+                </div>
+                <div class="dark-card rounded-3xl p-7 border border-[#14b8a6]/30">
+                    <div class="uppercase tracking-widest text-xs text-[#14b8a6] mb-3">REASONCACHE (2026)</div>
+                    <div class="font-semibold mb-2">Skill Acquisition via Trained KV-Caches</div>
+                    <div class="text-sm text-[#94a3b8]">Distills reasoning demonstrations into layer-wise KV prefixes. Goal: internalize reasoning patterns and skills so the model can reason better even with short or no exemplars at inference. Explicitly contrasts with Cartridges: "we target skill acquisition (e.g., reasoning)" not knowledge retrieval.</div>
+                </div>
+            </div>
+
+            <div class="mt-8 text-center text-xs text-[#64748b]">
+                Both Cartridges and ReasonCACHE train/optimize KV prefixes (they are <span class="font-medium text-white">"trained caches"</span>, not raw frozen activations). The difference is the objective and target capability.
+            </div>
+        </div>
+    </div>
+
+    <!-- Use Cases Synthesis -->
+    <div class="max-w-screen-2xl mx-auto px-8 py-16">
+        <div class="max-w-3xl mx-auto text-center mb-10">
+            <h2 class="font-display text-4xl tracking-tighter font-semibold">When to Use Which?</h2>
+            <p class="mt-3 text-[#94a3b8]">A practical decision guide based on the full evolution.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div class="dark-card rounded-3xl p-7 border border-[#1e2937]">
+                <div class="font-semibold mb-4 flex items-center gap-x-2"><i class="fa-solid fa-comment-dots text-[#6366f1]"></i> <span>Prompt Tuning</span></div>
+                <div class="text-sm space-y-3 text-[#cbd5e1]">
+                    <div>• Simple task formatting &amp; output control (JSON mode, bullet points, tone)</div>
+                    <div>• High-scale multi-task serving where minimal overhead matters</div>
+                    <div>• Quick behavioral tweaks without deep knowledge injection</div>
+                    <div>• When elegance and minimal parameters are priorities</div>
+                </div>
+            </div>
+
+            <div class="dark-card rounded-3xl p-7 border border-[#14b8a6] ring-1 ring-[#14b8a6]/20">
+                <div class="font-semibold mb-4 flex items-center gap-x-2"><i class="fa-solid fa-layer-group text-[#14b8a6]"></i> <span>Prefix Tuning / ReasonCACHE style</span></div>
+                <div class="text-sm space-y-3 text-[#cbd5e1]">
+                    <div>• Long-context or complex reasoning tasks</div>
+                    <div>• Injecting new knowledge structures or skills</div>
+                    <div>• Scenarios where you want the model to deeply internalize patterns (not just follow instructions)</div>
+                    <div>• When you need maximum expressivity from a tiny auxiliary module</div>
+                </div>
+            </div>
+
+            <div class="dark-card rounded-3xl p-7 border border-amber-900/30">
+                <div class="font-semibold mb-4 flex items-center gap-x-2"><i class="fa-solid fa-project-diagram text-amber-400"></i> <span>LoRA (still excellent default)</span></div>
+                <div class="text-sm space-y-3 text-[#cbd5e1]">
+                    <div>• Most standard fine-tuning use cases with good data</div>
+                    <div>• When you want weight-level adaptation and mature tooling</div>
+                    <div>• Production deployments where ecosystem support is critical</div>
+                    <div>• Tasks where moderate parameter budget is acceptable</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Final Takeaway -->
+    <div class="max-w-screen-2xl mx-auto px-8 pb-20">
+        <div class="max-w-3xl mx-auto dark-card rounded-3xl p-10 text-center border border-[#1e2937]">
+            <div class="text-[#14b8a6] text-sm tracking-[3px]">THE BIG PICTURE</div>
+            <div class="mt-4 text-3xl tracking-tight font-medium">Prefix tuning was never "wrong" — it was simply waiting for the right problems (long context + reasoning at scale) and the right framing (scaling ICL).</div>
+            <div class="mt-6 text-[#94a3b8]">ReasonCACHE proves that sometimes the most powerful ideas are the ones that quietly sit in the literature for years until the community catches up to their full potential.</div>
+
+            <div class="mt-8 flex justify-center gap-x-4 text-xs">
+                <a href="https://reasoncache.github.io/" target="_blank" class="inline-flex items-center gap-x-2 px-5 h-10 rounded-2xl border border-[#1e2937] hover:bg-[#0f172a] transition">
+                    Explore ReasonCACHE <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <footer class="border-t border-[#1e2937] py-8">
+        <div class="max-w-screen-2xl mx-auto px-8 text-xs text-[#64748b] flex flex-col md:flex-row gap-y-2 items-center justify-between">
+            <div>Visualization inspired by the clean, insightful style of <a href="https://do-not-panic.com/viz/2026/03/04/weight-decay.html" class="text-[#14b8a6] hover:underline">do-not-panic.com</a> weight-decay viz.</div>
+            <div class="flex gap-x-5">
+                <a href="https://arxiv.org/pdf/2101.00190" class="hover:text-white">Prefix Tuning (Li &amp; Liang 2021)</a>
+                <a href="https://arxiv.org/pdf/2104.08691" class="hover:text-white">Prompt Tuning (Lester et al. 2021)</a>
+                <a href="https://arxiv.org/abs/2106.09685" class="hover:text-white">LoRA (Hu et al. 2021)</a>
+                <a href="https://arxiv.org/pdf/2506.06266" class="hover:text-white">Cartridges (Eyuboglu et al. 2025)</a>
+                <a href="https://arxiv.org/pdf/2602.02366" class="hover:text-white">ReasonCACHE (2026)</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Tailwind script
+        function initializeTailwind() {
+            document.documentElement.style.setProperty('--accent', '#14b8a6');
+
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        fontFamily: {
+                            'display': ['Space Grotesk', 'Inter', 'system-ui', 'sans-serif']
+                        }
+                    }
+                }
+            };
+        }
+
+        // Simple animated counters for stats
+        function animateStats() {
+            const stats = document.querySelectorAll('.stat-number');
+            stats.forEach(stat => {
+                const target = stat.textContent;
+                if (target.includes('%') || target.includes('less') || target.includes('fewer')) {
+                    // Skip complex ones or handle simply
+                    return;
+                }
+
+                const num = parseFloat(target.replace('+', '').replace('%', ''));
+                if (!isNaN(num)) {
+                    stat.textContent = '0';
+                    let current = 0;
+                    const increment = num / 40;
+                    const timer = setInterval(() => {
+                        current += increment;
+                        if (current >= num) {
+                            stat.textContent = target;
+                            clearInterval(timer);
+                        } else {
+                            stat.textContent = (target.startsWith('+') ? '+' : '') + Math.floor(current);
+                        }
+                    }, 40);
+                }
+            });
+        }
+
+        // Keyboard navigation hint
+        function addKeyboardHints() {
+            document.addEventListener('keydown', function(e) {
+                if (e.key === '?') {
+                    const firstSection = document.getElementById('timeline');
+                    if (firstSection) firstSection.scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+
+            // Add subtle tooltip
+            console.log('%c[PEFT Viz] Press "?" to jump to timeline', 'color:#64748b');
+        }
+
+        // Initialize everything
+        function init() {
+            initializeTailwind();
+
+            // Animate some numbers on scroll into view
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        animateStats();
+                        observer.disconnect();
+                    }
+                });
+            }, { threshold: 0.3 });
+
+            const resultsSection = document.getElementById('reasoncache');
+            if (resultsSection) observer.observe(resultsSection);
+
+            addKeyboardHints();
+
+            // Easter egg: click accent elements to highlight
+            document.querySelectorAll('.prefix-block').forEach(el => {
+                el.addEventListener('click', () => {
+                    el.style.animation = 'none';
+                    el.offsetHeight; // trigger reflow
+                    el.style.animation = 'pulse-glow 0.6s ease';
+                });
+            });
+
+            console.log('%c[PEFT Evolution Visualization] Ready. All references and comparisons included.', 'color:#14b8a6');
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
