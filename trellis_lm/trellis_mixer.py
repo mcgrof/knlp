@@ -196,17 +196,21 @@ class TrellisMixer(nn.Module):
                     .reshape(2 * B, self.H, nC, cs, cs)
                     .contiguous()
                 )
-                # The fused Triton kernel assumes the memory is square (n_slots ==
-                # d_head); it CompilationErrors at m != d. Fall back to the correct
-                # PyTorch chunked path when the memory is non-square (the phi-screen
-                # uses m != d as an axis-bug trap, per the phi-resolution plan).
-                if (HAS_TRITON and write2.is_cuda and cfg.activation == "ln_silu"
-                        and cfg.n_slots == cfg.d_head):
+                # The fused Triton kernel handles LN-SiLU only in the square
+                # memory case because LN reductions are over the true slot count.
+                # Pointwise SiLU/identity can pad slots internally, so the
+                # Stage-2 winner/control at n_slots=48,d_head=64 can stay fused.
+                triton_pointwise = cfg.activation in ("silu", "identity")
+                triton_ln_silu = (
+                    cfg.activation == "ln_silu" and cfg.n_slots == cfg.d_head
+                )
+                nvidia_cuda = write2.is_cuda and torch.version.hip is None
+                if HAS_TRITON and nvidia_cuda and (triton_pointwise or triton_ln_silu):
                     # Fused Triton state-evolution: collapses the nC-chunk Python
                     # loop into one kernel (26-44x over the bmm loop), gradient-
                     # equivalent to the PyTorch path (z detached -> true-stale).
                     M0_2, u_2 = TrellisStateEvolutionTriton.apply(
-                        write2, alpha2, P2, rmat2, gf, cs
+                        write2, alpha2, P2, rmat2, gf, cs, cfg.activation
                     )
                 else:
                     M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
