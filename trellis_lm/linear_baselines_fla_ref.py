@@ -31,6 +31,8 @@ the ladder only references the `*_ref` kinds on the CUDA pod.
 
 from __future__ import annotations
 
+import inspect
+import os
 import torch
 import torch.nn as nn
 
@@ -40,13 +42,25 @@ from .trellis_mixer import RMSNorm
 try:  # fla reference layers live in the full flash-linear-attention package
     import fla.modules.convolution as _fla_conv
 
-    # Force the PyTorch short-conv fallback (identical math; no causal-conv1d
-    # CUDA build). Patch the class __init__ default so the layers' internally
-    # constructed ShortConvolution instances pick it up.
+    # Default to the PyTorch short-conv fallback (identical math; no
+    # causal-conv1d CUDA build required), but allow paid CUDA pods to opt into a
+    # faster FLA backend after a preflight.  Keep this as an import-time patch so
+    # the reference layers' internally constructed ShortConvolution instances
+    # pick it up.
     _ORIG_SHORTCONV_INIT = _fla_conv.ShortConvolution.__init__
 
     def _shortconv_init_cpu_safe(self, *a, **kw):
-        kw["use_fast_conv1d"] = False
+        backend = os.environ.get("TRELLIS_FLA_REF_CONV_BACKEND")
+        params = inspect.signature(_ORIG_SHORTCONV_INIT).parameters
+        if backend:
+            if "backend" in params:
+                kw["backend"] = backend
+            elif backend not in ("torch", "fallback", "cpu_safe"):
+                kw["use_fast_conv1d"] = True
+        elif "backend" in params:
+            kw.setdefault("backend", "torch")
+        else:
+            kw["use_fast_conv1d"] = False
         return _ORIG_SHORTCONV_INIT(self, *a, **kw)
 
     _fla_conv.ShortConvolution.__init__ = _shortconv_init_cpu_safe
