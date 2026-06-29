@@ -557,13 +557,14 @@
     <div id="branches" class="max-w-screen-2xl mx-auto px-8 py-16 border-b border-[#1e2937]">
         <div class="flex items-end justify-between gap-8 mb-8">
             <div class="max-w-2xl">
-                <span class="text-xs font-mono tracking-[3px] text-[#14b8a6]">THE PREFIX-TUNING BRANCH</span>
-                <h2 class="font-display text-4xl tracking-tighter font-semibold">Cartridges and ReasonCACHE split from the same KV-cache trunk.</h2>
+                <span class="text-xs font-mono tracking-[3px] text-[#14b8a6]">THE LEARNED PREFIX CACHE BRANCH</span>
+                <h2 class="font-display text-4xl tracking-tighter font-semibold">Cartridges and ReasonCACHE share the same learned-prefix trunk.</h2>
             </div>
             <p class="max-w-md text-sm text-[#64748b] text-right">
                 Prompt tuning and LoRA stayed closer to input embeddings and
-                weight deltas. The trained-cache line kept the prefix-tuning
-                interface and changed what the cache is trained to remember.
+                weight deltas. The learned-prefix-cache line kept the
+                prefix-tuning interface and changed the source material,
+                induction method, and training objective.
             </p>
         </div>
 
@@ -578,7 +579,7 @@
                     <p class="mt-3 text-sm text-[#94a3b8]">
                         Learn layer-wise K/V prefixes while the backbone stays
                         frozen. This is the attention-side adaptation primitive
-                        later reused by trained cache systems.
+                        later reused by learned prefix cache systems.
                     </p>
                 </div>
 
@@ -615,10 +616,14 @@
                 </div>
             </div>
 
-            <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div class="mt-6 grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
                 <div class="rounded-2xl border border-[#1e2937] p-4">
                     <div class="text-[#64748b] text-xs uppercase tracking-widest">Common mechanism</div>
                     <div class="mt-2 text-[#cbd5e1]">Layer-wise trainable KV prefixes, frozen backbone.</div>
+                </div>
+                <div class="rounded-2xl border border-[#14b8a6]/30 p-4">
+                    <div class="text-[#14b8a6] text-xs uppercase tracking-widest">Shared artifact</div>
+                    <div class="mt-2 text-[#cbd5e1]">Learned Prefix Cache: the object served by vLLM or LMCache.</div>
                 </div>
                 <div class="rounded-2xl border border-emerald-900/40 p-4">
                     <div class="text-emerald-400 text-xs uppercase tracking-widest">Cartridges objective</div>
@@ -1070,22 +1075,30 @@
                 </div>
             </div>
 
-            <!-- Trained Caches vs Cartridges -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Learned Prefix Caches vs Cache Induction -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div class="dark-card rounded-3xl p-7 border border-[#1e2937]">
                     <div class="uppercase tracking-widest text-xs text-emerald-400 mb-3">CARTRIDGES (2025)</div>
-                    <div class="font-semibold mb-2">Knowledge Retrieval via Trained KV-Caches</div>
+                    <div class="font-semibold mb-2">Documents via Learned Prefix Caches</div>
                     <div class="text-sm text-[#94a3b8]">Compresses massive external contexts/documents into learnable KV prefixes using Self-Study (synthetic conversations + distillation). Goal: faithful retrieval and synthesis from a specific corpus.</div>
                 </div>
                 <div class="dark-card rounded-3xl p-7 border border-[#14b8a6]/30">
                     <div class="uppercase tracking-widest text-xs text-[#14b8a6] mb-3">REASONCACHE (2026)</div>
-                    <div class="font-semibold mb-2">Skill Acquisition via Trained KV-Caches</div>
+                    <div class="font-semibold mb-2">Reasoning via Learned Prefix Caches</div>
                     <div class="text-sm text-[#94a3b8]">Distills reasoning demonstrations into layer-wise KV prefixes. Goal: internalize reasoning patterns and skills so the model can reason better even with short or no exemplars at inference. Explicitly contrasts with Cartridges: "we target skill acquisition (e.g., reasoning)" not knowledge retrieval.</div>
+                </div>
+                <div class="dark-card rounded-3xl p-7 border border-[#6366f1]/35">
+                    <div class="uppercase tracking-widest text-xs text-[#a5b4fc] mb-3">ARCI (KNLP)</div>
+                    <div class="font-semibold mb-2">Active Reading Cache Induction</div>
+                    <div class="text-sm text-[#94a3b8]">Generates trainable behavior traces from raw skills or documents before prefix-cache training. This is the bridge when curated reasoning traces are not already available.</div>
                 </div>
             </div>
 
             <div class="mt-8 text-center text-xs text-[#64748b]">
-                Both Cartridges and ReasonCACHE train/optimize KV prefixes (they are <span class="font-medium text-white">"trained caches"</span>, not raw frozen activations). The difference is the objective and target capability.
+                Both Cartridges and ReasonCACHE train/optimize KV prefixes.
+                We call the shared artifact a <span class="font-medium text-white">Learned Prefix Cache</span>;
+                the bridge from raw source material to trainable behavior is
+                <span class="font-medium text-white">Cache Induction</span>.
             </div>
         </div>
     </div>
