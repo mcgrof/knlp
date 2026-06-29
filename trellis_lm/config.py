@@ -20,6 +20,7 @@ class TrellisConfig:
     # --- Trellis memory knobs ---
     conv_kernel: int = 4
     use_short_conv_qk: bool = True
+    use_short_conv_v: bool = False
     # L2-normalize the write vector (and the read query) over head_dim before the
     # memory update -- DeltaNet's contraction stabilizer (the published paper's
     # Trellis equations use raw k; this is exploratory). Bounds gamma*||w||^2 so
@@ -38,6 +39,9 @@ class TrellisConfig:
     # beta_proj bias is set to logit(beta_init). 0.5 = zero-bias (legacy). The
     # paper's retention semantics want beta near 1; sweep {0.8..0.995}.
     gamma_init: float = 1e-2  # learning-rate of the inner OGD step
+    update_gate_mode: str = "none"  # ["none","scalar","channel"]
+    update_gate_init: float = 0.95
+    residual_update_mix: float = 0.0
     # output_path: "current" = out_proj(y) then *SiLU(gate) AFTER out_proj
     # (legacy). "paper" = PostNorm(y) -> *GeLU(gate) -> out_proj (Fig 1 order:
     # Trellis -> Norm -> gated branch -> Linear), gate in the inner_dim space.
@@ -73,6 +77,11 @@ class TrellisConfig:
             "l2_silu",
         ), self.alpha_mode
         assert self.beta_mode in ("scalar_per_head", "per_slot"), self.beta_mode
+        assert self.update_gate_mode in (
+            "none",
+            "scalar",
+            "channel",
+        ), self.update_gate_mode
         assert self.output_path in ("current", "paper"), self.output_path
         assert self.value_readout_act in (
             "none",
@@ -82,6 +91,8 @@ class TrellisConfig:
             "l2_silu",
         ), self.value_readout_act
         assert 0.0 < self.beta_init < 1.0, self.beta_init
+        assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
+        assert self.residual_update_mix >= 0.0, self.residual_update_mix
         assert self.dtype in ("bf16", "fp16", "fp32"), self.dtype
 
     @property
