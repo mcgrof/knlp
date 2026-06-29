@@ -629,7 +629,7 @@
         <a class="active" href="#top"><i class="fa-solid fa-bolt"></i> ReasonCACHE</a>
         <a href="#paper-results">Paper Result</a>
         <a href="#mechanism">Mechanism</a>
-        <a href="#induction">Cache Induction</a>
+        <a href="learned_prefix_caches.html">LPC Bridge</a>
         <a href="#vllm">vLLM Work</a>
         <a href="#skillsbench">SkillsBench</a>
         <a href="#pareto">Pareto</a>
@@ -650,9 +650,9 @@
             reusable reasoning behavior.
           </p>
           <p class="hero-sub">
-            The paper assumes reasoning traces already exist. Our work studies
-            the missing bridge: how to induce trainable traces from raw
-            SKILL.md files and documents with Active Reading Cache Induction.
+            The paper assumes reasoning traces already exist. Our separate
+            Learned Prefix Cache page covers the shared Cartridges plus
+            ReasonCACHE architecture and the Active Reading induction bridge.
           </p>
           <div class="actions">
             <a class="button primary" href="https://arxiv.org/abs/2602.02366" target="_blank" rel="noopener">
@@ -664,8 +664,8 @@
             <a class="button" href="peft_evolution.html">
               <i class="fa-solid fa-timeline"></i> PEFT evolution
             </a>
-            <a class="button" href="#induction">
-              <i class="fa-solid fa-route"></i> Active Reading
+            <a class="button" href="learned_prefix_caches.html">
+              <i class="fa-solid fa-layer-group"></i> LPC bridge
             </a>
             <a class="button" href="#vllm">
               <i class="fa-solid fa-code-branch"></i> Our vLLM support
@@ -813,72 +813,43 @@
       <div class="wrap">
         <div class="section-head">
           <div>
-            <div class="section-kicker">Cache induction</div>
-            <h2>The shared object is a learned prefix cache.</h2>
+            <div class="section-kicker">Shared architecture</div>
+            <h2>ReasonCACHE is one learned-prefix-cache instance.</h2>
           </div>
           <p>
-            Cartridges and ReasonCACHE differ less in the runtime object than
-            in the data pipeline. Both attach learned KV prefixes to a frozen
-            backbone. The hard part is deciding what behavior the prefix should
-            learn before it reaches vLLM.
+            This page stays focused on the ReasonCACHE paper and our vLLM
+            support. The shared Cartridges plus ReasonCACHE taxonomy now lives
+            on the Learned Prefix Caches page.
           </p>
         </div>
 
-        <div class="formula">
-          source material &rarr; cache induction &rarr; training objective &rarr; learned prefix cache
-        </div>
-
-        <div class="grid cols-3" style="margin-top:14px;">
+        <div class="grid cols-2">
           <div class="card hot">
             <span class="pill"><i class="fa-solid fa-layer-group"></i> LPC</span>
-            <h3 style="margin-top:14px;">Learned Prefix Cache</h3>
+            <h3 style="margin-top:14px;">Shared mechanism</h3>
             <p>
-              The common artifact: layer-wise learned K/V state prepended to
-              the request. Cartridges, ReasonCACHE, document caches, and skill
-              caches are all instances of this mechanism.
+              Cartridges, ReasonCACHE, document caches, and skill caches all
+              attach learned layer-wise K/V prefixes to a frozen model. The
+              runtime object is a learned prefix cache.
             </p>
-          </div>
-          <div class="card">
-            <span class="pill"><i class="fa-solid fa-diagram-project"></i> induction</span>
-            <h3 style="margin-top:14px;">Cache Induction</h3>
-            <p>
-              The bridge process that turns raw source material into trainable
-              behavior. Cartridges use fixed self-study for documents.
-              ReasonCACHE mostly bypasses this by starting from traces.
-            </p>
+            <div class="actions" style="margin-top:16px;">
+              <a class="button primary" href="learned_prefix_caches.html">
+                <i class="fa-solid fa-diagram-project"></i> Open LPC bridge
+              </a>
+            </div>
           </div>
           <div class="card">
             <span class="pill"><i class="fa-solid fa-book-open-reader"></i> ARCI</span>
-            <h3 style="margin-top:14px;">Active Reading Cache Induction</h3>
+            <h3 style="margin-top:14px;">ReasonCACHE gap</h3>
             <p>
-              Our candidate bridge. Active Reading generates task-shaped study
-              views and reasoning traces from source material, then the learned
-              prefix is trained with next-token or teacher-KL objectives.
+              ReasonCACHE validates learned KV prefixes for reasoning when
+              curated traces already exist. KNLP is testing Active Reading
+              Cache Induction as the missing step for raw skills, documents,
+              and procedural sources that do not already contain traces.
             </p>
-          </div>
-        </div>
-
-        <div class="grid cols-2" style="margin-top:14px;">
-          <div class="card">
-            <h3>The ReasonCACHE gap we found</h3>
-            <p>
-              The paper demonstrates that prefix tuning can store reasoning
-              behavior when the training data already contains reasoning
-              demonstrations. SkillsBench skill files are different: they are
-              documentation, not question-answer traces or chain-of-thought
-              solutions. Raw next-token training on the skill text mostly
-              teaches the cache to continue documentation, not solve the task.
-            </p>
-          </div>
-          <div class="card">
-            <h3>Why the boundary blurs</h3>
-            <p>
-              A document cartridge trained with self-study and distillation, a
-              reasoning cache trained from curated traces, and a skill cache
-              trained from ARCI traces all become learned prefix caches at
-              serving time. The useful taxonomy is no longer paper name first;
-              it is source material, induction method, objective, and cache.
-            </p>
+            <div class="formula" style="margin-top:14px;">
+              source material &rarr; cache induction &rarr; objective &rarr; learned prefix cache
+            </div>
           </div>
         </div>
       </div>
@@ -910,9 +881,9 @@
           <div class="card metric">
             <div>
               <div class="value cyan">READY</div>
-              <div class="label">vLLM commit stack covers prefix loading, connector aliasing, placeholders, harness, and Pareto analysis.</div>
+              <div class="label">vLLM support branch covers prefix loading, connector aliasing, placeholders, harness, and Pareto analysis.</div>
             </div>
-            <div class="source">branch 20260622-routing</div>
+            <div class="source">branch 20260629-learned-prefix-cache</div>
           </div>
           <div class="card metric">
             <div>
@@ -945,15 +916,18 @@
           </div>
 
           <div class="card">
-            <h3>Commit stack</h3>
+            <h3>Branch stack</h3>
             <table>
-              <tr><th>Commit</th><th>Patch</th></tr>
-              <tr><td><strong>757374dde</strong></td><td>Accept ReasonCACHE learned KV prefixes.</td></tr>
-              <tr><td><strong>eaf970ad4</strong></td><td>Register ReasonCacheConnector alias.</td></tr>
-              <tr><td><strong>c1babe291</strong></td><td>Require placeholders for ReasonCACHE prefixes.</td></tr>
-              <tr><td><strong>c8d95a049</strong></td><td>Add ReasonCACHE SkillsBench eval harness.</td></tr>
-              <tr><td><strong>23332ae48</strong></td><td>Add ReasonCACHE Pareto analysis.</td></tr>
+              <tr><th>Branch / commit</th><th>Patch</th></tr>
+              <tr><td><strong>20260629-learned-prefix-cache</strong></td><td>Non-routing branch based on the cartridge upstream work.</td></tr>
+              <tr><td><strong>0ac3a390d</strong></td><td>Add learned prefix cache support for Cartridges, ReasonCACHE, and generic KV prefixes.</td></tr>
+              <tr><td><strong>20260430-cartridges-upstream</strong></td><td>Cartridge connector base used as the serving foundation.</td></tr>
             </table>
+            <div class="actions" style="margin-top:16px;">
+              <a class="button" href="https://github.com/mcgrof/vllm/tree/20260629-learned-prefix-cache" target="_blank" rel="noopener">
+                <i class="fa-solid fa-code-branch"></i> vLLM LPC branch
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -971,8 +945,15 @@
             cartridge experiments. The learned-prefix arms remove SKILL.md
             text from the online prompt and supply behavior through injected KV
             state. The new question is which induction method produces useful
-            training traces.
+            training traces. The full ARCI bridge analysis is on the Learned
+            Prefix Caches page.
           </p>
+        </div>
+
+        <div class="actions" style="margin-top:-8px; margin-bottom:18px;">
+          <a class="button" href="learned_prefix_caches.html#results">
+            <i class="fa-solid fa-chart-line"></i> ARCI PoC results
+          </a>
         </div>
 
         <div class="grid cols-2">
@@ -1358,6 +1339,8 @@
         <a href="https://arxiv.org/abs/2602.02366" target="_blank" rel="noopener">Paper</a>
         &nbsp;/&nbsp;
         <a href="https://reasoncache.github.io/" target="_blank" rel="noopener">Project page</a>
+        &nbsp;/&nbsp;
+        <a href="learned_prefix_caches.html">Learned Prefix Caches</a>
         &nbsp;/&nbsp;
         <a href="peft_evolution.html">PEFT evolution</a>
         &nbsp;/&nbsp;
