@@ -78,6 +78,13 @@ class TrellisMixer(nn.Module):
         beta_out = H if cfg.beta_mode == "scalar_per_head" else H * M
         self.beta_proj = nn.Linear(d, beta_out, bias=True)
         self.reset_beta_bias()
+        if cfg.update_gate_mode == "scalar":
+            self.update_gate_proj = nn.Linear(d, H, bias=True)
+        elif cfg.update_gate_mode == "channel":
+            self.update_gate_proj = nn.Linear(d, H * M, bias=True)
+        else:
+            self.update_gate_proj = None
+        self.reset_update_gate_bias()
         # gamma positive per head via softplus(raw); init so softplus(raw)=gamma_init
         raw0 = math.log(math.expm1(cfg.gamma_init))
         self.gamma_raw = nn.Parameter(torch.full((H,), raw0))
@@ -102,6 +109,9 @@ class TrellisMixer(nn.Module):
         if self.use_conv:
             self.q_conv = CausalDWConv1d(H * D, cfg.conv_kernel)
             self.k_conv = CausalDWConv1d(H * D, cfg.conv_kernel)
+        self.use_v_conv = cfg.use_short_conv_v
+        if self.use_v_conv:
+            self.v_conv = CausalDWConv1d(H * D, cfg.conv_kernel)
         self.phi = get_activation(cfg.activation)
         self.f = get_activation(cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
@@ -115,6 +125,15 @@ class TrellisMixer(nn.Module):
         with torch.no_grad():
             b0 = math.log(self.cfg.beta_init / (1.0 - self.cfg.beta_init))
             self.beta_proj.bias.fill_(b0)
+
+    def reset_update_gate_bias(self):
+        if self.update_gate_proj is None:
+            return
+        with torch.no_grad():
+            p = self.cfg.update_gate_init
+            b0 = math.log(p / (1.0 - p))
+            self.update_gate_proj.weight.zero_()
+            self.update_gate_proj.bias.fill_(b0)
 
     def _heads(self, x, last):  # [B,T,H*last] -> [B,H,T,last]
         B, T, _ = x.shape
@@ -130,6 +149,8 @@ class TrellisMixer(nn.Module):
         if self.use_conv:
             q = self.q_conv(q)
             k = self.k_conv(k)
+        if self.use_v_conv:
+            v = self.v_conv(v)
         if cfg.write_l2norm:
             # DeltaNet-style L2 normalization of the write vectors (keys) and the
             # key-pass query, over head_dim, to bound gamma*||w||^2.
@@ -154,6 +175,17 @@ class TrellisMixer(nn.Module):
             if not cfg.forget_gate:
                 beta = torch.ones_like(beta)
             gamma = F.softplus(self.gamma_raw.float())  # [H], positive
+            update_gate = None
+            if cfg.update_gate_mode == "scalar":
+                update_gate = (
+                    torch.sigmoid(self.update_gate_proj(hf))
+                    .view(B, T, self.H, 1)
+                    .permute(0, 2, 1, 3)
+                )
+            elif cfg.update_gate_mode == "channel":
+                update_gate = torch.sigmoid(
+                    self._heads(self.update_gate_proj(hf), self.M)
+                )
 
         # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
         # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
@@ -205,7 +237,15 @@ class TrellisMixer(nn.Module):
                     cfg.activation == "ln_silu" and cfg.n_slots == cfg.d_head
                 )
                 nvidia_cuda = write2.is_cuda and torch.version.hip is None
-                if HAS_TRITON and nvidia_cuda and (triton_pointwise or triton_ln_silu):
+                triton_plain_update = (
+                    update_gate is None and cfg.residual_update_mix == 0.0
+                )
+                if (
+                    HAS_TRITON
+                    and nvidia_cuda
+                    and triton_plain_update
+                    and (triton_pointwise or triton_ln_silu)
+                ):
                     # Fused Triton state-evolution: collapses the nC-chunk Python
                     # loop into one kernel (26-44x over the bmm loop), gradient-
                     # equivalent to the PyTorch path (z detached -> true-stale).
@@ -213,8 +253,25 @@ class TrellisMixer(nn.Module):
                         write2, alpha2, P2, rmat2, gf, cs, cfg.activation
                     )
                 else:
+                    update_gate2 = None
+                    if update_gate is not None:
+                        update_gate2 = (
+                            update_gate.unsqueeze(0)
+                            .expand(2, B, self.H, T, update_gate.shape[-1])
+                            .reshape(2 * B, self.H, T, update_gate.shape[-1])
+                            .contiguous()
+                        )
                     M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
-                        write2, alpha2, None, gf, self.phi, cs, P=P2, rmat=rmat2
+                        write2,
+                        alpha2,
+                        None,
+                        gf,
+                        self.phi,
+                        cs,
+                        P=P2,
+                        rmat=rmat2,
+                        update_gate=update_gate2,
+                        residual_update_mix=cfg.residual_update_mix,
                     )
                 M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
                 u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
@@ -228,20 +285,60 @@ class TrellisMixer(nn.Module):
             elif use_chunk:
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
-                    kf, qf, af, bf, gf, self.phi, "M_q", cs, cfg.chunk_refine
+                    kf,
+                    qf,
+                    af,
+                    bf,
+                    gf,
+                    self.phi,
+                    "M_q",
+                    cs,
+                    cfg.chunk_refine,
+                    update_gate=update_gate,
+                    residual_update_mix=cfg.residual_update_mix,
                 )
                 r = self.f(yhat)
                 y = run_trellis_memory_chunked(
-                    vf, r, af, bf, gf, self.phi, "M_T_r", cs, cfg.chunk_refine
+                    vf,
+                    r,
+                    af,
+                    bf,
+                    gf,
+                    self.phi,
+                    "M_T_r",
+                    cs,
+                    cfg.chunk_refine,
+                    update_gate=update_gate,
+                    residual_update_mix=cfg.residual_update_mix,
                 )
             else:
                 ex = cfg.exact_inner
                 yhat = run_trellis_memory(
-                    kf, qf, af, bf, gf, self.phi, "M_q", training, exact_inner=ex
+                    kf,
+                    qf,
+                    af,
+                    bf,
+                    gf,
+                    self.phi,
+                    "M_q",
+                    training,
+                    exact_inner=ex,
+                    update_gate=update_gate,
+                    residual_update_mix=cfg.residual_update_mix,
                 )
                 r = self.f(yhat)  # [B,H,T,M]
                 y = run_trellis_memory(
-                    vf, r, af, bf, gf, self.phi, "M_T_r", training, exact_inner=ex
+                    vf,
+                    r,
+                    af,
+                    bf,
+                    gf,
+                    self.phi,
+                    "M_T_r",
+                    training,
+                    exact_inner=ex,
+                    update_gate=update_gate,
+                    residual_update_mix=cfg.residual_update_mix,
                 )
 
         # final phi on the value-pass readout (paper: y = phi(M^T r)). Applied
