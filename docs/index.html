@@ -91,21 +91,36 @@
     <section class="mb-14">
       <h2 class="text-2xl font-bold mb-6 text-center">Serving and Systems</h2>
       <div class="grid md:grid-cols-2 gap-4">
+        <a href="learned_prefix_caches.html" class="card rounded-lg p-5 block">
+          <div class="flex items-start justify-between mb-2">
+            <h3 class="font-semibold text-emerald-400">Learned Prefix Caches</h3>
+            <span class="text-xs bg-emerald-900 text-emerald-300 px-2 py-1 rounded ml-3 whitespace-nowrap">umbrella</span>
+          </div>
+          <p class="text-gray-500 text-sm mb-3">
+            The shared architecture for Cartridges, ReasonCACHE, and skill
+            caches. The page defines LPC, Cache Induction, and Active Reading
+            Cache Induction, then shows the current SkillsBench bridge results.
+          </p>
+          <div class="flex gap-3 text-xs">
+            <span class="text-emerald-400">ARCI pilot</span>
+            <span class="text-gray-600">&middot;</span>
+            <span class="text-gray-500">Cartridges + ReasonCACHE</span>
+          </div>
+        </a>
         <a href="reasoncache.html" class="card rounded-lg p-5 block">
           <div class="flex items-start justify-between mb-2">
             <h3 class="font-semibold text-teal-400">ReasonCACHE</h3>
             <span class="text-xs bg-teal-900 text-teal-300 px-2 py-1 rounded ml-3 whitespace-nowrap">vLLM</span>
           </div>
           <p class="text-gray-500 text-sm mb-3">
-            Train a learned prefix cache as a reusable reasoning interface.
-            Our vLLM branch accepts ReasonCACHE prefixes, and the latest H100
-            ablations test Active Reading Cache Induction for turning SKILL.md
-            documentation into trainable behavior traces.
+            ReasonCACHE as a reusable reasoning interface: paper summary,
+            serving implications, and KNLP vLLM support. The LPC page carries
+            the shared Cartridges plus Active Reading induction story.
           </p>
           <div class="flex gap-3 text-xs">
             <span class="text-teal-400">interactive report</span>
             <span class="text-gray-600">&middot;</span>
-            <span class="text-gray-500">ARCI pilot</span>
+            <span class="text-gray-500">LPC branch</span>
           </div>
         </a>
         <a href="spf.html" class="card rounded-lg p-5 block">
@@ -476,8 +491,9 @@
         <a href="cartridges_visualization.html" class="card rounded-lg p-5 block">
           <h3 class="font-semibold text-green-400 mb-2">Cartridges</h3>
           <p class="text-gray-500 text-sm">
-            Pre-trained KV caches that skip prefill. 10.6x speedup at 16K tokens.
-            vLLM integration via KVConnectorBase_V1 with zero core patches.
+            Document-focused learned prefix caches that skip prefill. The
+            Cartridges page gives the original document-cache results; the LPC
+            page shows how that mechanism connects to ReasonCACHE and ARCI.
           </p>
         </a>
         <a href="routing.html" class="card rounded-lg p-5 block">

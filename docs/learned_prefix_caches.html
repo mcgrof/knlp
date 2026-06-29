@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Learned Prefix Caches: Cartridges, ReasonCACHE, and ARCI | knlp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #080b12;
+      --panel: #111722;
+      --panel2: #161e2c;
+      --line: #2a3546;
+      --line2: #3d4a5e;
+      --text: #edf3fb;
+      --muted: #9aa8ba;
+      --faint: #667487;
+      --cyan: #20d1c4;
+      --green: #35d17f;
+      --amber: #f2b84d;
+      --blue: #62a8ff;
+      --rose: #ff6d83;
+      --violet: #a78bfa;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(32, 209, 196, 0.08), transparent 360px),
+        linear-gradient(110deg, rgba(98, 168, 255, 0.10), transparent 42%),
+        var(--bg);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.62;
+      overflow-x: hidden;
+    }
+
+    a { color: inherit; }
+    code, pre, .mono { font-family: var(--mono); }
+    .wrap { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+
+    .site-nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(8, 11, 18, 0.90);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--line);
+    }
+    .site-nav .wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(32, 209, 196, 0.46);
+      background: rgba(32, 209, 196, 0.10);
+      border-radius: 8px;
+      color: var(--cyan);
+    }
+    .brand strong {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-decoration: none;
+      transition: 0.18s ease;
+    }
+    .nav-links a:hover,
+    .nav-links a.active {
+      color: var(--text);
+      background: var(--panel);
+      border-color: var(--line);
+    }
+
+    .hero {
+      min-height: clamp(680px, 82vh, 860px);
+      display: grid;
+      align-items: center;
+      padding: 72px 0 44px;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+      align-items: center;
+      gap: 42px;
+    }
+    .hero-grid > *,
+    .grid > * { min-width: 0; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin-bottom: 18px;
+    }
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 2px;
+      background: var(--cyan);
+    }
+    h1 {
+      margin: 0;
+      max-width: 860px;
+      font-size: 96px;
+      line-height: 0.94;
+      letter-spacing: 0;
+    }
+    h1 span { color: var(--cyan); }
+    .hero-lede {
+      max-width: 720px;
+      margin: 24px 0 0;
+      color: #cad5e5;
+      font-size: 24px;
+      line-height: 1.32;
+      letter-spacing: 0;
+    }
+    .hero-sub {
+      max-width: 700px;
+      margin: 18px 0 0;
+      color: var(--muted);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--line2);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: 0.18s ease;
+    }
+    .button.primary {
+      background: linear-gradient(135deg, #23d0c5, #35d17f);
+      border-color: transparent;
+      color: #061311;
+    }
+    .button:hover {
+      transform: translateY(-1px);
+      border-color: var(--cyan);
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+    }
+
+    .branch-visual {
+      min-height: 500px;
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px),
+        linear-gradient(145deg, rgba(32, 209, 196, 0.12), rgba(167, 139, 250, 0.07) 48%, rgba(17, 23, 34, 0.96));
+      background-size: 28px 28px, 28px 28px, auto;
+      overflow: hidden;
+      padding: 28px;
+    }
+    .trunk {
+      position: absolute;
+      left: 50%;
+      top: 54px;
+      bottom: 72px;
+      width: 3px;
+      background: linear-gradient(var(--cyan), var(--green));
+      opacity: 0.72;
+    }
+    .tree-node {
+      position: absolute;
+      width: min(270px, calc(50% - 44px));
+      min-height: 86px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(8, 11, 18, 0.70);
+      padding: 12px;
+      box-shadow: 0 18px 55px rgba(0, 0, 0, 0.24);
+    }
+    .tree-node::after {
+      content: "";
+      position: absolute;
+      top: 42px;
+      height: 2px;
+      background: var(--line2);
+    }
+    .tree-node.left { left: 24px; }
+    .tree-node.left::after { right: -58px; width: 58px; }
+    .tree-node.right { right: 24px; }
+    .tree-node.right::after { left: -58px; width: 58px; }
+    .tree-node.center {
+      left: 50%;
+      transform: translateX(-50%);
+      top: 26px;
+      width: min(320px, calc(100% - 48px));
+      min-height: 72px;
+      text-align: center;
+      border-color: rgba(32, 209, 196, 0.50);
+    }
+    .tree-node.center::after { display: none; }
+    .tree-node.cartridges { top: 148px; }
+    .tree-node.reason { top: 262px; }
+    .tree-node.arci { top: 376px; }
+    .tree-node h3 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    .tree-node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .tree-node .tag {
+      display: inline-flex;
+      margin-bottom: 8px;
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    section {
+      padding: 70px 0;
+      border-top: 1px solid var(--line);
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(280px, 0.58fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 26px;
+    }
+    .section-kicker {
+      color: var(--cyan);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    h2 {
+      margin: 0;
+      font-size: 52px;
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+    .section-head p,
+    .lead {
+      margin: 0;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid .wide { grid-column: 1 / -1; }
+    .card {
+      background: linear-gradient(145deg, rgba(22, 30, 44, 0.92), rgba(13, 18, 28, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .card.hot { border-color: rgba(32, 209, 196, 0.50); }
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .metric {
+      min-height: 145px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .metric .value {
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 42px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+    .metric .value.green { color: var(--green); }
+    .metric .value.cyan { color: var(--cyan); }
+    .metric .value.amber { color: var(--amber); }
+    .metric .label {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .metric .source {
+      margin-top: 14px;
+      color: var(--faint);
+      font-size: 11px;
+      font-family: var(--mono);
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .formula {
+      padding: 16px;
+      border: 1px solid rgba(32, 209, 196, 0.28);
+      border-radius: 8px;
+      background: rgba(32, 209, 196, 0.06);
+      color: #c9fff8;
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow-x: auto;
+    }
+    .note {
+      border-left: 3px solid var(--amber);
+      background: rgba(242, 184, 77, 0.08);
+      padding: 12px 14px;
+      color: #d6c6a5;
+      border-radius: 0 8px 8px 0;
+      font-size: 13px;
+    }
+    .chart-card { min-height: 370px; }
+    .chart-shell {
+      height: 300px;
+      margin-top: 12px;
+    }
+    .table-scroll {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    .table-scroll table { min-width: 790px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--faint);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      font-weight: 700;
+    }
+    td { color: var(--muted); }
+    td strong { color: var(--text); }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .cyan { color: var(--cyan); }
+    .rose { color: var(--rose); }
+    .tight-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .tight-list li + li { margin-top: 5px; }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding: 30px 0 44px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+    footer .wrap {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--cyan); }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .section-head,
+      .grid.cols-3,
+      .grid.cols-4 {
+        grid-template-columns: 1fr 1fr;
+      }
+      h1 { font-size: 70px; }
+      h2 { font-size: 42px; }
+      .hero-lede { font-size: 22px; }
+      .branch-visual { min-height: 560px; }
+      .tree-node {
+        width: min(260px, calc(50% - 38px));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .wrap { width: min(100% - 28px, 1180px); }
+      .site-nav .wrap { align-items: flex-start; flex-direction: column; }
+      .nav-links { justify-content: flex-start; }
+      .hero { min-height: auto; padding: 48px 0 32px; }
+      .hero-grid,
+      .section-head,
+      .grid.cols-2,
+      .grid.cols-3,
+      .grid.cols-4 {
+        grid-template-columns: 1fr;
+      }
+      h1 {
+        font-size: 46px;
+        line-height: 0.98;
+        overflow-wrap: anywhere;
+      }
+      h2 { font-size: 34px; }
+      .hero-lede { font-size: 19px; }
+      .metric .value { font-size: 32px; }
+      .branch-visual { min-height: 760px; padding: 18px; }
+      .trunk { left: 18px; top: 112px; bottom: 48px; }
+      .tree-node,
+      .tree-node.center {
+        left: 42px;
+        right: 16px;
+        width: auto;
+        transform: none;
+        text-align: left;
+      }
+      .tree-node.center { top: 18px; }
+      .tree-node.cartridges { top: 132px; }
+      .tree-node.reason { top: 256px; }
+      .tree-node.arci { top: 382px; }
+      .tree-node.left::after,
+      .tree-node.right::after {
+        left: -24px;
+        right: auto;
+        width: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="index.html">
+        <span class="brand-mark"><i class="fa-solid fa-layer-group"></i></span>
+        <strong>knlp / LPC</strong>
+      </a>
+      <div class="nav-links">
+        <a class="active" href="#top"><i class="fa-solid fa-layer-group"></i> LPC</a>
+        <a href="#taxonomy">Taxonomy</a>
+        <a href="#arci">ARCI</a>
+        <a href="#results">Pilot Results</a>
+        <a href="#serving">vLLM Branch</a>
+        <a href="#next">Next Tests</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <div class="eyebrow">Cartridges / ReasonCACHE / ARCI</div>
+          <h1><span>Learned Prefix Caches</span><br>are the shared object.</h1>
+          <p class="hero-lede">
+            Cartridges, ReasonCACHE, skill caches, and document caches all
+            attach learned layer-wise KV prefixes to a frozen model. The real
+            difference is how training behavior is induced.
+          </p>
+          <p class="hero-sub">
+            KNLP uses Learned Prefix Cache (LPC) for the common artifact,
+            Cache Induction for the bridge process, and Active Reading Cache
+            Induction (ARCI) for the current method that turns raw documents
+            and skill files into trainable traces.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#results">
+              <i class="fa-solid fa-chart-line"></i> Pilot results
+            </a>
+            <a class="button" href="reasoncache.html">
+              <i class="fa-solid fa-bolt"></i> ReasonCACHE page
+            </a>
+            <a class="button" href="cartridges_visualization.html">
+              <i class="fa-solid fa-box-archive"></i> Cartridges page
+            </a>
+            <a class="button" href="peft_evolution.html">
+              <i class="fa-solid fa-timeline"></i> PEFT history
+            </a>
+          </div>
+        </div>
+
+        <div class="branch-visual" aria-label="Learned prefix cache branch diagram">
+          <div class="trunk"></div>
+          <div class="tree-node center">
+            <span class="tag">common mechanism</span>
+            <h3>Learned Prefix Cache</h3>
+            <p>Layer-wise learned K/V prefix, frozen backbone, prompt starts after the virtual prefix.</p>
+          </div>
+          <div class="tree-node left cartridges">
+            <span class="tag">documents</span>
+            <h3>Cartridges</h3>
+            <p>Raw corpus &rarr; self-study cache induction &rarr; context distillation &rarr; document prefix cache.</p>
+          </div>
+          <div class="tree-node right reason">
+            <span class="tag">reasoning</span>
+            <h3>ReasonCACHE</h3>
+            <p>Curated reasoning traces &rarr; next-token or prefix training &rarr; reasoning prefix cache.</p>
+          </div>
+          <div class="tree-node left arci">
+            <span class="tag">bridge</span>
+            <h3>ARCI</h3>
+            <p>Raw skills or documents &rarr; active-reading traces &rarr; KL or NTP &rarr; induced prefix cache.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="taxonomy">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Taxonomy</div>
+            <h2>The mechanism is not the missing piece.</h2>
+          </div>
+          <p>
+            The cleaner decomposition is source material, cache induction,
+            training objective, and learned prefix cache. That separates the
+            research question from the serving primitive.
+          </p>
+        </div>
+
+        <div class="formula">
+          source material &rarr; cache induction &rarr; training objective &rarr; learned prefix cache
+        </div>
+
+        <div class="grid cols-3" style="margin-top:14px;">
+          <div class="card hot">
+            <span class="pill"><i class="fa-solid fa-layer-group"></i> LPC</span>
+            <h3 style="margin-top:14px;">Learned Prefix Cache</h3>
+            <p>
+              The common artifact: learned per-layer K/V state prepended to
+              each request. Cartridges, ReasonCACHE, skill caches, and document
+              caches differ in payload and training pipeline, not serving shape.
+            </p>
+          </div>
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-diagram-project"></i> induction</span>
+            <h3 style="margin-top:14px;">Cache Induction</h3>
+            <p>
+              The bridge process that turns raw source material into behavior
+              the prefix can learn. Cartridges use fixed self-study. ReasonCACHE
+              starts from traces and mostly skips induction.
+            </p>
+          </div>
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-book-open-reader"></i> ARCI</span>
+            <h3 style="margin-top:14px;">Active Reading Cache Induction</h3>
+            <p>
+              Active Reading generates task-specific study views, questions,
+              procedures, and reasoning traces before prefix-cache training.
+              This is our current candidate for general cache induction.
+            </p>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>Cartridges solve a document induction problem.</h3>
+            <p>
+              The paper targets raw corpora. Naive next-token training learns
+              to continue or memorize the document, so Cartridges add self-study
+              conversations and context distillation to mimic a teacher that
+              still has the corpus in context.
+            </p>
+          </div>
+          <div class="card">
+            <h3>ReasonCACHE assumes the traces already exist.</h3>
+            <p>
+              The paper trains learned KV prefixes from reasoning demonstrations.
+              That validates the mechanism for reasoning, but leaves open the
+              practical question: how do we create reasoning traces when the
+              source is only a skill file, manual, dataset, or document?
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="arci">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">ARCI</div>
+            <h2>Active Reading fills the trace-induction hole.</h2>
+          </div>
+          <p>
+            Active Reading Cache Induction is the bridge under test: generate
+            trainable behavior from uncurated sources, then train the same
+            learned prefix cache object used by Cartridges and ReasonCACHE.
+          </p>
+        </div>
+
+        <div class="grid cols-4">
+          <div class="card metric hot">
+            <div>
+              <div class="value cyan">1</div>
+              <div class="label">Shared serving object: an externally supplied virtual KV prefix.</div>
+            </div>
+            <div class="source">LPC</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value green">2</div>
+              <div class="label">Induction families: fixed self-study and Active Reading.</div>
+            </div>
+            <div class="source">cache induction</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">2</div>
+              <div class="label">Training objectives under test: next-token and teacher KL.</div>
+            </div>
+            <div class="source">objective</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">4</div>
+              <div class="label">Pilot skill surfaces with scored H100 traces.</div>
+            </div>
+            <div class="source">SkillsBench subset</div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>The key mistake to avoid</h3>
+            <p>
+              A skill file is documentation, not a target transcript. Raw
+              SKILL.md next-token training is a negative control because it
+              teaches continuation of instructions, while the target behavior
+              is task solving.
+            </p>
+            <div class="note" style="margin-top:14px;">
+              For ReasonCACHE-style skill work, trace generation is not optional.
+              Either curated traces already exist, or cache induction must create
+              them before prefix training starts.
+            </div>
+          </div>
+          <div class="card">
+            <h3>The stronger experiment</h3>
+            <p>
+              Hold the cache mechanism, model, prefix size, teacher, and scoring
+              fixed. Compare fixed self-study cache induction against ARCI, and
+              compare next-token training against teacher-KL distillation.
+            </p>
+            <div class="formula" style="margin-top:14px;">
+              fixed self-study + KL &nbsp;vs&nbsp; ARCI + KL
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="results">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Current PoC</div>
+            <h2>ARCI creates useful skill traces on two of four pilot tasks.</h2>
+          </div>
+          <p>
+            The pilot is not a final frontier. It is enough to justify the
+            bridge hypothesis: when the source lacks reasoning traces, induction
+            quality dominates whether the learned prefix cache is useful.
+          </p>
+        </div>
+
+        <div class="grid cols-4">
+          <div class="card metric hot">
+            <div>
+              <div class="value green">31/65</div>
+              <div class="label">Aggregate pass count for ARCI reasoning plus teacher KL.</div>
+            </div>
+            <div class="source">47.7% pilot pass rate</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">22/65</div>
+              <div class="label">Aggregate pass count for fixed self-study plus teacher KL.</div>
+            </div>
+            <div class="source">33.8% pilot pass rate</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">18/65</div>
+              <div class="label">Aggregate pass count for ARCI skill traces plus teacher KL.</div>
+            </div>
+            <div class="source">27.7% pilot pass rate</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value rose">11/65</div>
+              <div class="label">Aggregate pass count for raw skill NTP and no-skill baselines.</div>
+            </div>
+            <div class="source">negative control</div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card chart-card">
+            <h3>Aggregate pilot pass rate</h3>
+            <p>Same four SkillsBench tasks. The ARCI reasoning arm is the best current synthetic trace arm.</p>
+            <div class="chart-shell"><canvas id="aggregateChart"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Prompt cost versus quality</h3>
+            <p>The current vLLM contract still uses placeholder tokens, so this is an implementation Pareto, not the final virtual-prefix cost model.</p>
+            <div class="chart-shell"><canvas id="paretoChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h3>SkillsBench ARCI pilot table</h3>
+          <p>
+            The table keeps the induction target visible. The biggest signals
+            are Excel table into PPT and recover missing XLSX data. Powerlifting
+            and weighted GDP stayed flat, so the next run needs broader task
+            strata and better error isolation.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <tr>
+                <th>Task</th>
+                <th>Raw skill NTP</th>
+                <th>Fixed self-study KL</th>
+                <th>ARCI skill KL</th>
+                <th>ARCI reasoning KL</th>
+                <th>Interpretation</th>
+              </tr>
+              <tr>
+                <td><strong>Excel table into PPT</strong></td>
+                <td>0 / 8</td>
+                <td>0 / 8</td>
+                <td class="ok">7 / 8</td>
+                <td class="ok">7 / 8</td>
+                <td>Active Reading converted static procedure into usable behavior.</td>
+              </tr>
+              <tr>
+                <td><strong>Powerlifting coefficient calculation</strong></td>
+                <td>0 / 11</td>
+                <td>0 / 11</td>
+                <td>0 / 11</td>
+                <td>0 / 11</td>
+                <td>Likely blocked by formula, verifier, or execution details.</td>
+              </tr>
+              <tr>
+                <td><strong>Recover missing XLSX data</strong></td>
+                <td>1 / 19</td>
+                <td class="ok">12 / 19</td>
+                <td>1 / 19</td>
+                <td class="ok">14 / 19</td>
+                <td>Reasoning-focused ARCI beats fixed self-study on this task.</td>
+              </tr>
+              <tr>
+                <td><strong>Weighted GDP calculation</strong></td>
+                <td>10 / 27</td>
+                <td>10 / 27</td>
+                <td>10 / 27</td>
+                <td>10 / 27</td>
+                <td>The shallow arms do not change the decisive bottleneck.</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>Skill files under test</h3>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Task</th>
+                  <th>Individual SKILL.md files</th>
+                  <th>Loaded skill chars</th>
+                  <th>ReasonCACHE prompt chars</th>
+                </tr>
+                <tr>
+                  <td><strong>Excel table into PPT</strong></td>
+                  <td>pptx: 25,534; xlsx: 5,243</td>
+                  <td>30,812</td>
+                  <td class="cyan">850</td>
+                </tr>
+                <tr>
+                  <td><strong>Powerlifting coefficient calculation</strong></td>
+                  <td>powerlifting: 14,857; senior-data-scientist: 5,630; xlsx: 5,243</td>
+                  <td>25,808</td>
+                  <td class="cyan">5,221</td>
+                </tr>
+                <tr>
+                  <td><strong>Recover missing XLSX data</strong></td>
+                  <td>data-reconciliation: 2,482; xlsx: 5,243</td>
+                  <td>7,775</td>
+                  <td class="cyan">2,356</td>
+                </tr>
+                <tr>
+                  <td><strong>Weighted GDP calculation</strong></td>
+                  <td>xlsx: 5,243</td>
+                  <td>5,260</td>
+                  <td class="cyan">1,216</td>
+                </tr>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Historical cartridge baseline</h3>
+            <p>
+              These older cartridge results are useful baselines, not direct
+              ReasonCACHE proof. They establish variance and the importance of
+              the induction pipeline on the same skill surfaces.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Task</th>
+                  <th>Full skill</th>
+                  <th>Truncated skill</th>
+                  <th>No skill</th>
+                  <th>Cartridge 50%</th>
+                </tr>
+                <tr><td><strong>Excel table into PPT</strong></td><td>0 / 8</td><td class="ok">7 / 8</td><td class="ok">7 / 8</td><td class="ok">7 / 8</td></tr>
+                <tr><td><strong>Powerlifting coefficient calculation</strong></td><td class="ok">9 / 11</td><td>5 / 11</td><td>5 / 11</td><td>5 / 11</td></tr>
+                <tr><td><strong>Recover missing XLSX data</strong></td><td>0 / 1</td><td>2 / 19</td><td>1 / 19</td><td class="ok">14 / 19</td></tr>
+                <tr><td><strong>Weighted GDP calculation</strong></td><td>1 / 27</td><td>1 / 27</td><td>1 / 27</td><td>1 / 27</td></tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="serving">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Serving</div>
+            <h2>The vLLM branch should be LPC support, not routing support.</h2>
+          </div>
+          <p>
+            The current support branch is based on the cartridge upstream work
+            and deliberately avoids the routing branch. Routing can layer on
+            later; the immediate primitive is externally supplied virtual-prefix
+            KV blocks.
+          </p>
+        </div>
+
+        <div class="grid cols-3">
+          <div class="card metric hot">
+            <div>
+              <div class="value green">0ac3a390d</div>
+              <div class="label">vLLM commit adding learned prefix cache support.</div>
+            </div>
+            <div class="source">20260629-learned-prefix-cache</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">non-routing</div>
+              <div class="label">Branch is based on cartridge support, not the routing stack.</div>
+            </div>
+            <div class="source">base: 20260430-cartridges-upstream</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">virtual KV</div>
+              <div class="label">The upstreamable object is an external virtual-prefix KV contract.</div>
+            </div>
+            <div class="source">vLLM + LMCache target</div>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>Serving contract</h3>
+            <ul class="tight-list">
+              <li>prefix handle and resource kind;</li>
+              <li>virtual token count and cache block alignment;</li>
+              <li>layout, dtype, model identity, tokenizer identity, and RoPE identity;</li>
+              <li>prompt positions and attention metadata account for the virtual prefix;</li>
+              <li>LMCache can own storage, residency, and reuse policy.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Branch links</h3>
+            <p>
+              The public docs should point at the LPC branch because it carries
+              Cartridges plus ReasonCACHE support without implying dependence
+              on the routing work.
+            </p>
+            <div class="actions">
+              <a class="button primary" href="https://github.com/mcgrof/vllm/tree/20260629-learned-prefix-cache" target="_blank" rel="noopener">
+                <i class="fa-solid fa-code-branch"></i> vLLM LPC branch
+              </a>
+              <a class="button" href="reasoncache.html#vllm">
+                <i class="fa-solid fa-bolt"></i> ReasonCACHE support
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="next">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Next tests</div>
+            <h2>Make the bridge claim harder to fake.</h2>
+          </div>
+          <p>
+            The next run should broaden task strata and separate induction cost
+            from serving cost. A useful Pareto frontier counts offline trace
+            generation, teacher passes, prefix bytes, online prompt tokens, and
+            expected requests sharing the learned prefix.
+          </p>
+        </div>
+
+        <div class="grid cols-3">
+          <div class="card">
+            <h3>Stratify SkillsBench</h3>
+            <p>
+              Add smallest, deterministic-random, medium, and largest task
+              strata instead of only the four large cartridge-era tasks.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Control the induction objective</h3>
+            <p>
+              Compare raw document NTP, fixed self-study NTP, fixed self-study
+              KL, ARCI NTP, ARCI skill KL, and ARCI reasoning KL.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Price repeated use</h3>
+            <p>
+              Plot quality against amortized cost for expected request counts.
+              A prefix cache is only better when reuse repays induction cost.
+            </p>
+          </div>
+        </div>
+
+        <div class="note" style="margin-top:14px;">
+          The terminology stays stable: Learned Prefix Cache names the artifact,
+          Cache Induction names the bridge, and Active Reading Cache Induction
+          names the current bridge method.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <div>Learned Prefix Cache report for KNLP.</div>
+      <div>
+        <a href="reasoncache.html">ReasonCACHE</a>
+        &nbsp;/&nbsp;
+        <a href="cartridges_visualization.html">Cartridges</a>
+        &nbsp;/&nbsp;
+        <a href="peft_evolution.html">PEFT evolution</a>
+        &nbsp;/&nbsp;
+        <a href="https://arxiv.org/pdf/2508.09494" target="_blank" rel="noopener">Active Reading</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const gridColor = "rgba(154, 168, 186, 0.16)";
+    const tickColor = "#9aa8ba";
+
+    new Chart(document.getElementById("aggregateChart"), {
+      type: "bar",
+      data: {
+        labels: ["No skill", "Raw NTP", "Self-study KL", "ARCI skill", "ARCI reasoning"],
+        datasets: [{
+          label: "Aggregate pass rate",
+          data: [0.169, 0.169, 0.338, 0.277, 0.477],
+          borderWidth: 1,
+          borderColor: ["#667487", "#ff6d83", "#f2b84d", "#62a8ff", "#35d17f"],
+          backgroundColor: [
+            "rgba(102, 116, 135, 0.55)",
+            "rgba(255, 109, 131, 0.50)",
+            "rgba(242, 184, 77, 0.50)",
+            "rgba(98, 168, 255, 0.50)",
+            "rgba(53, 209, 127, 0.58)"
+          ]
+        }]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${(ctx.raw * 100).toFixed(1)}% aggregate pass rate`
+            }
+          }
+        },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { color: tickColor, maxRotation: 0, autoSkip: false } },
+          y: {
+            beginAtZero: true,
+            max: 0.55,
+            grid: { color: gridColor },
+            ticks: { color: tickColor, callback: value => `${Math.round(value * 100)}%` }
+          }
+        }
+      }
+    });
+
+    new Chart(document.getElementById("paretoChart"), {
+      type: "scatter",
+      data: {
+        datasets: [
+          {
+            label: "no-skill baseline",
+            data: [{ x: 673, y: 0.169 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#667487"
+          },
+          {
+            label: "raw skill NTP",
+            data: [{ x: 3001, y: 0.169 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#ff6d83"
+          },
+          {
+            label: "fixed self-study KL",
+            data: [{ x: 3001, y: 0.338 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#f2b84d"
+          },
+          {
+            label: "ARCI skill KL",
+            data: [{ x: 3001, y: 0.277 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#62a8ff"
+          },
+          {
+            label: "ARCI reasoning KL",
+            data: [{ x: 3001, y: 0.477 }],
+            pointRadius: 9,
+            pointHoverRadius: 11,
+            backgroundColor: "#35d17f"
+          }
+        ]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: tickColor, boxWidth: 10, boxHeight: 10 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${(ctx.raw.y * 100).toFixed(1)}%, mean online tokens ${ctx.raw.x}`
+            }
+          }
+        },
+        scales: {
+          x: {
+            title: { display: true, text: "mean online prompt tokens under placeholder contract", color: tickColor },
+            grid: { color: gridColor },
+            ticks: { color: tickColor }
+          },
+          y: {
+            title: { display: true, text: "aggregate pass rate across pilot tasks", color: tickColor },
+            min: 0,
+            max: 0.55,
+            grid: { color: gridColor },
+            ticks: { color: tickColor, callback: value => `${Math.round(value * 100)}%` }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
