@@ -19,11 +19,11 @@ expand_v = 1.0. The reference layers therefore differ from the minimal mixer and
 from dense/Trellis ONLY by the conv + qk-norm + (gate) components, never by head
 width -- the architecture is the isolated variable.
 
-Short-conv kernel. fla's `ShortConvolution` prefers the `causal-conv1d` CUDA
-kernel; when that extension is absent it raises unless `use_fast_conv1d=False`.
-The PyTorch fallback computes the identical depthwise causal convolution (just
-without the fused kernel), so we force the fallback at import time. This changes
-conv *speed*, never conv *math* -- the architecture stays faithful.
+Short-conv kernel. Older fla builds prefer the `causal-conv1d` CUDA kernel; when
+that extension is absent they raise unless `use_fast_conv1d=False`. Newer fla
+builds expose a `backend` argument and default to Triton, which does not require
+`causal-conv1d`. The wrapper preserves that default unless an experiment
+explicitly sets `TRELLIS_FLA_REF_CONV_BACKEND`.
 
 fla is CUDA-only (Triton). On a host without fla, importing this module raises;
 the ladder only references the `*_ref` kinds on the CUDA pod.
@@ -42,11 +42,9 @@ from .trellis_mixer import RMSNorm
 try:  # fla reference layers live in the full flash-linear-attention package
     import fla.modules.convolution as _fla_conv
 
-    # Default to the PyTorch short-conv fallback (identical math; no
-    # causal-conv1d CUDA build required), but allow paid CUDA pods to opt into a
-    # faster FLA backend after a preflight.  Keep this as an import-time patch so
-    # the reference layers' internally constructed ShortConvolution instances
-    # pick it up.
+    # Keep the older use_fast_conv1d=False fallback, but do not invent a
+    # backend name for newer FLA builds.  FLA 0.4.x already defaults to Triton;
+    # setting backend="torch" makes the reference row unavailable.
     _ORIG_SHORTCONV_INIT = _fla_conv.ShortConvolution.__init__
 
     def _shortconv_init_cpu_safe(self, *a, **kw):
@@ -57,9 +55,7 @@ try:  # fla reference layers live in the full flash-linear-attention package
                 kw["backend"] = backend
             elif backend not in ("torch", "fallback", "cpu_safe"):
                 kw["use_fast_conv1d"] = True
-        elif "backend" in params:
-            kw.setdefault("backend", "torch")
-        else:
+        elif "backend" not in params:
             kw["use_fast_conv1d"] = False
         return _ORIG_SHORTCONV_INIT(self, *a, **kw)
 
