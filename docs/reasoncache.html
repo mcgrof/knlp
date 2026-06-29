@@ -629,6 +629,7 @@
         <a class="active" href="#top"><i class="fa-solid fa-bolt"></i> ReasonCACHE</a>
         <a href="#paper-results">Paper Result</a>
         <a href="#mechanism">Mechanism</a>
+        <a href="#induction">Cache Induction</a>
         <a href="#vllm">vLLM Work</a>
         <a href="#skillsbench">SkillsBench</a>
         <a href="#pareto">Pareto</a>
@@ -644,12 +645,14 @@
           <div class="eyebrow">arXiv:2602.02366 / Feb 2026</div>
           <h1><span>ReasonCACHE</span><br>without weight updates</h1>
           <p class="hero-lede">
-            A trainable KV cache that distills demonstrations into layer-wise prefixes,
-            keeping the backbone frozen while teaching the model reusable reasoning behavior.
+            A learned prefix cache that distills demonstrations into layer-wise
+            KV prefixes, keeping the backbone frozen while teaching the model
+            reusable reasoning behavior.
           </p>
           <p class="hero-sub">
-            The page starts with ReasonCACHE itself. The PEFT lineage is still here, but
-            moved into the background: prefix tuning is the mechanism, not the headline.
+            The paper assumes reasoning traces already exist. Our work studies
+            the missing bridge: how to induce trainable traces from raw
+            SKILL.md files and documents with Active Reading Cache Induction.
           </p>
           <div class="actions">
             <a class="button primary" href="https://arxiv.org/abs/2602.02366" target="_blank" rel="noopener">
@@ -660,6 +663,9 @@
             </a>
             <a class="button" href="peft_evolution.html">
               <i class="fa-solid fa-timeline"></i> PEFT evolution
+            </a>
+            <a class="button" href="#induction">
+              <i class="fa-solid fa-route"></i> Active Reading
             </a>
             <a class="button" href="#vllm">
               <i class="fa-solid fa-code-branch"></i> Our vLLM support
@@ -751,8 +757,10 @@
               interface.
             </p>
             <div class="note" style="margin-top:18px;">
-              Lead with ReasonCACHE and the vLLM support. Treat prefix tuning,
-              prompt tuning, and LoRA as background vocabulary.
+              The gap for our setting is upstream of the cache. ReasonCACHE
+              trains from curated reasoning traces; skill files and documents
+              need cache induction before the same learned-prefix mechanism can
+              be useful.
             </div>
           </div>
         </div>
@@ -801,18 +809,93 @@
       </div>
     </section>
 
+    <section id="induction">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <div class="section-kicker">Cache induction</div>
+            <h2>The shared object is a learned prefix cache.</h2>
+          </div>
+          <p>
+            Cartridges and ReasonCACHE differ less in the runtime object than
+            in the data pipeline. Both attach learned KV prefixes to a frozen
+            backbone. The hard part is deciding what behavior the prefix should
+            learn before it reaches vLLM.
+          </p>
+        </div>
+
+        <div class="formula">
+          source material &rarr; cache induction &rarr; training objective &rarr; learned prefix cache
+        </div>
+
+        <div class="grid cols-3" style="margin-top:14px;">
+          <div class="card hot">
+            <span class="pill"><i class="fa-solid fa-layer-group"></i> LPC</span>
+            <h3 style="margin-top:14px;">Learned Prefix Cache</h3>
+            <p>
+              The common artifact: layer-wise learned K/V state prepended to
+              the request. Cartridges, ReasonCACHE, document caches, and skill
+              caches are all instances of this mechanism.
+            </p>
+          </div>
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-diagram-project"></i> induction</span>
+            <h3 style="margin-top:14px;">Cache Induction</h3>
+            <p>
+              The bridge process that turns raw source material into trainable
+              behavior. Cartridges use fixed self-study for documents.
+              ReasonCACHE mostly bypasses this by starting from traces.
+            </p>
+          </div>
+          <div class="card">
+            <span class="pill"><i class="fa-solid fa-book-open-reader"></i> ARCI</span>
+            <h3 style="margin-top:14px;">Active Reading Cache Induction</h3>
+            <p>
+              Our candidate bridge. Active Reading generates task-shaped study
+              views and reasoning traces from source material, then the learned
+              prefix is trained with next-token or teacher-KL objectives.
+            </p>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top:14px;">
+          <div class="card">
+            <h3>The ReasonCACHE gap we found</h3>
+            <p>
+              The paper demonstrates that prefix tuning can store reasoning
+              behavior when the training data already contains reasoning
+              demonstrations. SkillsBench skill files are different: they are
+              documentation, not question-answer traces or chain-of-thought
+              solutions. Raw next-token training on the skill text mostly
+              teaches the cache to continue documentation, not solve the task.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Why the boundary blurs</h3>
+            <p>
+              A document cartridge trained with self-study and distillation, a
+              reasoning cache trained from curated traces, and a skill cache
+              trained from ARCI traces all become learned prefix caches at
+              serving time. The useful taxonomy is no longer paper name first;
+              it is source material, induction method, objective, and cache.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="vllm">
       <div class="wrap">
         <div class="section-head">
           <div>
             <div class="section-kicker">Our implementation result</div>
-            <h2>vLLM accepts ReasonCACHE prefixes and passes on H100.</h2>
+            <h2>vLLM accepts learned prefixes; ARCI gives the first skill signal.</h2>
           </div>
           <p>
-            Treat this as implementation validation, not final SkillsBench quality
-            validation. The vLLM branch loads learned KV prefixes through the
-            cartridge connector path and emits Pareto reports once trained
-            ReasonCACHE runs produce result JSONs.
+            The vLLM branch loads learned KV prefixes through the cartridge
+            connector path and emits Pareto reports from scored result JSONs.
+            The first H100 skill-trace run adds quality evidence for the
+            induction layer, not just the connector.
           </p>
         </div>
 
@@ -834,16 +917,16 @@
           <div class="card metric">
             <div>
               <div class="value amber">JSON+CSV</div>
-              <div class="label">The H100 run generated both Pareto report artifacts from the CLI path.</div>
+              <div class="label">The H100 runs generated scored ablation JSONs plus Pareto CSV artifacts.</div>
             </div>
-            <div class="source">H100 CLI validation</div>
+            <div class="source">H100 CLI + skill-trace runs</div>
           </div>
           <div class="card metric">
             <div>
-              <div class="value">NEXT</div>
-              <div class="label">Train ReasonCACHE SkillsBench checkpoints, then replace the contract input with real quality frontiers.</div>
+              <div class="value cyan">40</div>
+              <div class="label">Fresh H100 result JSONs across four SkillsBench tasks and ten ablation arms.</div>
             </div>
-            <div class="source">quality frontier input</div>
+            <div class="source">real traces skipped: unavailable</div>
           </div>
         </div>
 
@@ -857,6 +940,7 @@
               <tr><td><strong>Placeholder tokens</strong></td><td class="ok">Required until vLLM grows true virtual-prefix scheduling.</td></tr>
               <tr><td><strong>SkillsBench harness</strong></td><td class="ok">Run, compare, and normalize arm results.</td></tr>
               <tr><td><strong>Pareto frontier</strong></td><td class="ok">Emit per-task and aggregate-by-arm JSON/CSV reports.</td></tr>
+              <tr><td><strong>ARCI ablations</strong></td><td class="ok">Compare raw skill NTP, fixed self-study, and Active Reading trace induction.</td></tr>
             </table>
           </div>
 
@@ -880,13 +964,14 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">SkillsBench surface</div>
-            <h2>Name the skill files before claiming a frontier.</h2>
+            <h2>Name the skill files and the induction target.</h2>
           </div>
           <p>
             These are the same SkillsBench tasks and SKILL.md files from the
-            cartridge experiments. The ReasonCACHE arm intentionally removes
-            the SKILL.md text from the online prompt and supplies the learned
-            behavior through injected KV prefix state.
+            cartridge experiments. The learned-prefix arms remove SKILL.md
+            text from the online prompt and supply behavior through injected KV
+            state. The new question is which induction method produces useful
+            training traces.
           </p>
         </div>
 
@@ -1004,41 +1089,56 @@
           </div>
 
           <div class="card">
-            <h3>ReasonCACHE comparison status</h3>
+            <h3>H100 ReasonCACHE trace ablation</h3>
             <p>
-              We have not run trained ReasonCACHE skill checkpoints against
-              these four SkillsBench tasks yet. The current result proves the
-              vLLM serving path and analyzer, not task quality.
+              The completed pilot ran ten arms per task. The useful comparison
+              is not "ReasonCACHE versus Cartridges" yet; it is raw skill text
+              versus generated behavior traces for the same learned-prefix
+              mechanism.
             </p>
             <div class="table-scroll">
               <table>
-                <tr><th>Arm</th><th>Evidence today</th><th>Interpretation</th></tr>
                 <tr>
-                  <td><strong>Full SKILL.md prompt</strong></td>
-                  <td>Historical cartridge-era SkillsBench JSONs</td>
-                  <td>Regular prompt baseline is available.</td>
+                  <th>Task</th>
+                  <th>Raw skill NTP</th>
+                  <th>Fixed self-study KL</th>
+                  <th>ARCI skill KL</th>
+                  <th>ARCI reasoning KL</th>
                 </tr>
                 <tr>
-                  <td><strong>No-skill prompt</strong></td>
-                  <td>Historical cartridge-era SkillsBench JSONs</td>
-                  <td>Prompt without skill text is available.</td>
+                  <td><strong>Excel table into PPT</strong></td>
+                  <td>0 / 8</td>
+                  <td>0 / 8</td>
+                  <td class="ok">7 / 8</td>
+                  <td class="ok">7 / 8</td>
                 </tr>
                 <tr>
-                  <td><strong>Cartridge 50%</strong></td>
-                  <td>Historical cartridge trained-cache run</td>
-                  <td>Compares learned KV state for cartridges, not ReasonCACHE.</td>
+                  <td><strong>Powerlifting coefficient calculation</strong></td>
+                  <td>0 / 11</td>
+                  <td>0 / 11</td>
+                  <td>0 / 11</td>
+                  <td>0 / 11</td>
                 </tr>
                 <tr>
-                  <td><strong>ReasonCACHE serving path</strong></td>
-                  <td class="ok">99 targeted tests pass locally and on H100</td>
-                  <td>vLLM can load and schedule ReasonCACHE-style KV prefixes.</td>
+                  <td><strong>Recover missing XLSX data</strong></td>
+                  <td>1 / 19</td>
+                  <td class="ok">12 / 19</td>
+                  <td>1 / 19</td>
+                  <td class="ok">14 / 19</td>
                 </tr>
                 <tr>
-                  <td><strong>ReasonCACHE skill quality</strong></td>
-                  <td class="warn">Not run yet on these SkillsBench tasks</td>
-                  <td>Train checkpoints first, then compare pass rate, online prompt tokens, and latency.</td>
+                  <td><strong>Weighted GDP calculation</strong></td>
+                  <td>10 / 27</td>
+                  <td>10 / 27</td>
+                  <td>10 / 27</td>
+                  <td>10 / 27</td>
                 </tr>
               </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              Raw SKILL.md next-token training is the negative control. The
+              strongest synthetic arm so far is Active Reading focused on
+              reasoning plus teacher-KL distillation, but two tasks stayed flat.
             </div>
           </div>
 
@@ -1077,8 +1177,8 @@
                   <td>2,702 original skill tokens -> 1,351 budget tokens; 64 layers; 354,193,931 B artifact</td>
                 </tr>
                 <tr>
-                  <td><strong>Trained ReasonCACHE SkillsBench checkpoints</strong></td>
-                  <td class="warn">Pending: the harness will report each checkpoint's actual prefix length and prompt-token frontier.</td>
+                  <td><strong>H100 pilot learned-prefix checkpoints</strong></td>
+                  <td class="ok">672 to 3,856 prefix tokens; 36.8 to 210.9 MiB artifacts across the four tasks.</td>
                 </tr>
               </table>
             </div>
@@ -1092,19 +1192,24 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Pareto frontier</div>
-            <h2>Pareto analyzer for regular skills versus ReasonCACHE skills.</h2>
+            <h2>Pareto now compares induction arms, not just prompt size.</h2>
           </div>
           <p>
-            Once trained ReasonCACHE skill checkpoints exist, the analyzer will
-            maximize quality while minimizing online prompt tokens and latency.
-            It reports both per-task frontiers and aggregate-by-arm frontiers.
+            The analyzer maximizes pass rate while minimizing online prompt
+            tokens, generated tokens, and latency. The current frontier mixes
+            fresh H100 ReasonCACHE skill-trace arms with historical cartridge
+            baselines, so it is a pilot, not a final claim.
           </p>
         </div>
 
         <div class="grid cols-2">
           <div class="card chart-card">
-            <h3>Frontier contract example</h3>
-            <p>This chart shows the tested analyzer rule, not a SkillsBench quality claim. If ReasonCACHE ties quality with fewer online prompt tokens, it dominates the regular SKILL.md prompt.</p>
+            <h3>Fresh H100 pilot aggregate</h3>
+            <p>
+              Aggregate pass rate across the four old SkillsBench tasks. All
+              learned-prefix arms still include placeholder tokens under the
+              current vLLM contract.
+            </p>
             <div class="chart-shell"><canvas id="paretoChart"></canvas></div>
           </div>
           <div class="card">
@@ -1114,12 +1219,10 @@
   --output-json /workspace/results/pareto.json \
   --output-csv /workspace/results/pareto.csv</pre>
             <div class="note" style="margin-top:14px;">
-              The H100 validation generated Pareto JSON and CSV from this
-              command path.
-              Run trained ReasonCACHE SkillsBench checkpoints next. Feed those
-              result JSONs into this analyzer and replace the contract input with real
-              quality frontiers for the same SKILL.md files used in the cartridge
-              experiments.
+              The next run expands beyond the four cartridge-era tasks into
+              smallest, deterministic-random, medium, and largest SkillsBench
+              strata. That is the run that can support a stronger Pareto claim
+              about ARCI as a general cache-induction method.
             </div>
           </div>
         </div>
@@ -1151,6 +1254,7 @@
           <button class="tab" data-tab="prompt">Prompt Tuning</button>
           <button class="tab" data-tab="lora">LoRA</button>
           <button class="tab" data-tab="cartridges">Cartridges</button>
+          <button class="tab" data-tab="arci">ARCI</button>
         </div>
 
         <div id="tab-prefix" class="tab-panel active">
@@ -1193,13 +1297,26 @@
             <p>
               Cartridges target knowledge retrieval and synthesis from compressed
               document state. ReasonCACHE targets skill acquisition and reasoning.
-              Both are trained caches, but they optimize for different capabilities.
+              Both are learned prefix caches; their main difference is the
+              source data and induction method used before training.
             </p>
             <div class="actions" style="margin-top:16px;">
               <a class="button" href="cartridges_visualization.html">
                 <i class="fa-solid fa-box-archive"></i> KNLP cartridges page
               </a>
             </div>
+          </div>
+        </div>
+
+        <div id="tab-arci" class="tab-panel">
+          <div class="card">
+            <h3>Active Reading Cache Induction is the bridge under test.</h3>
+            <p>
+              ARCI names the step that generates trainable behavior from raw
+              source material. It lets the same learned-prefix-cache mechanism
+              serve document, skill, and reasoning workloads when curated
+              traces are not already available.
+            </p>
           </div>
         </div>
 
@@ -1213,6 +1330,11 @@
             <div class="year">2021</div>
             <h3>LoRA</h3>
             <p>Low-rank weight adaptation becomes the practical default.</p>
+          </div>
+          <div class="card">
+            <div class="year">2025</div>
+            <h3>Active Reading</h3>
+            <p>Generate document-specific study strategies and training views.</p>
           </div>
           <div class="card">
             <div class="year">2025</div>
@@ -1289,22 +1411,36 @@
       data: {
         datasets: [
           {
-            label: "regular full-skill prompt",
-            data: [{ x: 2000, y: 0.75 }],
-            pointRadius: 8,
-            pointHoverRadius: 10,
-            backgroundColor: "#62a8ff"
-          },
-          {
             label: "no-skill baseline",
-            data: [{ x: 400, y: 0.50 }],
+            data: [{ x: 673, y: 0.169 }],
             pointRadius: 8,
             pointHoverRadius: 10,
             backgroundColor: "#677386"
           },
           {
-            label: "ReasonCACHE skill",
-            data: [{ x: 450, y: 0.75 }],
+            label: "raw skill NTP",
+            data: [{ x: 3001, y: 0.169 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#ff6f7d"
+          },
+          {
+            label: "fixed self-study KL",
+            data: [{ x: 3001, y: 0.338 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#f5b84b"
+          },
+          {
+            label: "ARCI skill KL",
+            data: [{ x: 3001, y: 0.277 }],
+            pointRadius: 8,
+            pointHoverRadius: 10,
+            backgroundColor: "#62a8ff"
+          },
+          {
+            label: "ARCI reasoning KL",
+            data: [{ x: 3001, y: 0.477 }],
             pointRadius: 9,
             pointHoverRadius: 11,
             backgroundColor: "#31d978"
@@ -1319,20 +1455,20 @@
           legend: { labels: { color: tickColor, boxWidth: 10, boxHeight: 10 } },
           tooltip: {
             callbacks: {
-              label: ctx => `${ctx.dataset.label}: quality ${ctx.raw.y}, prompt tokens ${ctx.raw.x}`
+              label: ctx => `${ctx.dataset.label}: aggregate pass rate ${ctx.raw.y}, mean online tokens ${ctx.raw.x}`
             }
           }
         },
         scales: {
           x: {
-            title: { display: true, text: "online prompt tokens (lower is better)", color: tickColor },
+            title: { display: true, text: "mean online prompt tokens under placeholder contract", color: tickColor },
             grid: { color: gridColor },
             ticks: { color: tickColor }
           },
           y: {
-            title: { display: true, text: "quality / pass rate (higher is better)", color: tickColor },
-            min: 0.35,
-            max: 0.9,
+            title: { display: true, text: "aggregate pass rate across pilot tasks", color: tickColor },
+            min: 0,
+            max: 0.55,
             grid: { color: gridColor },
             ticks: { color: tickColor }
           }
