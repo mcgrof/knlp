@@ -63,6 +63,12 @@ def _trellis_vjp(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     return u if cg else u.detach()
 
 
+def _trellis_residual(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    z = zin.detach()
+    pred = phi(z)
+    return pred - alpha
+
+
 def trellis_chunk_decay(beta: torch.Tensor, chunk_size: int):
     """beta [B,H,T,1] -> P [B,H,nC,C,1], rmat [B,H,nC,C,C], pad."""
     assert beta.shape[-1] == 1, "chunked path supports per-head beta only"
@@ -82,7 +88,16 @@ def trellis_chunk_decay(beta: torch.Tensor, chunk_size: int):
 
 
 def run_trellis_memory_chunked_state_evolution(
-    write, alpha, beta, gamma, phi, chunk_size, P=None, rmat=None
+    write,
+    alpha,
+    beta,
+    gamma,
+    phi,
+    chunk_size,
+    P=None,
+    rmat=None,
+    update_gate=None,
+    residual_update_mix: float = 0.0,
 ):
     """True-stale chunk state evolution. No readout. Returns per-chunk
     start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad."""
@@ -98,6 +113,10 @@ def run_trellis_memory_chunked_state_evolution(
     nC = P.shape[2]
     Wp = _pad_time(write, pad, 0.0).contiguous().view(B, H, nC, C, D)
     Ap = _pad_time(alpha, pad, 0.0).contiguous().view(B, H, nC, C, M)
+    Gp = None
+    if update_gate is not None:
+        Gp = _pad_time(update_gate, pad, 1.0).contiguous()
+        Gp = Gp.view(B, H, nC, C, update_gate.shape[-1])
     Mstate = torch.zeros(B, H, M, D, device=write.device, dtype=write.dtype)
     g = gamma.view(1, H, 1, 1)
     N = B * H
@@ -110,6 +129,10 @@ def run_trellis_memory_chunked_state_evolution(
         M0f = M0.reshape(N, M, D).to(Wf.dtype)
         M0W = torch.bmm(Wf, M0f.transpose(1, 2)).view(B, H, C, M)
         u = _trellis_vjp(phi, M0W, A)
+        if residual_update_mix:
+            u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
+        if Gp is not None:
+            u = u * Gp[:, :, c]
         rC = rmat[:, :, c, -1, :].unsqueeze(-1)
         upd = torch.bmm((u * rC).reshape(N, C, M).transpose(1, 2), Wf).view(B, H, M, D)
         Plast = P[:, :, c, -1:, :]
@@ -229,12 +252,30 @@ class TrellisStateEvolutionFn(torch.autograd.Function):
 
 
 def run_trellis_memory_chunked_phase1(
-    write, read, alpha, beta, gamma, phi, read_mode, chunk_size
+    write,
+    read,
+    alpha,
+    beta,
+    gamma,
+    phi,
+    read_mode,
+    chunk_size,
+    update_gate=None,
+    residual_update_mix: float = 0.0,
 ):
     """True-stale equivalent of run_trellis_memory_chunked(refine_passes=0)."""
     P, rmat, _ = trellis_chunk_decay(beta, chunk_size)
     M0s, us, P, rmat, _ = run_trellis_memory_chunked_state_evolution(
-        write, alpha, beta, gamma, phi, chunk_size, P=P, rmat=rmat
+        write,
+        alpha,
+        beta,
+        gamma,
+        phi,
+        chunk_size,
+        P=P,
+        rmat=rmat,
+        update_gate=update_gate,
+        residual_update_mix=residual_update_mix,
     )
     return run_trellis_memory_chunked_batched_readout(
         write,
@@ -264,6 +305,8 @@ def run_trellis_memory(
     # the param graph) — the sanctioned fast mode.
     M_init: Optional[torch.Tensor] = None,  # [B,H,M,D] carried state (generation)
     return_state: bool = False,
+    update_gate: Optional[torch.Tensor] = None,  # [B,H,T,1] or [B,H,T,M]
+    residual_update_mix: float = 0.0,
 ):
     B, H, T, D = write.shape
     M = alpha.shape[-1]
@@ -303,6 +346,14 @@ def run_trellis_memory(
             )
         if not cg:
             u = u.detach()
+        if residual_update_mix:
+            if exact:
+                resid = err
+            else:
+                resid = _trellis_residual(phi, z, a)
+            u = u + residual_update_mix * resid
+        if update_gate is not None:
+            u = u * update_gate[:, :, t, :]
         # gated OGD update: M <- beta*M - gamma * outer(u, write)
         outer = torch.einsum("bhm,bhd->bhmd", u, w)  # [B,H,M,D]
         b_e = b.unsqueeze(-1) if per_slot else b.unsqueeze(-1)  # [B,H,M,1] or [B,H,1,1]
@@ -333,6 +384,8 @@ def run_trellis_memory_chunked(
     read_mode: str,  # "M_q" | "M_T_r"
     chunk_size: int,
     refine_passes: int = 0,
+    update_gate: Optional[torch.Tensor] = None,  # [B,H,T,1] or [B,H,T,M]
+    residual_update_mix: float = 0.0,
 ):
     """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
@@ -407,6 +460,7 @@ def run_trellis_memory_chunked(
         R = read[:, :, c0:c1, :]  # [B,H,C,*]
         A = alpha[:, :, c0:c1, :]  # [B,H,C,M]
         b = beta[:, :, c0:c1, :]  # [B,H,C,1]
+        G = update_gate[:, :, c0:c1, :] if update_gate is not None else None
         # cumulative inclusive decay P_t = prod_{i<=t} b_i, in log space so the
         # bounded ratio rmat[t,s] = P_t/P_s (<=1 for s<=t) replaces every u/P and
         # P/P division -- overflow-safe and bf16-friendly (Codex review).
@@ -420,6 +474,10 @@ def run_trellis_memory_chunked(
         # the in-chunk segmented-product reconstruction of M_{t-1}.
         M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)  # M0 @ w_t  (= stale z)
         u = _vjp(M0W, A)
+        if residual_update_mix:
+            u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
+        if G is not None:
+            u = u * G
         if refine_passes > 0 and C > 1:
             # exact-mode only (not the ladder path); kept in the original u/P
             # form, which is verified-exact. The bounded rewrite above covers
@@ -433,6 +491,10 @@ def run_trellis_memory_chunked(
                 corr = torch.einsum("bhts,bhsm->bhtm", WWs, Util)  # sum_{s<t}
                 z = Pprev * (M0W - g * corr)  # z_t = M_{t-1} @ w_t
                 u = _vjp(z, A)
+                if residual_update_mix:
+                    u = u + residual_update_mix * _trellis_residual(phi, z, A)
+                if G is not None:
+                    u = u * G
         if read_mode == "M_q":
             M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)  # [B,H,C,M]
             S = torch.einsum("bhtd,bhsd->bhts", R, W) * rmat  # (q_t.w_s)(P_t/P_s)
