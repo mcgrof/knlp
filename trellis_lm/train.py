@@ -183,7 +183,7 @@ def main():
     p.add_argument("--output_path", default="current",
                    choices=["current", "paper"])
     p.add_argument("--value_readout_act", default="none",
-                   choices=["none", "ln_silu", "l2_silu"])
+                   choices=["none", "ln_silu", "norm_silu", "l2_silu"])
     p.add_argument("--beta_init", type=float, default=0.5)
     p.add_argument("--gamma_init", type=float, default=1e-2)
     p.add_argument("--no_forget", action="store_true")

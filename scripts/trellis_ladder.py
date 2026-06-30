@@ -487,7 +487,9 @@ def main():
     )
     p.add_argument("--output_path", default="current", choices=["current", "paper"])
     p.add_argument(
-        "--value_readout_act", default="none", choices=["none", "ln_silu", "l2_silu"]
+        "--value_readout_act",
+        default="none",
+        choices=["none", "ln_silu", "norm_silu", "l2_silu"],
     )
     p.add_argument("--n_slots", type=int, default=64)
     p.add_argument("--eff_tokens", type=int, default=262144)
