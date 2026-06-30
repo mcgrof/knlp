@@ -76,9 +76,14 @@ class TrellisMixer(nn.Module):
         self.k_proj = nn.Linear(d, H * D, bias=False)
         self.v_proj = nn.Linear(d, H * D, bias=False)
         self.alpha_proj = nn.Linear(d, H * M, bias=False)
-        beta_out = H if cfg.beta_mode == "scalar_per_head" else H * M
-        self.beta_proj = nn.Linear(d, beta_out, bias=True)
-        self.reset_beta_bias()
+        if cfg.trellis_retention_mode == "token_proj":
+            beta_out = H if cfg.beta_mode == "scalar_per_head" else H * M
+            self.beta_proj = nn.Linear(d, beta_out, bias=True)
+        else:
+            self.beta_proj = None
+        self.retention_theta = None
+        self.register_buffer("retention_beta_fixed", None)
+        self.reset_beta_parameters()
         if cfg.update_gate_mode == "scalar":
             self.update_gate_proj = nn.Linear(d, H, bias=True)
         elif cfg.update_gate_mode == "channel":
@@ -138,9 +143,161 @@ class TrellisMixer(nn.Module):
         the paper wants beta near 1 (ChatGPT-Pro suspect #2). Must be called
         AFTER the model-wide _init_weights (which zeros all Linear biases),
         else it is silently clobbered."""
+        if self.beta_proj is None:
+            return
         with torch.no_grad():
             b0 = math.log(self.cfg.beta_init / (1.0 - self.cfg.beta_init))
             self.beta_proj.bias.fill_(b0)
+
+    def reset_beta_parameters(self):
+        cfg = self.cfg
+        if cfg.trellis_retention_mode == "token_proj":
+            self.reset_beta_bias()
+            return
+        init = self._retention_init_values(cfg.trellis_retention_mode)
+        if cfg.trellis_retention_mode == "fixed_beta":
+            self.retention_beta_fixed = init
+            return
+        self.retention_theta = nn.Parameter(self._beta_to_theta(init))
+
+    def _layer_position(self) -> float:
+        denom = max(1, self.cfg.n_layers - 1)
+        return float(self.layer_idx) / float(denom)
+
+    @staticmethod
+    def _beta_to_tau(beta: float) -> float:
+        return 1.0 / max(1e-9, 1.0 - float(beta))
+
+    @classmethod
+    def _logspace_betas(cls, low: float, high: float, count: int) -> torch.Tensor:
+        if count <= 1:
+            return torch.tensor([float(high)], dtype=torch.float32)
+        low_tau = cls._beta_to_tau(low)
+        high_tau = cls._beta_to_tau(high)
+        taus = torch.logspace(
+            math.log10(low_tau),
+            math.log10(high_tau),
+            steps=count,
+            dtype=torch.float32,
+        )
+        return 1.0 - 1.0 / taus
+
+    def _layer_short_to_long_beta(self) -> float:
+        s = self._layer_position()
+        low_tau = self._beta_to_tau(0.95)
+        high_tau = self._beta_to_tau(0.995)
+        tau = math.exp(math.log(low_tau) * (1.0 - s) + math.log(high_tau) * s)
+        return 1.0 - 1.0 / tau
+
+    def _layer_head_logspace_betas(self, count: int) -> torch.Tensor:
+        s = self._layer_position()
+        low_tau0 = self._beta_to_tau(0.95)
+        low_tau1 = self._beta_to_tau(0.975)
+        high_tau0 = self._beta_to_tau(0.98)
+        high_tau1 = self._beta_to_tau(0.999)
+        low_tau = math.exp(math.log(low_tau0) * (1.0 - s) + math.log(low_tau1) * s)
+        high_tau = math.exp(
+            math.log(high_tau0) * (1.0 - s) + math.log(high_tau1) * s
+        )
+        low_beta = 1.0 - 1.0 / low_tau
+        high_beta = 1.0 - 1.0 / high_tau
+        return self._logspace_betas(low_beta, high_beta, count)
+
+    def _scheduled_betas(self, count: int) -> torch.Tensor:
+        cfg = self.cfg
+        if cfg.trellis_beta_init_schedule == "flat_099":
+            values = torch.full(
+                (count,),
+                float(cfg.trellis_beta_init),
+                dtype=torch.float32,
+            )
+        elif cfg.trellis_beta_init_schedule == "layer_short_to_long":
+            values = torch.full(
+                (count,),
+                self._layer_short_to_long_beta(),
+                dtype=torch.float32,
+            )
+        elif cfg.trellis_beta_init_schedule == "head_logspace":
+            values = self._logspace_betas(0.95, 0.999, count)
+        elif cfg.trellis_beta_init_schedule == "layer_head_logspace":
+            values = self._layer_head_logspace_betas(count)
+        else:  # pragma: no cover - guarded by config validation
+            raise ValueError(cfg.trellis_beta_init_schedule)
+        return values.clamp(cfg.trellis_beta_min + 1e-6, cfg.trellis_beta_max - 1e-6)
+
+    def _retention_init_values(self, mode: str) -> torch.Tensor:
+        if mode in ("fixed_beta", "learned_per_head"):
+            return self._scheduled_betas(self.H)
+        if mode == "learned_per_channel":
+            return self._scheduled_betas(self.M)
+        if mode == "learned_per_head_channel":
+            return self._scheduled_betas(self.H).view(self.H, 1).expand(self.H, self.M)
+        raise ValueError(mode)
+
+    def _beta_to_theta(self, beta: torch.Tensor) -> torch.Tensor:
+        cfg = self.cfg
+        unit = (beta.float() - cfg.trellis_beta_min) / (
+            cfg.trellis_beta_max - cfg.trellis_beta_min
+        )
+        unit = unit.clamp(1e-6, 1.0 - 1e-6)
+        return torch.log(unit / (1.0 - unit))
+
+    def retention_beta_values(self) -> torch.Tensor | None:
+        cfg = self.cfg
+        mode = cfg.trellis_retention_mode
+        if mode == "token_proj":
+            return None
+        if mode == "fixed_beta":
+            return self.retention_beta_fixed
+        if self.retention_theta is None:  # pragma: no cover - defensive
+            raise RuntimeError("learned retention requested without theta")
+        unit = torch.sigmoid(self.retention_theta.float())
+        beta_range = cfg.trellis_beta_max - cfg.trellis_beta_min
+        return cfg.trellis_beta_min + beta_range * unit
+
+    def _expand_retention_beta(
+        self,
+        beta_values: torch.Tensor,
+        batch: int,
+        seq_len: int,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        values = beta_values.to(dtype=dtype)
+        if values.dim() == 1 and values.numel() == self.H:
+            return values.view(1, self.H, 1, 1).expand(batch, self.H, seq_len, 1)
+        if values.dim() == 1 and values.numel() == self.M:
+            return values.view(1, 1, 1, self.M).expand(batch, self.H, seq_len, self.M)
+        if values.shape == (self.H, self.M):
+            return values.view(1, self.H, 1, self.M).expand(
+                batch,
+                self.H,
+                seq_len,
+                self.M,
+            )
+        raise ValueError(f"unsupported retention beta shape {tuple(values.shape)}")
+
+    def compute_beta(self, h_float: torch.Tensor) -> torch.Tensor:
+        cfg = self.cfg
+        B, T, _ = h_float.shape
+        if cfg.trellis_retention_mode == "token_proj":
+            if self.beta_proj is None:  # pragma: no cover - defensive
+                raise RuntimeError("token_proj retention requires beta_proj")
+            if cfg.beta_mode == "scalar_per_head":
+                beta = (
+                    torch.sigmoid(self.beta_proj(h_float))
+                    .view(B, T, self.H, 1)
+                    .permute(0, 2, 1, 3)
+                )
+            else:
+                beta = torch.sigmoid(self._heads(self.beta_proj(h_float), self.M))
+        else:
+            beta_values = self.retention_beta_values()
+            if beta_values is None:  # pragma: no cover - defensive
+                raise RuntimeError("static retention values are unavailable")
+            beta = self._expand_retention_beta(beta_values, B, T, h_float.dtype)
+        if not cfg.forget_gate:
+            beta = torch.ones_like(beta)
+        return beta
 
     def reset_update_gate_bias(self):
         if self.update_gate_proj is None:
@@ -180,16 +337,7 @@ class TrellisMixer(nn.Module):
         # test kept these fp32 (q/k/v/alpha may be bf16, which it validated).
         with torch.autocast(device_type=x.device.type, enabled=False):
             hf = h.float()
-            if cfg.beta_mode == "scalar_per_head":
-                beta = (
-                    torch.sigmoid(self.beta_proj(hf))
-                    .view(B, T, self.H, 1)
-                    .permute(0, 2, 1, 3)
-                )
-            else:
-                beta = torch.sigmoid(self._heads(self.beta_proj(hf), self.M))
-            if not cfg.forget_gate:
-                beta = torch.ones_like(beta)
+            beta = self.compute_beta(hf)
             gamma = self.effective_gamma(F.softplus(self.gamma_raw.float()))
             update_gate = None
             if cfg.update_gate_mode == "scalar":
@@ -208,7 +356,7 @@ class TrellisMixer(nn.Module):
         # inputs are fine -- the head-on test showed bf16 PPL ~ fp32). Output
         # rejoins any outer autocast at out_proj. Chunked stale path when
         # chunk_size>1 and beta is per-head.
-        use_chunk = cfg.chunk_size > 1 and cfg.beta_mode == "scalar_per_head"
+        use_chunk = cfg.chunk_size > 1 and beta.shape[-1] == 1
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
         if BF16_INPUTS:
