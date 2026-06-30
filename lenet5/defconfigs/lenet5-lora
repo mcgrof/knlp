@@ -1,0 +1,26 @@
+# LeNet-5 LoRA adapters -- adaptation teaching lab
+# Freezes the base and trains low-rank A/B adapters on the FC layers plus
+# the head (~3.7K trainable params of ~64K). Set a base checkpoint to adapt
+# a pretrained model; otherwise it adapts a fresh base (educational only).
+# CPU-friendly: small epochs, 2 dataloader workers, no pruning.
+CONFIG_MODEL_LENET5=y
+CONFIG_LENET5_DATASET_MNIST=y
+CONFIG_LENET5_NUM_CLASSES=10
+CONFIG_LENET5_ADAPTATION_LORA=y
+CONFIG_LENET5_ADAPTATION_MODE="lora"
+CONFIG_LENET5_LORA_RANK=4
+CONFIG_LENET5_LORA_ALPHA="1.0"
+CONFIG_LENET5_TRAIN_HEAD=y
+CONFIG_LENET5_BASE_CHECKPOINT=""
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAM=y
+CONFIG_ADAM_BETA1="0.9"
+CONFIG_ADAM_BETA2="0.999"
+CONFIG_ADAM_EPSILON="1e-8"
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_BATCH_SIZE=512
+CONFIG_NUM_EPOCHS=5
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=2
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_VERBOSE=y

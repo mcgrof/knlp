@@ -1,0 +1,21 @@
+# LeNet-5 full fine-tuning -- adaptation teaching lab
+# Trains every weight (~62K params). Compare the trainable-param count
+# logged at startup against lenet5-lora and lenet5-prefix.
+# CPU-friendly: small epochs, 2 dataloader workers, no pruning.
+CONFIG_MODEL_LENET5=y
+CONFIG_LENET5_DATASET_MNIST=y
+CONFIG_LENET5_NUM_CLASSES=10
+CONFIG_LENET5_ADAPTATION_FULL=y
+CONFIG_LENET5_ADAPTATION_MODE="full"
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAM=y
+CONFIG_ADAM_BETA1="0.9"
+CONFIG_ADAM_BETA2="0.999"
+CONFIG_ADAM_EPSILON="1e-8"
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_BATCH_SIZE=512
+CONFIG_NUM_EPOCHS=5
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=2
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_VERBOSE=y
