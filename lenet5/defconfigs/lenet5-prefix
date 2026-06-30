@@ -1,0 +1,25 @@
+# LeNet-5 image prefix / soft prompt -- adaptation teaching lab
+# Freezes the base and trains a learned strip added to the top image rows
+# plus the head (~978 trainable params of ~62K). This is the CNN analogy to
+# prompt tuning, not transformer KV prefix tuning.
+# CPU-friendly: small epochs, 2 dataloader workers, no pruning.
+CONFIG_MODEL_LENET5=y
+CONFIG_LENET5_DATASET_MNIST=y
+CONFIG_LENET5_NUM_CLASSES=10
+CONFIG_LENET5_ADAPTATION_PREFIX=y
+CONFIG_LENET5_ADAPTATION_MODE="prefix"
+CONFIG_LENET5_PREFIX_ROWS=4
+CONFIG_LENET5_TRAIN_HEAD=y
+CONFIG_LENET5_BASE_CHECKPOINT=""
+CONFIG_OPTIMIZER_MODE_SINGLE=y
+CONFIG_OPTIMIZER_SELECT_ADAM=y
+CONFIG_ADAM_BETA1="0.9"
+CONFIG_ADAM_BETA2="0.999"
+CONFIG_ADAM_EPSILON="1e-8"
+CONFIG_PRUNING_MODE_NONE=y
+CONFIG_BATCH_SIZE=512
+CONFIG_NUM_EPOCHS=5
+CONFIG_LEARNING_RATE="0.001"
+CONFIG_NUM_WORKERS=2
+CONFIG_SAVE_CHECKPOINT=y
+CONFIG_VERBOSE=y
