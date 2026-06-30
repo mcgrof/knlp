@@ -69,6 +69,98 @@ def _trellis_residual(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tens
     return pred - alpha
 
 
+def _innovation_cap_enabled(stabilizer: str, cap: float) -> bool:
+    return (
+        stabilizer
+        in ("innovation_rms_cap", "innovation_rms_cap_plus_layerwise_gamma")
+        and cap > 0.0
+    )
+
+
+def _delta_ratio_cap_enabled(stabilizer: str, cap: float) -> bool:
+    return stabilizer == "delta_ratio_cap" and cap > 0.0
+
+
+def _apply_innovation_rms_cap(
+    err: torch.Tensor,
+    cap: float,
+    detach_scale: bool = True,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """One-sided RMS cap over the memory/write feature dimension.
+
+    This is update clipping, not unit normalization: rows already below the cap
+    are unchanged. The default detached scale keeps the cap out of the learned
+    architecture and matches the GPT-Pro recommendation.
+    """
+    rms = err.float().pow(2).mean(dim=-1, keepdim=True).sqrt()
+    scale = (cap / (rms + eps)).clamp(max=1.0).to(err.dtype)
+    if detach_scale:
+        scale = scale.detach()
+    return err * scale, scale
+
+
+def _trellis_vjp_stabilized(
+    phi,
+    zin: torch.Tensor,
+    alpha: torch.Tensor,
+    stabilizer: str = "none",
+    innovation_rms_cap: float = 0.0,
+    detach_scale: bool = True,
+) -> torch.Tensor:
+    z = zin.detach()
+    if not _innovation_cap_enabled(stabilizer, innovation_rms_cap):
+        return _trellis_vjp(phi, z, alpha)
+    zr = z.requires_grad_(True)
+    cg = alpha.requires_grad
+    with torch.enable_grad():
+        pred = phi(zr)
+        err = pred - alpha
+        err, _ = _apply_innovation_rms_cap(
+            err,
+            innovation_rms_cap,
+            detach_scale=detach_scale,
+        )
+        (u,) = torch.autograd.grad(
+            pred, zr, grad_outputs=err, create_graph=cg, retain_graph=True
+        )
+    return u if cg else u.detach()
+
+
+def _apply_delta_ratio_cap_to_u(
+    u: torch.Tensor,
+    write: torch.Tensor,
+    gamma: torch.Tensor,
+    state: torch.Tensor,
+    cap: float,
+    state_floor: float,
+    detach_scale: bool = True,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Scale a token/chunk update code so gamma*outer/update is bounded.
+
+    `u` may be [B,H,M] for the sequential path or [B,H,C,M] for chunk state
+    evolution. The chunk form uses the aggregate chunk update, then applies one
+    scale per [B,H] to all codes in that chunk so batched readout can reuse the
+    same stored `u`.
+    """
+    if u.dim() == 3:
+        raw = gamma * torch.einsum("bhm,bhd->bhmd", u, write)
+        scale_for_u = lambda scale: scale.squeeze(-1)
+    elif u.dim() == 4:
+        raw = gamma * torch.einsum("bhcm,bhcd->bhmd", u, write)
+        scale_for_u = lambda scale: scale.squeeze(-1).unsqueeze(2)
+    else:  # pragma: no cover - defensive
+        raise ValueError(f"unsupported u shape {tuple(u.shape)}")
+    state_rms = state.float().pow(2).mean(dim=(-1, -2), keepdim=True).sqrt()
+    delta_rms = raw.float().pow(2).mean(dim=(-1, -2), keepdim=True).sqrt()
+    ref = torch.maximum(state_rms, state.new_tensor(float(state_floor)).float())
+    scale = (float(cap) * ref / (delta_rms + eps)).clamp(max=1.0).to(u.dtype)
+    if detach_scale:
+        scale = scale.detach()
+    return u * scale_for_u(scale), scale
+
+
 def trellis_chunk_decay(beta: torch.Tensor, chunk_size: int):
     """beta [B,H,T,1] -> P [B,H,nC,C,1], rmat [B,H,nC,C,C], pad."""
     assert beta.shape[-1] == 1, "chunked path supports per-head beta only"
@@ -98,6 +190,11 @@ def run_trellis_memory_chunked_state_evolution(
     rmat=None,
     update_gate=None,
     residual_update_mix: float = 0.0,
+    trellis_update_stabilizer: str = "none",
+    trellis_innovation_rms_cap: float = 0.0,
+    trellis_delta_ratio_cap: float = 0.0,
+    trellis_state_rms_floor: float = 1e-3,
+    trellis_stabilizer_detach_scale: bool = True,
 ):
     """True-stale chunk state evolution. No readout. Returns per-chunk
     start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad."""
@@ -128,11 +225,30 @@ def run_trellis_memory_chunked_state_evolution(
         Wf = W.reshape(N, C, D)
         M0f = M0.reshape(N, M, D).to(Wf.dtype)
         M0W = torch.bmm(Wf, M0f.transpose(1, 2)).view(B, H, C, M)
-        u = _trellis_vjp(phi, M0W, A)
+        u = _trellis_vjp_stabilized(
+            phi,
+            M0W,
+            A,
+            stabilizer=trellis_update_stabilizer,
+            innovation_rms_cap=trellis_innovation_rms_cap,
+            detach_scale=trellis_stabilizer_detach_scale,
+        )
         if residual_update_mix:
             u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
         if Gp is not None:
             u = u * Gp[:, :, c]
+        if _delta_ratio_cap_enabled(
+            trellis_update_stabilizer, trellis_delta_ratio_cap
+        ):
+            u, _ = _apply_delta_ratio_cap_to_u(
+                u,
+                W,
+                g,
+                Mstate,
+                trellis_delta_ratio_cap,
+                trellis_state_rms_floor,
+                detach_scale=trellis_stabilizer_detach_scale,
+            )
         rC = rmat[:, :, c, -1, :].unsqueeze(-1)
         upd = torch.bmm((u * rC).reshape(N, C, M).transpose(1, 2), Wf).view(B, H, M, D)
         Plast = P[:, :, c, -1:, :]
@@ -307,6 +423,11 @@ def run_trellis_memory(
     return_state: bool = False,
     update_gate: Optional[torch.Tensor] = None,  # [B,H,T,1] or [B,H,T,M]
     residual_update_mix: float = 0.0,
+    trellis_update_stabilizer: str = "none",
+    trellis_innovation_rms_cap: float = 0.0,
+    trellis_delta_ratio_cap: float = 0.0,
+    trellis_state_rms_floor: float = 1e-3,
+    trellis_stabilizer_detach_scale: bool = True,
 ):
     B, H, T, D = write.shape
     M = alpha.shape[-1]
@@ -337,6 +458,14 @@ def run_trellis_memory(
         with torch.enable_grad():
             pred = phi(z_req)  # [B,H,M]
             err = pred - a  # alpha stays in graph
+            if _innovation_cap_enabled(
+                trellis_update_stabilizer, trellis_innovation_rms_cap
+            ):
+                err, _ = _apply_innovation_rms_cap(
+                    err,
+                    trellis_innovation_rms_cap,
+                    detach_scale=trellis_stabilizer_detach_scale,
+                )
             (u,) = torch.autograd.grad(
                 pred,
                 z_req,
@@ -354,6 +483,18 @@ def run_trellis_memory(
             u = u + residual_update_mix * resid
         if update_gate is not None:
             u = u * update_gate[:, :, t, :]
+        if _delta_ratio_cap_enabled(
+            trellis_update_stabilizer, trellis_delta_ratio_cap
+        ):
+            u, _ = _apply_delta_ratio_cap_to_u(
+                u,
+                w,
+                g,
+                Mstate,
+                trellis_delta_ratio_cap,
+                trellis_state_rms_floor,
+                detach_scale=trellis_stabilizer_detach_scale,
+            )
         # gated OGD update: M <- beta*M - gamma * outer(u, write)
         outer = torch.einsum("bhm,bhd->bhmd", u, w)  # [B,H,M,D]
         b_e = b.unsqueeze(-1) if per_slot else b.unsqueeze(-1)  # [B,H,M,1] or [B,H,1,1]
@@ -386,6 +527,11 @@ def run_trellis_memory_chunked(
     refine_passes: int = 0,
     update_gate: Optional[torch.Tensor] = None,  # [B,H,T,1] or [B,H,T,M]
     residual_update_mix: float = 0.0,
+    trellis_update_stabilizer: str = "none",
+    trellis_innovation_rms_cap: float = 0.0,
+    trellis_delta_ratio_cap: float = 0.0,
+    trellis_state_rms_floor: float = 1e-3,
+    trellis_stabilizer_detach_scale: bool = True,
 ):
     """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
@@ -436,7 +582,12 @@ def run_trellis_memory_chunked(
 
     def _vjp(zin, A):
         z = zin.detach()  # cut M 2nd-order
-        if phi is ln_silu:
+        if (
+            phi is ln_silu
+            and not _innovation_cap_enabled(
+                trellis_update_stabilizer, trellis_innovation_rms_cap
+            )
+        ):
             # fused closed-form phi(z) + J_phi^T(phi(z)-A): exact, no per-chunk
             # autograd graph (the kernel's dominant overhead) and no double
             # LN/SiLU. Linear in A, so the outer backward to alpha_proj flows.
@@ -446,6 +597,14 @@ def run_trellis_memory_chunked(
         with torch.enable_grad():
             pred = phi(zr)
             err = pred - A  # keep alpha -> alpha_proj trains
+            if _innovation_cap_enabled(
+                trellis_update_stabilizer, trellis_innovation_rms_cap
+            ):
+                err, _ = _apply_innovation_rms_cap(
+                    err,
+                    trellis_innovation_rms_cap,
+                    detach_scale=trellis_stabilizer_detach_scale,
+                )
             (uu,) = torch.autograd.grad(
                 pred, zr, grad_outputs=err, create_graph=cg, retain_graph=True
             )
@@ -478,6 +637,18 @@ def run_trellis_memory_chunked(
             u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
         if G is not None:
             u = u * G
+        if _delta_ratio_cap_enabled(
+            trellis_update_stabilizer, trellis_delta_ratio_cap
+        ):
+            u, _ = _apply_delta_ratio_cap_to_u(
+                u,
+                W,
+                g,
+                Mstate,
+                trellis_delta_ratio_cap,
+                trellis_state_rms_floor,
+                detach_scale=trellis_stabilizer_detach_scale,
+            )
         if refine_passes > 0 and C > 1:
             # exact-mode only (not the ladder path); kept in the original u/P
             # form, which is verified-exact. The bounded rewrite above covers
@@ -495,6 +666,18 @@ def run_trellis_memory_chunked(
                     u = u + residual_update_mix * _trellis_residual(phi, z, A)
                 if G is not None:
                     u = u * G
+                if _delta_ratio_cap_enabled(
+                    trellis_update_stabilizer, trellis_delta_ratio_cap
+                ):
+                    u, _ = _apply_delta_ratio_cap_to_u(
+                        u,
+                        W,
+                        g,
+                        Mstate,
+                        trellis_delta_ratio_cap,
+                        trellis_state_rms_floor,
+                        detach_scale=trellis_stabilizer_detach_scale,
+                    )
         if read_mode == "M_q":
             M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)  # [B,H,C,M]
             S = torch.einsum("bhtd,bhsd->bhts", R, W) * rmat  # (q_t.w_s)(P_t/P_s)
