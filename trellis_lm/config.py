@@ -87,6 +87,7 @@ class TrellisConfig:
         assert self.activation in (
             "silu",
             "ln_silu",
+            "norm_silu",
             "l2_silu",
             "softmax",
             "identity",
@@ -96,6 +97,7 @@ class TrellisConfig:
             "linear",
             "softmax",
             "ln_silu",
+            "norm_silu",
             "l2_silu",
         ), self.alpha_mode
         assert self.beta_mode in ("scalar_per_head", "per_slot"), self.beta_mode
@@ -151,6 +153,7 @@ class TrellisConfig:
             "silu",
             "identity",
             "ln_silu",
+            "norm_silu",
             "l2_silu",
         ), self.value_readout_act
         assert 0.0 < self.beta_init < 1.0, self.beta_init
