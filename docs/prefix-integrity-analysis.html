@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>knlp prefix integrity analysis</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --surface-2: #1a2332;
+    --border: #334155; --text: #cbd5e1; --muted: #94a3b8;
+    --green: #22c55e; --blue: #60a5fa; --purple: #c084fc;
+    --amber: #f59e0b; --cyan: #22d3ee; --rose: #fb7185;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+  .card { background: linear-gradient(145deg, var(--surface), var(--surface-2)); border: 1px solid var(--border); border-radius: 14px; }
+  .panel { background: linear-gradient(145deg, #172030, #141c2a); border: 1px solid var(--border); border-radius: 14px; }
+  .code-block { background: #0b1220; border: 1px solid #23324a; border-radius: 12px; overflow: hidden; margin: 1rem 0 1.5rem; }
+  .code-title { font-family: var(--mono); font-size: 12px; color: var(--muted); background: #10192a; border-bottom: 1px solid #23324a; padding: 10px 14px; }
+  pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #dbe7f3; }
+  code.inline { font-family: var(--mono); font-size: 0.92em; padding: 0.1rem 0.35rem; border-radius: 4px; background: #172033; border: 1px solid #253247; }
+  .kw { color: #f472b6; } .fn { color: #93c5fd; } .nm { color: #67e8f9; }
+  .cm { color: #64748b; } .str { color: #86efac; } .num { color: #fbbf24; }
+  .op { color: #cbd5e1; } .type { color: #c084fc; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: #94a3b8; font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #243244; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .good { color: #4ade80; font-weight: 600; }
+  .warn { color: #fbbf24; font-weight: 600; }
+  .bad  { color: #fb7185; font-weight: 600; }
+  .info { color: #7dd3fc; font-weight: 600; }
+  .path-list li { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .mini-note { border-left: 3px solid var(--green); background: rgba(34, 197, 94, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-warn { border-left: 3px solid var(--amber); background: rgba(245, 158, 11, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .mini-note-bad { border-left: 3px solid var(--rose); background: rgba(251, 113, 133, 0.08); border-radius: 0 10px 10px 0; padding: 12px 16px; }
+  .section-link { color: #60a5fa; }
+  .section-link:hover { text-decoration: underline; }
+  .chip { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-6 py-12">
+
+    <header class="text-center mb-14">
+      <div class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs font-mono text-slate-400 mb-5">
+        knlp / serving &amp; kv cache
+      </div>
+      <h1 class="text-5xl font-semibold tracking-tight text-slate-100 mb-4">Prefix Integrity Analysis</h1>
+      <p class="text-lg text-slate-400 max-w-4xl mx-auto leading-8">
+        Before a KV-cache compression, pruning, routing, quantization, or
+        offload algorithm goes near a production prefix-sharing or offload path,
+        it should answer one question that a benchmark does not. After the
+        algorithm touches a shared prefix, is that prefix still the same cache
+        object &mdash; reloadable, reusable, position-compatible, and close
+        enough to the original that the model does not change its mind?
+      </p>
+      <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+        <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
+        <a href="routing.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">routing</a>
+        <a href="kri.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 transition-colors">KRI</a>
+        <a href="https://github.com/mcgrof/knlp/tree/main/routing/prefix_integrity" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">source</a>
+      </div>
+    </header>
+
+    <!-- WHY -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">A contract check, not a leaderboard</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          A compression paper usually reports one curve: compression ratio
+          against model accuracy. That curve hides the failure that breaks a
+          serving stack. An algorithm can leave accuracy untouched on the prompt
+          it was measured on, and still rewrite the shared prefix into something
+          a prefix-cache or offload store can no longer reuse. The damage is
+          invisible on the accuracy plot because accuracy was never the property
+          at risk &mdash; the property at risk is the cache contract.
+        </p>
+        <p class="text-slate-300 leading-8 mb-4">
+          Prefix caching means two requests with the same prefix reuse the same
+          KV blocks. KV offloading means those blocks get written once and read
+          back later, possibly on another machine. Both rest on a quiet
+          assumption: the prefix maps to a stable, reloadable object that does
+          not depend on which request happens to arrive next. An algorithm that
+          quietly makes the stored prefix depend on the query, or change shape,
+          or drop the system-prompt block, breaks that assumption while the
+          accuracy number looks fine.
+        </p>
+        <div class="mini-note mt-2">
+          <p class="text-slate-300 leading-7 text-sm">
+            The harness asks the narrower question on purpose:
+            <strong>not &ldquo;does the algorithm compress?&rdquo; but &ldquo;after
+            compression, is the prefix still the same reusable cache
+            object?&rdquo;</strong> If it cannot answer yes, it has no business
+            being tested inside LMCache or a distributed store yet.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TWO AXES -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Two axes, judged separately</h2>
+        <p class="text-slate-300 leading-8 mb-5">
+          An algorithm can fail in two unrelated ways, and the harness keeps
+          them apart so a single number never hides one behind the other.
+        </p>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Contract axis</div>
+            <div class="text-2xl font-semibold text-blue-400 mb-2">Is the prefix still reusable?</div>
+            <p class="text-sm text-slate-400 leading-7">
+              Geometry, determinism, and the cache key. Does every retained block
+              reload at its original position and shape? Does the same prefix
+              produce the same stored bytes every time? If the stored object
+              depends on the query, is the query in the cache key? This axis runs
+              on a CPU with no model &mdash; it is pure bookkeeping over block
+              manifests.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">Drift axis</div>
+            <div class="text-2xl font-semibold text-purple-400 mb-2">Does the model change its mind?</div>
+            <p class="text-sm text-slate-400 leading-7">
+              The orthogonal question. Loading a real model over the cartridge,
+              how far does the candidate move the next-token distribution from
+              the full-cartridge baseline? Measured as KL divergence and top-1 /
+              top-k agreement. This needs a GPU, and it catches the algorithm
+              that keeps perfect geometry while wrecking the answer.
+            </p>
+          </div>
+        </div>
+        <p class="text-slate-300 leading-8 mt-5">
+          A clean contract with bad drift, or clean drift with a broken contract,
+          are both real failures &mdash; and they are different failures with
+          different fixes. The verdict reports both: a <span class="good">PASS</span> /
+          <span class="warn">WARN</span> / <span class="bad">FAIL</span> status, a
+          danger score, and one of five plain-language classifications.
+        </p>
+      </div>
+    </section>
+
+    <!-- CLASSIFICATIONS -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">The five verdicts</h2>
+        <div class="overflow-x-auto">
+        <table>
+          <thead>
+            <tr><th>Classification</th><th>What it means</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td>
+              <td class="text-slate-300">Shape-preserving, deterministic, and keyed by the prefix hash alone. Store it and share it on an ordinary prefix-cache or offload path.</td>
+            </tr>
+            <tr>
+              <td><span class="info">SAFE_ONLY_WITH_EXTENDED_CACHE_KEY</span></td>
+              <td class="text-slate-300">Reloadable and shape-preserving, but the stored object depends on the query. It must carry the query hash in its cache key, or be treated as routing rather than prefix cache.</td>
+            </tr>
+            <tr>
+              <td><span class="info">SAFE_ONLY_WITH_CUSTOM_CONNECTOR</span></td>
+              <td class="text-slate-300">Uses partial blocks, merging, sub-block masks, or variable-shape tensors. Not reusable by plain block-hash prefix caching without a custom connector and extra metadata.</td>
+            </tr>
+            <tr>
+              <td><span class="warn">ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE</span></td>
+              <td class="text-slate-300">Fine as a query-aware sparse-attention prior, but not compatible with prefix sharing: two requests with the same prefix no longer agree on the prefix object.</td>
+            </tr>
+            <tr>
+              <td><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+              <td class="text-slate-300">The same prefix can map to different or non-reloadable KV objects. Do not put it on a prefix-sharing or offload path as-is.</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">How it works</h2>
+        <p class="text-slate-300 leading-8 mb-4">
+          The harness uses a <strong>Cartridge as a deterministic stand-in for a
+          prefix-cached or offloaded KV object</strong>. A cartridge is a fixed,
+          precomputed KV cache with stable block boundaries, so it is a cheap,
+          reproducible prefix you can run an algorithm against without rerunning
+          prefill. It does not require LMCache or distributed serving &mdash; the
+          cartridge is the offload emulator.
+        </p>
+        <div class="grid md:grid-cols-3 gap-4 mb-5">
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">selector</div>
+            <div class="text-sm text-slate-400 leading-7">The algorithm chooses which blocks survive. The harness reads its choice as a block manifest and measures what stayed reusable.</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">codec</div>
+            <div class="text-sm text-slate-400 leading-7">The algorithm transforms the KV tensors but keeps every block present. The harness writes a transformed cartridge and compares it to the original.</div>
+          </div>
+          <div class="panel p-4">
+            <div class="text-xs font-mono text-slate-500 uppercase tracking-wider mb-2">selector + codec</div>
+            <div class="text-sm text-slate-400 leading-7">It does both. The harness produces a manifest and a transformed cartridge, and grades each.</div>
+          </div>
+        </div>
+        <p class="text-slate-300 leading-8 mb-4">
+          Every algorithm enters through one narrow slot &mdash; an
+          <strong>adapter</strong> &mdash; so the harness never needs to know
+          whether the thing is KRI, a quantizer, an eviction policy, or a
+          clustering scheme. It only sees the manifest and the transformed
+          tensors. The adapter also <em>declares</em> what the algorithm claims
+          about itself: its policy (prefix cache, routing, or offload codec) and
+          which fields it puts in its cache key. The verdict is the collision
+          between what the algorithm claims and what it actually does.
+        </p>
+        <p class="text-slate-300 leading-8">
+          To expose that collision, the harness replays the algorithm across many
+          suffix or query requests that all share the same prefix hash, repeating
+          each request to separate non-determinism from query-dependence. A
+          selection that changes when you re-run the same query is broken. A
+          selection that changes across different queries is query-aware &mdash;
+          fine for routing, dangerous for a prefix cache keyed by prefix alone.
+        </p>
+      </div>
+    </section>
+
+    <!-- METRICS -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">What gets measured</h2>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div>
+            <div class="text-xs font-mono uppercase tracking-wider text-blue-300 mb-3">Block survival</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7 text-sm">
+              <li><strong>Prefix reuse efficiency</strong> &mdash; the weighted fraction of the prefix that is still a reusable cache object. Partial and missing blocks both count as zero.</li>
+              <li><strong>Anchor and recent survival</strong> &mdash; did the system-prompt block and the recent window survive intact?</li>
+              <li><strong>Contiguous-prefix survival</strong> &mdash; the longest intact run from the start. A hole at block one truncates reuse even when later blocks are individually intact.</li>
+              <li><strong>Partial-block rate</strong> &mdash; a partial block is not intact. It may serve a custom kernel, but plain block-hash caching cannot reuse it.</li>
+            </ul>
+          </div>
+          <div>
+            <div class="text-xs font-mono uppercase tracking-wider text-purple-300 mb-3">Determinism, storage, drift</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7 text-sm">
+              <li><strong>Manifest and artifact stability</strong> &mdash; how many distinct selections and stored-byte digests the same prefix produces, across re-runs and across queries.</li>
+              <li><strong>Cache-key safety</strong> &mdash; if the stored object varies and the variable is not in the key, the verdict fails.</li>
+              <li><strong>Storage geometry</strong> &mdash; contiguous read ranges, read amplification, and how much the compression ratio swings request to request.</li>
+              <li><strong>Semantic drift</strong> &mdash; next-token KL divergence and top-1 / top-k agreement against the full-cartridge baseline.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VALIDATION -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">The first end-to-end run</h2>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; citation-check cartridge (4096 tokens, 256 blocks) &middot; 16 queries &middot; 2026-06-30</p>
+        <p class="text-slate-300 leading-8 mb-5">
+          Six configurations went through the drift module and the contract
+          verdict: two identity checks, two block selectors at a tight sixteen-block
+          budget, and two KV codecs. The identity checks came back exactly zero
+          &mdash; keeping every block, or applying the no-op codec, gave a KL of
+          zero and full top-1 agreement on every query. That confirms the
+          attention masking and the pinned query positions are exact, so any
+          drift elsewhere belongs to the algorithm and not to the harness.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>Config</th><th>Mode</th><th>KL mean</th><th>KL max</th><th>Top-1 agree</th><th>Status</th><th>Classification</th><th>Danger</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="font-mono text-xs">full</td><td class="text-slate-400 text-xs">selector</td>
+              <td class="good">0.000</td><td>0.000</td><td class="good">1.000</td>
+              <td><span class="good">PASS</span></td><td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td><td>0.00</td>
+            </tr>
+            <tr>
+              <td class="font-mono text-xs">codec_none</td><td class="text-slate-400 text-xs">codec</td>
+              <td class="good">0.000</td><td>0.000</td><td class="good">1.000</td>
+              <td><span class="good">PASS</span></td><td class="text-xs text-slate-500">sanity</td><td>&mdash;</td>
+            </tr>
+            <tr>
+              <td class="font-mono text-xs">codec_int8</td><td class="text-slate-400 text-xs">codec</td>
+              <td class="warn">0.422</td><td>2.80</td><td>0.688</td>
+              <td><span class="bad">FAIL</span></td><td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td><td>0.53</td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="font-mono text-xs">codec_fp8</td><td class="text-slate-400 text-xs">codec</td>
+              <td class="bad">4.952</td><td>9.75</td><td class="bad">0.062</td>
+              <td><span class="bad">FAIL</span></td><td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td><td class="bad">0.89</td>
+            </tr>
+            <tr>
+              <td class="font-mono text-xs">anchor_recency</td><td class="text-slate-400 text-xs">selector</td>
+              <td class="warn">1.901</td><td>5.07</td><td>0.375</td>
+              <td><span class="bad">FAIL</span></td><td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td><td>1.00</td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="font-mono text-xs">query_aware</td><td class="text-slate-400 text-xs">selector</td>
+              <td class="warn">1.618</td><td>5.23</td><td>0.312</td>
+              <td><span class="bad">FAIL</span></td><td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td><td class="bad">1.00</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <p class="text-xs text-slate-500 leading-6">
+          Selectors ran at a sixteen-of-256-block budget; the codecs are
+          per-tensor round-trips, a lower bound on a careful per-token or
+          per-channel quantizer. Full data, reports, and the run log are archived
+          in <code class="inline">knlp-key-results/prefix-integrity-20260630/</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- INSIGHTS -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">What the run shows</h2>
+
+        <div class="mb-6">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="chip text-rose-300 border-rose-500/40">contract failure</span>
+            <h3 class="text-lg font-semibold text-slate-100">A query-aware selector caught on the contract</h3>
+          </div>
+          <p class="text-slate-300 leading-8">
+            The query-aware selector keeps whole blocks at their original
+            geometry, so a check that only looked at shape or accuracy would wave
+            it through. But it picks a different set of blocks for every query
+            while declaring a prefix-hash-only cache key. With sixteen queries it
+            produced sixteen distinct manifests for one prefix. Two requests that
+            share the prefix now disagree on what the prefix is, so it lands at
+            <span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span>. Declaring the
+            query hash in its key moves the same algorithm to
+            <span class="info">SAFE_ONLY_WITH_EXTENDED_CACHE_KEY</span> &mdash; it
+            was never a prefix-cache citizen, it was a router wearing the wrong
+            label.
+          </p>
+        </div>
+
+        <div class="mb-6">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="chip text-rose-300 border-rose-500/40">drift failure</span>
+            <h3 class="text-lg font-semibold text-slate-100">An fp8 codec with perfect geometry and a wrecked model</h3>
+          </div>
+          <p class="text-slate-300 leading-8">
+            The fp8 codec is everything the contract axis wants: shape-preserving,
+            deterministic, query-independent, every block intact &mdash; a clean
+            <span class="good">SAFE_FOR_PREFIX_OFFLOAD</span> on the contract. A
+            geometry-only analysis would ship it. The drift axis tells the other
+            half of the story: it moves the next-token distribution hard (KL of
+            4.95) and flips the top-1 token on 94% of queries. The run fails, and
+            the report says it plainly &mdash; the bytes stay reusable while the
+            transform ruins the answer. That is the harness doing the job a
+            compression-ratio plot cannot.
+          </p>
+        </div>
+
+        <div class="mb-2">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="chip text-amber-300 border-amber-500/40">corroboration</span>
+            <h3 class="text-lg font-semibold text-slate-100">It reproduces the Qwen FP8 key fragility on its own</h3>
+          </div>
+          <p class="text-slate-300 leading-8">
+            fp8 came out about twelve times worse than int8 on KL &mdash; 4.95
+            against 0.42 &mdash; which is why the danger score now ranks them
+            apart, 0.89 against 0.53, rather than scoring both the same for simply
+            failing. That gap lines up with the known FP8 key-cache fragility of
+            this model family: Qwen2.5-7B has biased keys that fp8 cannot hold.
+            The harness rediscovered it from a different direction, without being
+            told to look for it.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- REPRODUCE -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Run it</h2>
+        <p class="text-slate-300 leading-8 mb-3">
+          The contract axis &mdash; block survival, determinism, cache-key safety,
+          storage geometry &mdash; needs no model and no GPU:
+        </p>
+        <div class="code-block">
+          <div class="code-title">contract verdict (CPU)</div>
+<pre><span class="nm">python</span> -m routing.prefix_integrity.cli validate \
+  --cartridge <span class="str">/path/to/cartridge_dir</span> \
+  --algorithm <span class="str">query_aware</span> \
+  --queries <span class="str">queries.jsonl</span> \
+  --budgets <span class="num">8,16,32</span> --pins <span class="str">A1R2K13</span> \
+  --out <span class="str">/path/to/report_dir</span></pre>
+        </div>
+        <p class="text-slate-300 leading-8 mb-3">
+          The drift axis loads a model and measures how far the candidate moves
+          the next-token distribution. The query positions are pinned to the
+          original prefix offset, so drift reflects the algorithm rather than
+          re-indexing. Fold its output back into the verdict with
+          <code class="inline">--semantic-json</code>:
+        </p>
+        <div class="code-block">
+          <div class="code-title">semantic drift (GPU)</div>
+<pre><span class="nm">python</span> -m routing.prefix_integrity.semantic_drift \
+  --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
+  --cartridge <span class="str">/path/to/cartridge_dir</span> \
+  --queries <span class="str">queries.jsonl</span> \
+  --algorithm <span class="str">query_aware</span> --mode <span class="str">selector</span> --budget-k <span class="num">16</span> \
+  --out <span class="str">semantic.json</span></pre>
+        </div>
+        <p class="text-slate-300 leading-8">
+          A new algorithm enters by implementing <code class="inline">select_blocks</code>
+          for a selector, a transform step for a codec, or both &mdash; loaded
+          from a <code class="inline">package.module:factory</code> spec. It
+          declares its policy and cache-key fields, and the harness checks those
+          claims against what it observes. Built-in adapters (full, recency,
+          random, anchor+recency, A1R2K13, an offline KRI prior, and the
+          query-aware selector) stand as known-good and known-dangerous
+          references.
+        </p>
+      </div>
+    </section>
+
+    <!-- SCOPE -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Where it sits</h2>
+        <div class="grid md:grid-cols-2 gap-5">
+          <div class="rounded-xl border border-blue-500/40 bg-blue-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-blue-300 mb-3">It is</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7">
+              <li>A preflight gate for any KV-cache algorithm before it reaches a real offload or prefix-sharing path.</li>
+              <li>A cache-contract check first, a quality check second, with the two kept apart.</li>
+              <li>Self-contained: a cartridge stands in for the offload store, so no LMCache, no distributed serving, no per-run prefill.</li>
+              <li>The same block manifest <a class="section-link" href="routing.html">routing</a> speaks, so a routing prior and a prefix-integrity candidate are the same shape.</li>
+            </ul>
+          </div>
+          <div class="rounded-xl border border-rose-500/40 bg-rose-950/10 p-5">
+            <div class="text-xs font-mono uppercase tracking-wider text-rose-300 mb-3">It is not</div>
+            <ul class="list-disc pl-6 text-slate-300 space-y-2 leading-7">
+              <li>An accuracy benchmark. Accuracy is one of two axes, and the contract axis runs without a model at all.</li>
+              <li>A routing algorithm. <a class="section-link" href="kri.html">KRI</a> and friends are candidates that go through it; the harness grades them.</li>
+              <li>A waiver. Passing here is permission to test in LMCache, not a guarantee of production behavior.</li>
+              <li>A substitute for running the workload. It catches a class of failure early, cheaply, before the expensive test.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-slate-500 text-sm border-t border-slate-800 pt-8 mt-14">
+      <p class="mb-2">
+        <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-300">GitHub</a>
+        <span class="mx-2">&middot;</span>
+        <a href="https://github.com/mcgrof/knlp/tree/main/routing/prefix_integrity" class="hover:text-slate-300">source</a>
+        <span class="mx-2">&middot;</span>
+        <a href="routing.html" class="hover:text-slate-300">routing</a>
+        <span class="mx-2">&middot;</span>
+        <a href="kri.html" class="hover:text-slate-300">KRI</a>
+        <span class="mx-2">&middot;</span>
+        <a href="index.html" class="hover:text-slate-300">knlp docs</a>
+      </p>
+      <p>Prefix Integrity Analysis &mdash; a cache-contract preflight for KV-cache algorithms</p>
+    </footer>
+  </div>
+</body>
+</html>
