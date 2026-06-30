@@ -38,6 +38,17 @@ class TrellisConfig:
     beta_init: float = 0.5  # init MEAN of the forget gate; the
     # beta_proj bias is set to logit(beta_init). 0.5 = zero-bias (legacy). The
     # paper's retention semantics want beta near 1; sweep {0.8..0.995}.
+    # trellis_retention_mode controls the retention source. "token_proj" is the
+    # historical behavior: beta is projected from each token through beta_proj.
+    # The explicit branch modes below test static fixed/learned timescales.
+    trellis_retention_mode: str = "token_proj"
+    trellis_beta_init: float = 0.99
+    trellis_beta_min: float = 0.90
+    trellis_beta_max: float = 0.9995
+    trellis_beta_param: str = "sigmoid_logit"
+    trellis_beta_lr_mult: float = 1.0
+    trellis_beta_weight_decay: float = 0.0
+    trellis_beta_init_schedule: str = "flat_099"
     gamma_init: float = 1e-2  # learning-rate of the inner OGD step
     # Stabilize the memory update without changing the default Trellis math.
     # "innovation_rms_cap" applies a one-sided RMS cap to phi(z)-alpha before
@@ -88,6 +99,31 @@ class TrellisConfig:
             "l2_silu",
         ), self.alpha_mode
         assert self.beta_mode in ("scalar_per_head", "per_slot"), self.beta_mode
+        assert self.trellis_retention_mode in (
+            "token_proj",
+            "fixed_beta",
+            "learned_per_head",
+            "learned_per_channel",
+            "learned_per_head_channel",
+        ), self.trellis_retention_mode
+        assert self.trellis_beta_param == "sigmoid_logit", self.trellis_beta_param
+        assert 0.0 < self.trellis_beta_min < self.trellis_beta_max < 1.0, (
+            self.trellis_beta_min,
+            self.trellis_beta_max,
+        )
+        assert self.trellis_beta_min < self.trellis_beta_init < (
+            self.trellis_beta_max
+        ), self.trellis_beta_init
+        assert self.trellis_beta_lr_mult >= 0.0, self.trellis_beta_lr_mult
+        assert self.trellis_beta_weight_decay >= 0.0, (
+            self.trellis_beta_weight_decay
+        )
+        assert self.trellis_beta_init_schedule in (
+            "flat_099",
+            "layer_short_to_long",
+            "head_logspace",
+            "layer_head_logspace",
+        ), self.trellis_beta_init_schedule
         assert self.trellis_update_stabilizer in (
             "none",
             "innovation_rms_cap",
