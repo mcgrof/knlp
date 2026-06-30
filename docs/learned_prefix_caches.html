@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Learned Prefix Caches: Cartridges, ReasonCACHE, and ARCI | knlp</title>
+  <title>Learned Prefix Caches: Cartridges, ReasonCACHE, and PI | knlp</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -523,7 +523,7 @@
       <div class="nav-links">
         <a class="active" href="#top"><i class="fa-solid fa-layer-group"></i> LPC</a>
         <a href="#taxonomy">Taxonomy</a>
-        <a href="#arci">ARCI</a>
+        <a href="#arci">PI</a>
         <a href="#results">Pilot Results</a>
         <a href="#serving">vLLM Branch</a>
         <a href="#next">Next Tests</a>
@@ -535,7 +535,7 @@
     <section class="hero">
       <div class="wrap hero-grid">
         <div>
-          <div class="eyebrow">Cartridges / ReasonCACHE / ARCI</div>
+          <div class="eyebrow">Cartridges / ReasonCACHE / PI</div>
           <h1><span>Learned Prefix Caches</span><br>are the shared object.</h1>
           <p class="hero-lede">
             Cartridges, ReasonCACHE, skill caches, and document caches all
@@ -543,10 +543,9 @@
             difference is how training behavior is induced.
           </p>
           <p class="hero-sub">
-            KNLP uses Learned Prefix Cache (LPC) for the common artifact,
-            Cache Induction for the bridge process, and Active Reading Cache
-            Induction (ARCI) for the current method that turns raw documents
-            and skill files into trainable traces.
+            KNLP uses Learned Prefix Cache (LPC) for the common artifact and
+            Prefix Induction (PI) for the bridge process that turns raw
+            documents, skill files, and demonstrations into trainable traces.
           </p>
           <div class="actions">
             <a class="button primary" href="#results">
@@ -574,7 +573,7 @@
           <div class="tree-node left cartridges">
             <span class="tag">documents</span>
             <h3>Cartridges</h3>
-            <p>Raw corpus &rarr; self-study cache induction &rarr; context distillation &rarr; document prefix cache.</p>
+            <p>Raw corpus &rarr; SS-PI &rarr; context distillation &rarr; document prefix cache.</p>
           </div>
           <div class="tree-node right reason">
             <span class="tag">reasoning</span>
@@ -583,7 +582,7 @@
           </div>
           <div class="tree-node left arci">
             <span class="tag">bridge</span>
-            <h3>ARCI</h3>
+            <h3>AR-PI</h3>
             <p>Raw skills or documents &rarr; active-reading traces &rarr; KL or NTP &rarr; induced prefix cache.</p>
           </div>
         </div>
@@ -598,14 +597,14 @@
             <h2>The mechanism is not the missing piece.</h2>
           </div>
           <p>
-            The cleaner decomposition is source material, cache induction,
+            The cleaner decomposition is source material, prefix induction,
             training objective, and learned prefix cache. That separates the
             research question from the serving primitive.
           </p>
         </div>
 
         <div class="formula">
-          source material &rarr; cache induction &rarr; training objective &rarr; learned prefix cache
+          source material &rarr; prefix induction &rarr; training objective &rarr; learned prefix cache
         </div>
 
         <div class="grid cols-3" style="margin-top:14px;">
@@ -619,8 +618,8 @@
             </p>
           </div>
           <div class="card">
-            <span class="pill"><i class="fa-solid fa-diagram-project"></i> induction</span>
-            <h3 style="margin-top:14px;">Cache Induction</h3>
+            <span class="pill"><i class="fa-solid fa-diagram-project"></i> PI</span>
+            <h3 style="margin-top:14px;">Prefix Induction</h3>
             <p>
               The bridge process that turns raw source material into behavior
               the prefix can learn. Cartridges use fixed self-study. ReasonCACHE
@@ -628,12 +627,12 @@
             </p>
           </div>
           <div class="card">
-            <span class="pill"><i class="fa-solid fa-book-open-reader"></i> ARCI</span>
-            <h3 style="margin-top:14px;">Active Reading Cache Induction</h3>
+            <span class="pill"><i class="fa-solid fa-book-open-reader"></i> AR-PI</span>
+            <h3 style="margin-top:14px;">Active Reading Prefix Induction</h3>
             <p>
               Active Reading generates task-specific study views, questions,
               procedures, and reasoning traces before prefix-cache training.
-              This is our current candidate for general cache induction.
+              This is the current active-reading PI candidate.
             </p>
           </div>
         </div>
@@ -665,11 +664,11 @@
       <div class="wrap">
         <div class="section-head">
           <div>
-            <div class="section-kicker">ARCI</div>
-            <h2>Active Reading fills the trace-induction hole.</h2>
+            <div class="section-kicker">Prefix Induction</div>
+            <h2>Active Reading fills one trace-induction hole.</h2>
           </div>
           <p>
-            Active Reading Cache Induction is the bridge under test: generate
+            Active Reading Prefix Induction is one bridge under test: generate
             trainable behavior from uncurated sources, then train the same
             learned prefix cache object used by Cartridges and ReasonCACHE.
           </p>
@@ -686,9 +685,9 @@
           <div class="card metric">
             <div>
               <div class="value green">2</div>
-              <div class="label">Induction families: fixed self-study and Active Reading.</div>
+              <div class="label">Prefix Induction families: fixed self-study and Active Reading.</div>
             </div>
-            <div class="source">cache induction</div>
+            <div class="source">PI</div>
           </div>
           <div class="card metric">
             <div>
@@ -717,7 +716,7 @@
             </p>
             <div class="note" style="margin-top:14px;">
               For ReasonCACHE-style skill work, trace generation is not optional.
-              Either curated traces already exist, or cache induction must create
+              Either curated traces already exist, or Prefix Induction must create
               them before prefix training starts.
             </div>
           </div>
@@ -725,11 +724,11 @@
             <h3>The stronger experiment</h3>
             <p>
               Hold the cache mechanism, model, prefix size, teacher, and scoring
-              fixed. Compare fixed self-study cache induction against ARCI, and
+              fixed. Compare fixed self-study PI against AR-PI, and
               compare next-token training against teacher-KL distillation.
             </p>
             <div class="formula" style="margin-top:14px;">
-              fixed self-study + KL &nbsp;vs&nbsp; ARCI + KL
+              SS-PI + KL &nbsp;vs&nbsp; AR-PI + KL
             </div>
           </div>
         </div>
@@ -741,7 +740,7 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Current PoC</div>
-            <h2>ARCI creates useful skill traces on two of four pilot tasks.</h2>
+            <h2>AR-PI creates useful skill traces on two of four pilot tasks.</h2>
           </div>
           <p>
             The pilot is not a final frontier. It is enough to justify the
@@ -754,7 +753,7 @@
           <div class="card metric hot">
             <div>
               <div class="value green">31/65</div>
-              <div class="label">Aggregate pass count for ARCI reasoning plus teacher KL.</div>
+              <div class="label">Aggregate pass count for R-PI plus teacher KL.</div>
             </div>
             <div class="source">47.7% pilot pass rate</div>
           </div>
@@ -768,7 +767,7 @@
           <div class="card metric">
             <div>
               <div class="value cyan">18/65</div>
-              <div class="label">Aggregate pass count for ARCI skill traces plus teacher KL.</div>
+              <div class="label">Aggregate pass count for AR-PI skill traces plus teacher KL.</div>
             </div>
             <div class="source">27.7% pilot pass rate</div>
           </div>
@@ -784,7 +783,7 @@
         <div class="grid cols-2" style="margin-top:14px;">
           <div class="card chart-card">
             <h3>Aggregate pilot pass rate</h3>
-            <p>Same four SkillsBench tasks. The ARCI reasoning arm is the best current synthetic trace arm.</p>
+            <p>Same four SkillsBench tasks. The R-PI arm is the best current synthetic trace arm.</p>
             <div class="chart-shell"><canvas id="aggregateChart"></canvas></div>
           </div>
           <div class="card chart-card">
@@ -795,7 +794,7 @@
         </div>
 
         <div class="card" style="margin-top:14px;">
-          <h3>SkillsBench ARCI pilot table</h3>
+          <h3>SkillsBench PI pilot table</h3>
           <p>
             The table keeps the induction target visible. The biggest signals
             are Excel table into PPT and recover missing XLSX data. Powerlifting
@@ -808,8 +807,8 @@
                 <th>Task</th>
                 <th>Raw skill NTP</th>
                 <th>Fixed self-study KL</th>
-                <th>ARCI skill KL</th>
-                <th>ARCI reasoning KL</th>
+                <th>AR-PI skill KL</th>
+                <th>R-PI KL</th>
                 <th>Interpretation</th>
               </tr>
               <tr>
@@ -834,7 +833,7 @@
                 <td class="ok">12 / 19</td>
                 <td>1 / 19</td>
                 <td class="ok">14 / 19</td>
-                <td>Reasoning-focused ARCI beats fixed self-study on this task.</td>
+                <td>R-PI beats fixed self-study on this task.</td>
               </tr>
               <tr>
                 <td><strong>Weighted GDP calculation</strong></td>
@@ -988,44 +987,49 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Next tests</div>
-            <h2>Make the bridge claim harder to fake.</h2>
+            <h2>The strategic move is Prefix Induction.</h2>
           </div>
           <p>
-            The next run should broaden task strata and separate induction cost
-            from serving cost. A useful Pareto frontier counts offline trace
-            generation, teacher passes, prefix bytes, online prompt tokens, and
-            expected requests sharing the learned prefix.
+            This is work in progress. The next run treats PI like the KRI
+            algorithm-vetting layer: hold the LPC mechanism fixed, compare a
+            small set of task-oriented induction algorithms, and price each one
+            by trace generation, teacher passes, prefix bytes, online prompt
+            tokens, and expected requests sharing the learned prefix.
           </p>
         </div>
 
         <div class="grid cols-3">
           <div class="card">
-            <h3>Stratify SkillsBench</h3>
+            <h3>SS-PI</h3>
             <p>
-              Add smallest, deterministic-random, medium, and largest task
-              strata instead of only the four large cartridge-era tasks.
+              Self-Study Prefix Induction keeps the Cartridges-style baseline:
+              generate broad synthetic conversations or QA around the source,
+              then distill against the teacher behavior.
             </p>
           </div>
           <div class="card">
-            <h3>Control the induction objective</h3>
+            <h3>AR-PI</h3>
             <p>
-              Compare raw document NTP, fixed self-study NTP, fixed self-study
-              KL, ARCI NTP, ARCI skill KL, and ARCI reasoning KL.
+              Active Reading Prefix Induction asks for source-specific study
+              strategies, procedural views, and examples before training the
+              learned prefix.
             </p>
           </div>
           <div class="card">
-            <h3>Price repeated use</h3>
+            <h3>R-PI</h3>
             <p>
-              Plot quality against amortized cost for expected request counts.
-              A prefix cache is only better when reuse repays induction cost.
+              Reasoning Prefix Induction focuses the generated traces on
+              intermediate reasoning, decision points, and task-solving
+              rationales when curated traces do not already exist.
             </p>
           </div>
         </div>
 
         <div class="note" style="margin-top:14px;">
           The terminology stays stable: Learned Prefix Cache names the artifact,
-          Cache Induction names the bridge, and Active Reading Cache Induction
-          names the current bridge method.
+          Prefix Induction names the bridge process, and SS-PI, AR-PI, and R-PI
+          are the initial algorithms under test. Verifier-guided variants stay
+          out of the claim until they are measured.
         </div>
       </div>
     </section>
@@ -1053,7 +1057,7 @@
     new Chart(document.getElementById("aggregateChart"), {
       type: "bar",
       data: {
-        labels: ["No skill", "Raw NTP", "Self-study KL", "ARCI skill", "ARCI reasoning"],
+        labels: ["No skill", "Raw NTP", "Self-study KL", "AR-PI skill", "R-PI"],
         datasets: [{
           label: "Aggregate pass rate",
           data: [0.169, 0.169, 0.338, 0.277, 0.477],
@@ -1118,14 +1122,14 @@
             backgroundColor: "#f2b84d"
           },
           {
-            label: "ARCI skill KL",
+            label: "AR-PI skill KL",
             data: [{ x: 3001, y: 0.277 }],
             pointRadius: 8,
             pointHoverRadius: 10,
             backgroundColor: "#62a8ff"
           },
           {
-            label: "ARCI reasoning KL",
+            label: "R-PI KL",
             data: [{ x: 3001, y: 0.477 }],
             pointRadius: 9,
             pointHoverRadius: 11,
