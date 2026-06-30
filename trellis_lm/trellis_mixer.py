@@ -121,7 +121,11 @@ class TrellisMixer(nn.Module):
         cfg = self.cfg
         if (
             cfg.trellis_update_stabilizer
-            in ("layerwise_gamma", "innovation_rms_cap_plus_layerwise_gamma")
+            in (
+                "layerwise_gamma",
+                "innovation_rms_cap_plus_layer0_gamma",
+                "innovation_rms_cap_plus_layerwise_gamma",
+            )
             and self.layer_idx == 0
             and cfg.trellis_layer0_gamma_mult != 1.0
         ):

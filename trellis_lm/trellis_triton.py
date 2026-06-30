@@ -253,6 +253,7 @@ if HAS_TRITON:
             return 0
         if stabilizer in (
             "innovation_rms_cap",
+            "innovation_rms_cap_plus_layer0_gamma",
             "innovation_rms_cap_plus_layerwise_gamma",
         ):
             return 1 if innovation_rms_cap > 0.0 else 0
