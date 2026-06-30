@@ -202,14 +202,21 @@ footer a { color: var(--cyan); text-decoration: none; }
 </div>
 
 <h3>SCI vs First-k</h3>
-<p><strong>SCI (Sampled Chunk Initialization)</strong> samples random 64-token chunks from across the document instead of taking the first <em>p</em> tokens. In theory, this captures broader content. In practice, both strategies produce nearly identical results:</p>
+<p><strong>SCI (Sampled Chunk Initialization)</strong> samples random 64-token chunks from across the document instead of taking the first <em>p</em> tokens. In theory, this captures broader content and may help optimization reach useful document coverage sooner. The original cartridge timing run showed similar fixed-budget wall-clock and decode behavior:</p>
 <table>
   <tr><th>Prefix</th><th>First-k (s)</th><th>SCI (s)</th><th>E2E First-k (tok/s)</th><th>E2E SCI (tok/s)</th></tr>
   <tr><td>256</td><td>661</td><td>682</td><td>59.5</td><td>60.0</td></tr>
   <tr><td>4,096</td><td>1,144</td><td>1,131</td><td>56.5</td><td>55.9</td></tr>
   <tr><td>16,384</td><td>2,684</td><td>2,610</td><td>44.5</td><td>44.2</td></tr>
 </table>
-<p>SCI's broader initialization does not translate into measurable quality or performance advantage over First-k.</p>
+<p>That table does not prove faster convergence. It reports fixed-budget runtime, not steps-to-quality or loss-to-threshold. A June 2026 A100 retest for learned-prefix skill caches separated paper SCI from two other initializers: first-k and the older KNLP <em>strided-RoPE</em> initializer that had previously been easy to confuse with SCI.</p>
+<table>
+  <tr><th>Task / arm</th><th>First-k</th><th>SCI seed 0</th><th>SCI seed 1</th><th>SCI seed 2</th><th>Strided-RoPE</th></tr>
+  <tr><td>xlsx, AR-TA + KL</td><td>12 / 19</td><td>1 / 19</td><td class="hi">13 / 19</td><td>3 / 19</td><td class="hi">15 / 19</td></tr>
+  <tr><td>xlsx, SS-PI + KL</td><td>1 / 19</td><td>0 / 1 invalid</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td></tr>
+  <tr><td>syzkaller, best learned-prefix row</td><td>0 / 7</td><td class="hi">1 / 7</td><td>&mdash;</td><td>&mdash;</td><td class="hi">1 / 7</td></tr>
+</table>
+<p>The retest does <em>not</em> confirm a faster-training claim for SCI. All A100 arms used the same 24 optimizer steps. Median train time was effectively identical: first-k 2.894s, SCI seed 0 2.892s, and strided-RoPE 2.897s. SCI can be strong, but naive random chunk sampling is seed-sensitive. The next useful SCI experiment is a true convergence test: vary training steps and measure quality-to-threshold across multiple SCI seeds and a smarter chunk selector.</p>
 </div>
 
 <!-- ============================================================ -->
