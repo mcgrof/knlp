@@ -155,6 +155,20 @@ parser.add_argument(
     help="json output file to use for stats, deafult is training_metrics.json",
 )
 parser.add_argument(
+    "--output-dir",
+    type=str,
+    default=".",
+    help="Directory for checkpoints and plots (test matrix passes the "
+    "per-run dir here; default is the current directory)",
+)
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=None,
+    help="Override the epoch count from config.py (test matrix uses this "
+    "for --override-epochs; default None means use NUM_EPOCHS from config)",
+)
+parser.add_argument(
     "--weight-decay",
     type=float,
     default=None,
@@ -224,6 +238,10 @@ batch_size = int(config.get("BATCH_SIZE", 512)) if config else 512
 num_classes = 10
 learning_rate = float(config.get("LEARNING_RATE", 0.001)) if config else 0.001
 num_epochs = int(config.get("NUM_EPOCHS", 10)) if config else 10
+# A --epochs override (e.g. the test matrix's --override-epochs) wins over
+# the config value so short CPU/smoke runs don't need a separate defconfig.
+if args.epochs is not None:
+    num_epochs = args.epochs
 num_workers = int(config.get("NUM_WORKERS", 16)) if config else 16
 
 # Time-based training (0 = no limit, train for NUM_EPOCHS)
@@ -834,8 +852,12 @@ training_metrics["final_accuracy"] = accuracy
 training_metrics["end_time"] = datetime.now().isoformat()
 
 # Save the model. This uses buffered IO, so we flush to measure how long
-# it takes to save with writeback incurred to the filesystem.
-model_filename = "lenet5_pruned.pth" if enable_pruning else "lenet5_optimized.pth"
+# it takes to save with writeback incurred to the filesystem. Artifacts go
+# under --output-dir (the test matrix's per-run dir) so they don't litter
+# the repo root; default "." preserves the standalone behavior.
+os.makedirs(args.output_dir, exist_ok=True)
+model_basename = "lenet5_pruned.pth" if enable_pruning else "lenet5_optimized.pth"
+model_filename = os.path.join(args.output_dir, model_basename)
 save_start_time = time.time()
 with open(model_filename, "wb") as f:
     torch.save(model.state_dict(), f)
@@ -871,8 +893,9 @@ try:
         plot_script = "plot_training.py"  # Fallback to local
 
     if os.path.exists(plot_script):
-        output_name = (
-            f"{args.optimizer}_{args.pruning_method}_{int(args.target_sparsity*100)}"
+        output_name = os.path.join(
+            args.output_dir,
+            f"{args.optimizer}_{args.pruning_method}_{int(args.target_sparsity*100)}",
         )
         plot_cmd = ["python3", plot_script, args.json_output, "--output", output_name]
         result = subprocess.run(plot_cmd, capture_output=True, text=True, timeout=10)
