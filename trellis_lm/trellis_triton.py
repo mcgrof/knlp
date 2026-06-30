@@ -40,6 +40,7 @@ if HAS_TRITON:
         rC_ptr,
         P_ptr,
         g_ptr,
+        Gate_ptr,
         M0_ptr,
         U_ptr,
         nC,
@@ -50,6 +51,8 @@ if HAS_TRITON:
         ACT: tl.constexpr,
         STABILIZER: tl.constexpr,
         INNOVATION_RMS_CAP: tl.constexpr,
+        GATE_WIDTH: tl.constexpr,
+        RESIDUAL_UPDATE_MIX: tl.constexpr,
         EPS: tl.constexpr,
     ):
         n = tl.program_id(0)
@@ -77,7 +80,8 @@ if HAS_TRITON:
                 var = tl.sum(sc * sc, axis=1) / M  # [C]
                 std = tl.sqrt(var + EPS)
                 y = sc / std[:, None]
-                err = y - alpha
+                resid = y - alpha
+                err = resid
                 if STABILIZER == 1:
                     err_sq = tl.where(valid_m[None, :], err * err, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
@@ -88,12 +92,15 @@ if HAS_TRITON:
                 eymean = tl.sum(err * y, axis=1) / M
                 ds = (err - emean[:, None] - y * eymean[:, None]) / std[:, None]
                 u = silu_grad * ds  # [C,M]
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u += RESIDUAL_UPDATE_MIX * resid
             elif ACT == 1:
                 # SiLU VJP: u = silu'(z) * (silu(z) - alpha).
                 sig = tl.sigmoid(z)
                 s = z * sig
                 silu_grad = sig + s * (1.0 - sig)
-                err = s - alpha
+                resid = s - alpha
+                err = resid
                 if STABILIZER == 1:
                     err_sq = tl.where(valid_m[None, :], err * err, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
@@ -101,9 +108,12 @@ if HAS_TRITON:
                     scale = tl.where(scale < 1.0, scale, 1.0)
                     err = err * scale[:, None]
                 u = silu_grad * err
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u += RESIDUAL_UPDATE_MIX * resid
             else:
                 # Identity VJP: u = z - alpha.
-                err = z - alpha
+                resid = z - alpha
+                err = resid
                 if STABILIZER == 1:
                     err_sq = tl.where(valid_m[None, :], err * err, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
@@ -111,6 +121,16 @@ if HAS_TRITON:
                     scale = tl.where(scale < 1.0, scale, 1.0)
                     err = err * scale[:, None]
                 u = err
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u += RESIDUAL_UPDATE_MIX * resid
+            if GATE_WIDTH == 1:
+                gbase = (n * nC + c) * C
+                gate = tl.load(Gate_ptr + gbase + rc)  # [C]
+                u = u * gate[:, None]
+            elif GATE_WIDTH > 1:
+                gbase = (n * nC + c) * C * M
+                gate = tl.load(Gate_ptr + gbase + rc[:, None] * M + rm[None, :])
+                u = u * gate
             # store start-state M0 (= current state) and code u
             m0base = (n * nC + c) * M * D
             tl.store(M0_ptr + m0base + rm[:, None] * D + rd[None, :], state)
@@ -138,6 +158,8 @@ if HAS_TRITON:
         gP_ptr,
         gRC_ptr,
         gG_ptr,
+        Gate_ptr,
+        gGate_ptr,
         nC,
         M: tl.constexpr,
         D: tl.constexpr,
@@ -146,6 +168,8 @@ if HAS_TRITON:
         ACT: tl.constexpr,
         STABILIZER: tl.constexpr,
         INNOVATION_RMS_CAP: tl.constexpr,
+        GATE_WIDTH: tl.constexpr,
+        RESIDUAL_UPDATE_MIX: tl.constexpr,
         EPS: tl.constexpr,
     ):
         n = tl.program_id(0)
@@ -184,6 +208,16 @@ if HAS_TRITON:
             # bar_u_total = grad_us + bar_u_state ; grad_A = alpha adjoint
             gU = tl.load(gU_ptr + ubase + rc[:, None] * M + rm[None, :])  # [C,M]
             bar_u = gU + bar_u_state  # [C,M]
+            if GATE_WIDTH == 1:
+                gbase = (n * nC + c) * C
+                gate = tl.load(Gate_ptr + gbase + rc)  # [C]
+                bar_u_pre_gate = bar_u * gate[:, None]
+            elif GATE_WIDTH > 1:
+                gbase = (n * nC + c) * C * M
+                gate = tl.load(Gate_ptr + gbase + rc[:, None] * M + rm[None, :])
+                bar_u_pre_gate = bar_u * gate
+            else:
+                bar_u_pre_gate = bar_u
             if ACT == 0:
                 # recompute z = W @ M0^T -> [C,M] for the LN-SiLU adjoint
                 z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
@@ -197,17 +231,29 @@ if HAS_TRITON:
                 std = tl.sqrt(var + EPS)
                 y = sc / std[:, None]
                 scale = tl.full((C,), 1.0, dtype=tl.float32)
+                resid = y - alpha
+                err_for_u = resid
                 if STABILIZER == 1:
-                    err = y - alpha
-                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_sq = tl.where(valid_m[None, :], resid * resid, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
                     scale = INNOVATION_RMS_CAP / (err_rms + EPS)
                     scale = tl.where(scale < 1.0, scale, 1.0)
-                h = silu_grad * bar_u
+                    err_for_u = resid * scale[:, None]
+                emean_u = tl.sum(err_for_u, axis=1) / M
+                eymean_u = tl.sum(err_for_u * y, axis=1) / M
+                ds_u = (
+                    err_for_u - emean_u[:, None] - y * eymean_u[:, None]
+                ) / std[:, None]
+                u_aug = silu_grad * ds_u
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u_aug += RESIDUAL_UPDATE_MIX * resid
+                h = silu_grad * bar_u_pre_gate
                 hmean = tl.sum(h, axis=1) / M
                 hymean = tl.sum(h * y, axis=1) / M
                 lnop = (h - hmean[:, None] - y * hymean[:, None]) / std[:, None]
                 grad_A = -scale[:, None] * lnop  # [C,M]
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    grad_A += -RESIDUAL_UPDATE_MIX * bar_u_pre_gate
             elif ACT == 1:
                 z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
                 alpha = tl.load(A_ptr + ubase + rc[:, None] * M + rm[None, :])
@@ -215,24 +261,40 @@ if HAS_TRITON:
                 s = z * sig
                 silu_grad = sig + s * (1.0 - sig)
                 scale = tl.full((C,), 1.0, dtype=tl.float32)
+                resid = s - alpha
                 if STABILIZER == 1:
-                    err = s - alpha
-                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_sq = tl.where(valid_m[None, :], resid * resid, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
                     scale = INNOVATION_RMS_CAP / (err_rms + EPS)
                     scale = tl.where(scale < 1.0, scale, 1.0)
-                grad_A = -(scale[:, None] * silu_grad * bar_u)
+                u_aug = silu_grad * (scale[:, None] * resid)
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u_aug += RESIDUAL_UPDATE_MIX * resid
+                grad_A = -(scale[:, None] * silu_grad * bar_u_pre_gate)
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    grad_A += -RESIDUAL_UPDATE_MIX * bar_u_pre_gate
             else:
                 z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
                 alpha = tl.load(A_ptr + ubase + rc[:, None] * M + rm[None, :])
                 scale = tl.full((C,), 1.0, dtype=tl.float32)
+                resid = z - alpha
                 if STABILIZER == 1:
-                    err = z - alpha
-                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_sq = tl.where(valid_m[None, :], resid * resid, 0.0)
                     err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
                     scale = INNOVATION_RMS_CAP / (err_rms + EPS)
                     scale = tl.where(scale < 1.0, scale, 1.0)
-                grad_A = -(scale[:, None] * bar_u)
+                u_aug = scale[:, None] * resid
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    u_aug += RESIDUAL_UPDATE_MIX * resid
+                grad_A = -(scale[:, None] * bar_u_pre_gate)
+                if RESIDUAL_UPDATE_MIX != 0.0:
+                    grad_A += -RESIDUAL_UPDATE_MIX * bar_u_pre_gate
+            if GATE_WIDTH == 1:
+                ggate = tl.sum(tl.where(valid_m[None, :], bar_u * u_aug, 0.0), axis=1)
+                tl.store(gGate_ptr + gbase + rc, ggate)
+            elif GATE_WIDTH > 1:
+                ggate = tl.where(valid_m[None, :], bar_u * u_aug, 0.0)
+                tl.store(gGate_ptr + gbase + rc[:, None] * M + rm[None, :], ggate)
             tl.store(gA_ptr + ubase + rc[:, None] * M + rm[None, :], grad_A)
             # carry: bar_M = grad_M0s + Plast * bar_M1
             gM0 = tl.load(gM0_ptr + m0base + rm[:, None] * D + rd[None, :])
@@ -270,6 +332,23 @@ if HAS_TRITON:
             return alpha
         return F.pad(alpha, (0, pad))
 
+    def _prepare_gate(update_gate, B, H, T, nC, C, M, M_actual):
+        if update_gate is None:
+            return None, 0
+        gate_width = update_gate.shape[-1]
+        if gate_width not in (1, M_actual):
+            raise ValueError(
+                "Triton Trellis update_gate must have last dim 1 or n_slots"
+            )
+        pad_t = nC * C - T
+        if gate_width == 1:
+            gate = F.pad(update_gate, (0, 0, 0, pad_t), value=1.0)
+            gate = gate.reshape(B * H, nC, C).contiguous().float()
+            return gate, 1
+        gate = F.pad(update_gate, (0, M - M_actual, 0, pad_t), value=1.0)
+        gate = gate.reshape(B * H, nC, C, M).contiguous().float()
+        return gate, M
+
     def trellis_state_evolution_triton(
         write,
         alpha,
@@ -280,6 +359,8 @@ if HAS_TRITON:
         activation="ln_silu",
         stabilizer="none",
         innovation_rms_cap=0.0,
+        update_gate=None,
+        residual_update_mix=0.0,
     ):
         """Triton fused forward. Returns M0s [B,H,nC,M,D], us [B,H,nC,C,M]."""
         M0s, us = _evo_fwd(
@@ -292,6 +373,8 @@ if HAS_TRITON:
             activation,
             stabilizer,
             innovation_rms_cap,
+            update_gate,
+            residual_update_mix,
         )
         return M0s, us
 
@@ -309,6 +392,8 @@ if HAS_TRITON:
         activation,
         stabilizer,
         innovation_rms_cap,
+        update_gate,
+        residual_update_mix,
     ):
         B, H, T, D = write.shape
         M_actual = alpha.shape[-1]
@@ -325,6 +410,8 @@ if HAS_TRITON:
         alpha = _pad_alpha_slots(alpha, M)
         Wp = write.reshape(N, nC, C, D).contiguous().float()
         Ap = alpha.reshape(N, nC, C, M).contiguous().float()
+        gate, gate_width = _prepare_gate(update_gate, B, H, T, nC, C, M, M_actual)
+        gate_arg = gate if gate is not None else torch.empty(1, device=dev)
         rC = rmat[:, :, :, -1, :].reshape(N, nC, C).contiguous().float()
         Pl = P[:, :, :, -1, 0].reshape(N, nC).contiguous().float()
         g = _gamma_to_N(gamma, B, H)
@@ -336,6 +423,7 @@ if HAS_TRITON:
             rC,
             Pl,
             g,
+            gate_arg,
             M0s,
             us,
             nC,
@@ -346,6 +434,8 @@ if HAS_TRITON:
             ACT=act,
             STABILIZER=stab,
             INNOVATION_RMS_CAP=float(innovation_rms_cap),
+            GATE_WIDTH=gate_width,
+            RESIDUAL_UPDATE_MIX=float(residual_update_mix),
             EPS=1e-6,
         )
         M0s = M0s.view(B, H, nC, M, D)[:, :, :, :M_actual, :]
@@ -368,6 +458,8 @@ if HAS_TRITON:
             activation,
             stabilizer="none",
             innovation_rms_cap=0.0,
+            update_gate=None,
+            residual_update_mix=0.0,
         ):
             B, H, T, D = write.shape
             M_actual = alpha.shape[-1]
@@ -387,6 +479,17 @@ if HAS_TRITON:
             alpha = _pad_alpha_slots(alpha, M)
             Wp = write.reshape(N, nC, C, D).contiguous().float()
             Ap = alpha.reshape(N, nC, C, M).contiguous().float()
+            gate, gate_width = _prepare_gate(
+                update_gate,
+                B,
+                H,
+                T,
+                nC,
+                C,
+                M,
+                M_actual,
+            )
+            gate_arg = gate if gate is not None else torch.empty(1, device=dev)
             rCl = rmat[:, :, :, -1, :].reshape(N, nC, C).contiguous().float()
             Pl = P[:, :, :, -1, 0].reshape(N, nC).contiguous().float()
             g = _gamma_to_N(gamma, B, H)
@@ -398,6 +501,7 @@ if HAS_TRITON:
                 rCl,
                 Pl,
                 g,
+                gate_arg,
                 M0s,
                 us,
                 nC,
@@ -408,9 +512,11 @@ if HAS_TRITON:
                 ACT=act,
                 STABILIZER=stab,
                 INNOVATION_RMS_CAP=float(innovation_rms_cap),
+                GATE_WIDTH=gate_width,
+                RESIDUAL_UPDATE_MIX=float(residual_update_mix),
                 EPS=1e-6,
             )
-            ctx.save_for_backward(Wp, Ap, rCl, Pl, g, M0s, us)
+            ctx.save_for_backward(Wp, Ap, rCl, Pl, g, M0s, us, gate_arg)
             ctx.dims = (
                 B,
                 H,
@@ -423,6 +529,8 @@ if HAS_TRITON:
                 act,
                 stab,
                 float(innovation_rms_cap),
+                gate_width,
+                float(residual_update_mix),
             )
             M0v = M0s.view(B, H, nC, M, D)[:, :, :, :M_actual, :]
             usv = us.view(B, H, nC, C, M)[:, :, :, :, :M_actual]
@@ -430,7 +538,7 @@ if HAS_TRITON:
 
         @staticmethod
         def backward(ctx, grad_M0s, grad_us):
-            Wp, Ap, rCl, Pl, g, M0s, us = ctx.saved_tensors
+            Wp, Ap, rCl, Pl, g, M0s, us, gate_arg = ctx.saved_tensors
             (
                 B,
                 H,
@@ -443,6 +551,8 @@ if HAS_TRITON:
                 act,
                 stab,
                 innovation_rms_cap,
+                gate_width,
+                residual_update_mix,
             ) = ctx.dims
             N = B * H
             dev = Wp.device
@@ -451,6 +561,12 @@ if HAS_TRITON:
             gP_last = torch.empty(N, nC, device=dev, dtype=torch.float32)
             gRC = torch.empty(N, nC, C, device=dev, dtype=torch.float32)
             gG_n = torch.empty(N, device=dev, dtype=torch.float32)
+            if gate_width == 1:
+                gGate = torch.empty(N, nC, C, device=dev, dtype=torch.float32)
+            elif gate_width > 1:
+                gGate = torch.empty(N, nC, C, M, device=dev, dtype=torch.float32)
+            else:
+                gGate = torch.empty(1, device=dev, dtype=torch.float32)
             if M != M_actual:
                 grad_M0s = F.pad(grad_M0s, (0, 0, 0, M - M_actual))
                 grad_us = F.pad(grad_us, (0, M - M_actual))
@@ -471,6 +587,8 @@ if HAS_TRITON:
                 gP_last,
                 gRC,
                 gG_n,
+                gate_arg,
+                gGate,
                 nC,
                 M=M,
                 D=D,
@@ -479,6 +597,8 @@ if HAS_TRITON:
                 ACT=act,
                 STABILIZER=stab,
                 INNOVATION_RMS_CAP=float(innovation_rms_cap),
+                GATE_WIDTH=gate_width,
+                RESIDUAL_UPDATE_MIX=float(residual_update_mix),
                 EPS=1e-6,
             )
             grad_write = gW.view(B, H, nC * C, D)[:, :, :T].contiguous()
@@ -488,6 +608,14 @@ if HAS_TRITON:
             grad_rmat = torch.zeros(B, H, nC, C, C, device=dev, dtype=torch.float32)
             grad_rmat[:, :, :, -1, :] = gRC.view(B, H, nC, C)
             grad_gamma = gG_n.view(B, H).sum(0)
+            if gate_width == 1:
+                grad_gate = gGate.view(B, H, nC * C, 1)[:, :, :T, :].contiguous()
+            elif gate_width > 1:
+                grad_gate = (
+                    gGate.view(B, H, nC * C, M)[:, :, :T, :M_actual].contiguous()
+                )
+            else:
+                grad_gate = None
             grads = (
                 grad_write,
                 grad_alpha,
@@ -497,6 +625,8 @@ if HAS_TRITON:
                 None,
                 None,
                 None,
+                None,
+                grad_gate,
                 None,
             )
             return grads[: len(ctx.needs_input_grad)]

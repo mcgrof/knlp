@@ -400,17 +400,24 @@ class TrellisMixer(nn.Module):
                 triton_ln_silu = (
                     cfg.activation == "ln_silu" and cfg.n_slots == cfg.d_head
                 )
-                nvidia_cuda = write2.is_cuda and torch.version.hip is None
-                triton_plain_update = (
-                    update_gate is None
-                    and cfg.residual_update_mix == 0.0
-                    and cfg.trellis_update_stabilizer
-                    != "delta_ratio_cap"
+                nvidia_cuda = write2.is_cuda and (
+                    getattr(torch.version, "hip", None) is None
+                )
+                update_gate2 = None
+                if update_gate is not None:
+                    update_gate2 = (
+                        update_gate.unsqueeze(0)
+                        .expand(2, B, self.H, T, update_gate.shape[-1])
+                        .reshape(2 * B, self.H, T, update_gate.shape[-1])
+                        .contiguous()
+                    )
+                triton_fused_update = cfg.trellis_update_stabilizer != (
+                    "delta_ratio_cap"
                 )
                 if (
                     HAS_TRITON
                     and nvidia_cuda
-                    and triton_plain_update
+                    and triton_fused_update
                     and (triton_pointwise or triton_ln_silu)
                 ):
                     # Fused Triton state-evolution: collapses the nC-chunk Python
@@ -426,16 +433,10 @@ class TrellisMixer(nn.Module):
                         cfg.activation,
                         cfg.trellis_update_stabilizer,
                         cfg.trellis_innovation_rms_cap,
+                        update_gate2,
+                        cfg.residual_update_mix,
                     )
                 else:
-                    update_gate2 = None
-                    if update_gate is not None:
-                        update_gate2 = (
-                            update_gate.unsqueeze(0)
-                            .expand(2, B, self.H, T, update_gate.shape[-1])
-                            .reshape(2 * B, self.H, T, update_gate.shape[-1])
-                            .contiguous()
-                        )
                     M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
                         write2,
                         alpha2,
