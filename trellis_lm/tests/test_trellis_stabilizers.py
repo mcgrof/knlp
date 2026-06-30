@@ -98,6 +98,26 @@ def test_layer0_gamma_multiplier_only_changes_layer0_effective_gamma():
     assert torch.allclose(layer1, gamma0)
 
 
+def test_layer0_gamma_alias_matches_requested_cap_combo_name():
+    cfg = TrellisConfig(
+        vocab_size=128,
+        d_model=32,
+        n_layers=2,
+        n_heads=2,
+        d_head=8,
+        n_slots=8,
+        trellis_update_stabilizer="innovation_rms_cap_plus_layer0_gamma",
+        trellis_innovation_rms_cap=24.0,
+        trellis_layer0_gamma_mult=0.75,
+    )
+    model = TrellisLM(cfg)
+    gamma0 = torch.ones(cfg.n_heads)
+    layer0 = model.blocks[0].mixer.effective_gamma(gamma0)
+    layer1 = model.blocks[1].mixer.effective_gamma(gamma0)
+    assert torch.allclose(layer0, torch.full_like(gamma0, 0.75))
+    assert torch.allclose(layer1, gamma0)
+
+
 def test_synthetic_large_innovation_has_no_nan_reference_path():
     torch.manual_seed(0)
     B, H, T, D, M, C = 1, 2, 16, 8, 8, 8

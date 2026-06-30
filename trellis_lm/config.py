@@ -93,6 +93,7 @@ class TrellisConfig:
             "innovation_rms_cap",
             "delta_ratio_cap",
             "layerwise_gamma",
+            "innovation_rms_cap_plus_layer0_gamma",
             "innovation_rms_cap_plus_layerwise_gamma",
         ), self.trellis_update_stabilizer
         assert self.trellis_innovation_rms_cap >= 0.0, (
