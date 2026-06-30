@@ -860,13 +860,13 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Our implementation result</div>
-            <h2>vLLM accepts learned prefixes; ARCI gives the first skill signal.</h2>
+            <h2>vLLM accepts learned prefixes; PI gives the first skill signal.</h2>
           </div>
           <p>
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
-            The first H100 skill-trace run adds quality evidence for the
-            induction layer, not just the connector.
+            The H100 skill-trace run and A100 SCI/Active Reading retest add
+            quality evidence for the induction layer, not just the connector.
           </p>
         </div>
 
@@ -888,16 +888,16 @@
           <div class="card metric">
             <div>
               <div class="value amber">JSON+CSV</div>
-              <div class="label">The H100 runs generated scored ablation JSONs plus Pareto CSV artifacts.</div>
+              <div class="label">The H100 and A100 runs generated scored ablation JSONs plus CSV summaries.</div>
             </div>
-            <div class="source">H100 CLI + skill-trace runs</div>
+            <div class="source">skill-trace and SCI/AR retests</div>
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">40</div>
-              <div class="label">Fresh H100 result JSONs across four SkillsBench tasks and ten ablation arms.</div>
+              <div class="value cyan">126</div>
+              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows plus 86 A100 retest rows.</div>
             </div>
-            <div class="source">real traces skipped: unavailable</div>
+            <div class="source">two completed GPU matrices</div>
           </div>
         </div>
 
@@ -911,7 +911,7 @@
               <tr><td><strong>Placeholder tokens</strong></td><td class="ok">Required until vLLM grows true virtual-prefix scheduling.</td></tr>
               <tr><td><strong>SkillsBench harness</strong></td><td class="ok">Run, compare, and normalize arm results.</td></tr>
               <tr><td><strong>Pareto frontier</strong></td><td class="ok">Emit per-task and aggregate-by-arm JSON/CSV reports.</td></tr>
-              <tr><td><strong>ARCI ablations</strong></td><td class="ok">Compare raw skill NTP, fixed self-study, and Active Reading trace induction.</td></tr>
+              <tr><td><strong>PI ablations</strong></td><td class="ok">Compare raw skill NTP, fixed self-study, proper AR-TA, AR-TS, R-PI, and BO-PI.</td></tr>
             </table>
           </div>
 
@@ -1124,6 +1124,50 @@
           </div>
 
           <div class="card">
+            <h3>A100 SCI and Active Reading retest</h3>
+            <p>
+              The retest fixed two labels at once: paper SCI is sampled
+              contiguous chunks, not the legacy strided-RoPE initializer; and
+              paper Active Reading has task-agnostic and task-specific prompt
+              families. The best result came from proper task-agnostic Active
+              Reading, not from raw skill continuation.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Task</th>
+                  <th>Best A100 row</th>
+                  <th>No skill</th>
+                  <th>Main read</th>
+                </tr>
+                <tr>
+                  <td><strong>Excel table into PPT</strong></td>
+                  <td>0 / 8</td>
+                  <td>0 / 8</td>
+                  <td>No tested shallow arm helped in this matrix.</td>
+                </tr>
+                <tr>
+                  <td><strong>Recover missing XLSX data</strong></td>
+                  <td class="ok">AR-TA + strided-RoPE: 15 / 19</td>
+                  <td>6 / 19</td>
+                  <td>Task-agnostic Active Reading became the best PI arm.</td>
+                </tr>
+                <tr>
+                  <td><strong>syzkaller ppdev syzlang</strong></td>
+                  <td>best learned-prefix rows: 1 / 7</td>
+                  <td>0 / 7</td>
+                  <td>Weak signal, but first-k stayed below SCI and strided-RoPE.</td>
+                </tr>
+              </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              This run does not confirm faster SCI convergence. It used fixed
+              24-step training, and median training time was effectively equal:
+              first-k 2.894s, paper SCI seed 0 2.892s, and strided-RoPE 2.897s.
+            </div>
+          </div>
+
+          <div class="card">
             <h3>ReasonCACHE prefix sizing contract</h3>
             <ul class="tight-list">
               <li><span class="status-tag green">inferred</span> Prefix length is read from the checkpoint <span class="mono">num_tokens</span>.</li>
@@ -1177,9 +1221,9 @@
           </div>
           <p>
             The analyzer maximizes pass rate while minimizing online prompt
-            tokens, generated tokens, and latency. The current frontier mixes
-            fresh H100 ReasonCACHE skill-trace arms with historical cartridge
-            baselines, so it is a pilot, not a final claim.
+            tokens, generated tokens, and latency. The current frontier now has
+            two evidence layers: the H100 skill-trace pilot and the A100
+            SCI/Active Reading retest. It is still a pilot, not a final claim.
           </p>
         </div>
 
@@ -1200,10 +1244,10 @@
   --output-json /workspace/results/pareto.json \
   --output-csv /workspace/results/pareto.csv</pre>
             <div class="note" style="margin-top:14px;">
-              The next run expands beyond the four cartridge-era tasks into
-              smallest, deterministic-random, medium, and largest SkillsBench
-              strata. That is the run that can support a stronger Pareto claim
-              about ARCI as a general cache-induction method.
+              The A100 retest adds an initializer frontier: first-k, paper SCI,
+              and strided-RoPE are not interchangeable. The next run should
+              expand beyond the cartridge-era tasks into smallest,
+              deterministic-random, medium, and largest SkillsBench strata.
             </div>
           </div>
         </div>

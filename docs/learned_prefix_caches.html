@@ -740,12 +740,13 @@
         <div class="section-head">
           <div>
             <div class="section-kicker">Current PoC</div>
-            <h2>AR-PI creates useful skill traces on two of four pilot tasks.</h2>
+            <h2>PI quality and initializer choice both matter.</h2>
           </div>
           <p>
-            The pilot is not a final frontier. It is enough to justify the
-            bridge hypothesis: when the source lacks reasoning traces, induction
-            quality dominates whether the learned prefix cache is useful.
+            The H100 skill-trace pilot showed that generated behavior traces
+            matter. The A100 retest added a second axis: first-k, paper SCI,
+            and legacy strided-RoPE are different initializers, and paper SCI
+            is seed-sensitive.
           </p>
         </div>
 
@@ -777,6 +778,37 @@
               <div class="label">Aggregate pass count for raw skill NTP and no-skill baselines.</div>
             </div>
             <div class="source">negative control</div>
+          </div>
+        </div>
+
+        <div class="grid cols-4" style="margin-top:14px;">
+          <div class="card metric hot">
+            <div>
+              <div class="value green">86</div>
+              <div class="label">A100 retest rows across three SkillsBench tasks.</div>
+            </div>
+            <div class="source">SCI + Active Reading matrix</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">15/19</div>
+              <div class="label">Best xlsx row: proper AR-TA plus strided-RoPE.</div>
+            </div>
+            <div class="source">no-skill baseline: 6/19</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">3</div>
+              <div class="label">Initializers separated: first-k, paper SCI, and strided-RoPE.</div>
+            </div>
+            <div class="source">not interchangeable</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value rose">no</div>
+              <div class="label">No confirmed SCI convergence-speed win in this fixed-step run.</div>
+            </div>
+            <div class="source">24 optimizer steps per trained arm</div>
           </div>
         </div>
 
@@ -844,6 +876,93 @@
                 <td>The shallow arms do not change the decisive bottleneck.</td>
               </tr>
             </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h3>A100 retest: proper AR labels and real SCI separation</h3>
+          <p>
+            The follow-up run separated paper task-agnostic Active Reading
+            (<span class="mono">AR-TA</span>), paper task-specific Active
+            Reading (<span class="mono">AR-TS</span>), the older KNLP
+            Active Reading prompt, paper SCI, first-k, and the legacy
+            strided-RoPE initializer. That matters because the best xlsx row
+            came from <span class="mono">AR-TA + strided-RoPE</span>, while
+            paper SCI depended strongly on the sampled chunks.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <tr>
+                <th>Task</th>
+                <th>Best A100 row</th>
+                <th>No-skill baseline</th>
+                <th>Interpretation</th>
+              </tr>
+              <tr>
+                <td><strong>Excel table into PPT</strong></td>
+                <td>0 / 8</td>
+                <td>0 / 8</td>
+                <td>No tested shallow arm solved this task in the A100 matrix.</td>
+              </tr>
+              <tr>
+                <td><strong>Recover missing XLSX data</strong></td>
+                <td class="ok">AR-TA + strided-RoPE: 15 / 19</td>
+                <td>6 / 19</td>
+                <td>Proper paper AR-TA became the strongest cache-induction arm.</td>
+              </tr>
+              <tr>
+                <td><strong>syzkaller ppdev syzlang</strong></td>
+                <td>best learned-prefix rows: 1 / 7</td>
+                <td>0 / 7</td>
+                <td>Weak signal, but first-k stayed below SCI and strided-RoPE.</td>
+              </tr>
+            </table>
+          </div>
+          <div class="table-scroll" style="margin-top:14px;">
+            <table>
+              <tr>
+                <th>xlsx SCI seed sweep</th>
+                <th>SCI seed 0</th>
+                <th>SCI seed 1</th>
+                <th>SCI seed 2</th>
+                <th>Best non-SCI comparison</th>
+              </tr>
+              <tr>
+                <td><strong>SS-PI + KL</strong></td>
+                <td>0 / 1 invalid</td>
+                <td class="ok">13 / 19</td>
+                <td class="ok">13 / 19</td>
+                <td>strided-RoPE: 13 / 19</td>
+              </tr>
+              <tr>
+                <td><strong>AR-TA + KL</strong></td>
+                <td>1 / 19</td>
+                <td class="ok">13 / 19</td>
+                <td>3 / 19</td>
+                <td class="ok">strided-RoPE: 15 / 19</td>
+              </tr>
+              <tr>
+                <td><strong>AR-TS + KL</strong></td>
+                <td>0 / 1 invalid</td>
+                <td class="ok">13 / 19</td>
+                <td class="ok">13 / 19</td>
+                <td>strided-RoPE: 1 / 19</td>
+              </tr>
+              <tr>
+                <td><strong>BO-PI + KL</strong></td>
+                <td>0 / 1 invalid</td>
+                <td class="ok">13 / 19</td>
+                <td>11 / 19</td>
+                <td>strided-RoPE: 0 / 1 invalid</td>
+              </tr>
+            </table>
+          </div>
+          <div class="note" style="margin-top:14px;">
+            The A100 run does not confirm the claim that SCI converges faster.
+            It used fixed 24-step training for every learned-prefix arm. Median
+            train time was essentially identical across first-k, SCI seed 0,
+            and strided-RoPE. A real convergence claim needs variable-step
+            curves and a quality threshold, not one fixed-budget run.
           </div>
         </div>
 
