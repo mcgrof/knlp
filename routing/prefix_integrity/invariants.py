@@ -215,9 +215,13 @@ def _classify(inp, query_dep, has_qhash, recs) -> Classification:
 def _danger_score(inp, violations, warnings, query_dep, has_qhash) -> float:
     """0 (safe) .. 1 (dangerous). Hard violations dominate; the query-dependent
     -without-query_hash case is weighted heavily because it is the silent one.
+    Semantic drift contributes by magnitude so two shape-preserving codecs that
+    both FAIL are still ranked -- a codec that moves the next-token distribution
+    far (fp8 on a fragile-key model) scores higher than one that barely moves it
+    (near-lossless int8).
     """
     score = 0.0
-    score += 0.35 * min(len(violations), 3) / 3.0 * 3  # up to 1.05 capped below
+    score += min(1.0, 0.35 * len(violations))
     if query_dep and not has_qhash and inp.policy == "prefix_cache":
         score += 0.4
     if inp.partial_block_rate > 0 and not inp.has_custom_restore_path:
@@ -226,4 +230,10 @@ def _danger_score(inp, violations, warnings, query_dep, has_qhash) -> float:
         score += 0.3
     score += 0.05 * len(warnings)
     score += 0.3 * (1.0 - max(0.0, min(1.0, inp.pre)))
+    # Drift severity: KL saturating at ~2 nats, plus the share of queries whose
+    # top-1 token flipped. Only contributes when drift was actually measured.
+    if inp.kl is not None:
+        score += 0.3 * min(1.0, inp.kl / 2.0)
+    if inp.top1_agreement is not None:
+        score += 0.2 * (1.0 - max(0.0, min(1.0, inp.top1_agreement)))
     return max(0.0, min(1.0, score))

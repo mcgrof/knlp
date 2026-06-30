@@ -224,6 +224,27 @@ def test_routing_policy_query_dependent_is_routing_only():
     )
 
 
+def test_drift_severity_ranks_codecs():
+    # two shape-preserving codecs that both FAIL on drift must still be ranked:
+    # a far-moving codec (fp8 on a fragile-key model) scores more dangerous than
+    # a near-lossless one (int8). Mirrors the real A100 fp8/int8 measurement.
+    int8 = InvariantInput(policy="prefix_cache", kl=0.42, top1_agreement=0.69)
+    fp8 = InvariantInput(policy="prefix_cache", kl=4.95, top1_agreement=0.06)
+    r_int8 = evaluate(int8)
+    r_fp8 = evaluate(fp8)
+    assert r_int8["status"] == Status.FAIL.value  # drift over tolerance
+    assert r_fp8["status"] == Status.FAIL.value
+    assert r_fp8["danger_score"] > r_int8["danger_score"]
+
+
+def test_zero_drift_codec_is_clean():
+    # identity codec (kl=0, top1=1.0) adds no danger and passes.
+    inp = InvariantInput(policy="prefix_cache", kl=0.0, top1_agreement=1.0)
+    r = evaluate(inp)
+    assert r["status"] == Status.PASS.value
+    assert r["danger_score"] < 0.1
+
+
 if __name__ == "__main__":
     import pytest
 
