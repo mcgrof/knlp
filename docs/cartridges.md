@@ -62,28 +62,44 @@ prefix length. Checkpoint size scales linearly: ~57 KB per token for Qwen-7B,
 
 ## SCI vs First-k initialization
 
-Two strategies for initializing the trainable KV cache before optimization:
+There are now three distinct initializer names in the KNLP cartridge harness.
+Keeping them separate matters because the old `sci` label was overloaded.
 
-**First-k.** Initialize with the first *p* key-value vectors from running the
-document through the model. Simple and deterministic.
+**First-k.** Initialize with the first *p* key-value vectors from a normal
+forward pass over the document prefix. This is simple and deterministic.
 
-**SCI (Sampled Chunk Initialization).** Initialize by sampling random 64-token
-chunks from across the document (seed=42). Captures broader document content
-in the initial state.
+**SCI (Sampled Chunk Initialization).** Initialize by sampling contiguous
+64-token chunks from across the tokenized document, concatenating those chunks
+into a synthetic initializer sequence, and running a normal forward pass over
+that sequence. This is paper-style SCI. It does not extract scattered K/V
+positions and does not need RoPE rephasing.
 
-Both produce nearly identical training times, decode throughput, and end-to-end
-performance. SCI's broader initialization does not translate into measurable
-quality advantage over First-k in our experiments. Training times on W7900
-(270 steps, 1 epoch):
+**Strided-RoPE.** This is the legacy KNLP initializer that older artifacts
+called `sci`: forward-pass the whole document, select uniformly spaced K/V
+positions, and rephase keys from their original RoPE positions into
+consecutive prefix coordinates. It is a real engineering variant, but it is
+not paper SCI.
 
-| Prefix | First-k | SCI |
-|--------|---------|-----|
-| 256 | 661s | 682s |
-| 4,096 | 1,144s | 1,131s |
-| 16,384 | 2,684s | 2,610s |
+Historical KNLP cartridge results labeled `sci` before 2026-06-30 should be
+read as `strided_rope` unless the run metadata explicitly says
+`init_method_canonical: sci_chunk`.
 
-End-to-end throughput at p=16,384: First-k = 44.5 tok/s, SCI = 44.2 tok/s,
-ICL baseline = 27.4 tok/s.
+The corrected W7900 ablation at
+`/data/knlp-key-results/cartridges/sci-fixed-ablation-20260630/` compares
+`first_k`, paper `sci_chunk`, and `strided_rope` on `citation-check` with
+Qwen2.5-7B-Instruct and a 4096-token prefix:
+
+| Arm | Init | Result | Generated tokens |
+|-----|------|--------|------------------|
+| no-skill | none | 5/9 | 76 |
+| first-k-4096 | first_k | 5/9 | 362 |
+| sci-chunk64-s0-4096 | sci_chunk | 5/9 | 66 |
+| strided-rope-4096 | strided_rope | 5/9 | 400 |
+
+The fixed SCI arm did not improve citation correctness in this init-only
+probe. The next meaningful comparison is to cross these initializers with the
+same self-study or Active Reading induction data and the same context
+distillation objective.
 
 ## Prefix tuning background
 
