@@ -59,6 +59,7 @@
         <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
         <a href="kri.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 transition-colors">KRI</a>
         <a href="kri_ft_visualization.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-teal-300 transition-colors">KRI-FT</a>
+        <a href="prefix-integrity-analysis.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-300 transition-colors">prefix integrity</a>
         <a href="spf.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">SPF</a>
         <a href="https://github.com/mcgrof/vllm/tree/20260622-routing" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">vLLM routing branch</a>
       </div>
@@ -531,6 +532,7 @@ VLLM_USE_PRECOMPILED=<span class="num">1</span> uv pip install -e . --torch-back
               <li>Useful for cartridges (fast experimentation) and for plain prefix-cached workloads.</li>
               <li>Independent of SPF: zero SPF imports, zero shared runtime state.</li>
               <li>Independent of cartridges long-term: the substrate stays valid for any prefix-cached path.</li>
+              <li>Gradeable before it ships: <a class="section-link" href="prefix-integrity-analysis.html">Prefix Integrity Analysis</a> checks whether a block-selection or codec algorithm keeps the prefix a reusable cache object, before it reaches a real offload path.</li>
             </ul>
           </div>
           <div class="rounded-xl border border-rose-500/40 bg-rose-950/10 p-5">
@@ -555,6 +557,8 @@ VLLM_USE_PRECOMPILED=<span class="num">1</span> uv pip install -e . --torch-back
         <a href="kri.html" class="hover:text-slate-300">KRI</a>
         <span class="mx-2">&middot;</span>
         <a href="kri_ft_visualization.html" class="hover:text-slate-300">KRI-FT</a>
+        <span class="mx-2">&middot;</span>
+        <a href="prefix-integrity-analysis.html" class="hover:text-slate-300">prefix integrity</a>
         <span class="mx-2">&middot;</span>
         <a href="spf.html" class="hover:text-slate-300">SPF</a>
         <span class="mx-2">&middot;</span>
