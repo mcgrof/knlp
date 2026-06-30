@@ -122,6 +122,17 @@ def render_markdown(result: dict) -> str:
 
     lines.append("## Decision")
     lines.append("")
+    # The classification describes the cache contract (is the prefix object
+    # reloadable/reusable). A FAIL with a SAFE_* contract label means the
+    # geometry is fine but the run failed on quality/drift -- say so plainly so
+    # a codec that preserves shape while wrecking the model is not read as "safe
+    # to deploy".
+    if result.get("status") == "FAIL" and cls.startswith("SAFE"):
+        lines.append(
+            "Contract verdict (geometry/cache-key) below, but the run FAILED on "
+            "quality -- do not deploy as-is despite the contract being clean."
+        )
+        lines.append("")
     lines.append(_DECISIONS.get(cls, cls))
     if result.get("recommendations"):
         lines.append("")
