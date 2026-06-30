@@ -72,7 +72,11 @@ def _trellis_residual(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tens
 def _innovation_cap_enabled(stabilizer: str, cap: float) -> bool:
     return (
         stabilizer
-        in ("innovation_rms_cap", "innovation_rms_cap_plus_layerwise_gamma")
+        in (
+            "innovation_rms_cap",
+            "innovation_rms_cap_plus_layer0_gamma",
+            "innovation_rms_cap_plus_layerwise_gamma",
+        )
         and cap > 0.0
     )
 
