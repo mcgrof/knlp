@@ -130,6 +130,7 @@ def scaled_identity(x: torch.Tensor) -> torch.Tensor:
 _ACT = {
     "silu": silu,                 # plain SiLU -- unconstrained nonlinear phi candidate
     "ln_silu": ln_silu,           # LayerNorm-SiLU (param-free), the current default
+    "norm_silu": ln_silu,         # explicit paper-review alias for normalized SiLU
     "l2_silu": l2_silu,
     "softmax": softmax,
     "identity": identity,
