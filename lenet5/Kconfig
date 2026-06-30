@@ -21,6 +21,82 @@ config LENET5_DATASET_MNIST
 	help
 	  LeNet-5 trained on MNIST dataset.
 
+menu "LeNet-5 Adaptation Teaching Modes"
+
+choice
+	prompt "Adaptation mode"
+	default LENET5_ADAPTATION_FULL
+	help
+	  Select how LeNet-5 is trained for pedagogical fine-tuning examples.
+	  Same dataset and same LeNet-5 skeleton, three training philosophies.
+
+config LENET5_ADAPTATION_FULL
+	bool "Full fine-tuning"
+	help
+	  Train all LeNet-5 parameters. This is normal training/fine-tuning.
+
+config LENET5_ADAPTATION_LORA
+	bool "LoRA adapters"
+	help
+	  Freeze the base LeNet-5 model and train low-rank adapters on
+	  selected fully-connected layers.
+
+config LENET5_ADAPTATION_PREFIX
+	bool "Image prefix / soft prompt"
+	help
+	  Freeze the base LeNet-5 model and train a learned image prefix.
+	  This is a CNN analogy for prefix/prompt tuning, not transformer
+	  KV prefix tuning.
+
+endchoice
+
+config LENET5_ADAPTATION_MODE
+	string
+	default "full" if LENET5_ADAPTATION_FULL
+	default "lora" if LENET5_ADAPTATION_LORA
+	default "prefix" if LENET5_ADAPTATION_PREFIX
+
+config LENET5_BASE_CHECKPOINT
+	string "Base checkpoint for PEFT modes"
+	default ""
+	help
+	  Optional pretrained LeNet-5 checkpoint to load before freezing the
+	  base model. Recommended for LoRA and prefix modes.
+
+config LENET5_TRAIN_HEAD
+	bool "Train final classifier head in PEFT modes"
+	default y
+	depends on LENET5_ADAPTATION_LORA || LENET5_ADAPTATION_PREFIX
+	help
+	  Also train fc2 in LoRA/prefix modes. This makes transfer examples
+	  easier to understand and mirrors common practice where the task
+	  head is adapted.
+
+config LENET5_LORA_RANK
+	int "LoRA rank"
+	default 4
+	range 1 64
+	depends on LENET5_ADAPTATION_LORA
+	help
+	  Rank of the low-rank LoRA adapter.
+
+config LENET5_LORA_ALPHA
+	string "LoRA alpha"
+	default "1.0"
+	depends on LENET5_ADAPTATION_LORA
+	help
+	  Scaling factor for the LoRA update. Effective scale is alpha / rank.
+
+config LENET5_PREFIX_ROWS
+	int "Image prefix rows"
+	default 4
+	range 1 32
+	depends on LENET5_ADAPTATION_PREFIX
+	help
+	  Number of top image rows used as the learned soft image prefix.
+
+endmenu
+
 menu "Image Tokenization (Experimental)"
 
 config LENET5_ENABLE_TOKENIZER
