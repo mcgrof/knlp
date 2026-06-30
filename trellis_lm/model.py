@@ -34,9 +34,9 @@ class SwiGLU(nn.Module):
 
 
 class TrellisBlock(nn.Module):
-    def __init__(self, cfg: TrellisConfig):
+    def __init__(self, cfg: TrellisConfig, layer_idx: int = 0):
         super().__init__()
-        self.mixer = TrellisMixer(cfg)
+        self.mixer = TrellisMixer(cfg, layer_idx=layer_idx)
         self.mlp = SwiGLU(cfg.d_model, cfg.mlp_ratio, cfg.dropout)
 
     def forward(self, x, training=True):
@@ -72,7 +72,9 @@ class TrellisLM(_LMBase):
         super().__init__()
         self.cfg = cfg
         self._init_head()
-        self.blocks = nn.ModuleList([TrellisBlock(cfg) for _ in range(cfg.n_layers)])
+        self.blocks = nn.ModuleList(
+            [TrellisBlock(cfg, layer_idx=i) for i in range(cfg.n_layers)]
+        )
         self.apply(self._init_weights)
         # _init_weights zeros every Linear bias; restore the forget-gate
         # retention bias afterwards so beta_init actually takes effect.
