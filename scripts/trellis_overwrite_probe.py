@@ -304,8 +304,9 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
     kind, readout = row_spec(row)
     cfg = make_cfg(args, readout)
     model = build_model(cfg, kind).to(device)
-    if args.dtype != "fp32":
-        model = model.to(as_dtype(args.dtype))
+    # Keep master weights fp32, matching the C4 harness. Trellis intentionally
+    # computes beta/gamma paths in fp32 under disabled autocast; casting modules
+    # to bf16 makes beta_proj weights bf16 while h.float() is fp32.
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     rng = random.Random(args.seed + 1009 * stable_row_seed(row))
     dt = as_dtype(args.dtype)
