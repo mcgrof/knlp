@@ -46,13 +46,17 @@ if HAS_TRITON:
         M: tl.constexpr,
         D: tl.constexpr,
         C: tl.constexpr,
+        M_ACTUAL: tl.constexpr,
         ACT: tl.constexpr,
+        STABILIZER: tl.constexpr,
+        INNOVATION_RMS_CAP: tl.constexpr,
         EPS: tl.constexpr,
     ):
         n = tl.program_id(0)
         rm = tl.arange(0, M)
         rd = tl.arange(0, D)
         rc = tl.arange(0, C)
+        valid_m = rm < M_ACTUAL
         # per-(b,h) base offsets into the [N, nC, ...] tensors
         gamma = tl.load(g_ptr + n)
         state = tl.zeros((M, D), dtype=tl.float32)  # Mstate, resident
@@ -74,6 +78,12 @@ if HAS_TRITON:
                 std = tl.sqrt(var + EPS)
                 y = sc / std[:, None]
                 err = y - alpha
+                if STABILIZER == 1:
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
+                    err = err * scale[:, None]
                 emean = tl.sum(err, axis=1) / M
                 eymean = tl.sum(err * y, axis=1) / M
                 ds = (err - emean[:, None] - y * eymean[:, None]) / std[:, None]
@@ -83,10 +93,24 @@ if HAS_TRITON:
                 sig = tl.sigmoid(z)
                 s = z * sig
                 silu_grad = sig + s * (1.0 - sig)
-                u = silu_grad * (s - alpha)
+                err = s - alpha
+                if STABILIZER == 1:
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
+                    err = err * scale[:, None]
+                u = silu_grad * err
             else:
                 # Identity VJP: u = z - alpha.
-                u = z - alpha
+                err = z - alpha
+                if STABILIZER == 1:
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
+                    err = err * scale[:, None]
+                u = err
             # store start-state M0 (= current state) and code u
             m0base = (n * nC + c) * M * D
             tl.store(M0_ptr + m0base + rm[:, None] * D + rd[None, :], state)
@@ -101,6 +125,7 @@ if HAS_TRITON:
     @triton.jit
     def _trellis_evo_bwd_kernel(
         W_ptr,
+        A_ptr,
         rC_ptr,
         P_ptr,
         g_ptr,
@@ -117,13 +142,17 @@ if HAS_TRITON:
         M: tl.constexpr,
         D: tl.constexpr,
         C: tl.constexpr,
+        M_ACTUAL: tl.constexpr,
         ACT: tl.constexpr,
+        STABILIZER: tl.constexpr,
+        INNOVATION_RMS_CAP: tl.constexpr,
         EPS: tl.constexpr,
     ):
         n = tl.program_id(0)
         rm = tl.arange(0, M)
         rd = tl.arange(0, D)
         rc = tl.arange(0, C)
+        valid_m = rm < M_ACTUAL
         gamma = tl.load(g_ptr + n)
         bar_M = tl.zeros((M, D), dtype=tl.float32)  # carried cotangent of state
         gG = tl.zeros((1,), dtype=tl.float32)
@@ -158,6 +187,7 @@ if HAS_TRITON:
             if ACT == 0:
                 # recompute z = W @ M0^T -> [C,M] for the LN-SiLU adjoint
                 z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
+                alpha = tl.load(A_ptr + ubase + rc[:, None] * M + rm[None, :])
                 sig = tl.sigmoid(z)
                 s = z * sig
                 silu_grad = sig + s * (1.0 - sig)
@@ -166,19 +196,43 @@ if HAS_TRITON:
                 var = tl.sum(sc * sc, axis=1) / M
                 std = tl.sqrt(var + EPS)
                 y = sc / std[:, None]
+                scale = tl.full((C,), 1.0, dtype=tl.float32)
+                if STABILIZER == 1:
+                    err = y - alpha
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
                 h = silu_grad * bar_u
                 hmean = tl.sum(h, axis=1) / M
                 hymean = tl.sum(h * y, axis=1) / M
                 lnop = (h - hmean[:, None] - y * hymean[:, None]) / std[:, None]
-                grad_A = -lnop  # [C,M]
+                grad_A = -scale[:, None] * lnop  # [C,M]
             elif ACT == 1:
                 z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
+                alpha = tl.load(A_ptr + ubase + rc[:, None] * M + rm[None, :])
                 sig = tl.sigmoid(z)
                 s = z * sig
                 silu_grad = sig + s * (1.0 - sig)
-                grad_A = -(silu_grad * bar_u)
+                scale = tl.full((C,), 1.0, dtype=tl.float32)
+                if STABILIZER == 1:
+                    err = s - alpha
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
+                grad_A = -(scale[:, None] * silu_grad * bar_u)
             else:
-                grad_A = -bar_u
+                z = tl.dot(W, tl.trans(M0), allow_tf32=False)  # [C,M]
+                alpha = tl.load(A_ptr + ubase + rc[:, None] * M + rm[None, :])
+                scale = tl.full((C,), 1.0, dtype=tl.float32)
+                if STABILIZER == 1:
+                    err = z - alpha
+                    err_sq = tl.where(valid_m[None, :], err * err, 0.0)
+                    err_rms = tl.sqrt(tl.sum(err_sq, axis=1) / M_ACTUAL)
+                    scale = INNOVATION_RMS_CAP / (err_rms + EPS)
+                    scale = tl.where(scale < 1.0, scale, 1.0)
+                grad_A = -(scale[:, None] * bar_u)
             tl.store(gA_ptr + ubase + rc[:, None] * M + rm[None, :], grad_A)
             # carry: bar_M = grad_M0s + Plast * bar_M1
             gM0 = tl.load(gM0_ptr + m0base + rm[:, None] * D + rd[None, :])
@@ -194,6 +248,16 @@ if HAS_TRITON:
             return 2
         raise ValueError(f"unsupported Triton Trellis activation: {activation}")
 
+    def _stabilizer_code(stabilizer, innovation_rms_cap=0.0):
+        if stabilizer in ("none", "layerwise_gamma"):
+            return 0
+        if stabilizer in (
+            "innovation_rms_cap",
+            "innovation_rms_cap_plus_layerwise_gamma",
+        ):
+            return 1 if innovation_rms_cap > 0.0 else 0
+        raise ValueError(f"unsupported Triton Trellis stabilizer: {stabilizer}")
+
     def _slot_kernel_dim(actual_m: int, activation_code: int) -> int:
         if activation_code == 0:
             return actual_m
@@ -206,20 +270,49 @@ if HAS_TRITON:
         return F.pad(alpha, (0, pad))
 
     def trellis_state_evolution_triton(
-        write, alpha, P, rmat, gamma, chunk_size, activation="ln_silu"
+        write,
+        alpha,
+        P,
+        rmat,
+        gamma,
+        chunk_size,
+        activation="ln_silu",
+        stabilizer="none",
+        innovation_rms_cap=0.0,
     ):
         """Triton fused forward. Returns M0s [B,H,nC,M,D], us [B,H,nC,C,M]."""
-        M0s, us = _evo_fwd(write, alpha, P, rmat, gamma, chunk_size, activation)
+        M0s, us = _evo_fwd(
+            write,
+            alpha,
+            P,
+            rmat,
+            gamma,
+            chunk_size,
+            activation,
+            stabilizer,
+            innovation_rms_cap,
+        )
         return M0s, us
 
     def _gamma_to_N(gamma, B, H):
         # N = B*H laid out as index b*H+h, so gamma[h] tiles per batch
         return gamma.view(1, H).expand(B, H).reshape(B * H).contiguous().float()
 
-    def _evo_fwd(write, alpha, P, rmat, gamma, C, activation):
+    def _evo_fwd(
+        write,
+        alpha,
+        P,
+        rmat,
+        gamma,
+        C,
+        activation,
+        stabilizer,
+        innovation_rms_cap,
+    ):
         B, H, T, D = write.shape
         M_actual = alpha.shape[-1]
         act = _activation_code(activation)
+        stab = _stabilizer_code(stabilizer, innovation_rms_cap)
         M = _slot_kernel_dim(M_actual, act)
         nC = P.shape[2]
         N = B * H
@@ -248,7 +341,10 @@ if HAS_TRITON:
             M=M,
             D=D,
             C=C,
+            M_ACTUAL=M_actual,
             ACT=act,
+            STABILIZER=stab,
+            INNOVATION_RMS_CAP=float(innovation_rms_cap),
             EPS=1e-6,
         )
         M0s = M0s.view(B, H, nC, M, D)[:, :, :, :M_actual, :]
@@ -260,10 +356,22 @@ if HAS_TRITON:
         TrellisStateEvolutionFn (z detached for u -> true-stale gradient)."""
 
         @staticmethod
-        def forward(ctx, write, alpha, P, rmat, gamma, chunk_size, activation):
+        def forward(
+            ctx,
+            write,
+            alpha,
+            P,
+            rmat,
+            gamma,
+            chunk_size,
+            activation,
+            stabilizer="none",
+            innovation_rms_cap=0.0,
+        ):
             B, H, T, D = write.shape
             M_actual = alpha.shape[-1]
             act = _activation_code(activation)
+            stab = _stabilizer_code(stabilizer, innovation_rms_cap)
             M = _slot_kernel_dim(M_actual, act)
             C = chunk_size
             nC = P.shape[2]
@@ -295,19 +403,46 @@ if HAS_TRITON:
                 M=M,
                 D=D,
                 C=C,
+                M_ACTUAL=M_actual,
                 ACT=act,
+                STABILIZER=stab,
+                INNOVATION_RMS_CAP=float(innovation_rms_cap),
                 EPS=1e-6,
             )
-            ctx.save_for_backward(Wp, rCl, Pl, g, M0s, us)
-            ctx.dims = (B, H, T, D, M_actual, M, nC, C, act)
+            ctx.save_for_backward(Wp, Ap, rCl, Pl, g, M0s, us)
+            ctx.dims = (
+                B,
+                H,
+                T,
+                D,
+                M_actual,
+                M,
+                nC,
+                C,
+                act,
+                stab,
+                float(innovation_rms_cap),
+            )
             M0v = M0s.view(B, H, nC, M, D)[:, :, :, :M_actual, :]
             usv = us.view(B, H, nC, C, M)[:, :, :, :, :M_actual]
             return M0v.contiguous(), usv.contiguous()
 
         @staticmethod
         def backward(ctx, grad_M0s, grad_us):
-            Wp, rCl, Pl, g, M0s, us = ctx.saved_tensors
-            B, H, T, D, M_actual, M, nC, C, act = ctx.dims
+            Wp, Ap, rCl, Pl, g, M0s, us = ctx.saved_tensors
+            (
+                B,
+                H,
+                T,
+                D,
+                M_actual,
+                M,
+                nC,
+                C,
+                act,
+                stab,
+                innovation_rms_cap,
+            ) = ctx.dims
             N = B * H
             dev = Wp.device
             gW = torch.empty(N, nC, C, D, device=dev, dtype=torch.float32)
@@ -322,6 +457,7 @@ if HAS_TRITON:
             gUs = grad_us.reshape(N, nC, C, M).contiguous().float()
             _trellis_evo_bwd_kernel[(N,)](
                 Wp,
+                Ap,
                 rCl,
                 Pl,
                 g,
@@ -338,7 +474,10 @@ if HAS_TRITON:
                 M=M,
                 D=D,
                 C=C,
+                M_ACTUAL=M_actual,
                 ACT=act,
+                STABILIZER=stab,
+                INNOVATION_RMS_CAP=float(innovation_rms_cap),
                 EPS=1e-6,
             )
             grad_write = gW.view(B, H, nC * C, D)[:, :, :T].contiguous()
@@ -348,4 +487,15 @@ if HAS_TRITON:
             grad_rmat = torch.zeros(B, H, nC, C, C, device=dev, dtype=torch.float32)
             grad_rmat[:, :, :, -1, :] = gRC.view(B, H, nC, C)
             grad_gamma = gG_n.view(B, H).sum(0)
-            return grad_write, grad_alpha, grad_P, grad_rmat, grad_gamma, None, None
+            grads = (
+                grad_write,
+                grad_alpha,
+                grad_P,
+                grad_rmat,
+                grad_gamma,
+                None,
+                None,
+                None,
+                None,
+            )
+            return grads[: len(ctx.needs_input_grad)]

@@ -65,9 +65,10 @@ class CausalDWConv1d(nn.Module):
 
 
 class TrellisMixer(nn.Module):
-    def __init__(self, cfg: TrellisConfig):
+    def __init__(self, cfg: TrellisConfig, layer_idx: int = 0):
         super().__init__()
         self.cfg = cfg
+        self.layer_idx = layer_idx
         H, D, M, d = cfg.n_heads, cfg.d_head, cfg.n_slots, cfg.d_model
         self.H, self.D, self.M = H, D, M
         self.norm = RMSNorm(d)
@@ -115,6 +116,17 @@ class TrellisMixer(nn.Module):
         self.phi = get_activation(cfg.activation)
         self.f = get_activation(cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
+
+    def effective_gamma(self, gamma: torch.Tensor) -> torch.Tensor:
+        cfg = self.cfg
+        if (
+            cfg.trellis_update_stabilizer
+            in ("layerwise_gamma", "innovation_rms_cap_plus_layerwise_gamma")
+            and self.layer_idx == 0
+            and cfg.trellis_layer0_gamma_mult != 1.0
+        ):
+            return gamma * float(cfg.trellis_layer0_gamma_mult)
+        return gamma
 
     def reset_beta_bias(self):
         """Set beta_proj bias = logit(beta_init) so the forget gate STARTS near
@@ -174,7 +186,7 @@ class TrellisMixer(nn.Module):
                 beta = torch.sigmoid(self._heads(self.beta_proj(hf), self.M))
             if not cfg.forget_gate:
                 beta = torch.ones_like(beta)
-            gamma = F.softplus(self.gamma_raw.float())  # [H], positive
+            gamma = self.effective_gamma(F.softplus(self.gamma_raw.float()))
             update_gate = None
             if cfg.update_gate_mode == "scalar":
                 update_gate = (
@@ -238,7 +250,10 @@ class TrellisMixer(nn.Module):
                 )
                 nvidia_cuda = write2.is_cuda and torch.version.hip is None
                 triton_plain_update = (
-                    update_gate is None and cfg.residual_update_mix == 0.0
+                    update_gate is None
+                    and cfg.residual_update_mix == 0.0
+                    and cfg.trellis_update_stabilizer
+                    != "delta_ratio_cap"
                 )
                 if (
                     HAS_TRITON
@@ -250,7 +265,15 @@ class TrellisMixer(nn.Module):
                     # loop into one kernel (26-44x over the bmm loop), gradient-
                     # equivalent to the PyTorch path (z detached -> true-stale).
                     M0_2, u_2 = TrellisStateEvolutionTriton.apply(
-                        write2, alpha2, P2, rmat2, gf, cs, cfg.activation
+                        write2,
+                        alpha2,
+                        P2,
+                        rmat2,
+                        gf,
+                        cs,
+                        cfg.activation,
+                        cfg.trellis_update_stabilizer,
+                        cfg.trellis_innovation_rms_cap,
                     )
                 else:
                     update_gate2 = None
@@ -272,6 +295,15 @@ class TrellisMixer(nn.Module):
                         rmat=rmat2,
                         update_gate=update_gate2,
                         residual_update_mix=cfg.residual_update_mix,
+                        trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                        trellis_innovation_rms_cap=(
+                            cfg.trellis_innovation_rms_cap
+                        ),
+                        trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                        trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                        trellis_stabilizer_detach_scale=(
+                            cfg.trellis_stabilizer_detach_scale
+                        ),
                     )
                 M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
                 u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
@@ -296,6 +328,13 @@ class TrellisMixer(nn.Module):
                     cfg.chunk_refine,
                     update_gate=update_gate,
                     residual_update_mix=cfg.residual_update_mix,
+                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
+                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                    trellis_stabilizer_detach_scale=(
+                        cfg.trellis_stabilizer_detach_scale
+                    ),
                 )
                 r = self.f(yhat)
                 y = run_trellis_memory_chunked(
@@ -310,6 +349,13 @@ class TrellisMixer(nn.Module):
                     cfg.chunk_refine,
                     update_gate=update_gate,
                     residual_update_mix=cfg.residual_update_mix,
+                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
+                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                    trellis_stabilizer_detach_scale=(
+                        cfg.trellis_stabilizer_detach_scale
+                    ),
                 )
             else:
                 ex = cfg.exact_inner
@@ -325,6 +371,13 @@ class TrellisMixer(nn.Module):
                     exact_inner=ex,
                     update_gate=update_gate,
                     residual_update_mix=cfg.residual_update_mix,
+                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
+                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                    trellis_stabilizer_detach_scale=(
+                        cfg.trellis_stabilizer_detach_scale
+                    ),
                 )
                 r = self.f(yhat)  # [B,H,T,M]
                 y = run_trellis_memory(
@@ -339,6 +392,13 @@ class TrellisMixer(nn.Module):
                     exact_inner=ex,
                     update_gate=update_gate,
                     residual_update_mix=cfg.residual_update_mix,
+                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
+                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                    trellis_stabilizer_detach_scale=(
+                        cfg.trellis_stabilizer_detach_scale
+                    ),
                 )
 
         # final phi on the value-pass readout (paper: y = phi(M^T r)). Applied

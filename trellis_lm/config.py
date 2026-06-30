@@ -39,6 +39,17 @@ class TrellisConfig:
     # beta_proj bias is set to logit(beta_init). 0.5 = zero-bias (legacy). The
     # paper's retention semantics want beta near 1; sweep {0.8..0.995}.
     gamma_init: float = 1e-2  # learning-rate of the inner OGD step
+    # Stabilize the memory update without changing the default Trellis math.
+    # "innovation_rms_cap" applies a one-sided RMS cap to phi(z)-alpha before
+    # the VJP/update. "layerwise_gamma" only scales gamma in layer 0 through
+    # trellis_layer0_gamma_mult. The combo enables both. "delta_ratio_cap" is a
+    # reference-path safety cap on aggregate update/state ratio.
+    trellis_update_stabilizer: str = "none"
+    trellis_innovation_rms_cap: float = 0.0
+    trellis_delta_ratio_cap: float = 0.0
+    trellis_state_rms_floor: float = 1e-3
+    trellis_layer0_gamma_mult: float = 1.0
+    trellis_stabilizer_detach_scale: bool = True
     update_gate_mode: str = "none"  # ["none","scalar","channel"]
     update_gate_init: float = 0.95
     residual_update_mix: float = 0.0
@@ -77,6 +88,21 @@ class TrellisConfig:
             "l2_silu",
         ), self.alpha_mode
         assert self.beta_mode in ("scalar_per_head", "per_slot"), self.beta_mode
+        assert self.trellis_update_stabilizer in (
+            "none",
+            "innovation_rms_cap",
+            "delta_ratio_cap",
+            "layerwise_gamma",
+            "innovation_rms_cap_plus_layerwise_gamma",
+        ), self.trellis_update_stabilizer
+        assert self.trellis_innovation_rms_cap >= 0.0, (
+            self.trellis_innovation_rms_cap
+        )
+        assert self.trellis_delta_ratio_cap >= 0.0, self.trellis_delta_ratio_cap
+        assert self.trellis_state_rms_floor >= 0.0, self.trellis_state_rms_floor
+        assert self.trellis_layer0_gamma_mult >= 0.0, (
+            self.trellis_layer0_gamma_mult
+        )
         assert self.update_gate_mode in (
             "none",
             "scalar",

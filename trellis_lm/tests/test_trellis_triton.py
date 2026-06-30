@@ -54,7 +54,7 @@ def run():
         # --- forward A/B
         M0_ref, u_ref, _, _, _ = evo(write, alpha, beta, gamma, phi, C, P=P, rmat=rmat)
         M0_t, u_t = trellis_state_evolution_triton(
-            write, alpha, P, rmat, gamma, C, act_name
+            write, alpha, P, rmat, gamma, C, act_name, "none", 0.0
         )
         for nm, r, f in (("M0", M0_ref, M0_t), ("u", u_ref, u_t)):
             rel = (r - f).abs().max().item() / (r.abs().max().item() + 1e-12)
@@ -73,7 +73,9 @@ def run():
             rm = rmat.clone().requires_grad_()
             g = gamma.clone().requires_grad_()
             if use_triton:
-                m0, us = TrellisStateEvolutionTriton.apply(w, a, Pp, rm, g, C, act_name)
+                m0, us = TrellisStateEvolutionTriton.apply(
+                    w, a, Pp, rm, g, C, act_name, "none", 0.0
+                )
             else:
                 m0, us, _, _, _ = evo(w, a, None, g, phi, C, P=Pp, rmat=rm)
             ((m0 * c1).sum() + (us * c2).sum()).backward()
