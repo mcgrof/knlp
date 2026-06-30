@@ -29,6 +29,7 @@ from lib.optimizers import (
     update_adamprune_masks,
 )
 from lenet5.model import LeNet5, LeNet5WithPCA, LeNet5WithSplinePCA
+from lenet5.peft import build_lenet5_adaptation, count_params
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="LeNet-5 training with optional pruning")
@@ -169,6 +170,42 @@ parser.add_argument(
     "for --override-epochs; default None means use NUM_EPOCHS from config)",
 )
 parser.add_argument(
+    "--adaptation-mode",
+    type=str,
+    default=None,
+    choices=["full", "lora", "prefix"],
+    help="LeNet-5 pedagogical adaptation mode (default: config or full)",
+)
+parser.add_argument(
+    "--lora-rank",
+    type=int,
+    default=None,
+    help="LoRA rank for the LeNet-5 linear adapters",
+)
+parser.add_argument(
+    "--lora-alpha",
+    type=float,
+    default=None,
+    help="LoRA alpha scaling (effective scale is alpha / rank)",
+)
+parser.add_argument(
+    "--prefix-rows",
+    type=int,
+    default=None,
+    help="Number of top image rows used as the learned prefix/prompt",
+)
+parser.add_argument(
+    "--train-head",
+    action="store_true",
+    help="Also train the final classifier head (fc2) in PEFT modes",
+)
+parser.add_argument(
+    "--base-checkpoint",
+    type=str,
+    default=None,
+    help="Optional pretrained LeNet-5 checkpoint for LoRA/prefix modes",
+)
+parser.add_argument(
     "--weight-decay",
     type=float,
     default=None,
@@ -235,7 +272,7 @@ elif args.pruning_method == "state":
 # Define relevant variables for the ML task (read from config or use defaults)
 # Note: Config values are strings from Kconfig, need type conversion
 batch_size = int(config.get("BATCH_SIZE", 512)) if config else 512
-num_classes = 10
+num_classes = int(config.get("LENET5_NUM_CLASSES", 10)) if config else 10
 learning_rate = float(config.get("LEARNING_RATE", 0.001)) if config else 0.001
 num_epochs = int(config.get("NUM_EPOCHS", 10)) if config else 10
 # A --epochs override (e.g. the test matrix's --override-epochs) wins over
@@ -441,6 +478,38 @@ test_loader = torch.utils.data.DataLoader(
 )
 
 
+# Resolve the pedagogical adaptation config (full / lora / prefix). CLI
+# flags win over config.py; both default to plain full fine-tuning, so the
+# baseline path is unchanged. Adaptation applies to the non-tokenized model.
+adaptation_mode = args.adaptation_mode or (
+    config.get("LENET5_ADAPTATION_MODE", "full") if config else "full"
+)
+lora_rank = (
+    args.lora_rank
+    if args.lora_rank is not None
+    else (int(config.get("LENET5_LORA_RANK", 4)) if config else 4)
+)
+lora_alpha = (
+    args.lora_alpha
+    if args.lora_alpha is not None
+    else (float(config.get("LENET5_LORA_ALPHA", 1.0)) if config else 1.0)
+)
+prefix_rows = (
+    args.prefix_rows
+    if args.prefix_rows is not None
+    else (int(config.get("LENET5_PREFIX_ROWS", 4)) if config else 4)
+)
+train_head = args.train_head or (
+    str(config.get("LENET5_TRAIN_HEAD", "n")).lower() in ("y", "yes", "true", "1")
+    if config
+    else False
+)
+base_checkpoint = (
+    args.base_checkpoint
+    or (config.get("LENET5_BASE_CHECKPOINT", "") if config else "")
+    or None
+)
+
 # Select model based on tokenization method
 logger.info(f"Using tokenization method: {args.tokenizer_method}")
 
@@ -487,9 +556,43 @@ elif args.tokenizer_method == "spline-pca":
     logger.info(f"PCA fitted on {len(train_images)} training images")
 
 else:
-    # Baseline: no tokenization
+    # Baseline: no tokenization. Build in the selected adaptation mode
+    # (full = plain LeNet-5; lora/prefix freeze the base and train a sliver).
     logger.info("Baseline mode: no tokenization")
-    model = LeNet5(num_classes=num_classes).to(device)
+    logger.info(f"Adaptation mode: {adaptation_mode}")
+    model = build_lenet5_adaptation(
+        num_classes=num_classes,
+        adaptation_mode=adaptation_mode,
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
+        prefix_rows=prefix_rows,
+        train_head=train_head,
+        base_checkpoint=base_checkpoint,
+    ).to(device)
+
+# Report the trainable-parameter budget -- the teaching punchline for the
+# adaptation modes (full trains everything; lora/prefix only a sliver).
+trainable_params, total_params = count_params(model)
+if not any(p.requires_grad for p in model.parameters()):
+    raise RuntimeError("No trainable parameters; PEFT mode produced an inert model")
+logger.info(
+    "Adaptation mode: %s, trainable params: %d / %d (%.2f%%)",
+    adaptation_mode,
+    trainable_params,
+    total_params,
+    100.0 * trainable_params / total_params,
+)
+training_metrics["adaptation"] = {
+    "mode": adaptation_mode,
+    "trainable_params": trainable_params,
+    "total_params": total_params,
+    "trainable_percent": 100.0 * trainable_params / total_params,
+    "lora_rank": lora_rank if adaptation_mode == "lora" else None,
+    "lora_alpha": lora_alpha if adaptation_mode == "lora" else None,
+    "prefix_rows": prefix_rows if adaptation_mode == "prefix" else None,
+    "train_head": train_head,
+    "base_checkpoint": base_checkpoint,
+}
 
 # Compile the model for faster execution (PyTorch 2.0+)
 if torch.__version__ >= "2.0.0" and device.type == "cuda":
