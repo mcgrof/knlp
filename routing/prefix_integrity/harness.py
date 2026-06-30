@@ -138,6 +138,14 @@ def run_validate(
             "cr_cv": round(cr_stats["cr_cv"], 4),
             "n_queries": len(queries),
             "budget_k": budget_k,
+            **(
+                {
+                    "kl": round(semantic["kl"], 4),
+                    "top1": round(semantic.get("top1", 0.0), 4),
+                }
+                if semantic and semantic.get("kl") is not None
+                else {}
+            ),
         },
         violations=verdict["violations"],
         warnings=verdict["warnings"],
