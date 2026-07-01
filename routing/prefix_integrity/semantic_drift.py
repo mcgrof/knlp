@@ -57,37 +57,93 @@ def _build_cache(cartridge_kv, device, dtype):
     return cache
 
 
+# Each codec is a (key-transform, value-transform) pair. Symmetric codecs apply
+# the same precision to K and V; asymmetric ones apply different precisions,
+# which is the whole point of the decode-paper asymmetry (protect the fragile
+# keys at 16-bit, compress the tolerant values).
+#
+# Scale granularity matters as much as bit-width. A single per-tensor scale on
+# post-RoPE keys manufactures key fragility -- the known pathology is per-channel
+# outliers in the RoPE'd key space, so a coarse global scale clips them. To make
+# a k16v8-vs-k8v16 key-vs-value isolation FAIR, keys are quantized per-channel
+# (a scale per head-dim channel, KIVI-style) and values per-token (a scale per
+# position). The per-tensor codecs are kept only as labeled "naive stress" rows,
+# and the k8v16 pair (fair vs naive) shows whether fair scaling rescues the keys.
+# Value tensors carry a leading (batch,) head, seq, dim layout, so the last two
+# dims are (seq, head_dim): per-channel = amax over seq (dim -2), per-token =
+# amax over head_dim (dim -1).
+def _identity(t):
+    return t.clone()
+
+
+def _fp8(t):
+    import torch
+
+    return t.to(torch.float8_e4m3fn).to(t.dtype)
+
+
+def _intN_perchannel(t, bits):
+    """Symmetric int-N with one scale per channel (shared across positions)."""
+    import torch
+
+    qmax = (1 << (bits - 1)) - 1
+    f = t.float()
+    scale = f.abs().amax(dim=-2, keepdim=True).clamp(min=1e-8) / qmax
+    q = (f / scale).round().clamp(-qmax, qmax)
+    return (q * scale).to(t.dtype)
+
+
+def _intN_pertoken(t, bits):
+    """Symmetric int-N with one scale per token (shared across channels)."""
+    import torch
+
+    qmax = (1 << (bits - 1)) - 1
+    f = t.float()
+    scale = f.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8) / qmax
+    q = (f / scale).round().clamp(-qmax, qmax)
+    return (q * scale).to(t.dtype)
+
+
+def _intN_roundtrip(t, bits):
+    """Symmetric int-N with a single per-tensor scale (naive; stress only)."""
+    import torch
+
+    qmax = (1 << (bits - 1)) - 1
+    f = t.float()
+    scale = f.abs().amax().clamp(min=1e-8) / qmax
+    q = (f / scale).round().clamp(-qmax, qmax)
+    return (q * scale).to(t.dtype)
+
+
+_CODECS = {
+    "none": (_identity, _identity),
+    # naive per-tensor stress rows (single global scale)
+    "int8": (lambda t: _intN_roundtrip(t, 8), lambda t: _intN_roundtrip(t, 8)),
+    "fp8": (_fp8, _fp8),
+    "k8v16_pt": (lambda t: _intN_roundtrip(t, 8), _identity),
+    # fair-granularity asymmetric: keys per-channel, values per-token
+    "k16v8": (_identity, lambda t: _intN_pertoken(t, 8)),
+    "k16v4": (_identity, lambda t: _intN_pertoken(t, 4)),
+    "k8v16": (lambda t: _intN_perchannel(t, 8), _identity),
+    "k8v8": (lambda t: _intN_perchannel(t, 8), lambda t: _intN_pertoken(t, 8)),
+}
+
+
 def _codec_transform(cartridge_kv, codec):
     """Return a transformed copy of the cartridge KV for codec-mode drift.
 
-    fp8   : round-trip K and V through float8_e4m3 (lossy reconstruction)
-    int8  : per-tensor symmetric int8 round-trip
-    none  : identity (sanity check -> ~0 drift)
+    none      : identity (sanity check -> ~0 drift; also the bf16 reload control)
+    int8/fp8  : per-tensor symmetric round-trip on both K and V (naive stress)
+    k8v16_pt  : keys int8 per-TENSOR, values bf16 (naive-K stress; vs fair k8v16)
+    k16v8     : keys bf16, values int8 per-token (fair; drift is V-only)
+    k16v4     : keys bf16, values int4 per-token (fair; pushes V)
+    k8v16     : keys int8 per-channel, values bf16 (fair; drift is K-only)
+    k8v8      : keys int8 per-channel, values int8 per-token (fair symmetric)
     """
-    import torch
-
-    out = []
-    for k, v in cartridge_kv:
-        if codec == "none":
-            out.append((k.clone(), v.clone()))
-        elif codec == "fp8":
-            kk = k.to(torch.float8_e4m3fn).to(k.dtype)
-            vv = v.to(torch.float8_e4m3fn).to(v.dtype)
-            out.append((kk, vv))
-        elif codec == "int8":
-            out.append((_int8_roundtrip(k), _int8_roundtrip(v)))
-        else:
-            raise ValueError(f"unknown codec {codec}")
-    return out
-
-
-def _int8_roundtrip(t):
-    import torch
-
-    f = t.float()
-    scale = f.abs().amax().clamp(min=1e-8) / 127.0
-    q = (f / scale).round().clamp(-127, 127)
-    return (q * scale).to(t.dtype)
+    if codec not in _CODECS:
+        raise ValueError(f"unknown codec {codec}")
+    kfn, vfn = _CODECS[codec]
+    return [(kfn(k), vfn(v)) for k, v in cartridge_kv]
 
 
 def _next_token_probs(model, input_ids, cache, prefix_keep, device):
@@ -226,7 +282,12 @@ def main(argv=None):
     ap.add_argument("--algorithm", default="query_aware")
     ap.add_argument("--algorithm-config", default=None)
     ap.add_argument("--mode", default="selector", choices=["selector", "codec"])
-    ap.add_argument("--codec", default="none", choices=["none", "fp8", "int8"])
+    ap.add_argument(
+        "--codec",
+        default="none",
+        choices=sorted(_CODECS),
+        help="KV round-trip codec; k*/v* names are asymmetric (see _CODECS)",
+    )
     ap.add_argument("--budget-k", type=int, default=16)
     ap.add_argument("--block-size", type=int, default=16)
     ap.add_argument("--pins", default="A1R2")

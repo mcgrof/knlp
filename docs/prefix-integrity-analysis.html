@@ -630,6 +630,74 @@
       </div>
     </section>
 
+    <!-- ASYMMETRIC CODEC TABLE -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Quantization on the same axes &mdash; asymmetric KV codecs</h2>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token cartridge &middot; 48 queries &middot; plan reviewed by ChatGPT Pro + Codex before running</p>
+        <p class="text-slate-300 leading-8 mb-5">
+          Selection is one way to shrink a KV cache; quantization is the other.
+          A quantization codec is query-independent &mdash; it round-trips every
+          block the same way regardless of the question &mdash; so on the contract
+          axis it is safe to share, needing only a codec-aware connector for its
+          non-standard dtype. That is the same query-independence that made a
+          selector useless, turned into a virtue: a codec never has to guess which
+          block the question wants, because it keeps them all, in fewer bits. This
+          table puts codecs and block selectors on PIA's axes together, with bytes
+          made explicit, and folds in the asymmetric <a class="section-link" href="https://knlp.io/decode">K16/V8 quantization</a>
+          from the decode work &mdash; keep the fragile keys at 16 bits, compress
+          the tolerant values.
+        </p>
+        <p class="text-slate-300 leading-8 mb-5">
+          One caveat the two reviewers forced, worth stating up front: a single
+          per-tensor scale on post-RoPE keys <em>manufactures</em> key fragility,
+          because the keys carry per-channel outliers a global scale clips. So the
+          keys here are scaled per-channel and the values per-token (the standard
+          granularity), and the crude per-tensor codecs are kept only as a labeled
+          stress control. Bytes are counted including the scale metadata.
+        </p>
+        <img src="images/pia_codec_asym.png" alt="Byte-matched, quantizing all blocks beats dropping whole blocks; key-vs-value asymmetry is modest under fair scaling" class="rounded-lg border border-slate-700/60 w-full mb-5" />
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>method</th><th>bytes vs bf16</th><th>what it does</th><th>next-token KL</th><th>top-1</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="text-slate-200">K16/V8 (fair)</td><td>0.75</td><td class="text-xs text-slate-400">values int8 per-token</td><td class="good">0.0038</td><td class="good">1.00</td></tr>
+            <tr><td class="text-slate-200">K16/V4 (fair)</td><td>0.63</td><td class="text-xs text-slate-400">values int4 per-token</td><td class="good">0.0168</td><td class="good">1.00</td></tr>
+            <tr><td class="text-slate-200">K8/V8 (fair)</td><td>0.51</td><td class="text-xs text-slate-400">both quantized, fair scales</td><td class="good">0.0080</td><td class="good">1.00</td></tr>
+            <tr><td class="text-slate-200">K8/V16 (fair)</td><td>0.76</td><td class="text-xs text-slate-400">keys int8 per-channel</td><td class="warn">0.0086</td><td class="warn">0.94</td></tr>
+            <tr><td class="text-slate-200">K8/V16 (naive per-tensor)</td><td>0.75</td><td class="text-xs text-slate-500">keys int8 global scale</td><td class="bad">0.0789</td><td class="bad">0.75</td></tr>
+            <tr><td class="text-slate-200">K8/V8 fp8 (naive per-tensor)</td><td>0.50</td><td class="text-xs text-slate-500">symmetric fp8, global scale</td><td class="bad">1.6921</td><td class="bad">0.44</td></tr>
+            <tr><td class="text-slate-200">positional selector @0.75</td><td>0.75</td><td class="text-xs text-slate-400">drops whole blocks</td><td class="bad">0.1822</td><td class="warn">0.94</td></tr>
+            <tr><td class="text-slate-200">positional selector @0.50</td><td>0.50</td><td class="text-xs text-slate-400">drops whole blocks</td><td class="bad">0.2273</td><td class="good">1.00</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p class="text-slate-300 leading-8 mb-4">
+          At the same byte budget and the same contract safety, quantizing every
+          block beats dropping whole blocks by one to two orders of magnitude on
+          drift &mdash; K16/V8 at 0.75 bytes moves the distribution 48&times; less
+          than a positional selector spending the same bytes, because evicting a
+          quarter of the prefix throws away middle blocks a question needed, while
+          quantization keeps them all approximately. That is a Pareto point
+          selection cannot reach: it is why the deployed asymmetric serving stack
+          quantizes the shared prefix rather than selecting over it.
+        </p>
+        <p class="text-slate-300 leading-8">
+          The key-vs-value asymmetry survives, but honestly. Once keys are scaled
+          per-channel the naive &ldquo;keys die at 8 bits&rdquo; effect mostly
+          disappears (KL 0.079 &rarr; 0.009, a 9&times; rescue); what remains is a
+          real but modest edge &mdash; quantizing keys still drifts about twice as
+          much as quantizing values and is the only 8-bit arm to drop top-1 below
+          one. The catastrophe is reserved for fp8 with a coarse scale, which
+          reproduces the <a class="section-link" href="https://knlp.io/decode">decode</a>
+          key-fp8 collapse and is the loudest warning in the table. Data in
+          <code class="inline">prefix-integrity-20260630/asym-codec-table/</code>.
+        </p>
+      </div>
+    </section>
+
     <!-- INSIGHTS -->
     <section class="mb-12">
       <div class="card p-6">
