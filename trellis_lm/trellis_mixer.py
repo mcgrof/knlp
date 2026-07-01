@@ -312,6 +312,18 @@ class TrellisMixer(nn.Module):
         B, T, _ = x.shape
         return x.view(B, T, self.H, last).permute(0, 2, 1, 3)
 
+    def _value_alpha(self, shared_alpha: torch.Tensor, key_code: torch.Tensor):
+        cfg = self.cfg
+        mix = float(cfg.trellis_value_alpha_mix)
+        if cfg.trellis_value_alpha_mode == "shared" or mix == 0.0:
+            return shared_alpha
+        target = key_code
+        if cfg.trellis_value_alpha_mode == "key_readout_detached":
+            target = target.detach()
+        if mix == 1.0:
+            return target
+        return shared_alpha * (1.0 - mix) + target * mix
+
     def forward(self, x, training: bool = True):
         cfg = self.cfg
         B, T, d = x.shape
@@ -369,29 +381,6 @@ class TrellisMixer(nn.Module):
                 cs = cfg.chunk_size
                 P, rmat, _ = trellis_chunk_decay(bf, cs)
                 nC = P.shape[2]
-                write2 = (
-                    torch.stack((kf, vf), dim=0)
-                    .reshape(2 * B, self.H, T, self.D)
-                    .contiguous()
-                )
-                alpha2 = (
-                    af.unsqueeze(0)
-                    .expand(2, B, self.H, T, self.M)
-                    .reshape(2 * B, self.H, T, self.M)
-                    .contiguous()
-                )
-                P2 = (
-                    P.unsqueeze(0)
-                    .expand(2, B, self.H, nC, cs, 1)
-                    .reshape(2 * B, self.H, nC, cs, 1)
-                    .contiguous()
-                )
-                rmat2 = (
-                    rmat.unsqueeze(0)
-                    .expand(2, B, self.H, nC, cs, cs)
-                    .reshape(2 * B, self.H, nC, cs, cs)
-                    .contiguous()
-                )
                 # The fused Triton kernel handles LN-SiLU only in the square
                 # memory case because LN reductions are over the true slot count.
                 # Pointwise SiLU/identity can pad slots internally, so the
@@ -400,53 +389,46 @@ class TrellisMixer(nn.Module):
                 triton_ln_silu = (
                     cfg.activation == "ln_silu" and cfg.n_slots == cfg.d_head
                 )
-                nvidia_cuda = write2.is_cuda and (
+                nvidia_cuda = kf.is_cuda and (
                     getattr(torch.version, "hip", None) is None
                 )
-                update_gate2 = None
-                if update_gate is not None:
-                    update_gate2 = (
-                        update_gate.unsqueeze(0)
-                        .expand(2, B, self.H, T, update_gate.shape[-1])
-                        .reshape(2 * B, self.H, T, update_gate.shape[-1])
-                        .contiguous()
-                    )
                 triton_fused_update = cfg.trellis_update_stabilizer != (
                     "delta_ratio_cap"
                 )
-                if (
-                    HAS_TRITON
-                    and nvidia_cuda
-                    and triton_fused_update
-                    and (triton_pointwise or triton_ln_silu)
-                ):
-                    # Fused Triton state-evolution: collapses the nC-chunk Python
-                    # loop into one kernel (26-44x over the bmm loop), gradient-
-                    # equivalent to the PyTorch path (z detached -> true-stale).
-                    M0_2, u_2 = TrellisStateEvolutionTriton.apply(
-                        write2,
-                        alpha2,
-                        P2,
-                        rmat2,
-                        gf,
-                        cs,
-                        cfg.activation,
-                        cfg.trellis_update_stabilizer,
-                        cfg.trellis_innovation_rms_cap,
-                        update_gate2,
-                        cfg.residual_update_mix,
-                    )
-                else:
-                    M0_2, u_2, _, _, _ = run_trellis_memory_chunked_state_evolution(
-                        write2,
-                        alpha2,
+
+                def evolve_state(write_in, alpha_in, P_in, rmat_in, gate_in):
+                    if (
+                        HAS_TRITON
+                        and nvidia_cuda
+                        and triton_fused_update
+                        and (triton_pointwise or triton_ln_silu)
+                    ):
+                        # Fused Triton state-evolution: collapses the nC-chunk
+                        # loop into one kernel, gradient-equivalent to the
+                        # PyTorch path (z detached -> true-stale).
+                        return TrellisStateEvolutionTriton.apply(
+                            write_in.contiguous(),
+                            alpha_in.contiguous(),
+                            P_in.contiguous(),
+                            rmat_in.contiguous(),
+                            gf,
+                            cs,
+                            cfg.activation,
+                            cfg.trellis_update_stabilizer,
+                            cfg.trellis_innovation_rms_cap,
+                            gate_in,
+                            cfg.residual_update_mix,
+                        )
+                    M0, u, _, _, _ = run_trellis_memory_chunked_state_evolution(
+                        write_in,
+                        alpha_in,
                         None,
                         gf,
                         self.phi,
                         cs,
-                        P=P2,
-                        rmat=rmat2,
-                        update_gate=update_gate2,
+                        P=P_in,
+                        rmat=rmat_in,
+                        update_gate=gate_in,
                         residual_update_mix=cfg.residual_update_mix,
                         trellis_update_stabilizer=cfg.trellis_update_stabilizer,
                         trellis_innovation_rms_cap=(
@@ -458,15 +440,62 @@ class TrellisMixer(nn.Module):
                             cfg.trellis_stabilizer_detach_scale
                         ),
                     )
-                M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
-                u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
-                yhat = run_trellis_memory_chunked_batched_readout(
-                    kf, qf, M0_2[0], u_2[0], P, rmat, gf, "M_q", cs, T_out=T
-                )
-                r = self.f(yhat)
-                y = run_trellis_memory_chunked_batched_readout(
-                    vf, r, M0_2[1], u_2[1], P, rmat, gf, "M_T_r", cs, T_out=T
-                )
+                    return M0, u
+
+                keyed_value_alpha = cfg.trellis_value_alpha_mode != "shared"
+                if not keyed_value_alpha:
+                    write2 = (
+                        torch.stack((kf, vf), dim=0)
+                        .reshape(2 * B, self.H, T, self.D)
+                        .contiguous()
+                    )
+                    alpha2 = (
+                        af.unsqueeze(0)
+                        .expand(2, B, self.H, T, self.M)
+                        .reshape(2 * B, self.H, T, self.M)
+                        .contiguous()
+                    )
+                    P2 = (
+                        P.unsqueeze(0)
+                        .expand(2, B, self.H, nC, cs, 1)
+                        .reshape(2 * B, self.H, nC, cs, 1)
+                        .contiguous()
+                    )
+                    rmat2 = (
+                        rmat.unsqueeze(0)
+                        .expand(2, B, self.H, nC, cs, cs)
+                        .reshape(2 * B, self.H, nC, cs, cs)
+                        .contiguous()
+                    )
+                    update_gate2 = None
+                    if update_gate is not None:
+                        update_gate2 = (
+                            update_gate.unsqueeze(0)
+                            .expand(2, B, self.H, T, update_gate.shape[-1])
+                            .reshape(2 * B, self.H, T, update_gate.shape[-1])
+                            .contiguous()
+                        )
+                    M0_2, u_2 = evolve_state(write2, alpha2, P2, rmat2, update_gate2)
+                    M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
+                    u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
+                    yhat = run_trellis_memory_chunked_batched_readout(
+                        kf, qf, M0_2[0], u_2[0], P, rmat, gf, "M_q", cs, T_out=T
+                    )
+                    r = self.f(yhat)
+                    y = run_trellis_memory_chunked_batched_readout(
+                        vf, r, M0_2[1], u_2[1], P, rmat, gf, "M_T_r", cs, T_out=T
+                    )
+                else:
+                    M0_k, u_k = evolve_state(kf, af, P, rmat, update_gate)
+                    yhat = run_trellis_memory_chunked_batched_readout(
+                        kf, qf, M0_k, u_k, P, rmat, gf, "M_q", cs, T_out=T
+                    )
+                    r = self.f(yhat)
+                    value_alpha = self._value_alpha(af, r)
+                    M0_v, u_v = evolve_state(vf, value_alpha, P, rmat, update_gate)
+                    y = run_trellis_memory_chunked_batched_readout(
+                        vf, r, M0_v, u_v, P, rmat, gf, "M_T_r", cs, T_out=T
+                    )
             elif use_chunk:
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
@@ -490,10 +519,11 @@ class TrellisMixer(nn.Module):
                     ),
                 )
                 r = self.f(yhat)
+                value_alpha = self._value_alpha(af, r)
                 y = run_trellis_memory_chunked(
                     vf,
                     r,
-                    af,
+                    value_alpha,
                     bf,
                     gf,
                     self.phi,
@@ -533,10 +563,11 @@ class TrellisMixer(nn.Module):
                     ),
                 )
                 r = self.f(yhat)  # [B,H,T,M]
+                value_alpha = self._value_alpha(af, r)
                 y = run_trellis_memory(
                     vf,
                     r,
-                    af,
+                    value_alpha,
                     bf,
                     gf,
                     self.phi,

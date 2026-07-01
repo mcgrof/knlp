@@ -206,7 +206,12 @@ def make_batch(cell: Cell, args: argparse.Namespace, rng: random.Random, device)
     )
 
 
-def make_cfg(args: argparse.Namespace, value_readout_act: str):
+def make_cfg(
+    args: argparse.Namespace,
+    value_readout_act: str,
+    value_alpha_mode: str,
+    value_alpha_mix: float,
+):
     from trellis_lm.config import TrellisConfig
 
     return TrellisConfig(
@@ -227,6 +232,8 @@ def make_cfg(args: argparse.Namespace, value_readout_act: str):
         output_path="paper",
         use_short_conv_v=True,
         value_readout_act=value_readout_act,
+        trellis_value_alpha_mode=value_alpha_mode,
+        trellis_value_alpha_mix=value_alpha_mix,
         trellis_retention_mode="token_proj",
         trellis_update_stabilizer="layerwise_gamma",
         trellis_layer0_gamma_mult=0.5,
@@ -234,15 +241,21 @@ def make_cfg(args: argparse.Namespace, value_readout_act: str):
     )
 
 
-def row_spec(row: str) -> tuple[str, str]:
+def row_spec(row: str) -> tuple[str, str, str, float]:
     if row == "trellis_none":
-        return "trellis", "none"
+        return "trellis", "none", "shared", 1.0
     if row == "trellis_norm_silu":
-        return "trellis", "norm_silu"
+        return "trellis", "norm_silu", "shared", 1.0
+    if row == "trellis_keyed":
+        return "trellis", "none", "key_readout", 1.0
+    if row == "trellis_keyed_detach":
+        return "trellis", "none", "key_readout_detached", 1.0
+    if row == "trellis_keyed_norm_silu":
+        return "trellis", "norm_silu", "key_readout", 1.0
     if row == "gdn_ref":
-        return "gated_delta_ref", "none"
+        return "gated_delta_ref", "none", "shared", 1.0
     if row == "dense":
-        return "dense", "none"
+        return "dense", "none", "shared", 1.0
     raise ValueError(row)
 
 
@@ -301,8 +314,15 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
     import torch
     from trellis_lm.model import build_model
 
-    kind, readout = row_spec(row)
-    cfg = make_cfg(args, readout)
+    kind, readout, value_alpha_mode, value_alpha_mix = row_spec(row)
+    cfg = make_cfg(args, readout, value_alpha_mode, value_alpha_mix)
+    row_meta = {
+        "row": row,
+        "kind": kind,
+        "value_readout_act": readout,
+        "trellis_value_alpha_mode": value_alpha_mode,
+        "trellis_value_alpha_mix": value_alpha_mix,
+    }
     model = build_model(cfg, kind).to(device)
     # Keep master weights fp32, matching the C4 harness. Trellis intentionally
     # computes beta/gamma paths in fp32 under disabled autocast; casting modules
@@ -327,9 +347,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         loss_value = float(loss.detach().item())
         if not math.isfinite(loss_value):
             return {
-                "row": row,
-                "kind": kind,
-                "value_readout_act": readout,
+                **row_meta,
                 "status": "diverged",
                 "divergence_step": step,
                 "divergence_reason": "nonfinite_loss",
@@ -341,9 +359,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         gnorm = float(torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0).item())
         if not math.isfinite(gnorm):
             return {
-                "row": row,
-                "kind": kind,
-                "value_readout_act": readout,
+                **row_meta,
                 "status": "diverged",
                 "divergence_step": step,
                 "divergence_reason": "nonfinite_grad_norm",
@@ -377,9 +393,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             )
     metrics = eval_row(model, row, args, cells, device)
     metrics.update({
-        "row": row,
-        "kind": kind,
-        "value_readout_act": readout,
+        **row_meta,
         "status": "ok",
         "params": model.get_num_params(),
         "memory_state_bytes_per_seq": model.memory_state_bytes(1),
