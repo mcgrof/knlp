@@ -28,7 +28,32 @@ def _adapter_decl(adapter):
         getattr(adapter, "policy", "prefix_cache"),
         tuple(getattr(adapter, "cache_key_fields", ("prefix_hash",))),
         bool(getattr(adapter, "has_custom_restore_path", False)),
+        bool(getattr(adapter, "shape_preserved", True)),
     )
+
+
+def _manifest(adapter, request, num_blocks, budget_k, block_size):
+    """Get a BlockManifest from an adapter. Token-level / per-head methods
+    override manifest() to return partial blocks via from_token_mask; plain
+    block selectors fall back to select_blocks -> whole-block manifest.
+    """
+    fn = getattr(adapter, "manifest", None)
+    if callable(fn):
+        return fn(request, num_blocks, budget_k, block_size)
+    sel = adapter.select_blocks(request, num_blocks, budget_k)
+    return BlockManifest.from_selected(num_blocks, sel, block_size=block_size)
+
+
+def _digest(man: BlockManifest) -> str:
+    """Content digest of a manifest: the kept blocks plus which are partial.
+    Two manifests that keep the same blocks but differ in partial pattern hash
+    differently, so a token-level method that shifts its cut is seen as a new
+    stored object.
+    """
+    import hashlib
+
+    sig = ",".join(f"{b}:{man.status[b].value[0]}" for b in sorted(set(man.selected)))
+    return hashlib.sha256(sig.encode()).hexdigest()[:16]
 
 
 def run_validate(
@@ -52,7 +77,7 @@ def run_validate(
     identity = load_identity(cartridge, block_size=block_size)
     num_blocks = identity.num_blocks
     adapter = load_adapter(adapter_spec, adapter_config)
-    policy, cache_key_fields, custom_restore = _adapter_decl(adapter)
+    policy, cache_key_fields, custom_restore, shape_preserved = _adapter_decl(adapter)
 
     pin = parse_pins(pins) or (1, 2, 0)
     anchor_blocks, recent_blocks = pin[0], pin[1]
@@ -61,18 +86,20 @@ def run_validate(
         queries = [{"id": "q0", "query": "default"}]
 
     # Replay: per query, repeat to expose non-determinism; collect across queries.
+    per_query_manifests = []
     per_query_selected = []
     per_query_digests = []
     same_query_digest_counts = []
     for q in queries:
         digs = set()
-        sel0 = None
+        man0 = None
         for _ in range(max(1, repeats)):
-            art = adapter.artifact(q, num_blocks, budget_k)
-            digs.add(art.artifact_digest)
-            if sel0 is None:
-                sel0 = sorted(set(adapter.select_blocks(q, num_blocks, budget_k)))
-        per_query_selected.append(sel0)
+            man = _manifest(adapter, q, num_blocks, budget_k, block_size)
+            digs.add(_digest(man))
+            if man0 is None:
+                man0 = man
+        per_query_manifests.append(man0)
+        per_query_selected.append(sorted(set(man0.selected)))
         per_query_digests.append(sorted(digs)[0])
         same_query_digest_counts.append(len(digs))
 
@@ -80,22 +107,21 @@ def run_validate(
     artifact_stab = M.artifact_stability(per_query_digests)
     same_query_stab = max(same_query_digest_counts)
 
-    # Representative manifest = first query's selection.
-    rep = BlockManifest.from_selected(
-        num_blocks, per_query_selected[0], block_size=block_size
-    )
+    # Representative manifest = first query.
+    rep = per_query_manifests[0]
     mm = M.manifest_metrics(
         rep, anchor_blocks=anchor_blocks, recent_blocks=recent_blocks
     )
 
-    # PRE / anchor averaged across queries (query-aware selectors vary).
-    pres, anchors = [], []
-    for sel in per_query_selected:
-        man = BlockManifest.from_selected(num_blocks, sel, block_size=block_size)
+    # PRE / anchor / partial averaged across queries (query-aware methods vary).
+    pres, anchors, partials = [], [], []
+    for man in per_query_manifests:
         pres.append(M.prefix_reuse_efficiency(man))
         anchors.append(M.anchor_survival(man, anchor_blocks))
+        partials.append(M.partial_block_rate(man))
     pre_mean = sum(pres) / len(pres)
     anchor_mean = sum(anchors) / len(anchors)
+    partial_mean = sum(partials) / len(partials)
 
     # Storage: compression ratio = blocks kept fraction, per query.
     cr_values = [num_blocks / max(1, len(sel)) for sel in per_query_selected]
@@ -106,13 +132,13 @@ def run_validate(
         policy=policy,
         cache_key_fields=cache_key_fields,
         has_custom_restore_path=custom_restore,
-        shape_preserved=True,  # selectors keep whole blocks at original geometry
+        shape_preserved=shape_preserved,
         reloadable=True,
         artifact_stability_same_query=same_query_stab,
         artifact_stability_across_queries=artifact_stab,
         manifest_stability_across_queries=manifest_stab,
         anchor_survival=anchor_mean,
-        partial_block_rate=mm["partial_block_rate"],
+        partial_block_rate=partial_mean,
         pre=pre_mean,
         cr_cv=cr_stats["cr_cv"],
         read_amplification=read_amp,

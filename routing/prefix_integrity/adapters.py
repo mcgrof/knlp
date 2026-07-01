@@ -75,9 +75,11 @@ class _BaseSelector:
     cache_key_fields = ("prefix_hash",)
     has_custom_restore_path = False
 
-    def manifest(self, request: dict, num_blocks: int, budget_k: int) -> BlockManifest:
+    def manifest(
+        self, request: dict, num_blocks: int, budget_k: int, block_size: int = 1
+    ) -> BlockManifest:
         sel = self.select_blocks(request, num_blocks, budget_k)
-        return BlockManifest.from_selected(num_blocks, sel)
+        return BlockManifest.from_selected(num_blocks, sel, block_size=block_size)
 
     def artifact(
         self, request, num_blocks, budget_k, config_hash=""
@@ -278,10 +280,20 @@ def load_adapter(spec: str, config: Optional[dict] = None):
         fn = getattr(mod, factory)
         return fn(**config) if config else fn()
     key = spec.lower()
-    if key not in _BUILTINS:
-        raise KeyError(f"unknown adapter '{spec}'; builtins: {sorted(_BUILTINS)}")
-    ctor = _BUILTINS[key]
-    try:
-        return ctor(**config) if config else ctor()
-    except TypeError:
-        return ctor()
+    if key in _BUILTINS:
+        ctor = _BUILTINS[key]
+        try:
+            return ctor(**config) if config else ctor()
+        except TypeError:
+            return ctor()
+    # Published-method library (SnapKV, H2O, StreamingLLM, ...).
+    from .library_adapters import LIBRARY
+
+    if key in LIBRARY:
+        ctor = LIBRARY[key]
+        try:
+            return ctor(**config) if config else ctor()
+        except TypeError:
+            return ctor()
+    known = sorted(_BUILTINS) + sorted(LIBRARY)
+    raise KeyError(f"unknown adapter '{spec}'; known: {known}")

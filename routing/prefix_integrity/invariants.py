@@ -176,37 +176,43 @@ def evaluate(inp: InvariantInput) -> dict:
 
 
 def _classify(inp, query_dep, has_qhash, recs) -> Classification:
-    # Non-reloadable or shape-broken (no restore path) => the prefix can map to
-    # a non-reloadable object: the worst case.
+    """Pick the single most-severe applicable verdict. A method can trip more
+    than one condition (SnapKV is both query-dependent and partial-block); the
+    verdict is the worst one, since that is the binding constraint on where it
+    can deploy. Severity, high to low: DANGEROUS > ROUTING_ONLY >
+    {CUSTOM_CONNECTOR, EXTENDED_CACHE_KEY} > SAFE.
+    """
+    claims_prefix_safe = inp.policy == "prefix_cache"
+
+    # DANGEROUS: the prefix can map to a different or non-reloadable object.
     if (not inp.reloadable) or (
         not inp.shape_preserved and not inp.has_custom_restore_path
     ):
         recs.append("declare a custom restore path or do not store by prefix_hash")
         return Classification.DANGEROUS_FOR_PREFIX_SHARING
-    # Non-deterministic for a fixed query => same prefix, different objects.
     if inp.artifact_stability_same_query > 1:
         recs.append("make artifact generation deterministic (seed/sort)")
         return Classification.DANGEROUS_FOR_PREFIX_SHARING
+    # Query-dependent content stored under prefix_hash alone is the fatal case,
+    # checked before partial-block so a method that is both is called dangerous.
+    if query_dep and not has_qhash and claims_prefix_safe:
+        recs.append("add query_hash to the cache key or relabel as routing-only")
+        return Classification.DANGEROUS_FOR_PREFIX_SHARING
 
-    # Partial blocks / variable shape but reloadable via a custom connector.
-    if inp.partial_block_rate > 0.0:
-        if inp.has_custom_restore_path:
-            return Classification.SAFE_ONLY_WITH_CUSTOM_CONNECTOR
-        recs.append("partial blocks need a custom connector or whole-block policy")
-        return Classification.SAFE_ONLY_WITH_CUSTOM_CONNECTOR
-
-    if query_dep:
-        if has_qhash:
-            recs.append(
-                "keep query_hash in the cache key; do not key by prefix_hash alone"
-            )
-            return Classification.SAFE_ONLY_WITH_EXTENDED_CACHE_KEY
-        # query-dependent, not keyed by query_hash
-        if inp.policy == "prefix_cache":
-            recs.append("add query_hash to the cache key or relabel as routing-only")
-            return Classification.DANGEROUS_FOR_PREFIX_SHARING
+    # ROUTING_ONLY: query-dependent but honestly labeled as routing, not cache.
+    if query_dep and not has_qhash and not claims_prefix_safe:
         recs.append("valid as a query-aware routing prior, not as prefix cache")
         return Classification.ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE
+
+    # SAFE-ONLY tier: reloadable and prefix-key-safe, but needs one accommodation.
+    if inp.partial_block_rate > 0.0:
+        recs.append("partial blocks need a custom connector or whole-block policy")
+        return Classification.SAFE_ONLY_WITH_CUSTOM_CONNECTOR
+    if not inp.shape_preserved:  # reloadable only via the declared restore path
+        return Classification.SAFE_ONLY_WITH_CUSTOM_CONNECTOR
+    if query_dep and has_qhash:
+        recs.append("keep query_hash in the cache key; do not key by prefix_hash alone")
+        return Classification.SAFE_ONLY_WITH_EXTENDED_CACHE_KEY
 
     # Deterministic, shape-preserving, query-independent, whole-block.
     return Classification.SAFE_FOR_PREFIX_OFFLOAD
