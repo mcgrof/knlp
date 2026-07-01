@@ -479,7 +479,8 @@
             drives their dangerous contract verdict, and the dense baseline found
             the needle only half the time, so a low KL can mean &ldquo;faithfully
             preserves the model's confusion.&rdquo; The decisive form is the
-            same-prefix, many-query cache-reuse replay described below.
+            same-prefix, many-query cache-reuse replay in the next section, which
+            runs the query-dependence directly and confirms the tension.
           </p>
         </div>
         <p class="text-slate-300 leading-8">
@@ -500,6 +501,81 @@
           KL is the robust signal. PyramidKV and Ada-KV hit KVPress API mismatches
           on this build and are design-classified only. Data in
           <code class="inline">prefix-integrity-20260630/kvpress_drift/</code>.
+        </p>
+      </div>
+    </section>
+
+    <!-- REUSE REPLAY (DECISIVE) -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">The decisive test &mdash; reusing a compressed prefix across queries</h2>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token shared prefix &middot; 6 prefixes, 29 strong needles</p>
+        <p class="text-slate-300 leading-8 mb-5">
+          The drift table above compressed each prefix without a query, so it
+          could not show the thing that actually makes an adaptive method unsafe
+          to share: its compressed cache depends on which question you asked.
+          This test runs that directly. One long prefix holds several planted
+          facts; we build a method's compressed cache and then reuse it across
+          different questions under a prefix-only key &mdash; exactly what a
+          prefix cache does when two requests share the same opening context. We
+          score only the facts the uncompressed model can actually answer, so a
+          compressed method is judged on real retrieval, not on the model's own
+          confusion.
+        </p>
+        <p class="text-slate-300 leading-8 mb-5">
+          A <strong>query-aware</strong> method (keep the tokens the question
+          attends to, SnapKV-shaped) is measured two ways. <em>Honest</em>
+          selects using the current question &mdash; the method deployed
+          correctly, with the question inside the cache key. <em>Unsafe reuse</em>
+          builds the cache from the first question and reuses that same
+          prefix-only artifact for every later question. A
+          <strong>positional</strong> method (a sink plus a recent window,
+          StreamingLLM-shaped) never looks at the question, so its one cache
+          serves every query identically.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>KV budget kept</th><th>full (dense)</th><th>query-aware, honest</th><th>query-aware, UNSAFE reuse</th><th>positional (safe)</th><th>kept-set overlap across queries</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>8%</td><td>1.00</td><td class="warn">0.28</td><td class="bad">0.10</td><td class="bad">0.00</td><td class="bad">0.35</td></tr>
+            <tr><td>15%</td><td>1.00</td><td class="good">0.76</td><td class="warn">0.34</td><td class="bad">0.00</td><td class="bad">0.39</td></tr>
+            <tr><td>25%</td><td>1.00</td><td class="good">0.93</td><td class="warn">0.52</td><td class="bad">0.00</td><td class="warn">0.48</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <img src="images/pia_reuse_pareto.png" alt="Prefix-only reuse collapses query-aware quality; quality-vs-cacheability Pareto" class="rounded-lg border border-slate-700/60 w-full mb-5" />
+        <p class="text-slate-300 leading-8 mb-4">
+          Deployed correctly, the query-aware method climbs toward the dense
+          baseline as the budget grows &mdash; 0.28, then 0.76, then 0.93. But
+          reusing that same cache across questions stays at roughly half of that
+          at every budget: it kept the first question's fact, not the current
+          one's. The overlap between the token sets different questions want to
+          keep is only about a third to a half, which is both why the harness
+          flags it dangerous and why the reuse collapses.
+        </p>
+        <p class="text-slate-300 leading-8">
+          The positional method is the mirror image. Every question keeps the
+          same tokens, so its cache is perfectly reusable &mdash; but at these
+          budgets a sink plus a recent window never reaches the old middle where
+          the facts sit, so it answers nothing. One method is high quality only
+          when the cache key carries its question; the other keeps full reuse but
+          cannot serve the question at an aggressive budget. That trade &mdash;
+          quality bought with cache reuse &mdash; is exactly what the contract
+          axis predicted from the design alone, now confirmed by running it.
+        </p>
+        <p class="text-xs text-slate-500 leading-6 mt-4">
+          The context is 4096 tokens because the query-aware selector reads full
+          attention, which does not fit past ~4-5K on an 80GB card; the effect
+          is a property of the selection depending on the question, not of
+          context length, so it is expected to sharpen at longer context with a
+          cheaper selector. The positional row is a floor, not a tuned
+          StreamingLLM. Single model. Getting here took four fixes &mdash; a
+          validated masking path, distinct non-interfering facts, a normalized
+          scorer, and a sink-aware selector &mdash; all recorded in the findings.
+          Data and plot in
+          <code class="inline">prefix-integrity-20260630/pia-reuse-replay/</code>.
         </p>
       </div>
     </section>
