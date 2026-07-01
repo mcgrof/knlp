@@ -744,9 +744,10 @@
           </div>
           <p>
             The H100 skill-trace pilot showed that generated behavior traces
-            matter. The A100 retest added a second axis: first-k, paper SCI,
-            and legacy strided-RoPE are different initializers, and paper SCI
-            is seed-sensitive.
+            matter. The A100 runs added two more axes: fixed-budget initializer
+            quality and checkpointed steps-to-quality. First-k, paper SCI, and
+            legacy strided-RoPE are different initializers, and random SCI is
+            seed-sensitive rather than a default convergence win.
           </p>
         </div>
 
@@ -805,10 +806,10 @@
           </div>
           <div class="card metric">
             <div>
-              <div class="value rose">no</div>
-              <div class="label">No confirmed SCI convergence-speed win in this fixed-step run.</div>
+              <div class="value rose">80</div>
+              <div class="label">Follow-up checkpoint rows testing SCI steps-to-quality.</div>
             </div>
-            <div class="source">24 optimizer steps per trained arm</div>
+            <div class="source">xlsx convergence curve</div>
           </div>
         </div>
 
@@ -958,11 +959,47 @@
             </table>
           </div>
           <div class="note" style="margin-top:14px;">
-            The A100 run does not confirm the claim that SCI converges faster.
-            It used fixed 24-step training for every learned-prefix arm. Median
-            train time was essentially identical across first-k, SCI seed 0,
-            and strided-RoPE. A real convergence claim needs variable-step
-            curves and a quality threshold, not one fixed-budget run.
+            The fixed-budget run did not measure convergence, so we ran a
+            follow-up checkpoint curve at steps 0, 1, 2, 4, 8, 16, 24, and 48
+            on xlsx. It does not support random SCI as a faster-convergence
+            default. For AR-TA, first-k reached 17 / 19 at step 8 and
+            strided-RoPE reached 16 / 19 at step 4; the best SCI seed reached
+            13 / 19 at step 16.
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h3>A100 convergence curve: SCI is not the fast default</h3>
+          <p>
+            This table uses verifier quality by optimizer step, not training
+            wall-clock. It answers the convergence question directly for the
+            xlsx skill-cache task.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <tr>
+                <th>PI</th>
+                <th>Initializer</th>
+                <th>Step to 12 / 19</th>
+                <th>Step to 13 / 19</th>
+                <th>Step to 15 / 19</th>
+                <th>Best</th>
+              </tr>
+              <tr><td><strong>AR-TA</strong></td><td>first-k</td><td class="ok">8</td><td class="ok">8</td><td class="ok">8</td><td class="ok">17 / 19</td></tr>
+              <tr><td><strong>AR-TA</strong></td><td>SCI seed 0</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>8 / 19</td></tr>
+              <tr><td><strong>AR-TA</strong></td><td>SCI seed 1</td><td>16</td><td>16</td><td>&mdash;</td><td>13 / 19</td></tr>
+              <tr><td><strong>AR-TA</strong></td><td>SCI seed 2</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>8 / 19</td></tr>
+              <tr><td><strong>AR-TA</strong></td><td>strided-RoPE</td><td class="ok">4</td><td class="ok">4</td><td class="ok">4</td><td class="ok">16 / 19</td></tr>
+              <tr><td><strong>SS-PI</strong></td><td>first-k</td><td class="ok">2</td><td>&mdash;</td><td>&mdash;</td><td>12 / 19</td></tr>
+              <tr><td><strong>SS-PI</strong></td><td>SCI seed 1</td><td>16</td><td>16</td><td>&mdash;</td><td class="ok">14 / 19</td></tr>
+              <tr><td><strong>SS-PI</strong></td><td>SCI seed 2</td><td class="ok">4</td><td class="ok">4</td><td>&mdash;</td><td class="ok">14 / 19</td></tr>
+              <tr><td><strong>SS-PI</strong></td><td>strided-RoPE</td><td>8</td><td>8</td><td>&mdash;</td><td>13 / 19</td></tr>
+            </table>
+          </div>
+          <div class="note" style="margin-top:14px;">
+            The useful lesson is not that SCI is bad. It is that random SCI is
+            brittle. A coverage-aware chunk selector is now the natural next
+            initializer to test.
           </div>
         </div>
 

@@ -865,8 +865,9 @@
           <p>
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
-            The H100 skill-trace run and A100 SCI/Active Reading retest add
-            quality evidence for the induction layer, not just the connector.
+            The H100 skill-trace run, A100 SCI/Active Reading retest, and A100
+            convergence curve add quality evidence for the induction layer,
+            not just the connector.
           </p>
         </div>
 
@@ -890,14 +891,14 @@
               <div class="value amber">JSON+CSV</div>
               <div class="label">The H100 and A100 runs generated scored ablation JSONs plus CSV summaries.</div>
             </div>
-            <div class="source">skill-trace and SCI/AR retests</div>
+            <div class="source">skill-trace, SCI/AR, and convergence retests</div>
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">126</div>
-              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows plus 86 A100 retest rows.</div>
+              <div class="value cyan">206</div>
+              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, and 80 A100 convergence rows.</div>
             </div>
-            <div class="source">two completed GPU matrices</div>
+            <div class="source">three completed GPU matrices</div>
           </div>
         </div>
 
@@ -1161,9 +1162,71 @@
               </table>
             </div>
             <div class="note" style="margin-top:14px;">
-              This run does not confirm faster SCI convergence. It used fixed
-              24-step training, and median training time was effectively equal:
-              first-k 2.894s, paper SCI seed 0 2.892s, and strided-RoPE 2.897s.
+              This fixed-budget run did not measure convergence. It only showed
+              that equal 24-step training time was effectively equal: first-k
+              2.894s, paper SCI seed 0 2.892s, and strided-RoPE 2.897s.
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>A100 convergence curve</h3>
+            <p>
+              The follow-up run saved and scored xlsx checkpoints at optimizer
+              steps 0, 1, 2, 4, 8, 16, 24, and 48. This tests
+              steps-to-quality directly, instead of treating final wall-clock
+              as convergence.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>PI</th>
+                  <th>Initializer</th>
+                  <th>Fastest useful step</th>
+                  <th>Best</th>
+                  <th>Main read</th>
+                </tr>
+                <tr>
+                  <td><strong>AR-TA</strong></td>
+                  <td>first-k</td>
+                  <td class="ok">8 to reach 17 / 19</td>
+                  <td class="ok">17 / 19</td>
+                  <td>Best quality row.</td>
+                </tr>
+                <tr>
+                  <td><strong>AR-TA</strong></td>
+                  <td>strided-RoPE</td>
+                  <td class="ok">4 to reach 16 / 19</td>
+                  <td class="ok">16 / 19</td>
+                  <td>Fastest high-quality row.</td>
+                </tr>
+                <tr>
+                  <td><strong>AR-TA</strong></td>
+                  <td>best SCI seed</td>
+                  <td>16 to reach 13 / 19</td>
+                  <td>13 / 19</td>
+                  <td>No SCI convergence win for AR-TA.</td>
+                </tr>
+                <tr>
+                  <td><strong>SS-PI</strong></td>
+                  <td>SCI seed 2</td>
+                  <td class="ok">4 to reach 14 / 19</td>
+                  <td class="ok">14 / 19</td>
+                  <td>SCI can work when sampled chunks are useful.</td>
+                </tr>
+                <tr>
+                  <td><strong>SS-PI</strong></td>
+                  <td>first-k</td>
+                  <td>2 to reach 12 / 19</td>
+                  <td>12 / 19</td>
+                  <td>Fast early baseline.</td>
+                </tr>
+              </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              The result is not "SCI is bad." It is "random SCI is not a
+              default convergence win." The next SCI algorithm should make
+              chunk choice coverage-aware: retrieval-guided, strategy-guided,
+              or section-balanced.
             </div>
           </div>
 
@@ -1244,8 +1307,9 @@
   --output-json /workspace/results/pareto.json \
   --output-csv /workspace/results/pareto.csv</pre>
             <div class="note" style="margin-top:14px;">
-              The A100 retest adds an initializer frontier: first-k, paper SCI,
-              and strided-RoPE are not interchangeable. The next run should
+              The A100 retest and convergence curve add an initializer frontier:
+              first-k, paper SCI, and strided-RoPE are not interchangeable. The
+              next run should
               expand beyond the cartridge-era tasks into smallest,
               deterministic-random, medium, and largest SkillsBench strata.
             </div>
