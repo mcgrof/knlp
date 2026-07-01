@@ -58,6 +58,17 @@
         object &mdash; reloadable, reusable, position-compatible, and close
         enough to the original that the model does not change its mind?
       </p>
+      <p class="text-base text-slate-500 max-w-4xl mx-auto leading-8 mt-4">
+        PIA answers it in stages, cheapest first: a CPU contract check with no
+        model, then a GPU drift check on whatever survives, and the real serving
+        stack only for the finalists. It reuses the deterministic
+        <a href="kri.html" class="section-link">Cartridge</a> prefix artifacts
+        from our <a href="routing.html" class="section-link">routing-attention</a>
+        R&amp;D as stand-ins for a shared prefix cache &mdash; which is what lets
+        the whole screen run on one GPU for the price of a coffee. It flags the
+        risks of an adaptive KV method early, and on the same axes points at the
+        integrity-preserving choice for an existing offload path.
+      </p>
       <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
         <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
         <a href="routing.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">routing</a>
@@ -141,6 +152,96 @@
           <span class="warn">WARN</span> / <span class="bad">FAIL</span> status, a
           danger score, and one of five plain-language classifications.
         </p>
+      </div>
+    </section>
+
+    <!-- STAGED VALIDATION -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Staged validation, cheapest filter first</h2>
+        <p class="text-slate-300 leading-8 mb-5">
+          The two axes are run as stages, not all at once, so a method that fails
+          the cheap check never burns a GPU. Each stage is a gate: only what
+          survives moves on. The whole point is that the early stages are almost
+          free, because they run over a <a href="kri.html" class="section-link">Cartridge</a>
+          &mdash; a deterministic, prefix-only KV artifact from our routing work
+          that behaves exactly like a shared prefix cache &mdash; instead of a
+          live serving stack.
+        </p>
+        <div class="space-y-4">
+          <div class="panel p-5">
+            <div class="flex items-baseline gap-3 mb-1">
+              <span class="chip text-slate-400 border-slate-600">stage 0</span>
+              <span class="text-lg font-semibold text-slate-200">The Cartridge stand-in</span>
+              <span class="text-xs font-mono text-slate-500">substrate &middot; free</span>
+            </div>
+            <p class="text-sm text-slate-400 leading-7">
+              A Cartridge is a saved prefix KV cache with a manifest: the same
+              deterministic, reloadable, prefix-keyed object a real prefix cache
+              stores. Reusing it as the test fixture is what makes every later
+              stage cheap and repeatable &mdash; the method under test is applied
+              to the Cartridge, and we watch what it does to the contract and the
+              output. This is the routing-attention R&amp;D the harness is built
+              on, turned into a preflight fixture.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="flex items-baseline gap-3 mb-1">
+              <span class="chip text-blue-300 border-blue-500/40">stage 1</span>
+              <span class="text-lg font-semibold text-slate-200">Contract &mdash; CPU, no model</span>
+              <span class="text-xs font-mono text-slate-500">seconds &middot; ~free</span>
+            </div>
+            <p class="text-sm text-slate-400 leading-7">
+              Pure bookkeeping over the block manifest: does every retained block
+              reload at its original position and shape, does the same prefix
+              produce the same bytes, and if the artifact depends on the query, is
+              the query in the cache key? A method that is query-dependent under a
+              prefix-only key is flagged <span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span>
+              here, before any GPU is touched. Most bad ideas die at this gate.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="flex items-baseline gap-3 mb-1">
+              <span class="chip text-purple-300 border-purple-500/40">stage 2</span>
+              <span class="text-lg font-semibold text-slate-200">Drift &mdash; one GPU, one prefill</span>
+              <span class="text-xs font-mono text-slate-500">minutes &middot; ~$1&ndash;3</span>
+            </div>
+            <p class="text-sm text-slate-400 leading-7">
+              For whatever keeps a clean contract, load a real model over the
+              Cartridge and measure how far the method moves the next-token
+              distribution from the full-cache baseline &mdash; KL divergence and
+              top-1 agreement, with the query's position pinned so the drift is
+              the algorithm's, not a bookkeeping artifact. This catches the method
+              that keeps perfect geometry while wrecking the answer, and it is
+              where the byte-vs-drift trade-offs on this page are measured.
+            </p>
+          </div>
+          <div class="panel p-5">
+            <div class="flex items-baseline gap-3 mb-1">
+              <span class="chip text-emerald-300 border-emerald-500/40">stage 3</span>
+              <span class="text-lg font-semibold text-slate-200">The real serving stack &mdash; finalists only</span>
+              <span class="text-xs font-mono text-slate-500">the verdict</span>
+            </div>
+            <p class="text-sm text-slate-400 leading-7">
+              PIA is a preflight, not the last word. A method that clears both
+              gates has earned a run on the real stack &mdash;
+              <a href="https://knlp.io/decode" class="section-link">vLLM / FlashInfer / LMCache</a>
+              with the actual quantization kernels and long context &mdash; where
+              the fake-quant, short-context, synthetic-cartridge caveats of the
+              screen are retired. The screen decides what is worth that run; the
+              stack delivers the verdict.
+            </p>
+          </div>
+        </div>
+        <div class="mini-note mt-5">
+          <p class="text-slate-300 leading-7 text-sm">
+            Read the stages as a funnel: stage 1 kills query-dependent
+            prefix-sharing risks for free, stage 2 ranks the survivors by drift
+            per byte, and stage 3 confirms the recommendation on the real stack.
+            The results below are stage-1 and stage-2 outputs &mdash; fast
+            screens that flag the risk and point at the integrity-preserving fix.
+          </p>
+        </div>
       </div>
     </section>
 
@@ -754,6 +855,28 @@
             this model family: Qwen2.5-7B has biased keys that fp8 cannot hold.
             The harness rediscovered it from a different direction, without being
             told to look for it.
+          </p>
+        </div>
+
+        <div class="mb-2">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="chip text-emerald-300 border-emerald-500/40">recommendation</span>
+            <h3 class="text-lg font-semibold text-slate-100">It doesn't only flag risk &mdash; it points at the fix</h3>
+          </div>
+          <p class="text-slate-300 leading-8">
+            The three failures above are what the screen catches; the codec table
+            is what it recommends. Put quantization and block selection on the same
+            axes with bytes counted, and among the contract-safe, query-independent
+            options, asymmetric quantization wins the moderate-compression region
+            outright &mdash; K16/V8 moves the distribution about forty-eight times
+            less than a positional selector spending the same bytes, because it
+            degrades every block a little instead of dropping a quarter of them.
+            The staged approach also earned its keep on nuance: a per-tensor scale
+            made keys look fatally fragile, and the fair per-channel rescan showed
+            most of that was the scale, not the keys &mdash; the real key-vs-value
+            gap is a modest factor of two. That is the difference between flagging
+            a risk and understanding it, and it is why the finalists still go to
+            the real stack.
           </p>
         </div>
       </div>
