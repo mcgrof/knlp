@@ -1010,38 +1010,38 @@
         </div>
 
         <div class="card" style="margin-top:14px;">
-          <h3>LongHealth document curve: first-k remains strong</h3>
+          <h3>LongHealth document curve: random SCI is seed-sensitive</h3>
           <p>
             The corrected long-context redo uses LongHealth patient-record
-            text, not SkillsBench skill files. The source has 11,846 wrapped
-            tokens and the learned KV prefix has 2,048 tokens. Training data,
-            objective, model, prefix length, and evaluator are fixed; only the
+            text, not SkillsBench skill files. The A100 multi-document run
+            selected four records with 9,603 to 12,503 wrapped source tokens
+            and a 2,048-token learned KV prefix. Training data, objective,
+            model, prefix length, and evaluator are fixed; only the
             initializer changes.
           </p>
           <div class="table-scroll">
             <table>
               <tr>
-                <th>Initializer</th>
-                <th>Step 0</th>
-                <th>Step 4</th>
-                <th>Step 8</th>
-                <th>Step 16</th>
-                <th>Step 24</th>
-                <th>Best</th>
+                <th>Patient</th>
+                <th>Source tokens</th>
+                <th>First-k best</th>
+                <th>Best SCI</th>
+                <th>Delta</th>
+                <th>Verdict</th>
               </tr>
-              <tr><td><strong>first-k</strong></td><td class="ok">11 / 20</td><td>10 / 20</td><td>7 / 20</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td></tr>
-              <tr><td><strong>SCI seed 0</strong></td><td>9 / 20</td><td>10 / 20</td><td>5 / 20</td><td>9 / 20</td><td>9 / 20</td><td>10 / 20</td></tr>
-              <tr><td><strong>SCI seed 1</strong></td><td class="ok">11 / 20</td><td>9 / 20</td><td>7 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="ok">11 / 20</td></tr>
-              <tr><td><strong>SCI seed 2</strong></td><td class="ok">11 / 20</td><td>5 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="ok">12 / 20</td><td class="ok">12 / 20</td></tr>
+              <tr><td><strong>patient_05</strong></td><td>9,603</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td><td>0</td><td>Tie</td></tr>
+              <tr><td><strong>patient_06</strong></td><td>10,807</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td><td>0</td><td>Tie</td></tr>
+              <tr><td><strong>patient_12</strong></td><td>12,503</td><td class="ok">17 / 20</td><td>13 / 20</td><td>-4</td><td>First-k win</td></tr>
+              <tr><td><strong>patient_18</strong></td><td>11,904</td><td>8 / 20</td><td class="ok">10 / 20</td><td>+2</td><td>SCI win</td></tr>
             </table>
           </div>
           <div class="note" style="margin-top:14px;">
-            This valid document-cartridge test does not support random paper
-            SCI as a robust faster-convergence default. One seed gets a small
-            late win, two seeds do not beat first-k, and no SCI seed gives a
-            reliable early advantage. The next initializer should choose chunks
-            deliberately through retrieval, salience, section balance, or PI
-            strategy signals.
+            The four-patient A100 run lands at one SCI win, two ties, and one
+            first-k win, with a mean best-score delta of -0.5. The result keeps
+            SCI in the search space, but it does not make random SCI the
+            default. The next initializer should choose chunks deliberately
+            through retrieval, salience, section balance, or PI strategy
+            signals.
           </div>
         </div>
 
