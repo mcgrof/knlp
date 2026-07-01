@@ -888,13 +888,24 @@
     <!-- REPRODUCE -->
     <section class="mb-12">
       <div class="card p-6">
-        <h2 class="text-2xl font-semibold text-slate-100 mb-3">Run it</h2>
+        <h2 class="text-2xl font-semibold text-slate-100 mb-4">Run it</h2>
+        <p class="text-slate-300 leading-8 mb-5">
+          Run the stages in order. Stage 1 needs no GPU; stage 2 does. Screen on
+          stage 1 first, and only spend the GPU on what survives.
+        </p>
+
+        <div class="flex items-baseline gap-3 mb-2">
+          <span class="chip text-blue-300 border-blue-500/40">stage 1</span>
+          <span class="chip text-emerald-300 border-emerald-500/40">no GPU</span>
+          <h3 class="text-lg font-semibold text-slate-200">Contract &mdash; CPU, no model</h3>
+        </div>
         <p class="text-slate-300 leading-8 mb-3">
-          The contract axis &mdash; block survival, determinism, cache-key safety,
-          storage geometry &mdash; needs no model and no GPU:
+          Block survival, determinism, cache-key safety, and storage geometry.
+          Pure bookkeeping over the block manifest &mdash; no weights are loaded,
+          so it runs anywhere. Most methods that are unsafe to share fail here.
         </p>
         <div class="code-block">
-          <div class="code-title">contract verdict (CPU)</div>
+          <div class="code-title">contract verdict &mdash; CPU, no model</div>
 <pre><span class="nm">python</span> -m routing.prefix_integrity.cli validate \
   --cartridge <span class="str">/path/to/cartridge_dir</span> \
   --algorithm <span class="str">query_aware</span> \
@@ -902,15 +913,22 @@
   --budgets <span class="num">8,16,32</span> --pins <span class="str">A1R2K13</span> \
   --out <span class="str">/path/to/report_dir</span></pre>
         </div>
+
+        <div class="flex items-baseline gap-3 mb-2 mt-7">
+          <span class="chip text-purple-300 border-purple-500/40">stage 2</span>
+          <span class="chip text-amber-300 border-amber-500/40">needs a GPU</span>
+          <h3 class="text-lg font-semibold text-slate-200">Drift &mdash; one GPU</h3>
+        </div>
         <p class="text-slate-300 leading-8 mb-3">
-          The drift axis loads a model and measures how far the candidate moves
-          the next-token distribution. The query positions are pinned to the
+          Loads a model over the cartridge and measures how far the candidate
+          moves the next-token distribution. The query positions are pinned to the
           original prefix offset, so drift reflects the algorithm rather than
           re-indexing. Fold its output back into the verdict with
-          <code class="inline">--semantic-json</code>:
+          <code class="inline">--semantic-json</code>. This step and everything
+          below it require a GPU.
         </p>
         <div class="code-block">
-          <div class="code-title">semantic drift (GPU)</div>
+          <div class="code-title">semantic drift &mdash; GPU</div>
 <pre><span class="nm">python</span> -m routing.prefix_integrity.semantic_drift \
   --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
   --cartridge <span class="str">/path/to/cartridge_dir</span> \
@@ -918,7 +936,20 @@
   --algorithm <span class="str">query_aware</span> --mode <span class="str">selector</span> --budget-k <span class="num">16</span> \
   --out <span class="str">semantic.json</span></pre>
         </div>
-        <p class="text-slate-300 leading-8">
+        <p class="text-slate-300 leading-8 mb-3">
+          The byte-aware codec table on this page is the same GPU drift path swept
+          over codecs and byte-matched selectors. Building a cartridge prefills a
+          model, so it needs a GPU too:
+        </p>
+        <div class="code-block">
+          <div class="code-title">build a cartridge + sweep the codec table &mdash; GPU</div>
+<pre><span class="nm">python</span> experiments/pia_build_cartridge.py \
+  --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
+  --target-tokens <span class="num">4096</span> --out-dir <span class="str">cart</span>
+<span class="nm">bash</span> experiments/pia_codec_table.sh   <span class="cm"># none/int8/fp8 + k16v8, k8v16, k16v4, ...</span></pre>
+        </div>
+
+        <p class="text-slate-300 leading-8 mt-6">
           A new algorithm enters by implementing <code class="inline">select_blocks</code>
           for a selector, a transform step for a codec, or both &mdash; loaded
           from a <code class="inline">package.module:factory</code> spec. It
