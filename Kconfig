@@ -225,6 +225,7 @@ source "Kconfig.ra_mla"
 source "Kconfig.decode"
 source "Kconfig.fdec"
 source "Kconfig.quant"
+source "Kconfig.kri_tierkv"
 
 menu "Advanced Options"
 
