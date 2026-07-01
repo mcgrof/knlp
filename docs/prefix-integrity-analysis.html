@@ -418,6 +418,85 @@
       </div>
     </section>
 
+    <!-- FAITHFUL DRIFT -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Measured drift &mdash; the two axes disagree</h2>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; KVPress presses &middot; 5662-token context, keep ~25%</p>
+        <p class="text-slate-300 leading-8 mb-5">
+          The contract axis above is design-derived. To fill the other axis with
+          real numbers we installed <a class="section-link" href="https://github.com/NVIDIA/kvpress">KVPress</a>
+          and ran its actual presses on an A100: for each method, compress the KV
+          of a long context, then measure how far the model's next-token
+          distribution moves from the uncompressed baseline. This is the same
+          drift the reference run measured with fp8/int8, now from the real
+          methods.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Contract verdict (design)</th><th>Measured drift KL</th><th>Top-1 agree</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-slate-200">SnapKV</td><td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+              <td class="good">0.425</td><td>0.75</td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">TOVA</td><td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+              <td class="good">0.716</td><td>0.75</td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">Expected Attention</td><td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+              <td class="warn">0.860</td><td>0.50</td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">H2O</td><td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+              <td class="warn">1.973</td><td>0.75</td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">StreamingLLM</td><td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td>
+              <td class="bad">2.510</td><td>0.75</td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">Knorm</td><td class="text-xs"><span class="info">SAFE_ONLY_WITH_CUSTOM_CONNECTOR</span></td>
+              <td class="bad">3.486</td><td>0.75</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="mini-note-bad mb-4">
+          <p class="text-slate-200 leading-7 text-sm">
+            <strong>The orderings are reversed.</strong> The method with the
+            lowest drift &mdash; SnapKV, the best at preserving the output &mdash;
+            is the one the contract axis flags most dangerous for prefix sharing.
+            The method that is prefix-cache safe &mdash; StreamingLLM &mdash; has
+            among the worst drift, because at this budget it drops the middle of
+            the document where the answer lived. Quality safety and prefix-sharing
+            safety are in tension, and neither can be read off the other.
+          </p>
+        </div>
+        <p class="text-slate-300 leading-8">
+          That tension is the reason PIA measures both. A quality leaderboard
+          ranks SnapKV at the top and would send it to production; the contract
+          axis shows it is a router, not a prefix-cache-safe compressor, so it
+          needs the query in its cache key or it will corrupt a shared prefix.
+          Conversely, the safe-looking positional method buys that safety with
+          accuracy. The right choice depends on which axis binds &mdash; and you
+          only see both if you measure both.
+        </p>
+        <p class="text-xs text-slate-500 leading-6 mt-4">
+          Compression here is query-independent (the question is appended after
+          compression), so this isolates each method's intrinsic quality loss;
+          the query-dependence that drives the contract verdict is a design
+          property, measured separately. Four-probe needle set, one budget;
+          KL is the robust signal. PyramidKV and Ada-KV hit KVPress API mismatches
+          on this build and are design-classified only. Data in
+          <code class="inline">prefix-integrity-20260630/kvpress_drift/</code>.
+        </p>
+      </div>
+    </section>
+
     <!-- INSIGHTS -->
     <section class="mb-12">
       <div class="card p-6">
