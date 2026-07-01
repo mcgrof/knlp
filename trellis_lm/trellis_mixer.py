@@ -319,10 +319,48 @@ class TrellisMixer(nn.Module):
         if self.update_gate_proj is None:
             return
         with torch.no_grad():
-            p = self.cfg.update_gate_init
+            floor = float(self.cfg.trellis_update_gate_floor)
+            p = (float(self.cfg.update_gate_init) - floor) / (1.0 - floor)
             b0 = math.log(p / (1.0 - p))
             self.update_gate_proj.weight.zero_()
             self.update_gate_proj.bias.fill_(b0)
+
+    def _update_gate_from_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        gate = torch.sigmoid(logits)
+        floor = float(self.cfg.trellis_update_gate_floor)
+        if floor != 0.0:
+            gate = floor + (1.0 - floor) * gate
+        return gate
+
+    def _gate_for_memory(
+        self,
+        update_gate: torch.Tensor | None,
+        memory: str,
+    ) -> torch.Tensor | None:
+        if update_gate is None:
+            return None
+        target = self.cfg.trellis_update_gate_target
+        if target == "both" or target == memory:
+            return update_gate
+        return None
+
+    def _stack_key_value_gates(self, update_gate: torch.Tensor | None):
+        if update_gate is None:
+            return None
+        key_gate = self._gate_for_memory(update_gate, "key")
+        value_gate = self._gate_for_memory(update_gate, "value")
+        if key_gate is None and value_gate is None:
+            return None
+        if key_gate is None:
+            key_gate = torch.ones_like(update_gate)
+        if value_gate is None:
+            value_gate = torch.ones_like(update_gate)
+        B, H, T, W = update_gate.shape
+        return (
+            torch.stack((key_gate, value_gate), dim=0)
+            .reshape(2 * B, H, T, W)
+            .contiguous()
+        )
 
     def _heads(self, x, last):  # [B,T,H*last] -> [B,H,T,last]
         B, T, _ = x.shape
@@ -386,14 +424,16 @@ class TrellisMixer(nn.Module):
             update_gate = None
             if cfg.update_gate_mode == "scalar":
                 update_gate = (
-                    torch.sigmoid(self.update_gate_proj(hf))
+                    self._update_gate_from_logits(self.update_gate_proj(hf))
                     .view(B, T, self.H, 1)
                     .permute(0, 2, 1, 3)
                 )
             elif cfg.update_gate_mode == "channel":
-                update_gate = torch.sigmoid(
+                update_gate = self._update_gate_from_logits(
                     self._heads(self.update_gate_proj(hf), self.M)
                 )
+            key_update_gate = self._gate_for_memory(update_gate, "key")
+            value_update_gate = self._gate_for_memory(update_gate, "value")
 
         # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
         # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
@@ -504,12 +544,7 @@ class TrellisMixer(nn.Module):
                     )
                     update_gate2 = None
                     if update_gate is not None:
-                        update_gate2 = (
-                            update_gate.unsqueeze(0)
-                            .expand(2, B, self.H, T, update_gate.shape[-1])
-                            .reshape(2 * B, self.H, T, update_gate.shape[-1])
-                            .contiguous()
-                        )
+                        update_gate2 = self._stack_key_value_gates(update_gate)
                     M0_2, u_2 = evolve_state(write2, alpha2, P2, rmat2, update_gate2)
                     M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
                     u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
@@ -521,13 +556,19 @@ class TrellisMixer(nn.Module):
                         vf, r, M0_2[1], u_2[1], P, rmat, gf, "M_T_r", cs, T_out=T
                     )
                 else:
-                    M0_k, u_k = evolve_state(kf, af, P, rmat, update_gate)
+                    M0_k, u_k = evolve_state(kf, af, P, rmat, key_update_gate)
                     yhat = run_trellis_memory_chunked_batched_readout(
                         kf, qf, M0_k, u_k, P, rmat, gf, "M_q", cs, T_out=T
                     )
                     r = self.f(yhat)
                     value_alpha = self._value_alpha(af, r)
-                    M0_v, u_v = evolve_state(vf, value_alpha, P, rmat, update_gate)
+                    M0_v, u_v = evolve_state(
+                        vf,
+                        value_alpha,
+                        P,
+                        rmat,
+                        value_update_gate,
+                    )
                     y = run_trellis_memory_chunked_batched_readout(
                         vf, r, M0_v, u_v, P, rmat, gf, "M_T_r", cs, T_out=T
                     )
@@ -543,7 +584,7 @@ class TrellisMixer(nn.Module):
                     "M_q",
                     cs,
                     cfg.chunk_refine,
-                    update_gate=update_gate,
+                    update_gate=key_update_gate,
                     residual_update_mix=cfg.residual_update_mix,
                     trellis_update_stabilizer=cfg.trellis_update_stabilizer,
                     trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
@@ -565,7 +606,7 @@ class TrellisMixer(nn.Module):
                     "M_T_r",
                     cs,
                     cfg.chunk_refine,
-                    update_gate=update_gate,
+                    update_gate=value_update_gate,
                     residual_update_mix=cfg.residual_update_mix,
                     trellis_update_stabilizer=cfg.trellis_update_stabilizer,
                     trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
@@ -587,7 +628,7 @@ class TrellisMixer(nn.Module):
                     "M_q",
                     training,
                     exact_inner=ex,
-                    update_gate=update_gate,
+                    update_gate=key_update_gate,
                     residual_update_mix=cfg.residual_update_mix,
                     trellis_update_stabilizer=cfg.trellis_update_stabilizer,
                     trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
@@ -609,7 +650,7 @@ class TrellisMixer(nn.Module):
                     "M_T_r",
                     training,
                     exact_inner=ex,
-                    update_gate=update_gate,
+                    update_gate=value_update_gate,
                     residual_update_mix=cfg.residual_update_mix,
                     trellis_update_stabilizer=cfg.trellis_update_stabilizer,
                     trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
