@@ -51,6 +51,20 @@ POLICIES = [
 ]
 
 
+def _extract_kv(past_key_values):
+    """Return list[(K, V)] per layer across transformers cache versions.
+
+    transformers 5.x uses a DynamicCache whose `.layers` hold DynamicLayer
+    objects with `.keys`/`.values`; older versions iterate as (k, v) tuples.
+    """
+    pkv = past_key_values
+    if hasattr(pkv, "layers"):
+        return [(layer.keys, layer.values) for layer in pkv.layers]
+    if hasattr(pkv, "key_cache"):
+        return list(zip(pkv.key_cache, pkv.value_cache))
+    return [(t[0], t[1]) for t in pkv]  # legacy tuple-of-tuples
+
+
 def build_context(tok, target_tokens):
     """A long distractor context with one needle, trimmed to ~target tokens."""
     needle = (
@@ -81,7 +95,7 @@ def run(args):
     seq_len = ids.shape[1]
     with torch.no_grad():
         out = model(ids, use_cache=True, output_attentions=True)
-    kv = [(k, v) for k, v in out.past_key_values]
+    kv = _extract_kv(out.past_key_values)
     attns = list(out.attentions)
 
     cfg0 = TierKVConfig(
