@@ -1,0 +1,31 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KRI-TierKV A100 Results</title>
+<style>
+body{background:#0f172a;color:#cbd5e1;font-family:system-ui,sans-serif;max-width:1000px;margin:0 auto;padding:2rem}
+h1{color:#f1f5f9} code{background:#1e293b;padding:2px 6px;border-radius:4px}
+table{width:100%;border-collapse:collapse;margin:1rem 0}
+th{text-align:left;color:#94a3b8;font-size:12px;text-transform:uppercase;padding:8px;border-bottom:1px solid #334155}
+td{padding:8px;border-bottom:1px solid #243244}
+.meta{color:#94a3b8;font-size:14px;line-height:1.8}
+</style></head><body>
+<h1>KRI-TierKV A100 Results</h1>
+<p class="meta">Inspired by TTKV (arXiv:2604.19769 &mdash; verify id before citing).
+Not a TTKV clone: the tiering policy is KRI-D-sum. FP8/quant is fake/storage
+simulation only; no native FP8 speedup is claimed on A100.</p>
+<p class="meta">
+Model: <code>Qwen/Qwen2.5-7B-Instruct</code><br>
+Hardware: <code>NVIDIA A100 80GB PCIe</code><br>
+Context: 2048 tokens, 16 blocks of
+128 &middot; fast window 512 tokens
+&middot; slow top-K 4<br>
+Quant: <code>none</code>
+(K16/V16), mean V rel-err n/a
+</p>
+<table><tr><th>Policy</th><th>Mass recall</th><th>High-mass FNR</th><th>Slow blocks fetched</th><th>Bytes moved / token</th></tr><tr><td>dense_reference</td><td>1.000 <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="200" height="12" fill="#4ade80"/></svg></td><td>0.000</td><td>12</td><td>88.1 MB <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="200" height="12" fill="#60a5fa"/></svg></td></tr><tr><td>recent_only</td><td>0.777 <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="155" height="12" fill="#fbbf24"/></svg></td><td>0.000</td><td>1</td><td>7.3 MB <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="16" height="12" fill="#60a5fa"/></svg></td></tr><tr><td>fifo_kri_topk</td><td>0.838 <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="167" height="12" fill="#fbbf24"/></svg></td><td>0.000</td><td>5</td><td>36.7 MB <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="83" height="12" fill="#60a5fa"/></svg></td></tr><tr><td>kri_d_sum_kri_topk</td><td>0.838 <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="167" height="12" fill="#fbbf24"/></svg></td><td>0.000</td><td>5</td><td>36.7 MB <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="83" height="12" fill="#60a5fa"/></svg></td></tr><tr><td>oracle_topk</td><td>0.897 <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="179" height="12" fill="#fbbf24"/></svg></td><td>0.000</td><td>5</td><td>36.7 MB <svg width="210" height="14"><rect width="200" height="12" fill="#1e293b"/><rect width="83" height="12" fill="#60a5fa"/></svg></td></tr></table>
+<h2>Conclusion</h2>
+<p class="meta">Does KRI-D-sum beat FIFO / recent-only on attention-mass recall?
+Compare the <code>kri_d_sum_kri_topk</code> row against <code>recent_only</code>
+and <code>fifo_kri_topk</code>. Does K16/V8 preserve quality? Check the V rel-err
+and the quant run's recall. </p>
+</body></html>
