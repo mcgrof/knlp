@@ -409,10 +409,14 @@
         </table>
         </div>
         <p class="text-xs text-slate-500 leading-6">
-          Selectors ran at a sixteen-of-256-block budget; the codecs are
-          per-tensor round-trips, a lower bound on a careful per-token or
-          per-channel quantizer. Full data, reports, and the run log are archived
-          in <code class="inline">knlp-key-results/prefix-integrity-20260630/</code>.
+          Selectors ran at a sixteen-of-256-block budget; the codecs here are
+          per-tensor round-trips, a deliberately naive lower bound. The
+          <strong>asymmetric</strong> extension &mdash; K16/V8 and friends, with
+          fair per-channel key and per-token value scaling, and bytes accounted
+          &mdash; is its own run in
+          <a href="#asym-codecs" class="section-link">Quantization on the same
+          axes</a> below. Full data, reports, and the run log are archived in
+          <code class="inline">knlp-key-results/prefix-integrity-20260630/</code>.
         </p>
       </div>
     </section>
@@ -732,7 +736,7 @@
     </section>
 
     <!-- ASYMMETRIC CODEC TABLE -->
-    <section class="mb-12">
+    <section class="mb-12" id="asym-codecs">
       <div class="card p-6">
         <h2 class="text-2xl font-semibold text-slate-100 mb-2">Quantization on the same axes &mdash; asymmetric KV codecs</h2>
         <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token cartridge &middot; 48 queries &middot; plan reviewed by ChatGPT Pro + Codex before running</p>
