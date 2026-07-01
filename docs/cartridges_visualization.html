@@ -209,24 +209,16 @@ footer a { color: var(--cyan); text-decoration: none; }
   <tr><td>4,096</td><td>1,144</td><td>1,131</td><td>56.5</td><td>55.9</td></tr>
   <tr><td>16,384</td><td>2,684</td><td>2,610</td><td>44.5</td><td>44.2</td></tr>
 </table>
-<p>That table does not prove faster convergence. It reports fixed-budget runtime, not steps-to-quality or loss-to-threshold. A June 2026 A100 convergence run therefore saved and scored checkpoints at optimizer steps 0, 1, 2, 4, 8, 16, 24, and 48 on <code>xlsx-recover-data</code>. It separated paper SCI from two other initializers: first-k and the older KNLP <em>strided-RoPE</em> initializer that had previously been easy to confuse with SCI.</p>
+<p>That table does not prove faster convergence. It reports fixed-budget runtime, not steps-to-quality or loss-to-threshold. We first tested SCI on SkillsBench skill files, but that is a skill-cache experiment, not a valid long-document cartridge test. The corrected July 2026 A100 redo uses LongHealth <code>patient_01</code>: 44,915 characters, 11,846 wrapped source tokens, and a 2,048-token learned KV prefix. Training data, objective, model, prefix size, and evaluation are held fixed; only the initializer changes.</p>
 <table>
-  <tr><th>AR-TA + KL</th><th>0</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th><th>24</th><th>48</th><th>Best</th></tr>
-  <tr><td>First-k</td><td>6 / 19</td><td>6 / 19</td><td>6 / 19</td><td>9 / 19</td><td class="hi">17 / 19</td><td>0 / 1 invalid</td><td>1 / 19</td><td>13 / 19</td><td class="hi">step 8</td></tr>
-  <tr><td>SCI seed 0</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>8 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>2 / 19</td><td>step 4</td></tr>
-  <tr><td>SCI seed 1</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td>step 16</td></tr>
-  <tr><td>SCI seed 2</td><td>6 / 19</td><td>6 / 19</td><td>8 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>0 / 1 invalid</td><td>8 / 19</td><td>step 2</td></tr>
-  <tr><td>Strided-RoPE</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">16 / 19</td><td>1 / 19</td><td class="hi">13 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">step 4</td></tr>
+  <tr><th>LongHealth initializer</th><th>0</th><th>4</th><th>8</th><th>16</th><th>24</th><th>Best</th><th>Read</th></tr>
+  <tr><td>First-k</td><td class="hi">11 / 20</td><td>10 / 20</td><td>7 / 20</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td>Strong baseline; no training gain.</td></tr>
+  <tr><td>SCI seed 0</td><td>9 / 20</td><td>10 / 20</td><td>5 / 20</td><td>9 / 20</td><td>9 / 20</td><td>10 / 20</td><td>Does not beat first-k.</td></tr>
+  <tr><td>SCI seed 1</td><td class="hi">11 / 20</td><td>9 / 20</td><td>7 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="hi">11 / 20</td><td>Ties only at initialization.</td></tr>
+  <tr><td>SCI seed 2</td><td class="hi">11 / 20</td><td>5 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="hi">12 / 20</td><td class="hi">12 / 20</td><td>Small late win, seed-specific.</td></tr>
 </table>
-<table>
-  <tr><th>SS-PI + KL</th><th>0</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th><th>24</th><th>48</th><th>Best</th></tr>
-  <tr><td>First-k</td><td>5 / 19</td><td>1 / 19</td><td class="hi">12 / 19</td><td>8 / 19</td><td>0 / 1 invalid</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>step 2</td></tr>
-  <tr><td>SCI seed 0</td><td>1 / 19</td><td>0 / 1 invalid</td><td>0 / 1 invalid</td><td>8 / 19</td><td>1 / 19</td><td>0 / 1 invalid</td><td>0 / 1 invalid</td><td>0 / 1 invalid</td><td>step 4</td></tr>
-  <tr><td>SCI seed 1</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td class="hi">14 / 19</td><td>step 48</td></tr>
-  <tr><td>SCI seed 2</td><td>6 / 19</td><td>6 / 19</td><td>6 / 19</td><td class="hi">14 / 19</td><td>6 / 19</td><td>6 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">step 4</td></tr>
-  <tr><td>Strided-RoPE</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td>1 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td class="hi">13 / 19</td><td>step 8</td></tr>
-</table>
-<p><strong>Result:</strong> random SCI does not win the convergence test overall. For AR-TA, first-k reaches 17 / 19 at step 8 and strided-RoPE reaches 16 / 19 at step 4; the best SCI seed reaches 13 / 19 at step 16. For SS-PI, SCI can be competitive, but only for selected seeds. The next useful SCI variant is not "more random chunks"; it is a better chunk selector: retrieval-guided, strategy-guided, or section-balanced SCI.</p>
+<p><strong>Result:</strong> random paper SCI is not a robust faster-convergence default on this long-document cartridge test. One SCI seed reaches a small late best score of 12 / 20, but two seeds fail to beat first-k and no seed gives a reliable early win. The useful next SCI variant is not "more random chunks"; it is a better chunk selector: retrieval-guided, strategy-guided, salience-guided, or section-balanced SCI.</p>
+<p>The SkillsBench xlsx run remains useful, but it answers a different question: initializer behavior for skill caches induced from procedural skill files. That run also showed seed sensitivity, with first-k winning AR-TA quality and selected SCI seeds helping SS-PI. It should not be cited as document-cartridge evidence.</p>
 </div>
 
 <!-- ============================================================ -->
