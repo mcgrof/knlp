@@ -71,6 +71,12 @@ class TrellisConfig:
     # value_readout_act: final phi on the value-pass readout y = phi(M^T r).
     # Paper applies normalized-SiLU; "none" = legacy (no activation).
     value_readout_act: str = "none"  # ["none","ln_silu","l2_silu"]
+    # value alpha controls the target code used when the value memory writes.
+    # "shared" is the historical Trellis path: key and value memories both use
+    # alpha_proj(h). "key_readout" tests explicit key-code binding by using the
+    # key-pass readout code r as the value-pass write target.
+    trellis_value_alpha_mode: str = "shared"
+    trellis_value_alpha_mix: float = 1.0
     exact_inner: bool = True  # exact sequential VJP (Phase 0)
     chunk_size: int = 1  # 1 = pure sequential
     chunk_refine: int = 0  # intra-chunk z refinement passes (faithful chunkwise)
@@ -156,6 +162,14 @@ class TrellisConfig:
             "norm_silu",
             "l2_silu",
         ), self.value_readout_act
+        assert self.trellis_value_alpha_mode in (
+            "shared",
+            "key_readout",
+            "key_readout_detached",
+        ), self.trellis_value_alpha_mode
+        assert 0.0 <= self.trellis_value_alpha_mix <= 1.0, (
+            self.trellis_value_alpha_mix
+        )
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
         assert self.residual_update_mix >= 0.0, self.residual_update_mix
