@@ -209,15 +209,16 @@ footer a { color: var(--cyan); text-decoration: none; }
   <tr><td>4,096</td><td>1,144</td><td>1,131</td><td>56.5</td><td>55.9</td></tr>
   <tr><td>16,384</td><td>2,684</td><td>2,610</td><td>44.5</td><td>44.2</td></tr>
 </table>
-<p>That table does not prove faster convergence. It reports fixed-budget runtime, not steps-to-quality or loss-to-threshold. We first tested SCI on SkillsBench skill files, but that is a skill-cache experiment, not a valid long-document cartridge test. The corrected July 2026 A100 redo uses LongHealth <code>patient_01</code>: 44,915 characters, 11,846 wrapped source tokens, and a 2,048-token learned KV prefix. Training data, objective, model, prefix size, and evaluation are held fixed; only the initializer changes.</p>
+<p>That table does not prove faster convergence. It reports fixed-budget runtime, not steps-to-quality or loss-to-threshold. We first tested SCI on SkillsBench skill files, but that is a skill-cache experiment, not a valid long-document cartridge test. The corrected July 2026 A100 document runs use LongHealth patient records with 9,603 to 12,503 wrapped source tokens and a 2,048-token learned KV prefix. Training data, objective, model, prefix size, and evaluation are held fixed; only the initializer changes.</p>
+<p>The first corrected run on <code>patient_01</code> showed a seed-specific SCI win: first-k reached 11 / 20, while three SCI seeds reached 10 / 20, 11 / 20, and 12 / 20. The follow-up A100 run expanded the test to four more LongHealth records:</p>
 <table>
-  <tr><th>LongHealth initializer</th><th>0</th><th>4</th><th>8</th><th>16</th><th>24</th><th>Best</th><th>Read</th></tr>
-  <tr><td>First-k</td><td class="hi">11 / 20</td><td>10 / 20</td><td>7 / 20</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td>Strong baseline; no training gain.</td></tr>
-  <tr><td>SCI seed 0</td><td>9 / 20</td><td>10 / 20</td><td>5 / 20</td><td>9 / 20</td><td>9 / 20</td><td>10 / 20</td><td>Does not beat first-k.</td></tr>
-  <tr><td>SCI seed 1</td><td class="hi">11 / 20</td><td>9 / 20</td><td>7 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="hi">11 / 20</td><td>Ties only at initialization.</td></tr>
-  <tr><td>SCI seed 2</td><td class="hi">11 / 20</td><td>5 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="hi">12 / 20</td><td class="hi">12 / 20</td><td>Small late win, seed-specific.</td></tr>
+  <tr><th>LongHealth patient</th><th>Source tokens</th><th>First-k best</th><th>Best SCI</th><th>Delta</th><th>Verdict</th></tr>
+  <tr><td><code>patient_05</code></td><td>9,603</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td>0</td><td>Tie</td></tr>
+  <tr><td><code>patient_06</code></td><td>10,807</td><td class="hi">11 / 20</td><td class="hi">11 / 20</td><td>0</td><td>Tie</td></tr>
+  <tr><td><code>patient_12</code></td><td>12,503</td><td class="hi">17 / 20</td><td>13 / 20</td><td>-4</td><td>First-k wins</td></tr>
+  <tr><td><code>patient_18</code></td><td>11,904</td><td>8 / 20</td><td class="hi">10 / 20</td><td>+2</td><td>SCI wins</td></tr>
 </table>
-<p><strong>Result:</strong> random paper SCI is not a robust faster-convergence default on this long-document cartridge test. One SCI seed reaches a small late best score of 12 / 20, but two seeds fail to beat first-k and no seed gives a reliable early win. The useful next SCI variant is not "more random chunks"; it is a better chunk selector: retrieval-guided, strategy-guided, salience-guided, or section-balanced SCI.</p>
+<p><strong>Result:</strong> random paper SCI is not a robust faster-convergence default on these long-document cartridge tests. Across the four-patient run, SCI wins once, ties twice, and loses once, with a mean best-score delta of -0.5 correct answers. The useful next SCI variant is not "more random chunks"; it is a better chunk selector: retrieval-guided, strategy-guided, salience-guided, or section-balanced SCI.</p>
 <p>The SkillsBench xlsx run remains useful, but it answers a different question: initializer behavior for skill caches induced from procedural skill files. That run also showed seed sensitivity, with first-k winning AR-TA quality and selected SCI seeds helping SS-PI. It should not be cited as document-cartridge evidence.</p>
 </div>
 
