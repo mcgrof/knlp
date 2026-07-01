@@ -580,6 +580,56 @@
       </div>
     </section>
 
+    <!-- KRI-TIERKV KILL-TEST -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Same story in a tiered cache &mdash; a kill-test</h2>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 128-token blocks &middot; keep 7 of 28 blocks</p>
+        <p class="text-slate-300 leading-8 mb-5">
+          The reuse replay above is about a prefix cache. The same question comes
+          up for a tiered cache that keeps a few old blocks in fast memory and
+          spills the rest: which blocks do you keep? One proposed answer was a
+          query-independent magnitude score (sum the keys and values in a block,
+          keep the biggest). If that worked you could route without knowing the
+          question. This run tests it directly. Facts are planted one per old
+          block; each question needs a different block; a method keeps the
+          protected first block, a small recent window, and three old blocks of
+          its choosing. Success is keeping the block that holds the answer and
+          then answering. We score only the facts that sit in a genuine old block,
+          since a fact in the recent window is kept by everyone and tests nothing.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>block selector</th><th>kind</th><th>old-block retrieval</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="text-slate-200">oracle (looks at the answer)</td><td class="text-xs text-slate-400">ceiling</td><td class="good">1.00</td></tr>
+            <tr><td class="text-slate-200">query-aware (looks at the question)</td><td class="text-xs text-emerald-300">deployable</td><td class="good">1.00</td></tr>
+            <tr><td class="text-slate-200">value-magnitude</td><td class="text-xs text-slate-400">query-independent</td><td class="warn">0.35</td></tr>
+            <tr><td class="text-slate-200">random (4 seeds)</td><td class="text-xs text-slate-400">query-independent</td><td class="bad">0.15</td></tr>
+            <tr><td class="text-slate-200">KRI-D-sum (key+value magnitude)</td><td class="text-xs text-slate-400">query-independent</td><td class="bad">0.00</td></tr>
+            <tr><td class="text-slate-200">recency (FIFO)</td><td class="text-xs text-slate-400">query-independent</td><td class="bad">0.00</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <img src="images/kri_tierkv_killtest.png" alt="KRI-TierKV kill-test: query-independent block scores fail, query-aware matches the oracle" class="rounded-lg border border-slate-700/60 w-full mb-5" />
+        <p class="text-slate-300 leading-8">
+          The answer block is fully selectable &mdash; the oracle gets it every
+          time &mdash; and the query-aware score matches it. The magnitude score
+          gets none of it, below even random, because it must commit to the same
+          three old blocks for twenty different questions. Key magnitude is
+          actually anti-informative here; value magnitude carries a little
+          salience because the planted facts are conspicuous sentences, but it is
+          capped for the same reason. It is the reuse replay's lesson in a
+          different cache: a routing decision that ignores the question cannot
+          serve many questions from one shared context, and the win that survives
+          is query-aware. Details and the decision rule are in
+          <code class="inline">prefix-integrity-20260630/kri-tierkv-killtest/</code>.
+        </p>
+      </div>
+    </section>
+
     <!-- INSIGHTS -->
     <section class="mb-12">
       <div class="card p-6">
