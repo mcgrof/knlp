@@ -211,6 +211,8 @@ def make_cfg(
     value_readout_act: str,
     value_alpha_mode: str,
     value_alpha_mix: float,
+    value_alpha_correction_init: float,
+    value_alpha_correction_max: float,
 ):
     from trellis_lm.config import TrellisConfig
 
@@ -234,6 +236,8 @@ def make_cfg(
         value_readout_act=value_readout_act,
         trellis_value_alpha_mode=value_alpha_mode,
         trellis_value_alpha_mix=value_alpha_mix,
+        trellis_value_alpha_correction_init=value_alpha_correction_init,
+        trellis_value_alpha_correction_max=value_alpha_correction_max,
         trellis_retention_mode="token_proj",
         trellis_update_stabilizer="layerwise_gamma",
         trellis_layer0_gamma_mult=0.5,
@@ -241,21 +245,43 @@ def make_cfg(
     )
 
 
-def row_spec(row: str) -> tuple[str, str, str, float]:
+def row_spec(row: str) -> tuple[str, str, str, float, float, float]:
     if row == "trellis_none":
-        return "trellis", "none", "shared", 1.0
+        return "trellis", "none", "shared", 1.0, 1e-3, 0.25
     if row == "trellis_norm_silu":
-        return "trellis", "norm_silu", "shared", 1.0
+        return "trellis", "norm_silu", "shared", 1.0, 1e-3, 0.25
     if row == "trellis_keyed":
-        return "trellis", "none", "key_readout", 1.0
+        return "trellis", "none", "key_readout", 1.0, 1e-3, 0.25
     if row == "trellis_keyed_detach":
-        return "trellis", "none", "key_readout_detached", 1.0
+        return "trellis", "none", "key_readout_detached", 1.0, 1e-3, 0.25
     if row == "trellis_keyed_norm_silu":
-        return "trellis", "norm_silu", "key_readout", 1.0
+        return "trellis", "norm_silu", "key_readout", 1.0, 1e-3, 0.25
+    if row == "trellis_corr1e3":
+        return "trellis", "none", "shared_plus_key_correction", 1.0, 1e-3, 0.25
+    if row == "trellis_corr1e2":
+        return "trellis", "none", "shared_plus_key_correction", 1.0, 1e-2, 0.25
+    if row == "trellis_corr_detach1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_key_correction_detached",
+            1.0,
+            1e-3,
+            0.25,
+        )
+    if row == "trellis_corr_norm_silu1e3":
+        return (
+            "trellis",
+            "norm_silu",
+            "shared_plus_key_correction",
+            1.0,
+            1e-3,
+            0.25,
+        )
     if row == "gdn_ref":
-        return "gated_delta_ref", "none", "shared", 1.0
+        return "gated_delta_ref", "none", "shared", 1.0, 1e-3, 0.25
     if row == "dense":
-        return "dense", "none", "shared", 1.0
+        return "dense", "none", "shared", 1.0, 1e-3, 0.25
     raise ValueError(row)
 
 
@@ -314,14 +340,30 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
     import torch
     from trellis_lm.model import build_model
 
-    kind, readout, value_alpha_mode, value_alpha_mix = row_spec(row)
-    cfg = make_cfg(args, readout, value_alpha_mode, value_alpha_mix)
+    (
+        kind,
+        readout,
+        value_alpha_mode,
+        value_alpha_mix,
+        value_alpha_correction_init,
+        value_alpha_correction_max,
+    ) = row_spec(row)
+    cfg = make_cfg(
+        args,
+        readout,
+        value_alpha_mode,
+        value_alpha_mix,
+        value_alpha_correction_init,
+        value_alpha_correction_max,
+    )
     row_meta = {
         "row": row,
         "kind": kind,
         "value_readout_act": readout,
         "trellis_value_alpha_mode": value_alpha_mode,
         "trellis_value_alpha_mix": value_alpha_mix,
+        "trellis_value_alpha_correction_init": value_alpha_correction_init,
+        "trellis_value_alpha_correction_max": value_alpha_correction_max,
     }
     model = build_model(cfg, kind).to(device)
     # Keep master weights fp32, matching the C4 harness. Trellis intentionally
@@ -392,6 +434,21 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
                 flush=True,
             )
     metrics = eval_row(model, row, args, cells, device)
+    correction_scales = []
+    for module in model.modules():
+        raw = getattr(module, "value_alpha_correction_raw", None)
+        if raw is None:
+            continue
+        max_scale = float(module.cfg.trellis_value_alpha_correction_max)
+        scale = max_scale * torch.sigmoid(raw.detach().float())
+        correction_scales.append(scale.cpu())
+    if correction_scales:
+        flat = torch.cat([item.reshape(-1) for item in correction_scales])
+        row_meta["trellis_value_alpha_correction_scale"] = {
+            "mean": float(flat.mean().item()),
+            "min": float(flat.min().item()),
+            "max": float(flat.max().item()),
+        }
     metrics.update({
         **row_meta,
         "status": "ok",

@@ -77,6 +77,8 @@ class TrellisConfig:
     # key-pass readout code r as the value-pass write target.
     trellis_value_alpha_mode: str = "shared"
     trellis_value_alpha_mix: float = 1.0
+    trellis_value_alpha_correction_init: float = 1e-3
+    trellis_value_alpha_correction_max: float = 0.25
     exact_inner: bool = True  # exact sequential VJP (Phase 0)
     chunk_size: int = 1  # 1 = pure sequential
     chunk_refine: int = 0  # intra-chunk z refinement passes (faithful chunkwise)
@@ -166,9 +168,23 @@ class TrellisConfig:
             "shared",
             "key_readout",
             "key_readout_detached",
+            "shared_plus_key_correction",
+            "shared_plus_key_correction_detached",
         ), self.trellis_value_alpha_mode
         assert 0.0 <= self.trellis_value_alpha_mix <= 1.0, (
             self.trellis_value_alpha_mix
+        )
+        assert self.trellis_value_alpha_correction_init >= 0.0, (
+            self.trellis_value_alpha_correction_init
+        )
+        assert self.trellis_value_alpha_correction_max > 0.0, (
+            self.trellis_value_alpha_correction_max
+        )
+        assert self.trellis_value_alpha_correction_init <= (
+            self.trellis_value_alpha_correction_max
+        ), (
+            self.trellis_value_alpha_correction_init,
+            self.trellis_value_alpha_correction_max,
         )
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
