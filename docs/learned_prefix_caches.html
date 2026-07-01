@@ -746,8 +746,9 @@
             The H100 skill-trace pilot showed that generated behavior traces
             matter. The A100 runs added two more axes: fixed-budget initializer
             quality and checkpointed steps-to-quality. First-k, paper SCI, and
-            legacy strided-RoPE are different initializers, and random SCI is
-            seed-sensitive rather than a default convergence win.
+            legacy strided-RoPE are different initializers. The corrected
+            LongHealth redo also separates skill-cache behavior from valid
+            long-document cartridge behavior.
           </p>
         </div>
 
@@ -807,10 +808,15 @@
           <div class="card metric">
             <div>
               <div class="value rose">80</div>
-              <div class="label">Follow-up checkpoint rows testing SCI steps-to-quality.</div>
+              <div class="label">Skill-cache checkpoint rows testing SCI steps-to-quality.</div>
             </div>
             <div class="source">xlsx convergence curve</div>
           </div>
+        </div>
+        <div class="note" style="margin-top:14px;">
+          The xlsx convergence curve is a skill-cache result. A separate
+          LongHealth document redo uses an 11,846-token patient record and a
+          2,048-token prefix to test document-cartridge SCI directly.
         </div>
 
         <div class="grid cols-2" style="margin-top:14px;">
@@ -1000,6 +1006,42 @@
             The useful lesson is not that SCI is bad. It is that random SCI is
             brittle. A coverage-aware chunk selector is now the natural next
             initializer to test.
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h3>LongHealth document curve: first-k remains strong</h3>
+          <p>
+            The corrected long-context redo uses LongHealth patient-record
+            text, not SkillsBench skill files. The source has 11,846 wrapped
+            tokens and the learned KV prefix has 2,048 tokens. Training data,
+            objective, model, prefix length, and evaluator are fixed; only the
+            initializer changes.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <tr>
+                <th>Initializer</th>
+                <th>Step 0</th>
+                <th>Step 4</th>
+                <th>Step 8</th>
+                <th>Step 16</th>
+                <th>Step 24</th>
+                <th>Best</th>
+              </tr>
+              <tr><td><strong>first-k</strong></td><td class="ok">11 / 20</td><td>10 / 20</td><td>7 / 20</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td><td class="ok">11 / 20</td></tr>
+              <tr><td><strong>SCI seed 0</strong></td><td>9 / 20</td><td>10 / 20</td><td>5 / 20</td><td>9 / 20</td><td>9 / 20</td><td>10 / 20</td></tr>
+              <tr><td><strong>SCI seed 1</strong></td><td class="ok">11 / 20</td><td>9 / 20</td><td>7 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="ok">11 / 20</td></tr>
+              <tr><td><strong>SCI seed 2</strong></td><td class="ok">11 / 20</td><td>5 / 20</td><td>9 / 20</td><td>7 / 20</td><td class="ok">12 / 20</td><td class="ok">12 / 20</td></tr>
+            </table>
+          </div>
+          <div class="note" style="margin-top:14px;">
+            This valid document-cartridge test does not support random paper
+            SCI as a robust faster-convergence default. One seed gets a small
+            late win, two seeds do not beat first-k, and no SCI seed gives a
+            reliable early advantage. The next initializer should choose chunks
+            deliberately through retrieval, salience, section balance, or PI
+            strategy signals.
           </div>
         </div>
 
