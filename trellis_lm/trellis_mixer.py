@@ -121,6 +121,22 @@ class TrellisMixer(nn.Module):
         self.phi = get_activation(cfg.activation)
         self.f = get_activation(cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
+        self.value_alpha_correction_raw = None
+        if cfg.trellis_value_alpha_mode in (
+            "shared_plus_key_correction",
+            "shared_plus_key_correction_detached",
+        ):
+            raw = self._value_alpha_correction_init_raw()
+            self.value_alpha_correction_raw = nn.Parameter(torch.full((H,), raw))
+
+    def _value_alpha_correction_init_raw(self) -> float:
+        cfg = self.cfg
+        max_scale = float(cfg.trellis_value_alpha_correction_max)
+        init = float(cfg.trellis_value_alpha_correction_init)
+        # Use a near-zero finite logit for exact-zero requests so gradients can
+        # still move the correction scale if the branch has signal.
+        unit = max(1e-8, min(1.0 - 1e-8, init / max_scale))
+        return math.log(unit / (1.0 - unit))
 
     def effective_gamma(self, gamma: torch.Tensor) -> torch.Tensor:
         cfg = self.cfg
@@ -317,6 +333,22 @@ class TrellisMixer(nn.Module):
         mix = float(cfg.trellis_value_alpha_mix)
         if cfg.trellis_value_alpha_mode == "shared" or mix == 0.0:
             return shared_alpha
+        if cfg.trellis_value_alpha_mode in (
+            "shared_plus_key_correction",
+            "shared_plus_key_correction_detached",
+        ):
+            target = key_code
+            if cfg.trellis_value_alpha_mode.endswith("_detached"):
+                target = target.detach()
+            if self.value_alpha_correction_raw is None:  # pragma: no cover
+                raise RuntimeError("value alpha correction mode missing scale")
+            scale = (
+                float(cfg.trellis_value_alpha_correction_max)
+                * torch.sigmoid(self.value_alpha_correction_raw.float())
+            )
+            scale = scale.to(device=shared_alpha.device, dtype=shared_alpha.dtype)
+            scale = scale.view(1, self.H, 1, 1) * mix
+            return shared_alpha + scale * (target - shared_alpha)
         target = key_code
         if cfg.trellis_value_alpha_mode == "key_readout_detached":
             target = target.detach()
@@ -442,7 +474,10 @@ class TrellisMixer(nn.Module):
                     )
                     return M0, u
 
-                keyed_value_alpha = cfg.trellis_value_alpha_mode != "shared"
+                keyed_value_alpha = (
+                    cfg.trellis_value_alpha_mode != "shared"
+                    and cfg.trellis_value_alpha_mix != 0.0
+                )
                 if not keyed_value_alpha:
                     write2 = (
                         torch.stack((kf, vf), dim=0)
