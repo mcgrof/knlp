@@ -866,7 +866,7 @@
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
             The H100 skill-trace run, A100 SCI/Active Reading retest, A100
-            skill-cache convergence curve, and LongHealth document redo add
+            skill-cache convergence curve, and LongHealth document retests add
             quality evidence for the induction layer, not just the connector.
           </p>
         </div>
@@ -895,10 +895,10 @@
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">226</div>
-              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, 80 skill-cache convergence rows, and 20 LongHealth document rows.</div>
+              <div class="value cyan">306</div>
+              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, 80 skill-cache convergence rows, and 100 LongHealth document rows.</div>
             </div>
-            <div class="source">four completed GPU matrices</div>
+            <div class="source">five completed GPU matrices</div>
           </div>
         </div>
 
@@ -1230,13 +1230,13 @@
               or section-balanced.
             </div>
             <div class="note" style="margin-top:14px;">
-              We reran the SCI question on a real long-context document after
-              this skill-cache curve. The LongHealth redo uses an 11,846-token
-              patient record and a 2,048-token learned prefix. First-k reached
-              11 / 20; SCI seeds reached 10 / 20, 11 / 20, and 12 / 20, with
-              the 12 / 20 result appearing only at step 24. That supports the
-              same cautious conclusion: random SCI is seed-sensitive, not a
-              robust faster-convergence default.
+              We reran the SCI question on real long-context documents after
+              this skill-cache curve. The first LongHealth redo used an
+              11,846-token patient record and found a seed-specific SCI win.
+              The follow-up A100 run added four records from 9,603 to 12,503
+              wrapped tokens: SCI won once, tied twice, and lost once. That
+              supports the same cautious conclusion: random SCI is
+              seed-sensitive, not a robust faster-convergence default.
             </div>
           </div>
 
