@@ -865,9 +865,9 @@
           <p>
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
-            The H100 skill-trace run, A100 SCI/Active Reading retest, and A100
-            convergence curve add quality evidence for the induction layer,
-            not just the connector.
+            The H100 skill-trace run, A100 SCI/Active Reading retest, A100
+            skill-cache convergence curve, and LongHealth document redo add
+            quality evidence for the induction layer, not just the connector.
           </p>
         </div>
 
@@ -891,14 +891,14 @@
               <div class="value amber">JSON+CSV</div>
               <div class="label">The H100 and A100 runs generated scored ablation JSONs plus CSV summaries.</div>
             </div>
-            <div class="source">skill-trace, SCI/AR, and convergence retests</div>
+            <div class="source">skill-trace, SCI/AR, convergence, and LongHealth retests</div>
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">206</div>
-              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, and 80 A100 convergence rows.</div>
+              <div class="value cyan">226</div>
+              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, 80 skill-cache convergence rows, and 20 LongHealth document rows.</div>
             </div>
-            <div class="source">three completed GPU matrices</div>
+            <div class="source">four completed GPU matrices</div>
           </div>
         </div>
 
@@ -1174,7 +1174,8 @@
               The follow-up run saved and scored xlsx checkpoints at optimizer
               steps 0, 1, 2, 4, 8, 16, 24, and 48. This tests
               steps-to-quality directly, instead of treating final wall-clock
-              as convergence.
+              as convergence. It is a skill-cache curve, not document-side
+              Cartridges evidence.
             </p>
             <div class="table-scroll">
               <table>
@@ -1227,6 +1228,15 @@
               default convergence win." The next SCI algorithm should make
               chunk choice coverage-aware: retrieval-guided, strategy-guided,
               or section-balanced.
+            </div>
+            <div class="note" style="margin-top:14px;">
+              We reran the SCI question on a real long-context document after
+              this skill-cache curve. The LongHealth redo uses an 11,846-token
+              patient record and a 2,048-token learned prefix. First-k reached
+              11 / 20; SCI seeds reached 10 / 20, 11 / 20, and 12 / 20, with
+              the 12 / 20 result appearing only at step 24. That supports the
+              same cautious conclusion: random SCI is seed-sensitive, not a
+              robust faster-convergence default.
             </div>
           </div>
 
@@ -1285,8 +1295,9 @@
           <p>
             The analyzer maximizes pass rate while minimizing online prompt
             tokens, generated tokens, and latency. The current frontier now has
-            two evidence layers: the H100 skill-trace pilot and the A100
-            SCI/Active Reading retest. It is still a pilot, not a final claim.
+            three evidence layers: the H100 skill-trace pilot, the A100
+            SCI/Active Reading retest, and the long-document SCI redo. It is
+            still a pilot, not a final claim.
           </p>
         </div>
 
@@ -1307,9 +1318,9 @@
   --output-json /workspace/results/pareto.json \
   --output-csv /workspace/results/pareto.csv</pre>
             <div class="note" style="margin-top:14px;">
-              The A100 retest and convergence curve add an initializer frontier:
-              first-k, paper SCI, and strided-RoPE are not interchangeable. The
-              next run should
+              The A100 skill-cache retest, skill-cache convergence curve, and
+              LongHealth document redo add an initializer frontier: first-k,
+              paper SCI, and strided-RoPE are not interchangeable. The next run should
               expand beyond the cartridge-era tasks into smallest,
               deterministic-random, medium, and largest SkillsBench strata.
             </div>
