@@ -739,7 +739,7 @@
     <section class="mb-12" id="asym-codecs">
       <div class="card p-6">
         <h2 class="text-2xl font-semibold text-slate-100 mb-2">Quantization on the same axes &mdash; asymmetric KV codecs</h2>
-        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token cartridge &middot; 48 queries &middot; plan reviewed by ChatGPT Pro + Codex before running</p>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token cartridge &middot; 48 queries</p>
         <p class="text-slate-300 leading-8 mb-5">
           Selection is one way to shrink a KV cache; quantization is the other.
           A quantization codec is query-independent &mdash; it round-trips every
@@ -754,12 +754,12 @@
           the tolerant values.
         </p>
         <p class="text-slate-300 leading-8 mb-5">
-          One caveat the two reviewers forced, worth stating up front: a single
-          per-tensor scale on post-RoPE keys <em>manufactures</em> key fragility,
-          because the keys carry per-channel outliers a global scale clips. So the
-          keys here are scaled per-channel and the values per-token (the standard
-          granularity), and the crude per-tensor codecs are kept only as a labeled
-          stress control. Bytes are counted including the scale metadata.
+          Scale granularity decides this measurement, so fix it first. A single
+          per-tensor scale on post-RoPE keys <em>manufactures</em> key fragility:
+          the keys carry per-channel outliers, and a global scale clips them.
+          Scale keys per-channel and values per-token &mdash; the standard
+          granularity &mdash; and keep the crude per-tensor codecs only as a
+          labeled stress control. Count bytes including the scale metadata.
         </p>
         <img src="images/pia_codec_asym.png" alt="Byte-matched, quantizing all blocks beats dropping whole blocks; key-vs-value asymmetry is modest under fair scaling" class="rounded-lg border border-slate-700/60 w-full mb-5" />
         <div class="overflow-x-auto mb-5">
@@ -875,12 +875,11 @@
             outright &mdash; K16/V8 moves the distribution about forty-eight times
             less than a positional selector spending the same bytes, because it
             degrades every block a little instead of dropping a quarter of them.
-            The staged approach also earned its keep on nuance: a per-tensor scale
-            made keys look fatally fragile, and the fair per-channel rescan showed
-            most of that was the scale, not the keys &mdash; the real key-vs-value
-            gap is a modest factor of two. That is the difference between flagging
-            a risk and understanding it, and it is why the finalists still go to
-            the real stack.
+            Scale granularity separates a real risk from an artifact: a per-tensor
+            scale makes keys look fatally fragile, but per-channel scaling shows
+            most of that is the scale, not the keys &mdash; the real key-vs-value
+            gap is a modest factor of two. Flagging a risk and understanding it are
+            different jobs, which is why the finalists still go to the real stack.
           </p>
         </div>
       </div>
