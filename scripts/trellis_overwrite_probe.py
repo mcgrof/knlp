@@ -213,6 +213,10 @@ def make_cfg(
     value_alpha_mix: float,
     value_alpha_correction_init: float,
     value_alpha_correction_max: float,
+    update_gate_mode: str,
+    update_gate_init: float,
+    update_gate_target: str,
+    update_gate_floor: float,
 ):
     from trellis_lm.config import TrellisConfig
 
@@ -241,25 +245,108 @@ def make_cfg(
         trellis_retention_mode="token_proj",
         trellis_update_stabilizer="layerwise_gamma",
         trellis_layer0_gamma_mult=0.5,
+        update_gate_mode=update_gate_mode,
+        update_gate_init=update_gate_init,
+        trellis_update_gate_target=update_gate_target,
+        trellis_update_gate_floor=update_gate_floor,
         residual_update_mix=0.10,
     )
 
 
-def row_spec(row: str) -> tuple[str, str, str, float, float, float]:
+def row_spec(
+    row: str,
+) -> tuple[str, str, str, float, float, float, str, float, str, float]:
     if row == "trellis_none":
-        return "trellis", "none", "shared", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_norm_silu":
-        return "trellis", "norm_silu", "shared", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "norm_silu",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_keyed":
-        return "trellis", "none", "key_readout", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "none",
+            "key_readout",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_keyed_detach":
-        return "trellis", "none", "key_readout_detached", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "none",
+            "key_readout_detached",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_keyed_norm_silu":
-        return "trellis", "norm_silu", "key_readout", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "norm_silu",
+            "key_readout",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_corr1e3":
-        return "trellis", "none", "shared_plus_key_correction", 1.0, 1e-3, 0.25
+        return (
+            "trellis",
+            "none",
+            "shared_plus_key_correction",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_corr1e2":
-        return "trellis", "none", "shared_plus_key_correction", 1.0, 1e-2, 0.25
+        return (
+            "trellis",
+            "none",
+            "shared_plus_key_correction",
+            1.0,
+            1e-2,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_corr_detach1e3":
         return (
             "trellis",
@@ -268,6 +355,10 @@ def row_spec(row: str) -> tuple[str, str, str, float, float, float]:
             1.0,
             1e-3,
             0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
         )
     if row == "trellis_corr_norm_silu1e3":
         return (
@@ -277,11 +368,89 @@ def row_spec(row: str) -> tuple[str, str, str, float, float, float]:
             1.0,
             1e-3,
             0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
+    if row == "trellis_gate_value095":
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.95,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080":
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value_floor050":
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.95,
+            "value",
+            0.50,
+        )
+    if row == "trellis_gate_channel_value095":
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "channel",
+            0.95,
+            "value",
+            0.0,
         )
     if row == "gdn_ref":
-        return "gated_delta_ref", "none", "shared", 1.0, 1e-3, 0.25
+        return (
+            "gated_delta_ref",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "dense":
-        return "dense", "none", "shared", 1.0, 1e-3, 0.25
+        return (
+            "dense",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     raise ValueError(row)
 
 
@@ -347,6 +516,10 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         value_alpha_mix,
         value_alpha_correction_init,
         value_alpha_correction_max,
+        update_gate_mode,
+        update_gate_init,
+        update_gate_target,
+        update_gate_floor,
     ) = row_spec(row)
     cfg = make_cfg(
         args,
@@ -355,6 +528,10 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         value_alpha_mix,
         value_alpha_correction_init,
         value_alpha_correction_max,
+        update_gate_mode,
+        update_gate_init,
+        update_gate_target,
+        update_gate_floor,
     )
     row_meta = {
         "row": row,
@@ -364,6 +541,10 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "trellis_value_alpha_mix": value_alpha_mix,
         "trellis_value_alpha_correction_init": value_alpha_correction_init,
         "trellis_value_alpha_correction_max": value_alpha_correction_max,
+        "update_gate_mode": update_gate_mode,
+        "update_gate_init": update_gate_init,
+        "trellis_update_gate_target": update_gate_target,
+        "trellis_update_gate_floor": update_gate_floor,
     }
     model = build_model(cfg, kind).to(device)
     # Keep master weights fp32, matching the C4 harness. Trellis intentionally
@@ -448,6 +629,35 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             "mean": float(flat.mean().item()),
             "min": float(flat.min().item()),
             "max": float(flat.max().item()),
+        }
+    gate_bias_values = []
+    gate_weight_norms = []
+    gate_bias_effective = []
+    for module in model.modules():
+        proj = getattr(module, "update_gate_proj", None)
+        if proj is None:
+            continue
+        bias = proj.bias.detach().float()
+        gate_bias_values.append(bias.cpu())
+        gate_weight_norms.append(proj.weight.detach().float().norm().reshape(1).cpu())
+        gate_bias_effective.append(module._update_gate_from_logits(bias).cpu())
+    if gate_bias_values:
+        bias_flat = torch.cat([item.reshape(-1) for item in gate_bias_values])
+        weight_flat = torch.cat(gate_weight_norms)
+        effective_flat = torch.cat([item.reshape(-1) for item in gate_bias_effective])
+        row_meta["update_gate_bias"] = {
+            "mean": float(bias_flat.mean().item()),
+            "min": float(bias_flat.min().item()),
+            "max": float(bias_flat.max().item()),
+        }
+        row_meta["update_gate_weight_norm"] = {
+            "mean": float(weight_flat.mean().item()),
+            "max": float(weight_flat.max().item()),
+        }
+        row_meta["update_gate_bias_effective"] = {
+            "mean": float(effective_flat.mean().item()),
+            "min": float(effective_flat.min().item()),
+            "max": float(effective_flat.max().item()),
         }
     metrics.update({
         **row_meta,

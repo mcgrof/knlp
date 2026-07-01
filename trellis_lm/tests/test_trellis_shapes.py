@@ -44,3 +44,72 @@ def test_update_gate_and_repair_knobs_shapes():
         idx = torch.randint(0, cfg.vocab_size, (2, 16))
         logits, _ = m(idx, training=False)
         assert logits.shape == (2, 16, cfg.vocab_size)
+
+
+def test_update_gate_floor_initializes_effective_gate():
+    cfg = tiny_cfg(
+        update_gate_mode="scalar",
+        update_gate_init=0.95,
+        trellis_update_gate_floor=0.5,
+    )
+    m = TrellisLM(cfg).eval()
+    mixer = m.blocks[0].mixer
+    gate = mixer._update_gate_from_logits(mixer.update_gate_proj.bias.detach())
+    assert torch.allclose(gate, torch.full_like(gate, 0.95), atol=1e-6)
+
+
+def test_value_only_update_gate_forward_backward_is_finite():
+    cfg = tiny_cfg(
+        activation="silu",
+        chunk_size=4,
+        beta_mode="scalar_per_head",
+        update_gate_mode="scalar",
+        update_gate_init=0.95,
+        trellis_update_gate_target="value",
+        trellis_update_gate_floor=0.5,
+        use_short_conv_v=True,
+        residual_update_mix=0.10,
+    )
+    m = TrellisLM(cfg).train()
+    idx = torch.randint(0, cfg.vocab_size, (2, 16))
+    logits, loss = m(idx, labels=idx, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
+    loss.backward()
+    gate_grads = [
+        block.mixer.update_gate_proj.bias.grad
+        for block in m.blocks
+        if block.mixer.update_gate_proj is not None
+    ]
+    assert gate_grads
+    assert all(g is not None and torch.isfinite(g).all() for g in gate_grads)
+
+
+def test_value_only_update_gate_changes_outputs_vs_both_target():
+    torch.manual_seed(0)
+    both_cfg = tiny_cfg(
+        activation="silu",
+        chunk_size=4,
+        beta_mode="scalar_per_head",
+        update_gate_mode="scalar",
+        update_gate_init=0.5,
+        trellis_update_gate_target="both",
+        use_short_conv_v=True,
+    )
+    value_cfg = tiny_cfg(
+        activation="silu",
+        chunk_size=4,
+        beta_mode="scalar_per_head",
+        update_gate_mode="scalar",
+        update_gate_init=0.5,
+        trellis_update_gate_target="value",
+        use_short_conv_v=True,
+    )
+    both = TrellisLM(both_cfg).eval()
+    value = TrellisLM(value_cfg).eval()
+    value.load_state_dict(both.state_dict())
+    idx = torch.randint(0, both_cfg.vocab_size, (2, 16))
+    with torch.no_grad():
+        both_logits, _ = both(idx, training=False)
+        value_logits, _ = value(idx, training=False)
+    assert not torch.allclose(both_logits, value_logits)

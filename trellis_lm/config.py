@@ -63,6 +63,10 @@ class TrellisConfig:
     trellis_stabilizer_detach_scale: bool = True
     update_gate_mode: str = "none"  # ["none","scalar","channel"]
     update_gate_init: float = 0.95
+    # Where to apply the token-conditioned update gate. The historical scalar
+    # and channel gates used "both"; overwrite probes can gate only value writes.
+    trellis_update_gate_target: str = "both"  # ["both","key","value"]
+    trellis_update_gate_floor: float = 0.0
     residual_update_mix: float = 0.0
     # output_path: "current" = out_proj(y) then *SiLU(gate) AFTER out_proj
     # (legacy). "paper" = PostNorm(y) -> *GeLU(gate) -> out_proj (Fig 1 order:
@@ -155,6 +159,14 @@ class TrellisConfig:
             "scalar",
             "channel",
         ), self.update_gate_mode
+        assert self.trellis_update_gate_target in (
+            "both",
+            "key",
+            "value",
+        ), self.trellis_update_gate_target
+        assert 0.0 <= self.trellis_update_gate_floor < 1.0, (
+            self.trellis_update_gate_floor
+        )
         assert self.output_path in ("current", "paper"), self.output_path
         assert self.value_readout_act in (
             "none",
@@ -188,6 +200,11 @@ class TrellisConfig:
         )
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
+        if self.update_gate_mode != "none":
+            assert self.update_gate_init > self.trellis_update_gate_floor, (
+                self.update_gate_init,
+                self.trellis_update_gate_floor,
+            )
         assert self.residual_update_mix >= 0.0, self.residual_update_mix
         assert self.dtype in ("bf16", "fp16", "fp32"), self.dtype
 
