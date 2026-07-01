@@ -316,6 +316,108 @@
       </div>
     </section>
 
+    <!-- LEADERBOARD METHODS -->
+    <section class="mb-12">
+      <div class="card p-6">
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Ten methods off the leaderboard</h2>
+        <p class="text-slate-300 leading-8 mb-5">
+          The reference adapters prove the harness works. The real question is
+          what it says about methods people actually deploy. We took ten off the
+          <a class="section-link" href="https://github.com/NVIDIA/kvpress">KVPress</a>
+          leaderboard and their papers &mdash; StreamingLLM, Knorm, SnapKV,
+          Expected Attention, TOVA, H2O, PyramidKV, plus Quest, Ada-KV, and KIVI
+          &mdash; and ran each through the same slot. Each method is classified by
+          its <em>design</em>: whether it keeps whole blocks or scattered tokens,
+          whether the kept set depends on the query, whether heads disagree, and
+          whether it changes the tensor layout. Those are facts about the method,
+          not about any one prompt, so the contract axis settles them on a CPU.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Source</th><th>Granularity</th><th>Query-dependent</th><th>Partial</th><th>Verdict</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="text-slate-200">StreamingLLM</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">block (sink + window)</td><td class="good text-xs">no</td><td>0%</td>
+              <td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">KIVI</td><td class="text-slate-500 text-xs">paper</td>
+              <td class="text-xs">codec (2-bit + residual)</td><td class="good text-xs">no</td><td>0%<span class="text-slate-500"> (dtype)</span></td>
+              <td class="text-xs"><span class="info">SAFE_ONLY_WITH_CUSTOM_CONNECTOR</span></td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">Knorm</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head</td><td class="good text-xs">no</td><td class="warn">52%</td>
+              <td class="text-xs"><span class="info">SAFE_ONLY_WITH_CUSTOM_CONNECTOR</span></td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">Quest</td><td class="text-slate-500 text-xs">paper</td>
+              <td class="text-xs">block (pages)</td><td class="warn text-xs">yes</td><td>0%</td>
+              <td class="text-xs"><span class="warn">ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">SnapKV</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">Expected Attention</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">TOVA</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head, decode</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">H2O</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head, decode</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">PyramidKV</td><td class="text-slate-500 text-xs">KVPress</td>
+              <td class="text-xs">token, per-head, per-layer</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">Ada-KV</td><td class="text-slate-500 text-xs">paper</td>
+              <td class="text-xs">token, per-head</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <p class="text-slate-300 leading-8">
+          One method &mdash; StreamingLLM, the only purely positional one &mdash;
+          is a clean prefix-cache citizen. Everything adaptive picked a different
+          block set for all sixteen queries, so under a prefix-only key it lands
+          <span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span>. That is not a
+          knock on the methods; it says they are <em>routers</em>, not
+          prefix-cache-safe compressors. Put the query hash in the cache key and
+          the same six move to <span class="info">SAFE_ONLY_WITH_EXTENDED_CACHE_KEY</span>.
+          KIVI and Knorm are query-independent but change the layout &mdash; a
+          dtype change, or per-head scattered tokens that leave half the blocks
+          partial &mdash; so they need a custom connector, not plain block-hash
+          reuse. Quest keeps the whole prefix and only routes reads, so it is
+          honestly a router and labeled as one.
+        </p>
+        <div class="mini-note-warn mt-4">
+          <p class="text-slate-300 leading-7 text-sm">
+            <strong>Scope.</strong> This is the contract axis, which follows from
+            each method's published design and needs no model. The drift axis
+            &mdash; how much each method actually moves the output &mdash; needs
+            each method's real selection over a real model, and the honest way to
+            get it is to drive the harness from the KVPress presses on a GPU. That
+            is the natural next run.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <!-- INSIGHTS -->
     <section class="mb-12">
       <div class="card p-6">
