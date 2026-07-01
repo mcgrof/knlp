@@ -465,24 +465,31 @@
           </tbody>
         </table>
         </div>
-        <div class="mini-note-bad mb-4">
+        <div class="mini-note-warn mb-4">
           <p class="text-slate-200 leading-7 text-sm">
-            <strong>The orderings are reversed.</strong> The method with the
-            lowest drift &mdash; SnapKV, the best at preserving the output &mdash;
-            is the one the contract axis flags most dangerous for prefix sharing.
-            The method that is prefix-cache safe &mdash; StreamingLLM &mdash; has
-            among the worst drift, because at this budget it drops the middle of
-            the document where the answer lived. Quality safety and prefix-sharing
-            safety are in tension, and neither can be read off the other.
+            <strong>Hypothesis, not yet a proof.</strong> In this run the drift
+            ordering is the reverse of the contract ordering &mdash; SnapKV has
+            the lowest drift yet the most dangerous contract verdict, while the
+            prefix-safe StreamingLLM has among the worst drift because at this
+            budget it drops the middle where the answer lived. That points to a
+            tension between quality safety and prefix-sharing safety. But this
+            run does <em>not</em> establish it: the question is appended
+            <em>after</em> compression, so the adaptive methods compressed
+            query-independently and never exercised the query-dependence that
+            drives their dangerous contract verdict, and the dense baseline found
+            the needle only half the time, so a low KL can mean &ldquo;faithfully
+            preserves the model's confusion.&rdquo; The decisive form is the
+            same-prefix, many-query cache-reuse replay described below.
           </p>
         </div>
         <p class="text-slate-300 leading-8">
-          That tension is the reason PIA measures both. A quality leaderboard
-          ranks SnapKV at the top and would send it to production; the contract
-          axis shows it is a router, not a prefix-cache-safe compressor, so it
-          needs the query in its cache key or it will corrupt a shared prefix.
-          Conversely, the safe-looking positional method buys that safety with
-          accuracy. The right choice depends on which axis binds &mdash; and you
+          The reason to measure both axes is still the point: a quality
+          leaderboard ranks SnapKV at the top and would send it to production,
+          while the contract axis shows it is a router, not a prefix-cache-safe
+          compressor, so under a prefix-only key it would corrupt a shared
+          prefix. Whether the safe-looking positional method must buy that safety
+          with accuracy is what the next experiment settles. The right choice
+          depends on which axis binds &mdash; and you
           only see both if you measure both.
         </p>
         <p class="text-xs text-slate-500 leading-6 mt-4">
