@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MIT
+# KRI-TierKV: KRI-guided tiered KV-cache eviction and sparse retrieval.
+# Inspired by TTKV (arXiv:2604.19769); not a clone -- the tiering policy is
+# KRI-D-sum. FP8 here is fake/storage quantization only (no native FP8 on A100).
+
+config KNLP_KRI_TIERKV
+	bool "KRI-TierKV: KRI-guided tiered KV cache eviction and sparse retrieval"
+	default n
+
+config KNLP_KRI_TIERKV_EMU
+	bool "KRI-TierKV emulation mode"
+	depends on KNLP_KRI_TIERKV
+	default y
+
+config KNLP_KRI_TIERKV_KRI_D_SUM
+	bool "Use KRI-D-sum as primary block selector"
+	depends on KNLP_KRI_TIERKV
+	default y
+
+config KNLP_KRI_TIERKV_ASYM_QUANT
+	bool "Enable asymmetric KV fake quantization"
+	depends on KNLP_KRI_TIERKV
+	default n
+
+config KNLP_KRI_TIERKV_V_ONLY
+	bool "Enable V-only quantization policy, K remains fp16/bf16"
+	depends on KNLP_KRI_TIERKV_ASYM_QUANT
+	default y
+
+config KNLP_KRI_TIERKV_HTML_REPORT
+	bool "Generate HTML report for KRI-TierKV experiments"
+	depends on KNLP_KRI_TIERKV
+	default y
