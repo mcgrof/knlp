@@ -744,11 +744,14 @@
           </div>
           <p>
             The H100 skill-trace pilot showed that generated behavior traces
-            matter. The A100 runs added two more axes: fixed-budget initializer
-            quality and checkpointed steps-to-quality. First-k, paper SCI, and
-            legacy strided-RoPE are different initializers. The corrected
-            LongHealth redo also separates skill-cache behavior from valid
-            long-document cartridge behavior.
+            matter. The H100 stabilization and GSM8K sanity runs add the next
+            split: curated reasoning traces make ReasonCACHE work, while raw
+            skills need Prefix Induction before cache training is useful. The
+            A100 runs added two more axes: fixed-budget initializer quality and
+            checkpointed steps-to-quality. First-k, paper SCI, and legacy
+            strided-RoPE are different initializers. The corrected LongHealth
+            redo also separates skill-cache behavior from valid long-document
+            cartridge behavior.
           </p>
         </div>
 
@@ -819,6 +822,30 @@
           2,048-token prefix to test document-cartridge SCI directly.
         </div>
 
+        <div class="grid cols-3" style="margin-top:14px;">
+          <div class="card metric hot">
+            <div>
+              <div class="value green">17/19</div>
+              <div class="label">Best BO-PI score on XLSX recovery.</div>
+            </div>
+            <div class="source">high signal, seed-sensitive</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value cyan">14/19</div>
+              <div class="label">CSB-PI repeated this score in two focused seeds.</div>
+            </div>
+            <div class="source">next scale candidate</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value amber">20/24</div>
+              <div class="label">GSM8K ReasonCACHE NTP at 512 prefix tokens.</div>
+            </div>
+            <div class="source">curated-trace sanity</div>
+          </div>
+        </div>
+
         <div class="grid cols-2" style="margin-top:14px;">
           <div class="card chart-card">
             <h3>Aggregate pilot pass rate</h3>
@@ -883,6 +910,73 @@
                 <td>The shallow arms do not change the decisive bottleneck.</td>
               </tr>
             </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <h3>Current frontier update</h3>
+          <p>
+            The newer frontier keeps the mechanism and the induction problem
+            separate. ReasonCACHE works when traces are already present. Skill
+            caches need an induction algorithm that turns source material into
+            trainable behavior before the prefix is optimized.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <tr>
+                <th>Surface</th>
+                <th>Family</th>
+                <th>Result</th>
+                <th>Request tokens</th>
+                <th>Prefix tokens</th>
+                <th>Read</th>
+              </tr>
+              <tr>
+                <td><strong>XLSX recovery</strong></td>
+                <td>BO-PI + KL</td>
+                <td class="ok">17 / 19</td>
+                <td>4,072</td>
+                <td>1,744</td>
+                <td>Best score, not stable enough yet.</td>
+              </tr>
+              <tr>
+                <td><strong>XLSX recovery</strong></td>
+                <td>CSB-PI + KL</td>
+                <td class="ok">14 / 19</td>
+                <td>3,641</td>
+                <td>1,744</td>
+                <td>Best stabilization candidate.</td>
+              </tr>
+              <tr>
+                <td><strong>XLSX recovery</strong></td>
+                <td>SS-PI + KL</td>
+                <td>12 / 19</td>
+                <td>3,505</td>
+                <td>1,744</td>
+                <td>Cartridges-style induction baseline.</td>
+              </tr>
+              <tr>
+                <td><strong>GSM8K</strong></td>
+                <td>ReasonCACHE NTP</td>
+                <td class="ok">20 / 24</td>
+                <td>251.6 mean</td>
+                <td>512</td>
+                <td>Curated traces make the mechanism useful.</td>
+              </tr>
+              <tr>
+                <td><strong>GSM8K</strong></td>
+                <td>No cache</td>
+                <td>17 / 24</td>
+                <td>301.7 mean</td>
+                <td>0</td>
+                <td>Mechanism baseline.</td>
+              </tr>
+            </table>
+          </div>
+          <div class="note" style="margin-top:14px;">
+            This is the current umbrella claim: LPC is the shared object,
+            ReasonCACHE validates trace-trained reasoning caches, and PI is the
+            missing bridge when traces do not already exist.
           </div>
         </div>
 
@@ -1196,7 +1290,7 @@
           </p>
         </div>
 
-        <div class="grid cols-3">
+        <div class="grid cols-4">
           <div class="card">
             <h3>SS-PI</h3>
             <p>
@@ -1206,11 +1300,11 @@
             </p>
           </div>
           <div class="card">
-            <h3>AR-PI</h3>
+            <h3>AR-TA / AR-TS</h3>
             <p>
-              Active Reading Prefix Induction asks for source-specific study
-              strategies, procedural views, and examples before training the
-              learned prefix.
+              Active Reading Prefix Induction keeps the paper split between
+              task-agnostic and task-specific strategy generation, then trains
+              the learned prefix from induced traces.
             </p>
           </div>
           <div class="card">
@@ -1221,13 +1315,21 @@
               rationales when curated traces do not already exist.
             </p>
           </div>
+          <div class="card hot">
+            <h3>CSB-PI</h3>
+            <p>
+              Contract/self-check/bounded Prefix Induction is the next scale
+              candidate because it repeated the xlsx gain without the BO-PI
+              seed spike.
+            </p>
+          </div>
         </div>
 
         <div class="note" style="margin-top:14px;">
           The terminology stays stable: Learned Prefix Cache names the artifact,
-          Prefix Induction names the bridge process, and SS-PI, AR-PI, and R-PI
-          are the initial algorithms under test. Verifier-guided variants stay
-          out of the claim until they are measured.
+          Prefix Induction names the bridge process, and SS-PI, AR-TA, AR-TS,
+          R-PI, BO-PI, and CSB-PI are the measured algorithm families so far.
+          BO-PI is the high-score signal; CSB-PI is the stabilization candidate.
         </div>
       </div>
     </section>
