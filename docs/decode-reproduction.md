@@ -40,6 +40,14 @@ Serve asym K16/V8: pass `attention_config={"backend": "FLASHINFER"}` and
 env var is not honored, and drop `VLLM_BATCH_INVARIANT` (breaks engine init). For
 TP>1 set `NCCL_NVLS_ENABLE=0` (the RunPod H100 image can't init NVLS multicast).
 
+Tensor parallelism is validated at **TP=1, 2, and 4** (Qwen2.5-7B): K16/V8 is
+lossless — prefill NLL bit-identical to FP16 and decode token-agreement 1.0 vs
+FP16 — and composes with zero difference-in-differences interaction, even at
+TP=4 where the 4 KV heads shard to one KV head per rank. Symmetric FP8 collapses
+at every TP. Give a file entry point when using `spawn` (a heredoc/stdin script
+makes the multiprocess worker fail at import, which can masquerade as an NCCL
+init crash).
+
 The asym K16/V8 production recipe in Python:
 
 ```python
