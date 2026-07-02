@@ -113,3 +113,34 @@ def test_value_only_update_gate_changes_outputs_vs_both_target():
         both_logits, _ = both(idx, training=False)
         value_logits, _ = value(idx, training=False)
     assert not torch.allclose(both_logits, value_logits)
+
+
+def test_update_gate_layer_mode_and_diagnostics():
+    cfg = tiny_cfg(
+        activation="silu",
+        chunk_size=4,
+        beta_mode="scalar_per_head",
+        update_gate_mode="scalar",
+        update_gate_init=0.8,
+        trellis_update_gate_target="value",
+        trellis_update_gate_layer_mode="layer0",
+        use_short_conv_v=True,
+        residual_update_mix=0.10,
+    )
+    m = TrellisLM(cfg).eval()
+    idx = torch.randint(0, cfg.vocab_size, (2, 16))
+    with torch.no_grad():
+        logits, _ = m(idx, training=False)
+    assert torch.isfinite(logits).all()
+
+    layer0 = m.blocks[0].mixer.last_trellis_diag
+    layer1 = m.blocks[1].mixer.last_trellis_diag
+    assert layer0["value_update_gate"] is not None
+    assert layer0["key_update_gate"] is None
+    assert layer1["value_update_gate"] is None
+    assert layer0["value_state"]["rms"] >= 0.0
+    assert layer0["value_update"]["rms"] >= 0.0
+    assert layer0["backend"] in (
+        "pytorch_state_evolution",
+        "triton_state_evolution",
+    )

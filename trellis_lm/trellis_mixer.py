@@ -339,10 +339,76 @@ class TrellisMixer(nn.Module):
     ) -> torch.Tensor | None:
         if update_gate is None:
             return None
+        layer_mode = self.cfg.trellis_update_gate_layer_mode
+        if layer_mode == "layer0" and self.layer_idx != 0:
+            return None
+        if layer_mode == "not_layer0" and self.layer_idx == 0:
+            return None
+        lower_half_cut = max(1, self.cfg.n_layers // 2)
+        if layer_mode == "lower_half" and self.layer_idx >= lower_half_cut:
+            return None
+        if layer_mode == "upper_half" and self.layer_idx < lower_half_cut:
+            return None
         target = self.cfg.trellis_update_gate_target
         if target == "both" or target == memory:
             return update_gate
         return None
+
+    @staticmethod
+    def _diag_tensor_stats(t: torch.Tensor | None) -> dict[str, float] | None:
+        if t is None:
+            return None
+        with torch.no_grad():
+            x = t.detach().float()
+            return {
+                "mean": float(x.mean().item()),
+                "std": float(x.std(unbiased=False).item()) if x.numel() > 1 else 0.0,
+                "rms": float(x.pow(2).mean().sqrt().item()),
+                "absmax": float(x.abs().max().item()),
+                "min": float(x.min().item()),
+                "max": float(x.max().item()),
+            }
+
+    def _diag_gate_stats(
+        self,
+        update_gate: torch.Tensor | None,
+        query_index: int,
+    ) -> dict[str, object] | None:
+        if update_gate is None:
+            return None
+        stats: dict[str, object] = self._diag_tensor_stats(update_gate) or {}
+        with torch.no_grad():
+            g = update_gate.detach().float()
+            stats["frac_lt_0_2"] = float((g < 0.2).float().mean().item())
+            stats["frac_gt_0_95"] = float((g > 0.95).float().mean().item())
+            stats["query"] = self._diag_tensor_stats(g[:, :, query_index, :])
+        return stats
+
+    def _base_forward_diag(
+        self,
+        beta: torch.Tensor,
+        gamma: torch.Tensor,
+        update_gate: torch.Tensor | None,
+        key_update_gate: torch.Tensor | None,
+        value_update_gate: torch.Tensor | None,
+        seq_len: int,
+        backend: str,
+    ) -> dict[str, object]:
+        query_index = max(0, seq_len - 2)
+        return {
+            "layer": self.layer_idx,
+            "backend": backend,
+            "update_gate_layer_mode": self.cfg.trellis_update_gate_layer_mode,
+            "update_gate_target": self.cfg.trellis_update_gate_target,
+            "beta": self._diag_tensor_stats(beta),
+            "effective_gamma": self._diag_tensor_stats(gamma),
+            "update_gate": self._diag_gate_stats(update_gate, query_index),
+            "key_update_gate": self._diag_gate_stats(key_update_gate, query_index),
+            "value_update_gate": self._diag_gate_stats(value_update_gate, query_index),
+        }
+
+    def _set_forward_diag(self, diag: dict[str, object]) -> None:
+        self.last_trellis_diag = diag
 
     def _stack_key_value_gates(self, update_gate: torch.Tensor | None):
         if update_gate is None:
@@ -467,14 +533,28 @@ class TrellisMixer(nn.Module):
                 triton_fused_update = cfg.trellis_update_stabilizer != (
                     "delta_ratio_cap"
                 )
+                fused_backend = (
+                    HAS_TRITON
+                    and nvidia_cuda
+                    and triton_fused_update
+                    and (triton_pointwise or triton_ln_silu)
+                )
+                forward_diag = self._base_forward_diag(
+                    beta=bf,
+                    gamma=gf,
+                    update_gate=update_gate,
+                    key_update_gate=key_update_gate,
+                    value_update_gate=value_update_gate,
+                    seq_len=T,
+                    backend=(
+                        "triton_state_evolution"
+                        if fused_backend
+                        else "pytorch_state_evolution"
+                    ),
+                )
 
                 def evolve_state(write_in, alpha_in, P_in, rmat_in, gate_in):
-                    if (
-                        HAS_TRITON
-                        and nvidia_cuda
-                        and triton_fused_update
-                        and (triton_pointwise or triton_ln_silu)
-                    ):
+                    if fused_backend:
                         # Fused Triton state-evolution: collapses the nC-chunk
                         # loop into one kernel, gradient-equivalent to the
                         # PyTorch path (z detached -> true-stale).
@@ -548,6 +628,11 @@ class TrellisMixer(nn.Module):
                     M0_2, u_2 = evolve_state(write2, alpha2, P2, rmat2, update_gate2)
                     M0_2 = M0_2.view(2, B, self.H, nC, self.M, self.D)
                     u_2 = u_2.view(2, B, self.H, nC, cs, self.M)
+                    forward_diag["key_state"] = self._diag_tensor_stats(M0_2[0])
+                    forward_diag["value_state"] = self._diag_tensor_stats(M0_2[1])
+                    forward_diag["key_update"] = self._diag_tensor_stats(u_2[0])
+                    forward_diag["value_update"] = self._diag_tensor_stats(u_2[1])
+                    self._set_forward_diag(forward_diag)
                     yhat = run_trellis_memory_chunked_batched_readout(
                         kf, qf, M0_2[0], u_2[0], P, rmat, gf, "M_q", cs, T_out=T
                     )
@@ -569,10 +654,26 @@ class TrellisMixer(nn.Module):
                         rmat,
                         value_update_gate,
                     )
+                    forward_diag["key_state"] = self._diag_tensor_stats(M0_k)
+                    forward_diag["value_state"] = self._diag_tensor_stats(M0_v)
+                    forward_diag["key_update"] = self._diag_tensor_stats(u_k)
+                    forward_diag["value_update"] = self._diag_tensor_stats(u_v)
+                    self._set_forward_diag(forward_diag)
                     y = run_trellis_memory_chunked_batched_readout(
                         vf, r, M0_v, u_v, P, rmat, gf, "M_T_r", cs, T_out=T
                     )
             elif use_chunk:
+                self._set_forward_diag(
+                    self._base_forward_diag(
+                        beta=bf,
+                        gamma=gf,
+                        update_gate=update_gate,
+                        key_update_gate=key_update_gate,
+                        value_update_gate=value_update_gate,
+                        seq_len=T,
+                        backend="pytorch_chunked_refine",
+                    )
+                )
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
                     kf,
@@ -617,6 +718,17 @@ class TrellisMixer(nn.Module):
                     ),
                 )
             else:
+                self._set_forward_diag(
+                    self._base_forward_diag(
+                        beta=bf,
+                        gamma=gf,
+                        update_gate=update_gate,
+                        key_update_gate=key_update_gate,
+                        value_update_gate=value_update_gate,
+                        seq_len=T,
+                        backend="pytorch_sequential",
+                    )
+                )
                 ex = cfg.exact_inner
                 yhat = run_trellis_memory(
                     kf,
