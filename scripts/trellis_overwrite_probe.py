@@ -74,6 +74,19 @@ def stable_row_seed(row: str) -> int:
     return total
 
 
+def row_base_and_layer_mode(row: str) -> tuple[str, str]:
+    suffixes = {
+        "_layer0": "layer0",
+        "_lowerhalf": "lower_half",
+        "_upperhalf": "upper_half",
+        "_notlayer0": "not_layer0",
+    }
+    for suffix, layer_mode in suffixes.items():
+        if row.endswith(suffix):
+            return row[: -len(suffix)], layer_mode
+    return row, "all"
+
+
 def vocab_size(args: argparse.Namespace) -> int:
     return args.n_keys + args.n_vals + 2 + args.distractor_vocab
 
@@ -216,6 +229,7 @@ def make_cfg(
     update_gate_mode: str,
     update_gate_init: float,
     update_gate_target: str,
+    update_gate_layer_mode: str,
     update_gate_floor: float,
 ):
     from trellis_lm.config import TrellisConfig
@@ -248,6 +262,7 @@ def make_cfg(
         update_gate_mode=update_gate_mode,
         update_gate_init=update_gate_init,
         trellis_update_gate_target=update_gate_target,
+        trellis_update_gate_layer_mode=update_gate_layer_mode,
         trellis_update_gate_floor=update_gate_floor,
         residual_update_mix=0.10,
     )
@@ -256,6 +271,7 @@ def make_cfg(
 def row_spec(
     row: str,
 ) -> tuple[str, str, str, float, float, float, str, float, str, float]:
+    row, _ = row_base_and_layer_mode(row)
     if row == "trellis_none":
         return (
             "trellis",
@@ -518,6 +534,42 @@ def finalize_counts(counts: dict[str, int]) -> dict[str, Any]:
     return out
 
 
+def collect_trellis_diagnostics(model) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for module in model.modules():
+        diag = getattr(module, "last_trellis_diag", None)
+        if diag is not None:
+            out.append(diag)
+    out.sort(key=lambda item: int(item.get("layer", 0)))
+    return out
+
+
+def append_jsonl(path: Path | None, payload: dict[str, Any]) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def update_first_learning_steps(
+    first_steps: dict[str, int],
+    step: int,
+    train_acc: float,
+    loss_value: float,
+) -> None:
+    thresholds = {
+        "acc_gt_0": train_acc > 0.0,
+        "acc_ge_0_5": train_acc >= 0.50,
+        "acc_ge_0_9": train_acc >= 0.90,
+        "acc_ge_0_95": train_acc >= 0.95,
+        "loss_lt_1": loss_value < 1.0,
+    }
+    for key, passed in thresholds.items():
+        if passed and key not in first_steps:
+            first_steps[key] = step
+
+
 def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> dict[str, Any]:
     import torch
     from trellis_lm.model import build_model
@@ -534,6 +586,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         update_gate_target,
         update_gate_floor,
     ) = row_spec(row)
+    row_base, update_gate_layer_mode = row_base_and_layer_mode(row)
     cfg = make_cfg(
         args,
         readout,
@@ -544,10 +597,12 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         update_gate_mode,
         update_gate_init,
         update_gate_target,
+        update_gate_layer_mode,
         update_gate_floor,
     )
     row_meta = {
         "row": row,
+        "row_base": row_base,
         "kind": kind,
         "value_readout_act": readout,
         "trellis_value_alpha_mode": value_alpha_mode,
@@ -557,6 +612,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "update_gate_mode": update_gate_mode,
         "update_gate_init": update_gate_init,
         "trellis_update_gate_target": update_gate_target,
+        "trellis_update_gate_layer_mode": update_gate_layer_mode,
         "trellis_update_gate_floor": update_gate_floor,
     }
     model = build_model(cfg, kind).to(device)
@@ -564,9 +620,10 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
     # computes beta/gamma paths in fp32 under disabled autocast; casting modules
     # to bf16 makes beta_proj weights bf16 while h.float() is fp32.
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    rng = random.Random(args.seed + 1009 * stable_row_seed(row))
+    rng = random.Random(args.seed + 1009 * stable_row_seed(row_base))
     dt = as_dtype(args.dtype)
     hist = []
+    first_learning_steps: dict[str, int] = {}
     t0 = time.time()
     ntok = 0
     model.train()
@@ -588,6 +645,10 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
                 "divergence_step": step,
                 "divergence_reason": "nonfinite_loss",
                 "loss": loss_value,
+                "first_learning_steps": first_learning_steps,
+                "trellis_diagnostics": (
+                    collect_trellis_diagnostics(model) if args.diagnostics else []
+                ),
                 "history": hist,
                 "params": model.get_num_params(),
             }
@@ -601,26 +662,57 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
                 "divergence_reason": "nonfinite_grad_norm",
                 "loss": loss_value,
                 "gnorm": gnorm,
+                "first_learning_steps": first_learning_steps,
+                "trellis_diagnostics": (
+                    collect_trellis_diagnostics(model) if args.diagnostics else []
+                ),
                 "history": hist,
                 "params": model.get_num_params(),
             }
         opt.step()
         ntok += idx.numel()
-        if step == 1 or step % args.log_every == 0:
-            with torch.no_grad():
-                preds = []
-                for bi, pos in enumerate(meta.query_pos):
-                    preds.append(int(logits[bi, pos].argmax(-1).item()))
-                counts = accuracy_metrics(preds, meta, args)
+        with torch.no_grad():
+            preds = []
+            for bi, pos in enumerate(meta.query_pos):
+                preds.append(int(logits[bi, pos].argmax(-1).item()))
+            counts = accuracy_metrics(preds, meta, args)
+            train_acc = counts["correct"] / max(1, counts["total"])
+            update_first_learning_steps(
+                first_learning_steps,
+                step,
+                train_acc,
+                loss_value,
+            )
+        diag_due = args.diagnostics and (
+            step == 1 or step % (args.diag_every or args.log_every) == 0
+        )
+        if step == 1 or step % args.log_every == 0 or diag_due:
+            layer_diag = collect_trellis_diagnostics(model) if args.diagnostics else []
             entry = {
                 "step": step,
                 "tokens": ntok,
                 "loss": round(loss_value, 6),
                 "gnorm": round(gnorm, 6),
-                "train_acc": counts["correct"] / max(1, counts["total"]),
+                "train_acc": train_acc,
                 "tok_s": ntok / max(1e-9, time.time() - t0),
             }
+            if layer_diag:
+                entry["trellis_diagnostics"] = layer_diag
             hist.append(entry)
+            if layer_diag:
+                append_jsonl(
+                    args.diag_jsonl,
+                    {
+                        "row": row,
+                        "seed": args.seed,
+                        "step": step,
+                        "tokens": ntok,
+                        "loss": loss_value,
+                        "gnorm": gnorm,
+                        "train_acc": train_acc,
+                        "layers": layer_diag,
+                    },
+                )
             print(
                 f"  [{row}] step {step}/{args.train_steps} "
                 f"loss {loss_value:.4f} acc {entry['train_acc']:.3f} "
@@ -678,6 +770,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "params": model.get_num_params(),
         "memory_state_bytes_per_seq": model.memory_state_bytes(1),
         "train_tokens": ntok,
+        "first_learning_steps": first_learning_steps,
         "history": hist,
     })
     return metrics
@@ -686,7 +779,8 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
 def eval_row(model, row: str, args: argparse.Namespace, cells: list[Cell], device):
     import torch
 
-    rng = random.Random(args.seed + 7919 * stable_row_seed(row) + 17)
+    row_base, _ = row_base_and_layer_mode(row)
+    rng = random.Random(args.seed + 7919 * stable_row_seed(row_base) + 17)
     model.eval()
     by_cell: list[dict[str, Any]] = []
     by_pressure: dict[str, dict[str, int]] = {}
@@ -766,6 +860,9 @@ def main() -> int:
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
+    p.add_argument("--diagnostics", action="store_true")
+    p.add_argument("--diag-every", type=int, default=0)
+    p.add_argument("--diag-jsonl", type=Path, default=None)
     p.add_argument("--out", type=Path, default=Path("overwrite_probe_results.json"))
     p.add_argument("--print-cells", action="store_true")
     args = p.parse_args()
