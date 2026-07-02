@@ -865,7 +865,8 @@
           <p>
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
-            The H100 skill-trace run, A100 SCI/Active Reading retest, A100
+            The H100 skill-trace run, H100 PI stabilization run, GSM8K
+            ReasonCACHE sanity check, A100 SCI/Active Reading retest, A100
             skill-cache convergence curve, and LongHealth document retests add
             quality evidence for the induction layer, not just the connector.
           </p>
@@ -889,16 +890,16 @@
           <div class="card metric">
             <div>
               <div class="value amber">JSON+CSV</div>
-              <div class="label">The H100 and A100 runs generated scored ablation JSONs plus CSV summaries.</div>
+              <div class="label">The H100 and A100 runs generated scored ablation rows plus CSV summaries.</div>
             </div>
-            <div class="source">skill-trace, SCI/AR, convergence, and LongHealth retests</div>
+            <div class="source">skill-trace, PI, GSM8K, SCI/AR, and LongHealth retests</div>
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">306</div>
-              <div class="label">Fresh result JSONs: 40 H100 skill-trace rows, 86 A100 retest rows, 80 skill-cache convergence rows, and 100 LongHealth document rows.</div>
+              <div class="value cyan">341</div>
+              <div class="label">Scored rows across H100 skill traces, H100 PI stabilization, GSM8K sanity, A100 retests, convergence, and LongHealth.</div>
             </div>
-            <div class="source">five completed GPU matrices</div>
+            <div class="source">seven completed GPU matrices</div>
           </div>
         </div>
 
@@ -913,6 +914,7 @@
               <tr><td><strong>SkillsBench harness</strong></td><td class="ok">Run, compare, and normalize arm results.</td></tr>
               <tr><td><strong>Pareto frontier</strong></td><td class="ok">Emit per-task and aggregate-by-arm JSON/CSV reports.</td></tr>
               <tr><td><strong>PI ablations</strong></td><td class="ok">Compare raw skill NTP, fixed self-study, proper AR-TA, AR-TS, R-PI, and BO-PI.</td></tr>
+              <tr><td><strong>Curated traces</strong></td><td class="ok">GSM8K sanity confirms ReasonCACHE helps when reasoning traces already exist.</td></tr>
             </table>
           </div>
 
@@ -1125,6 +1127,113 @@
           </div>
 
           <div class="card">
+            <h3>H100 PI stabilization on XLSX recovery</h3>
+            <p>
+              The stabilization run focused on the clearest skill-cache signal:
+              recovering missing spreadsheet data. It tests whether stronger
+              induction prompts improve the same learned-prefix mechanism.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Family</th>
+                  <th>Accuracy</th>
+                  <th>Request tokens</th>
+                  <th>Prefix tokens</th>
+                  <th>Main read</th>
+                </tr>
+                <tr>
+                  <td><strong>BO-PI</strong></td>
+                  <td class="ok">17 / 19</td>
+                  <td>4,072</td>
+                  <td>1,744</td>
+                  <td>Best score, but seed-sensitive.</td>
+                </tr>
+                <tr>
+                  <td><strong>CSB-PI</strong></td>
+                  <td class="ok">14 / 19</td>
+                  <td>3,641</td>
+                  <td>1,744</td>
+                  <td>More stable focused candidate.</td>
+                </tr>
+                <tr>
+                  <td><strong>SS-PI</strong></td>
+                  <td>12 / 19</td>
+                  <td>3,505</td>
+                  <td>1,744</td>
+                  <td>Cartridges-style self-study baseline.</td>
+                </tr>
+                <tr>
+                  <td><strong>No skill</strong></td>
+                  <td>8 / 19</td>
+                  <td>1,732</td>
+                  <td>0</td>
+                  <td>Lower cost, lower quality.</td>
+                </tr>
+              </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              The current recommendation is to scale CSB-PI first. BO-PI is a
+              useful upper signal, but the seed instability keeps it out of the
+              main claim until it reproduces.
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>GSM8K ReasonCACHE sanity check</h3>
+            <p>
+              This checks the paper's easier case: reasoning traces already
+              exist. It does not solve prefix induction for raw skills, but it
+              confirms the learned-prefix mechanism is useful when trained on
+              curated traces.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Family</th>
+                  <th>Accuracy</th>
+                  <th>Mean request tokens</th>
+                  <th>Prefix tokens</th>
+                  <th>Main read</th>
+                </tr>
+                <tr>
+                  <td><strong>ReasonCACHE NTP</strong></td>
+                  <td class="ok">20 / 24</td>
+                  <td>251.6</td>
+                  <td>512</td>
+                  <td>Best sanity row.</td>
+                </tr>
+                <tr>
+                  <td><strong>ReasonCACHE NTP</strong></td>
+                  <td class="ok">19 / 24</td>
+                  <td>239.9</td>
+                  <td>256</td>
+                  <td>Lower prefix cost, same score as prefill.</td>
+                </tr>
+                <tr>
+                  <td><strong>Text prefill</strong></td>
+                  <td>19 / 24</td>
+                  <td>277.9</td>
+                  <td>256</td>
+                  <td>Strong initialization control.</td>
+                </tr>
+                <tr>
+                  <td><strong>No cache</strong></td>
+                  <td>17 / 24</td>
+                  <td>301.7</td>
+                  <td>0</td>
+                  <td>Mechanism baseline.</td>
+                </tr>
+              </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              This is why the work splits into two questions: ReasonCACHE is
+              useful with traces, while raw skills need Prefix Induction before
+              training a cache is meaningful.
+            </div>
+          </div>
+
+          <div class="card">
             <h3>A100 SCI and Active Reading retest</h3>
             <p>
               The retest fixed two labels at once: paper SCI is sampled
@@ -1293,17 +1402,17 @@
             <h2>Pareto now compares induction arms, not just prompt size.</h2>
           </div>
           <p>
-            The analyzer maximizes pass rate while minimizing online prompt
-            tokens, generated tokens, and latency. The current frontier now has
-            three evidence layers: the H100 skill-trace pilot, the A100
-            SCI/Active Reading retest, and the long-document SCI redo. It is
-            still a pilot, not a final claim.
+            The analyzer maximizes pass rate while keeping request tokens,
+            virtual prefix tokens, prefix bytes, offline induction time, and
+            reuse count separate. The current frontier combines controlled
+            bridge strata, H100 PI stabilization, and the GSM8K curated-trace
+            sanity check. It is still a pilot, not a final claim.
           </p>
         </div>
 
         <div class="grid cols-2">
           <div class="card chart-card">
-            <h3>Fresh H100 pilot aggregate</h3>
+            <h3>Original H100 pilot aggregate</h3>
             <p>
               Aggregate pass rate across the four old SkillsBench tasks. All
               learned-prefix arms still include placeholder tokens under the
@@ -1312,17 +1421,37 @@
             <div class="chart-shell"><canvas id="paretoChart"></canvas></div>
           </div>
           <div class="card">
-            <h3>Command path</h3>
-            <pre>python benchmarks/benchmark_reasoncache_skills.py pareto \
-  /workspace/results/*/*/result.json \
-  --output-json /workspace/results/pareto.json \
-  --output-csv /workspace/results/pareto.csv</pre>
+            <h3>Current frontier axes</h3>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Axis</th>
+                  <th>Why it stays separate</th>
+                </tr>
+                <tr>
+                  <td><strong>Request tokens</strong></td>
+                  <td>Online prompt plus generated tokens drive serving cost.</td>
+                </tr>
+                <tr>
+                  <td><strong>Prefix bytes</strong></td>
+                  <td>Loaded learned prefixes consume cache residency.</td>
+                </tr>
+                <tr>
+                  <td><strong>Offline seconds</strong></td>
+                  <td>Induction and training cost only amortize with reuse.</td>
+                </tr>
+                <tr>
+                  <td><strong>Reuse count</strong></td>
+                  <td>A prefix shared across many requests changes the frontier.</td>
+                </tr>
+              </table>
+            </div>
             <div class="note" style="margin-top:14px;">
               The A100 skill-cache retest, skill-cache convergence curve, and
               LongHealth document redo add an initializer frontier: first-k,
-              paper SCI, and strided-RoPE are not interchangeable. The next run should
-              expand beyond the cartridge-era tasks into smallest,
-              deterministic-random, medium, and largest SkillsBench strata.
+              paper SCI, and strided-RoPE are not interchangeable. The next
+              run should scale CSB-PI across the public skill strata and add
+              enough seeds to separate induction quality from lucky prompts.
             </div>
           </div>
         </div>
