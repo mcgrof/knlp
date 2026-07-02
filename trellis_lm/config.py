@@ -66,6 +66,7 @@ class TrellisConfig:
     # Where to apply the token-conditioned update gate. The historical scalar
     # and channel gates used "both"; overwrite probes can gate only value writes.
     trellis_update_gate_target: str = "both"  # ["both","key","value"]
+    trellis_update_gate_layer_mode: str = "all"
     trellis_update_gate_floor: float = 0.0
     residual_update_mix: float = 0.0
     # output_path: "current" = out_proj(y) then *SiLU(gate) AFTER out_proj
@@ -164,6 +165,13 @@ class TrellisConfig:
             "key",
             "value",
         ), self.trellis_update_gate_target
+        assert self.trellis_update_gate_layer_mode in (
+            "all",
+            "layer0",
+            "lower_half",
+            "upper_half",
+            "not_layer0",
+        ), self.trellis_update_gate_layer_mode
         assert 0.0 <= self.trellis_update_gate_floor < 1.0, (
             self.trellis_update_gate_floor
         )
