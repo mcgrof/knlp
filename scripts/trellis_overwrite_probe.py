@@ -62,8 +62,9 @@ def build_cells(args: argparse.Namespace) -> list[Cell]:
 
 def json_args(args: argparse.Namespace) -> dict[str, Any]:
     out = vars(args).copy()
-    if isinstance(out.get("out"), Path):
-        out["out"] = str(out["out"])
+    for key, value in list(out.items()):
+        if isinstance(value, Path):
+            out[key] = str(value)
     return out
 
 
