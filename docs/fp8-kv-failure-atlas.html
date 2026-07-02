@@ -1109,9 +1109,69 @@
               ctx-2048 teacher-forced NLL, faithful quantizers, measured free on a W7900. Independently re-run on a
               separate date and W7900 &mdash; the four arms reproduce to the digit &mdash; with a second biasless family
               added as a control (Qwen3-4B: prebias-K8 +0.0022, K16/V8 +0.0030), confirming that on a model without a
-              key bias, plain 8-bit keys are already near-lossless and the pre-RoPE split changes nothing. Remaining
-              extensions (labeled in the source): ctx-8K + a NIAH probe, paired-doc block-bootstrap CIs, and the full
-              per-query streaming cache-lifecycle.
+              key bias, plain 8-bit keys are already near-lossless and the pre-RoPE split changes nothing. The three
+              extensions this footnote used to defer &mdash; ctx-8K with block-bootstrap CIs, a NIAH probe, and the
+              cache-lifecycle &mdash; are delivered in the next section.
+            </p>
+          </Section>
+
+          {/* 10c. Phase-6: 8K, intervals, retrieval, generation */}
+          <Section id="phase6" kicker="Hardening the frontier" title="At 8K, with intervals, retrieval, and generation">
+            <p>
+              The frontier above is a single teacher-forced step at 2048 tokens. Phase-6 closes the three extensions the
+              footnote named &mdash; long context, confidence intervals, and probes beyond next-token loss &mdash; across
+              five families on <strong>24 independent wikitext documents</strong> at 8192 tokens. It adds a
+              <strong> block-bootstrap CI</strong> over documents on every &Delta;NLL, a <strong>passkey / needle</strong>
+              retrieval probe, and <strong>autoregressive divergence</strong> through a real incremental cache (the
+              cache-lifecycle a one-step measurement cannot see). The result is a two-axis split the 2048 table hid.
+            </p>
+
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-3">arm</th>
+                  <th className="text-right px-2">&Delta;NLL@8K worst [95% CI]</th>
+                  <th className="text-right px-2">passkey</th>
+                  <th className="text-right px-2">AR-agree (worst&ndash;best)</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">K16/V8</td><td className="text-right px-2">+0.0005 [&minus;0.0003, +0.0012]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.56&ndash;0.97</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">pre-RoPE prebias-K8/V8</td><td className="text-right px-2">+0.0027 [+0.0023, +0.0031]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.45&ndash;0.71</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">K16/V2-PT+R</td><td className="text-right px-2">+0.068 [+0.062, +0.074]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.17&ndash;0.59</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-amber-400">faithful KIVI (2-bit K)</td><td className="text-right px-2 text-amber-400">+0.473 [+0.452, +0.493]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2 text-amber-400">0.11&ndash;0.38</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p>
+              <strong className="text-gray-200">Retrieval is robust; generation is sensitive.</strong> On the three
+              models whose full-precision passkey is perfect (Llama-3.1-8B, Qwen3-4B, Mistral-7B) the planted needle is
+              still recovered <strong>1.000 of the time under every arm</strong> &mdash; even faithful KIVI, whose &Delta;NLL
+              reaches +0.20 on Llama. Yet the same KIVI cache, run through greedy generation, agrees with the
+              full-precision continuation only <strong>11&ndash;38%</strong> of the time and forks on nearly every prompt.
+              The failure mode of aggressive KV quantization is <em>generation drift, not retrieval loss</em> &mdash; the
+              cache-lifecycle amplifies the quality gap a single teacher-forced step understates, and KIVI&rsquo;s AR
+              collapse tracks its raised NLL while K16/V8&rsquo;s stays high.
+            </p>
+
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
+              <p className="text-sm text-gray-300"><strong className="text-green-400">K16/V8 clears all three axes.</strong>
+              {' '}Lossless &Delta;NLL at 8K with a CI that brackets zero on every long-context family, perfect needle
+              retrieval, and the highest generation agreement of any arm. Its sub-1.0 AR-agreement is dominated by benign
+              argmax tie-flips &mdash; the NLL is flat, so the differing tokens are equal-quality continuations, not
+              degradation. AR-agreement here is a strict <em>comparative</em> sensitivity probe: it is diagnostic because
+              KIVI diverges three-to-five times more, and there the NLL confirms the loss is real.</p>
+            </div>
+            <p className="text-xs text-gray-500">
+              ctx-8192, 24 wikitext-103 documents, five families, 95% block-bootstrap CI over documents (2000 resamples).
+              Worst is the max &Delta;NLL across the four long-context families; passkey and AR-agreement are read on the
+              three whose full-precision retrieval is 1.0. <strong>Phi-2 is excluded from the 8K axes</strong> &mdash; its
+              native context is 2048, so its 8K rows probe out-of-window extrapolation (passkey 0.000 even at full
+              precision); it remains valid on the ctx-2048 frontier above. Qwen2.5-7B is excluded from the passkey axis
+              only (low raw-text-probe baseline, no chat template). The one remaining refinement is the per-query streaming
+              residual window; the arms here keep a global-tail residual. The retrieval and cache-lifecycle axes connect
+              to the <a href="prefix-integrity-analysis.html" className="underline">prefix-integrity analysis</a>.
+              Measured free on an A100 (employer-billed neocloud).
             </p>
           </Section>
 
