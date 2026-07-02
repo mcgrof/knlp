@@ -747,11 +747,14 @@
             matter. The H100 stabilization and GSM8K sanity runs add the next
             split: curated reasoning traces make ReasonCACHE work, while raw
             skills need Prefix Induction before cache training is useful. The
-            A100 runs added two more axes: fixed-budget initializer quality and
-            checkpointed steps-to-quality. First-k, paper SCI, and legacy
-            strided-RoPE are different initializers. The corrected LongHealth
-            redo also separates skill-cache behavior from valid long-document
-            cartridge behavior.
+            H100 public-strata scale run is the first negative transfer
+            warning: CSB-PI and BO-PI did not generalize beyond the focused
+            XLSX surface, though one public task is harness-confounded. The
+            A100 runs added two more axes: fixed-budget
+            initializer quality and checkpointed steps-to-quality. First-k,
+            paper SCI, and legacy strided-RoPE are different initializers. The
+            corrected LongHealth redo also separates skill-cache behavior from
+            valid long-document cartridge behavior.
           </p>
         </div>
 
@@ -822,7 +825,7 @@
           2,048-token prefix to test document-cartridge SCI directly.
         </div>
 
-        <div class="grid cols-3" style="margin-top:14px;">
+        <div class="grid cols-4" style="margin-top:14px;">
           <div class="card metric hot">
             <div>
               <div class="value green">17/19</div>
@@ -835,7 +838,7 @@
               <div class="value cyan">14/19</div>
               <div class="label">CSB-PI repeated this score in two focused seeds.</div>
             </div>
-            <div class="source">next scale candidate</div>
+            <div class="source">focused XLSX signal</div>
           </div>
           <div class="card metric">
             <div>
@@ -843,6 +846,13 @@
               <div class="label">GSM8K ReasonCACHE NTP at 512 prefix tokens.</div>
             </div>
             <div class="source">curated-trace sanity</div>
+          </div>
+          <div class="card metric">
+            <div>
+              <div class="value rose">0/16</div>
+              <div class="label">Public-strata scale score for each PI family on non-empty tasks.</div>
+            </div>
+            <div class="source">negative transfer test</div>
           </div>
         </div>
 
@@ -945,7 +955,7 @@
                 <td class="ok">14 / 19</td>
                 <td>3,641</td>
                 <td>1,744</td>
-                <td>Best stabilization candidate.</td>
+                <td>Focused signal; did not transfer in scale.</td>
               </tr>
               <tr>
                 <td><strong>XLSX recovery</strong></td>
@@ -970,6 +980,14 @@
                 <td>301.7 mean</td>
                 <td>0</td>
                 <td>Mechanism baseline.</td>
+              </tr>
+              <tr>
+                <td><strong>Public skill strata</strong></td>
+                <td>CSB-PI / BO-PI + KL</td>
+                <td>0 / 48 each</td>
+                <td>varies</td>
+                <td>varies</td>
+                <td>Focused XLSX gains did not generalize; one slice needs harness repair.</td>
               </tr>
             </table>
           </div>
@@ -1282,11 +1300,13 @@
             <h2>The strategic move is Prefix Induction.</h2>
           </div>
           <p>
-            This is work in progress. The next run treats PI like the KRI
-            algorithm-vetting layer: hold the LPC mechanism fixed, compare a
-            small set of task-oriented induction algorithms, and price each one
-            by trace generation, teacher passes, prefix bytes, online prompt
-            tokens, and expected requests sharing the learned prefix.
+            This is work in progress. PI is now being treated like the KRI
+            algorithm-vetting layer: hold the LPC mechanism fixed, compare
+            task-oriented induction algorithms, and price each one by trace
+            generation, teacher passes, prefix bytes, online prompt tokens,
+            and expected requests sharing the learned prefix. The public-strata
+            scale run showed the first promoted PI families are still
+            task-local, with one public slice blocked by harness assumptions.
           </p>
         </div>
 
@@ -1318,9 +1338,9 @@
           <div class="card hot">
             <h3>CSB-PI</h3>
             <p>
-              Contract/self-check/bounded Prefix Induction is the next scale
-              candidate because it repeated the xlsx gain without the BO-PI
-              seed spike.
+              Contract/self-check/bounded Prefix Induction repeated the xlsx
+              gain without the BO-PI seed spike, but the H100 public-strata
+              scale run did not reproduce that gain on broader skills.
             </p>
           </div>
         </div>
@@ -1329,7 +1349,8 @@
           The terminology stays stable: Learned Prefix Cache names the artifact,
           Prefix Induction names the bridge process, and SS-PI, AR-TA, AR-TS,
           R-PI, BO-PI, and CSB-PI are the measured algorithm families so far.
-          BO-PI is the high-score signal; CSB-PI is the stabilization candidate.
+          BO-PI is the high-score focused signal; CSB-PI is the more stable
+          focused signal. Neither is a broad-general PI result yet.
         </div>
       </div>
     </section>
