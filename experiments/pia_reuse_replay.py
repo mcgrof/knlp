@@ -121,6 +121,22 @@ def query_aware_kept(model, tok, ctx_ids, q_text, keep_tokens, device, obs=10):
     return set(keep.tolist())
 
 
+def qk_aware_kept(model, tok, ctx_ids, q_text, keep_tokens, device, obs=10):
+    """Same query-aware selection as query_aware_kept, but scored with the cheap
+    q.k path (pia_qk_selector) instead of output_attentions -- so it runs at
+    16-32K where the [layers, heads, T, T] attention tensor will not fit. The
+    parity harness (pia_qk_parity.py) confirms it tracks query_aware_kept."""
+    from pia_qk_selector import qk_top_tokens
+
+    q_ids = tok(
+        "\n\nQuestion: " + q_text + "\nAnswer with only the code:",
+        return_tensors="pt",
+        add_special_tokens=False,
+    ).input_ids.to(device)
+    full = torch.cat([ctx_ids, q_ids], dim=1)
+    return qk_top_tokens(model, full, ctx_ids.shape[1], keep_tokens, obs, device)
+
+
 def positional_kept(prefix_len, keep_tokens, sink=128, recent=384):
     """Sink + recent window (StreamingLLM-shaped), query-independent."""
     kept = set(range(min(sink, prefix_len)))
@@ -201,16 +217,21 @@ def _found(ans, expected):
     return _norm(expected) in _norm(ans)
 
 
-def eval_prefix(model, tok, device, needles, context_len, keep_ratio, pidx):
+def eval_prefix(
+    model, tok, device, needles, context_len, keep_ratio, pidx, selector="attn"
+):
     """One shared prefix, one query per needle, four modes. Returns per-needle
-    rows plus the query-aware kept-set Jaccard across queries."""
+    rows plus the query-aware kept-set Jaccard across queries. `selector` picks
+    the query-aware scorer: "attn" (output_attentions, <=4K) or "qk" (cheap q.k
+    path, scales to 16-32K)."""
     ctx_text, qa = build_context(tok, needles, context_len)
     ctx_ids = tok(ctx_text, return_tensors="pt").input_ids.to(device)
     prefix_len = ctx_ids.shape[1]
     keep_tokens = max(1, int(prefix_len * keep_ratio))
 
+    select = qk_aware_kept if selector == "qk" else query_aware_kept
     qa_kept = {
-        i: query_aware_kept(model, tok, ctx_ids, q, keep_tokens, device)
+        i: select(model, tok, ctx_ids, q, keep_tokens, device)
         for i, (q, _) in enumerate(qa)
     }
     pos_kept = positional_kept(prefix_len, keep_tokens)
@@ -247,9 +268,14 @@ def run(args):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(args.model)
+    # the qk selector recomputes its own scores in a pre-hook on the layer
+    # inputs, so it does not need eager; sdpa avoids materializing the full
+    # [heads, T, T] score matrix, which is what lets the forward reach 16-32K.
+    # the attn selector (output_attentions) requires eager.
+    impl = "eager" if args.selector == "attn" else "sdpa"
     model = (
         AutoModelForCausalLM.from_pretrained(
-            args.model, torch_dtype=torch.bfloat16, attn_implementation="eager"
+            args.model, torch_dtype=torch.bfloat16, attn_implementation=impl
         )
         .to(device)
         .eval()
@@ -266,7 +292,14 @@ def run(args):
         needles = pool[: args.n_needles]
         print(f"prefix {p}: {[s for s, _ in needles]}", flush=True)
         per, prefix_len, keep_tokens, jac = eval_prefix(
-            model, tok, device, needles, args.context_len, args.keep_ratio, p
+            model,
+            tok,
+            device,
+            needles,
+            args.context_len,
+            args.keep_ratio,
+            p,
+            selector=args.selector,
         )
         all_rows.extend(per)
         jaccards.append(jac)
@@ -287,6 +320,7 @@ def run(args):
     )
     result = {
         "model": args.model,
+        "selector": args.selector,
         "context_len": prefix_len,
         "keep_ratio": args.keep_ratio,
         "keep_tokens": keep_tokens,
@@ -325,6 +359,13 @@ def main():
     ap.add_argument("--context-len", type=int, default=4096)
     ap.add_argument("--n-needles", type=int, default=8)
     ap.add_argument("--keep-ratio", type=float, default=0.08)
+    ap.add_argument(
+        "--selector",
+        choices=["attn", "qk"],
+        default="attn",
+        help="query-aware scorer: attn=output_attentions (<=4K), "
+        "qk=cheap q.k path (scales to 16-32K)",
+    )
     ap.add_argument("--repeats", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--output-dir", required=True)
