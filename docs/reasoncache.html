@@ -865,10 +865,11 @@
           <p>
             The vLLM branch loads learned KV prefixes through the cartridge
             connector path and emits Pareto reports from scored result JSONs.
-            The H100 skill-trace run, H100 PI stabilization run, GSM8K
-            ReasonCACHE sanity check, A100 SCI/Active Reading retest, A100
-            skill-cache convergence curve, and LongHealth document retests add
-            quality evidence for the induction layer, not just the connector.
+            The H100 skill-trace run, H100 PI stabilization run, H100
+            public-strata scale run, GSM8K ReasonCACHE sanity check, A100
+            SCI/Active Reading retest, A100 skill-cache convergence curve, and
+            LongHealth document retests add quality evidence for the induction
+            layer, not just the connector.
           </p>
         </div>
 
@@ -896,10 +897,10 @@
           </div>
           <div class="card metric">
             <div>
-              <div class="value cyan">341</div>
-              <div class="label">Scored rows across H100 skill traces, H100 PI stabilization, GSM8K sanity, A100 retests, convergence, and LongHealth.</div>
+              <div class="value cyan">397</div>
+              <div class="label">Scored rows across H100 skill traces, PI stabilization and scale, GSM8K sanity, A100 retests, convergence, and LongHealth.</div>
             </div>
-            <div class="source">seven completed GPU matrices</div>
+            <div class="source">eight completed GPU matrices</div>
           </div>
         </div>
 
@@ -914,6 +915,7 @@
               <tr><td><strong>SkillsBench harness</strong></td><td class="ok">Run, compare, and normalize arm results.</td></tr>
               <tr><td><strong>Pareto frontier</strong></td><td class="ok">Emit per-task and aggregate-by-arm JSON/CSV reports.</td></tr>
               <tr><td><strong>PI ablations</strong></td><td class="ok">Compare raw skill NTP, fixed self-study, proper AR-TA, AR-TS, R-PI, and BO-PI.</td></tr>
+              <tr><td><strong>PI scale</strong></td><td>Public-strata scale run failed quality transfer across all non-empty verifier tasks.</td></tr>
               <tr><td><strong>Curated traces</strong></td><td class="ok">GSM8K sanity confirms ReasonCACHE helps when reasoning traces already exist.</td></tr>
             </table>
           </div>
@@ -1173,9 +1175,61 @@
               </table>
             </div>
             <div class="note" style="margin-top:14px;">
-              The current recommendation is to scale CSB-PI first. BO-PI is a
-              useful upper signal, but the seed instability keeps it out of the
-              main claim until it reproduces.
+              The follow-up scale run changed the read. CSB-PI and BO-PI are
+              still useful XLSX signals, but they did not transfer across the
+              first public skill strata.
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>H100 PI scale across public skill strata</h3>
+            <p>
+              The next run widened the task surface instead of chasing the XLSX
+              win. It used the same four public strata chosen for the bridge:
+              small, deterministic-random, medium, and large SkillsBench tasks.
+              All non-empty verifier tasks scored zero across every PI family.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <tr>
+                  <th>Family</th>
+                  <th>Aggregate</th>
+                  <th>Rows</th>
+                  <th>Main read</th>
+                </tr>
+                <tr>
+                  <td><strong>No skill / full skill</strong></td>
+                  <td>0 / 16 each</td>
+                  <td>8</td>
+                  <td>Prompt baselines did not solve the selected tasks.</td>
+                </tr>
+                <tr>
+                  <td><strong>SS-PI, AR-TA, AR-TS, R-PI</strong></td>
+                  <td>0 / 16 each</td>
+                  <td>16</td>
+                  <td>No single-seed PI arm transferred.</td>
+                </tr>
+                <tr>
+                  <td><strong>CSB-PI</strong></td>
+                  <td>0 / 48</td>
+                  <td>12</td>
+                  <td>Three seeds did not reproduce the focused XLSX gain.</td>
+                </tr>
+                <tr>
+                  <td><strong>BO-PI</strong></td>
+                  <td>0 / 48</td>
+                  <td>12</td>
+                  <td>The high-score XLSX arm did not generalize.</td>
+                </tr>
+              </table>
+            </div>
+            <div class="note" style="margin-top:14px;">
+              This does not refute ReasonCACHE. It says our current PI prompts
+              are task-local, and the public-strata harness still needs cleanup:
+              syzkaller is confounded by sandbox path assumptions and
+              organize-messy-files has no scored assertions. The useful next
+              test is harness repair plus error isolation, not a larger
+              repetition of the same matrix.
             </div>
           </div>
 
@@ -1405,8 +1459,9 @@
             The analyzer maximizes pass rate while keeping request tokens,
             virtual prefix tokens, prefix bytes, offline induction time, and
             reuse count separate. The current frontier combines controlled
-            bridge strata, H100 PI stabilization, and the GSM8K curated-trace
-            sanity check. It is still a pilot, not a final claim.
+            bridge strata, H100 PI stabilization, H100 public-strata scale, and
+            the GSM8K curated-trace sanity check. It is still a pilot, not a
+            final claim.
           </p>
         </div>
 
@@ -1449,9 +1504,11 @@
             <div class="note" style="margin-top:14px;">
               The A100 skill-cache retest, skill-cache convergence curve, and
               LongHealth document redo add an initializer frontier: first-k,
-              paper SCI, and strided-RoPE are not interchangeable. The next
-              run should scale CSB-PI across the public skill strata and add
-              enough seeds to separate induction quality from lucky prompts.
+              paper SCI, and strided-RoPE are not interchangeable. The completed
+              H100 public-strata scale run shows that CSB-PI and BO-PI remain
+              focused XLSX signals, not broad skill-cache claims. One public
+              slice is harness-confounded, so this is a warning rather than a
+              final broad-task verdict.
             </div>
           </div>
         </div>
