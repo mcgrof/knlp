@@ -904,6 +904,17 @@
     Section V is retained only as a precision-asymmetry cross-check.
   </p>
 
+  <p class="panel-body" style="margin-top:16px;">
+    <strong>Composes under tensor parallelism (TP=1, 2, 4).</strong> On a 4×H100 pod, the K16/V8 vs FP16 quality
+    delta was measured across tensor-parallel degrees. Prefill NLL is <em>bit-identical</em> to FP16 at every TP
+    (0 of 48 sequences differ), and autoregressive decode reaches <strong>100% token-agreement with FP16 at TP=1,
+    2, and 4</strong> — including TP=4, where Qwen2.5-7B's 4 KV heads shard to exactly <em>one KV head per rank</em>,
+    the maximally-stressful case for per-rank scale domains. The difference-in-differences interaction is
+    <strong>0.0 (CI95 [0,0])</strong>: K16/V8's zero quality cost does not change with parallelism. Symmetric FP8
+    collapses at every TP (+1.0 NLL), and a function-preserving KV-head permutation shows the collapse is dominated
+    by a single catastrophic head — unfixable by scale-domain sharding, curable only by keeping keys at 16 bit.
+  </p>
+
   <div class="kr-label" style="margin-top:24px;">Implementation gates — three failure surfaces, all closed</div>
   <div class="kr-table" style="margin:12px 0;">
     <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;">
