@@ -399,6 +399,19 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_gate_value080_norm_silu":
+        return (
+            "trellis",
+            "norm_silu",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "trellis_gate_value_floor050":
         return (
             "trellis",
