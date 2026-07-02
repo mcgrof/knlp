@@ -1,28 +1,44 @@
 # Decode paper: build, paper, and reproducibility
 
-The vLLM asym branch requires torch >= 2.10, cmake >= 4.0, and the
-FlashInfer cutlass submodule initialized.  The tested recipe (H100
-SECURE pod, RunPod):
+**Use the `paper-memory-decode-v0.18` branches** (FlashInfer `2b532f7`, vLLM
+`2315e62e2`) — the ONLY pair that serves asym e2e. The dev-tip branches
+(`asym-prefill-refactor-stage` / `asymmetric-kv-plumbing`) do NOT: they fail on
+`v_cache bf16 != fp8` (cross-repo dtype drift). Requires torch 2.10.0+cu128 and
+setuptools_scm/build deps preinstalled (`--no-build-isolation` skips them). The
+tested recipe (H100 SECURE pod, RunPod; mirrors
+`knlp-key-results/tp-asym-validation-20260624/harness/pod_build.sh`):
 
 ```bash
-# 1. FlashInfer
-cd /root && git clone --branch asym-prefill-refactor-stage \
-    https://github.com/mcgrof/flashinfer.git flashinfer-src
-cd flashinfer-src && git submodule update --init --recursive
-pip install --no-build-isolation -e .
+# 0. torch 2.10 cu128 (pin it; vllm/flashinfer otherwise bump it to 2.12 and
+#    break the _C.so ABI) + build deps for --no-build-isolation
+pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.10.0
+pip install setuptools_scm setuptools wheel cmake ninja packaging
 
-# 2. vLLM (pulls torch and rebuilds _C; ~60 min CUDA compile)
-cd /root && git clone --branch asymmetric-kv-plumbing \
-    https://github.com/mcgrof/vllm.git vllm-src
-cd vllm-src && MAX_JOBS=32 NVCC_THREADS=2 \
-    pip install --no-build-isolation -e .
+# 1. vLLM v0.18 (~40 min CUDA compile). use_existing_torch.py keeps the pin.
+cd /root && git clone https://github.com/mcgrof/vllm.git vllm-v018
+cd vllm-v018 && git checkout paper-memory-decode-v0.18 && git reset --hard 2315e62e2
+python use_existing_torch.py
+MAX_JOBS=64 NVCC_THREADS=2 pip install -e . --no-build-isolation
 
-# 3. Reinstall flashinfer editable (vllm pip overwrites with PyPI 0.6.6)
-cd /root/flashinfer-src && pip install --no-build-isolation -e .
+# 2. re-pin torch (the vLLM build drags it to 2.12) + drop mismatched vision/audio
+pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+pip uninstall -y torchvision torchaudio
 
-# 4. Verify
-FLASHINFER_DISABLE_VERSION_CHECK=1 python -c "import vllm, flashinfer"
+# 3. FlashInfer v0.18 (--no-deps to protect torch; JIT-compiles on first use)
+cd /root && git clone https://github.com/mcgrof/flashinfer.git flashinfer-v018
+cd flashinfer-v018 && git checkout paper-memory-decode-v0.18 && git reset --hard 2b532f7
+git submodule update --init --recursive
+pip install -e . --no-deps --no-build-isolation
+pip install transformers==4.57.6
+
+# 4. Verify (import vllm._C, not vllm, to register _C_cache_ops)
+python -c "import torch; import vllm._C; import flashinfer; print('stack OK')"
 ```
+
+Serve asym K16/V8: pass `attention_config={"backend": "FLASHINFER"}` and
+`kv_cache_dtype=("auto", "fp8_e4m3")` to `LLM()`; the `VLLM_ATTENTION_BACKEND`
+env var is not honored, and drop `VLLM_BATCH_INVARIANT` (breaks engine init). For
+TP>1 set `NCCL_NVLS_ENABLE=0` (the RunPod H100 image can't init NVLS multicast).
 
 The asym K16/V8 production recipe in Python:
 
