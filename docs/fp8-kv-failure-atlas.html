@@ -787,6 +787,43 @@
             </div>
           </Section>
 
+          {/* 7a2. Bias-vs-subspace, quantified */}
+          <Section id="mechquant" kicker="The split, in numbers" title="Bias vs subspace, measured across four families">
+            <p>
+              The two mechanisms above are not just a narrative &mdash; they separate cleanly when measured. Across four
+              families, the K-bias L2 mass tells you which failure you have: on the full-RoPE biased model it is a
+              <strong> rotary-path DC offset</strong> a pre-RoPE prebias re-centers (96% recovery); on the partial-RoPE
+              models almost the entire bias lives in the <strong>un-rotated pass-through subspace</strong> (Phi-2 0.979,
+              Pythia 0.998 of the L2), where the pure rotary prebias recovers far less because the pathology is the
+              subspace distribution, not a rotary offset. The biasless control has no K8 problem at all.
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-3">model</th>
+                  <th className="text-right px-2">K-bias</th>
+                  <th className="text-right px-2">bias L2 in pass-through</th>
+                  <th className="text-right px-2">K8 err (top-1)</th>
+                  <th className="text-right px-2">prebias recovery</th>
+                  <th className="text-right px-2">K8 AR margin</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">Qwen2.5-7B (full-RoPE)</td><td className="text-right px-2">yes</td><td className="text-right px-2 text-gray-500">DC offset</td><td className="text-right px-2 text-red-400">2.88 (0.28)</td><td className="text-right px-2 text-green-400">0.96</td><td className="text-right px-2">9.22</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">Phi-2 (partial-RoPE)</td><td className="text-right px-2">yes</td><td className="text-right px-2 text-amber-400">0.979</td><td className="text-right px-2">0.69 (0.87)</td><td className="text-right px-2 text-amber-400">0.155</td><td className="text-right px-2">0.38</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">Pythia-410M (interleaved)</td><td className="text-right px-2">yes</td><td className="text-right px-2 text-amber-400">0.998</td><td className="text-right px-2 text-red-400">1.37 (0.58)</td><td className="text-right px-2">0.65</td><td className="text-right px-2">2.14</td></tr>
+                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">Mistral-7B (biasless)</td><td className="text-right px-2">no</td><td className="text-right px-2 text-gray-500">&mdash;</td><td className="text-right px-2 text-green-400">0.044 (0.98)</td><td className="text-right px-2 text-gray-500">n/a</td><td className="text-right px-2">0.03</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-500">
+              Fake-quant, four families, an A100. <strong>K8 AR margin</strong> is the bf16 logit gap the quantized cache
+              overturned at the first autoregressive divergence &mdash; the tie-flip-vs-real-drift discriminator: K8 on a
+              biased model drifts with a large margin (Qwen 9.2, real quality loss), while the lossless K16/V8 arm diverges
+              only at a tiny margin (Mistral 0.03, a benign argmax tie-flip). This is the margin the frontier&rsquo;s
+              autoregressive axis measures qualitatively, resolved to a number.
+            </p>
+          </Section>
+
           {/* 7b. Taxonomy */}
           <Section id="taxonomy" kicker="The map" title="A failure taxonomy: six classes, two mechanisms">
             <p>
