@@ -829,10 +829,21 @@ Decode" lives at `knlp.io/decode` and depends on three modified
 serving-stack repos plus the paper LaTeX repo.  All four are public
 on GitHub:
 
-| Repo | GitHub | Branch | What it contains |
+**CRITICAL — which branch serves asym end-to-end.** For any asym K16/V8
+reproduction or end-to-end serve, use the **`paper-memory-decode-v0.18`**
+branches (FlashInfer tip `2b532f7`, vLLM tip `2315e62e2`). These are the ONLY
+pair validated to serve asym e2e (Table 4 rel-err 0.0255, TP-invariant). The
+`asymmetric-kv-plumbing` (vLLM) and `asym-prefill-refactor-stage` (FlashInfer)
+dev-tip branches are **post-paper R&D and do NOT serve e2e**: cross-repo dtype
+drift (FI-5 `829e1b49` drifted from the dtype-split series) makes them fail on
+`v_cache bf16 != fp8`. The dev tips are fine for decode-path unit correctness and
+the vLLM selector-routing work (the selector auto-route-to-FlashInfer fix landed
+there, vllm-asym `467e84c68`), but never for a full serve.
+
+| Repo | GitHub | Branch (reproduction / e2e) | What it contains |
 |---|---|---|---|
-| vllm-asym | `github.com/mcgrof/vllm` | `asymmetric-kv-plumbing` | vLLM v1 with tuple K/V cache, FlashAttn writer patch, asym dtype plumbing |
-| flashinfer-asym | `github.com/mcgrof/flashinfer` | `asym-prefill-refactor-stage` | FlashInfer with FI-1..FI-5 CUDA template refactor for independent K/V dtypes in prefill+decode |
+| vllm-asym | `github.com/mcgrof/vllm` | **`paper-memory-decode-v0.18`** (`2315e62e2`) | vLLM v1, tuple K/V cache, asym plumbing — the e2e-validated state. Dev tip `asymmetric-kv-plumbing` (`d960d6c37`) is post-paper R&D, not e2e-serving. |
+| flashinfer-asym | `github.com/mcgrof/flashinfer` | **`paper-memory-decode-v0.18`** (`2b532f7`) | FlashInfer dtype-split (DTypeK/DTypeV), decode-path asym — the e2e-validated state. Dev tip `asym-prefill-refactor-stage` (`829e1b49`) is incomplete (unified DTypeKV in prefill). |
 | lmcache | `github.com/mcgrof/LMCache` | `asymmetric-kv-codec` | LMCache with K16/V8 codec, split-tier placement, serde, 74 CPU unit tests |
 | paper | `github.com/mcgrof/paper-memory-decode` | `main` | LaTeX source, figures, data, generate scripts |
 
@@ -840,8 +851,8 @@ On monster (the primary workstation), the local clones live at:
 
 | Repo | Path | Branch |
 |---|---|---|
-| vllm-asym | `/home/mcgrof/devel/vllm-asym` | `asymmetric-kv-plumbing` |
-| flashinfer-asym | `/home/mcgrof/devel/flashinfer-asym` | `asym-prefill-refactor-stage` |
+| vllm-asym | `/home/mcgrof/devel/vllm-asym` | `paper-memory-decode-v0.18` for e2e; `asymmetric-kv-plumbing` is the dev tip |
+| flashinfer-asym | `/home/mcgrof/devel/flashinfer-asym` | `paper-memory-decode-v0.18` for e2e; `asym-prefill-refactor-stage` is the dev tip |
 | lmcache | `/home/mcgrof/devel/lmcache` | `asymmetric-kv-codec` |
 | paper | `/home/mcgrof/devel/paper-memory-decode` | `main` |
 
