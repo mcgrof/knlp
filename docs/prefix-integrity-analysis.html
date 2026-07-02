@@ -614,7 +614,7 @@
     <section class="mb-12">
       <div class="card p-6">
         <h2 class="text-2xl font-semibold text-slate-100 mb-2">The decisive test &mdash; reusing a compressed prefix across queries</h2>
-        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; Qwen2.5-7B-Instruct &middot; 4096-token shared prefix &middot; 6 prefixes, 29 strong needles</p>
+        <p class="text-sm text-slate-500 font-mono mb-4">A100 80GB &middot; W7900 &middot; Qwen2.5-7B-Instruct &middot; 4096 and 16384-token shared prefixes &middot; 6 prefixes each</p>
         <p class="text-slate-300 leading-8 mb-5">
           The drift table above compressed each prefix without a query, so it
           could not show the thing that actually makes an adaptive method unsafe
@@ -670,17 +670,48 @@
           quality bought with cache reuse &mdash; is exactly what the contract
           axis predicted from the design alone, now confirmed by running it.
         </p>
+        <p class="text-slate-300 leading-8 mt-6">
+          Running the same replay at four times the context shows the trade is a
+          property of the selection, not of length &mdash; and the cost of
+          reuse grows with it. A cheaper q&middot;k selector recomputes the same
+          observation-window signal one layer at a time and reaches 16384
+          tokens, where the full attention tensor will not fit. At matched
+          budgets the honestly deployed method climbs while the reused artifact
+          falls further behind.
+        </p>
+        <div class="overflow-x-auto mb-5">
+        <table>
+          <thead>
+            <tr><th>16384-token prefix, KV budget kept</th><th>full (dense)</th><th>query-aware, honest</th><th>query-aware, UNSAFE reuse</th><th>positional (safe)</th><th>kept-set overlap across queries</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>8%</td><td>1.00</td><td class="warn">0.27</td><td class="bad">0.10</td><td class="bad">0.00</td><td class="bad">0.40</td></tr>
+            <tr><td>15%</td><td>1.00</td><td class="good">0.81</td><td class="bad">0.25</td><td class="bad">0.00</td><td class="bad">0.45</td></tr>
+            <tr><td>25%</td><td>1.00</td><td class="good">1.00</td><td class="bad">0.33</td><td class="bad">0.00</td><td class="warn">0.54</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p class="text-slate-300 leading-8">
+          At 16K the honest method reaches the dense baseline by a quarter
+          budget (1.00), but the prefix-only reuse tops out at 0.33 &mdash; a
+          three-fold gap where 4096 tokens showed less than two. Longer shared
+          context makes an adaptive method's cache both more valuable to reuse
+          and more wrong to reuse, at once. The kept-set overlap stays near a
+          half, so the harness flags the same danger at either length.
+        </p>
         <p class="text-xs text-slate-500 leading-6 mt-4">
-          The context is 4096 tokens because the query-aware selector reads full
-          attention, which does not fit past ~4-5K on an 80GB card; the effect
-          is a property of the selection depending on the question, not of
-          context length, so it is expected to sharpen at longer context with a
-          cheaper selector. The positional row is a floor, not a tuned
-          StreamingLLM. Single model. Getting here took four fixes &mdash; a
-          validated masking path, distinct non-interfering facts, a normalized
-          scorer, and a sink-aware selector &mdash; all recorded in the findings.
-          Data and plot in
-          <code class="inline">prefix-integrity-20260630/pia-reuse-replay/</code>.
+          The 4096-token rows read full attention directly; the 16384-token
+          rows use a q&middot;k selector that recomputes the observation-window
+          score from one layer's inputs at a time, so only a
+          <code class="inline">[heads, obs, T]</code> slice is ever resident and
+          the forward runs with memory-efficient attention. A parity check
+          against the full-attention selector at 2048 tokens matches its kept
+          sets (Jaccard 0.86) and its answer accuracy. The positional row is a
+          floor, not a tuned StreamingLLM. Single model. Getting the 4096 result
+          to hold took a validated masking path, distinct non-interfering facts,
+          a normalized scorer, and a sink-aware selector. Data and plot in
+          <code class="inline">prefix-integrity-20260630/pia-reuse-replay/</code>
+          and <code class="inline">pia-reuse-replay-16k-*</code>.
         </p>
       </div>
     </section>
@@ -947,6 +978,22 @@
   --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
   --target-tokens <span class="num">4096</span> --out-dir <span class="str">cart</span>
 <span class="nm">bash</span> experiments/pia_codec_table.sh   <span class="cm"># none/int8/fp8 + k16v8, k8v16, k16v4, ...</span></pre>
+        </div>
+        <p class="text-slate-300 leading-8 mb-3">
+          The decisive same-prefix, many-query reuse replay picks its
+          query-aware scorer with <code class="inline">--selector</code>:
+          <code class="inline">attn</code> reads full attention (up to ~4K),
+          <code class="inline">qk</code> uses the cheap q&middot;k path that
+          scales to 16&ndash;32K. <code class="inline">pia_qk_parity.py</code>
+          checks the two agree where both fit.
+        </p>
+        <div class="code-block">
+          <div class="code-title">reuse replay + selector parity &mdash; GPU</div>
+<pre><span class="nm">python</span> experiments/pia_reuse_replay.py \
+  --model <span class="str">Qwen/Qwen2.5-7B-Instruct</span> \
+  --context-len <span class="num">16384</span> --selector <span class="str">qk</span> \
+  --keep-ratio <span class="num">0.15</span> --output-dir <span class="str">reuse16k</span>
+<span class="nm">python</span> experiments/pia_qk_parity.py <span class="cm"># qk vs full-attention selector</span></pre>
         </div>
 
         <p class="text-slate-300 leading-8 mt-6">
