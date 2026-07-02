@@ -1106,9 +1106,12 @@
               self-contradiction — every arm reproduces its published behavior.</p>
             </div>
             <p className="text-xs text-gray-500">
-              ctx-2048 teacher-forced NLL, faithful quantizers, measured free on a W7900. Remaining extensions (labeled in
-              the source): ctx-8K + a NIAH probe, paired-doc block-bootstrap CIs, and the full per-query streaming
-              cache-lifecycle.
+              ctx-2048 teacher-forced NLL, faithful quantizers, measured free on a W7900. Independently re-run on a
+              separate date and W7900 &mdash; the four arms reproduce to the digit &mdash; with a second biasless family
+              added as a control (Qwen3-4B: prebias-K8 +0.0022, K16/V8 +0.0030), confirming that on a model without a
+              key bias, plain 8-bit keys are already near-lossless and the pre-RoPE split changes nothing. Remaining
+              extensions (labeled in the source): ctx-8K + a NIAH probe, paired-doc block-bootstrap CIs, and the full
+              per-query streaming cache-lifecycle.
             </p>
           </Section>
 
