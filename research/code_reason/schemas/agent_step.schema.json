@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/agent_step.schema.json",
+  "title": "One agent transcript step (JSONL row)",
+  "type": "object",
+  "required": ["step", "role"],
+  "properties": {
+    "step": {"type": "integer", "minimum": 0},
+    "role": {"enum": ["system", "user", "assistant", "tool"]},
+    "content": {"type": "string"},
+    "tool_call": {
+      "type": "object",
+      "properties": {"name": {"type": "string"}, "args": {"type": "object"}}
+    },
+    "tool_result": {"type": "object"},
+    "tokens": {
+      "type": "object",
+      "properties": {"input": {"type": "integer"},
+                     "output": {"type": "integer"}}
+    }
+  }
+}
