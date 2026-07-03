@@ -95,3 +95,31 @@ class RepoReader:
             except (OSError, UnicodeError):
                 continue
         return {"pattern": pattern, "hits": hits, "truncated": False}
+
+
+def _self_test():
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, "a.py"), "w").write("def foo():\n    return 1\n")
+    os.makedirs(os.path.join(d, "sub"))
+    open(os.path.join(d, "sub", "b.py"), "w").write("class Baz:\n    pass\n")
+    r = RepoReader(d)
+    assert r.list_files("**/*.py") == ["a.py", "sub/b.py"], r.list_files("**/*.py")
+    assert r.read("a.py", 1, 1)["text"] == "def foo():\n"
+    assert len(r.grep(r"def |class ", "**/*.py")["hits"]) == 2
+    # path escapes fail closed (raise), they do not silently read outside
+    for bad in ("../secret", "/etc/passwd"):
+        try:
+            r._resolve(bad)
+            raise AssertionError(f"escape not caught: {bad}")
+        except PathEscape:
+            pass
+    print("[repo_reader] self-test PASS: list/read/grep + path-escape guard")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--self-test" in sys.argv:
+        _self_test()

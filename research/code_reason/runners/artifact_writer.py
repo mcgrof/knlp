@@ -175,3 +175,57 @@ class ArtifactWriter:
         _dump(a_paper, os.path.join(d, "A.paper_only.json"))
         _dump(blb_aug, os.path.join(d, "blB.augmented.json"))
         _dump(comparison, os.path.join(d, "comparison.json"))
+
+
+def _self_test():
+    import tempfile
+
+    rd = tempfile.mkdtemp()
+    w = ArtifactWriter(rd, repo_root=".")
+    for name in ("environment.json", "git-state.json"):
+        assert os.path.exists(os.path.join(rd, name)), name
+    cert = {
+        "task_id": "t1",
+        "task_type": "code_qa",
+        "model": "m",
+        "mode": "semiformal",
+        "answer": {"a": 1},
+        "premises": [
+            {
+                "id": "P1",
+                "claim": "c",
+                "evidence": [{"file": "x.py", "source": "repo_read"}],
+            }
+        ],
+        "formal_conclusion": "done",
+        "confidence": "low",
+    }
+    w.write_prompt("t1", "m", "semiformal", "hi")
+    w.append_transcript("t1", "m", "semiformal", {"step": 0, "role": "user"})
+    w.write_certificate("t1", "m", "semiformal", cert)
+    w.write_result(
+        "t1",
+        "m",
+        "semiformal",
+        {
+            "task_id": "t1",
+            "task_type": "code_qa",
+            "model": "m",
+            "mode": "semiformal",
+            "answer": {"a": 1},
+        },
+    )
+    base = os.path.join(rd, "tasks", "t1", "m", "semiformal")
+    for f in ("prompt.md", "transcript.jsonl", "certificate.json", "answer.json"):
+        assert os.path.exists(os.path.join(base, f)), f
+    # deterministic dump: sorted keys, stable bytes
+    a = open(os.path.join(base, "certificate.json")).read()
+    w.write_certificate("t1", "m", "semiformal", cert)
+    assert open(os.path.join(base, "certificate.json")).read() == a
+    js = "with-jsonschema" if _HAVE_JSONSCHEMA else "no-jsonschema (soft)"
+    print(f"[artifact_writer] self-test PASS ({js}): full tree + deterministic")
+
+
+if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        _self_test()
