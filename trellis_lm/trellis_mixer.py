@@ -122,6 +122,7 @@ class TrellisMixer(nn.Module):
         self.f = get_activation(cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
         self.value_alpha_correction_raw = None
+        self.value_read_query_gate_proj = None
         if cfg.trellis_value_alpha_mode in (
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
@@ -132,6 +133,11 @@ class TrellisMixer(nn.Module):
         ):
             raw = self._value_alpha_correction_init_raw()
             self.value_alpha_correction_raw = nn.Parameter(torch.full((H,), raw))
+        if cfg.trellis_value_read_query_mode in (
+            "alpha_residual_gate",
+            "alpha_residual_gate_detached",
+        ):
+            self.value_read_query_gate_proj = nn.Linear(d, H, bias=True)
 
     def _value_alpha_correction_init_raw(self) -> float:
         cfg = self.cfg
@@ -329,6 +335,17 @@ class TrellisMixer(nn.Module):
             self.update_gate_proj.weight.zero_()
             self.update_gate_proj.bias.fill_(b0)
 
+    def reset_value_read_query_gate_bias(self):
+        if self.value_read_query_gate_proj is None:
+            return
+        with torch.no_grad():
+            max_gate = float(self.cfg.trellis_value_read_query_gate_max)
+            p = float(self.cfg.trellis_value_read_query_gate_init) / max_gate
+            p = max(1e-8, min(1.0 - 1e-8, p))
+            b0 = math.log(p / (1.0 - p))
+            self.value_read_query_gate_proj.weight.zero_()
+            self.value_read_query_gate_proj.bias.fill_(b0)
+
     def _update_gate_from_logits(self, logits: torch.Tensor) -> torch.Tensor:
         gate = torch.sigmoid(logits)
         floor = float(self.cfg.trellis_update_gate_floor)
@@ -479,6 +496,30 @@ class TrellisMixer(nn.Module):
         if mix == 1.0:
             return target
         return shared_alpha * (1.0 - mix) + target * mix
+
+    def _value_read_query(
+        self,
+        key_readout: torch.Tensor,
+        shared_alpha: torch.Tensor,
+        h_float: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        cfg = self.cfg
+        if cfg.trellis_value_read_query_mode == "key_readout":
+            return key_readout, None
+        if self.value_read_query_gate_proj is None:  # pragma: no cover
+            raise RuntimeError("value read query gate mode missing projection")
+        B, T, _ = h_float.shape
+        gate = (
+            torch.sigmoid(self.value_read_query_gate_proj(h_float))
+            .view(B, T, self.H, 1)
+            .permute(0, 2, 1, 3)
+            * float(cfg.trellis_value_read_query_gate_max)
+        )
+        gate = gate.to(device=key_readout.device, dtype=key_readout.dtype)
+        target = shared_alpha
+        if cfg.trellis_value_read_query_mode.endswith("_detached"):
+            target = target.detach()
+        return key_readout + gate * (target - key_readout), gate
 
     def forward(self, x, training: bool = True):
         cfg = self.cfg
@@ -652,13 +693,28 @@ class TrellisMixer(nn.Module):
                     forward_diag["value_state"] = self._diag_tensor_stats(M0_2[1])
                     forward_diag["key_update"] = self._diag_tensor_stats(u_2[0])
                     forward_diag["value_update"] = self._diag_tensor_stats(u_2[1])
-                    self._set_forward_diag(forward_diag)
                     yhat = run_trellis_memory_chunked_batched_readout(
                         kf, qf, M0_2[0], u_2[0], P, rmat, gf, "M_q", cs, T_out=T
                     )
                     r = self.f(yhat)
+                    value_read_query, value_read_query_gate = self._value_read_query(
+                        r, af, hf
+                    )
+                    forward_diag["value_read_query_gate"] = self._diag_gate_stats(
+                        value_read_query_gate, max(0, T - 2)
+                    )
+                    self._set_forward_diag(forward_diag)
                     y = run_trellis_memory_chunked_batched_readout(
-                        vf, r, M0_2[1], u_2[1], P, rmat, gf, "M_T_r", cs, T_out=T
+                        vf,
+                        value_read_query,
+                        M0_2[1],
+                        u_2[1],
+                        P,
+                        rmat,
+                        gf,
+                        "M_T_r",
+                        cs,
+                        T_out=T,
                     )
                 else:
                     M0_k, u_k = evolve_state(kf, af, P, rmat, key_update_gate)
@@ -678,21 +734,34 @@ class TrellisMixer(nn.Module):
                     forward_diag["value_state"] = self._diag_tensor_stats(M0_v)
                     forward_diag["key_update"] = self._diag_tensor_stats(u_k)
                     forward_diag["value_update"] = self._diag_tensor_stats(u_v)
+                    value_read_query, value_read_query_gate = self._value_read_query(
+                        r, af, hf
+                    )
+                    forward_diag["value_read_query_gate"] = self._diag_gate_stats(
+                        value_read_query_gate, max(0, T - 2)
+                    )
                     self._set_forward_diag(forward_diag)
                     y = run_trellis_memory_chunked_batched_readout(
-                        vf, r, M0_v, u_v, P, rmat, gf, "M_T_r", cs, T_out=T
+                        vf,
+                        value_read_query,
+                        M0_v,
+                        u_v,
+                        P,
+                        rmat,
+                        gf,
+                        "M_T_r",
+                        cs,
+                        T_out=T,
                     )
             elif use_chunk:
-                self._set_forward_diag(
-                    self._base_forward_diag(
-                        beta=bf,
-                        gamma=gf,
-                        update_gate=update_gate,
-                        key_update_gate=key_update_gate,
-                        value_update_gate=value_update_gate,
-                        seq_len=T,
-                        backend="pytorch_chunked_refine",
-                    )
+                forward_diag = self._base_forward_diag(
+                    beta=bf,
+                    gamma=gf,
+                    update_gate=update_gate,
+                    key_update_gate=key_update_gate,
+                    value_update_gate=value_update_gate,
+                    seq_len=T,
+                    backend="pytorch_chunked_refine",
                 )
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
@@ -717,9 +786,16 @@ class TrellisMixer(nn.Module):
                 )
                 r = self.f(yhat)
                 value_alpha = self._value_alpha(af, r)
+                value_read_query, value_read_query_gate = self._value_read_query(
+                    r, af, hf
+                )
+                forward_diag["value_read_query_gate"] = self._diag_gate_stats(
+                    value_read_query_gate, max(0, T - 2)
+                )
+                self._set_forward_diag(forward_diag)
                 y = run_trellis_memory_chunked(
                     vf,
-                    r,
+                    value_read_query,
                     value_alpha,
                     bf,
                     gf,
@@ -738,16 +814,14 @@ class TrellisMixer(nn.Module):
                     ),
                 )
             else:
-                self._set_forward_diag(
-                    self._base_forward_diag(
-                        beta=bf,
-                        gamma=gf,
-                        update_gate=update_gate,
-                        key_update_gate=key_update_gate,
-                        value_update_gate=value_update_gate,
-                        seq_len=T,
-                        backend="pytorch_sequential",
-                    )
+                forward_diag = self._base_forward_diag(
+                    beta=bf,
+                    gamma=gf,
+                    update_gate=update_gate,
+                    key_update_gate=key_update_gate,
+                    value_update_gate=value_update_gate,
+                    seq_len=T,
+                    backend="pytorch_sequential",
                 )
                 ex = cfg.exact_inner
                 yhat = run_trellis_memory(
@@ -772,9 +846,16 @@ class TrellisMixer(nn.Module):
                 )
                 r = self.f(yhat)  # [B,H,T,M]
                 value_alpha = self._value_alpha(af, r)
+                value_read_query, value_read_query_gate = self._value_read_query(
+                    r, af, hf
+                )
+                forward_diag["value_read_query_gate"] = self._diag_gate_stats(
+                    value_read_query_gate, max(0, T - 2)
+                )
+                self._set_forward_diag(forward_diag)
                 y = run_trellis_memory(
                     vf,
-                    r,
+                    value_read_query,
                     value_alpha,
                     bf,
                     gf,

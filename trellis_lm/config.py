@@ -87,6 +87,13 @@ class TrellisConfig:
     trellis_value_alpha_mix: float = 1.0
     trellis_value_alpha_correction_init: float = 1e-3
     trellis_value_alpha_correction_max: float = 0.25
+    # value_read_query controls the code used to read from the value memory.
+    # "key_readout" is the historical path: use r = phi(M_key q). The gated
+    # alpha-residual modes test whether overwrite failures come from unstable
+    # alignment between key-pass read codes and the value write addresses.
+    trellis_value_read_query_mode: str = "key_readout"
+    trellis_value_read_query_gate_init: float = 0.05
+    trellis_value_read_query_gate_max: float = 0.75
     exact_inner: bool = True  # exact sequential VJP (Phase 0)
     chunk_size: int = 1  # 1 = pure sequential
     chunk_refine: int = 0  # intra-chunk z refinement passes (faithful chunkwise)
@@ -212,6 +219,20 @@ class TrellisConfig:
         ), (
             self.trellis_value_alpha_correction_init,
             self.trellis_value_alpha_correction_max,
+        )
+        assert self.trellis_value_read_query_mode in (
+            "key_readout",
+            "alpha_residual_gate",
+            "alpha_residual_gate_detached",
+        ), self.trellis_value_read_query_mode
+        assert 0.0 <= self.trellis_value_read_query_gate_init <= (
+            self.trellis_value_read_query_gate_max
+        ), (
+            self.trellis_value_read_query_gate_init,
+            self.trellis_value_read_query_gate_max,
+        )
+        assert 0.0 < self.trellis_value_read_query_gate_max <= 1.0, (
+            self.trellis_value_read_query_gate_max
         )
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init

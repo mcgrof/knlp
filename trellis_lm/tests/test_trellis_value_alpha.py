@@ -25,8 +25,28 @@ def _tiny_model(mode: str = "shared", correction_init: float = 1e-3):
     return TrellisLM(cfg)
 
 
+def _tiny_read_query_model(read_query_mode: str):
+    cfg = tiny_cfg(
+        activation="silu",
+        alpha_mode="linear",
+        beta_init=0.99,
+        gamma_init=0.005,
+        chunk_size=4,
+        output_path="paper",
+        use_short_conv_v=True,
+        trellis_update_stabilizer="layerwise_gamma",
+        trellis_layer0_gamma_mult=0.5,
+        residual_update_mix=0.10,
+        trellis_value_read_query_mode=read_query_mode,
+        trellis_value_read_query_gate_init=0.05,
+        trellis_value_read_query_gate_max=0.75,
+    )
+    return TrellisLM(cfg)
+
+
 def test_default_value_alpha_mode_is_shared():
     assert tiny_cfg().trellis_value_alpha_mode == "shared"
+    assert tiny_cfg().trellis_value_read_query_mode == "key_readout"
 
 
 def test_key_readout_value_alpha_forward_backward_is_finite():
@@ -112,6 +132,53 @@ def test_prev_key_correction_forward_backward_is_finite():
         block.mixer.value_alpha_correction_raw.grad
         for block in model.blocks
         if block.mixer.value_alpha_correction_raw is not None
+    ]
+    assert grads
+    assert all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+def test_alpha_residual_read_query_starts_near_configured_gate():
+    model = _tiny_read_query_model("alpha_residual_gate")
+    gates = []
+    for block in model.blocks:
+        proj = block.mixer.value_read_query_gate_proj
+        assert proj is not None
+        gate = (
+            block.mixer.cfg.trellis_value_read_query_gate_max
+            * torch.sigmoid(proj.bias.detach().float())
+        )
+        gates.append(gate)
+    flat = torch.cat(gates)
+    assert torch.allclose(flat, torch.full_like(flat, 0.05), atol=1e-6)
+
+
+def test_alpha_residual_read_query_changes_outputs_with_same_weights():
+    torch.manual_seed(5)
+    base = _tiny_read_query_model("key_readout").eval()
+    branch = _tiny_read_query_model("alpha_residual_gate").eval()
+    branch.load_state_dict(base.state_dict(), strict=False)
+    for block in branch.blocks:
+        block.mixer.reset_value_read_query_gate_bias()
+    idx = torch.randint(0, base.cfg.vocab_size, (2, 19))
+    with torch.no_grad():
+        base_logits, _ = base(idx, training=False)
+        branch_logits, _ = branch(idx, training=False)
+    assert not torch.allclose(base_logits, branch_logits)
+
+
+def test_alpha_residual_read_query_forward_backward_is_finite():
+    torch.manual_seed(6)
+    model = _tiny_read_query_model("alpha_residual_gate")
+    idx = torch.randint(0, model.cfg.vocab_size, (2, 17))
+    labels = idx.clone()
+    logits, loss = model(idx, labels=labels, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
+    loss.backward()
+    grads = [
+        block.mixer.value_read_query_gate_proj.weight.grad
+        for block in model.blocks
+        if block.mixer.value_read_query_gate_proj is not None
     ]
     assert grads
     assert all(g is not None and torch.isfinite(g).all() for g in grads)
