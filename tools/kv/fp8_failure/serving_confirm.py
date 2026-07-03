@@ -40,7 +40,6 @@ os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
 import vllm._C  # noqa: F401  -- registers _C_cache_ops
 from vllm import LLM, SamplingParams
 
-
 CELLS = {
     "native": "auto",
     "k8v8": "fp8_e4m3",
