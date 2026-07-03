@@ -72,6 +72,19 @@ class MLA_Config:
     rope_theta: float = 10000.0
     dropout: float = 0.0
 
+    # Asymmetric split-KV (ksplice-asym / ASKV) fields
+    # -------------------------------------------------
+    # Unlike MLA's single joint d_latent shared by K and V, the asymmetric
+    # variant gives K and V *separate* cache lanes with different widths and
+    # different stored precisions. K sits on the serial score path before
+    # softmax, so it is kept wide and high-precision; V overlaps the reduction
+    # path and tolerates aggressive compression. Defaults preserve K geometry
+    # and quantize only the V lane (the K16/V8 decode result, made structural).
+    d_k_latent: int = 192  # key lane width (score-safe, higher fidelity)
+    d_v_latent: int = 128  # value lane width (payload, aggressively compressed)
+    k_quant_bits: int = 16  # stored precision of the cached K latent (16 = off)
+    v_quant_bits: int = 8  # stored precision of the cached V latent (per-token)
+
 
 class RotaryEmbedding(nn.Module):
     """Rotary Position Embeddings (RoPE) for attention."""
@@ -1229,3 +1242,241 @@ class GPT2_MLA_KV_FIM(nn.Module):
         attn_probs = F.softmax(scores, dim=-1)
 
         return attn_probs
+
+
+# ---------------------------------------------------------------------------
+# ksplice-asym / ASKV: Asymmetric Split-KV Attention
+# ---------------------------------------------------------------------------
+#
+# The asymmetric decode result (K16/V8 matches FP16 while symmetric FP8
+# collapses on fragile-key models) says K and V are not twins: keys carry the
+# score geometry read before softmax on the serial path, values carry the
+# output payload that overlaps the reduction. MLA hides that asymmetry by
+# collapsing K and V into one shared latent. ASKV does the opposite -- it makes
+# the cache contract asymmetric *by construction*:
+#
+#   cK_t = to_k_latent(h_t)   wide,  high precision (score-safe)
+#   cV_t = to_v_latent(h_t)   narrow, low precision (payload)
+#   K_t  = from_k_latent(cK_t);  V_t = from_v_latent(cV_t)
+#
+# The cache stores the two lanes separately (a tuple), never a joint c_KV, so
+# key geometry and value payload never share a compression budget. Attention is
+# ordinary head-space SDPA (the honest MLA_Flash math), not the latent-only
+# rewrite, so the only thing under test is the asymmetric split, not a second
+# RoPE trick.
+
+
+def fake_quant_per_token(x: torch.Tensor, bits: int) -> torch.Tensor:
+    """
+    Symmetric per-token (per last-dim vector) integer fake-quant with a
+    straight-through estimator. Models what the cached latent would cost at
+    `bits` bits/element: the scale is one value per token, so the payload is
+    the quantized codes plus a negligible scale. bits >= 16 is a no-op (the
+    lane is stored at full precision). This is the KIVI-style per-token value
+    quant, applied here to the cached *latent* so training sees the same
+    rounding the cache would.
+    """
+    if bits is None or bits >= 16:
+        return x
+    qmax = float(2 ** (bits - 1) - 1)
+    scale = x.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / qmax
+    xq = torch.clamp(torch.round(x / scale), -qmax - 1.0, qmax) * scale
+    # Straight-through: forward uses xq, backward flows as identity.
+    return x + (xq - x).detach()
+
+
+class AsymSplitKV_Flash(nn.Module):
+    """
+    Asymmetric split-KV attention. Separate K and V cache lanes of different
+    width and stored precision; ordinary head-space causal SDPA.
+    """
+
+    def __init__(self, cfg: MLA_Config, layer_idx: int):
+        super().__init__()
+        self.cfg = cfg
+        self.layer_idx = layer_idx
+
+        self.n_heads = cfg.n_heads
+        self.head_dim = cfg.head_dim
+        self.d_k_latent = cfg.d_k_latent
+        self.d_v_latent = cfg.d_v_latent
+        self.k_quant_bits = cfg.k_quant_bits
+        self.v_quant_bits = cfg.v_quant_bits
+
+        kv_head_dim = cfg.n_heads * cfg.head_dim
+
+        # Q path: direct, full-rank, not cached.
+        self.W_q = nn.Linear(cfg.d_model, kv_head_dim)
+
+        # K lane: wide, high-precision latent -> per-head keys.
+        self.to_k_latent = nn.Linear(cfg.d_model, cfg.d_k_latent, bias=False)
+        self.from_k_latent = nn.Linear(cfg.d_k_latent, kv_head_dim)
+
+        # V lane: narrow, low-precision latent -> per-head values.
+        self.to_v_latent = nn.Linear(cfg.d_model, cfg.d_v_latent, bias=False)
+        self.from_v_latent = nn.Linear(cfg.d_v_latent, kv_head_dim)
+
+        self.out_proj = nn.Linear(kv_head_dim, cfg.d_model)
+
+        self.rope = RotaryEmbedding(
+            cfg.head_dim, max_seq_len=cfg.block_size, theta=cfg.rope_theta
+        )
+        self.scale = 1.0 / math.sqrt(cfg.head_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        use_cache: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        B, T, D = x.shape
+        H, d = self.n_heads, self.head_dim
+
+        q = self.W_q(x).view(B, T, H, d).permute(0, 2, 1, 3)  # [B,H,T,d]
+
+        # Two independent cache lanes, each quantized to its own precision.
+        k_latent = fake_quant_per_token(self.to_k_latent(x), self.k_quant_bits)
+        v_latent = fake_quant_per_token(self.to_v_latent(x), self.v_quant_bits)
+
+        if cache is not None:
+            k_cache, v_cache = cache
+            k_latent = torch.cat([k_cache, k_latent], dim=1)
+            v_latent = torch.cat([v_cache, v_latent], dim=1)
+        T_total = k_latent.shape[1]
+
+        k = self.from_k_latent(k_latent).view(B, T_total, H, d).permute(0, 2, 1, 3)
+        v = self.from_v_latent(v_latent).view(B, T_total, H, d).permute(0, 2, 1, 3)
+
+        cos, sin = self.rope(x, T_total)
+        if cache is not None:
+            q_cos, q_sin = cos[-T:], sin[-T:]
+            q, _ = apply_rope(q, q, q_cos, q_sin)
+            k, _ = apply_rope(k, k, cos, sin)
+        else:
+            q, k = apply_rope(q, k, cos, sin)
+
+        attn_out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            is_causal=True,
+            dropout_p=self.cfg.dropout if self.training else 0.0,
+        )
+
+        attn_out = attn_out.transpose(1, 2).contiguous().view(B, T, H * d)
+        out = self.out_proj(attn_out)
+
+        new_cache = (k_latent, v_latent) if use_cache else None
+        return out, new_cache
+
+
+class AsymSplitKVBlock(nn.Module):
+    """Transformer block with asymmetric split-KV attention + MLP."""
+
+    def __init__(self, cfg: MLA_Config, layer_idx: int):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(cfg.d_model)
+        self.attn = AsymSplitKV_Flash(cfg, layer_idx)
+        self.ln_2 = nn.LayerNorm(cfg.d_model)
+        self.mlp = nn.Sequential(
+            nn.Linear(cfg.d_model, 4 * cfg.d_model),
+            nn.GELU(),
+            nn.Linear(4 * cfg.d_model, cfg.d_model),
+            nn.Dropout(cfg.dropout),
+        )
+
+    def forward(self, x, cache=None, use_cache=False):
+        attn_out, new_cache = self.attn(self.ln_1(x), cache, use_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_cache
+
+
+class GPT2_MLA_KV_ASYM(nn.Module):
+    """
+    Full GPT-2 with asymmetric split-KV attention (ksplice-asym / ASKV).
+
+    K and V are cached in separate lanes: the key lane is wide and stored at
+    high precision (score-safe), the value lane is narrow and stored at low
+    precision (payload). This bakes the K16/V8 asymmetric-quantization result
+    into the architecture instead of applying it post-hoc to a joint MLA
+    latent. Compare against GPT2_MLA at *equal cache bytes* -- see
+    cache_bytes_per_token().
+    """
+
+    def __init__(self, cfg: MLA_Config, vocab_size: int = 50257):
+        super().__init__()
+        self.cfg = cfg
+
+        self.wte = nn.Embedding(vocab_size, cfg.d_model)
+        self.wpe = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.drop = nn.Dropout(cfg.dropout)
+
+        self.blocks = nn.ModuleList(
+            [AsymSplitKVBlock(cfg, i) for i in range(cfg.n_layers)]
+        )
+
+        self.ln_f = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, vocab_size, bias=False)
+
+        # Weight tying
+        self.wte.weight = self.lm_head.weight
+        assert self.wte.weight is self.lm_head.weight, "Weight tying failed"
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(torch.arange(T, device=idx.device))
+        x = self.drop(tok_emb + pos_emb)
+
+        for block in self.blocks:
+            x, _ = block(x)
+
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+            )
+
+        return logits, loss
+
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    def cache_bytes_per_token(self) -> float:
+        """
+        Bytes cached per token per layer. Each lane costs its width times its
+        stored precision in bytes (bits/8); a 16-bit lane is 2 bytes/element.
+        The tiny per-token quant scale is ignored (one fp16 per token amortizes
+        to ~0 across a 128-wide lane).
+        """
+        k_bytes = self.cfg.d_k_latent * (min(self.cfg.k_quant_bits, 16) / 8.0)
+        v_bytes = self.cfg.d_v_latent * (min(self.cfg.v_quant_bits, 16) / 8.0)
+        return k_bytes + v_bytes
+
+    def get_compression_stats(self) -> dict:
+        per_layer = self.cache_bytes_per_token()
+        # Standard GPT-2 caches full K+V per head at 2 bytes: 2*H*head_dim*2.
+        gpt2_bytes = 2 * self.cfg.n_heads * self.cfg.head_dim * 2.0
+        return {
+            "d_k_latent": self.cfg.d_k_latent,
+            "d_v_latent": self.cfg.d_v_latent,
+            "k_quant_bits": self.cfg.k_quant_bits,
+            "v_quant_bits": self.cfg.v_quant_bits,
+            "cache_bytes_per_token_per_layer": per_layer,
+            "compression_vs_gpt2": f"{gpt2_bytes / per_layer:.2f}x",
+        }
