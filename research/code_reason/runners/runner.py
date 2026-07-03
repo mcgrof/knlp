@@ -23,10 +23,18 @@ _ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_ROOT, "datasets"))
 
+sys.path.insert(0, os.path.join(_ROOT, "addendums"))
+
 from artifact_writer import ArtifactWriter  # noqa: E402
 from agent_loop import run_agent  # noqa: E402
 from tool_router import ToolRouter, tool_specs  # noqa: E402
 from model_client import MockModelClient, mock_default_script  # noqa: E402
+from registry import run_addendums  # noqa: E402
+
+
+def _truthy(flags, key):
+    return flags.get(key) in (True, "y")
+
 
 _PROMPTS = os.path.join(_ROOT, "prompts")
 
@@ -137,6 +145,13 @@ def run_manifest(
                     cert.setdefault("task_type", tt)
                     writer.write_certificate(task_id, model, mode, cert)
                     result["certificate_ref"] = "certificate.json"
+                if _truthy(flags, "CONFIG_CODE_REASON_ADDENDUMS") and _truthy(
+                    flags, "CONFIG_CODE_REASON_RECORD_ADDENDUMS"
+                ):
+                    for rec in run_addendums(
+                        flags, row, router.reader, out["certificate"] or {}
+                    ):
+                        writer.write_addendum(task_id, model, mode, rec)
                 writer.write_result(task_id, model, mode, result)
                 writer.write_costs(task_id, model, mode, out["tokens"])
                 writer.append_manifest(
