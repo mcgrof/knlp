@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Execution-free command guard for the paper baseline.
+
+The paper's verifier can inspect a repository but must not execute its code,
+run its tests, install its dependencies, or read git history. This guard
+enforces that with a *default-deny* allowlist: a command runs only if its
+executable is a known read/search tool, it contains no shell composition
+(so an allowed command cannot chain into a forbidden one), and it stays
+inside the repository root. The named forbidden classes (test runners,
+imports, installs, git history) get explicit, clear rejection reasons on top
+of the default deny.
+
+Policy flows from Kconfig: CONFIG_CODE_REASON_NO_TARGET_* and
+CONFIG_CODE_REASON_AUGMENTED / _ALLOW_STATIC_GIT_HISTORY_ADDENDUM.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shlex
+import subprocess
+from dataclasses import dataclass
+
+# Read-only / search / static tools. Anything not here is denied by default.
+ALLOWLIST = {
+    "cat",
+    "head",
+    "tail",
+    "nl",
+    "wc",
+    "ls",
+    "dir",
+    "find",
+    "tree",
+    "stat",
+    "file",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ripgrep",
+    "sort",
+    "uniq",
+    "cut",
+    "basename",
+    "dirname",
+    "realpath",
+    "readlink",
+}
+
+# Shell composition / redirection / write — never allowed in a single command.
+_SHELL_META = re.compile(r"[;&|<>`$()]|\*\*|\|\||&&|>>")
+
+# Named forbidden classes -> clear reasons (checked before the allowlist so the
+# operator sees *why*, not just "not allowlisted").
+_NAMED_BLOCKS = [
+    (re.compile(r"\b(pytest|py\.test|tox|nose2?|unittest)\b"), "test execution"),
+    (re.compile(r"\bpython[0-9.]*\b.*\b-m\s+pytest\b"), "test execution"),
+    (re.compile(r"\bmvn\b.*\btest\b"), "test execution"),
+    (re.compile(r"\b(gradle|gradlew)\b.*\btest\b"), "test execution"),
+    (re.compile(r"\bnpm\b.*\b(test|run\s+test)\b"), "test execution"),
+    (re.compile(r"\byarn\b.*\btest\b"), "test execution"),
+    (re.compile(r"\bcargo\b.*\btest\b"), "test execution"),
+    (re.compile(r"\bgo\s+test\b"), "test execution"),
+    (re.compile(r"\bctest\b"), "test execution"),
+    (re.compile(r"\bpython[0-9.]*\b\s+(-c|-m)\b"), "target code execution"),
+    (
+        re.compile(r"\b(node|ruby|perl|bash|sh|zsh|make|cmake)\b"),
+        "target code execution",
+    ),
+    (re.compile(r"\bpip[0-9.]*\b\s+install\b"), "dependency install"),
+    (re.compile(r"\b(npm|yarn)\b\s+(install|add)\b"), "dependency install"),
+    (
+        re.compile(r"\b(apt|apt-get|conda|poetry|uv)\b\s+(install|add)\b"),
+        "dependency install",
+    ),
+]
+
+_GIT_HISTORY = re.compile(
+    r"\bgit\b.*\b(log|show|blame|rev-list|reflog|whatchanged|diff)\b"
+)
+
+
+@dataclass
+class ExecutionPolicy:
+    no_target_repo_execution: bool = True
+    no_target_test_execution: bool = True
+    no_target_dependency_install: bool = True
+    no_git_history: bool = True
+    augmented: bool = False
+    allow_static_git_history: bool = False
+
+    @classmethod
+    def from_flags(cls, flags):
+        aug = bool(flags.get("CONFIG_CODE_REASON_AUGMENTED", False))
+        allow_git = bool(
+            flags.get("CONFIG_CODE_REASON_ALLOW_STATIC_GIT_HISTORY_ADDENDUM", False)
+        )
+        return cls(
+            no_target_repo_execution=flags.get(
+                "CONFIG_CODE_REASON_NO_TARGET_REPO_EXECUTION", True
+            ),
+            no_target_test_execution=flags.get(
+                "CONFIG_CODE_REASON_NO_TARGET_TEST_EXECUTION", True
+            ),
+            no_target_dependency_install=flags.get(
+                "CONFIG_CODE_REASON_NO_TARGET_DEPENDENCY_INSTALL", True
+            ),
+            no_git_history=flags.get("CONFIG_CODE_REASON_NO_GIT_HISTORY", True),
+            augmented=aug,
+            allow_static_git_history=aug and allow_git,
+        )
+
+    @property
+    def git_history_allowed(self):
+        return not self.no_git_history and self.allow_static_git_history
+
+
+@dataclass
+class Decision:
+    allowed: bool
+    reason: str
+
+
+class SafeShell:
+    def __init__(self, policy, repo_root):
+        self.policy = policy
+        self.repo_root = os.path.realpath(repo_root)
+
+    def check(self, command):
+        cmd = command.strip()
+        if not cmd:
+            return Decision(False, "empty command")
+        if _SHELL_META.search(cmd):
+            return Decision(
+                False,
+                "shell composition/redirection is not allowed "
+                "(one read-only command at a time)",
+            )
+        # named forbidden classes first, for a clear reason
+        for pat, klass in _NAMED_BLOCKS:
+            if pat.search(cmd):
+                return Decision(
+                    False, f"blocked: {klass} " "(execution-free paper baseline)"
+                )
+        if _GIT_HISTORY.search(cmd) and not self.policy.git_history_allowed:
+            return Decision(
+                False, "blocked: git history access " "(disabled in paper reproduction)"
+            )
+        try:
+            argv = shlex.split(cmd)
+        except ValueError as exc:
+            return Decision(False, f"unparseable command: {exc}")
+        exe = os.path.basename(argv[0])
+        git_ok = exe == "git" and self.policy.git_history_allowed
+        if exe not in ALLOWLIST and not git_ok:
+            return Decision(False, f"'{exe}' is not in the read-only allowlist")
+        return Decision(True, "ok")
+
+    def run(self, command, timeout=20):
+        d = self.check(command)
+        if not d.allowed:
+            return {"allowed": False, "reason": d.reason, "command": command}
+        argv = shlex.split(command)
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return {
+                "allowed": True,
+                "command": command,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "allowed": True,
+                "command": command,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": "timeout",
+            }
