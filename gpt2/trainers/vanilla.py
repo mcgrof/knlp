@@ -22,7 +22,13 @@ parent_dir = os.path.dirname(
 sys.path.insert(0, parent_dir)
 
 from gpt2.model import GPT2, GPTConfig
-from gpt2.mla import GPT2_MLA, GPT2_MLA_KV, GPT2_MLA_KV_FIM, MLA_Config
+from gpt2.mla import (
+    GPT2_MLA,
+    GPT2_MLA_KV,
+    GPT2_MLA_KV_FIM,
+    GPT2_MLA_KV_ASYM,
+    MLA_Config,
+)
 from gpt2.model_knlp import GPT2_KNLP, GPT2_KNLP_Config
 from gpt2.rgsa import GPT2_RGSA, RGSAConfig
 from lib.optimizers import create_optimizer, layer_lr_fim_update
@@ -111,10 +117,27 @@ class VanillaGPT2Trainer(BaseGPT2Trainer):
                 block_size=self.args.block_size,
                 n_layers=base_config.n_layer,
                 dropout=self.args.dropout,
+                d_k_latent=int(getattr(self.config, "MLA_D_K_LATENT", 192)),
+                d_v_latent=int(getattr(self.config, "MLA_D_V_LATENT", 128)),
+                k_quant_bits=int(getattr(self.config, "MLA_K_QUANT_BITS", 16)),
+                v_quant_bits=int(getattr(self.config, "MLA_V_QUANT_BITS", 8)),
             )
 
             # Create appropriate MLA model
-            if "mla_kv_fim" in mla_variant.lower():
+            if "ksplice_asym" in mla_variant.lower():
+                # Asymmetric split-KV: separate K/V cache lanes, K high
+                # fidelity + V aggressively compressed (K16/V8 by default).
+                model = GPT2_MLA_KV_ASYM(config)
+                if self.master_process:
+                    stats = model.get_compression_stats()
+                    print(
+                        f"  ASKV (ksplice-asym): "
+                        f"d_k_latent={config.d_k_latent}(k{config.k_quant_bits}) "
+                        f"d_v_latent={config.d_v_latent}(v{config.v_quant_bits}), "
+                        f"{stats['cache_bytes_per_token_per_layer']:.0f} B/tok/layer, "
+                        f"{stats['compression_vs_gpt2']} vs GPT-2"
+                    )
+            elif "mla_kv_fim" in mla_variant.lower():
                 # Selective KVSplice: only last N layers
                 compression_ratio = float(
                     getattr(self.config, "MLA_COMPRESSION_RATIO", 0.5)
