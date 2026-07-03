@@ -58,6 +58,39 @@ def test_update_gate_floor_initializes_effective_gate():
     assert torch.allclose(gate, torch.full_like(gate, 0.95), atol=1e-6)
 
 
+def test_prev_context_update_gate_forward_backward_is_finite():
+    cfg = tiny_cfg(
+        activation="silu",
+        chunk_size=4,
+        beta_mode="scalar_per_head",
+        update_gate_mode="scalar",
+        update_gate_init=0.8,
+        trellis_update_gate_target="value",
+        trellis_update_gate_context_mode="current_prev",
+        use_short_conv_v=True,
+        residual_update_mix=0.10,
+    )
+    m = TrellisLM(cfg).train()
+    mixer = m.blocks[0].mixer
+    assert mixer.update_gate_proj.in_features == 2 * cfg.d_model
+    idx = torch.randint(0, cfg.vocab_size, (2, 16))
+    logits, loss = m(idx, labels=idx, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
+    loss.backward()
+    gate_grads = [
+        block.mixer.update_gate_proj.weight.grad
+        for block in m.blocks
+        if block.mixer.update_gate_proj is not None
+    ]
+    assert gate_grads
+    assert all(g is not None and torch.isfinite(g).all() for g in gate_grads)
+    assert (
+        m.blocks[0].mixer.last_trellis_diag["update_gate_context_mode"]
+        == "current_prev"
+    )
+
+
 def test_value_only_update_gate_forward_backward_is_finite():
     cfg = tiny_cfg(
         activation="silu",

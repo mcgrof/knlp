@@ -67,6 +67,7 @@ class TrellisConfig:
     # and channel gates used "both"; overwrite probes can gate only value writes.
     trellis_update_gate_target: str = "both"  # ["both","key","value"]
     trellis_update_gate_layer_mode: str = "all"
+    trellis_update_gate_context_mode: str = "current"
     trellis_update_gate_floor: float = 0.0
     residual_update_mix: float = 0.0
     # output_path: "current" = out_proj(y) then *SiLU(gate) AFTER out_proj
@@ -182,6 +183,11 @@ class TrellisConfig:
             "upper_half",
             "not_layer0",
         ), self.trellis_update_gate_layer_mode
+        assert self.trellis_update_gate_context_mode in (
+            "current",
+            "prev",
+            "current_prev",
+        ), self.trellis_update_gate_context_mode
         assert 0.0 <= self.trellis_update_gate_floor < 1.0, (
             self.trellis_update_gate_floor
         )

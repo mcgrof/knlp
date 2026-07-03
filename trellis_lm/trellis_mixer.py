@@ -84,10 +84,13 @@ class TrellisMixer(nn.Module):
         self.retention_theta = None
         self.register_buffer("retention_beta_fixed", None)
         self.reset_beta_parameters()
+        gate_dim = d
+        if cfg.trellis_update_gate_context_mode == "current_prev":
+            gate_dim = 2 * d
         if cfg.update_gate_mode == "scalar":
-            self.update_gate_proj = nn.Linear(d, H, bias=True)
+            self.update_gate_proj = nn.Linear(gate_dim, H, bias=True)
         elif cfg.update_gate_mode == "channel":
-            self.update_gate_proj = nn.Linear(d, H * M, bias=True)
+            self.update_gate_proj = nn.Linear(gate_dim, H * M, bias=True)
         else:
             self.update_gate_proj = None
         self.reset_update_gate_bias()
@@ -421,6 +424,7 @@ class TrellisMixer(nn.Module):
             "backend": backend,
             "update_gate_layer_mode": self.cfg.trellis_update_gate_layer_mode,
             "update_gate_target": self.cfg.trellis_update_gate_target,
+            "update_gate_context_mode": self.cfg.trellis_update_gate_context_mode,
             "beta": self._diag_tensor_stats(beta),
             "effective_gamma": self._diag_tensor_stats(gamma),
             "update_gate": self._diag_gate_stats(update_gate, query_index),
@@ -458,6 +462,17 @@ class TrellisMixer(nn.Module):
         if x.shape[2] <= 1:
             return x
         return torch.cat((x[:, :, :1], x[:, :, :-1]), dim=2)
+
+    def _update_gate_context(self, h_float: torch.Tensor) -> torch.Tensor:
+        mode = self.cfg.trellis_update_gate_context_mode
+        if mode == "current":
+            return h_float
+        prev = torch.cat((h_float[:, :1], h_float[:, :-1]), dim=1)
+        if mode == "prev":
+            return prev
+        if mode == "current_prev":
+            return torch.cat((h_float, prev), dim=-1)
+        raise ValueError(mode)
 
     def _value_alpha(self, shared_alpha: torch.Tensor, key_code: torch.Tensor):
         cfg = self.cfg
@@ -550,14 +565,16 @@ class TrellisMixer(nn.Module):
             gamma = self.effective_gamma(F.softplus(self.gamma_raw.float()))
             update_gate = None
             if cfg.update_gate_mode == "scalar":
+                gate_context = self._update_gate_context(hf)
                 update_gate = (
-                    self._update_gate_from_logits(self.update_gate_proj(hf))
+                    self._update_gate_from_logits(self.update_gate_proj(gate_context))
                     .view(B, T, self.H, 1)
                     .permute(0, 2, 1, 3)
                 )
             elif cfg.update_gate_mode == "channel":
+                gate_context = self._update_gate_context(hf)
                 update_gate = self._update_gate_from_logits(
-                    self._heads(self.update_gate_proj(hf), self.M)
+                    self._heads(self.update_gate_proj(gate_context), self.M)
                 )
             key_update_gate = self._gate_for_memory(update_gate, "key")
             value_update_gate = self._gate_for_memory(update_gate, "value")
