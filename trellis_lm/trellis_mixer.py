@@ -126,9 +126,12 @@ class TrellisMixer(nn.Module):
         self.alpha_act = get_activation(cfg.alpha_mode)
         self.value_alpha_correction_raw = None
         self.value_read_query_gate_proj = None
+        self.value_address_proj = None
         if cfg.trellis_value_alpha_mode in (
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_local_key_correction",
+            "shared_plus_local_key_correction_detached",
             "shared_plus_prev_alpha_correction",
             "shared_plus_prev_alpha_correction_detached",
             "shared_plus_prev_key_correction",
@@ -136,11 +139,23 @@ class TrellisMixer(nn.Module):
         ):
             raw = self._value_alpha_correction_init_raw()
             self.value_alpha_correction_raw = nn.Parameter(torch.full((H,), raw))
+        if self._needs_value_address():
+            self.value_address_proj = nn.Linear(d, H * M, bias=False)
         if cfg.trellis_value_read_query_mode in (
             "alpha_residual_gate",
             "alpha_residual_gate_detached",
         ):
             self.value_read_query_gate_proj = nn.Linear(d, H, bias=True)
+
+    def _needs_value_address(self) -> bool:
+        cfg = self.cfg
+        return cfg.trellis_value_alpha_mode in (
+            "shared_plus_local_key_correction",
+            "shared_plus_local_key_correction_detached",
+        ) or cfg.trellis_value_read_query_mode in (
+            "local_key_address",
+            "local_key_address_detached",
+        )
 
     def _value_alpha_correction_init_raw(self) -> float:
         cfg = self.cfg
@@ -474,7 +489,18 @@ class TrellisMixer(nn.Module):
             return torch.cat((h_float, prev), dim=-1)
         raise ValueError(mode)
 
-    def _value_alpha(self, shared_alpha: torch.Tensor, key_code: torch.Tensor):
+    def _value_address(self, h_float: torch.Tensor) -> torch.Tensor | None:
+        if self.value_address_proj is None:
+            return None
+        address = self._heads(self.value_address_proj(h_float), self.M)
+        return self.alpha_act(address)
+
+    def _value_alpha(
+        self,
+        shared_alpha: torch.Tensor,
+        key_code: torch.Tensor,
+        local_key_address: torch.Tensor | None = None,
+    ):
         cfg = self.cfg
         mix = float(cfg.trellis_value_alpha_mix)
         if cfg.trellis_value_alpha_mode == "shared" or mix == 0.0:
@@ -482,6 +508,8 @@ class TrellisMixer(nn.Module):
         if cfg.trellis_value_alpha_mode in (
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_local_key_correction",
+            "shared_plus_local_key_correction_detached",
             "shared_plus_prev_alpha_correction",
             "shared_plus_prev_alpha_correction_detached",
             "shared_plus_prev_key_correction",
@@ -492,6 +520,10 @@ class TrellisMixer(nn.Module):
                 target = self._previous_code(shared_alpha)
             elif mode.startswith("shared_plus_prev_key"):
                 target = self._previous_code(key_code)
+            elif mode.startswith("shared_plus_local_key"):
+                if local_key_address is None:  # pragma: no cover - guarded
+                    raise RuntimeError("local key correction missing address")
+                target = self._previous_code(local_key_address)
             else:
                 target = key_code
             if mode.endswith("_detached"):
@@ -517,10 +549,21 @@ class TrellisMixer(nn.Module):
         key_readout: torch.Tensor,
         shared_alpha: torch.Tensor,
         h_float: torch.Tensor,
+        local_key_address: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         cfg = self.cfg
         if cfg.trellis_value_read_query_mode == "key_readout":
             return key_readout, None
+        if cfg.trellis_value_read_query_mode in (
+            "local_key_address",
+            "local_key_address_detached",
+        ):
+            if local_key_address is None:  # pragma: no cover - guarded
+                raise RuntimeError("local key read query missing address")
+            target = local_key_address
+            if cfg.trellis_value_read_query_mode.endswith("_detached"):
+                target = target.detach()
+            return target, None
         if self.value_read_query_gate_proj is None:  # pragma: no cover
             raise RuntimeError("value read query gate mode missing projection")
         B, T, _ = h_float.shape
@@ -578,6 +621,7 @@ class TrellisMixer(nn.Module):
                 )
             key_update_gate = self._gate_for_memory(update_gate, "key")
             value_update_gate = self._gate_for_memory(update_gate, "value")
+            local_key_address = self._value_address(hf)
 
         # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
         # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
@@ -630,6 +674,13 @@ class TrellisMixer(nn.Module):
                         else "pytorch_state_evolution"
                     ),
                 )
+                if local_key_address is not None:
+                    forward_diag["value_address"] = self._diag_tensor_stats(
+                        local_key_address
+                    )
+                    forward_diag["value_address_prev"] = self._diag_tensor_stats(
+                        self._previous_code(local_key_address)
+                    )
 
                 def evolve_state(write_in, alpha_in, P_in, rmat_in, gate_in):
                     if fused_backend:
@@ -715,10 +766,13 @@ class TrellisMixer(nn.Module):
                     )
                     r = self.f(yhat)
                     value_read_query, value_read_query_gate = self._value_read_query(
-                        r, af, hf
+                        r, af, hf, local_key_address
                     )
                     forward_diag["value_read_query_gate"] = self._diag_gate_stats(
                         value_read_query_gate, max(0, T - 2)
+                    )
+                    forward_diag["value_read_query"] = self._diag_tensor_stats(
+                        value_read_query
                     )
                     self._set_forward_diag(forward_diag)
                     y = run_trellis_memory_chunked_batched_readout(
@@ -739,7 +793,7 @@ class TrellisMixer(nn.Module):
                         kf, qf, M0_k, u_k, P, rmat, gf, "M_q", cs, T_out=T
                     )
                     r = self.f(yhat)
-                    value_alpha = self._value_alpha(af, r)
+                    value_alpha = self._value_alpha(af, r, local_key_address)
                     M0_v, u_v = evolve_state(
                         vf,
                         value_alpha,
@@ -751,11 +805,15 @@ class TrellisMixer(nn.Module):
                     forward_diag["value_state"] = self._diag_tensor_stats(M0_v)
                     forward_diag["key_update"] = self._diag_tensor_stats(u_k)
                     forward_diag["value_update"] = self._diag_tensor_stats(u_v)
+                    forward_diag["value_alpha"] = self._diag_tensor_stats(value_alpha)
                     value_read_query, value_read_query_gate = self._value_read_query(
-                        r, af, hf
+                        r, af, hf, local_key_address
                     )
                     forward_diag["value_read_query_gate"] = self._diag_gate_stats(
                         value_read_query_gate, max(0, T - 2)
+                    )
+                    forward_diag["value_read_query"] = self._diag_tensor_stats(
+                        value_read_query
                     )
                     self._set_forward_diag(forward_diag)
                     y = run_trellis_memory_chunked_batched_readout(
@@ -802,12 +860,23 @@ class TrellisMixer(nn.Module):
                     ),
                 )
                 r = self.f(yhat)
-                value_alpha = self._value_alpha(af, r)
+                value_alpha = self._value_alpha(af, r, local_key_address)
                 value_read_query, value_read_query_gate = self._value_read_query(
-                    r, af, hf
+                    r, af, hf, local_key_address
                 )
                 forward_diag["value_read_query_gate"] = self._diag_gate_stats(
                     value_read_query_gate, max(0, T - 2)
+                )
+                if local_key_address is not None:
+                    forward_diag["value_address"] = self._diag_tensor_stats(
+                        local_key_address
+                    )
+                    forward_diag["value_address_prev"] = self._diag_tensor_stats(
+                        self._previous_code(local_key_address)
+                    )
+                forward_diag["value_alpha"] = self._diag_tensor_stats(value_alpha)
+                forward_diag["value_read_query"] = self._diag_tensor_stats(
+                    value_read_query
                 )
                 self._set_forward_diag(forward_diag)
                 y = run_trellis_memory_chunked(
@@ -862,12 +931,23 @@ class TrellisMixer(nn.Module):
                     ),
                 )
                 r = self.f(yhat)  # [B,H,T,M]
-                value_alpha = self._value_alpha(af, r)
+                value_alpha = self._value_alpha(af, r, local_key_address)
                 value_read_query, value_read_query_gate = self._value_read_query(
-                    r, af, hf
+                    r, af, hf, local_key_address
                 )
                 forward_diag["value_read_query_gate"] = self._diag_gate_stats(
                     value_read_query_gate, max(0, T - 2)
+                )
+                if local_key_address is not None:
+                    forward_diag["value_address"] = self._diag_tensor_stats(
+                        local_key_address
+                    )
+                    forward_diag["value_address_prev"] = self._diag_tensor_stats(
+                        self._previous_code(local_key_address)
+                    )
+                forward_diag["value_alpha"] = self._diag_tensor_stats(value_alpha)
+                forward_diag["value_read_query"] = self._diag_tensor_stats(
+                    value_read_query
                 )
                 self._set_forward_diag(forward_diag)
                 y = run_trellis_memory(

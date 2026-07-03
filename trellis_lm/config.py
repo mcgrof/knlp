@@ -84,6 +84,9 @@ class TrellisConfig:
     # The prev-* correction modes preserve shared alpha and add a bounded
     # learned correction toward the previous token's code. They are overwrite
     # diagnostics for grammars where a value immediately follows its key.
+    # The local-key correction mode uses a separate key-address projection:
+    # value writes target the previous token's projected address, and paired
+    # read-query modes can read with the current token's projected address.
     trellis_value_alpha_mode: str = "shared"
     trellis_value_alpha_mix: float = 1.0
     trellis_value_alpha_correction_init: float = 1e-3
@@ -206,6 +209,8 @@ class TrellisConfig:
             "key_readout_detached",
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_local_key_correction",
+            "shared_plus_local_key_correction_detached",
             "shared_plus_prev_alpha_correction",
             "shared_plus_prev_alpha_correction_detached",
             "shared_plus_prev_key_correction",
@@ -228,6 +233,8 @@ class TrellisConfig:
         )
         assert self.trellis_value_read_query_mode in (
             "key_readout",
+            "local_key_address",
+            "local_key_address_detached",
             "alpha_residual_gate",
             "alpha_residual_gate_detached",
         ), self.trellis_value_read_query_mode
