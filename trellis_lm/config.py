@@ -80,6 +80,9 @@ class TrellisConfig:
     # "shared" is the historical Trellis path: key and value memories both use
     # alpha_proj(h). "key_readout" tests explicit key-code binding by using the
     # key-pass readout code r as the value-pass write target.
+    # The prev-* correction modes preserve shared alpha and add a bounded
+    # learned correction toward the previous token's code. They are overwrite
+    # diagnostics for grammars where a value immediately follows its key.
     trellis_value_alpha_mode: str = "shared"
     trellis_value_alpha_mix: float = 1.0
     trellis_value_alpha_correction_init: float = 1e-3
@@ -190,6 +193,10 @@ class TrellisConfig:
             "key_readout_detached",
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_prev_alpha_correction",
+            "shared_plus_prev_alpha_correction_detached",
+            "shared_plus_prev_key_correction",
+            "shared_plus_prev_key_correction_detached",
         ), self.trellis_value_alpha_mode
         assert 0.0 <= self.trellis_value_alpha_mix <= 1.0, (
             self.trellis_value_alpha_mix

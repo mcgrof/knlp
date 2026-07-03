@@ -429,6 +429,58 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_gate_value080_prevalpha_corr1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_prev_alpha_correction",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_prevalpha_corr1e2":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_prev_alpha_correction",
+            1.0,
+            1e-2,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_prevkey_corr1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_prev_key_correction",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_prevkey_detach_corr1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_prev_key_correction_detached",
+            1.0,
+            1e-3,
+            0.25,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "trellis_gate_value_floor050":
         return (
             "trellis",

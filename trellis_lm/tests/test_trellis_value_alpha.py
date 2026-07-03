@@ -85,3 +85,33 @@ def test_shared_plus_key_correction_forward_backward_is_finite():
     ]
     assert grads
     assert all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+def test_prev_alpha_correction_changes_outputs_with_same_weights():
+    torch.manual_seed(3)
+    shared = _tiny_model("shared").eval()
+    prev = _tiny_model("shared_plus_prev_alpha_correction", correction_init=0.1).eval()
+    prev.load_state_dict(shared.state_dict(), strict=False)
+    idx = torch.randint(0, shared.cfg.vocab_size, (2, 19))
+    with torch.no_grad():
+        shared_logits, _ = shared(idx, training=False)
+        prev_logits, _ = prev(idx, training=False)
+    assert not torch.allclose(shared_logits, prev_logits)
+
+
+def test_prev_key_correction_forward_backward_is_finite():
+    torch.manual_seed(4)
+    model = _tiny_model("shared_plus_prev_key_correction")
+    idx = torch.randint(0, model.cfg.vocab_size, (2, 17))
+    labels = idx.clone()
+    logits, loss = model(idx, labels=labels, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
+    loss.backward()
+    grads = [
+        block.mixer.value_alpha_correction_raw.grad
+        for block in model.blocks
+        if block.mixer.value_alpha_correction_raw is not None
+    ]
+    assert grads
+    assert all(g is not None and torch.isfinite(g).all() for g in grads)
