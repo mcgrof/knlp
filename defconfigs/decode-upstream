@@ -1,0 +1,44 @@
+# Reproduce the paper-memory-decode asymmetric K16/V8 results on the
+# latest upstream-integration-targeting branches.  These are the newest
+# serving branches -- the vLLM k16fp8 line and the decode-only asym
+# FlashInfer series curated for upstream submission -- and supersede the
+# frozen v0.18 paper artifact and the older dev-tip branches that the
+# base decode profile still pins.
+#
+# Serving contract: prefill computes fresh full-precision K/V; only the
+# cache is stored K16/V8 and decode reads it asymmetrically, so a
+# decode-only asym FlashInfer kernel serves end to end.
+#
+# Branch tips at authoring (2026-07-02):
+#   vllm       20260702-k16fp8                     758786e23
+#   flashinfer 20260702-asym-k16v8-decode-upstream 87a294b3c
+#
+# Single-H100/H200 profile.
+CONFIG_KNLP_REPRODUCE_DECODE=y
+CONFIG_KNLP_REPRODUCE_PROFILE="decode-upstream"
+CONFIG_KNLP_WORKTREE_ROOT=".."
+CONFIG_KNLP_RESULTS_ROOT="./results/decode-upstream"
+CONFIG_KNLP_BUILD_ROOT="./build/decode-upstream"
+CONFIG_KNLP_VLLM_REPO="https://github.com/mcgrof/vllm.git"
+CONFIG_KNLP_VLLM_REF="20260702-k16fp8"
+CONFIG_KNLP_VLLM_DIR="vllm"
+CONFIG_KNLP_FLASHINFER_REPO="https://github.com/mcgrof/flashinfer.git"
+CONFIG_KNLP_FLASHINFER_REF="20260702-asym-k16v8-decode-upstream"
+CONFIG_KNLP_FLASHINFER_DIR="flashinfer"
+CONFIG_KNLP_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+CONFIG_KNLP_LMCACHE_REF="asymmetric-kv-codec"
+CONFIG_KNLP_LMCACHE_DIR="lmcache"
+CONFIG_KNLP_PAPER_REPO="https://github.com/mcgrof/paper-memory-decode.git"
+CONFIG_KNLP_PAPER_REF="main"
+CONFIG_KNLP_PAPER_DIR="paper-memory-decode"
+CONFIG_KNLP_MODEL_QWEN25_7B="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_KNLP_DATASET_WIKITEXT="wikitext"
+CONFIG_KNLP_DATASET_GSM8K="gsm8k"
+CONFIG_KNLP_ENABLE_WANDB=n
+CONFIG_KNLP_ENABLE_TRACKERIO=n
+CONFIG_KNLP_UPLOAD_ARTIFACTS=n
+CONFIG_KNLP_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_FAIL_ON_DIRTY_GIT=y
+CONFIG_KNLP_REQUIRE_PINNED_REFS=n
+CONFIG_KNLP_PARALLEL_GPUS="auto"
+CONFIG_KNLP_MAX_PARALLEL_GPU_JOBS=8
