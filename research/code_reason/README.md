@@ -22,5 +22,5 @@ in Python constants.
 - [x] Ticket 5: dataset manifest builders
 - [x] Ticket 6: agent runner (model_client, agent_loop, tool_router)
 - [x] Ticket 7: paper metrics
-- [ ] Ticket 8: augmented addendum registry
+- [x] Ticket 8: augmented addendum registry
 - [ ] Ticket 9: report generator
