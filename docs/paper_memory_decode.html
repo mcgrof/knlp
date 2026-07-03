@@ -1622,8 +1622,10 @@ llm = LLM(
   </div>
   <p class="panel-body">
     The full-stack vLLM + FlashInfer asymmetric K16/V8 result depends on three modified serving-stack
-    repos.  All three are public on GitHub with the exact branches the paper measurements were taken
-    on.
+    repos, all public on GitHub.  The branches below are the latest, upstream-integration-targeting
+    line: the vLLM K16/V8 serving branch and the decode-only asymmetric FlashInfer series curated for
+    the upstream PR ladder.  They serve asym end to end because prefill computes fresh full-precision
+    K/V and only the cache is stored K16/V8, so a decode-only asymmetric kernel suffices.
   </p>
 
   <div class="kr-table" style="margin:16px 0;">
@@ -1637,14 +1639,14 @@ llm = LLM(
       </thead>
       <tbody>
         <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">mcgrof/vllm</a></td>
-          <td style="padding:10px 16px;"><code>asymmetric-kv-plumbing</code></td>
-          <td style="padding:10px 16px;">Tuple K/V cache, FlashAttn writer patch, asym dtype plumbing</td>
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">mcgrof/vllm</a></td>
+          <td style="padding:10px 16px;"><code>20260702-k16fp8</code></td>
+          <td style="padding:10px 16px;">Latest, upstream-targeting: K16/V8 cache with a decode-only asym read (prefill stays full-precision), tuple K/V, loud-fail on asym misroute</td>
         </tr>
         <tr style="border-bottom:1px solid var(--border);">
-          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">mcgrof/flashinfer</a></td>
-          <td style="padding:10px 16px;"><code>asym-prefill-refactor-stage</code></td>
-          <td style="padding:10px 16px;">FI-1..FI-5 CUDA template refactor for independent K/V dtypes in prefill+decode</td>
+          <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">mcgrof/flashinfer</a></td>
+          <td style="padding:10px 16px;"><code>20260702-asym-k16v8-decode-upstream</code></td>
+          <td style="padding:10px 16px;">Latest, upstream-targeting: curated decode-only K16/FP8 dtype-split series, rebased on upstream main, GPU-gated for the upstream PR ladder</td>
         </tr>
         <tr>
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">mcgrof/LMCache</a></td>
@@ -1659,11 +1661,12 @@ llm = LLM(
     The knlp defconfig system provides one-command reproduction of the core paper findings:
   </p>
   <pre style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:16px;overflow-x:auto;font-size:13px;color:var(--text);"><code>git clone https://github.com/mcgrof/knlp.git && cd knlp
-make defconfig-decode       # Core asym claims (1×H100, ~4-8 h warm)
+make defconfig-decode-upstream   # Latest upstream-targeting branches (1×H100/H200)
 make</code></pre>
   <p class="panel-body" style="margin-top:8px;">
-    Three reproduction profiles are planned: <code>defconfig-decode</code> (core full-stack quality
-    battery + standalone FlashInfer gates + LMCache codec checks),
+    <code>defconfig-decode-upstream</code> pins the latest branches above and is the recommended
+    serving profile.  The reproduction profiles are: <code>defconfig-decode</code> (core full-stack
+    quality battery + standalone FlashInfer gates + LMCache codec checks),
     <code>defconfig-decode-sat</code> (saturation model + Hill fit), and
     <code>defconfig-decode-full</code> (everything possible from the paper, with structured skip reports
     when cross-GPU hardware is missing). Each defconfig pins exact git refs, clones the three forks into
@@ -1683,8 +1686,8 @@ make</code></pre>
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
-    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer Fork</a>
-    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM Fork</a>
+    <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">FlashInfer Fork</a>
+    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">vLLM Fork</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache Fork</a>
     <a href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">Fused-Quant Docs</a>
     <a href="https://github.com/mcgrof/knlp">GitHub</a>
