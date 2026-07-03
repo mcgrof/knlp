@@ -125,6 +125,10 @@ class TrellisMixer(nn.Module):
         if cfg.trellis_value_alpha_mode in (
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_prev_alpha_correction",
+            "shared_plus_prev_alpha_correction_detached",
+            "shared_plus_prev_key_correction",
+            "shared_plus_prev_key_correction_detached",
         ):
             raw = self._value_alpha_correction_init_raw()
             self.value_alpha_correction_raw = nn.Parameter(torch.full((H,), raw))
@@ -432,6 +436,12 @@ class TrellisMixer(nn.Module):
         B, T, _ = x.shape
         return x.view(B, T, self.H, last).permute(0, 2, 1, 3)
 
+    @staticmethod
+    def _previous_code(x: torch.Tensor) -> torch.Tensor:
+        if x.shape[2] <= 1:
+            return x
+        return torch.cat((x[:, :, :1], x[:, :, :-1]), dim=2)
+
     def _value_alpha(self, shared_alpha: torch.Tensor, key_code: torch.Tensor):
         cfg = self.cfg
         mix = float(cfg.trellis_value_alpha_mix)
@@ -440,9 +450,19 @@ class TrellisMixer(nn.Module):
         if cfg.trellis_value_alpha_mode in (
             "shared_plus_key_correction",
             "shared_plus_key_correction_detached",
+            "shared_plus_prev_alpha_correction",
+            "shared_plus_prev_alpha_correction_detached",
+            "shared_plus_prev_key_correction",
+            "shared_plus_prev_key_correction_detached",
         ):
-            target = key_code
-            if cfg.trellis_value_alpha_mode.endswith("_detached"):
+            mode = cfg.trellis_value_alpha_mode
+            if mode.startswith("shared_plus_prev_alpha"):
+                target = self._previous_code(shared_alpha)
+            elif mode.startswith("shared_plus_prev_key"):
+                target = self._previous_code(key_code)
+            else:
+                target = key_code
+            if mode.endswith("_detached"):
                 target = target.detach()
             if self.value_alpha_correction_raw is None:  # pragma: no cover
                 raise RuntimeError("value alpha correction mode missing scale")
