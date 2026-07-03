@@ -88,6 +88,18 @@ def row_base_and_layer_mode(row: str) -> tuple[str, str]:
     return row, "all"
 
 
+def row_base_layer_context(row: str) -> tuple[str, str, str]:
+    row_base, layer_mode = row_base_and_layer_mode(row)
+    context_suffixes = {
+        "_prevctx": "current_prev",
+        "_prevonly": "prev",
+    }
+    for suffix, context_mode in context_suffixes.items():
+        if row_base.endswith(suffix):
+            return row_base[: -len(suffix)], layer_mode, context_mode
+    return row_base, layer_mode, "current"
+
+
 def vocab_size(args: argparse.Namespace) -> int:
     return args.n_keys + args.n_vals + 2 + args.distractor_vocab
 
@@ -234,6 +246,7 @@ def make_cfg(
     update_gate_init: float,
     update_gate_target: str,
     update_gate_layer_mode: str,
+    update_gate_context_mode: str,
     update_gate_floor: float,
 ):
     from trellis_lm.config import TrellisConfig
@@ -270,6 +283,7 @@ def make_cfg(
         update_gate_init=update_gate_init,
         trellis_update_gate_target=update_gate_target,
         trellis_update_gate_layer_mode=update_gate_layer_mode,
+        trellis_update_gate_context_mode=update_gate_context_mode,
         trellis_update_gate_floor=update_gate_floor,
         residual_update_mix=0.10,
     )
@@ -278,7 +292,7 @@ def make_cfg(
 def row_spec(
     row: str,
 ) -> tuple[str, str, str, float, float, float, str, float, float, str, float, str, float]:
-    row, _ = row_base_and_layer_mode(row)
+    row, _, _ = row_base_layer_context(row)
     if row == "trellis_none":
         return (
             "trellis",
@@ -772,7 +786,9 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         update_gate_target,
         update_gate_floor,
     ) = row_spec(row)
-    row_base, update_gate_layer_mode = row_base_and_layer_mode(row)
+    row_base, update_gate_layer_mode, update_gate_context_mode = row_base_layer_context(
+        row
+    )
     cfg = make_cfg(
         args,
         readout,
@@ -787,6 +803,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         update_gate_init,
         update_gate_target,
         update_gate_layer_mode,
+        update_gate_context_mode,
         update_gate_floor,
     )
     row_meta = {
@@ -805,6 +822,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "update_gate_init": update_gate_init,
         "trellis_update_gate_target": update_gate_target,
         "trellis_update_gate_layer_mode": update_gate_layer_mode,
+        "trellis_update_gate_context_mode": update_gate_context_mode,
         "trellis_update_gate_floor": update_gate_floor,
     }
     model = build_model(cfg, kind).to(device)
@@ -971,7 +989,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
 def eval_row(model, row: str, args: argparse.Namespace, cells: list[Cell], device):
     import torch
 
-    row_base, _ = row_base_and_layer_mode(row)
+    row_base, _, _ = row_base_layer_context(row)
     rng = random.Random(args.seed + 7919 * stable_row_seed(row_base) + 17)
     model.eval()
     by_cell: list[dict[str, Any]] = []
