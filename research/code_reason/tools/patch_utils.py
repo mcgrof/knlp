@@ -74,3 +74,27 @@ def affected_line_ranges(files):
         if rngs:
             out[f.path] = rngs
     return out
+
+
+def _self_test():
+    diff = (
+        "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,3 @@\n"
+        " def foo():\n-    return 1\n+    return 11\n+    # note\n"
+    )
+    files = parse_unified_diff(diff)
+    assert affected_files(files) == ["x.py"], affected_files(files)
+    assert affected_line_ranges(files) == {"x.py": [(1, 3)]}
+    # patch_hash is stable and content-addressed
+    h1, h2 = patch_hash(diff), patch_hash(diff)
+    assert h1 == h2 and h1 != patch_hash(diff + "\n")
+    # two files in one diff
+    two = diff + "--- a/y.py\n+++ b/y.py\n@@ -5,1 +5,1 @@\n-a\n+b\n"
+    assert affected_files(parse_unified_diff(two)) == ["x.py", "y.py"]
+    print("[patch_utils] self-test PASS: parse + affected files/ranges + hash")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--self-test" in sys.argv:
+        _self_test()

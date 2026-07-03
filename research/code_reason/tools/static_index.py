@@ -8,6 +8,7 @@ jump to symbols without importing or running the target. Not a full parser
 
 from __future__ import annotations
 
+import os
 import re
 
 _DEFS = {
@@ -63,3 +64,31 @@ def build_index(reader, glob="**/*"):
                 {"file": e["file"], "line": e["line"], "lang": e["lang"]}
             )
     return idx
+
+
+def _self_test():
+    import sys
+    import tempfile
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from repo_reader import RepoReader
+
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, "m.py"), "w").write(
+        "def foo():\n    pass\n\nclass Bar:\n    def baz(self):\n        pass\n"
+    )
+    open(os.path.join(d, "n.c"), "w").write(
+        "int add(int a, int b) {\n  return a+b;\n}\n"
+    )
+    idx = build_index(RepoReader(d), "**/*")
+    assert "foo" in idx and "Bar" in idx and "baz" in idx, list(idx)
+    assert idx["foo"][0]["lang"] == "python"
+    assert "add" in idx and idx["add"][0]["lang"] == "c", idx.get("add")
+    print("[static_index] self-test PASS: python + c symbols indexed")
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    if "--self-test" in _sys.argv:
+        _self_test()
