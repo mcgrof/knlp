@@ -71,5 +71,34 @@ python3 research/code_reason/datasets/manifest_builder.py --self-test \
   >/dev/null 2>&1 && echo "  ok:   manifest_builder self-test" \
   || { echo "  FAIL: manifest_builder self-test"; fail=1; }
 
+echo "=== [e2e] manifest -> run -> score -> report (offline mock) ==="
+E2E="build/code_reason/e2e"
+rm -rf "$E2E"
+if python3 - "$MAN" "$OUT" "$E2E" <<'PY' >/dev/null 2>&1
+import json, sys
+sys.path[:0] = [
+    "research/code_reason/datasets", "research/code_reason/runners",
+    "research/code_reason/reports", "research/code_reason/addendums",
+    "research/code_reason/tools",
+]
+from runner import run_manifest
+from metrics import score_run
+from report import write_report
+man, cfg, rd = sys.argv[1], sys.argv[2], sys.argv[3]
+flags = json.load(open(cfg))["flags"]
+rows = [json.loads(x) for x in open(man)]
+ds_dir = "research/code_reason/datasets/fixtures/smoke"
+run_manifest(rows, flags, rd, ds_dir, config_path=cfg, repo_root=".")
+score_run(rd, ds_dir, rows)
+write_report(rd)
+PY
+then
+  [ -f "$E2E/report.md" ] && [ -f "$E2E/metrics_summary.json" ] \
+    && echo "  ok:   e2e report + metrics written" \
+    || { echo "  FAIL: e2e artifacts missing"; fail=1; }
+else
+  echo "  FAIL: e2e pipeline"; fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then echo "SMOKE PASS"; else echo "SMOKE FAIL"; fi
 exit "$fail"
