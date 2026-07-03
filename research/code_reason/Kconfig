@@ -1,0 +1,172 @@
+# Agentic Code Reasoning R&D harness (arXiv:2603.01896).
+# Sourced from the top-level knlp Kconfig. Every experimental toggle lives
+# here so nothing is buried in Python constants; the runner consumes a JSON
+# artifact generated from .config, never hard-coded policy.
+
+menu "Code Reasoning R&D"
+
+config CODE_REASON
+	bool "Enable Agentic Code Reasoning R&D harness"
+	default n
+	help
+	  Master switch for the code-reasoning R&D vehicle. Off by default so
+	  it never perturbs existing knlp defconfigs or `make check`.
+
+config CODE_REASON_PAPER_REPRO
+	bool "Reproduce Agentic Code Reasoning paper"
+	depends on CODE_REASON
+	default n
+	help
+	  Reproduce the paper setup only: static/execution-free verifier,
+	  standard + semi-formal reasoning, no knlp addendums.
+
+config CODE_REASON_AUGMENTED
+	bool "Enable knlp augmented code-reasoning experiments"
+	depends on CODE_REASON
+	default n
+	help
+	  Layer the certificate addendums and A-vs-blB artifact generation on
+	  top of the paper harness.
+
+menu "Tasks"
+	depends on CODE_REASON
+
+config CODE_REASON_TASK_PATCH_EQUIV
+	bool "Patch equivalence verification"
+	default y
+
+config CODE_REASON_TASK_FAULT_LOCALIZATION
+	bool "Fault localization"
+	default y
+
+config CODE_REASON_TASK_CODE_QA
+	bool "Code question answering"
+	default y
+
+endmenu
+
+menu "Reasoning modes"
+	depends on CODE_REASON
+
+config CODE_REASON_MODE_STANDARD
+	bool "Standard agentic reasoning"
+	default y
+
+config CODE_REASON_MODE_SEMIFORMAL
+	bool "Semi-formal certificate reasoning"
+	default y
+
+endmenu
+
+menu "Paper target models"
+	depends on CODE_REASON
+
+config CODE_REASON_MODEL_OPUS_4_5
+	bool "Claude Opus 4.5"
+	default y
+
+config CODE_REASON_MODEL_SONNET_4_5
+	bool "Claude Sonnet 4.5"
+	default y
+
+config CODE_REASON_MODEL_GEMINI_3_PRO_GRADER
+	bool "Gemini 3 Pro grader / artifact source"
+	default n
+
+config CODE_REASON_MODEL_GPT_5_2_GRADER
+	bool "GPT-5.2 grader"
+	default n
+
+endmenu
+
+menu "Execution policy"
+	depends on CODE_REASON
+
+config CODE_REASON_NO_TARGET_REPO_EXECUTION
+	bool "Forbid executing target repository code"
+	default y
+
+config CODE_REASON_NO_TARGET_TEST_EXECUTION
+	bool "Forbid executing target repository tests"
+	default y
+
+config CODE_REASON_NO_TARGET_DEPENDENCY_INSTALL
+	bool "Forbid installing target repository dependencies"
+	default y
+
+config CODE_REASON_NO_GIT_HISTORY
+	bool "Forbid git history access during paper reproduction"
+	default y
+
+config CODE_REASON_ALLOW_STATIC_GIT_HISTORY_ADDENDUM
+	bool "Allow git-history mining only as an explicit addendum"
+	depends on CODE_REASON_AUGMENTED
+	default n
+
+endmenu
+
+menu "Certificate addendums"
+	depends on CODE_REASON_AUGMENTED
+
+config CODE_REASON_ADDENDUMS
+	bool "Enable addendum system"
+	default n
+
+config CODE_REASON_ADDENDUM_A_VS_BLB
+	bool "Emit A-vs-blB comparison artifacts"
+	depends on CODE_REASON_ADDENDUMS
+
+config CODE_REASON_ADDENDUM_AST_RUNTIME
+	bool "Emit static AST/runtime-shape assessment for affected files"
+	depends on CODE_REASON_ADDENDUMS
+
+config CODE_REASON_ADDENDUM_COLLATERAL_EVOLUTION
+	bool "Mine collateral evolution evidence from code history"
+	depends on CODE_REASON_ADDENDUMS
+	select CODE_REASON_ALLOW_STATIC_GIT_HISTORY_ADDENDUM
+
+config CODE_REASON_ADDENDUM_COCCINELLE
+	bool "Use Coccinelle / SmPL semantic patch analysis when compatible"
+	depends on CODE_REASON_ADDENDUMS
+
+config CODE_REASON_ADDENDUM_COCCINELLE_AUTO_DISABLE_IF_UNSUPPORTED
+	bool "Auto-disable Coccinelle addendum outside compatible C-family repos"
+	depends on CODE_REASON_ADDENDUM_COCCINELLE
+	default y
+
+config CODE_REASON_ADDENDUM_SEMANTIC_REWRITE
+	bool "Use language-adaptive semantic rewrite addendum"
+	depends on CODE_REASON_ADDENDUMS
+
+config CODE_REASON_ADDENDUM_LANGUAGE_ADAPTIVE
+	bool "Select addendum implementation based on repository language"
+	depends on CODE_REASON_ADDENDUMS
+
+endmenu
+
+menu "Artifacts"
+	depends on CODE_REASON
+
+config CODE_REASON_RECORD_TRANSCRIPTS
+	bool "Record agent transcripts"
+	default y
+
+config CODE_REASON_RECORD_CERTIFICATES
+	bool "Record semi-formal certificates"
+	default y
+
+config CODE_REASON_RECORD_ADDENDUMS
+	bool "Record addendum outputs"
+	default n
+
+config CODE_REASON_RECORD_TOKEN_COSTS
+	bool "Record token and cost accounting"
+	default y
+
+config CODE_REASON_RECORD_AB_ARTIFACTS
+	bool "Record paired A/B artifacts"
+	default n
+
+endmenu
+
+endmenu
