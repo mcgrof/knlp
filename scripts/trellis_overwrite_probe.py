@@ -613,6 +613,70 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_gate_value080_localaddr1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_local_key_correction",
+            1.0,
+            1e-3,
+            1.0,
+            "local_key_address",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_localaddr1e2":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_local_key_correction",
+            1.0,
+            1e-2,
+            1.0,
+            "local_key_address",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_localaddr_detach1e3":
+        return (
+            "trellis",
+            "none",
+            "shared_plus_local_key_correction_detached",
+            1.0,
+            1e-3,
+            1.0,
+            "local_key_address_detached",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_gate_value080_localaddr_norm_silu1e3":
+        return (
+            "trellis",
+            "norm_silu",
+            "shared_plus_local_key_correction",
+            1.0,
+            1e-3,
+            1.0,
+            "local_key_address",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "trellis_gate_value_floor050":
         return (
             "trellis",
@@ -973,6 +1037,20 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             "mean": float(effective_flat.mean().item()),
             "min": float(effective_flat.min().item()),
             "max": float(effective_flat.max().item()),
+        }
+    address_weight_norms = []
+    for module in model.modules():
+        proj = getattr(module, "value_address_proj", None)
+        if proj is None:
+            continue
+        address_weight_norms.append(
+            proj.weight.detach().float().norm().reshape(1).cpu()
+        )
+    if address_weight_norms:
+        flat = torch.cat(address_weight_norms)
+        row_meta["value_address_weight_norm"] = {
+            "mean": float(flat.mean().item()),
+            "max": float(flat.max().item()),
         }
     metrics.update({
         **row_meta,

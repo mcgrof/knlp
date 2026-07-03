@@ -44,6 +44,30 @@ def _tiny_read_query_model(read_query_mode: str):
     return TrellisLM(cfg)
 
 
+def _tiny_local_address_model(detached: bool = False):
+    suffix = "_detached" if detached else ""
+    cfg = tiny_cfg(
+        activation="silu",
+        alpha_mode="linear",
+        beta_init=0.99,
+        gamma_init=0.005,
+        chunk_size=4,
+        output_path="paper",
+        use_short_conv_v=True,
+        trellis_update_stabilizer="layerwise_gamma",
+        trellis_layer0_gamma_mult=0.5,
+        residual_update_mix=0.10,
+        update_gate_mode="scalar",
+        update_gate_init=0.80,
+        trellis_update_gate_target="value",
+        trellis_value_alpha_mode=f"shared_plus_local_key_correction{suffix}",
+        trellis_value_alpha_correction_init=1e-3,
+        trellis_value_alpha_correction_max=1.0,
+        trellis_value_read_query_mode=f"local_key_address{suffix}",
+    )
+    return TrellisLM(cfg)
+
+
 def test_default_value_alpha_mode_is_shared():
     assert tiny_cfg().trellis_value_alpha_mode == "shared"
     assert tiny_cfg().trellis_value_read_query_mode == "key_readout"
@@ -182,3 +206,62 @@ def test_alpha_residual_read_query_forward_backward_is_finite():
     ]
     assert grads
     assert all(g is not None and torch.isfinite(g).all() for g in grads)
+
+
+def test_local_key_address_projection_is_opt_in():
+    default = _tiny_model("shared")
+    branch = _tiny_local_address_model()
+    assert default.blocks[0].mixer.value_address_proj is None
+    assert branch.blocks[0].mixer.value_address_proj is not None
+
+
+def test_local_key_address_correction_starts_near_configured_scale():
+    model = _tiny_local_address_model()
+    scales = []
+    for block in model.blocks:
+        raw = block.mixer.value_alpha_correction_raw
+        assert raw is not None
+        scales.append(
+            block.mixer.cfg.trellis_value_alpha_correction_max
+            * torch.sigmoid(raw.detach().float())
+        )
+    flat = torch.cat(scales)
+    assert torch.allclose(flat, torch.full_like(flat, 1e-3), atol=1e-6)
+
+
+def test_local_key_address_forward_backward_is_finite():
+    torch.manual_seed(7)
+    model = _tiny_local_address_model()
+    idx = torch.randint(0, model.cfg.vocab_size, (2, 17))
+    labels = idx.clone()
+    logits, loss = model(idx, labels=labels, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
+    loss.backward()
+    address_grads = [
+        block.mixer.value_address_proj.weight.grad
+        for block in model.blocks
+        if block.mixer.value_address_proj is not None
+    ]
+    scale_grads = [
+        block.mixer.value_alpha_correction_raw.grad
+        for block in model.blocks
+        if block.mixer.value_alpha_correction_raw is not None
+    ]
+    assert address_grads and scale_grads
+    assert all(g is not None and torch.isfinite(g).all() for g in address_grads)
+    assert all(g is not None and torch.isfinite(g).all() for g in scale_grads)
+    diag = model.blocks[0].mixer.last_trellis_diag
+    assert diag["value_address"]["rms"] >= 0.0
+    assert diag["value_address_prev"]["rms"] >= 0.0
+    assert diag["value_read_query"]["rms"] >= 0.0
+
+
+def test_detached_local_key_address_forward_is_finite():
+    torch.manual_seed(8)
+    model = _tiny_local_address_model(detached=True)
+    idx = torch.randint(0, model.cfg.vocab_size, (2, 17))
+    labels = idx.clone()
+    logits, loss = model(idx, labels=labels, training=True)
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(loss)
