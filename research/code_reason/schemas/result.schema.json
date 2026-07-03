@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/result.schema.json",
+  "title": "Final per-task result",
+  "type": "object",
+  "required": ["task_id", "task_type", "model", "mode", "answer"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "task_type": {"enum": ["patch_equiv", "fault_localization", "code_qa"]},
+    "model": {"type": "string"},
+    "mode": {"enum": ["standard", "semiformal", "augmented"]},
+    "answer": {"type": "object"},
+    "correct": {"type": ["boolean", "null"]},
+    "score": {"type": ["number", "null"]},
+    "certificate_ref": {"type": "string"},
+    "metrics_ref": {"type": "string"}
+  }
+}

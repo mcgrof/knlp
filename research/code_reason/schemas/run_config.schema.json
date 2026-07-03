@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/run_config.schema.json",
+  "title": "Runner config artifact (generated from Kconfig .config)",
+  "type": "object",
+  "required": ["schema", "flags"],
+  "properties": {
+    "schema": {"const": "code_reason.run_config/v0"},
+    "source": {"type": "string"},
+    "flags": {
+      "type": "object",
+      "patternProperties": {
+        "^CONFIG_CODE_REASON": {"type": ["boolean", "string", "integer"]}
+      }
+    }
+  }
+}

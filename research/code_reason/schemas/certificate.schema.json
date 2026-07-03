@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/certificate.schema.json",
+  "title": "Semi-formal reasoning certificate (artifact of record)",
+  "type": "object",
+  "required": ["task_id", "task_type", "model", "mode", "answer",
+               "premises", "formal_conclusion", "confidence"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "task_type": {"enum": ["patch_equiv", "fault_localization", "code_qa"]},
+    "model": {"type": "string"},
+    "mode": {"enum": ["standard", "semiformal", "augmented"]},
+    "answer": {"type": "object"},
+    "definitions": {"type": "array", "items": {"type": "string"}},
+    "premises": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "claim", "evidence"],
+        "properties": {
+          "id": {"type": "string"},
+          "claim": {"type": "string"},
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file", "source"],
+              "properties": {
+                "file": {"type": "string"},
+                "line_start": {"type": "integer", "minimum": 0},
+                "line_end": {"type": "integer", "minimum": 0},
+                "source": {"enum": ["repo_read", "grep", "ast",
+                                    "coccinelle", "git_history",
+                                    "semantic_rewrite"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "traces": {"type": "array"},
+    "counter_hypotheses": {"type": "array"},
+    "formal_conclusion": {"type": "string"},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "known_gaps": {"type": "array", "items": {"type": "string"}}
+  }
+}
