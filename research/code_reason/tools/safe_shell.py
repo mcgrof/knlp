@@ -114,7 +114,12 @@ class ExecutionPolicy:
 
     @property
     def git_history_allowed(self):
-        return not self.no_git_history and self.allow_static_git_history
+        # The paper baseline forbids git history (no_git_history=y). The only
+        # way it opens is the explicit augmented allowance, which is the
+        # override -- so it does not also require no_git_history to be off
+        # (the Kconfig collateral-evolution addendum selects the allowance
+        # while NO_GIT_HISTORY stays y).
+        return self.allow_static_git_history
 
 
 @dataclass
@@ -186,3 +191,77 @@ class SafeShell:
                 "stdout": "",
                 "stderr": "timeout",
             }
+
+
+_BLOCKED = [
+    "pytest tests/",
+    "py.test -q",
+    "python -m pytest",
+    "python3 -m pytest tests",
+    "tox",
+    "nose2",
+    "python -m unittest",
+    "mvn test",
+    "gradle test",
+    "./gradlew test",
+    "npm test",
+    "npm run test",
+    "yarn test",
+    "cargo test",
+    "go test ./...",
+    "ctest",
+    "python -c 'import target'",
+    "python3 -m target",
+    "node app.js",
+    "bash run.sh",
+    "make",
+    "pip install -r requirements.txt",
+    "pip3 install numpy",
+    "npm install",
+    "conda install numpy",
+    "cat a.py | grep def",
+    "grep def a.py > out.txt",
+    "ls && pytest",
+]
+
+_ALLOWED = [
+    "cat calc.py",
+    "head -20 calc.py",
+    "grep -n def calc.py",
+    "rg pattern",
+    "ls -la",
+    "find . -name '*.py'",
+    "wc -l calc.py",
+]
+
+
+def _self_test():
+    pol = ExecutionPolicy()  # paper defaults: everything forbidden
+    sh = SafeShell(pol, ".")
+    blocked = sum(1 for c in _BLOCKED if not sh.check(c).allowed)
+    allowed = sum(1 for c in _ALLOWED if sh.check(c).allowed)
+    assert blocked == len(_BLOCKED), [c for c in _BLOCKED if sh.check(c).allowed]
+    assert allowed == len(_ALLOWED), [c for c in _ALLOWED if not sh.check(c).allowed]
+    # git history: forbidden in the paper baseline...
+    assert not sh.check("git log --oneline").allowed
+    # ...opened only by the explicit augmented allowance
+    aug = ExecutionPolicy.from_flags(
+        {
+            "CONFIG_CODE_REASON_AUGMENTED": True,
+            "CONFIG_CODE_REASON_ALLOW_STATIC_GIT_HISTORY_ADDENDUM": True,
+        }
+    )
+    assert SafeShell(aug, ".").check("git log --oneline -- calc.py").allowed
+    # but the allowance never opens execution
+    assert not SafeShell(aug, ".").check("pytest tests/").allowed
+    print(
+        f"[safe_shell] self-test PASS: blocked {blocked}/{len(_BLOCKED)}, "
+        f"allowed {allowed}/{len(_ALLOWED)}, git gate + no exec leak"
+    )
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--self-test" in sys.argv:
+        _self_test()
