@@ -84,7 +84,11 @@ def main():
             e = row[cell]
             dppl = f"{e.get('delta_ppl', 0):+.2f}" if "delta_ppl" in e else "  -"
             t1 = f"{e.get('top1_agreement'):.3f}" if "top1_agreement" in e else "  -"
-            gd = f"{e.get('greedy_divergence_pos'):.0f}" if "greedy_divergence_pos" in e else " -"
+            gd = (
+                f"{e.get('greedy_divergence_pos'):.0f}"
+                if "greedy_divergence_pos" in e
+                else " -"
+            )
             print(f"{model:<16}{cell:<9}{e['ppl']:>10.3f}{dppl:>10}{t1:>9}{gd:>7}")
     print(f"\nreport -> {args.out}")
 
