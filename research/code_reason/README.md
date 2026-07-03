@@ -19,7 +19,7 @@ in Python constants.
 - [x] Ticket 2: artifact schemas + writer
 - [x] Ticket 3: paper prompt templates
 - [x] Ticket 4: safe repo-exploration tools (execution-free guard)
-- [ ] Ticket 5: dataset manifest builders
+- [x] Ticket 5: dataset manifest builders
 - [ ] Ticket 6: agent runner (model_client, agent_loop, tool_router)
 - [ ] Ticket 7: paper metrics
 - [ ] Ticket 8: augmented addendum registry
