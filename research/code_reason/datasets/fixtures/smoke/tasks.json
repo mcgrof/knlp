@@ -1,0 +1,49 @@
+{
+  "dataset": "smoke",
+  "repo": "repo",
+  "language": "python",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "records": [
+    {
+      "id": "peq-equiv",
+      "task_type": "patch_equiv",
+      "payload": {
+        "question": "Are these two patches to mul() semantically equivalent?",
+        "target_symbol": "mul",
+        "patch_reference": "--- a/calc.py\n+++ b/calc.py\n@@ def mul(a, b):\n     total = 0\n-    for _ in range(b + 1):\n+    for _ in range(b):\n         total = add(total, a)\n     return total\n",
+        "patch_candidate": "--- a/calc.py\n+++ b/calc.py\n@@ def mul(a, b):\n     total = 0\n-    for _ in range(b + 1):\n+    i = 0\n+    while i < b:\n         total = add(total, a)\n+        i += 1\n     return total\n"
+      },
+      "gold": {"equivalent": true}
+    },
+    {
+      "id": "peq-diff",
+      "task_type": "patch_equiv",
+      "payload": {
+        "question": "Are these two patches to mul() semantically equivalent?",
+        "target_symbol": "mul",
+        "patch_reference": "--- a/calc.py\n+++ b/calc.py\n@@ def mul(a, b):\n     total = 0\n-    for _ in range(b + 1):\n+    for _ in range(b):\n         total = add(total, a)\n     return total\n",
+        "patch_candidate": "--- a/calc.py\n+++ b/calc.py\n@@ def mul(a, b):\n     total = 0\n-    for _ in range(b + 1):\n+    for _ in range(b - 1):\n         total = add(total, a)\n     return total\n"
+      },
+      "gold": {"equivalent": false}
+    },
+    {
+      "id": "flo-mul",
+      "task_type": "fault_localization",
+      "payload": {
+        "question": "mul(3, 2) returns 9 but should return 6. Localize the fault.",
+        "symptom": "mul(a, b) returns a * (b + 1) instead of a * b",
+        "candidate_files": ["calc.py", "strutil.py"]
+      },
+      "gold": {"file": "calc.py", "line_start": 13, "line_end": 18, "symbol": "mul"}
+    },
+    {
+      "id": "qa-clamp",
+      "task_type": "code_qa",
+      "payload": {
+        "question": "What does clamp(x, lo, hi) return when x is greater than hi?",
+        "context_files": ["calc.py"]
+      },
+      "gold": {"answer": "hi"}
+    }
+  ]
+}

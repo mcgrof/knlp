@@ -54,5 +54,22 @@ assert CONFIG_CODE_REASON_ADDENDUM_AST_RUNTIME True "augmented"
 assert CONFIG_CODE_REASON_ADDENDUM_COCCINELLE True "augmented"
 assert CONFIG_CODE_REASON_ADDENDUM_A_VS_BLB True "augmented"
 
+echo "=== [manifest] build smoke dataset from the augmented config.json ==="
+MAN="build/code_reason/smoke_manifest.jsonl"
+if python3 research/code_reason/datasets/manifest_builder.py \
+     --config "$OUT" --out "$MAN" >/dev/null 2>&1; then
+  n=$(python3 -c "print(sum(1 for _ in open('$MAN')))")
+  if [ "$n" -ge 1 ]; then
+    echo "  ok:   manifest -> $n rows from config-enabled tasks"
+  else
+    echo "  FAIL: manifest produced 0 rows"; fail=1
+  fi
+else
+  echo "  FAIL: manifest_builder"; fail=1
+fi
+python3 research/code_reason/datasets/manifest_builder.py --self-test \
+  >/dev/null 2>&1 && echo "  ok:   manifest_builder self-test" \
+  || { echo "  FAIL: manifest_builder self-test"; fail=1; }
+
 if [ "$fail" -eq 0 ]; then echo "SMOKE PASS"; else echo "SMOKE FAIL"; fi
 exit "$fail"
