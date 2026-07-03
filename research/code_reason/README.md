@@ -16,7 +16,7 @@ in Python constants.
 
 ## Ticket status
 - [x] Ticket 1: Kconfig + defconfig plumbing + config.json + smoke test
-- [ ] Ticket 2: artifact schemas + writer
+- [x] Ticket 2: artifact schemas + writer
 - [ ] Ticket 3: paper prompt templates
 - [ ] Ticket 4: safe repo-exploration tools (execution-free guard)
 - [ ] Ticket 5: dataset manifest builders

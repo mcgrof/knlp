@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/metrics.schema.json",
+  "title": "Per-task / aggregate metrics",
+  "type": "object",
+  "properties": {
+    "patch_equiv": {
+      "type": "object",
+      "properties": {
+        "accuracy": {"type": "number"},
+        "equivalent_accuracy": {"type": "number"},
+        "non_equivalent_accuracy": {"type": "number"},
+        "false_equivalent_rate": {"type": "number"},
+        "false_non_equivalent_rate": {"type": "number"}
+      }
+    },
+    "fault_localization": {
+      "type": "object",
+      "properties": {
+        "top_1_all": {"type": "number"}, "top_3_all": {"type": "number"},
+        "top_5_all": {"type": "number"}, "top_1_any": {"type": "number"},
+        "top_3_any": {"type": "number"}, "top_5_any": {"type": "number"}
+      }
+    },
+    "code_qa": {
+      "type": "object",
+      "properties": {
+        "rubric_score": {"type": "number"},
+        "grader_agreement": {"type": "number"},
+        "hallucination_count": {"type": "integer"}
+      }
+    },
+    "certificate_quality": {
+      "type": "object",
+      "properties": {
+        "cited_evidence_validity": {"type": "number"},
+        "unsupported_claim_count": {"type": "integer"},
+        "missing_trace_count": {"type": "integer"},
+        "contradiction_count": {"type": "integer"},
+        "addendum_used_count": {"type": "integer"}
+      }
+    },
+    "cost": {
+      "type": "object",
+      "properties": {
+        "input_tokens": {"type": "integer"},
+        "output_tokens": {"type": "integer"},
+        "tool_calls": {"type": "integer"},
+        "wall_time_s": {"type": "number"},
+        "api_cost_usd": {"type": "number"},
+        "pod_cost_usd": {"type": "number"}
+      }
+    }
+  }
+}

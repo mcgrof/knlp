@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/addendum.schema.json",
+  "title": "Addendum output envelope",
+  "type": "object",
+  "required": ["name", "enabled"],
+  "properties": {
+    "name": {"enum": ["ast_runtime", "collateral_evolution", "coccinelle",
+                      "semantic_rewrite", "ab_vs_blb"]},
+    "enabled": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "fallback": {"type": ["string", "null"]},
+    "language": {"type": "string"},
+    "output": {"type": "object"}
+  }
+}

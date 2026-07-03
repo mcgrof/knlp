@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "code_reason/task_manifest.schema.json",
+  "title": "One task manifest entry (JSONL row)",
+  "type": "object",
+  "required": ["task_id", "task_type", "dataset"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "task_type": {"enum": ["patch_equiv", "fault_localization", "code_qa"]},
+    "dataset": {"type": "string"},
+    "repo": {"type": "string"},
+    "language": {"enum": ["python", "java", "cpp", "c", "mixed", "unknown"]},
+    "source_commit": {"type": "string"},
+    "patch_hash": {"type": "string"},
+    "model_ids": {"type": "array", "items": {"type": "string"}},
+    "seed": {"type": "integer"},
+    "payload": {"type": "object"},
+    "gold": {"type": "object"}
+  }
+}
