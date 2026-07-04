@@ -25,6 +25,23 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+ROLE_FILLER = 0
+ROLE_SET = 1
+ROLE_SET_KEY = 2
+ROLE_SET_VALUE = 3
+ROLE_QUERY = 4
+ROLE_QUERY_KEY = 5
+ROLE_ANSWER = 6
+ROLE_NAMES = (
+    "filler",
+    "set",
+    "set_key",
+    "set_value",
+    "query",
+    "query_key",
+    "answer",
+)
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -41,6 +58,8 @@ class BatchMeta:
     stale_values: list[set[int]]
     other_values: list[set[int]]
     latest_distance: list[int]
+    roles: Any | None = None
+    key_ids: Any | None = None
 
 
 def parse_ints(raw: str) -> list[int]:
@@ -139,6 +158,30 @@ def _distribute_fillers(
     return out
 
 
+def _append_filler(
+    seq: list[int],
+    roles: list[int],
+    key_ids: list[int],
+    args: argparse.Namespace,
+    rng: random.Random,
+) -> None:
+    seq.append(_filler(rng, args))
+    roles.append(ROLE_FILLER)
+    key_ids.append(-1)
+
+
+def _append_event(
+    seq: list[int],
+    roles: list[int],
+    key_ids: list[int],
+    event: tuple[int, int, int],
+) -> None:
+    set_tok, key_tok, value_tok = event
+    seq.extend([set_tok, key_tok, value_tok])
+    roles.extend([ROLE_SET, ROLE_SET_KEY, ROLE_SET_VALUE])
+    key_ids.extend([-1, key_tok, key_tok])
+
+
 def make_example(
     cell: Cell,
     args: argparse.Namespace,
@@ -174,23 +217,37 @@ def make_example(
     if min_len > cell.seq_len:
         filler_after = max(0, cell.seq_len - (3 * len(prefix_events) + 6))
     seq: list[int] = []
+    roles: list[int] = []
+    key_ids: list[int] = []
     pre_extra = cell.seq_len - (3 * len(prefix_events) + 3 + filler_after + 3)
     fills = _distribute_fillers(rng, max(0, pre_extra), len(prefix_events) + 1)
     for event, n_fill in zip(prefix_events, fills):
-        seq.extend([_filler(rng, args) for _ in range(n_fill)])
-        seq.extend(event)
+        for _ in range(n_fill):
+            _append_filler(seq, roles, key_ids, args, rng)
+        _append_event(seq, roles, key_ids, event)
     if fills:
-        seq.extend([_filler(rng, args) for _ in range(fills[-1])])
-    seq.extend(latest_event)
+        for _ in range(fills[-1]):
+            _append_filler(seq, roles, key_ids, args, rng)
+    _append_event(seq, roles, key_ids, latest_event)
     latest_value_pos = len(seq) - 1
-    seq.extend([_filler(rng, args) for _ in range(filler_after)])
+    for _ in range(filler_after):
+        _append_filler(seq, roles, key_ids, args, rng)
     seq.extend([ids["query"], qkey, answer])
+    roles.extend([ROLE_QUERY, ROLE_QUERY_KEY, ROLE_ANSWER])
+    key_ids.extend([-1, qkey, qkey])
     if len(seq) < cell.seq_len:
-        pad = [_filler(rng, args) for _ in range(cell.seq_len - len(seq))]
-        seq = pad + seq
-        latest_value_pos += len(pad)
-    if len(seq) != cell.seq_len:
-        raise RuntimeError((len(seq), cell))
+        pad_n = cell.seq_len - len(seq)
+        pad_seq: list[int] = []
+        pad_roles: list[int] = []
+        pad_key_ids: list[int] = []
+        for _ in range(pad_n):
+            _append_filler(pad_seq, pad_roles, pad_key_ids, args, rng)
+        seq = pad_seq + seq
+        roles = pad_roles + roles
+        key_ids = pad_key_ids + key_ids
+        latest_value_pos += pad_n
+    if len(seq) != cell.seq_len or len(roles) != cell.seq_len:
+        raise RuntimeError((len(seq), len(roles), cell))
     query_pos = cell.seq_len - 2
     meta = {
         "query_pos": query_pos,
@@ -198,6 +255,8 @@ def make_example(
         "stale_values": stale_values,
         "other_values": other_values,
         "latest_distance": query_pos - latest_value_pos,
+        "roles": roles,
+        "key_ids": key_ids,
     }
     return seq, meta
 
@@ -211,6 +270,8 @@ def make_batch(cell: Cell, args: argparse.Namespace, rng: random.Random, device)
     stale_values: list[set[int]] = []
     other_values: list[set[int]] = []
     latest_distance: list[int] = []
+    role_rows: list[list[int]] = []
+    key_id_rows: list[list[int]] = []
     for _ in range(args.batch):
         seq, meta = make_example(cell, args, rng)
         rows.append(seq)
@@ -219,7 +280,11 @@ def make_batch(cell: Cell, args: argparse.Namespace, rng: random.Random, device)
         stale_values.append(set(meta["stale_values"]))
         other_values.append(set(meta["other_values"]))
         latest_distance.append(int(meta["latest_distance"]))
+        role_rows.append(list(meta["roles"]))
+        key_id_rows.append(list(meta["key_ids"]))
     idx = torch.as_tensor(rows, dtype=torch.long, device=device)
+    roles = torch.as_tensor(role_rows, dtype=torch.long, device=device)
+    key_ids = torch.as_tensor(key_id_rows, dtype=torch.long, device=device)
     labels = torch.full_like(idx, -100)
     for bi, pos in enumerate(query_pos):
         labels[bi, pos + 1] = idx[bi, pos + 1]
@@ -229,6 +294,8 @@ def make_batch(cell: Cell, args: argparse.Namespace, rng: random.Random, device)
         stale_values=stale_values,
         other_values=other_values,
         latest_distance=latest_distance,
+        roles=roles,
+        key_ids=key_ids,
     )
 
 
@@ -709,6 +776,54 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_role_oracle_main_update":
+        return (
+            "trellis_role_main",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_role_oracle_separate_kv_learned_address":
+        return (
+            "trellis_role_kv_learned",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_role_oracle_separate_kv_oracle_address":
+        return (
+            "trellis_role_kv_oracle",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "gdn_ref":
         return (
             "gated_delta_ref",
@@ -748,6 +863,285 @@ def as_dtype(name: str):
     import torch
 
     return {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[name]
+
+
+def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
+    """Probe-only role-oracle binding wrappers.
+
+    These rows are deliberately scoped to this synthetic overwrite harness. They
+    do not change the generic Trellis C4/default path. The "main" row only gives
+    the Trellis stack role embeddings. The separate-KV rows add a small
+    role-gated associative side channel after the Trellis blocks and before the
+    final LM head.
+    """
+
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    from trellis_lm.model import TrellisLM
+
+    class RoleOracleBindingProbeLM(nn.Module):
+        requires_binding_meta = True
+
+        def __init__(self):
+            super().__init__()
+            self.cfg = cfg
+            self.kind = kind
+            self.base = TrellisLM(cfg)
+            self.role_emb = nn.Embedding(len(ROLE_NAMES), cfg.d_model)
+            nn.init.normal_(self.role_emb.weight, std=0.02)
+            self.use_separate_kv = kind in (
+                "trellis_role_kv_learned",
+                "trellis_role_kv_oracle",
+            )
+            self.use_oracle_address = kind == "trellis_role_kv_oracle"
+            if self.use_separate_kv:
+                self.addr_dim = cfg.n_slots
+                self.key_proj = nn.Linear(cfg.d_model, self.addr_dim, bias=False)
+                self.query_proj = nn.Linear(cfg.d_model, self.addr_dim, bias=False)
+                self.value_proj = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
+                self.binding_out = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
+                for module in (
+                    self.key_proj,
+                    self.query_proj,
+                    self.value_proj,
+                    self.binding_out,
+                ):
+                    nn.init.normal_(module.weight, std=0.02)
+                residual_unit = max(
+                    1e-8,
+                    min(
+                        1.0 - 1e-8,
+                        float(args.binding_residual_init)
+                        / float(args.binding_residual_max),
+                    ),
+                )
+                self.binding_residual_raw = nn.Parameter(
+                    torch.tensor(math.log(residual_unit / (1.0 - residual_unit)))
+                )
+                self.binding_eta_raw = nn.Parameter(
+                    torch.tensor(math.log(math.expm1(float(args.binding_eta_init))))
+                )
+                oracle = torch.randn(args.n_keys, self.addr_dim)
+                oracle = F.normalize(oracle, dim=-1)
+                self.register_buffer("oracle_address", oracle)
+            else:
+                self.addr_dim = 0
+                self.key_proj = None
+                self.query_proj = None
+                self.value_proj = None
+                self.binding_out = None
+                self.binding_residual_raw = None
+                self.binding_eta_raw = None
+                self.register_buffer("oracle_address", torch.empty(0))
+            self.last_binding_diag: dict[str, Any] | None = None
+
+        def get_num_params(self):
+            return sum(p.numel() for p in self.parameters())
+
+        def memory_state_bytes(self, batch_size: int) -> int:
+            base = self.base.memory_state_bytes(batch_size)
+            if not self.use_separate_kv:
+                return base
+            elem = 2 if self.cfg.dtype in ("bf16", "fp16") else 4
+            return base + batch_size * self.addr_dim * self.cfg.d_model * elem
+
+        def _address(
+            self,
+            hidden: torch.Tensor,
+            key_ids: torch.Tensor,
+            role: str,
+        ) -> torch.Tensor:
+            if self.use_oracle_address:
+                safe_ids = key_ids.clamp_min(0)
+                return self.oracle_address.to(hidden.dtype)[safe_ids]
+            if role == "query":
+                if self.query_proj is None:  # pragma: no cover
+                    raise RuntimeError("missing query projection")
+                return F.normalize(self.query_proj(hidden), dim=-1)
+            if self.key_proj is None:  # pragma: no cover
+                raise RuntimeError("missing key projection")
+            return F.normalize(self.key_proj(hidden), dim=-1)
+
+        @staticmethod
+        def _cos(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+            return F.cosine_similarity(a.float(), b.float(), dim=-1, eps=1e-6)
+
+        def _binding_residual(self, h: torch.Tensor, meta: BatchMeta) -> torch.Tensor:
+            if meta.roles is None or meta.key_ids is None:
+                raise RuntimeError("role-oracle binding row requires BatchMeta roles")
+            if self.value_proj is None or self.binding_out is None:  # pragma: no cover
+                raise RuntimeError("separate-KV row missing projections")
+            roles = meta.roles
+            key_ids = meta.key_ids
+            B, T, D = h.shape
+            residual = h.new_zeros(B, T, D)
+            scale = float(args.binding_residual_max) * torch.sigmoid(
+                self.binding_residual_raw
+            ).to(h.dtype)
+            eta = F.softplus(self.binding_eta_raw).to(h.dtype)
+            write_counts = []
+            read_counts = []
+            align_correct = 0
+            align_total = 0
+            read_target_cos = []
+            residual_norm = []
+            update_norm = []
+            max_collision = []
+            for bi in range(B):
+                memory = h.new_zeros(self.addr_dim, D)
+                current_addr = None
+                addr_by_key: dict[int, torch.Tensor] = {}
+                value_by_key: dict[int, torch.Tensor] = {}
+                writes = 0
+                reads = 0
+                event_pos = torch.nonzero(
+                    (roles[bi] == ROLE_SET_KEY)
+                    | (roles[bi] == ROLE_SET_VALUE)
+                    | (roles[bi] == ROLE_QUERY_KEY),
+                    as_tuple=False,
+                ).flatten()
+                for pos_t in event_pos.tolist():
+                    role_id = int(roles[bi, pos_t].item())
+                    key_id = int(key_ids[bi, pos_t].item())
+                    if role_id == ROLE_SET_KEY:
+                        current_addr = self._address(
+                            h[bi, pos_t],
+                            key_ids[bi, pos_t],
+                            role="key",
+                        )
+                        addr_by_key[key_id] = current_addr
+                    elif role_id == ROLE_SET_VALUE:
+                        if current_addr is None:
+                            continue
+                        value = self.value_proj(h[bi, pos_t])
+                        read_prev = current_addr @ memory
+                        delta = eta * current_addr[:, None] * (value - read_prev)[
+                            None, :
+                        ]
+                        memory = memory + delta
+                        value_by_key[key_id] = value
+                        update_norm.append(float(delta.detach().float().norm().item()))
+                        writes += 1
+                    elif role_id == ROLE_QUERY_KEY:
+                        query_addr = self._address(
+                            h[bi, pos_t],
+                            key_ids[bi, pos_t],
+                            role="query",
+                        )
+                        read = query_addr @ memory
+                        out = scale * self.binding_out(read)
+                        residual[bi, pos_t] = out
+                        residual_norm.append(float(out.detach().float().norm().item()))
+                        reads += 1
+                        if addr_by_key:
+                            with torch.no_grad():
+                                keys = list(addr_by_key)
+                                addr_stack = torch.stack(
+                                    [addr_by_key[k].detach() for k in keys]
+                                )
+                                sims = addr_stack.float() @ query_addr.detach().float()
+                                pred_key = keys[int(sims.argmax().item())]
+                                align_correct += int(pred_key == key_id)
+                                align_total += 1
+                                if addr_stack.shape[0] > 1:
+                                    sim_mat = addr_stack.float() @ addr_stack.float().T
+                                    sim_mat = sim_mat - torch.eye(
+                                        sim_mat.shape[0],
+                                        device=sim_mat.device,
+                                        dtype=sim_mat.dtype,
+                                    )
+                                    max_collision.append(
+                                        float(sim_mat.max().detach().item())
+                                    )
+                        target_value = value_by_key.get(key_id)
+                        if target_value is not None:
+                            with torch.no_grad():
+                                read_target_cos.append(
+                                    float(
+                                        self._cos(
+                                            read.detach().unsqueeze(0),
+                                            target_value.detach().unsqueeze(0),
+                                        )[0].item()
+                                    )
+                                )
+                write_counts.append(writes)
+                read_counts.append(reads)
+            self.last_binding_diag = {
+                "layer": -1,
+                "backend": "role_oracle_binding_probe",
+                "binding_kind": self.kind,
+                "address_mode": "oracle" if self.use_oracle_address else "learned",
+                "residual_scale": float(scale.detach().float().item()),
+                "eta": float(eta.detach().float().item()),
+                "write_count_mean": sum(write_counts) / max(1, len(write_counts)),
+                "read_count_mean": sum(read_counts) / max(1, len(read_counts)),
+                "alignment_accuracy": (
+                    align_correct / align_total if align_total else None
+                ),
+                "read_target_cos_mean": (
+                    sum(read_target_cos) / len(read_target_cos)
+                    if read_target_cos
+                    else None
+                ),
+                "residual_norm_mean": (
+                    sum(residual_norm) / len(residual_norm) if residual_norm else 0.0
+                ),
+                "update_norm_mean": (
+                    sum(update_norm) / len(update_norm) if update_norm else 0.0
+                ),
+                "address_collision_max_mean": (
+                    sum(max_collision) / len(max_collision) if max_collision else None
+                ),
+            }
+            return residual
+
+        def forward(
+            self,
+            idx,
+            labels=None,
+            training=None,
+            batch_meta: BatchMeta | None = None,
+        ):
+            if training is None:
+                training = self.training
+            if batch_meta is None or batch_meta.roles is None:
+                raise RuntimeError("role-oracle binding row requires BatchMeta")
+            x = self.base.wte(idx) + self.role_emb(batch_meta.roles)
+            for blk in self.base.blocks:
+                x = blk(x, training=training)
+            if self.use_separate_kv:
+                x = x + self._binding_residual(x, batch_meta)
+            else:
+                role_counts = {
+                    ROLE_NAMES[i]: int((batch_meta.roles == i).sum().item())
+                    for i in range(len(ROLE_NAMES))
+                }
+                self.last_binding_diag = {
+                    "layer": -1,
+                    "backend": "role_oracle_main_update_probe",
+                    "binding_kind": self.kind,
+                    "role_counts": role_counts,
+                }
+            x = self.base.norm_f(x)
+            logits = self.base.lm_head(x)
+            loss = None
+            if labels is not None:
+                loss = F.cross_entropy(
+                    logits[:, :-1].reshape(-1, logits.size(-1)),
+                    labels[:, 1:].reshape(-1),
+                    ignore_index=-100,
+                )
+            return logits, loss
+
+    return RoleOracleBindingProbeLM()
+
+
+def forward_model(model, idx, labels=None, training=None, meta: BatchMeta | None = None):
+    if getattr(model, "requires_binding_meta", False):
+        return model(idx, labels=labels, training=training, batch_meta=meta)
+    return model(idx, labels=labels, training=training)
 
 
 def accuracy_metrics(preds: list[int], meta: BatchMeta, args: argparse.Namespace) -> dict[str, int]:
@@ -801,6 +1195,9 @@ def collect_trellis_diagnostics(model) -> list[dict[str, Any]]:
         diag = getattr(module, "last_trellis_diag", None)
         if diag is not None:
             out.append(diag)
+    binding_diag = getattr(model, "last_binding_diag", None)
+    if binding_diag is not None:
+        out.append(binding_diag)
     out.sort(key=lambda item: int(item.get("layer", 0)))
     return out
 
@@ -874,6 +1271,7 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "row": row,
         "row_base": row_base,
         "kind": kind,
+        "binding_probe_kind": kind if kind.startswith("trellis_role_") else "none",
         "value_readout_act": readout,
         "trellis_value_alpha_mode": value_alpha_mode,
         "trellis_value_alpha_mix": value_alpha_mix,
@@ -888,8 +1286,14 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
         "trellis_update_gate_layer_mode": update_gate_layer_mode,
         "trellis_update_gate_context_mode": update_gate_context_mode,
         "trellis_update_gate_floor": update_gate_floor,
+        "binding_residual_init": args.binding_residual_init,
+        "binding_residual_max": args.binding_residual_max,
+        "binding_eta_init": args.binding_eta_init,
     }
-    model = build_model(cfg, kind).to(device)
+    if kind.startswith("trellis_role_"):
+        model = build_role_oracle_probe_model(cfg, kind, args).to(device)
+    else:
+        model = build_model(cfg, kind).to(device)
     # Keep master weights fp32, matching the C4 harness. Trellis intentionally
     # computes beta/gamma paths in fp32 under disabled autocast; casting modules
     # to bf16 makes beta_proj weights bf16 while h.float() is fp32.
@@ -910,7 +1314,13 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             dtype=dt,
             enabled=args.dtype != "fp32",
         ):
-            logits, loss = model(idx, labels=labels, training=True)
+            logits, loss = forward_model(
+                model,
+                idx,
+                labels=labels,
+                training=True,
+                meta=meta,
+            )
         loss_value = float(loss.detach().item())
         if not math.isfinite(loss_value):
             return {
@@ -1052,6 +1462,12 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             "mean": float(flat.mean().item()),
             "max": float(flat.max().item()),
         }
+    if getattr(model, "requires_binding_meta", False):
+        row_meta["binding_probe_final_diag"] = getattr(
+            model,
+            "last_binding_diag",
+            None,
+        )
     metrics.update({
         **row_meta,
         "status": "ok",
@@ -1081,7 +1497,12 @@ def eval_row(model, row: str, args: argparse.Namespace, cells: list[Cell], devic
             distance_sum = 0
             for _ in range(args.eval_batches):
                 idx, _, meta = make_batch(cell, args, rng, device)
-                logits, _ = model(idx, training=False)
+                logits, _ = forward_model(
+                    model,
+                    idx,
+                    training=False,
+                    meta=meta,
+                )
                 preds = []
                 for bi, pos in enumerate(meta.query_pos):
                     preds.append(int(logits[bi, pos].argmax(-1).item()))
@@ -1151,6 +1572,9 @@ def main() -> int:
     p.add_argument("--diagnostics", action="store_true")
     p.add_argument("--diag-every", type=int, default=0)
     p.add_argument("--diag-jsonl", type=Path, default=None)
+    p.add_argument("--binding-residual-init", type=float, default=0.10)
+    p.add_argument("--binding-residual-max", type=float, default=1.0)
+    p.add_argument("--binding-eta-init", type=float, default=1.0)
     p.add_argument("--out", type=Path, default=Path("overwrite_probe_results.json"))
     p.add_argument("--print-cells", action="store_true")
     args = p.parse_args()
