@@ -64,10 +64,12 @@ class OpenAIClient:
                 with urllib.request.urlopen(req, timeout=180) as resp:
                     body = json.load(resp)
                 ch = body["choices"][0]
+                usage = body.get("usage", {})
                 return {
                     "text": ch["message"].get("content") or "",
                     "finish_reason": ch.get("finish_reason"),
-                    "usage": body.get("usage", {}),
+                    "usage": usage,
+                    "cost": call_cost(usage),
                     "model": body.get("model"),
                 }
             except urllib.error.HTTPError as exc:

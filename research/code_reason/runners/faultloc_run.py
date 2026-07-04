@@ -159,7 +159,7 @@ def _one(bug, cond, repos_dir, client, raw_dir):
             indent=2,
             sort_keys=True,
         )
-    return cond, flags, call_cost(res["usage"]), res["finish_reason"]
+    return cond, flags, res.get("cost", 0.0), res["finish_reason"]
 
 
 def run(manifest_rows, repos_dir, out_dir, client, conditions=CONDITIONS, workers=8):
@@ -250,16 +250,27 @@ def main():
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--repos", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--backend", default="openai", choices=["openai", "anthropic"])
     ap.add_argument("--model", default="gpt-5.2-2025-12-11")
     ap.add_argument("--reasoning", default="medium")
+    ap.add_argument("--conditions", default="", help="comma subset of conditions")
+    ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
     rows = [json.loads(x) for x in open(args.manifest)]
     if args.limit:
         rows = rows[: args.limit]
-    client = OpenAIClient(model=args.model, reasoning_effort=args.reasoning)
+    if args.backend == "anthropic":
+        from anthropic_client import AnthropicClient
+
+        client = AnthropicClient(model=args.model)
+    else:
+        client = OpenAIClient(model=args.model, reasoning_effort=args.reasoning)
+    conds = args.conditions.split(",") if args.conditions else CONDITIONS
     t0 = time.time()
-    res = run(rows, args.repos, args.out, client)
+    res = run(
+        rows, args.repos, args.out, client, conditions=conds, workers=args.workers
+    )
     print(json.dumps(res["conditions"], indent=2, sort_keys=True))
     print(
         f"[faultloc_run] {res['total_calls']} calls, "
