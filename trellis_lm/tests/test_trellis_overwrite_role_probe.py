@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import random
+import sys
 from pathlib import Path
 
 import torch
@@ -15,6 +16,7 @@ PROBE_PATH = ROOT / "scripts" / "trellis_overwrite_probe.py"
 SPEC = importlib.util.spec_from_file_location("trellis_overwrite_probe", PROBE_PATH)
 probe = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
+sys.modules[SPEC.name] = probe
 SPEC.loader.exec_module(probe)
 
 
