@@ -112,25 +112,57 @@ def build_prompt(bug, condition, repo_dir):
     return head + src + _TASK[condition]
 
 
-def _extract_json(text):
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
-    # outermost object
-    start = text.find("{")
-    if start < 0:
-        return {}
-    depth = 0
-    for i in range(start, len(text)):
+def _iter_json_objects(text):
+    """Yield (start, end) spans of balanced, string-aware `{...}` objects.
+
+    String-aware so braces inside quoted strings (e.g. a Java snippet the
+    model quotes before its answer) do not throw off the brace count, and it
+    scans the whole text rather than assuming the first `{` opens the answer:
+    reasoning models prepend prose and fenced code and emit the JSON last.
+    """
+    i, n = 0, len(text)
+    while i < n:
         if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except json.JSONDecodeError:
-                    return {}
-    return {}
+            depth, in_str, esc = 0, False, False
+            for j in range(i, n):
+                c = text[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif c == "\\":
+                        esc = True
+                    elif c == '"':
+                        in_str = False
+                elif c == '"':
+                    in_str = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield i, j
+                        i = j
+                        break
+            else:
+                return
+        i += 1
+
+
+def _extract_json(text):
+    # Prefer the last balanced object that actually carries the answer block;
+    # fall back to the last object that parses at all.
+    best, fallback = None, None
+    for a, b in _iter_json_objects(text):
+        try:
+            obj = json.loads(text[a : b + 1])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        fallback = obj
+        if "ranked_locations" in obj:
+            best = obj
+    return best if best is not None else (fallback or {})
 
 
 def _one(bug, cond, repos_dir, client, raw_dir):
@@ -204,6 +236,55 @@ def run(manifest_rows, repos_dir, out_dir, client, conditions=CONDITIONS, worker
     return result
 
 
+def regrade(out_dir, conditions=CONDITIONS):
+    """Recompute predictions/flags from the saved raw model text -- no API.
+
+    Re-extracts each raw response with the current _extract_json/grader and
+    rewrites results.json + report.md. Cost and truncation are preserved from
+    the existing results.json (the model calls already happened); this only
+    fixes offline parsing/grading. Also rewrites each raw/*.json in place with
+    the corrected predictions and flags.
+    """
+    raw_dir = os.path.join(out_dir, "raw")
+    prior = {}
+    rp = os.path.join(out_dir, "results.json")
+    if os.path.exists(rp):
+        prior = json.load(open(rp))
+    per_cond = {c: [] for c in conditions}
+    truncated = 0
+    for fn in sorted(os.listdir(raw_dir)):
+        if not fn.endswith(".json"):
+            continue
+        path = os.path.join(raw_dir, fn)
+        d = json.load(open(path))
+        cond = d["condition"]
+        if cond not in per_cond:
+            continue
+        answer = _extract_json(d["raw_text"])
+        preds = parse_predictions(answer)
+        flags = grade_bug(preds, d["gold"])
+        flags["task_id"] = d["task_id"]
+        d["predictions"], d["flags"] = preds, flags
+        json.dump(d, open(path, "w"), indent=2, sort_keys=True)
+        per_cond[cond].append(flags)
+        if d.get("finish_reason") == "length":
+            truncated += 1
+    summary = {c: aggregate(per_cond[c]) for c in conditions}
+    n_bugs = max((len(v) for v in per_cond.values()), default=0)
+    result = {
+        "model": prior.get("model", "unknown"),
+        "reasoning_effort": prior.get("reasoning_effort", "n/a"),
+        "n_bugs": n_bugs,
+        "conditions": summary,
+        "total_calls": sum(len(v) for v in per_cond.values()),
+        "truncated_calls": truncated,
+        "est_cost_usd": prior.get("est_cost_usd", 0.0),
+    }
+    json.dump(result, open(rp, "w"), indent=2, sort_keys=True)
+    _write_report(result, out_dir)
+    return result
+
+
 def _write_report(result, out_dir):
     lines = ["# Fault localization: prompt-condition comparison", ""]
     lines.append(
@@ -247,26 +328,43 @@ def _write_report(result, out_dir):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--manifest", required=True)
-    ap.add_argument("--repos", required=True)
+    ap.add_argument("--manifest", default="")
+    ap.add_argument("--repos", default="")
     ap.add_argument("--out", required=True)
     ap.add_argument("--backend", default="openai", choices=["openai", "anthropic"])
     ap.add_argument("--model", default="gpt-5.2-2025-12-11")
     ap.add_argument("--reasoning", default="medium")
     ap.add_argument("--conditions", default="", help="comma subset of conditions")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--max-tokens", type=int, default=0, help="output cap override")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument(
+        "--regrade",
+        action="store_true",
+        help="recompute results from saved raw/ text, no API calls",
+    )
     args = ap.parse_args()
+    conds = args.conditions.split(",") if args.conditions else CONDITIONS
+    if args.regrade:
+        res = regrade(args.out, conditions=conds)
+        print(json.dumps(res["conditions"], indent=2, sort_keys=True))
+        print(f"[faultloc_run] regraded {res['total_calls']} -> {args.out}")
+        return
+    if not args.manifest or not args.repos:
+        ap.error("--manifest and --repos are required unless --regrade")
     rows = [json.loads(x) for x in open(args.manifest)]
     if args.limit:
         rows = rows[: args.limit]
     if args.backend == "anthropic":
         from anthropic_client import AnthropicClient
 
-        client = AnthropicClient(model=args.model)
+        client = AnthropicClient(model=args.model, max_tokens=args.max_tokens or 8192)
     else:
-        client = OpenAIClient(model=args.model, reasoning_effort=args.reasoning)
-    conds = args.conditions.split(",") if args.conditions else CONDITIONS
+        client = OpenAIClient(
+            model=args.model,
+            reasoning_effort=args.reasoning,
+            max_completion_tokens=args.max_tokens or 8000,
+        )
     t0 = time.time()
     res = run(
         rows, args.repos, args.out, client, conditions=conds, workers=args.workers
