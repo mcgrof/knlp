@@ -211,14 +211,29 @@ def make_example(
     answer = _rand_value(rng, args, used_values)
     latest_event = (ids["set"], qkey, answer)
 
+    # Hard grid: distractor writes to OTHER keys placed AFTER the answer, so the
+    # queried key's value is no longer the last SET_VALUE (defeats a last-value
+    # register). qkey is never among them, so its latest value stays `answer`.
+    suffix_n = max(0, getattr(args, "hard_suffix_writes", 0))
+    suffix_pool = others if others else [k for k in range(args.n_keys) if k != qkey]
+    suffix_events: list[tuple[int, int, int]] = []
+    for _ in range(suffix_n):
+        value = _rand_value(rng, args, used_values)
+        used_values.add(value)
+        other_values.add(value)
+        suffix_events.append((ids["set"], rng.choice(suffix_pool), value))
+    suffix_len = 3 * len(suffix_events)
+
     filler_after = max(0, cell.latest_gap - 2)
-    min_len = 3 * len(prefix_events) + 3 + filler_after + 3
+    min_len = 3 * len(prefix_events) + 3 + suffix_len + filler_after + 3
     if min_len > cell.seq_len:
-        filler_after = max(0, cell.seq_len - (3 * len(prefix_events) + 6))
+        filler_after = max(0, cell.seq_len - (3 * len(prefix_events) + 6 + suffix_len))
     seq: list[int] = []
     roles: list[int] = []
     key_ids: list[int] = []
-    pre_extra = cell.seq_len - (3 * len(prefix_events) + 3 + filler_after + 3)
+    pre_extra = cell.seq_len - (
+        3 * len(prefix_events) + 3 + suffix_len + filler_after + 3
+    )
     fills = _distribute_fillers(rng, max(0, pre_extra), len(prefix_events) + 1)
     for event, n_fill in zip(prefix_events, fills):
         for _ in range(n_fill):
@@ -229,6 +244,8 @@ def make_example(
             _append_filler(seq, roles, key_ids, args, rng)
     _append_event(seq, roles, key_ids, latest_event)
     latest_value_pos = len(seq) - 1
+    for event in suffix_events:
+        _append_event(seq, roles, key_ids, event)
     for _ in range(filler_after):
         _append_filler(seq, roles, key_ids, args, rng)
     seq.extend([ids["query"], qkey, answer])
@@ -333,7 +350,7 @@ def make_cfg(
         activation="silu",
         alpha_mode="linear",
         beta_init=0.99,
-        gamma_init=0.005,
+        gamma_init=getattr(args, "gamma_init", 0.005),
         chunk_size=args.chunk_size,
         chunk_refine=0,
         output_path="paper",
@@ -348,7 +365,7 @@ def make_cfg(
         trellis_value_read_query_gate_max=value_read_query_gate_max,
         trellis_retention_mode="token_proj",
         trellis_update_stabilizer="layerwise_gamma",
-        trellis_layer0_gamma_mult=0.5,
+        trellis_layer0_gamma_mult=getattr(args, "layer0_gamma_mult", 0.5),
         update_gate_mode=update_gate_mode,
         update_gate_init=update_gate_init,
         trellis_update_gate_target=update_gate_target,
@@ -1832,6 +1849,14 @@ def main() -> int:
     p.add_argument("--binding-residual-max", type=float, default=1.0)
     p.add_argument("--binding-eta-init", type=float, default=1.0)
     p.add_argument("--role-aux-weight", type=float, default=1.0)
+    # Stabilization knobs for the exact (chunk=1) path, which diverges under the
+    # C4-tuned defaults. Lower gamma / stronger layer-0 damping / lower LR.
+    p.add_argument("--gamma-init", type=float, default=0.005)
+    p.add_argument("--layer0-gamma-mult", type=float, default=0.5)
+    # Hard grid: append N distractor SET events for OTHER keys AFTER the queried
+    # key's answer, so the answer is no longer the last SET_VALUE. This removes
+    # the last-value-register shortcut that solves the easy grid without binding.
+    p.add_argument("--hard-suffix-writes", type=int, default=0)
     p.add_argument("--out", type=Path, default=Path("overwrite_probe_results.json"))
     p.add_argument("--print-cells", action="store_true")
     args = p.parse_args()
