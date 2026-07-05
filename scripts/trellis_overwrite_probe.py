@@ -845,6 +845,38 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_role_labelfree_suprouter_oracle_address":
+        return (
+            "trellis_role_kv_labelfree_sup_oracle",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
+    if row == "trellis_role_labelfree_suprouter_learned_address":
+        return (
+            "trellis_role_kv_labelfree_sup_learned",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "gdn_ref":
         return (
             "gated_delta_ref",
@@ -916,18 +948,37 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                 "trellis_role_kv_learned",
                 "trellis_role_kv_oracle",
                 "trellis_role_kv_labelfree",
+                "trellis_role_kv_labelfree_sup_learned",
+                "trellis_role_kv_labelfree_sup_oracle",
             )
             self.use_oracle_address = kind == "trellis_role_kv_oracle"
-            # Label-free row: the model gets NO oracle role/key channel. It must
-            # infer write/read gating from its own hidden state (role_head) and
-            # address by content (learned key/query projections). This is the
-            # decisive kill test -- the oracle rows only prove the associative
-            # memory works when an oracle routes it.
-            self.use_labelfree = kind == "trellis_role_kv_labelfree"
+            # Label-free rows: the model gets NO oracle role/key channel. It must
+            # infer write/read gating from its own hidden state (role_head). The
+            # base row addresses purely by content; the two supervised-router
+            # autopsy rows add an auxiliary role-classification LOSS on gold roles
+            # (never fed as input) to isolate whether the failure is the router or
+            # the address learner. The "_sup_oracle" arm addresses by oracle key
+            # id (perfect address, learned routing); "_sup_learned" addresses by
+            # content (learned routing AND learned address).
+            self.use_labelfree = kind in (
+                "trellis_role_kv_labelfree",
+                "trellis_role_kv_labelfree_sup_learned",
+                "trellis_role_kv_labelfree_sup_oracle",
+            )
+            self.use_supervised_router = kind in (
+                "trellis_role_kv_labelfree_sup_learned",
+                "trellis_role_kv_labelfree_sup_oracle",
+            )
+            self.labelfree_addr = (
+                "oracle"
+                if kind == "trellis_role_kv_labelfree_sup_oracle"
+                else "learned"
+            )
             # Set to "zero" at eval to null the binding residual: a causally-used
             # memory must lose its accuracy under ablation; a shortcut will not.
             self.binding_ablate = "none"
             self.last_gate_diag: dict[str, Any] | None = None
+            self._aux_role_loss = None
             if self.use_separate_kv:
                 self.addr_dim = cfg.n_slots
                 self.key_proj = nn.Linear(cfg.d_model, self.addr_dim, bias=False)
@@ -1157,17 +1208,41 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
             B, T, D = h.shape
             if self.binding_ablate == "zero":
                 self.last_gate_diag = {"ablate": "zero"}
+                self._aux_role_loss = None
                 return h.new_zeros(B, T, D)
             scale = float(args.binding_residual_max) * torch.sigmoid(
                 self.binding_residual_raw
             ).to(h.dtype)
             eta = F.softplus(self.binding_eta_raw).to(h.dtype)
-            write_addr = F.normalize(self.key_proj(h), dim=-1)  # [B,T,A]
-            read_addr = F.normalize(self.query_proj(h), dim=-1)  # [B,T,A]
+            if self.labelfree_addr == "oracle":
+                # Perfect address (oracle key id), learned routing. Isolates
+                # whether the router alone is the failure: if this arm still
+                # fails, the barrier is deeper than address learning.
+                safe_ids = meta.key_ids.clamp_min(0)
+                addr = self.oracle_address.to(h.dtype)[safe_ids]  # [B,T,A]
+                write_addr = addr
+                read_addr = addr
+            else:
+                write_addr = F.normalize(self.key_proj(h), dim=-1)  # [B,T,A]
+                read_addr = F.normalize(self.query_proj(h), dim=-1)  # [B,T,A]
             values = self.value_proj(h)  # [B,T,D]
-            gates = torch.softmax(self.role_head(h).float(), dim=-1).to(h.dtype)
+            role_logits = self.role_head(h)  # [B,T,3]
+            gates = torch.softmax(role_logits.float(), dim=-1).to(h.dtype)
             p_write = gates[..., 0]  # [B,T]
             p_read = gates[..., 1]  # [B,T]
+            # Supervised-router autopsy: gold roles used ONLY as an auxiliary
+            # loss (never fed as input). 0=write (SET_VALUE), 1=read (QUERY_KEY),
+            # 2=none. forward adds this to the answer CE.
+            if self.use_supervised_router and self.training:
+                roles = meta.roles
+                target = torch.full_like(roles, 2)
+                target[roles == ROLE_SET_VALUE] = 0
+                target[roles == ROLE_QUERY_KEY] = 1
+                self._aux_role_loss = float(args.role_aux_weight) * F.cross_entropy(
+                    role_logits.reshape(-1, 3).float(), target.reshape(-1)
+                )
+            else:
+                self._aux_role_loss = None
             memory = h.new_zeros(B, self.addr_dim, D)
             reads = h.new_zeros(B, T, D)
             for t in range(T):
@@ -1201,9 +1276,30 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                             "support": int(is_true.sum().item()),
                         }
 
+                    # Learned-address collision proxy: off-diagonal cosine among
+                    # the (already-normalized) write addresses at true write
+                    # positions. ~1.0 means the address learner collapsed all
+                    # keys onto one direction (the arm-B failure mode).
+                    addr_diag = None
+                    if self.labelfree_addr == "learned" and bool(is_wtrue.any()):
+                        wa = write_addr[is_wtrue].float()
+                        n = min(wa.shape[0], 256)
+                        if n > 1:
+                            wa = wa[:n]
+                            sim = wa @ wa.T
+                            off = sim - torch.eye(n, device=sim.device)
+                            addr_diag = {
+                                "write_addr_offdiag_cos_mean": float(
+                                    off.sum().item() / max(1, n * n - n)
+                                ),
+                                "write_addr_offdiag_cos_max": float(off.max().item()),
+                                "n": n,
+                            }
+
                     self.last_gate_diag = {
                         "write_gate": prf(is_wtrue, 0),
                         "read_gate": prf(is_rtrue, 1),
+                        "address_collision": addr_diag,
                         "p_write_at_true_write": (
                             float(p_write[is_wtrue].float().mean().item())
                             if bool(is_wtrue.any())
@@ -1261,6 +1357,8 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                     labels[:, 1:].reshape(-1),
                     ignore_index=-100,
                 )
+                if getattr(self, "_aux_role_loss", None) is not None:
+                    loss = loss + self._aux_role_loss
             return logits, loss
 
     return RoleOracleBindingProbeLM()
@@ -1733,6 +1831,7 @@ def main() -> int:
     p.add_argument("--binding-residual-init", type=float, default=0.10)
     p.add_argument("--binding-residual-max", type=float, default=1.0)
     p.add_argument("--binding-eta-init", type=float, default=1.0)
+    p.add_argument("--role-aux-weight", type=float, default=1.0)
     p.add_argument("--out", type=Path, default=Path("overwrite_probe_results.json"))
     p.add_argument("--print-cells", action="store_true")
     args = p.parse_args()
