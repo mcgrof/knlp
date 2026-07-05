@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -288,14 +287,18 @@ def make_batch(cell: Cell, args: argparse.Namespace, rng: random.Random, device)
     labels = torch.full_like(idx, -100)
     for bi, pos in enumerate(query_pos):
         labels[bi, pos + 1] = idx[bi, pos + 1]
-    return idx, labels, BatchMeta(
-        query_pos=query_pos,
-        answers=answers,
-        stale_values=stale_values,
-        other_values=other_values,
-        latest_distance=latest_distance,
-        roles=roles,
-        key_ids=key_ids,
+    return (
+        idx,
+        labels,
+        BatchMeta(
+            query_pos=query_pos,
+            answers=answers,
+            stale_values=stale_values,
+            other_values=other_values,
+            latest_distance=latest_distance,
+            roles=roles,
+            key_ids=key_ids,
+        ),
     )
 
 
@@ -358,7 +361,9 @@ def make_cfg(
 
 def row_spec(
     row: str,
-) -> tuple[str, str, str, float, float, float, str, float, float, str, float, str, float]:
+) -> tuple[
+    str, str, str, float, float, float, str, float, float, str, float, str, float
+]:
     row, _, _ = row_base_layer_context(row)
     if row == "trellis_none":
         return (
@@ -824,6 +829,22 @@ def row_spec(
             "value",
             0.0,
         )
+    if row == "trellis_role_labelfree_learned":
+        return (
+            "trellis_role_kv_labelfree",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "scalar",
+            0.80,
+            "value",
+            0.0,
+        )
     if row == "gdn_ref":
         return (
             "gated_delta_ref",
@@ -894,14 +915,33 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
             self.use_separate_kv = kind in (
                 "trellis_role_kv_learned",
                 "trellis_role_kv_oracle",
+                "trellis_role_kv_labelfree",
             )
             self.use_oracle_address = kind == "trellis_role_kv_oracle"
+            # Label-free row: the model gets NO oracle role/key channel. It must
+            # infer write/read gating from its own hidden state (role_head) and
+            # address by content (learned key/query projections). This is the
+            # decisive kill test -- the oracle rows only prove the associative
+            # memory works when an oracle routes it.
+            self.use_labelfree = kind == "trellis_role_kv_labelfree"
+            # Set to "zero" at eval to null the binding residual: a causally-used
+            # memory must lose its accuracy under ablation; a shortcut will not.
+            self.binding_ablate = "none"
+            self.last_gate_diag: dict[str, Any] | None = None
             if self.use_separate_kv:
                 self.addr_dim = cfg.n_slots
                 self.key_proj = nn.Linear(cfg.d_model, self.addr_dim, bias=False)
                 self.query_proj = nn.Linear(cfg.d_model, self.addr_dim, bias=False)
                 self.value_proj = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
                 self.binding_out = nn.Linear(cfg.d_model, cfg.d_model, bias=False)
+                # Learned role head for the label-free row: 3 logits per token
+                # over {write-value, read-query, none}. Unused by oracle rows.
+                self.role_head = (
+                    nn.Linear(cfg.d_model, 3) if self.use_labelfree else None
+                )
+                if self.role_head is not None:
+                    nn.init.normal_(self.role_head.weight, std=0.02)
+                    nn.init.zeros_(self.role_head.bias)
                 for module in (
                     self.key_proj,
                     self.query_proj,
@@ -932,6 +972,7 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                 self.query_proj = None
                 self.value_proj = None
                 self.binding_out = None
+                self.role_head = None
                 self.binding_residual_raw = None
                 self.binding_eta_raw = None
                 self.register_buffer("oracle_address", torch.empty(0))
@@ -973,6 +1014,9 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                 raise RuntimeError("role-oracle binding row requires BatchMeta roles")
             if self.value_proj is None or self.binding_out is None:  # pragma: no cover
                 raise RuntimeError("separate-KV row missing projections")
+            if self.binding_ablate == "zero":
+                self.last_binding_diag = {"ablate": "zero"}
+                return h.new_zeros(*h.shape)
             roles = meta.roles
             key_ids = meta.key_ids
             B, T, D = h.shape
@@ -1017,9 +1061,9 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                             continue
                         value = self.value_proj(h[bi, pos_t])
                         read_prev = current_addr @ memory
-                        delta = eta * current_addr[:, None] * (value - read_prev)[
-                            None, :
-                        ]
+                        delta = (
+                            eta * current_addr[:, None] * (value - read_prev)[None, :]
+                        )
                         memory = memory + delta
                         value_by_key[key_id] = value
                         update_norm.append(float(delta.detach().float().norm().item()))
@@ -1097,6 +1141,84 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
             }
             return residual
 
+        def _binding_residual_labelfree(
+            self, h: torch.Tensor, meta: BatchMeta
+        ) -> torch.Tensor:
+            """Self-routed separate-KV stream (no oracle roles/keys).
+
+            Same delta-rule associative memory as the oracle path, but the
+            write/read gating comes from a learned role head on the hidden
+            state and the address comes from content projections. Vectorized
+            as a batched scan over T (memory kept per-sequence), which is also
+            the fast path the oracle rows would use at V2 scale. The gradient
+            path uses only h; the roles in `meta` are read at eval solely to
+            score whether the learned router fired in the right places.
+            """
+            B, T, D = h.shape
+            if self.binding_ablate == "zero":
+                self.last_gate_diag = {"ablate": "zero"}
+                return h.new_zeros(B, T, D)
+            scale = float(args.binding_residual_max) * torch.sigmoid(
+                self.binding_residual_raw
+            ).to(h.dtype)
+            eta = F.softplus(self.binding_eta_raw).to(h.dtype)
+            write_addr = F.normalize(self.key_proj(h), dim=-1)  # [B,T,A]
+            read_addr = F.normalize(self.query_proj(h), dim=-1)  # [B,T,A]
+            values = self.value_proj(h)  # [B,T,D]
+            gates = torch.softmax(self.role_head(h).float(), dim=-1).to(h.dtype)
+            p_write = gates[..., 0]  # [B,T]
+            p_read = gates[..., 1]  # [B,T]
+            memory = h.new_zeros(B, self.addr_dim, D)
+            reads = h.new_zeros(B, T, D)
+            for t in range(T):
+                a_w = write_addr[:, t]  # [B,A]
+                read_prev = torch.einsum("ba,bad->bd", a_w, memory)  # [B,D]
+                innovation = values[:, t] - read_prev  # [B,D]
+                delta = (
+                    eta
+                    * p_write[:, t, None, None]
+                    * a_w[:, :, None]
+                    * innovation[:, None, :]
+                )  # [B,A,D]
+                memory = memory + delta
+                reads[:, t] = torch.einsum("ba,bad->bd", read_addr[:, t], memory)
+            residual = scale * p_read[..., None] * self.binding_out(reads)
+            if not self.training and meta.roles is not None:
+                with torch.no_grad():
+                    pred = gates.argmax(-1)  # 0=write, 1=read, 2=none
+                    roles = meta.roles
+                    is_wtrue = roles == ROLE_SET_VALUE
+                    is_rtrue = roles == ROLE_QUERY_KEY
+
+                    def prf(is_true, cls):
+                        pred_pos = pred == cls
+                        tp = int((pred_pos & is_true).sum().item())
+                        fp = int((pred_pos & (~is_true)).sum().item())
+                        fn = int(((~pred_pos) & is_true).sum().item())
+                        return {
+                            "precision": tp / max(1, tp + fp),
+                            "recall": tp / max(1, tp + fn),
+                            "support": int(is_true.sum().item()),
+                        }
+
+                    self.last_gate_diag = {
+                        "write_gate": prf(is_wtrue, 0),
+                        "read_gate": prf(is_rtrue, 1),
+                        "p_write_at_true_write": (
+                            float(p_write[is_wtrue].float().mean().item())
+                            if bool(is_wtrue.any())
+                            else None
+                        ),
+                        "p_read_at_true_read": (
+                            float(p_read[is_rtrue].float().mean().item())
+                            if bool(is_rtrue.any())
+                            else None
+                        ),
+                        "residual_scale": float(scale.detach().float().item()),
+                        "eta": float(eta.detach().float().item()),
+                    }
+            return residual
+
         def forward(
             self,
             idx,
@@ -1108,10 +1230,16 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
                 training = self.training
             if batch_meta is None or batch_meta.roles is None:
                 raise RuntimeError("role-oracle binding row requires BatchMeta")
-            x = self.base.wte(idx) + self.role_emb(batch_meta.roles)
+            # Label-free row must NOT see the oracle role embedding.
+            if self.use_labelfree:
+                x = self.base.wte(idx)
+            else:
+                x = self.base.wte(idx) + self.role_emb(batch_meta.roles)
             for blk in self.base.blocks:
                 x = blk(x, training=training)
-            if self.use_separate_kv:
+            if self.use_labelfree:
+                x = x + self._binding_residual_labelfree(x, batch_meta)
+            elif self.use_separate_kv:
                 x = x + self._binding_residual(x, batch_meta)
             else:
                 role_counts = {
@@ -1138,13 +1266,17 @@ def build_role_oracle_probe_model(cfg, kind: str, args: argparse.Namespace):
     return RoleOracleBindingProbeLM()
 
 
-def forward_model(model, idx, labels=None, training=None, meta: BatchMeta | None = None):
+def forward_model(
+    model, idx, labels=None, training=None, meta: BatchMeta | None = None
+):
     if getattr(model, "requires_binding_meta", False):
         return model(idx, labels=labels, training=training, batch_meta=meta)
     return model(idx, labels=labels, training=training)
 
 
-def accuracy_metrics(preds: list[int], meta: BatchMeta, args: argparse.Namespace) -> dict[str, int]:
+def accuracy_metrics(
+    preds: list[int], meta: BatchMeta, args: argparse.Namespace
+) -> dict[str, int]:
     correct = stale = other = non_value = 0
     value_lo = args.n_keys
     value_hi = args.n_keys + args.n_vals
@@ -1228,7 +1360,9 @@ def update_first_learning_steps(
             first_steps[key] = step
 
 
-def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> dict[str, Any]:
+def train_row(
+    row: str, args: argparse.Namespace, cells: list[Cell], device
+) -> dict[str, Any]:
     import torch
     from trellis_lm.model import build_model
 
@@ -1404,6 +1538,26 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
                 flush=True,
             )
     metrics = eval_row(model, row, args, cells, device)
+    # Causal memory-ablation: for a separate-KV binding row, re-run eval with the
+    # binding residual nulled. A genuinely-used associative memory must lose its
+    # accuracy; a shortcut path will keep it. The gap is the causal-use signal.
+    if getattr(model, "use_separate_kv", False):
+        gate_diag = getattr(model, "last_gate_diag", None)
+        prev_ablate = getattr(model, "binding_ablate", "none")
+        model.binding_ablate = "zero"
+        try:
+            ablated = eval_row(model, row, args, cells, device)
+        finally:
+            model.binding_ablate = prev_ablate
+        acc_full = metrics["eval"]["latest_value_accuracy"]
+        acc_ablated = ablated["eval"]["latest_value_accuracy"]
+        metrics["causal_ablation"] = {
+            "acc_full": acc_full,
+            "acc_ablated": acc_ablated,
+            "causal_delta": acc_full - acc_ablated,
+        }
+        if gate_diag is not None:
+            metrics["labelfree_gate_diag"] = gate_diag
     correction_scales = []
     for module in model.modules():
         raw = getattr(module, "value_alpha_correction_raw", None)
@@ -1468,15 +1622,17 @@ def train_row(row: str, args: argparse.Namespace, cells: list[Cell], device) -> 
             "last_binding_diag",
             None,
         )
-    metrics.update({
-        **row_meta,
-        "status": "ok",
-        "params": model.get_num_params(),
-        "memory_state_bytes_per_seq": model.memory_state_bytes(1),
-        "train_tokens": ntok,
-        "first_learning_steps": first_learning_steps,
-        "history": hist,
-    })
+    metrics.update(
+        {
+            **row_meta,
+            "status": "ok",
+            "params": model.get_num_params(),
+            "memory_state_bytes_per_seq": model.memory_state_bytes(1),
+            "train_tokens": ntok,
+            "first_learning_steps": first_learning_steps,
+            "history": hist,
+        }
+    )
     return metrics
 
 
@@ -1520,16 +1676,18 @@ def eval_row(model, row: str, args: argparse.Namespace, cells: list[Cell], devic
                 add_counts(by_overwrite[ow], counts)
                 distance_sum += sum(meta.latest_distance)
             item = finalize_counts(cell_counts)
-            item.update({
-                "seq_len": cell.seq_len,
-                "n_unique": cell.n_unique,
-                "overwrites": cell.overwrites,
-                "latest_gap_target": cell.latest_gap,
-                "slot_pressure": cell.n_unique / max(1, args.n_slots),
-                "latest_distance_mean": (
-                    distance_sum / max(1, cell_counts.get("total", 0))
-                ),
-            })
+            item.update(
+                {
+                    "seq_len": cell.seq_len,
+                    "n_unique": cell.n_unique,
+                    "overwrites": cell.overwrites,
+                    "latest_gap_target": cell.latest_gap,
+                    "slot_pressure": cell.n_unique / max(1, args.n_slots),
+                    "latest_distance_mean": (
+                        distance_sum / max(1, cell_counts.get("total", 0))
+                    ),
+                }
+            )
             by_cell.append(item)
     return {
         "eval": finalize_counts(total_counts),
@@ -1589,7 +1747,9 @@ def main() -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
     if not cells:
-        raise SystemExit("no viable cells; lower unique keys/overwrites or raise context")
+        raise SystemExit(
+            "no viable cells; lower unique keys/overwrites or raise context"
+        )
 
     import torch
 
@@ -1611,11 +1771,18 @@ def main() -> int:
                 flush=True,
             )
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps({
-            "args": json_args(args),
-            "cells": [cell.__dict__ for cell in cells],
-            "results": results,
-        }, indent=2, sort_keys=True) + "\n")
+        args.out.write_text(
+            json.dumps(
+                {
+                    "args": json_args(args),
+                    "cells": [cell.__dict__ for cell in cells],
+                    "results": results,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
     print(f"wrote {args.out}", flush=True)
     return 0
 
