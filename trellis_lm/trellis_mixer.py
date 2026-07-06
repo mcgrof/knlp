@@ -94,6 +94,14 @@ class TrellisMixer(nn.Module):
         else:
             self.update_gate_proj = None
         self.reset_update_gate_bias()
+        # input-conditioned write gate a(x_t) in R^{H*M}: per-slot gain from the
+        # token input, used only when trellis_write_mode == "input_conditioned".
+        # Bias init makes a≡1 at start (exact gated delta rule) via the chosen
+        # gate activation; weights zeroed so the recurrence starts linear.
+        self.write_gate_proj = None
+        if cfg.trellis_write_mode == "input_conditioned":
+            self.write_gate_proj = nn.Linear(d, H * M, bias=True)
+            self.reset_write_gate_bias()
         # gamma positive per head via softplus(raw); init so softplus(raw)=gamma_init
         raw0 = math.log(math.expm1(cfg.gamma_init))
         self.gamma_raw = nn.Parameter(torch.full((H,), raw0))
@@ -240,9 +248,7 @@ class TrellisMixer(nn.Module):
         high_tau0 = self._beta_to_tau(0.98)
         high_tau1 = self._beta_to_tau(0.999)
         low_tau = math.exp(math.log(low_tau0) * (1.0 - s) + math.log(low_tau1) * s)
-        high_tau = math.exp(
-            math.log(high_tau0) * (1.0 - s) + math.log(high_tau1) * s
-        )
+        high_tau = math.exp(math.log(high_tau0) * (1.0 - s) + math.log(high_tau1) * s)
         low_beta = 1.0 - 1.0 / low_tau
         high_beta = 1.0 - 1.0 / high_tau
         return self._logspace_betas(low_beta, high_beta, count)
@@ -352,6 +358,35 @@ class TrellisMixer(nn.Module):
             b0 = math.log(p / (1.0 - p))
             self.update_gate_proj.weight.zero_()
             self.update_gate_proj.bias.fill_(b0)
+
+    def reset_write_gate_bias(self):
+        """Init the input-conditioned write gate so a(x_t) ≡ 1 at start, which
+        makes u_t = 1⊙z − alpha = M@w − alpha — the exact (gated) delta rule.
+        Weights zeroed; bias solves act(bias)=1 for the chosen gate activation."""
+        if self.write_gate_proj is None:
+            return
+        act = self.cfg.trellis_input_gate_act
+        if act == "softplus":
+            b0 = math.log(math.expm1(1.0))  # softplus(b0) = 1
+        elif act == "sigmoid":
+            b0 = 0.0  # sigmoid(0) = 0.5; readout scaled x2 below -> a≈1
+        else:  # identity
+            b0 = 1.0
+        with torch.no_grad():
+            self.write_gate_proj.weight.zero_()
+            self.write_gate_proj.bias.fill_(b0)
+
+    def _write_gate(self, h_float: torch.Tensor) -> torch.Tensor | None:
+        """Per-slot input-conditioned gate a(x_t) in [B,H,T,M], fp32."""
+        if self.write_gate_proj is None:
+            return None
+        logits = self._heads(self.write_gate_proj(h_float), self.M)  # [B,H,T,M]
+        act = self.cfg.trellis_input_gate_act
+        if act == "softplus":
+            return F.softplus(logits)
+        if act == "sigmoid":
+            return 2.0 * torch.sigmoid(logits)  # range (0,2), init a≈1
+        return logits  # identity
 
     def reset_value_read_query_gate_bias(self):
         if self.value_read_query_gate_proj is None:
@@ -530,9 +565,8 @@ class TrellisMixer(nn.Module):
                 target = target.detach()
             if self.value_alpha_correction_raw is None:  # pragma: no cover
                 raise RuntimeError("value alpha correction mode missing scale")
-            scale = (
-                float(cfg.trellis_value_alpha_correction_max)
-                * torch.sigmoid(self.value_alpha_correction_raw.float())
+            scale = float(cfg.trellis_value_alpha_correction_max) * torch.sigmoid(
+                self.value_alpha_correction_raw.float()
             )
             scale = scale.to(device=shared_alpha.device, dtype=shared_alpha.dtype)
             scale = scale.view(1, self.H, 1, 1) * mix
@@ -567,12 +601,9 @@ class TrellisMixer(nn.Module):
         if self.value_read_query_gate_proj is None:  # pragma: no cover
             raise RuntimeError("value read query gate mode missing projection")
         B, T, _ = h_float.shape
-        gate = (
-            torch.sigmoid(self.value_read_query_gate_proj(h_float))
-            .view(B, T, self.H, 1)
-            .permute(0, 2, 1, 3)
-            * float(cfg.trellis_value_read_query_gate_max)
-        )
+        gate = torch.sigmoid(self.value_read_query_gate_proj(h_float)).view(
+            B, T, self.H, 1
+        ).permute(0, 2, 1, 3) * float(cfg.trellis_value_read_query_gate_max)
         gate = gate.to(device=key_readout.device, dtype=key_readout.dtype)
         target = shared_alpha
         if cfg.trellis_value_read_query_mode.endswith("_detached"):
@@ -622,13 +653,17 @@ class TrellisMixer(nn.Module):
             key_update_gate = self._gate_for_memory(update_gate, "key")
             value_update_gate = self._gate_for_memory(update_gate, "value")
             local_key_address = self._value_address(hf)
+            write_gate = self._write_gate(hf)  # [B,H,T,M] or None
 
         # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
         # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
         # inputs are fine -- the head-on test showed bf16 PPL ~ fp32). Output
         # rejoins any outer autocast at out_proj. Chunked stale path when
         # chunk_size>1 and beta is per-head.
-        use_chunk = cfg.chunk_size > 1 and beta.shape[-1] == 1
+        # input-conditioned write runs only on the exact sequential path (the
+        # affine-in-M update is exact-chunkable in principle, but the chunk/triton
+        # kernels here compute the nonlinear-phi VJP, so route around them).
+        use_chunk = cfg.chunk_size > 1 and beta.shape[-1] == 1 and write_gate is None
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
         if BF16_INPUTS:
@@ -712,9 +747,7 @@ class TrellisMixer(nn.Module):
                         update_gate=gate_in,
                         residual_update_mix=cfg.residual_update_mix,
                         trellis_update_stabilizer=cfg.trellis_update_stabilizer,
-                        trellis_innovation_rms_cap=(
-                            cfg.trellis_innovation_rms_cap
-                        ),
+                        trellis_innovation_rms_cap=(cfg.trellis_innovation_rms_cap),
                         trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
                         trellis_state_rms_floor=cfg.trellis_state_rms_floor,
                         trellis_stabilizer_detach_scale=(
@@ -929,6 +962,7 @@ class TrellisMixer(nn.Module):
                     trellis_stabilizer_detach_scale=(
                         cfg.trellis_stabilizer_detach_scale
                     ),
+                    input_gate=write_gate,
                 )
                 r = self.f(yhat)  # [B,H,T,M]
                 value_alpha = self._value_alpha(af, r, local_key_address)
@@ -969,6 +1003,7 @@ class TrellisMixer(nn.Module):
                     trellis_stabilizer_detach_scale=(
                         cfg.trellis_stabilizer_detach_scale
                     ),
+                    input_gate=write_gate,
                 )
 
         # final phi on the value-pass readout (paper: y = phi(M^T r)). Applied
