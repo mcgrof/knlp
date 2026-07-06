@@ -47,6 +47,12 @@ Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
   not its self-report.
 - **STYLE**: terse prose paragraphs explaining the change, rationale, and
   technical details. No shopping-list bullet dumps.
+- **Attribution and collaboration records**: keep the commit message an
+  imperative technical statement about the change. A model is named only
+  in the `Generated-by` and MACP (`AI-*`/`MCP-*`/`Collab-*`) trailers —
+  that is the sole place attribution belongs. Extended collaboration,
+  review, or plan-grading material is kept in `/data/knlp-key-results`,
+  not in the knlp commit log.
 
 **Enforcement.** knlp ships an MACP-lite `commit-msg` validator at
 `scripts/commit-msg-hook` (the lighter profile of the agents protocol: it
