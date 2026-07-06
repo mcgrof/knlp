@@ -83,6 +83,7 @@ class TrellisLM(_LMBase):
                 m.reset_beta_bias()
                 m.reset_update_gate_bias()
                 m.reset_value_read_query_gate_bias()
+                m.reset_write_lowrank()
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):

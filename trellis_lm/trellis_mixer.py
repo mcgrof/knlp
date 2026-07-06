@@ -99,10 +99,20 @@ class TrellisMixer(nn.Module):
         # Bias init makes a≡1 at start (exact gated delta rule) via the chosen
         # gate activation; weights zeroed so the recurrence starts linear.
         self.write_gate_proj = None
+        # optional slot-mixing part: G(x) = diag(a(x)) + U(x) V(x)^T. write_
+        # lowrank_proj emits the U and V factors ([M x r] each per head/token);
+        # rank=0 leaves it None so the diagonal path is bit-identical.
+        self.write_lowrank_proj = None
+        self.write_gate_rank = int(cfg.trellis_input_gate_rank)
         if cfg.trellis_write_mode == "input_conditioned":
             gate_out = H if cfg.trellis_input_gate_scope == "scalar" else H * M
             self.write_gate_proj = nn.Linear(d, gate_out, bias=True)
             self.reset_write_gate_bias()
+            if self.write_gate_rank > 0:
+                self.write_lowrank_proj = nn.Linear(
+                    d, H * M * self.write_gate_rank * 2, bias=False
+                )
+                self.reset_write_lowrank()
         # gamma positive per head via softplus(raw); init so softplus(raw)=gamma_init
         raw0 = math.log(math.expm1(cfg.gamma_init))
         self.gamma_raw = nn.Parameter(torch.full((H,), raw0))
@@ -397,6 +407,33 @@ class TrellisMixer(nn.Module):
             gate = gate.expand(-1, -1, -1, self.M)  # broadcast to all slots
         return gate
 
+    def reset_write_lowrank(self):
+        """Init the slot-mixing low-rank gain so U V^T = 0 at start: the write
+        begins as the pure diagonal gate diag(a(x)) and learns the mixing. U is
+        zeroed and V is small-random so the pair bootstraps off zero (if both
+        were zero neither would get gradient). Must be called AFTER the model
+        _init_weights, which otherwise reinitializes the projection."""
+        if self.write_lowrank_proj is None:
+            return
+        with torch.no_grad():
+            H, M, r = self.H, self.M, self.write_gate_rank
+            w = self.write_lowrank_proj.weight  # [H*M*r*2, d]
+            w.zero_()
+            # rows [H*M*r : 2*H*M*r] are the V factor -> small random
+            v_rows = w[H * M * r :, :]
+            v_rows.normal_(0.0, 0.02)
+
+    def _write_lowrank(self, h_float: torch.Tensor):
+        """Token-conditioned low-rank factors U(x), V(x) in [B,H,T,M,r] for the
+        slot-mixing gain, or None when rank==0."""
+        if self.write_lowrank_proj is None:
+            return None
+        B, T, _ = h_float.shape
+        H, M, r = self.H, self.M, self.write_gate_rank
+        uv = self.write_lowrank_proj(h_float)  # [B,T,H*M*r*2]
+        uv = uv.view(B, T, 2, H, M, r).permute(2, 0, 3, 1, 4, 5)  # [2,B,H,T,M,r]
+        return uv[0].contiguous(), uv[1].contiguous()
+
     def reset_value_read_query_gate_bias(self):
         if self.value_read_query_gate_proj is None:
             return
@@ -663,6 +700,7 @@ class TrellisMixer(nn.Module):
             value_update_gate = self._gate_for_memory(update_gate, "value")
             local_key_address = self._value_address(hf)
             write_gate = self._write_gate(hf)  # [B,H,T,M] or None
+            write_lowrank = self._write_lowrank(hf)  # (U,V) [B,H,T,M,r] or None
 
         # key pass -> yhat; value pass -> y. The Trellis memory runs in fp32 (the
         # chunk recurrence state, LN-SiLU reductions and decay are fp32; bf16
@@ -960,6 +998,11 @@ class TrellisMixer(nn.Module):
                     # input-conditioned: exact affine chunk kernel when
                     # chunk_size>1 (matmul throughput), else exact sequential.
                     if ic_chunk:
+                        if write_lowrank is not None:
+                            raise NotImplementedError(
+                                "rank>0 slot-mixing gate has no chunk kernel "
+                                "yet; run sequential (chunk_size=1)."
+                            )
                         return run_trellis_memory_chunked(
                             write_in,
                             read_in,
@@ -992,6 +1035,7 @@ class TrellisMixer(nn.Module):
                             cfg.trellis_stabilizer_detach_scale
                         ),
                         input_gate=write_gate,
+                        input_gate_lowrank=write_lowrank,
                     )
 
                 yhat = _ic_or_seq(kf, qf, af, "M_q", key_update_gate)
