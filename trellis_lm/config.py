@@ -45,6 +45,12 @@ class TrellisConfig:
     # activation for the input-conditioned per-slot gate a(x_t). "softplus" with
     # a bias init of log(e-1) starts a≡1 (exact delta rule) then learns.
     trellis_input_gate_act: str = "softplus"
+    # scope of the input-conditioned gate. "per_slot": a(x_t) in R^M, one gain
+    # per memory slot -- more expressive, needs n per-slot chunk solves.
+    # "scalar": a(x_t) in R, one gain per token/head broadcast to all slots --
+    # cheaper (the n slot-solves collapse to one shared solve, GDN-cost) and the
+    # ablation for whether per-slot expressivity is actually needed to bind.
+    trellis_input_gate_scope: str = "per_slot"
     # alpha: the learned write target / code
     alpha_mode: str = "linear"  # ["linear","softmax","ln_silu","l2_silu"]
     # beta: forget gate granularity
@@ -151,6 +157,10 @@ class TrellisConfig:
             "sigmoid",
             "identity",
         ), self.trellis_input_gate_act
+        assert self.trellis_input_gate_scope in (
+            "per_slot",
+            "scalar",
+        ), self.trellis_input_gate_scope
         assert self.trellis_retention_mode in (
             "token_proj",
             "fixed_beta",
