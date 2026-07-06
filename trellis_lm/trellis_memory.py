@@ -555,6 +555,7 @@ def run_trellis_memory_chunked(
     trellis_delta_ratio_cap: float = 0.0,
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
+    input_gate: Optional[torch.Tensor] = None,  # [B,H,T,M] per-slot gate a(x_t)
 ):
     """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
@@ -652,6 +653,66 @@ def run_trellis_memory_chunked(
         # inner code: stale from M0, then refine to z_t = M_{t-1} @ w_t using
         # the in-chunk segmented-product reconstruction of M_{t-1}.
         M0W = torch.einsum("bhmd,bhcd->bhcm", Mstate, W)  # M0 @ w_t  (= stale z)
+        if input_gate is not None:
+            # Input-conditioned affine write: u_t = a(x_t) ⊙ z_t − alpha_t, with
+            # z_t = M_{t-1} @ w_t reconstructed EXACTLY inside the chunk. Because
+            # u_t is affine in z_t (a from the token input, not the state code),
+            # one FORWARD-substitution pass over the chunk is exact -- no Jacobi
+            # iteration and no VJP graph. z_t uses the same segmented-product
+            # reconstruction as the refine path: z_t = P_{t-1}(M0@w_t − gamma
+            # sum_{s<t} (w_t·w_s)(u_s/P_s)). This reproduces the sequential
+            # recurrence; the readout/advance below are already exact given u.
+            Pprev = P / (b + 1e-12)  # P_{t-1}  [B,H,C,1]
+            WW = torch.einsum("bhtd,bhsd->bhts", W, W)  # w_t . w_s  [B,H,C,C]
+            strict = torch.tril(torch.ones(C, C, device=dev, dtype=dt), diagonal=-1)
+            a_g = input_gate[:, :, c0:c1, :]  # [B,H,C,M]
+            gval = g.reshape(1, H, 1, 1, 1)  # per-head gamma
+            # The chunk innovation solves (I + Λ_m) u_m = rhs_m per slot m, a
+            # strictly-lower-triangular (nilpotent) system. Λ_m and rhs_m differ
+            # per slot only through the per-slot gate a_{t,m}; the coupling
+            # coef[t,s] = (P_{t-1}/P_s)(w_t·w_s) is shared. Solve all slots at
+            # once with a batched unit-lower-triangular solve -- this replaces the
+            # length-C token loop with one matmul-class kernel, leaving only the
+            # T/C chunk loop sequential (the DeltaNet chunk structure).
+            lp = logP.squeeze(-1)  # log P_t  [B,H,C]
+            lpprev = lp - torch.log(b.clamp_min(1e-9)).squeeze(-1)  # log P_{t-1}
+            ratio = torch.exp((lpprev[..., :, None] - lp[..., None, :]).clamp_max(0.0))
+            coef = ratio * WW * strict.view(1, 1, C, C)  # (P_{t-1}/P_s) w_t·w_s
+            # Λ[b,h,m,t,s] = γ a_{t,m} coef[t,s]      (strict lower, per slot)
+            Lam = gval * a_g.permute(0, 1, 3, 2).unsqueeze(-1) * coef.unsqueeze(2)
+            eye = torch.eye(C, device=dev, dtype=dt).view(1, 1, 1, C, C)
+            Lmat = eye + Lam  # [B,H,M,C,C] unit-lower-triangular
+            rhs = a_g.permute(0, 1, 3, 2) * Pprev.squeeze(-1).unsqueeze(
+                2
+            ) * M0W.permute(0, 1, 3, 2) - A.permute(
+                0, 1, 3, 2
+            )  # [B,H,M,C]
+            u = torch.linalg.solve_triangular(
+                Lmat, rhs.unsqueeze(-1), upper=False, unitriangular=True
+            ).squeeze(
+                -1
+            )  # [B,H,M,C]
+            u = u.permute(0, 1, 3, 2)  # [B,H,C,M]
+            if G is not None:
+                u = u * G
+            if read_mode == "M_q":
+                M0q = torch.einsum("bhmd,bhcd->bhcm", Mstate, R)
+                S = torch.einsum("bhtd,bhsd->bhts", R, W) * rmat
+                term2 = torch.einsum("bhts,bhsm->bhtm", S, u)
+                y = P * M0q - g * term2
+            elif read_mode == "M_T_r":
+                first = P * torch.einsum("bhcm,bhmd->bhcd", R, Mstate)
+                Gr = torch.einsum("bhtm,bhsm->bhts", R, u) * rmat
+                term2 = torch.einsum("bhts,bhsd->bhtd", Gr, W)
+                y = first - g * term2
+            else:
+                raise ValueError(read_mode)
+            outs.append(y)
+            Plast = P[:, :, -1:, :]
+            rC = rmat[:, :, -1, :].unsqueeze(-1)
+            upd = torch.einsum("bhcm,bhcd->bhmd", u * rC, W)
+            Mstate = Plast * Mstate - g * upd
+            continue
         u = _vjp(M0W, A)
         if residual_update_mix:
             u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
