@@ -398,9 +398,10 @@ def row_spec(
             "both",
             0.0,
         )
-    if row == "trellis_input_cond":
+    if row in ("trellis_input_cond", "trellis_input_cond_scalar"):
         # Input-conditioned write (affine-in-M, exact-chunkable). Same shell as
-        # trellis_none; make_cfg flips trellis_write_mode via the row name.
+        # trellis_none; make_cfg flips trellis_write_mode via the row name. The
+        # _scalar variant uses a per-token scalar gate (broadcast to all slots).
         return (
             "trellis",
             "none",
@@ -1568,9 +1569,12 @@ def train_row(
         update_gate_context_mode,
         update_gate_floor,
     )
-    if row_base == "trellis_input_cond":
+    if row_base in ("trellis_input_cond", "trellis_input_cond_scalar"):
         cfg.trellis_write_mode = "input_conditioned"
         cfg.trellis_input_gate_act = getattr(args, "input_gate_act", "softplus")
+        cfg.trellis_input_gate_scope = (
+            "scalar" if row_base == "trellis_input_cond_scalar" else "per_slot"
+        )
         # Delta-rule stabilizers: L2-normalize the write vector (bounds
         # gamma*||w||^2, the DeltaNet contraction) so the affine-in-M recurrence
         # cannot exceed its spectral bound. Without it the input-conditioned

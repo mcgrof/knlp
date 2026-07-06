@@ -100,7 +100,8 @@ class TrellisMixer(nn.Module):
         # gate activation; weights zeroed so the recurrence starts linear.
         self.write_gate_proj = None
         if cfg.trellis_write_mode == "input_conditioned":
-            self.write_gate_proj = nn.Linear(d, H * M, bias=True)
+            gate_out = H if cfg.trellis_input_gate_scope == "scalar" else H * M
+            self.write_gate_proj = nn.Linear(d, gate_out, bias=True)
             self.reset_write_gate_bias()
         # gamma positive per head via softplus(raw); init so softplus(raw)=gamma_init
         raw0 = math.log(math.expm1(cfg.gamma_init))
@@ -377,16 +378,24 @@ class TrellisMixer(nn.Module):
             self.write_gate_proj.bias.fill_(b0)
 
     def _write_gate(self, h_float: torch.Tensor) -> torch.Tensor | None:
-        """Per-slot input-conditioned gate a(x_t) in [B,H,T,M], fp32."""
+        """Input-conditioned gate a(x_t) in [B,H,T,M], fp32. "scalar" scope
+        projects one gain per head/token and broadcasts to all M slots."""
         if self.write_gate_proj is None:
             return None
-        logits = self._heads(self.write_gate_proj(h_float), self.M)  # [B,H,T,M]
+        if self.cfg.trellis_input_gate_scope == "scalar":
+            logits = self._heads(self.write_gate_proj(h_float), 1)  # [B,H,T,1]
+        else:
+            logits = self._heads(self.write_gate_proj(h_float), self.M)  # [B,H,T,M]
         act = self.cfg.trellis_input_gate_act
         if act == "softplus":
-            return F.softplus(logits)
-        if act == "sigmoid":
-            return 2.0 * torch.sigmoid(logits)  # range (0,2), init a≈1
-        return logits  # identity
+            gate = F.softplus(logits)
+        elif act == "sigmoid":
+            gate = 2.0 * torch.sigmoid(logits)  # range (0,2), init a≈1
+        else:
+            gate = logits  # identity
+        if self.cfg.trellis_input_gate_scope == "scalar":
+            gate = gate.expand(-1, -1, -1, self.M)  # broadcast to all slots
+        return gate
 
     def reset_value_read_query_gate_bias(self):
         if self.value_read_query_gate_proj is None:
