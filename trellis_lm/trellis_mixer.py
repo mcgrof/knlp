@@ -660,10 +660,13 @@ class TrellisMixer(nn.Module):
         # inputs are fine -- the head-on test showed bf16 PPL ~ fp32). Output
         # rejoins any outer autocast at out_proj. Chunked stale path when
         # chunk_size>1 and beta is per-head.
-        # input-conditioned write runs only on the exact sequential path (the
-        # affine-in-M update is exact-chunkable in principle, but the chunk/triton
-        # kernels here compute the nonlinear-phi VJP, so route around them).
+        # The fused state-evolution / triton path computes the nonlinear-phi VJP,
+        # so the input-conditioned write routes around it. It has its own EXACT
+        # chunk kernel (run_trellis_memory_chunked with input_gate, affine
+        # forward-substitution): use it when chunk_size>1 and beta is per-head,
+        # else the exact sequential path.
         use_chunk = cfg.chunk_size > 1 and beta.shape[-1] == 1 and write_gate is None
+        ic_chunk = write_gate is not None and cfg.chunk_size > 1 and beta.shape[-1] == 1
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
         if BF16_INPUTS:
@@ -943,27 +946,46 @@ class TrellisMixer(nn.Module):
                     backend="pytorch_sequential",
                 )
                 ex = cfg.exact_inner
-                yhat = run_trellis_memory(
-                    kf,
-                    qf,
-                    af,
-                    bf,
-                    gf,
-                    self.phi,
-                    "M_q",
-                    training,
-                    exact_inner=ex,
-                    update_gate=key_update_gate,
-                    residual_update_mix=cfg.residual_update_mix,
-                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
-                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
-                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
-                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
-                    trellis_stabilizer_detach_scale=(
-                        cfg.trellis_stabilizer_detach_scale
-                    ),
-                    input_gate=write_gate,
-                )
+
+                def _ic_or_seq(write_in, read_in, alpha_in, read_mode, ugate):
+                    # input-conditioned: exact affine chunk kernel when
+                    # chunk_size>1 (matmul throughput), else exact sequential.
+                    if ic_chunk:
+                        return run_trellis_memory_chunked(
+                            write_in,
+                            read_in,
+                            alpha_in,
+                            bf,
+                            gf,
+                            self.phi,
+                            read_mode,
+                            cfg.chunk_size,
+                            update_gate=ugate,
+                            input_gate=write_gate,
+                        )
+                    return run_trellis_memory(
+                        write_in,
+                        read_in,
+                        alpha_in,
+                        bf,
+                        gf,
+                        self.phi,
+                        read_mode,
+                        training,
+                        exact_inner=ex,
+                        update_gate=ugate,
+                        residual_update_mix=cfg.residual_update_mix,
+                        trellis_update_stabilizer=cfg.trellis_update_stabilizer,
+                        trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
+                        trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
+                        trellis_state_rms_floor=cfg.trellis_state_rms_floor,
+                        trellis_stabilizer_detach_scale=(
+                            cfg.trellis_stabilizer_detach_scale
+                        ),
+                        input_gate=write_gate,
+                    )
+
+                yhat = _ic_or_seq(kf, qf, af, "M_q", key_update_gate)
                 r = self.f(yhat)  # [B,H,T,M]
                 value_alpha = self._value_alpha(af, r, local_key_address)
                 value_read_query, value_read_query_gate = self._value_read_query(
@@ -984,26 +1006,8 @@ class TrellisMixer(nn.Module):
                     value_read_query
                 )
                 self._set_forward_diag(forward_diag)
-                y = run_trellis_memory(
-                    vf,
-                    value_read_query,
-                    value_alpha,
-                    bf,
-                    gf,
-                    self.phi,
-                    "M_T_r",
-                    training,
-                    exact_inner=ex,
-                    update_gate=value_update_gate,
-                    residual_update_mix=cfg.residual_update_mix,
-                    trellis_update_stabilizer=cfg.trellis_update_stabilizer,
-                    trellis_innovation_rms_cap=cfg.trellis_innovation_rms_cap,
-                    trellis_delta_ratio_cap=cfg.trellis_delta_ratio_cap,
-                    trellis_state_rms_floor=cfg.trellis_state_rms_floor,
-                    trellis_stabilizer_detach_scale=(
-                        cfg.trellis_stabilizer_detach_scale
-                    ),
-                    input_gate=write_gate,
+                y = _ic_or_seq(
+                    vf, value_read_query, value_alpha, "M_T_r", value_update_gate
                 )
 
         # final phi on the value-pass readout (paper: y = phi(M^T r)). Applied
