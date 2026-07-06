@@ -245,3 +245,12 @@ gnn_ssd_store/
 
 # Code Reasoning R&D generated artifacts (config.json, manifests, runs)
 build/code_reason/
+
+# Build / venv / cache junk — per-checkout artifacts, never shared
+.venv/
+.venv_temp/
+build/
+checkpoints/
+.pytest_cache/
+**/.pytest_cache/
+gpt2/output/
