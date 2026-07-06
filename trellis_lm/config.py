@@ -51,6 +51,17 @@ class TrellisConfig:
     # cheaper (the n slot-solves collapse to one shared solve, GDN-cost) and the
     # ablation for whether per-slot expressivity is actually needed to bind.
     trellis_input_gate_scope: str = "per_slot"
+    # rank of the SLOT-MIXING part of the input-conditioned gain. 0 (default) is
+    # the diagonal gate G(x)=diag(a(x)) -- slots do not mix; the write to slot m
+    # uses only its own readout z_m. rank>0 adds a token-conditioned low-rank
+    # term: G(x) = diag(a(x)) + U(x) V(x)^T with U,V in R^{M x r}, so each slot's
+    # write can read the whole memory readout z (content-addressed cross-slot
+    # routing). It stays AFFINE in M (U,V from the token, not the state), so the
+    # recurrence is still exact-chunkable; it is the chunkable analog of the
+    # paper's dense state-dependent Jacobian mixing. rank=0 is bit-identical to
+    # the diagonal path (no low-rank projection is built). This is the
+    # Slot-Mixing Delta rank ladder (scalar -> diagonal -> rank1 -> rank2).
+    trellis_input_gate_rank: int = 0
     # alpha: the learned write target / code
     alpha_mode: str = "linear"  # ["linear","softmax","ln_silu","l2_silu"]
     # beta: forget gate granularity
@@ -161,6 +172,10 @@ class TrellisConfig:
             "per_slot",
             "scalar",
         ), self.trellis_input_gate_scope
+        assert (
+            isinstance(self.trellis_input_gate_rank, int)
+            and self.trellis_input_gate_rank >= 0
+        ), self.trellis_input_gate_rank
         assert self.trellis_retention_mode in (
             "token_proj",
             "fixed_beta",
