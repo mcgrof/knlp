@@ -31,6 +31,20 @@ class TrellisConfig:
     # "identity" reduces the nonlinear write to the (gated) delta rule -- the
     # same-shell control for "does the nonlinear write help?" (paper ablation).
     activation: str = "ln_silu"  # ["ln_silu","l2_silu","softmax","identity"]
+    # trellis_write_mode selects the innovation rule. "nonlinear_phi" (default)
+    # is the paper's state-dependent write u_t = J_phi(z)^T(phi(z)-alpha), whose
+    # state-dependent Jacobian forfeits the delta-rule free lunch (no cheap exact
+    # chunk) and couples staleness<->stability. "input_conditioned" replaces it
+    # with u_t = a(x_t) ⊙ z_t − alpha_t, where a(x_t) ∈ R^M is a per-slot gate
+    # computed from the token INPUT x_t (not the state code z_t=M@w). This keeps
+    # the update AFFINE in M -> the WY/UT chunk transform survives (exact and
+    # parallelizable), and a≡1 recovers the (gated) delta rule exactly. It is the
+    # salvageable Trellis: input-conditioned nonlinear expressivity without the
+    # state-dependent Jacobian that breaks exact chunking (Pro consult 2026-07-05).
+    trellis_write_mode: str = "nonlinear_phi"
+    # activation for the input-conditioned per-slot gate a(x_t). "softplus" with
+    # a bias init of log(e-1) starts a≡1 (exact delta rule) then learns.
+    trellis_input_gate_act: str = "softplus"
     # alpha: the learned write target / code
     alpha_mode: str = "linear"  # ["linear","softmax","ln_silu","l2_silu"]
     # beta: forget gate granularity
@@ -128,6 +142,15 @@ class TrellisConfig:
             "l2_silu",
         ), self.alpha_mode
         assert self.beta_mode in ("scalar_per_head", "per_slot"), self.beta_mode
+        assert self.trellis_write_mode in (
+            "nonlinear_phi",
+            "input_conditioned",
+        ), self.trellis_write_mode
+        assert self.trellis_input_gate_act in (
+            "softplus",
+            "sigmoid",
+            "identity",
+        ), self.trellis_input_gate_act
         assert self.trellis_retention_mode in (
             "token_proj",
             "fixed_beta",
@@ -140,13 +163,11 @@ class TrellisConfig:
             self.trellis_beta_min,
             self.trellis_beta_max,
         )
-        assert self.trellis_beta_min < self.trellis_beta_init < (
-            self.trellis_beta_max
+        assert (
+            self.trellis_beta_min < self.trellis_beta_init < (self.trellis_beta_max)
         ), self.trellis_beta_init
         assert self.trellis_beta_lr_mult >= 0.0, self.trellis_beta_lr_mult
-        assert self.trellis_beta_weight_decay >= 0.0, (
-            self.trellis_beta_weight_decay
-        )
+        assert self.trellis_beta_weight_decay >= 0.0, self.trellis_beta_weight_decay
         assert self.trellis_beta_init_schedule in (
             "flat_099",
             "layer_short_to_long",
@@ -161,14 +182,10 @@ class TrellisConfig:
             "innovation_rms_cap_plus_layer0_gamma",
             "innovation_rms_cap_plus_layerwise_gamma",
         ), self.trellis_update_stabilizer
-        assert self.trellis_innovation_rms_cap >= 0.0, (
-            self.trellis_innovation_rms_cap
-        )
+        assert self.trellis_innovation_rms_cap >= 0.0, self.trellis_innovation_rms_cap
         assert self.trellis_delta_ratio_cap >= 0.0, self.trellis_delta_ratio_cap
         assert self.trellis_state_rms_floor >= 0.0, self.trellis_state_rms_floor
-        assert self.trellis_layer0_gamma_mult >= 0.0, (
-            self.trellis_layer0_gamma_mult
-        )
+        assert self.trellis_layer0_gamma_mult >= 0.0, self.trellis_layer0_gamma_mult
         assert self.update_gate_mode in (
             "none",
             "scalar",
@@ -191,9 +208,9 @@ class TrellisConfig:
             "prev",
             "current_prev",
         ), self.trellis_update_gate_context_mode
-        assert 0.0 <= self.trellis_update_gate_floor < 1.0, (
-            self.trellis_update_gate_floor
-        )
+        assert (
+            0.0 <= self.trellis_update_gate_floor < 1.0
+        ), self.trellis_update_gate_floor
         assert self.output_path in ("current", "paper"), self.output_path
         assert self.value_readout_act in (
             "none",
@@ -216,15 +233,13 @@ class TrellisConfig:
             "shared_plus_prev_key_correction",
             "shared_plus_prev_key_correction_detached",
         ), self.trellis_value_alpha_mode
-        assert 0.0 <= self.trellis_value_alpha_mix <= 1.0, (
-            self.trellis_value_alpha_mix
-        )
-        assert self.trellis_value_alpha_correction_init >= 0.0, (
-            self.trellis_value_alpha_correction_init
-        )
-        assert self.trellis_value_alpha_correction_max > 0.0, (
-            self.trellis_value_alpha_correction_max
-        )
+        assert 0.0 <= self.trellis_value_alpha_mix <= 1.0, self.trellis_value_alpha_mix
+        assert (
+            self.trellis_value_alpha_correction_init >= 0.0
+        ), self.trellis_value_alpha_correction_init
+        assert (
+            self.trellis_value_alpha_correction_max > 0.0
+        ), self.trellis_value_alpha_correction_max
         assert self.trellis_value_alpha_correction_init <= (
             self.trellis_value_alpha_correction_max
         ), (
@@ -238,15 +253,17 @@ class TrellisConfig:
             "alpha_residual_gate",
             "alpha_residual_gate_detached",
         ), self.trellis_value_read_query_mode
-        assert 0.0 <= self.trellis_value_read_query_gate_init <= (
-            self.trellis_value_read_query_gate_max
+        assert (
+            0.0
+            <= self.trellis_value_read_query_gate_init
+            <= (self.trellis_value_read_query_gate_max)
         ), (
             self.trellis_value_read_query_gate_init,
             self.trellis_value_read_query_gate_max,
         )
-        assert 0.0 < self.trellis_value_read_query_gate_max <= 1.0, (
-            self.trellis_value_read_query_gate_max
-        )
+        assert (
+            0.0 < self.trellis_value_read_query_gate_max <= 1.0
+        ), self.trellis_value_read_query_gate_max
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
         if self.update_gate_mode != "none":

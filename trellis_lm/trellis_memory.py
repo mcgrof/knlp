@@ -241,9 +241,7 @@ def run_trellis_memory_chunked_state_evolution(
             u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
         if Gp is not None:
             u = u * Gp[:, :, c]
-        if _delta_ratio_cap_enabled(
-            trellis_update_stabilizer, trellis_delta_ratio_cap
-        ):
+        if _delta_ratio_cap_enabled(trellis_update_stabilizer, trellis_delta_ratio_cap):
             u, _ = _apply_delta_ratio_cap_to_u(
                 u,
                 W,
@@ -432,6 +430,7 @@ def run_trellis_memory(
     trellis_delta_ratio_cap: float = 0.0,
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
+    input_gate: Optional[torch.Tensor] = None,  # [B,H,T,M] per-slot gate a(x_t)
 ):
     B, H, T, D = write.shape
     M = alpha.shape[-1]
@@ -451,6 +450,28 @@ def run_trellis_memory(
         b = beta[:, :, t, :]  # [B,H,1] or [B,H,M]
         # z_t = M_state @ write_t
         z = torch.einsum("bhmd,bhd->bhm", Mstate, w)  # [B,H,M]
+        if input_gate is not None:
+            # input-conditioned write: u_t = a(x_t) ⊙ z_t − alpha_t. a is a
+            # per-slot gate from the token INPUT (not the state code z), so the
+            # update stays AFFINE in M -> exact-chunkable, and a≡1 recovers the
+            # (gated) delta rule. z keeps its M dependency so the outer backward
+            # flows through the recurrence; no inner VJP graph is needed.
+            a_gate = input_gate[:, :, t, :]  # [B,H,M]
+            u = a_gate * z - a
+            if update_gate is not None:
+                u = u * update_gate[:, :, t, :]
+            outer = torch.einsum("bhm,bhd->bhmd", u, w)  # [B,H,M,D]
+            b_e = b.unsqueeze(-1)  # [B,H,M,1] or [B,H,1,1]
+            Mstate = b_e * Mstate - g * outer
+            r = read[:, :, t, :]
+            if read_mode == "M_q":
+                y = torch.einsum("bhmd,bhd->bhm", Mstate, r)
+            elif read_mode == "M_T_r":
+                y = torch.einsum("bhmd,bhm->bhd", Mstate, r)
+            else:
+                raise ValueError(read_mode)
+            outs.append(y)
+            continue
         # u_t = J_phi(z)^T (phi(z) - alpha) via VJP.
         # exact_inner: keep z in the graph -> u carries both the M (2nd-order)
         # and alpha gradients. stale: detach z (cut the expensive M 2nd-order
@@ -487,9 +508,7 @@ def run_trellis_memory(
             u = u + residual_update_mix * resid
         if update_gate is not None:
             u = u * update_gate[:, :, t, :]
-        if _delta_ratio_cap_enabled(
-            trellis_update_stabilizer, trellis_delta_ratio_cap
-        ):
+        if _delta_ratio_cap_enabled(trellis_update_stabilizer, trellis_delta_ratio_cap):
             u, _ = _apply_delta_ratio_cap_to_u(
                 u,
                 w,
@@ -586,11 +605,8 @@ def run_trellis_memory_chunked(
 
     def _vjp(zin, A):
         z = zin.detach()  # cut M 2nd-order
-        if (
-            phi is ln_silu
-            and not _innovation_cap_enabled(
-                trellis_update_stabilizer, trellis_innovation_rms_cap
-            )
+        if phi is ln_silu and not _innovation_cap_enabled(
+            trellis_update_stabilizer, trellis_innovation_rms_cap
         ):
             # fused closed-form phi(z) + J_phi^T(phi(z)-A): exact, no per-chunk
             # autograd graph (the kernel's dominant overhead) and no double
@@ -641,9 +657,7 @@ def run_trellis_memory_chunked(
             u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
         if G is not None:
             u = u * G
-        if _delta_ratio_cap_enabled(
-            trellis_update_stabilizer, trellis_delta_ratio_cap
-        ):
+        if _delta_ratio_cap_enabled(trellis_update_stabilizer, trellis_delta_ratio_cap):
             u, _ = _apply_delta_ratio_cap_to_u(
                 u,
                 W,
