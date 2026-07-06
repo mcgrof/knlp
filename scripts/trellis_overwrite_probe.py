@@ -398,6 +398,24 @@ def row_spec(
             "both",
             0.0,
         )
+    if row == "trellis_input_cond":
+        # Input-conditioned write (affine-in-M, exact-chunkable). Same shell as
+        # trellis_none; make_cfg flips trellis_write_mode via the row name.
+        return (
+            "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
     if row == "trellis_norm_silu":
         return (
             "trellis",
@@ -897,6 +915,40 @@ def row_spec(
     if row == "gdn_ref":
         return (
             "gated_delta_ref",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
+    if row == "gdn":
+        # Native (non-FLA) gated delta rule baseline: works without the fla
+        # reference layers, which are absent in the W7900 env.
+        return (
+            "gated_delta",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
+    if row == "delta":
+        return (
+            "delta",
             "none",
             "shared",
             1.0,
@@ -1516,8 +1568,17 @@ def train_row(
         update_gate_context_mode,
         update_gate_floor,
     )
+    if row_base == "trellis_input_cond":
+        cfg.trellis_write_mode = "input_conditioned"
+        cfg.trellis_input_gate_act = getattr(args, "input_gate_act", "softplus")
+        # Delta-rule stabilizers: L2-normalize the write vector (bounds
+        # gamma*||w||^2, the DeltaNet contraction) so the affine-in-M recurrence
+        # cannot exceed its spectral bound. Without it the input-conditioned
+        # write diverges (nonfinite_loss) exactly like the nonlinear write.
+        cfg.write_l2norm = getattr(args, "input_cond_l2norm", True)
     row_meta = {
         "row": row,
+        "trellis_write_mode": cfg.trellis_write_mode,
         "row_base": row_base,
         "kind": kind,
         "binding_probe_kind": kind if kind.startswith("trellis_role_") else "none",
@@ -1853,6 +1914,13 @@ def main() -> int:
     # C4-tuned defaults. Lower gamma / stronger layer-0 damping / lower LR.
     p.add_argument("--gamma-init", type=float, default=0.005)
     p.add_argument("--layer0-gamma-mult", type=float, default=0.5)
+    # Gate activation for the trellis_input_cond row's a(x_t). "softplus" starts
+    # a≡1 (exact delta rule); "sigmoid" bounds a in (0,2); "identity" unbounded.
+    p.add_argument(
+        "--input-gate-act",
+        default="softplus",
+        choices=["softplus", "sigmoid", "identity"],
+    )
     # Hard grid: append N distractor SET events for OTHER keys AFTER the queried
     # key's answer, so the answer is no longer the last SET_VALUE. This removes
     # the last-value-register shortcut that solves the easy grid without binding.
