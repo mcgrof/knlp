@@ -398,12 +398,45 @@ def row_spec(
             "both",
             0.0,
         )
-    if row in ("trellis_input_cond", "trellis_input_cond_scalar"):
+    if row in (
+        "trellis_input_cond",
+        "trellis_input_cond_scalar",
+        # Slot-Mixing Delta rank ladder (same shell; train_row flips write mode,
+        # gate scope, and slot-mixing rank via the row name).
+        "smd_scalar",
+        "smd_diag",
+        "smd_rank1",
+        "smd_rank2",
+        "smd_rank1_frozen",
+        # Faithful Trellis references (state-conditioned nonlinear write); the
+        # phi differs (norm_silu = paper, ln_silu = our earlier variant).
+        "trellis_faithful",
+        "trellis_layernorm_silu",
+    ):
         # Input-conditioned write (affine-in-M, exact-chunkable). Same shell as
         # trellis_none; make_cfg flips trellis_write_mode via the row name. The
         # _scalar variant uses a per-token scalar gate (broadcast to all slots).
         return (
             "trellis",
+            "none",
+            "shared",
+            1.0,
+            1e-3,
+            0.25,
+            "key_readout",
+            0.05,
+            0.75,
+            "none",
+            0.95,
+            "both",
+            0.0,
+        )
+    if row in ("deltaproduct_nh2", "deltaproduct_nh3"):
+        # FLA GatedDeltaProduct reference (n_h Householder products). The kind
+        # carries n_h; build_model parses it. UNTESTED on W7900 (needs FLA/CUDA).
+        nh = 2 if row == "deltaproduct_nh2" else 3
+        return (
+            f"gated_delta_product_ref_nh{nh}",
             "none",
             "shared",
             1.0,
@@ -1528,6 +1561,22 @@ def update_first_learning_steps(
             first_steps[key] = step
 
 
+def _freeze_random_lowrank(model):
+    """Frozen-random slot-mixing null (cmcp control): re-init BOTH U and V of
+    every write_lowrank_proj to random and freeze them. If a fixed random
+    mixing helps nearly as much as the learned one, the gain is 'any mixing
+    regularizes', not learned content-addressed routing."""
+    import torch
+
+    for m in model.modules():
+        proj = getattr(m, "write_lowrank_proj", None)
+        if proj is None:
+            continue
+        with torch.no_grad():
+            proj.weight.normal_(0.0, 0.02)  # both U and V halves random
+        proj.weight.requires_grad_(False)
+
+
 def train_row(
     row: str, args: argparse.Namespace, cells: list[Cell], device
 ) -> dict[str, Any]:
@@ -1569,17 +1618,40 @@ def train_row(
         update_gate_context_mode,
         update_gate_floor,
     )
-    if row_base in ("trellis_input_cond", "trellis_input_cond_scalar"):
+    input_cond_rows = (
+        "trellis_input_cond",
+        "trellis_input_cond_scalar",
+        "smd_scalar",
+        "smd_diag",
+        "smd_rank1",
+        "smd_rank2",
+        "smd_rank1_frozen",
+    )
+    if row_base in input_cond_rows:
         cfg.trellis_write_mode = "input_conditioned"
         cfg.trellis_input_gate_act = getattr(args, "input_gate_act", "softplus")
-        cfg.trellis_input_gate_scope = (
-            "scalar" if row_base == "trellis_input_cond_scalar" else "per_slot"
-        )
+        scalar_scope = row_base in ("trellis_input_cond_scalar", "smd_scalar")
+        cfg.trellis_input_gate_scope = "scalar" if scalar_scope else "per_slot"
+        # Slot-mixing rank: 0 diagonal, 1/2 low-rank. smd_rank1_frozen keeps
+        # rank 1 but freezes a random U,V (the mixing-is-just-regularization
+        # null); the freeze is applied after build_model below.
+        cfg.trellis_input_gate_rank = {
+            "smd_rank1": 1,
+            "smd_rank2": 2,
+            "smd_rank1_frozen": 1,
+        }.get(row_base, 0)
         # Delta-rule stabilizers: L2-normalize the write vector (bounds
         # gamma*||w||^2, the DeltaNet contraction) so the affine-in-M recurrence
         # cannot exceed its spectral bound. Without it the input-conditioned
         # write diverges (nonfinite_loss) exactly like the nonlinear write.
         cfg.write_l2norm = getattr(args, "input_cond_l2norm", True)
+    elif row_base in ("trellis_faithful", "trellis_layernorm_silu"):
+        # Faithful Trellis reference: state-conditioned nonlinear write with the
+        # Jacobian gain. phi = norm_silu is the paper's (SiLU/||SiLU||);
+        # ln_silu is our earlier LayerNorm-SiLU variant -- the gap between the
+        # two rows is the phi-choice ablation.
+        cfg.trellis_write_mode = "nonlinear_phi"
+        cfg.activation = "norm_silu" if row_base == "trellis_faithful" else "ln_silu"
     row_meta = {
         "row": row,
         "trellis_write_mode": cfg.trellis_write_mode,
@@ -1608,6 +1680,8 @@ def train_row(
         model = build_role_oracle_probe_model(cfg, kind, args).to(device)
     else:
         model = build_model(cfg, kind).to(device)
+    if row_base == "smd_rank1_frozen":
+        _freeze_random_lowrank(model)
     # Keep master weights fp32, matching the C4 harness. Trellis intentionally
     # computes beta/gamma paths in fp32 under disabled autocast; casting modules
     # to bf16 makes beta_proj weights bf16 while h.float() is fp32.

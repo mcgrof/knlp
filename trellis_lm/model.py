@@ -199,4 +199,10 @@ def build_model(cfg: TrellisConfig, kind: str):
         from .linear_baselines_fla_ref import build_linear_baseline_ref
 
         return build_linear_baseline_ref(cfg, gated=(kind == "gated_delta_ref"))
+    if kind.startswith("gated_delta_product_ref"):
+        # FLA GatedDeltaProduct reference; kind carries n_h ("..._nh2"/"_nh3").
+        from .linear_baselines_fla_ref import build_linear_baseline_ref
+
+        nh = int(kind.rsplit("nh", 1)[-1]) if "nh" in kind else 2
+        return build_linear_baseline_ref(cfg, gated=True, num_householder=nh)
     raise ValueError(kind)
