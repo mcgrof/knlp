@@ -294,9 +294,9 @@ def val_ppl(model, val_seqs, device, batch, dt):
     tot, ntok = 0.0, 0
     for i in range(0, len(val_seqs), batch):
         rows = val_seqs[i : i + batch]
-        if not rows:
+        if len(rows) == 0:
             break
-        idx = torch.tensor(rows, device=device)
+        idx = torch.as_tensor(rows, device=device).long()
         with torch.autocast(
             device_type=device.type, dtype=dt, enabled=dt != torch.float32
         ):
@@ -346,7 +346,7 @@ def train_one(label, kind, ov, args, train_seqs, val_seqs, device, dt):
             bi = 0
             rows = train_seqs[bi : bi + args.batch]
             bi += args.batch
-        idx = torch.tensor(rows, device=device)
+        idx = torch.as_tensor(rows, device=device).long()
         with torch.autocast(
             device_type=device.type, dtype=dt, enabled=dt != torch.float32
         ):
