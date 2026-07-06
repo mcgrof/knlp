@@ -431,6 +431,7 @@ def run_trellis_memory(
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
     input_gate: Optional[torch.Tensor] = None,  # [B,H,T,M] per-slot gate a(x_t)
+    input_gate_lowrank: Optional[tuple] = None,  # (U,V) each [B,H,T,M,r]
 ):
     B, H, T, D = write.shape
     M = alpha.shape[-1]
@@ -441,6 +442,9 @@ def run_trellis_memory(
         Mstate = M_init
     g = gamma.view(1, H, 1, 1)
     per_slot = beta.shape[-1] == M
+    lr_U = lr_V = None
+    if input_gate_lowrank is not None:
+        lr_U, lr_V = input_gate_lowrank  # [B,H,T,M,r]
     outs = []
     create_graph = training and torch.is_grad_enabled()
 
@@ -458,6 +462,13 @@ def run_trellis_memory(
             # flows through the recurrence; no inner VJP graph is needed.
             a_gate = input_gate[:, :, t, :]  # [B,H,M]
             u = a_gate * z - a
+            if lr_U is not None:
+                # slot-mixing term: U(x_t) @ (V(x_t)^T z_t). V^T z reads the
+                # whole memory readout (all slots), U scatters it back -> the
+                # write to slot m can depend on every slot's readout. Still
+                # affine in M (U,V from the token, not the state).
+                mix = torch.einsum("bhmr,bhm->bhr", lr_V[:, :, t], z)  # [B,H,r]
+                u = u + torch.einsum("bhmr,bhr->bhm", lr_U[:, :, t], mix)
             if update_gate is not None:
                 u = u * update_gate[:, :, t, :]
             outer = torch.einsum("bhm,bhd->bhmd", u, w)  # [B,H,M,D]
