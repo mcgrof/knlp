@@ -63,9 +63,22 @@ try:  # fla reference layers live in the full flash-linear-attention package
 
     from fla.layers import DeltaNet, GatedDeltaNet
 
+    try:
+        from fla.layers import GatedDeltaProduct
+    except Exception:  # pragma: no cover - older fla without DeltaProduct
+        GatedDeltaProduct = None
+
     HAS_FLA_REF = True
 except Exception:  # pragma: no cover - non-fla host
     HAS_FLA_REF = False
+    GatedDeltaProduct = None
+
+
+def _fla_ref_short_conv() -> bool:
+    """Short-conv is DISABLED by default for the mechanism comparison (the
+    recurrence is the isolated variable). Set TRELLIS_FLA_REF_SHORT_CONV=1 for
+    the author-default appendix row."""
+    return os.environ.get("TRELLIS_FLA_REF_SHORT_CONV", "0") == "1"
 
 
 class FLARefMixer(nn.Module):
@@ -76,7 +89,7 @@ class FLARefMixer(nn.Module):
     projection), and returns the mixer delta -- the block adds the residual.
     """
 
-    def __init__(self, cfg: TrellisConfig, gated: bool):
+    def __init__(self, cfg: TrellisConfig, gated: bool, num_householder: int = 1):
         super().__init__()
         if not HAS_FLA_REF:
             raise RuntimeError(
@@ -84,10 +97,31 @@ class FLARefMixer(nn.Module):
             )
         self.cfg = cfg
         self.gated = gated
+        self.num_householder = int(num_householder)
         H, D, d = cfg.n_heads, cfg.d_head, cfg.d_model
         self.H, self.D = H, D
         self.norm = RMSNorm(d)
-        if gated:
+        short_conv = _fla_ref_short_conv()
+        if self.num_householder > 1:
+            # DeltaProduct: n_h Householder products / token -> diagonal+rank-n_h
+            # transition. Needs beta in (0,2) (allow_neg_eigval) or state-tracking
+            # fails. UNTESTED on W7900 (no FLA); validated on the H100 pod.
+            if GatedDeltaProduct is None:
+                raise RuntimeError(
+                    "fla GatedDeltaProduct unavailable; upgrade flash-linear-attention"
+                )
+            self.layer = GatedDeltaProduct(
+                hidden_size=d,
+                num_heads=H,
+                head_dim=D,
+                expand_v=1.0,
+                num_householder=self.num_householder,
+                use_gate=True,
+                use_short_conv=short_conv,
+                conv_size=cfg.conv_kernel,
+                allow_neg_eigval=True,
+            )
+        elif gated:
             # head_dim fixes the per-head key/value width; expand_v=1 keeps the
             # value width equal to the key width (matched to delta/dense/Trellis,
             # not the fla default expand_v=2 which would widen value state).
@@ -97,7 +131,7 @@ class FLARefMixer(nn.Module):
                 head_dim=D,
                 expand_v=1.0,
                 use_gate=True,
-                use_short_conv=True,
+                use_short_conv=short_conv,
                 conv_size=cfg.conv_kernel,
             )
         else:
@@ -108,7 +142,7 @@ class FLARefMixer(nn.Module):
                 expand_k=1.0,
                 expand_v=1.0,
                 use_gate=False,
-                use_short_conv=True,
+                use_short_conv=short_conv,
                 conv_size=cfg.conv_kernel,
                 qk_norm="l2",
             )
@@ -136,11 +170,15 @@ class FLARefMixer(nn.Module):
         return self.H * self.D * self.D * 2
 
 
-def build_linear_baseline_ref(cfg: TrellisConfig, gated: bool):
-    """LM whose mixer is the fla REFERENCE DeltaNet / GatedDeltaNet layer.
+def build_linear_baseline_ref(
+    cfg: TrellisConfig, gated: bool, num_householder: int = 1
+):
+    """LM whose mixer is the fla REFERENCE DeltaNet / GatedDeltaNet /
+    GatedDeltaProduct layer.
 
     Mirrors `linear_baselines.build_linear_baseline` exactly (same block, head,
     init, forward, loss) but swaps the minimal fla mixer for the reference layer.
+    num_householder>1 selects GatedDeltaProduct.
     """
     from .model import SwiGLU, _LMBase
     import torch.nn.functional as F
@@ -148,7 +186,7 @@ def build_linear_baseline_ref(cfg: TrellisConfig, gated: bool):
     class _Block(nn.Module):
         def __init__(self):
             super().__init__()
-            self.mixer = FLARefMixer(cfg, gated)
+            self.mixer = FLARefMixer(cfg, gated, num_householder=num_householder)
             self.mlp = SwiGLU(cfg.d_model, cfg.mlp_ratio, cfg.dropout)
 
         def forward(self, x, training=True):
