@@ -231,6 +231,8 @@ def main():
             "gated_delta",
             "delta_ref",
             "gated_delta_ref",
+            "gated_delta_product_ref_nh2",
+            "gated_delta_product_ref_nh3",
         ],
     )
     p.add_argument("--steps", type=int, default=300)
