@@ -81,8 +81,48 @@ def backend_of(model):
     return type(model).__name__
 
 
-def build_cfg(args, vocab):
-    return TrellisConfig(
+# Our Slot-Mixing Delta arms map to a "trellis" model carrying the
+# input-conditioned affine write. The gate config is the leading one that
+# produced the small-C4 positive (write_mode=input_conditioned, sigmoid gate,
+# silu/linear-alpha, gamma=0.05, layer0 gamma mult 0.5, write_l2norm on for
+# stability); the scope (per_slot=diagonal vs scalar) is picked by the arm name.
+# The exact chunk-16 kernel is numerically identical to the chunk-1 sequential
+# path the anchor used but far faster at seq2048.
+SMD_ARMS = {
+    "smd_diag": "per_slot",
+    "smd_scalar": "scalar",
+}
+
+
+def build_cfg(arm, args, vocab):
+    """Return (cfg, kind) for an arm. Baselines pass kind=arm; smd arms build a
+    trellis cfg with the input-conditioned gate and kind='trellis'."""
+    if arm in SMD_ARMS:
+        cfg = TrellisConfig(
+            vocab_size=vocab,
+            d_model=args.d_model,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+            d_head=args.d_head,
+            n_slots=args.n_slots,
+            max_seq_len=args.seq_len,
+            dtype=args.dtype,
+            chunk_size=args.chunk_size,
+            trellis_write_mode="input_conditioned",
+            trellis_input_gate_act="sigmoid",
+            trellis_input_gate_scope=SMD_ARMS[arm],
+            write_l2norm=True,
+            activation="silu",
+            alpha_mode="linear",
+            beta_mode="scalar_per_head",
+            beta_init=0.5,
+            value_readout_act="none",
+            output_path="current",
+            gamma_init=args.smd_gamma_init,
+            trellis_layer0_gamma_mult=args.smd_layer0_gamma_mult,
+        )
+        return cfg, "trellis"
+    cfg = TrellisConfig(
         vocab_size=vocab,
         d_model=args.d_model,
         n_layers=args.n_layers,
@@ -93,11 +133,12 @@ def build_cfg(args, vocab):
         dtype=args.dtype,
         chunk_size=args.chunk_size,
     )
+    return cfg, arm
 
 
-def train_arm(arm, seed, cfg, train_rows, args, device, dt):
+def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt):
     torch.manual_seed(seed)
-    model = build_model(cfg, arm).to(device)
+    model = build_model(cfg, kind).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     model.train()
     steps = len(train_rows) // args.batch
@@ -169,6 +210,10 @@ def main():
     p.add_argument("--n_slots", type=int, default=48)
     p.add_argument("--chunk_size", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
+    # Slot-Mixing Delta stability recipe (validated gate window); only used by
+    # the smd_* arms.
+    p.add_argument("--smd_gamma_init", type=float, default=0.05)
+    p.add_argument("--smd_layer0_gamma_mult", type=float, default=0.5)
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
     p.add_argument("--log_every", type=int, default=250)
     p.add_argument("--dataset", default="allenai/c4")
@@ -214,9 +259,11 @@ def main():
     results = []
     for arm in arms:
         for seed in seeds:
-            cfg = build_cfg(args, vocab)
+            cfg, kind = build_cfg(arm, args, vocab)
             try:
-                model, tr = train_arm(arm, seed, cfg, train_rows, args, device, dt)
+                model, tr = train_arm(
+                    arm, kind, seed, cfg, train_rows, args, device, dt
+                )
                 row = {
                     "arm": arm,
                     "seed": seed,
