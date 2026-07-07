@@ -410,8 +410,11 @@ def row_spec(
         "smd_rank1_frozen",
         # Faithful Trellis references (state-conditioned nonlinear write); the
         # phi differs (norm_silu = paper, ln_silu = our earlier variant).
+        # trellis_l2norm_control = trellis_faithful + write_l2norm, so the
+        # nonlinear baseline gets the same write-norm advantage the smd arms use.
         "trellis_faithful",
         "trellis_layernorm_silu",
+        "trellis_l2norm_control",
     ):
         # Input-conditioned write (affine-in-M, exact-chunkable). Same shell as
         # trellis_none; make_cfg flips trellis_write_mode via the row name. The
@@ -1645,13 +1648,23 @@ def train_row(
         # cannot exceed its spectral bound. Without it the input-conditioned
         # write diverges (nonfinite_loss) exactly like the nonlinear write.
         cfg.write_l2norm = getattr(args, "input_cond_l2norm", True)
-    elif row_base in ("trellis_faithful", "trellis_layernorm_silu"):
+    elif row_base in (
+        "trellis_faithful",
+        "trellis_layernorm_silu",
+        "trellis_l2norm_control",
+    ):
         # Faithful Trellis reference: state-conditioned nonlinear write with the
         # Jacobian gain. phi = norm_silu is the paper's (SiLU/||SiLU||);
         # ln_silu is our earlier LayerNorm-SiLU variant -- the gap between the
         # two rows is the phi-choice ablation.
         cfg.trellis_write_mode = "nonlinear_phi"
-        cfg.activation = "norm_silu" if row_base == "trellis_faithful" else "ln_silu"
+        cfg.activation = (
+            "ln_silu" if row_base == "trellis_layernorm_silu" else "norm_silu"
+        )
+        # Fairness control: give the paper (norm_silu) nonlinear write the same
+        # write_l2norm the smd arms use, isolating the write-norm advantage from
+        # the mechanism. trellis_faithful stays paper-default (no write-norm).
+        cfg.write_l2norm = row_base == "trellis_l2norm_control"
     row_meta = {
         "row": row,
         "trellis_write_mode": cfg.trellis_write_mode,
