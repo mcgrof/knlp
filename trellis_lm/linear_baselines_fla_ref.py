@@ -81,6 +81,39 @@ def _fla_ref_short_conv() -> bool:
     return os.environ.get("TRELLIS_FLA_REF_SHORT_CONV", "0") == "1"
 
 
+def _construct_fla(cls, *, critical=(), gate=None, **want):
+    """Instantiate an fla layer while respecting the INSTALLED signature.
+
+    fla layers accept **kwargs and would silently swallow a mis-named argument,
+    so a fidelity-critical setting (num_householder, allow_neg_eigval, ...) could
+    be dropped and the row would degrade with no error. This resolves the gate
+    kwarg to whichever the class accepts (`use_output_gate` on DeltaProduct vs
+    `use_gate` on Gated-DeltaNet), drops kwargs the class does not declare, and
+    RAISES if any name in `critical` is not in the signature. The effective
+    kwargs are stashed on the module for the on-pod fidelity audit.
+    """
+    params = inspect.signature(cls.__init__).parameters
+    if gate is not None:
+        if "use_output_gate" in params:
+            want["use_output_gate"] = gate
+        elif "use_gate" in params:
+            want["use_gate"] = gate
+        else:
+            raise RuntimeError(f"{cls.__name__}: no output-gate kwarg in signature")
+    for name in critical:
+        if name not in params:
+            raise RuntimeError(
+                f"{cls.__name__}: fidelity-critical kwarg '{name}' absent from "
+                f"installed signature -- refusing to run a silently degraded row"
+            )
+    effective = {k: v for k, v in want.items() if k in params}
+    dropped = {k: v for k, v in want.items() if k not in params}
+    layer = cls(**effective)
+    layer._fla_effective_kwargs = effective
+    layer._fla_dropped_kwargs = dropped
+    return layer
+
+
 class FLARefMixer(nn.Module):
     """Wrap fla's reference DeltaNet / GatedDeltaNet as a ladder mixer.
 
@@ -110,13 +143,17 @@ class FLARefMixer(nn.Module):
                 raise RuntimeError(
                     "fla GatedDeltaProduct unavailable; upgrade flash-linear-attention"
                 )
-            self.layer = GatedDeltaProduct(
+            # num_householder + allow_neg_eigval ARE the DeltaProduct mechanism;
+            # fail loud if the installed fla doesn't accept them (2a).
+            self.layer = _construct_fla(
+                GatedDeltaProduct,
+                critical=("num_householder", "allow_neg_eigval"),
+                gate=True,
                 hidden_size=d,
                 num_heads=H,
                 head_dim=D,
                 expand_v=1.0,
                 num_householder=self.num_householder,
-                use_gate=True,
                 use_short_conv=short_conv,
                 conv_size=cfg.conv_kernel,
                 allow_neg_eigval=True,
@@ -125,23 +162,25 @@ class FLARefMixer(nn.Module):
             # head_dim fixes the per-head key/value width; expand_v=1 keeps the
             # value width equal to the key width (matched to delta/dense/Trellis,
             # not the fla default expand_v=2 which would widen value state).
-            self.layer = GatedDeltaNet(
+            self.layer = _construct_fla(
+                GatedDeltaNet,
+                gate=True,
                 hidden_size=d,
                 num_heads=H,
                 head_dim=D,
                 expand_v=1.0,
-                use_gate=True,
                 use_short_conv=short_conv,
                 conv_size=cfg.conv_kernel,
             )
         else:
             # expand_k=expand_v=1.0 -> head_k_dim=head_v_dim=d/H=D (== d_head).
-            self.layer = DeltaNet(
+            self.layer = _construct_fla(
+                DeltaNet,
+                gate=False,
                 hidden_size=d,
                 num_heads=H,
                 expand_k=1.0,
                 expand_v=1.0,
-                use_gate=False,
                 use_short_conv=short_conv,
                 conv_size=cfg.conv_kernel,
                 qk_norm="l2",
