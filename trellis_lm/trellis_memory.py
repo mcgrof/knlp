@@ -21,6 +21,7 @@ per call (per independent sequence); a streaming generate() carries it forward.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import torch
@@ -468,7 +469,9 @@ def run_trellis_memory(
                 # write to slot m can depend on every slot's readout. Still
                 # affine in M (U,V from the token, not the state).
                 mix = torch.einsum("bhmr,bhm->bhr", lr_V[:, :, t], z)  # [B,H,r]
-                u = u + torch.einsum("bhmr,bhr->bhm", lr_U[:, :, t], mix)
+                r_dim = lr_U.shape[-1]
+                scatter = torch.einsum("bhmr,bhr->bhm", lr_U[:, :, t], mix)
+                u = u + scatter / math.sqrt(r_dim)  # LoRA-style 1/sqrt(r)
             if update_gate is not None:
                 u = u * update_gate[:, :, t, :]
             outer = torch.einsum("bhm,bhd->bhmd", u, w)  # [B,H,M,D]
