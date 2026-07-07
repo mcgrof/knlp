@@ -117,8 +117,45 @@ def test_model_smoke_rank_ladder():
         assert gmax < 1e4, f"scope={scope} rank={rank}: grad blew up ({gmax:.3e})"
 
 
+def test_rank0_no_lowrank_param_and_deterministic():
+    """rank=0 must add NO low-rank parameter (so it draws the same RNG stream
+    as the pre-feature diagonal path) and must build bit-identically under a
+    fixed seed. Guards against the low-rank machinery silently perturbing the
+    diagonal baseline it is meant to reduce to."""
+    torch.manual_seed(1234)
+    m0 = TrellisLM(_cfg(0))
+    names = dict(m0.named_parameters())
+    assert not any(
+        "write_lowrank" in n for n in names
+    ), "rank=0 built a write_lowrank parameter"
+    assert m0.blocks[0].mixer.write_lowrank_proj is None
+    # same seed -> bit-identical state dict (reset ordering is deterministic)
+    torch.manual_seed(1234)
+    m0b = TrellisLM(_cfg(0))
+    for k, v in m0.state_dict().items():
+        assert torch.equal(v, m0b.state_dict()[k]), f"non-deterministic build: {k}"
+
+
+def test_write_gate_bias_survives_init():
+    """The input-conditioned write gate's a≡1 bias init must survive the
+    model-wide _init_weights (which zeros all Linear biases). Regression for
+    the reset loop omitting reset_write_gate_bias -> the diagonal gate started
+    at the wrong operating point. sigmoid scope: reset value is bias=0."""
+    torch.manual_seed(0)
+    for scope, rank in [("scalar", 0), ("per_slot", 0), ("per_slot", 2)]:
+        model = TrellisLM(_cfg(rank, scope))
+        b = model.blocks[0].mixer.write_gate_proj.bias
+        # sigmoid gate resets bias to 0.0 (2*sigmoid(0)=1 == a≡1)
+        assert torch.equal(b, torch.zeros_like(b)), (
+            f"scope={scope} rank={rank}: write-gate bias not at reset value "
+            f"(max |b|={b.abs().max().item():.3e}) -- _init_weights clobber"
+        )
+
+
 if __name__ == "__main__":
     test_zero_lowrank_matches_diagonal()
     test_random_lowrank_finite_and_differs()
     test_model_smoke_rank_ladder()
+    test_rank0_no_lowrank_param_and_deterministic()
+    test_write_gate_bias_survives_init()
     print("ALL SLOT-MIXING GATE TESTS PASSED")
