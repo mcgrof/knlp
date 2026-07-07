@@ -1,0 +1,42 @@
+# kvio content-trace replay + KV capture -- LongBench (long-context single-turn).
+#
+# LMSYS-Chat-1M and LongBench are TWO DIFFERENT datasets -- this is the
+# LongBench one; see defconfigs/kvio-lmsys for the multi-turn-conversation one.
+# LongBench is NOT gated (no HF token needed).  Its repeated-prefix structure
+# is a SHARED DOCUMENT prefix: each question = tokens(document) ++
+# tokens(question), so all questions about one document share the document
+# token prefix -> real prefix-cache hits.
+#
+# Two-phase: Phase 1 capture (needs a GPU box) writes the recorded set into
+# RECORD_DIR; a second `make kvio-replay` REPLAYS that set GPU-free through the
+# configured backend (LMCache raw_block).
+#
+#   make defconfig-kvio-longbench
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_KVIO_CONTENT_MAX_REQUESTS=200
+#   EOF
+#   make                       # Phase 1: doctor/fetch/build/capture
+#   make kvio-replay           # Phase 2: replay the recorded set GPU-free
+CONFIG_KNLP_REPRODUCE_KVIO=y
+CONFIG_KNLP_KVIO_PROFILE="content"
+CONFIG_KNLP_KVIO_WORKTREE_ROOT=".."
+CONFIG_KNLP_KVIO_RESULTS_ROOT="./results/kvio-longbench"
+# RECORD_DIR unset => defaults to RESULTS_ROOT/record; override with KVIO_PATH.
+CONFIG_KNLP_KVIO_BACKEND="lmcache"
+CONFIG_KNLP_KVIO_VLLM_REPO="https://github.com/mcgrof/vllm.git"
+CONFIG_KNLP_KVIO_VLLM_REF="asymmetric-kv-plumbing"
+CONFIG_KNLP_KVIO_VLLM_DIR="vllm"
+CONFIG_KNLP_KVIO_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+# LMCache ref defaults to "kvio" (Kconfig.kvio); override via LMCACHE_REF /
+# LMCACHE_BRANCH.  Do NOT pin it here (olddefconfig would shadow the override).
+CONFIG_KNLP_KVIO_LMCACHE_DIR="lmcache"
+CONFIG_KNLP_KVIO_CONTENT_DATASET_LONGBENCH=y
+CONFIG_KNLP_KVIO_CONTENT_MODEL="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_KNLP_KVIO_CONTENT_MAX_REQUESTS=0
+CONFIG_KNLP_KVIO_CONTENT_SAVE_DECODE_CACHE=n
+CONFIG_KNLP_KVIO_CONTENT_L2_DEVICE=""
+CONFIG_KNLP_KVIO_CONTENT_L2_CAPACITY_GB=32
+CONFIG_KNLP_KVIO_CONTENT_NVME_TRACER=""
+CONFIG_KNLP_KVIO_CONTENT_PORT=8000
+CONFIG_KNLP_KVIO_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_KVIO_FAIL_ON_DIRTY_GIT=y
