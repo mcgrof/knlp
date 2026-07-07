@@ -1,0 +1,53 @@
+# Mooncake real-trace replay profile (kvio).
+#
+# Drives a production Mooncake (FAST25) request trace through
+# vLLM + LMCache to measure prefix-cache reuse, timing, and
+# KV-offload storage behaviour.  Token IDs are synthesised
+# preserving the trace's hash structure (same hash_id -> same
+# 512-token block); the content is synthetic, the reuse/length/
+# arrival timing is faithful.  Valid for exact prefix-reuse, KV
+# byte pressure, store/load traffic, and TTFT/throughput -- NOT
+# for semantic quality.
+#
+# The parse/token-synth/schedule path is CPU-testable; the replay
+# stage skips gracefully (recording an offline synth/smoke JSON)
+# when no GPU/vllm/lmcache is present.
+#
+# Usage on a GPU box with vLLM + LMCache:
+#   make defconfig-kvio-mooncake
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_KVIO_MOONCAKE_TRACE_PATH="/data/mooncake/conversation_trace.jsonl"
+#   CONFIG_KNLP_KVIO_MOONCAKE_MODEL="Qwen/Qwen2.5-7B-Instruct"
+#   CONFIG_KNLP_KVIO_MOONCAKE_MAX_REQUESTS=200
+#   EOF
+#   make
+#
+# Smoke-gate first (never start with the full 23.6k toolagent trace):
+#   set CONFIG_KNLP_KVIO_MOONCAKE_MAX_REQUESTS to 50-200, verify shared-
+#   prefix token IDs match + LMCache logs store/load, THEN scale up.
+CONFIG_KNLP_REPRODUCE_KVIO=y
+CONFIG_KNLP_KVIO_PROFILE="mooncake"
+CONFIG_KNLP_KVIO_WORKTREE_ROOT=".."
+CONFIG_KNLP_KVIO_RESULTS_ROOT="./results/kvio-mooncake"
+# RECORD_DIR unset => defaults to RESULTS_ROOT/record; override with KVIO_PATH.
+# (Mooncake records the semantic trace only -- no raw_block corpus yet -- so
+# replay-of-record reports a clear skip for this profile until corpus capture
+# is added; capture still runs normally.)
+CONFIG_KNLP_KVIO_BACKEND="lmcache"
+CONFIG_KNLP_KVIO_VLLM_REPO="https://github.com/mcgrof/vllm.git"
+CONFIG_KNLP_KVIO_VLLM_REF="asymmetric-kv-plumbing"
+CONFIG_KNLP_KVIO_VLLM_DIR="vllm"
+CONFIG_KNLP_KVIO_LMCACHE_REPO="https://github.com/mcgrof/LMCache.git"
+# LMCache ref defaults to "kvio" (Kconfig.kvio); override on the make
+# line via LMCACHE_REF or its alias LMCACHE_BRANCH.  Do NOT pin it here
+# (pyconf --olddefconfig would keep the pin and SHADOW the CLI override).
+CONFIG_KNLP_KVIO_LMCACHE_DIR="lmcache"
+# Mooncake replay knobs.
+CONFIG_KNLP_KVIO_MOONCAKE_TRACE_PATH=""
+CONFIG_KNLP_KVIO_MOONCAKE_MODEL="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_KNLP_KVIO_MOONCAKE_MAX_REQUESTS=0
+CONFIG_KNLP_KVIO_MOONCAKE_SPEEDUP=1
+CONFIG_KNLP_KVIO_MOONCAKE_VOCAB_SIZE=32000
+CONFIG_KNLP_KVIO_MOONCAKE_SEED=0
+CONFIG_KNLP_KVIO_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_KVIO_FAIL_ON_DIRTY_GIT=y

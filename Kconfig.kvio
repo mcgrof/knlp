@@ -1,0 +1,293 @@
+# SPDX-License-Identifier: MIT
+# Configuration for the kvio storage-IO capture / replay reproduction.
+#
+# Selecting one of the kvio-* defconfigs sets these values.  After
+# defconfig selection, plain `make` runs the configured profile via
+# Makefile.kvio.  All symbols are namespaced CONFIG_KNLP_KVIO_* so kvio
+# is self-contained and never collides with another reproduce profile.
+
+menu "kvio storage-IO capture/replay reproduction"
+
+config KNLP_REPRODUCE_KVIO
+	bool "Enable kvio storage-IO capture/replay reproduction"
+	default n
+	help
+	  Set by defconfig-kvio-mooncake and defconfig-kvio-lmsys.  When
+	  set, plain `make` drives a real request trace through vLLM +
+	  LMCache and captures the KV-offload storage behaviour so it can be
+	  analysed -- and reproduced -- GPU-free later.
+
+if KNLP_REPRODUCE_KVIO
+
+config KNLP_KVIO_PROFILE
+	string "kvio profile name"
+	default "content"
+	help
+	  One of: mooncake, content.  Drives stage selection in
+	  tools/reproduce/kvio/run.py.
+
+config KNLP_KVIO_WORKTREE_ROOT
+	string "Parent directory for cloned companion repos"
+	default ".."
+	help
+	  Companion repos (vllm, lmcache) are cloned into this directory.
+	  Default is the parent of the knlp checkout.
+
+config KNLP_KVIO_RESULTS_ROOT
+	string "Results directory"
+	default "./results/kvio"
+
+# ── Companion repos ────────────────────────────────────────────
+
+config KNLP_KVIO_VLLM_REPO
+	string "vLLM repo URL"
+	default "https://github.com/mcgrof/vllm.git"
+
+# CLI override for the vLLM git ref:
+#   make defconfig-kvio-lmsys VLLM_REF=my-branch
+config KNLP_KVIO_VLLM_REF_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh VLLM_REF)
+
+config KNLP_KVIO_VLLM_REF
+	string "vLLM git ref (branch, tag, or commit)"
+	default "$(VLLM_REF)" if KNLP_KVIO_VLLM_REF_SET_BY_CLI
+	default "asymmetric-kv-plumbing"
+
+config KNLP_KVIO_VLLM_DIR
+	string "vLLM clone directory (relative to WORKTREE_ROOT)"
+	default "vllm"
+
+config KNLP_KVIO_LMCACHE_REPO
+	string "LMCache repo URL"
+	default "https://github.com/mcgrof/LMCache.git"
+
+# CLI override for the LMCache git ref.  LMCACHE_BRANCH is an accepted
+# ALIAS for LMCACHE_REF, so both
+#   make defconfig-kvio-lmsys LMCACHE_BRANCH=my-kvio-branch
+#   make defconfig-kvio-lmsys LMCACHE_REF=my-kvio-branch
+# work.  When BOTH are set, LMCACHE_BRANCH wins (its default line is
+# listed first below).  kvio needs a custom LMCache branch (the one that
+# ships rust/raw_block + the semantic trace), so the default is "kvio".
+config KNLP_KVIO_LMCACHE_BRANCH_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh LMCACHE_BRANCH)
+
+config KNLP_KVIO_LMCACHE_REF_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh LMCACHE_REF)
+
+config KNLP_KVIO_LMCACHE_REF
+	string "LMCache git ref"
+	default "$(LMCACHE_BRANCH)" if KNLP_KVIO_LMCACHE_BRANCH_SET_BY_CLI
+	default "$(LMCACHE_REF)" if KNLP_KVIO_LMCACHE_REF_SET_BY_CLI
+	default "kvio"
+
+config KNLP_KVIO_LMCACHE_DIR
+	string "LMCache clone directory"
+	default "lmcache"
+
+# ── Mooncake real-trace replay (kvio-mooncake profile) ─────────
+#
+# Drives a production Mooncake (FAST25) request trace through
+# vLLM + LMCache to measure prefix-cache reuse, timing, and
+# KV-offload storage behaviour.  Token IDs are synthesised
+# preserving the trace's hash structure (same hash_id -> same
+# 512-token block); content is synthetic, reuse/timing is faithful.
+
+config KNLP_KVIO_MOONCAKE_TRACE_PATH
+	string "Mooncake FAST25 JSONL trace path"
+	default ""
+	help
+	  Path to a FAST25 Mooncake trace (conversation/toolagent/
+	  synthetic .jsonl).  When empty the stage uses a tiny built-in
+	  fixture so the smoke gate can still run without a trace.
+
+config KNLP_KVIO_MOONCAKE_MODEL
+	string "Model for the Mooncake replay"
+	default "Qwen/Qwen2.5-7B-Instruct"
+
+config KNLP_KVIO_MOONCAKE_MAX_REQUESTS
+	int "Cap on replayed requests (0 = all)"
+	default 0
+	help
+	  Never start with the full 23.6k toolagent trace; cap to a
+	  smoke-sized subset first.  0 means replay every record.
+
+config KNLP_KVIO_MOONCAKE_SPEEDUP
+	int "Arrival-time speedup factor (compresses replay)"
+	default 1
+
+config KNLP_KVIO_MOONCAKE_VOCAB_SIZE
+	int "Vocab size bound for synthesised token IDs"
+	default 32000
+
+config KNLP_KVIO_MOONCAKE_SEED
+	int "Seed for deterministic token-ID synthesis"
+	default 0
+
+# ── Content-bearing real-trace replay + KV capture (kvio-lmsys) ─
+#
+# Drives REAL datasets -- LMSYS-Chat-1M multi-turn conversations or
+# LongBench long-context questions -- tokenized with the target
+# model, through vLLM + LMCache, and CAPTURES the LMCache KV corpus
+# plus the semantic trace for offline, GPU-free KV-geometry / reuse /
+# storage analysis.  Repeated-prefix structure yields real prefix-
+# cache hits (LMSYS: growing per-turn prefix; LongBench: shared
+# document prefix).
+
+choice
+	prompt "Content dataset"
+	default KNLP_KVIO_CONTENT_DATASET_LMSYS
+	help
+	  Which real dataset the content-trace stage replays.  LMSYS is
+	  HF-gated (needs an authenticated token + accepted terms); the
+	  stage falls back to a tiny built-in fixture when it cannot be
+	  loaded so the offline smoke gate still runs.
+
+config KNLP_KVIO_CONTENT_DATASET_LMSYS
+	bool "LMSYS-Chat-1M (multi-turn conversations)"
+
+config KNLP_KVIO_CONTENT_DATASET_LONGBENCH
+	bool "LongBench (long-context single-turn)"
+
+endchoice
+
+config KNLP_KVIO_CONTENT_DATASET
+	string
+	default "lmsys" if KNLP_KVIO_CONTENT_DATASET_LMSYS
+	default "longbench" if KNLP_KVIO_CONTENT_DATASET_LONGBENCH
+	default "lmsys"
+
+config KNLP_KVIO_CONTENT_MODEL
+	string "Model (and tokenizer) for the content replay"
+	default "Qwen/Qwen2.5-7B-Instruct"
+
+config KNLP_KVIO_CONTENT_MAX_REQUESTS
+	int "Cap on replayed requests (0 = all)"
+	default 0
+	help
+	  Smoke-gate first: cap to a small subset (e.g. 50-200) before
+	  scaling up.  0 means replay every built request.
+
+config KNLP_KVIO_CONTENT_SPEEDUP
+	int "Arrival-time speedup factor (compresses replay)"
+	default 1
+
+config KNLP_KVIO_CONTENT_SEED
+	int "Seed for arrival synthesis / deterministic build"
+	default 0
+
+config KNLP_KVIO_CONTENT_SAVE_DECODE_CACHE
+	bool "Save decode-phase KV to L2 (capture decode tails too)"
+	default n
+	help
+	  When set, LMCache also stores decode-phase KV objects (partial
+	  tails).  Default off for a clean prefill-KV corpus.
+
+config KNLP_KVIO_CONTENT_L2_DEVICE
+	string "L2 raw_block device (empty = local pre-sized file)"
+	default ""
+	help
+	  raw_block backend target for the captured KV corpus.  Empty means
+	  use the local pre-sized file in the stage dir (offline,
+	  use_uring_cmd=false).  Set to an NVMe generic namespace character
+	  device (e.g. /dev/ng0n1) for a real io_uring_cmd capture
+	  (use_uring_cmd=true).
+
+config KNLP_KVIO_CONTENT_L2_CAPACITY_GB
+	int "L2 raw_block capacity (GiB)"
+	default 32
+	help
+	  Capacity of the raw_block L2.  Large enough that L2 eviction never
+	  triggers during the run, else captured KV objects are lost.
+
+config KNLP_KVIO_CONTENT_NVME_TRACER
+	string "Path to nvme_uring_cmd_monitor eBPF binary (optional)"
+	default ""
+	help
+	  Optional.  When set AND the L2 device is a /dev/ng* char device,
+	  the stage launches this eBPF tracer for the duration of the replay
+	  and writes nvme_trace.jsonl.  Unset => semantic trace only.
+
+config KNLP_KVIO_CONTENT_PORT
+	int "vLLM serve port for the content replay"
+	default 8000
+
+# ── Common run controls ────────────────────────────────────────
+
+config KNLP_KVIO_ALLOW_HARDWARE_SKIPS
+	bool "Allow graceful skips when GPU/vllm/lmcache are absent"
+	default y
+
+config KNLP_KVIO_FAIL_ON_DIRTY_GIT
+	bool "Fail if companion repos have a dirty git tree"
+	default y
+
+# ── Record (Phase 1 capture) / replay (Phase 2 GPU-free) ───────
+#
+# The two-phase model: capture ONCE on a GPU box (records the KV corpus
+# + semantic trace into RECORD_DIR), then replay that recorded set
+# GPU-free through a storage backend as many times as you like.  If
+# RECORD_DIR already holds a recorded set, `make kvio-replay` replays it
+# instead of capturing.
+
+# The recorded-set directory can be overridden on the make line with
+# KVIO_PATH:  make defconfig-kvio-lmsys KVIO_PATH=/data/my-recorded-set
+config KNLP_KVIO_RECORD_DIR_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh KVIO_PATH)
+
+config KNLP_KVIO_RECORD_DIR
+	string "Recorded-set directory (empty => RESULTS_ROOT/record)"
+	default "$(KVIO_PATH)" if KNLP_KVIO_RECORD_DIR_SET_BY_CLI
+	default ""
+	help
+	  Directory holding a recorded set (a kvio_record.json manifest +
+	  corpus + semantic trace).  When it exists with a manifest,
+	  `make kvio-replay` REPLAYS that set GPU-free through the configured
+	  backend instead of capturing; otherwise capture writes the recorded
+	  set there.  Empty => the default RESULTS_ROOT/record.  Override the
+	  path on the make line with KVIO_PATH:
+	    make defconfig-kvio-lmsys KVIO_PATH=/data/my-recorded-set
+
+config KNLP_KVIO_BACKEND
+	string "Replay backend for a recorded set"
+	default "lmcache"
+	help
+	  Storage backend a recorded set is replayed through.  "lmcache" =
+	  LMCache raw_block (via the GPU-free kvio_replay driver).  Other
+	  backends record a clear skip for now.
+
+config KNLP_KVIO_SMOKE
+	bool "Offline CPU-only smoke (never touch a GPU or a real device)"
+	default n
+	help
+	  Force the pure parse/tokenize/schedule + offline path and record
+	  the offline JSON even if a GPU is present.  Lets the pipeline be
+	  validated CPU-only, separately from capture/replay.  See
+	  defconfig-kvio-smoke.
+
+config KNLP_KVIO_REPLAY_DRIVER
+	string "Path to the GPU-free kvio_replay driver (empty => skip/hook)"
+	default ""
+	help
+	  ebpf-syscall examples/lmcache/kvio_replay.py.  Empty =>
+	  replay-of-record records a documented skip.  When set, replay
+	  shells out to it (KVIO_SRC pointed at the LMCache checkout) to
+	  drive the recorded geometry through LMCache raw_block GPU-free.
+	  NOTE: today the driver replays the recorded set's projected
+	  single-payload geometry, not the full captured size distribution
+	  (captured-distribution replay is a TODO).
+
+config KNLP_KVIO_REPLAY_DEVICE
+	string "Device for replay-of-record (empty => recorded L2 image file)"
+	default ""
+
+config KNLP_KVIO_REPLAY_ENGINE
+	string "kvio_replay --engine {posix,io_uring,uring_cmd}"
+	default "io_uring"
+
+endif # KNLP_REPRODUCE_KVIO
+
+endmenu

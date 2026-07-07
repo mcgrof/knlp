@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the kvio storage-IO capture / replay reproduction.
+#
+# Selecting one of:
+#   make defconfig-kvio-smoke      offline CPU-only pipeline smoke (no GPU)
+#   make defconfig-kvio-mooncake   Mooncake real-trace -> vLLM+LMCache replay
+#   make defconfig-kvio-lmsys      LMSYS-Chat-1M content-trace + KV capture
+#   make defconfig-kvio-longbench  LongBench content-trace + KV capture
+# writes .config and enables CONFIG_KNLP_REPRODUCE_KVIO.  Plain `make`
+# after that runs kvio-doctor -> kvio-fetch -> kvio-build -> kvio-replay
+# -> kvio-report.
+#
+# Two-phase capture/replay: the recorded set lives in
+# CONFIG_KNLP_KVIO_RECORD_DIR (defaults to RESULTS_ROOT/record; override on the
+# make line with KVIO_PATH, e.g. `make defconfig-kvio-lmsys KVIO_PATH=/data/set`).
+# The first `make` CAPTURES a recorded set on a GPU box; a second
+# `make kvio-replay` finds it and REPLAYS it GPU-free through the configured
+# backend (CONFIG_KNLP_KVIO_BACKEND, default LMCache raw_block via
+# CONFIG_KNLP_KVIO_REPLAY_DRIVER).
+#
+# Offline smoke (no GPU / fetch / build):
+#   make defconfig-kvio-smoke && make kvio-replay
+#
+# For kvio-mooncake on a GPU box (smoke-gate first, then scale):
+#   make defconfig-kvio-mooncake
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_KVIO_MOONCAKE_TRACE_PATH="/data/mooncake/conversation_trace.jsonl"
+#   CONFIG_KNLP_KVIO_MOONCAKE_MAX_REQUESTS=200
+#   EOF
+#   make
+#
+# For kvio-lmsys on a GPU box (smoke-gate first, then scale); the
+# stage captures the KV corpus + semantic trace by default:
+#   make defconfig-kvio-lmsys
+#   cat >> .config << 'EOF'
+#   CONFIG_KNLP_KVIO_CONTENT_MODEL="Qwen/Qwen2.5-7B-Instruct"
+#   CONFIG_KNLP_KVIO_CONTENT_MAX_REQUESTS=200
+#   EOF
+#   make
+#
+# Point LMCache at a feature branch via LMCACHE_REF or its alias
+# LMCACHE_BRANCH on the make line (kvio defaults to the "kvio" branch):
+#   make defconfig-kvio-lmsys LMCACHE_BRANCH=my-kvio-branch
+
+KVIO_ORCH := python3 -m tools.reproduce.kvio.run
+
+.PHONY: kvio-doctor kvio-fetch kvio-build kvio-replay kvio-report \
+        kvio-clean kvio
+
+# When CONFIG_KNLP_REPRODUCE_KVIO=y, plain `make` defaults to the kvio
+# pipeline.  Otherwise the existing all: target is unaffected.
+ifeq ($(CONFIG_KNLP_REPRODUCE_KVIO),y)
+.DEFAULT_GOAL := kvio
+endif
+
+kvio: kvio-doctor kvio-fetch kvio-build kvio-replay kvio-report
+
+kvio-doctor:
+	@$(KVIO_ORCH) doctor --config .config
+
+kvio-fetch:
+	@$(KVIO_ORCH) fetch --config .config
+
+kvio-build:
+	@$(KVIO_ORCH) build --config .config
+
+kvio-replay:
+	@$(KVIO_ORCH) replay --config .config
+
+kvio-report:
+	@$(KVIO_ORCH) report --config .config
+
+kvio-clean:
+	@$(KVIO_ORCH) clean --config .config

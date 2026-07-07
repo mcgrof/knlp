@@ -1,0 +1,21 @@
+# kvio offline smoke -- validate the pipeline CPU-only (no GPU/device/fetch).
+#
+# Runs the pure parse/tokenize/schedule + offline smoke gate and records the
+# offline JSON.  CONFIG_KNLP_KVIO_SMOKE=y forces the offline path even when a
+# GPU is present, and RECORD_DIR is empty so nothing is captured/replayed.
+# This is how you check the pipeline works separately from capture/replay:
+#
+#   make defconfig-kvio-smoke
+#   make kvio-replay          # offline: build/tokenize/schedule + smoke gate
+#
+# (Use `make kvio-replay`, not bare `make`, so it does not fetch/build the
+# vLLM + LMCache companion repos -- the smoke path needs none of that.)
+CONFIG_KNLP_REPRODUCE_KVIO=y
+CONFIG_KNLP_KVIO_PROFILE="content"
+CONFIG_KNLP_KVIO_SMOKE=y
+CONFIG_KNLP_KVIO_RESULTS_ROOT="./results/kvio-smoke"
+CONFIG_KNLP_KVIO_CONTENT_DATASET_LMSYS=y
+CONFIG_KNLP_KVIO_CONTENT_MODEL="Qwen/Qwen2.5-7B-Instruct"
+CONFIG_KNLP_KVIO_CONTENT_MAX_REQUESTS=50
+CONFIG_KNLP_KVIO_ALLOW_HARDWARE_SKIPS=y
+CONFIG_KNLP_KVIO_FAIL_ON_DIRTY_GIT=y
