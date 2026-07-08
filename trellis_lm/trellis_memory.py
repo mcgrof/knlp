@@ -570,6 +570,7 @@ def run_trellis_memory_chunked(
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
     input_gate: Optional[torch.Tensor] = None,  # [B,H,T,M] per-slot gate a(x_t)
+    ic_solver: str = "solve",  # "solve" (cuSOLVER trsm) | "neumann" (matmul)
 ):
     """Faithful chunkwise form of run_trellis_memory (per-head beta only).
 
@@ -692,21 +693,34 @@ def run_trellis_memory_chunked(
             lpprev = lp - torch.log(b.clamp_min(1e-9)).squeeze(-1)  # log P_{t-1}
             ratio = torch.exp((lpprev[..., :, None] - lp[..., None, :]).clamp_max(0.0))
             coef = ratio * WW * strict.view(1, 1, C, C)  # (P_{t-1}/P_s) w_t·w_s
-            # Λ[b,h,m,t,s] = γ a_{t,m} coef[t,s]      (strict lower, per slot)
-            Lam = gval * a_g.permute(0, 1, 3, 2).unsqueeze(-1) * coef.unsqueeze(2)
-            eye = torch.eye(C, device=dev, dtype=dt).view(1, 1, 1, C, C)
-            Lmat = eye + Lam  # [B,H,M,C,C] unit-lower-triangular
-            rhs = a_g.permute(0, 1, 3, 2) * Pprev.squeeze(-1).unsqueeze(
-                2
-            ) * M0W.permute(0, 1, 3, 2) - A.permute(
-                0, 1, 3, 2
-            )  # [B,H,M,C]
-            u = torch.linalg.solve_triangular(
-                Lmat, rhs.unsqueeze(-1), upper=False, unitriangular=True
-            ).squeeze(
-                -1
-            )  # [B,H,M,C]
-            u = u.permute(0, 1, 3, 2)  # [B,H,C,M]
+            # rhs_t = a_{t,m} P_{t-1} (M0@w_t)_m − alpha_{t,m}, kept [B,H,C,M].
+            rhs_cm = a_g * Pprev * M0W - A  # [B,H,C,M]
+            gval1 = g.reshape(1, H, 1, 1)  # per-head gamma  [1,H,1,1]
+            if ic_solver == "neumann":
+                # The per-slot system (I + γ a_{·,m} ⊙_row coef) u_m = rhs_m is
+                # strictly-lower-triangular hence nilpotent: the fixed point
+                # u = rhs − γ a ⊙ (coef @ u) is EXACT after C−1 sweeps. The
+                # coupling `coef` is SHARED across the M slots, so one
+                # [C,C]@[C,M] matmul advances every slot at once — no per-slot
+                # [B,H,M,C,C] system, no cuSOLVER trsm. torch.compile fuses the
+                # unrolled C−1 sweeps into a handful of kernels.
+                u = rhs_cm
+                for _ in range(C - 1):
+                    u = rhs_cm - gval1 * a_g * torch.einsum(
+                        "bhts,bhsm->bhtm", coef, u
+                    )
+            else:
+                # Λ[b,h,m,t,s] = γ a_{t,m} coef[t,s]  (strict lower, per slot)
+                Lam = gval * a_g.permute(0, 1, 3, 2).unsqueeze(-1) * coef.unsqueeze(2)
+                eye = torch.eye(C, device=dev, dtype=dt).view(1, 1, 1, C, C)
+                Lmat = eye + Lam  # [B,H,M,C,C] unit-lower-triangular
+                rhs = rhs_cm.permute(0, 1, 3, 2)  # [B,H,M,C]
+                u = torch.linalg.solve_triangular(
+                    Lmat, rhs.unsqueeze(-1), upper=False, unitriangular=True
+                ).squeeze(
+                    -1
+                )  # [B,H,M,C]
+                u = u.permute(0, 1, 3, 2)  # [B,H,C,M]
             if G is not None:
                 u = u * G
             if read_mode == "M_q":
