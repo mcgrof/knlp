@@ -91,6 +91,7 @@ def backend_of(model):
 SMD_ARMS = {
     "smd_diag": "per_slot",
     "smd_scalar": "scalar",
+    "smd_identity": "identity",
 }
 
 
