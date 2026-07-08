@@ -104,7 +104,20 @@ class TrellisMixer(nn.Module):
         # rank=0 leaves it None so the diagonal path is bit-identical.
         self.write_lowrank_proj = None
         self.write_gate_rank = int(cfg.trellis_input_gate_rank)
-        if cfg.trellis_write_mode == "input_conditioned":
+        # scope="identity" pins the input gate to a constant a(x)=1, so the write
+        # is the plain affine delta rule u=z-alpha with no learned multiplicative
+        # gain. It still routes through the input-conditioned chunk kernel (the
+        # gate tensor is all ones), so it is a same-codepath control that isolates
+        # the effect of the learned diag/scalar gate at matched state size.
+        self.identity_write_gate = (
+            cfg.trellis_write_mode == "input_conditioned"
+            and cfg.trellis_input_gate_scope == "identity"
+        )
+        make_gate = (
+            cfg.trellis_write_mode == "input_conditioned"
+            and not self.identity_write_gate
+        )
+        if make_gate:
             gate_out = H if cfg.trellis_input_gate_scope == "scalar" else H * M
             self.write_gate_proj = nn.Linear(d, gate_out, bias=True)
             self.reset_write_gate_bias()
@@ -390,6 +403,9 @@ class TrellisMixer(nn.Module):
     def _write_gate(self, h_float: torch.Tensor) -> torch.Tensor | None:
         """Input-conditioned gate a(x_t) in [B,H,T,M], fp32. "scalar" scope
         projects one gain per head/token and broadcasts to all M slots."""
+        if getattr(self, "identity_write_gate", False):
+            B, T, _ = h_float.shape
+            return h_float.new_ones(B, self.H, T, self.M)
         if self.write_gate_proj is None:
             return None
         if self.cfg.trellis_input_gate_scope == "scalar":

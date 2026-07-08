@@ -171,6 +171,7 @@ class TrellisConfig:
         assert self.trellis_input_gate_scope in (
             "per_slot",
             "scalar",
+            "identity",
         ), self.trellis_input_gate_scope
         assert (
             isinstance(self.trellis_input_gate_rank, int)
