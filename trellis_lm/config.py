@@ -42,6 +42,11 @@ class TrellisConfig:
     # salvageable Trellis: input-conditioned nonlinear expressivity without the
     # state-dependent Jacobian that breaks exact chunking (Pro consult 2026-07-05).
     trellis_write_mode: str = "nonlinear_phi"
+    # solver for the input-conditioned affine chunk kernel. "solve": per-slot
+    # cuSOLVER unit-triangular trsm (default, reference). "neumann": all-slots
+    # nilpotent fixed-point (C-1 matmul sweeps, shared coupling) -- bit-exact,
+    # graph-break-free so torch.compile can fuse it (the speed path).
+    trellis_ic_solver: str = "solve"
     # activation for the input-conditioned per-slot gate a(x_t). "softplus" with
     # a bias init of log(e-1) starts a≡1 (exact delta rule) then learns.
     trellis_input_gate_act: str = "softplus"
