@@ -1030,6 +1030,7 @@ class TrellisMixer(nn.Module):
                             cfg.chunk_size,
                             update_gate=ugate,
                             input_gate=write_gate,
+                            ic_solver=cfg.trellis_ic_solver,
                         )
                     return run_trellis_memory(
                         write_in,
