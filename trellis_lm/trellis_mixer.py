@@ -1013,6 +1013,31 @@ class TrellisMixer(nn.Module):
                 def _ic_or_seq(write_in, read_in, alpha_in, read_mode, ugate):
                     # input-conditioned: exact affine chunk kernel when
                     # chunk_size>1 (matmul throughput), else exact sequential.
+                    # smd_identity (G=I, ones gate) is a plain gated delta rule;
+                    # route it onto the fla fast path when requested (see
+                    # smd_fla.py). Only valid when there is no multiplicative
+                    # gate content, no update gate, and no low-rank mixing.
+                    if (
+                        self.identity_write_gate
+                        and cfg.trellis_ic_solver in ("fla", "fla_ref")
+                        and write_lowrank is None
+                        and ugate is None
+                        and cfg.residual_update_mix == 0.0
+                        and cfg.trellis_update_stabilizer == "none"
+                    ):
+                        from .smd_fla import smd_identity_pass
+
+                        backend = "fla" if cfg.trellis_ic_solver == "fla" else "ref"
+                        return smd_identity_pass(
+                            write_in,
+                            read_in,
+                            alpha_in,
+                            bf,
+                            gf,
+                            read_mode,
+                            cfg.chunk_size,
+                            backend=backend,
+                        )
                     if ic_chunk:
                         if write_lowrank is not None:
                             raise NotImplementedError(
