@@ -19,25 +19,34 @@ import torch
 class HeadCovariance:
     def __init__(self, n_heads: int):
         self.n_heads = n_heads
-        self.C = torch.zeros(n_heads, n_heads, dtype=torch.float64)
-        self.n = 0  # number of length-H column samples seen
+        self.C = None      # HxH accumulator, lazily placed on the input's device
+        self.n = 0         # number of length-H column samples seen
 
     @torch.no_grad()
     def update(self, X: torch.Tensor):
         """X: (..., H, D) -- any leading batch/token dims. Adds sum over all
-        leading dims of X X^T and counts D columns per (leading) matrix."""
+        leading dims of X X^T and counts D columns per (leading) matrix.
+
+        The contraction output is only HxH, so accumulate on the input's device
+        in float32 (fast on ROCm; the HxH einsum keeps enough precision for the
+        eigenvectors over ~1e5-1e6 samples). covariance() promotes to float64 on
+        CPU for the eigendecomposition."""
         assert X.shape[-2] == self.n_heads, f"expected H={self.n_heads}, got {X.shape[-2]}"
-        Xf = X.reshape(-1, X.shape[-2], X.shape[-1]).to(torch.float64)  # (N, H, D)
-        # sum_n X_n @ X_n^T  == einsum over the batch and D axes
-        self.C += torch.einsum("nhd,ngd->hg", Xf, Xf)
+        Xf = X.reshape(-1, X.shape[-2], X.shape[-1]).float()  # (N, H, D) on X.device
+        c = torch.einsum("nhd,ngd->hg", Xf, Xf)
+        if self.C is None:
+            self.C = torch.zeros(self.n_heads, self.n_heads, dtype=torch.float32, device=Xf.device)
+        self.C += c
         self.n += Xf.shape[0] * Xf.shape[-1]
 
     def covariance(self) -> torch.Tensor:
         assert self.n > 0, "no samples accumulated"
-        return self.C / self.n
+        return (self.C.double().cpu()) / self.n
 
     def merge(self, other: "HeadCovariance"):
         assert other.n_heads == self.n_heads
-        self.C += other.C
+        if other.C is not None:
+            oc = other.C.to(self.C.device) if self.C is not None else other.C.clone()
+            self.C = oc if self.C is None else self.C + oc
         self.n += other.n
         return self
