@@ -1023,8 +1023,17 @@ llm = LLM(
     </div>
     Qwen2.5-7B under symmetric FP8 suffers total retrieval failure — not graceful degradation, complete collapse.
     Asymmetric K16/V8 matches FP16 within measurement noise and slightly exceeds it on the Qwen2.5-7B 32K row
-    (0.89 vs 0.84). Tolerant models are unaffected in either direction, so asymmetric is the recommended safe
-    default among the evaluated fused FP8 KV-cache paths.
+    (0.89 vs 0.84). Tolerant models are unaffected in either direction. So <strong>if you need a single
+    KV-cache scheme that covers every model — including fragile-key ones — asymmetric K16/V8 is the safe
+    default</strong> among the evaluated fused FP8 paths: it is the only one here that holds quality on the
+    fragile models while matching the tolerant ones. That safety is now <em>explained</em>, not merely
+    observed: symmetric FP8-K collapse tracks K-projection <strong>bias magnitude</strong> (with a distinct
+    partial-RoPE failure mode), so on a <em>known-robust</em> model symmetric FP8-K is quality-admissible and,
+    being denser, can be the better choice. See the
+    <a href="fp8-kv-failure-atlas.html" style="color:var(--cyan);">FP8 KV-cache failure atlas</a> for the
+    root cause and the per-model fragility map. A fuller comparison of K16/V8 against the broader
+    KV-quantization field — symmetric FP8, TurboQuant, and others, across quality, kernel tax, and served
+    goodput — is in progress and will be linked here when complete.
   </div>
 
   <div class="citation-block">
@@ -1114,14 +1123,19 @@ llm = LLM(
   <div class="speedup-bar-wrap" id="flashinferBars"></div>
 
   <div class="key-result">
-    <div class="kr-label">Asymmetric wins over symmetric FP8 on every tested model</div>
+    <div class="kr-label">Asymmetric leads symmetric FP8 on throughput at fixed batch 32 — on every tested model</div>
     Per-model asymmetric-vs-symmetric ratio ranges from <strong>+1.0% (Llama-3.1-8B)</strong> to
     <strong>+4.2% (Qwen2.5-1.5B)</strong>, with the headline
     <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. This gap is structural, not noise:
     asymmetric eliminates K dequantization entirely whereas symmetric serializes it ahead of softmax.
-    Critically, asymmetric is also the only quality-safe configuration on fragile-key models (see
-    <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a> for the NIAH 0.00 → 0.89
-    retrieval rescue on Qwen2.5-7B).
+    Note the scope: this is a <em>fixed-batch-32</em> kernel-throughput result on the vLLM 0.19 / FlashInfer
+    0.6.7 stack below — a capacity- or residency-bound serving regime (where symmetric FP8's smaller cache
+    admits more concurrent sequences) is a separate measurement and is not this claim. What is
+    model-independent is quality admissibility: asymmetric is the only configuration here that stays
+    quality-safe on fragile-key models — the NIAH 0.00 → 0.89 retrieval rescue on Qwen2.5-7B — while
+    symmetric FP8-K is fine on robust models (see the
+    <a href="fp8-kv-failure-atlas.html" style="color:var(--cyan);">FP8 KV-cache failure atlas</a> for which
+    models fail and why).
   </div>
 
   <div class="citation-block">
