@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIM-Guided Weight Quantization — which weights need more bits, on a real eval</title>
+  <meta name="description" content="At decode, model weights are ~83% of the bytes, so weight quantization is the dominant lever. Diagonal Fisher (FIM) sensitivity says which weights need more bits. On a held-out cross-family eval (Qwen2.5-7B + Llama-3.2-3B), int8 is the near-lossless deployable knee (-41% decode bytes); FIM-guided int4 is usable with a quality hit; and the fancy quantizers (AWQ, GPTQ) that looked great on a small proxy do not deliver a free int4 win once measured honestly.">
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #a855f7, #d946ef);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; transition: all 0.3s ease; }
+    .card:hover { border-color: #a855f7; box-shadow: 0 4px 20px -5px rgba(168, 85, 247, 0.2); }
+    .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .prose p { margin-bottom: 0.9rem; }
+    .prose strong { color: #e2e8f0; }
+    .kbd { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 6px; color:#cbd5e1; }
+    .anchor { scroll-margin-top: 1.5rem; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
+      <a href="fim_quantization_visualization.html" class="px-3 py-1.5 bg-purple-600 rounded text-sm font-medium text-white">FIM Quant</a>
+      <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
+      <a href="lm_head_decode_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-emerald-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">LM-head decode</a>
+      <a href="fisher_adam_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-blue-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FIM-Adam</a>
+    </div>
+  </nav>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+      ResponsiveContainer, ReferenceLine, Cell, Label
+    } = Recharts;
+
+    const C = {
+      purple:'#a855f7', fuchsia:'#d946ef', violet:'#8b5cf6', blue:'#3b82f6', green:'#22c55e',
+      emerald:'#10b981', amber:'#f59e0b', red:'#ef4444', cyan:'#06b6d4', gray:'#64748b', slate:'#334155', dim:'#475569'
+    };
+
+    // ───────────────────────── DATA (measured: Qwen2.5-7B + Llama-3.2-3B, fdec quant-eval 2026-06) ─────────────────────────
+
+    // Decode byte pools, Qwen2.5-7B, ctx 32768, baseline per-token. Weights dominate.
+    const POOLS = [
+      {pool:'model weights', mb:14141, pct:83, fill:C.purple},
+      {pool:'KV cache',      mb:1879,  pct:11, fill:C.cyan},
+      {pool:'LM-head',       mb:1090,  pct:6,  fill:C.gray},
+    ];
+
+    // Diagonal Fisher (mean grad^2) per projection type, Qwen2.5-7B, diverse calib.
+    // pct = share of that projection already promoted to int8 by the FIM top-20% rule.
+    const FISHER = [
+      {proj:'v_proj',    fisher:1.29e-6, pct:82, note:'most sensitive'},
+      {proj:'k_proj',    fisher:4.24e-7, pct:50},
+      {proj:'o_proj',    fisher:1.08e-7, pct:4},
+      {proj:'down_proj', fisher:8.5e-8,  pct:4},
+      {proj:'up_proj',   fisher:6.4e-8,  pct:0},
+      {proj:'q_proj',    fisher:4.95e-8, pct:0, note:'Fisher-cheap'},
+      {proj:'gate_proj', fisher:4.2e-8,  pct:0, note:'least'},
+    ];
+
+    // The deployable knee — REAL held-out cross-family eval (wikitext-2 test, 4096 ctx,
+    // calib disjoint from eval). top-1 agreement vs fp16, and perplexity ratio.
+    const KNEE = [
+      {config:'int8',     qwen:0.921, llama:0.982, qppl:1.027, lppl:0.999, saved:41, lat:3.00},
+      {config:'int4',     qwen:0.823, llama:0.888, qppl:1.160, lppl:1.059, saved:61, lat:2.00},
+      {config:'int4+AWQ', qwen:0.817, llama:0.874, qppl:1.131, lppl:1.056, saved:61, lat:2.00},
+    ];
+
+    // The earlier 6-prompt PROXY sweep that the real eval corrected. Shows naive-int4
+    // was an artifact (group-wise + AWQ lift it) — but the real eval (above) then
+    // showed those lifts do not hold out of the proxy.
+    const PROXY = [
+      {config:'int8',          top1:0.951, saved:41},
+      {config:'int6',          top1:0.878, saved:52},
+      {config:'int4 naive',    top1:0.780, saved:61},
+      {config:'int4 group-128',top1:0.854, saved:61},
+      {config:'int4 +AWQ',     top1:0.878, saved:61},
+    ];
+
+    // ───────────────────────── components ─────────────────────────
+    function StatCard({label, value, unit, sub, color}) {
+      return (
+        <div className="stat-card rounded-lg p-4">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{color: color||'#fff'}}>{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+    function Tip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          {label !== undefined && <div className="text-gray-400 mb-1">{label}</div>}
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color || p.fill}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    function Section({id, kicker, title, children}) {
+      return (
+        <section id={id} className="anchor card rounded-xl p-6 md:p-8 mb-8">
+          {kicker && <div className="text-xs uppercase tracking-widest mb-2" style={{color:C.purple}}>{kicker}</div>}
+          <h2 className="text-2xl font-bold mb-4">{title}</h2>
+          <div className="prose text-gray-400 text-[15px] leading-relaxed max-w-none">{children}</div>
+        </section>
+      );
+    }
+    function ChartFrame({title, sub, height, children}) {
+      return (
+        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+          {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
+          {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
+          <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div className="max-w-5xl mx-auto px-5 py-12">
+          <header className="text-center mb-10">
+            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
+              <span className="gradient-text">FIM-Guided</span> Weight Quantization
+            </h1>
+            <p className="text-gray-400 max-w-3xl mx-auto text-lg">
+              At decode, model weights are <strong className="text-gray-200">~83% of the bytes moved per token</strong>,
+              so weight quantization is the dominant lever &mdash; not the KV cache. Diagonal Fisher (the same
+              <span className="kbd"> E[g²]</span> signal Adam already tracks) says <strong className="text-gray-200"> which
+              weights need more bits</strong>. Measured honestly on a held-out cross-family eval, the deployable knee is
+              <strong className="text-gray-200"> int8</strong>; the clever int4 tricks that dazzle on a small proxy do not
+              survive a real eval.
+            </p>
+          </header>
+
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
+            <StatCard label="Weights at decode" value="83" unit="%" sub="of bytes/token, 7B @ 32k" color={C.purple}/>
+            <StatCard label="int8 knee" value="−41" unit="%" sub="decode bytes, near-lossless" color={C.green}/>
+            <StatCard label="int4 (FIM)" value="−61" unit="%" sub="bytes, real quality hit" color={C.amber}/>
+            <StatCard label="Most sensitive" value="W_v" sub="not the V-cache" color={C.fuchsia}/>
+            <StatCard label="Eval" value="2 families" sub="Qwen2.5-7B + Llama-3.2-3B" />
+            <StatCard label="Deployable" value="int8" sub="calibration-free" color={C.green}/>
+          </div>
+
+          <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.purple}}>
+            <h3 className="font-semibold text-purple-400 mb-2">The result in one breath</h3>
+            <p className="text-gray-300 text-[15px] leading-relaxed">
+              Decode is memory-bound, and at a 7B model with real context the weights are <strong className="text-white">83%</strong>
+              {" "}of the bytes read each token &mdash; so quantizing weights is where the decode speedup lives. Diagonal Fisher
+              ranks which weights matter: spend int8 on the sensitive ones, int4 on the rest. On a held-out cross-family eval,
+              <strong className="text-white"> int8 weights are near-lossless</strong> (top-1 0.92&ndash;0.98 vs fp16, perplexity
+              within ~3%) for <strong className="text-white">−41%</strong> decode bytes, calibration-free. Pushing to int4
+              buys another <strong className="text-white">−20%</strong> but costs real quality. And the honest part: the
+              activation-aware tricks (AWQ, GPTQ) that turned a 6-prompt proxy into a int4 win <strong className="text-white"> do
+              not deliver a free win</strong> once you measure on held-out text across two model families &mdash; int8 is the
+              knee that holds up.
+            </p>
+          </div>
+
+          {/* 1. byte pools */}
+          <Section id="pools" kicker="Why weights" title="Weights are 83% of the bytes decode reads">
+            <p>
+              Autoregressive decode is memory-traffic bound, so what matters is the bytes moved per token. Split them by
+              pool for Qwen2.5-7B at 32k context: the <strong>weights dominate</strong>, the KV cache is a distant second,
+              the LM-head smaller still. Quantizing the KV cache and the LM-head together moves only ~2.6% of decode bytes
+              at this regime; quantizing the <em>weights</em> is the lever that moves the needle.
+            </p>
+            <ChartFrame title="Decode byte pools per token — Qwen2.5-7B @ 32k context"
+              sub="Megabytes read per generated token, by pool. Weights are 83% of the total, so weight precision sets the decode floor." height={300}>
+              <BarChart data={POOLS} layout="vertical" margin={{top:8, right:40, left:30, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" stroke="#94a3b8" label={{value:'MB / token', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
+                <YAxis type="category" dataKey="pool" stroke="#94a3b8" width={110} tick={{fontSize:12}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="mb" name="MB/token" radius={[0,3,3,0]}>
+                  {POOLS.map((d,i)=><Cell key={i} fill={d.fill}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p className="text-xs text-gray-500">
+              This is why a KV-only or LM-head-only optimization, however elegant, barely moves single-stream decode at 7B:
+              the byte budget is in the weights. (As context and batch grow the KV pool catches up; at short context and
+              small batch, weights own the bandwidth.)
+            </p>
+          </Section>
+
+          {/* 2. which weights */}
+          <Section id="fisher" kicker="Which weights" title="Fisher says which weights need more bits">
+            <p>
+              Not all weights are equal. Diagonal Fisher information &mdash; the per-parameter <span className="kbd">E[g²]</span>,
+              exactly the second moment Adam already accumulates &mdash; measures how much each weight moves the loss. Rank
+              the linear layers by Fisher and a clean policy falls out: promote the most sensitive <strong>20%</strong> to
+              int8, leave the rest at int4. Group the layers by projection type and the structure is striking:
+            </p>
+            <ChartFrame title="Weight sensitivity by projection (diagonal Fisher, Qwen2.5-7B)"
+              sub="Mean Fisher per projection type (log scale). The value projection W_v is the single most sensitive — even though the V-cache is the FP8-robust one. Queries are Fisher-cheap." height={320}>
+              <BarChart data={FISHER} margin={{top:8, right:16, left:10, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="proj" stroke="#94a3b8" tick={{fontSize:11}} angle={-20} textAnchor="end" height={50} interval={0}/>
+                <YAxis stroke="#94a3b8" scale="log" domain={[3e-8, 2e-6]} tickFormatter={v=>v.toExponential(0)} label={{value:'mean Fisher (log)', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="fisher" name="mean Fisher" radius={[3,3,0,0]}>
+                  {FISHER.map((d,i)=><Cell key={i} fill={d.proj==='v_proj'?C.fuchsia:(d.proj==='k_proj'?C.purple:C.dim)}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">The surprise: cache-precision policy does not transfer to weight-precision
+              policy.</strong> Our KV-cache work shows the V-cache tolerates FP8 (it is the robust one to drop). Yet the
+              {" "}<em>weights</em> that produce V, <span className="kbd">W_v</span>, are the <strong>single most</strong>
+              {" "}Fisher-sensitive parameters in the model. Softmax averaging smooths the stored V vectors so the cache survives
+              FP8, while the parameters that compute V still move the loss most. You cannot read which weights to protect off
+              which cache to protect. Fisher promotes 82% of <span className="kbd">W_v</span> and 50% of
+              <span className="kbd"> W_k</span> to int8 automatically; <span className="kbd">q_proj</span> stays int4 (0% promoted).
+            </div>
+            <p>
+              That last fact retires a tempting idea. Because keys must stay FP16 in the cache, you might pin the
+              key-projection weights to int8 too. It is byte-free (GQA already shrank <span className="kbd">k_proj</span>/<span className="kbd">v_proj</span>),
+              but it is <strong>redundant</strong>: Fisher already promotes the sensitive k/v layers, so the explicit pin only
+              adds the Fisher-low remainder and does not move quality. Fisher subsumes the key-aware pin.
+            </p>
+          </Section>
+
+          {/* 3. the knee */}
+          <Section id="knee" kicker="The verdict" title="The deployable knee, on a real held-out eval">
+            <p>
+              The number that matters is measured on held-out text, not a handful of prompts: wikitext-2 test at 4096-token
+              context, calibration disjoint from evaluation, run identically on two model families as a generality gate.
+              Top-1 next-token agreement against the fp16 model, by precision:
+            </p>
+            <ChartFrame title="int8 vs int4 — top-1 agreement vs fp16 (held-out, two families)"
+              sub="int8 is near-lossless on both families; int4 costs real quality; and activation-aware AWQ does not recover it on the real eval (it slightly hurts agreement). Higher is better.">
+              <BarChart data={KNEE} margin={{top:8, right:16, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="config" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" domain={[0.75,1.0]} tickFormatter={v=>v.toFixed(2)} label={{value:'top-1 vs fp16', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <ReferenceLine y={0.98} stroke={C.green} strokeDasharray="4 4" label={{value:'near-lossless', fill:C.green, fontSize:10, position:'right'}}/>
+                <Bar dataKey="llama" name="Llama-3.2-3B" fill={C.violet} radius={[3,3,0,0]}/>
+                <Bar dataKey="qwen"  name="Qwen2.5-7B"   fill={C.purple} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              <strong>int8 is the knee.</strong> Qwen2.5-7B holds top-1 0.921 with perplexity within 2.7%; Llama-3.2-3B holds
+              0.982 with perplexity essentially unchanged (ratio 0.999) &mdash; for <strong>−41%</strong> decode bytes and a
+              roofline 5.11&rarr;3.00 ms/token, and it is <strong>calibration-free</strong>. Dropping to int4 with
+              Fisher-guided allocation (sensitive layers kept at int8) buys another −20% of bytes but costs real quality
+              (Qwen 0.823, Llama 0.888; perplexity +16% / +6%). int4 is for when that hit is acceptable for the extra bytes;
+              otherwise ship int8.
+            </p>
+          </Section>
+
+          {/* 4. the honest correction */}
+          <Section id="proxy" kicker="The honest part" title="The proxy oversold the clever int4 tricks">
+            <p>
+              It is worth showing the trap, because it is a common one. A quick 6-prompt teacher-forced proxy told a tidy
+              story: naive int4 lands at top-1 0.780, group-wise scaling lifts it to 0.854, and AWQ activation-aware scaling
+              lifts it to 0.878 &mdash; looking like the clever quantizers recover most of the int4 gap for free.
+            </p>
+            <ChartFrame title="The 6-prompt proxy sweep (what looked like a int4 win)"
+              sub="On the proxy, group-wise + AWQ appeared to rescue naive int4 from 0.780 to 0.878 at the same bytes. The held-out eval above tells a different story." height={280}>
+              <BarChart data={PROXY} margin={{top:8, right:16, left:0, bottom:30}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="config" stroke="#94a3b8" tick={{fontSize:11}} angle={-15} textAnchor="end" height={50} interval={0}/>
+                <YAxis stroke="#94a3b8" domain={[0.7,1.0]} tickFormatter={v=>v.toFixed(2)} label={{value:'proxy top-1', angle:-90, position:'insideLeft', fill:'#94a3b8', fontSize:11}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="top1" name="proxy top-1" radius={[3,3,0,0]}>
+                  {PROXY.map((d,i)=><Cell key={i} fill={d.config==='int8'?C.green:(d.config.indexOf('int4')===0?C.amber:C.gray)}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              On the real held-out eval across two families, that win evaporates. Fixed-α AWQ is roughly a wash and slightly
+              {" "}<em>hurts</em> agreement (Qwen int4 0.823&rarr;0.817, Llama 0.888&rarr;0.874); it shaves a little perplexity
+              while costing a little KL &mdash; not a free lunch on either family. GPTQ generalizes but does not beat int8,
+              and most of its apparent perplexity win was <strong>domain alignment</strong>: calibrate and evaluate on the
+              same corpus and it shines; calibrate on C4 and evaluate cross-domain and Qwen int8+GPTQ collapses back to plain
+              int8. So the corrected, honest knee is <strong>calibration-free int8</strong>, with GPTQ as optional fidelity
+              polish, not a structural win. The lesson is older than this page: a small proxy produces beautiful
+              reconstruction numbers and overstated conclusions; measure on held-out text, across families, before believing
+              a quantizer.
+            </p>
+          </Section>
+
+          {/* 5. recipe */}
+          <Section id="recipe" kicker="What to ship" title="The recipe, and where it stands">
+            <p>
+              Weights are the decode byte budget, so quantize them first, and let Fisher decide the precision per layer.
+              The deployable recipe today: <strong>int8 weights</strong> (near-lossless, −41% decode bytes, no calibration),
+              with the Fisher map available to push the insensitive layers to int4 where the extra −20% is worth a measured
+              quality hit. Keep the most Fisher-sensitive layers &mdash; led by <span className="kbd">W_v</span>, not the
+              cache &mdash; at higher precision. The activation-aware quantizers are optional polish, not the load-bearing
+              lever, once you hold them to a real eval.
+            </p>
+            <p>
+              Two honest caveats. The Fisher map and the int4 quality are measured on short-to-moderate context and top-1
+              agreement; the long-context regime where key-projection precision would matter most is not exercised here, so
+              the byte-cheap key-projection pin stays a safe default even though this eval cannot credit it. And the
+              perplexity numbers are model- and corpus-specific &mdash; the durable claims are the byte split (weights
+              dominate decode), the int8 near-lossless knee, and that cache-precision policy does not predict
+              weight-precision policy. Data: Qwen2.5-7B and Llama-3.2-3B, held-out wikitext-4k, 2026-06.
+            </p>
+          </Section>
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
+            <p className="mb-2">
+              <a href="https://arxiv.org/abs/2507.18807" className="hover:text-gray-400">Squisher (E[g²] ≈ Fisher)</a>
+              <span className="mx-2">&middot;</span>
+              <a href="fisher_adam_visualization.html" className="hover:text-gray-400">FIM-Adam pruning</a>
+              <span className="mx-2">&middot;</span>
+              <a href="index.html" className="hover:text-gray-400">knlp</a>
+            </p>
+            <p>Measured on held-out text across two model families &mdash; int8 is the knee that holds.</p>
+          </footer>
+        </div>
+      );
+    }
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>

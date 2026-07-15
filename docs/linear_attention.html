@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linear Attention &amp; Bounded Memory — DeltaNet, Gated DeltaNet, DeltaProduct, Trellis</title>
+  <meta name="description" content="knlp's from-scratch matched-harness study of the linear-attention / bounded-memory family — DeltaNet, Gated DeltaNet, GatedDeltaProduct, and Trellis (arXiv:2512.23852). Verdict: at reachable scale Trellis's nonlinear memory write is a liability, for two reasons we make precise — a structural one (it is not affine in the state, so it forfeits the exact chunk kernel) and an empirical one (a same-shell identity control shows the linear delta rule beats it ~2x). GatedDeltaProduct and Gated DeltaNet both solve the exact-overwrite binding grid, but GatedDeltaProduct loses to Gated DeltaNet on language-model loss. Gated DeltaNet is the matched-state quality leader.">
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155; transition: all 0.3s ease;
+    }
+    .card:hover { border-color: #8b5cf6; box-shadow: 0 4px 20px -5px rgba(139, 92, 246, 0.2); }
+    .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .prose p { margin-bottom: 0.9rem; }
+    .prose strong { color: #e2e8f0; }
+    .kbd { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 6px; color:#cbd5e1; }
+    .anchor { scroll-margin-top: 1.5rem; }
+    .pill { font-size: 0.7rem; padding: 1px 8px; border-radius: 9999px; font-weight: 600; }
+    .pill-win { background:#064e3b; color:#6ee7b7; }
+    .pill-mid { background:#3730a3; color:#c7d2fe; }
+    .pill-lose { background:#7f1d1d; color:#fca5a5; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <!-- Shared Navigation -->
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
+      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-violet-600 rounded text-sm font-medium text-white">Linear Attn</a>
+      <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
+      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+      <a href="ra_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">RA</a>
+      <a href="fisher_adam_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-blue-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FIM-Adam</a>
+    </div>
+  </nav>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+      ResponsiveContainer, ReferenceLine, Cell, ComposedChart, Label
+    } = Recharts;
+
+    const C = {
+      indigo:'#6366f1', violet:'#8b5cf6', blue:'#3b82f6', green:'#10b981',
+      amber:'#f59e0b', red:'#ef4444', cyan:'#06b6d4', gray:'#64748b', slate:'#334155', rose:'#f43f5e'
+    };
+
+    // ───────────────────────── DATA (verified: archives + arXiv:2512.23852) ─────────────────────────
+
+    // Matched A100 run: C4 d256/L4, seq2048, ~352M tok (~20/total-param incl emb),
+    // fp32-master + bf16-autocast, AdamW, fla REFERENCE baselines, Trellis fused-Triton kernel, one pod.
+    const FAIR = [
+      {model:'Gated DeltaNet', short:'GatedDelta', ppl:78.49,  params:4.48, klass:'win',  note:'fla reference'},
+      {model:'DeltaNet',       short:'DeltaNet',   ppl:89.77,  params:4.21, klass:'win',  note:'fla reference'},
+      {model:'Trellis',        short:'Trellis',    ppl:152.54, params:4.74, klass:'mid',  note:'this work'},
+      {model:'dense Transformer', short:'dense', ppl:224.89, params:4.72, klass:'lose', note:'KV grows with T'},
+    ];
+
+    // PG19 long-context: scratch Trellis vs matched dense (full-strength sequential, multi-seed).
+    // Trellis beats dense and the margin holds/widens with context. (Family ordering here is
+    // superseded by the fair A100 run; this panel shows the Trellis-vs-DENSE direction only.)
+    const PG19 = [
+      {len:'512',  trellis:1542, dense:1581, delta:-2.5},
+      {len:'1024', trellis:1517, dense:1635, delta:-7.3},
+      {len:'2048', trellis:585,  dense:621,  delta:-5.9},
+      {len:'4096', trellis:546,  dense:622,  delta:-12.1},
+    ];
+
+    // Mixer-level throughput (A100, fwd+bwd, [B8,T2048,d256,H4]), tok/s in thousands.
+    const THRU = [
+      {mixer:'fla GatedDelta',    tps:3891, kind:'linear'},
+      {mixer:'fla DeltaNet',      tps:3315, kind:'linear'},
+      {mixer:'dense MHA',         tps:2941, kind:'dense'},
+      {mixer:'Trellis (Triton)',  tps:770,  kind:'trellis'},
+      {mixer:'Trellis (Python)',  tps:121,  kind:'slow'},
+      {mixer:'our DeltaNet (bmm)',tps:85,   kind:'slow'},
+    ];
+
+    // Paper Table 1 — 790M params / 30B tokens (C4). PPL lower=better.
+    const PAPER_790 = [
+      {model:'Trellis',        ppl:20.28, best:true},
+      {model:'Gated DeltaNet', ppl:21.40, best:false},
+      {model:'Transformer++',  ppl:25.89, best:false},
+      {model:'TTT',            ppl:27.05, best:false},
+      {model:'Mamba2',         ppl:28.91, best:false},
+    ];
+    // Paper Table 2 — 125M ablation (The Pile). NO Gated-DeltaNet row at 125M.
+    const PAPER_125 = [
+      {row:'Trellis (full)',         ppl:10.87, kind:'full'},
+      {row:'b=1 (no chunking)',      ppl:10.75, kind:'full'},
+      {row:'w/o forget gate',        ppl:11.28, kind:'abl'},
+      {row:'TTT',                    ppl:11.44, kind:'base'},
+      {row:'DeltaNet',               ppl:11.58, kind:'base'},
+      {row:'linear φ (f=LN-SiLU)',   ppl:11.65, kind:'abl'},
+    ];
+
+    // Empirical proof: same-shell identity-φ control (our harness, ~4.7M, d256/L4,
+    // C4, 120M tok, seed0). Varies ONLY φ. Linear delta rule beats nonlinear ~2×.
+    const IDENTITY = [
+      {row:'identity-φ (linear delta rule)', lr:'3e-4', ppl:127.90, kind:'linear'},
+      {row:'ln_silu + all paper toggles',    lr:'3e-3', ppl:182.83, kind:'nl'},
+      {row:'ln_silu at matched LR',          lr:'3e-4', ppl:248.37, kind:'nl'},
+      {row:'ln_silu default',                lr:'3e-3', ppl:260.61, kind:'nl'},
+    ];
+
+    // GatedDeltaProduct on real language loss: matched C4-en family run
+    // (46.7M, d512/L10, seq2048, 20M tok, 3 seeds, fla reference layers, one stream).
+    // DeltaProduct wins the exact-overwrite binding grid but LOSES to GDN on LM loss.
+    const DPROD = [
+      {model:'Gated DeltaNet',      short:'GatedDelta',   ppl:215.72, klass:'win'},
+      {model:'GatedDeltaProduct',   short:'DeltaProduct', ppl:224.39, klass:'mid'},
+      {model:'DeltaNet',            short:'DeltaNet',     ppl:254.50, klass:'win'},
+      {model:'dense Transformer',   short:'dense',        ppl:377.91, klass:'lose'},
+    ];
+
+    // ───────────────────────── reusable components (knlp family idiom) ─────────────────────────
+    function StatCard({label, value, unit, sub, color}) {
+      return (
+        <div className="stat-card rounded-lg p-4">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{color: color||'#fff'}}>{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+    function Tip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          {label !== undefined && <div className="text-gray-400 mb-1">{label}</div>}
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color || p.fill}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    function Section({id, kicker, title, children}) {
+      return (
+        <section id={id} className="anchor card rounded-xl p-6 md:p-8 mb-8">
+          {kicker && <div className="text-xs uppercase tracking-widest mb-2" style={{color:C.violet}}>{kicker}</div>}
+          <h2 className="text-2xl font-bold mb-4">{title}</h2>
+          <div className="prose text-gray-400 text-[15px] leading-relaxed max-w-none">{children}</div>
+        </section>
+      );
+    }
+    function ChartFrame({title, sub, height, children}) {
+      return (
+        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+          {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
+          {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
+          <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
+        </div>
+      );
+    }
+    const Pill = ({k, children}) => {
+      const m = {win:'pill-win', mid:'pill-mid', lose:'pill-lose'};
+      return <span className={`pill ${m[k]}`}>{children}</span>;
+    };
+    const KLASS = {win:C.green, mid:C.violet, lose:C.red};
+
+    // ───────────────────────── the page ─────────────────────────
+    function App() {
+      return (
+        <div className="max-w-5xl mx-auto px-5 py-12">
+          {/* Header */}
+          <header className="text-center mb-10">
+            <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
+              <span className="gradient-text">Linear Attention</span> &amp; Bounded Memory
+            </h1>
+            <p className="text-gray-400 max-w-3xl mx-auto text-lg">
+              A dense Transformer&rsquo;s KV cache grows with context; this family replaces it with a
+              <strong className="text-gray-200"> fixed-size recurrent state</strong>. We reimplemented the family
+              from scratch in one matched harness &mdash; <strong className="text-gray-200">DeltaNet</strong>,
+              <strong className="text-gray-200"> Gated DeltaNet</strong>,
+              <strong className="text-gray-200"> GatedDeltaProduct</strong>, and
+              <strong className="text-gray-200"> Trellis</strong> &mdash; to ask whether Trellis&rsquo;s
+              <em> nonlinear</em> memory writer beats its <em>linear</em> cousins at matched size. We ran the
+              decisive controls, and the verdict is in: at the scale we can afford, the nonlinear write is a
+              <strong className="text-gray-200"> liability</strong>, and we can say precisely why &mdash; one
+              structural reason and one empirical one. Gated DeltaNet is the matched-state quality leader.
+            </p>
+          </header>
+
+          {/* Key stats */}
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-8">
+            <StatCard label="Models" value="3 + dense" sub="one matched harness" />
+            <StatCard label="Trained scale" value="4.7" unit="M" sub="paper floor is 125M" />
+            <StatCard label="Decode state" value="O(1)" sub="constant in context" color={C.green}/>
+            <StatCard label="Nonlinear write" value="~2×" sub="worse than linear, matched shell" color={C.red}/>
+            <StatCard label="Quality leader" value="GatedDelta" sub="matched-state C4" color={C.green}/>
+            <StatCard label="Status" value="closed" sub="verdict in; 790M parked" color={C.amber}/>
+          </div>
+
+          {/* TLDR */}
+          <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.violet}}>
+            <h3 className="font-semibold text-violet-400 mb-2">The result in one breath</h3>
+            <p className="text-gray-300 text-[15px] leading-relaxed">
+              Trellis&rsquo;s defining feature is a <em>nonlinear</em> memory write. At the scale we can afford to
+              train, that write is a <strong className="text-white">liability</strong>, and the study closes on two
+              load-bearing findings. <strong className="text-white">Structural:</strong> the nonlinear write is not
+              affine in the state, so it forfeits the exact chunk-parallel training kernel its linear cousins get for
+              free &mdash; this is a theorem, not an engineering gap.
+              <strong className="text-white"> Empirical:</strong> a same-shell control that changes <em>only</em> the
+              write &mdash; swapping the nonlinearity for the identity, which reduces Trellis to the plain delta rule
+              &mdash; is nearly <strong className="text-white">2× better</strong> (127.9 vs 248.4 PPL at matched
+              learning rate); the nonlinearity buys training stability, not quality. Separately, GatedDeltaProduct
+              &mdash; whose extra rotations ace an exact-overwrite task &mdash; also loses to Gated DeltaNet on real
+              language-model loss. Gated DeltaNet is the matched-state leader. The one thing we did <em>not</em> test is
+              the paper&rsquo;s 790M-parameter scale claim; it is parked, not disproven.
+            </p>
+          </div>
+
+          {/* 1. lineage */}
+          <Section id="lineage" kicker="Where it comes from" title="The delta-rule lineage">
+            <p>
+              The family descends from the <a href="https://isl.stanford.edu/~widrow/papers/c1960adaptiveswitching.pdf" className="text-violet-300 hover:underline"><strong>delta rule</strong> (Widrow &amp; Hoff, 1960)</a>,
+              an online least-squares update that nudges a weight matrix to shrink a per-step prediction error.
+              <a href="https://arxiv.org/pdf/2102.11174" className="text-violet-300 hover:underline">Schlag et al. (2021)</a> recast
+              linear attention as a <strong>fast-weight</strong> memory written by exactly that update; the delta-rule model
+              &mdash; later parallelized and scaled as <a href="https://arxiv.org/abs/2406.06484" className="text-violet-300 hover:underline"><strong>DeltaNet</strong></a> &mdash;
+              is the linear baseline here. Adding a learned forget gate gives
+              <a href="https://arxiv.org/abs/2412.06464" className="text-violet-300 hover:underline"><strong> Gated DeltaNet</strong></a>
+              (<a href="https://podcast.do-not-panic.com/episodes/gated-delta-networks-for-long-context-retrieval/" className="text-violet-300 hover:underline">podcast</a>).
+              A separate thread, test-time training (TTT, Titans, Atlas), reaches the same place from the optimization side.
+              <a href="https://podcast.do-not-panic.com/episodes/trellis-and-bounded-memory-transformer-kv-compression/" className="text-violet-300 hover:underline"><strong> Trellis</strong></a>
+              (<a href="https://arxiv.org/abs/2512.23852" className="text-violet-300 hover:underline">arXiv:2512.23852</a>) sits at the junction:
+              a gated delta-rule memory whose inner write is a <em>nonlinear</em> gradient step. That single
+              nonlinearity is the whole bet &mdash; it is what the paper credits for the long-context win, and
+              what costs Trellis the cheap exact training kernel its linear cousins get for free.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 text-sm my-4">
+              {['delta rule (1960)','fast-weight linear attn (2021)','DeltaNet','Gated DeltaNet','test-time memory','Trellis'].map((n,i,a)=>(
+                <React.Fragment key={i}>
+                  <span className="px-3 py-1.5 rounded-lg bg-[#0b1220] border border-gray-800 text-gray-300">{n}</span>
+                  {i<a.length-1 && <span className="text-violet-500">&rarr;</span>}
+                </React.Fragment>
+              ))}
+            </div>
+          </Section>
+
+          {/* 2. what each is */}
+          <Section id="models" kicker="The three writers" title="What each model actually computes">
+            <p>
+              All three keep a per-head recurrent state and read it <strong>write-before-read</strong> &mdash; the
+              state is updated with the current token, then queried. The only difference that matters is whether
+              the inner write is linear in the state.
+            </p>
+            <div className="grid md:grid-cols-3 gap-4 mt-2">
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2"><h4 className="font-semibold text-green-300"><a href="https://arxiv.org/abs/2406.06484" className="hover:underline">DeltaNet</a></h4><Pill k="win">linear</Pill></div>
+                <p className="text-sm text-gray-400">Fast-weight matrix <span className="kbd">S</span>, delta-rule write
+                <span className="kbd">S &larr; S + β(v − Sk)kᵀ</span>, read <span className="kbd">o = Sq</span>. Inner step
+                is linear in <span className="kbd">S</span>, so it gets an <strong>exact chunk-parallel kernel</strong>.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2"><h4 className="font-semibold text-green-300"><a href="https://podcast.do-not-panic.com/episodes/gated-delta-networks-for-long-context-retrieval/" className="hover:underline">Gated DeltaNet</a></h4><Pill k="win">linear</Pill></div>
+                <p className="text-sm text-gray-400">DeltaNet plus a learned scalar decay
+                <span className="kbd">S &larr; αS + β(v − αSk)kᵀ</span>. The gate lets memory forget, which matters at
+                length. Still linear, still exact-chunkable &mdash; and the standout at the scale we can train.</p>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2"><h4 className="font-semibold text-violet-300"><a href="https://podcast.do-not-panic.com/episodes/trellis-and-bounded-memory-transformer-kv-compression/" className="hover:underline">Trellis</a></h4><Pill k="mid">nonlinear</Pill></div>
+                <p className="text-sm text-gray-400">An <span className="kbd">m</span>-slot memory <span className="kbd">M</span>,
+                one online-gradient step on <span className="kbd">½‖φ(Mw) − α‖²</span> per token:
+                <span className="kbd">M &larr; βM − γ&middot;u wᵀ</span>, <span className="kbd">u = Jφ(z)ᵀ(φ(z)−α)</span>. The
+                nonlinear <span className="kbd">φ</span> is the difference from DeltaNet, and the source of everything
+                below. Two-pass (key then value).</p>
+              </div>
+            </div>
+          </Section>
+
+          {/* 3. the fair A100 result */}
+          <Section id="fair" kicker="The decisive comparison" title="One clean run, one pod, fair baselines">
+            <p>
+              The comparison that settles it is a single A100 run under one protocol: C4, <span className="kbd">d256/L4</span>,
+              sequence length 2048, &asymp;352M tokens (&asymp;20 per total parameter including embeddings, &asymp;74 per
+              non-embedding parameter), fp32 master weights with bf16 autocast,
+              the fla <strong>reference</strong> DeltaNet / Gated DeltaNet layers (short conv + qk-norm + output gate &mdash;
+              not strawmen), and the Trellis fused kernel, all in the same pod.
+            </p>
+            <ChartFrame title="Validation perplexity — matched A100 run (lower is better)"
+              sub="fla reference baselines, Trellis fused-Triton kernel, identical protocol. Green = linear cousins, violet = Trellis, red = dense.">
+              <BarChart data={FAIR} margin={{top:8, right:16, left:0, bottom:60}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="short" stroke="#94a3b8" angle={-25} textAnchor="end" height={80} interval={0} tick={{fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0,240]} label={{value:'val PPL', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="ppl" name="val PPL" radius={[3,3,0,0]}>
+                  {FAIR.map((d,i)=><Cell key={i} fill={KLASS[d.klass]}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              Trellis at 152.54 sits clearly between the dense baseline and the linear family &mdash; a normal
+              <em> below-crossover</em> result, not near-dense. But it still loses to plain DeltaNet and to Gated
+              DeltaNet, at a small <strong> parameter disadvantage to the baselines</strong> (it carries ~5&ndash;12%
+              more non-embedding parameters and still loses, which makes the loss conservative). In nats at matched
+              tokens, Trellis is <strong>+0.53 nat</strong> behind DeltaNet and <strong>+0.66</strong> behind Gated
+              DeltaNet.
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">Why this is the run that counts.</strong> It is the one comparison
+              that is simultaneously matched in size, on a fair GPU, against the fla reference baselines (conv +
+              qk-norm + output gate, not strawmen), and at a real token budget &mdash; so the ordering it gives is the
+              one to trust over any smaller or less controlled run.
+            </div>
+          </Section>
+
+          {/* 4. PG19 long context */}
+          <Section id="pg19" kicker="The structural win" title="Bounded memory beats dense at length">
+            <p>
+              On PG19, a real long-range corpus, scratch Trellis beats a matched <strong>dense</strong> Transformer and
+              the margin holds as context grows &mdash; the bounded-memory-at-length effect the architecture exists for,
+              while Trellis&rsquo;s state stays constant in sequence length and dense&rsquo;s KV cache does not. This is the
+              part of the story that is solid regardless of the cousin comparison.
+            </p>
+            <ChartFrame title="PG19 — Trellis vs matched dense, by context length"
+              sub="Multi-seed scratch training. Bars: val PPL (lower better). The Trellis-beats-dense direction is robust; the family ordering is settled by the fair A100 run above, not here.">
+              <ComposedChart data={PG19} margin={{top:8, right:16, left:0, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="len" stroke="#94a3b8" label={{value:'context length', position:'insideBottom', offset:-4, fill:'#94a3b8'}}/>
+                <YAxis stroke="#94a3b8" label={{value:'val PPL', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Bar dataKey="dense" name="dense" fill={C.red} radius={[3,3,0,0]}/>
+                <Bar dataKey="trellis" name="Trellis" fill={C.violet} radius={[3,3,0,0]}/>
+              </ComposedChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 6. the structural limitation (math) */}
+          <Section id="kernels" kicker="The structural limitation" title="Why the nonlinear write forfeits the exact kernel — a theorem">
+            <p>
+              DeltaNet and Gated DeltaNet get an <strong>exact chunk-parallel kernel</strong> as a gift of linearity:
+              each step is a fixed affine map of the state, affine maps compose, and the within-chunk coupling is a
+              strictly-lower-triangular (nilpotent) system solved once &mdash; a whole chunk of serial rank-1 edits
+              collapses into a few matmuls plus one small triangular solve (the WY/UT transform). This is the entire
+              training speedup, and it is exactly what Trellis cannot have. The reason is structural, provable by
+              composition over the chunk, not an implementation gap:
+            </p>
+            <div className="bg-[#0b1220] border-l-4 rounded-lg p-4 my-4 text-sm" style={{borderLeftColor:C.violet}}>
+              <strong className="text-violet-300">Sufficient condition (exact finite chunk transform).</strong>
+              <span className="text-gray-400"> Fix a chunk after all token-derived quantities are computed. If the
+              per-step update is affine in some fixed finite-dimensional state representation <span className="kbd">Ψ(M)</span>
+              closed under the update (<span className="kbd">Ψ(M_t) = L_t Ψ(M_&#123;t-1&#125;) + c_t</span>, with
+              <span className="kbd">L_t, c_t</span> independent of the state), an exact fixed-finite-dimensional linear
+              chunk transform exists. With <span className="kbd">Ψ = id</span> this is affine-in-<span className="kbd">M</span>,
+              which the delta rule satisfies. We do <em>not</em> claim the converse in general &mdash; only that the
+              original-state WY/UT transform specifically requires affine-in-<span className="kbd">M</span>, and that for
+              the paper&rsquo;s normalized-SiLU write no exact fixed finite lift is known.</span>
+            </div>
+            <p>
+              Both writers share the update <span className="kbd">M &larr; diag(β)M − γ&middot;u wᵀ</span> and differ only
+              in <span className="kbd">u</span>. The delta rule&rsquo;s <span className="kbd">u = Mw − α</span> is affine in
+              <span className="kbd"> M</span> &mdash; it satisfies the theorem, so the exact kernel exists. Trellis&rsquo;s
+              <span className="kbd"> u = Jφ(z)ᵀ(φ(z) − α)</span>, <span className="kbd">z = Mw</span>, is affine in
+              <span className="kbd"> z</span> only if the Jacobian gain <span className="kbd">Jφ(z)</span> is constant, i.e.
+              <span className="kbd"> φ</span> affine. For a generic state-dependent nonlinearity &mdash; the paper&rsquo;s
+              normalized SiLU &mdash; <em>no</em> fixed finite affine lift is known, the within-chunk equations become
+              nonlinear-triangular rather than a linear nilpotent solve, and the exact WY/UT transform is gone. The paper&rsquo;s
+              own chunk form concedes this: it <em>freezes</em> the Jacobian at the chunk-start state
+              (a &ldquo;locally linear recurrence&rdquo;), an approximation whose error grows with the step size, the chunk
+              length, and the curvature of <span className="kbd">φ</span>.
+            </p>
+            <p className="text-xs text-gray-500">
+              Two overclaims retired for honesty: &ldquo;nonlinear &rArr; no exact chunk&rdquo; is false in general
+              (affine <span className="kbd">φ</span>, fixed-active-set ReLU, and polynomial/kernel lifts are exceptions
+              &mdash; though the polynomial/kernel lifts grow the state dimension and are not a fixed WY transform); and
+              the cost is not &ldquo;independent of chunk size&rdquo; (the solve grows with the chunk &mdash; what is
+              chunk-independent is the count of sequential recurrent-state evaluations). The tightened statement and its
+              six empirical controls are in the archive.
+            </p>
+            <h3 className="font-semibold text-gray-200 mt-6 mb-2">The fused kernel (making the slow path bearable)</h3>
+            <p>
+              Most of Trellis&rsquo;s apparent slowness, though, was a Python launch-bound loop, not the algorithm. A
+              fused Triton kernel collapses the per-chunk launches into one persistent program per
+              <span className="kbd">(batch, head)</span>, keeping the <span className="kbd">[64,64]</span> state tile
+              resident and doing the LayerNorm-SiLU VJP in-register, with a hand-derived backward. The result: 26&ndash;44&times;
+              on the forward, <strong>6.4&times; on the full mixer</strong> (120.7k &rarr; 769.8k tok/s), pulling Trellis
+              from 0.04&times; to 0.26&times; of dense throughput and shrinking the gap to fla Gated DeltaNet from ~25&times;
+              to <strong>~4&times;</strong>. The same kernel runs unmodified on the W7900 (ROCm) for an 8&ndash;12&times; win.
+              It made the comparison tractable &mdash; but a fast kernel for the approximate recurrence does not recover
+              the exact one the theorem rules out.
+            </p>
+            <ChartFrame title="Mixer throughput, fwd+bwd (A100, B8·T2048·d256·H4)"
+              sub="Thousands of tokens/sec. The linear baselines (fla) beat dense attention; the fused Trellis kernel closes most — not all — of the gap. The ~4× residual is the genuine no-parallel-scan floor.">
+              <BarChart data={THRU} layout="vertical" margin={{top:8, right:40, left:30, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" stroke="#94a3b8" label={{value:'k tok/s', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
+                <YAxis type="category" dataKey="mixer" stroke="#94a3b8" width={120} tick={{fontSize:11}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="tps" name="k tok/s" radius={[0,3,3,0]}>
+                  {THRU.map((d,i)=><Cell key={i} fill={d.kind==='linear'?C.green:(d.kind==='dense'?C.gray:(d.kind==='trellis'?C.violet:C.slate))}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">The decode flip.</strong> The kernel tax is a training/prefill cost. At
+              <em> decode</em> the bounded fixed-size state is an advantage, not a tax &mdash; constant per-token cost, no
+              growing cache to reread. That is the whole reason the family connects to knlp&rsquo;s decode and
+              KV-compression work: a bounded state is the most aggressive KV compression there is.
+            </div>
+          </Section>
+
+          {/* 7. paper claims */}
+          <Section id="paper" kicker="The target" title="What the Trellis paper claims (verified)">
+            <p>
+              Pulled from the arXiv source (arXiv:2512.23852). Two facts to keep straight: Trellis and Gated DeltaNet
+              are compared head-to-head <strong>only at 790M</strong>, and the 125M ablation has <strong>no Gated
+              DeltaNet row</strong> at all. The paper&rsquo;s win is a scale claim, and it specifies no initialization for
+              the inner step size or the forget gate &mdash; the same under-specification that sank an independent
+              reimplementation of the group&rsquo;s earlier Titans model.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              <ChartFrame title="Paper Table 1 — 790M / 30B (C4)" sub="Trellis is best; Gated DeltaNet is the runner-up by 1.12 ppl." height={300}>
+                <BarChart data={PAPER_790} layout="vertical" margin={{top:8, right:30, left:20, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis type="number" stroke="#94a3b8" domain={[18,30]}/>
+                  <YAxis type="category" dataKey="model" stroke="#94a3b8" width={110} tick={{fontSize:11}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Bar dataKey="ppl" name="val PPL" radius={[0,3,3,0]}>
+                    {PAPER_790.map((d,i)=><Cell key={i} fill={d.best?C.violet:C.gray}/>)}
+                  </Bar>
+                </BarChart>
+              </ChartFrame>
+              <ChartFrame title="Paper Table 2 — 125M ablation (The Pile)" sub="No GatedDelta row here. Linear φ (delta rule) = 11.65; the nonlinear write is worth ~0.78 ppl." height={300}>
+                <BarChart data={PAPER_125} layout="vertical" margin={{top:8, right:30, left:20, bottom:8}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                  <XAxis type="number" stroke="#94a3b8" domain={[10,12]}/>
+                  <YAxis type="category" dataKey="row" stroke="#94a3b8" width={130} tick={{fontSize:10}}/>
+                  <Tooltip content={<Tip/>}/>
+                  <Bar dataKey="ppl" name="val PPL" radius={[0,3,3,0]}>
+                    {PAPER_125.map((d,i)=><Cell key={i} fill={d.kind==='full'?C.violet:(d.kind==='abl'?C.amber:C.gray)}/>)}
+                  </Bar>
+                </BarChart>
+              </ChartFrame>
+            </div>
+            <p className="text-xs text-gray-500">
+              Also Table 3 (1B, RULER / S-NIAH recall): Trellis 79.8 &gt; Gated DeltaNet 75.8 &gt; TTT 66.1 &gt; DeltaNet 57.9
+              &gt; Mamba2 52.0, edge largest at long context. Smallest published config: 125M / 2.4B tokens.
+            </p>
+          </Section>
+
+          {/* 8. empirical proof: identity-φ control */}
+          <Section id="identity" kicker="The empirical proof" title="Change only the write: the nonlinear one is ~2× worse">
+            <p>
+              The theorem says the nonlinear write costs the exact kernel. The obvious next question is whether it at
+              least buys quality to pay for that. The clean test is a <strong>same-shell control</strong>: the identical
+              Trellis mixer, projections, two-pass shell, and parameter budget, changing <em>only</em>
+              <span className="kbd"> φ</span>. Setting <span className="kbd">φ = identity</span> makes the Jacobian gain
+              the identity and reduces the write to the plain delta rule &mdash; so any difference is the nonlinearity
+              itself, not the shell, norm, gate, or conv that separate an external DeltaNet baseline. This is the causal
+              control the paper runs (its 11.65 vs 10.87); here is ours, at matched learning rate and tokens.
+            </p>
+            <ChartFrame title="Same-shell φ control — val PPL (lower better), ~4.7M / C4 / 120M tokens"
+              sub="Only the write nonlinearity changes. Green = linear delta rule (φ=identity); violet = the nonlinear ln_silu write in several configs.">
+              <BarChart data={IDENTITY} layout="vertical" margin={{top:8, right:44, left:20, bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" stroke="#94a3b8" domain={[0,280]} label={{value:'val PPL', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
+                <YAxis type="category" dataKey="row" stroke="#94a3b8" width={190} tick={{fontSize:10}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="ppl" name="val PPL" radius={[0,3,3,0]}>
+                  {IDENTITY.map((d,i)=><Cell key={i} fill={d.kind==='linear'?C.green:C.violet}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              At matched learning rate (3e-4), matched tokens, and the identical shell, the linear delta rule reaches
+              <strong className="text-white"> 127.9</strong> versus the nonlinear write&rsquo;s
+              <strong className="text-white"> 248.4</strong> &mdash; nearly 2× lower perplexity. Even the fully
+              paper-faithful nonlinear config (output path, value-readout activation, high &beta;-init) reaches only
+              182.8, still behind the plain linear write. So the gap Trellis shows to its linear cousins is <em>not</em> a
+              reconstruction artifact: at this scale the nonlinear inner write genuinely underperforms.
+            </p>
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+              <strong className="text-gray-200">What the nonlinearity actually buys: stability.</strong> The
+              identity-<span className="kbd">φ</span> run only trains at the low learning rate &mdash; it diverges (NaN
+              within ~200 steps) at 1e-3 and above &mdash; consistent with dropping the normalizing nonlinearity that
+              bounds the error code, so the state can grow unbounded. The nonlinear <span className="kbd">φ</span>
+              tolerates a 10× higher learning rate. So on this run its measured contribution is training stability, not
+              quality &mdash; a liability on loss that pays for itself only in optimization headroom.
+            </div>
+          </Section>
+
+          {/* 8b. DeltaProduct on language loss */}
+          <Section id="deltaproduct" kicker="The other nonlinear bet" title="GatedDeltaProduct: wins exact overwrite, loses language loss">
+            <p>
+              A different way to add power to a delta rule is <strong>GatedDeltaProduct</strong>: several Householder
+              rotations per step, which give exact multi-step overwrite &mdash; delete-then-write in one token. On a
+              synthetic overwrite/binding grid it solves the task near-perfectly (1.000) &mdash; the task its extra
+              rotations are built for &mdash; but Gated DeltaNet essentially ties it there (0.996); the real divide is
+              that both solve it while Trellis and the nonlinear-write variants stay near chance. The question is whether
+              the exact-overwrite machinery transfers to real language modeling. On a matched C4-en run &mdash; 46.7M
+              parameters, <span className="kbd">d512/L10</span>, sequence 2048, 20M tokens, three seeds, fla reference
+              layers on one packed stream &mdash; it does not.
+            </p>
+            <ChartFrame title="Matched C4-en family run — val PPL (lower better), 46.7M / 20M tokens / 3 seeds"
+              sub="Gated DeltaNet leads; GatedDeltaProduct's exact-overwrite rotations do not carry to LM loss. Green = leader, violet = DeltaProduct, red = dense.">
+              <BarChart data={DPROD} margin={{top:8, right:16, left:0, bottom:60}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="short" stroke="#94a3b8" angle={-25} textAnchor="end" height={80} interval={0} tick={{fontSize:11}}/>
+                <YAxis stroke="#94a3b8" domain={[0,400]} label={{value:'val PPL', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="ppl" name="val PPL" radius={[3,3,0,0]}>
+                  {DPROD.map((d,i)=><Cell key={i} fill={KLASS[d.klass]}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              Gated DeltaNet wins at <strong>215.7</strong>; GatedDeltaProduct trails at <strong>224.4</strong>, a tight
+              near-constant ~0.04 nats behind at every token milestone (5/10/15/20M), with no sign of an imminent
+              crossing through 20M. The
+              pattern rhymes with Trellis: an architecture that adds expressivity to the write &mdash; extra rotations
+              here, a nonlinear gain there &mdash; wins a targeted synthetic task but loses to plain soft gated decay on
+              real language loss. Soft, well-conditioned forgetting generalizes better than either kind of extra
+              machinery. Gated DeltaNet is the quality leader across every comparison we ran &mdash; the state-matched
+              46.7M and smd runs, and the param-matched FAIR run alike.
+            </p>
+          </Section>
+
+          {/* 9. verdict / closed */}
+          <Section id="verdict" kicker="The verdict" title="Line closed — what we keep and what stays parked">
+            <p>
+              The bounded-memory family beats a matched dense Transformer at long context &mdash; that part is solid and
+              is the keeper. Within the family, at every scale we could afford, <strong>Gated DeltaNet is the
+              matched-state quality leader</strong>: simpler, lower-variance, exact-chunkable, faster, and better on
+              loss. The two ways of adding expressivity to the write that we studied &mdash; Trellis&rsquo;s nonlinear
+              gain and GatedDeltaProduct&rsquo;s extra rotations &mdash; each win a targeted task and each lose to plain
+              soft gated decay on real language-model loss. Trellis carries the extra burden of forfeiting the exact
+              training kernel on top of that. We are closing this as an active line.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4 my-2">
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+                <strong className="text-green-300">What we keep.</strong>
+                <ul className="list-disc pl-5 space-y-1 mt-2">
+                  <li>Bounded memory beats dense at length &mdash; the structural win the family exists for.</li>
+                  <li>Gated DeltaNet as the trusted matched-state baseline for downstream KV / decode work.</li>
+                  <li>The fused Triton kernel and an fla-mapped fast path &mdash; reusable regardless of Trellis.</li>
+                  <li>The negatives as knowledge: extra write expressivity (nonlinear gain, exact rotations) does not buy language-model quality at reachable scale.</li>
+                </ul>
+              </div>
+              <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
+                <strong className="text-amber-300">What stays parked (not disproven).</strong>
+                <p className="mt-2">
+                  The paper&rsquo;s headline is a <strong>scale</strong> claim at 790M / 30B (Trellis 20.28 vs Gated
+                  DeltaNet 21.40) &mdash; a regime we never trained. The decisive test is a faithful 125M / 2.4B
+                  reproduction; an independent fairness audit put the odds it reproduces at about
+                  <strong> 0.30</strong>, on a thin (~5% ppl) margin, with several reconstruction ambiguities. A
+                  low-probability, thin-margin, multi-day run, when every cheaper probe here is negative, is a line to
+                  park behind a clear reason &mdash; not to pursue on its odds. The harness makes the test cheap to bolt
+                  on if that reason appears.
+                </p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-500">
+              Bottom line: at the scale we can afford, the linear delta rule with a good forget gate is the thing to
+              build on; the nonlinear write is a liability, provably (no exact kernel) and empirically (~2× worse
+              same-shell). The 790M scale claim is the authors&rsquo; to defend.
+            </p>
+          </Section>
+
+          {/* footer */}
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
+            <p className="mb-2">
+              <a href="https://github.com/mcgrof/knlp/blob/main/docs/linear-attention.md" className="hover:text-gray-400">Full write-up</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://github.com/mcgrof/knlp/tree/main/trellis_lm" className="hover:text-gray-400">trellis_lm/ code</a>
+              <span className="mx-2">&middot;</span>
+              <a href="https://arxiv.org/abs/2512.23852" className="hover:text-gray-400">Trellis paper</a>
+              <span className="mx-2">&middot;</span>
+              <a href="index.html" className="hover:text-gray-400">knlp</a>
+            </p>
+            <p>Line closed &mdash; Gated DeltaNet is the matched-state quality leader; the paper&rsquo;s 790M scale claim is parked, not disproven.</p>
+          </footer>
+        </div>
+      );
+    }
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>

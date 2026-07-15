@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GNN Fraud Detection: Two Regimes, Two Strategies</title>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #10b981, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <!-- Shared Navigation -->
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">← Home</a>
+      <a href="fisher_adam_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-blue-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FIM-Adam</a>
+      <a href="fim_quantization_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-purple-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Quantization</a>
+      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+      <a href="ra_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">RA</a>
+      <a href="tiering_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-emerald-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Tiering</a>
+      <a href="gnn_fraud_visualization.html" class="px-3 py-1.5 bg-rose-600 rounded text-sm font-medium text-white">GNN Fraud</a>
+      <a href="gnn_ssd_report.html" class="px-3 py-1.5 bg-gray-800 hover:bg-emerald-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">SSD Report</a>
+    </div>
+  </nav>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } = Recharts;
+
+    // Hero Section
+    function HeroSection() {
+      return (
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold mb-4">
+            <span className="gradient-text">GNN Fraud Detection</span>
+          </h1>
+          <p className="text-xl text-gray-400 mb-6">
+            Two Regimes, Two Optimization Strategies
+          </p>
+          <div className="bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-4 border border-emerald-700/50 max-w-2xl mx-auto mb-8">
+            <p className="text-lg text-gray-300 italic">
+              "When data fits in cache, batching dominates throughput.<br/>
+              When data exceeds cache, locality dominates throughput."
+            </p>
+          </div>
+          <div className="flex justify-center gap-6 text-center flex-wrap">
+            <div className="bg-gray-800 rounded-xl p-6 border border-emerald-900">
+              <div className="text-4xl font-bold text-emerald-400">4×</div>
+              <div className="text-gray-400 mt-2">Fewer Page Reads</div>
+              <div className="text-gray-600 text-sm">(DGraphFin)</div>
+            </div>
+            <div className="bg-gray-800 rounded-xl p-6 border border-cyan-900">
+              <div className="text-4xl font-bold text-cyan-400">5k</div>
+              <div className="text-gray-400 mt-2">TPS Capacity</div>
+              <div className="text-gray-600 text-sm">(AMEX mb=4)</div>
+            </div>
+            <div className="bg-gray-800 rounded-xl p-6 border border-purple-900">
+              <div className="text-4xl font-bold text-purple-400">+7%</div>
+              <div className="text-gray-400 mt-2">F1 with FIM-RA</div>
+              <div className="text-gray-600 text-sm">(DGraphFin)</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Two Regimes Section
+    function TwoRegimesSection() {
+      const [activeRegime, setActiveRegime] = React.useState('amex');
+
+      const regimes = {
+        amex: {
+          name: 'AMEX (Cache-Resident)',
+          color: '#06b6d4',
+          dataset: '3.3GB tabular',
+          workingSet: 'Fits in GPU (48GB)',
+          bottleneck: 'Compute/Scheduling',
+          keyMetric: 'TPS Capacity',
+          optimization: 'Increase microbatch size',
+          findings: [
+            'mb=1: 2,000 TPS sustainable (p99 < 1ms)',
+            'mb=4: 5,000 TPS sustainable (p99 < 3ms)',
+            'Access pattern (random vs hotset) irrelevant',
+            'Hard capacity cliff at 10k TPS (66% drop rate)',
+          ],
+        },
+        dgraphfin: {
+          name: 'DGraphFin (Memory-Bound)',
+          color: '#10b981',
+          dataset: '3.7M nodes, 4.3M edges',
+          workingSet: 'Exceeds cache',
+          bottleneck: 'Memory/Storage',
+          keyMetric: 'Read Amplification',
+          optimization: 'METIS layout + page batching',
+          findings: [
+            'Page-batch: 6.8× RA_fetch (4× better)',
+            'Neighbor sampling: 28.5× RA_fetch',
+            'FIM-guided RA: +7% F1 vs baseline',
+            'Training saturates in 5 minutes',
+          ],
+        },
+      };
+
+      const r = regimes[activeRegime];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Two Regimes: When Does Locality Matter?</h2>
+          <p className="text-gray-400 mb-6">
+            The optimization strategy depends entirely on whether your working set fits in the memory hierarchy.
+          </p>
+
+          <div className="flex gap-3 mb-6">
+            {Object.entries(regimes).map(([key, regime]) => (
+              <button
+                key={key}
+                onClick={() => setActiveRegime(key)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  activeRegime === key
+                    ? 'ring-2'
+                    : 'bg-gray-800 hover:bg-gray-700'
+                }`}
+                style={{
+                  backgroundColor: activeRegime === key ? regime.color : undefined,
+                  ringColor: regime.color,
+                }}
+              >
+                {regime.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Dataset</span>
+                  <span className="text-white font-mono">{r.dataset}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Working Set</span>
+                  <span className="text-white font-mono">{r.workingSet}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Bottleneck</span>
+                  <span style={{ color: r.color }} className="font-mono">{r.bottleneck}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Key Metric</span>
+                  <span className="text-white font-mono">{r.keyMetric}</span>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 flex justify-between">
+                  <span className="text-gray-400">Optimization</span>
+                  <span style={{ color: r.color }} className="font-mono text-sm">{r.optimization}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-gray-300 mb-3">Key Findings</h4>
+              <ul className="space-y-2">
+                {r.findings.map((finding, i) => (
+                  <li key={i} className="flex gap-3 text-sm">
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: r.color }}>{i + 1}</span>
+                    <span className="text-gray-400">{finding}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // AMEX Capacity Section
+    function AMEXCapacitySection() {
+      const capacityData = [
+        { name: 'mb=1', sustainable: 2000, cliff: 5000, p99: 0.5, label: 'Microbatch 1' },
+        { name: 'mb=4', sustainable: 5000, cliff: 10000, p99: 2.0, label: 'Microbatch 4' },
+      ];
+
+      const tpsData = [
+        { tps: 500, mb1: 0.5, mb4: 1.4 },
+        { tps: 1000, mb1: 0.4, mb4: 3.3 },
+        { tps: 2000, mb1: 0.4, mb4: 1.8 },
+        { tps: 5000, mb1: 62, mb4: 0.95 },
+        { tps: 10000, mb1: 35000, mb4: 30000 },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">AMEX: Real-Time Inference Capacity</h2>
+          <p className="text-gray-400 mb-6">
+            When the dataset fits in GPU memory, batching is the only lever that matters.
+            Locality optimizations provide no benefit.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Capacity by Microbatch Size</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={capacityData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" domain={[0, 6000]} tickFormatter={v => `${v/1000}k`} />
+                  <YAxis type="category" dataKey="label" stroke="#9ca3af" width={100} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="sustainable" name="Sustainable TPS" fill="#06b6d4" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg text-center">
+                <span className="text-cyan-400 font-bold">2.5× capacity increase</span>
+                <span className="text-gray-400"> with mb=4 (2k → 5k TPS)</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">The Tradeoff</h3>
+              <div className="space-y-4">
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-cyan-500">
+                  <div className="font-semibold text-cyan-400">Microbatch = 1</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    p99 latency: <strong className="text-white">0.3-0.5ms</strong><br/>
+                    Capacity: <strong className="text-white">2,000 TPS</strong><br/>
+                    Best for: Ultra-low latency requirements
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-emerald-500">
+                  <div className="font-semibold text-emerald-400">Microbatch = 4</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    p99 latency: <strong className="text-white">1-3ms</strong><br/>
+                    Capacity: <strong className="text-white">5,000 TPS</strong><br/>
+                    Best for: Higher throughput with relaxed latency
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gradient-to-r from-cyan-900/30 to-purple-900/30 rounded-lg p-4 border border-cyan-700/50">
+            <h3 className="text-cyan-400 font-semibold mb-3">Why Locality Doesn't Help Here</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+              <div>
+                <div className="text-2xl font-mono text-gray-200">3.3GB</div>
+                <div className="text-gray-500 text-sm">Dataset size</div>
+              </div>
+              <div>
+                <div className="text-2xl font-mono text-gray-200">48GB</div>
+                <div className="text-gray-500 text-sm">GPU memory</div>
+              </div>
+              <div>
+                <div className="text-2xl font-mono text-cyan-400">68-95%</div>
+                <div className="text-gray-500 text-sm">Cache hit rate</div>
+              </div>
+            </div>
+            <p className="text-gray-400 text-sm text-center mt-3">
+              With 68-95% cache hit, data access is essentially free.
+              The bottleneck is <span className="text-cyan-400">GPU kernel launch overhead</span> and <span className="text-cyan-400">queue management</span>.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // DGraphFin Dataset Section
+    function DatasetSection() {
+      const labelData = [
+        { name: 'Normal (0)', value: 1210092, color: '#3b82f6', pct: '32.7%' },
+        { name: 'Fraud (1)', value: 15509, color: '#ef4444', pct: '0.42%' },
+        { name: 'Background (2)', value: 1620851, color: '#6b7280', pct: '43.8%' },
+        { name: 'Background (3)', value: 854098, color: '#4b5563', pct: '23.1%' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">DGraphFin: Financial Fraud Detection</h2>
+          <p className="text-gray-400 mb-6">
+            A large-scale graph with 3.7M nodes and 4.3M edges. <strong className="text-white">Binary classification</strong> (num_classes=2):
+            the model outputs 2 logits, not 4.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Node Distribution</h3>
+              <div className="space-y-3">
+                {labelData.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded" style={{ backgroundColor: item.color }}></div>
+                    <div className="flex-1">
+                      <div className="flex justify-between">
+                        <span className="text-gray-300">{item.name}</span>
+                        <span className="text-gray-500 font-mono">{item.value.toLocaleString()}</span>
+                      </div>
+                      <div className="w-full bg-gray-700 rounded-full h-2 mt-1">
+                        <div className="h-2 rounded-full" style={{
+                          backgroundColor: item.color,
+                          width: `${Math.max(2, parseFloat(item.pct))}%`
+                        }}></div>
+                      </div>
+                    </div>
+                    <span className="text-gray-500 text-sm w-16 text-right">{item.pct}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Key Facts</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-blue-500">
+                  <div className="font-semibold text-blue-400">Labels 0 & 1: Supervised</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Only these appear in train/val/test masks. Model learns to classify normal vs fraud.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-gray-500">
+                  <div className="font-semibold text-gray-400">Labels 2 & 3: Background</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Participate in message passing for graph connectivity. Never evaluated or supervised.
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border-l-4 border-red-500">
+                  <div className="font-semibold text-red-400">1.27% Fraud Rate</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Train split: 847,042 normal + 10,857 fraud. Extreme class imbalance makes this hard.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Samplers Comparison Section
+    function SamplersSection() {
+      const [activeSampler, setActiveSampler] = React.useState('page_batch');
+
+      const samplers = {
+        neighbor: {
+          name: 'NeighborSampler',
+          color: '#ef4444',
+          description: 'PyG NeighborLoader [10,5] - standard GNN baseline',
+          howItWorks: [
+            'Sample 1024 seed nodes (training nodes)',
+            'For each seed, sample 10 neighbors (hop 1)',
+            'For each hop-1 neighbor, sample 5 more (hop 2)',
+            'Result: seeds + neighbors scattered across graph',
+          ],
+          pros: ['Standard approach', 'Works on any graph'],
+          cons: ['Poor locality (~28× RA_fetch)', 'Random page access pattern'],
+        },
+        page_batch: {
+          name: 'Page-Batch',
+          color: '#3b82f6',
+          description: 'Page-aware batching with METIS partitioning',
+          howItWorks: [
+            'Select 32 contiguous METIS partitions',
+            'All ~1920 nodes in those pages are "core"',
+            'Add 20% boundary nodes for message passing',
+            'Result: dense core + sparse boundary',
+          ],
+          pros: ['4× better locality (~6.8× RA_fetch)', 'METIS groups related nodes'],
+          cons: ['Requires pre-computed layout', 'Boundary expansion adds overhead'],
+        },
+      };
+
+      const s = samplers[activeSampler];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">The Two Samplers</h2>
+          <p className="text-gray-400 mb-6">
+            We compare two approaches to batching nodes for GNN training on disk-resident graphs.
+          </p>
+
+          <div className="flex gap-3 mb-6">
+            {Object.entries(samplers).map(([key, sampler]) => (
+              <button
+                key={key}
+                onClick={() => setActiveSampler(key)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  activeSampler === key
+                    ? 'ring-2'
+                    : 'bg-gray-800 hover:bg-gray-700'
+                }`}
+                style={{
+                  backgroundColor: activeSampler === key ? sampler.color : undefined,
+                  ringColor: sampler.color,
+                }}
+              >
+                {sampler.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <div className="bg-gray-900 rounded-lg p-4 mb-4">
+                <h3 className="font-semibold mb-2" style={{ color: s.color }}>{s.name}</h3>
+                <p className="text-gray-400 text-sm">{s.description}</p>
+              </div>
+
+              <h4 className="font-semibold text-gray-300 mb-2">How It Works</h4>
+              <ol className="space-y-2">
+                {s.howItWorks.map((step, i) => (
+                  <li key={i} className="flex gap-3 text-sm">
+                    <span className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                          style={{ backgroundColor: s.color }}>{i + 1}</span>
+                    <span className="text-gray-400">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            <div>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="text-emerald-400 font-semibold text-sm mb-2">Pros</div>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    {s.pros.map((pro, i) => (
+                      <li key={i}>✓ {pro}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <div className="text-red-400 font-semibold text-sm mb-2">Cons</div>
+                  <ul className="text-sm text-gray-400 space-y-1">
+                    {s.cons.map((con, i) => (
+                      <li key={i}>✗ {con}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Visual representation */}
+              <div className="bg-gray-900 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-300 mb-3">Page Access Pattern</h4>
+                <div className="grid grid-cols-8 gap-1">
+                  {[...Array(32)].map((_, i) => {
+                    let color, opacity;
+                    if (activeSampler === 'neighbor') {
+                      // Random scatter
+                      const touched = Math.random() < 0.5;
+                      color = touched ? '#ef4444' : '#374151';
+                      opacity = touched ? 0.3 + Math.random() * 0.4 : 0.2;
+                    } else {
+                      // Contiguous for page-aware
+                      const isCore = i < 8;
+                      const isBoundary = i >= 8 && i < 12;
+                      color = isCore ? s.color : isBoundary ? '#fbbf24' : '#374151';
+                      opacity = isCore ? 0.8 : isBoundary ? 0.5 : 0.2;
+                    }
+                    return (
+                      <div
+                        key={i}
+                        className="aspect-square rounded"
+                        style={{ backgroundColor: color, opacity }}
+                        title={`Page ${i}`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                  {activeSampler === 'neighbor' ? (
+                    <span>Pages touched randomly across graph</span>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded" style={{ backgroundColor: s.color }}></div>
+                        Core (dense)
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded bg-yellow-500"></div>
+                        Boundary (sparse)
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // RA Metrics Section
+    function RAMetricsSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Read Amplification: Two Metrics, Two Questions</h2>
+          <p className="text-gray-400 mb-6">
+            When features are stored on disk in 4KB pages, accessing scattered nodes wastes I/O bandwidth.
+          </p>
+
+          <div className="mb-6 bg-amber-900/20 border border-amber-700/60 rounded-lg p-4">
+            <h3 className="text-amber-400 font-semibold mb-1">⚠ "RA" means two different things on this page</h3>
+            <p className="text-gray-400 text-sm">
+              In <strong className="text-amber-300">this</strong> section (and the <code className="text-amber-300">RA</code> nav tab),
+              <strong className="text-white"> RA = Read Amplification</strong>, an I/O metric: wasted bytes read per useful byte.
+              In the <strong className="text-cyan-300">FIM-Guided RA</strong> section further down,
+              <strong className="text-white"> RA = Reciprocal Attention</strong>, a neighbor-aggregation mechanism for the model itself.
+              They are unrelated ideas that happen to share initials. Read Amplification is about <em>storage layout</em>;
+              Reciprocal Attention is about <em>how a node combines its neighbors</em>.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-4 h-4 rounded bg-cyan-500"></div>
+                <h3 className="font-semibold text-cyan-400">RA_fetch (Locality)</h3>
+              </div>
+              <code className="text-sm bg-gray-800 px-2 py-1 rounded block mb-3">
+                (pages_touched × 4096) / (loaded_nodes × 68)
+              </code>
+              <p className="text-gray-400 text-sm mb-3">
+                <strong>Question:</strong> How scattered are my memory accesses?
+              </p>
+              <ul className="text-sm text-gray-500 space-y-1">
+                <li>• Ideal: 1.0× (all nodes packed in minimal pages)</li>
+                <li>• Random scatter: ~60× (one node per page)</li>
+                <li>• <strong className="text-white">Use this to compare samplers fairly</strong></li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-4 h-4 rounded bg-emerald-500"></div>
+                <h3 className="font-semibold text-emerald-400">RA_signal (Training Efficiency)</h3>
+              </div>
+              <code className="text-sm bg-gray-800 px-2 py-1 rounded block mb-3">
+                (pages_touched × 4096) / (supervised_nodes × 68)
+              </code>
+              <p className="text-gray-400 text-sm mb-3">
+                <strong>Question:</strong> How much I/O per supervised gradient?
+              </p>
+              <ul className="text-sm text-gray-500 space-y-1">
+                <li>• Always ≥ RA_fetch (supervised ≤ loaded)</li>
+                <li>• Inflated by label sparsity (only 23% in train mask)</li>
+                <li>• <strong className="text-white">Shows end-to-end training cost</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          {/* The 4.3× floor explanation */}
+          <div className="mt-6 bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-4 border border-emerald-700/50">
+            <h3 className="text-emerald-400 font-semibold mb-3">Why RA_signal Has a ~4.3× Floor</h3>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center mb-4">
+              <div>
+                <div className="text-3xl font-mono text-gray-200">60</div>
+                <div className="text-gray-500 text-sm">nodes per page</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-gray-200">×</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-gray-200">23%</div>
+                <div className="text-gray-500 text-sm">have train labels</div>
+              </div>
+              <div>
+                <div className="text-3xl font-mono text-emerald-400">= 14</div>
+                <div className="text-gray-500 text-sm">supervised per page</div>
+              </div>
+            </div>
+            <p className="text-gray-400 text-sm text-center">
+              Even with <span className="text-cyan-400">perfect locality</span> (RA_fetch = 1.0×),
+              you read 60 nodes to supervise 14 → <strong className="text-emerald-400">floor = 60/14 ≈ 4.3×</strong>.
+              This is the dataset's label sparsity, not your sampler's fault.
+            </p>
+          </div>
+
+          {/* Visual comparison */}
+          <div className="mt-6">
+            <h3 className="font-semibold text-gray-300 mb-3">Same Numerator, Different Denominator</h3>
+            <svg viewBox="0 0 600 100" className="w-full max-w-2xl mx-auto">
+              <rect x="50" y="5" width="500" height="25" fill="#06b6d4" opacity="0.8" rx="4"/>
+              <text x="300" y="22" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">
+                Bytes Read (pages × 4KB)
+              </text>
+
+              <text x="30" y="50" fill="#9CA3AF" fontSize="14">÷</text>
+
+              <rect x="50" y="35" width="300" height="25" fill="#6B7280" rx="4"/>
+              <text x="200" y="52" textAnchor="middle" fill="white" fontSize="11">
+                Loaded nodes × 68B
+              </text>
+              <text x="560" y="52" fill="#06b6d4" fontSize="12" fontWeight="bold">
+                = RA_fetch
+              </text>
+
+              <rect x="50" y="70" width="70" height="25" fill="#10B981" rx="4"/>
+              <text x="85" y="87" textAnchor="middle" fill="white" fontSize="10">
+                Supervised × 68B
+              </text>
+              <text x="560" y="87" fill="#10B981" fontSize="12" fontWeight="bold">
+                = RA_signal
+              </text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    // Results Section
+    function ResultsSection() {
+      const raData = [
+        { name: 'neighbor', ra_fetch: 28.5, label: 'NeighborSampler' },
+        { name: 'page_batch', ra_fetch: 6.8, label: 'Page-Batch' },
+      ];
+
+      const fraudData = [
+        { name: 'neighbor', f1: 0.0757, prauc: 0.0349, label: 'NeighborSampler' },
+        { name: 'page_batch', f1: 0.0763, prauc: 0.0346, label: 'Page-Batch' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Results: 1-Hour Training</h2>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">I/O Efficiency (RA_fetch) — Lower is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={raData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis type="number" stroke="#9ca3af" domain={[0, 35]} />
+                  <YAxis type="category" dataKey="label" stroke="#9ca3af" width={120} tick={{ fill: '#9ca3af', fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="ra_fetch" name="RA_fetch">
+                    <Cell fill="#ef4444" />
+                    <Cell fill="#3b82f6" />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-center">
+                <span className="text-emerald-400 font-bold">4× improvement</span>
+                <span className="text-gray-400"> in memory locality (28.5× → 6.8×)</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Fraud Detection Quality — Higher is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={fraudData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="label" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis stroke="#9ca3af" domain={[0, 0.1]} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Legend />
+                  <Bar dataKey="f1" name="F1 Score" fill="#06b6d4" />
+                  <Bar dataKey="prauc" name="PR-AUC" fill="#8b5cf6" />
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-cyan-900/30 border border-cyan-700 rounded-lg text-center">
+                <span className="text-cyan-400 font-bold">Identical quality</span>
+                <span className="text-gray-400"> across both samplers</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Full results table */}
+          <div className="mt-8 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-700">
+                  <th className="text-left py-2 px-3 text-gray-400">Sampler</th>
+                  <th className="text-right py-2 px-3 text-gray-400">F1</th>
+                  <th className="text-right py-2 px-3 text-gray-400">PR-AUC</th>
+                  <th className="text-right py-2 px-3 text-gray-400">P@0.5%</th>
+                  <th className="text-right py-2 px-3 text-gray-400">R@1%</th>
+                  <th className="text-right py-2 px-3 text-cyan-400">RA_fetch</th>
+                  <th className="text-right py-2 px-3 text-emerald-400">RA_signal</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-800">
+                  <td className="py-2 px-3 text-red-400">NeighborSampler</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0757</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0349</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0566</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0499</td>
+                  <td className="text-right py-2 px-3 font-mono text-red-400">28.5×</td>
+                  <td className="text-right py-2 px-3 font-mono">85.1×</td>
+                </tr>
+                <tr className="border-b border-gray-800 bg-blue-900/20">
+                  <td className="py-2 px-3 text-blue-400">Page-Batch</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0763</td>
+                  <td className="text-right py-2 px-3 font-mono">0.0346</td>
+                  <td className="text-right py-2 px-3 font-mono font-bold">0.0773</td>
+                  <td className="text-right py-2 px-3 font-mono font-bold">0.0559</td>
+                  <td className="text-right py-2 px-3 font-mono text-emerald-400 font-bold">6.8×</td>
+                  <td className="text-right py-2 px-3 font-mono">34.3×</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // FIM-Guided RA Section
+    function FIMGuidedRASection() {
+      const raData = [
+        { name: 'Baseline', f1: 0.0782, prauc: 0.0361, color: '#6b7280' },
+        { name: 'RA + Var', f1: 0.0829, prauc: 0.0374, color: '#06b6d4' },
+        { name: 'FIM-guided', f1: 0.0837, prauc: 0.0379, color: '#10b981' },
+      ];
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">FIM-Guided Reciprocal Attention for GNNs</h2>
+          <p className="text-gray-400 mb-6">
+            Reciprocal Attention (K@Q.T instead of Q@K.T) transfers from transformers to GNNs.
+            FIM guidance applies RA selectively to <strong className="text-white">uncertain nodes</strong> (bottom 33% by Fisher trace).
+          </p>
+
+          <div className="mb-6 bg-amber-900/20 border border-amber-700/60 rounded-lg p-4">
+            <h3 className="text-amber-400 font-semibold mb-1">Note: "RA" here is Reciprocal Attention, not Read Amplification</h3>
+            <p className="text-gray-400 text-sm">
+              This section is about the <strong className="text-white">model</strong>: how a node aggregates its neighbors.
+              It is independent of the Read Amplification (I/O) metric above. You can adopt Reciprocal Attention on
+              <em> any</em> graph — large or cache-resident — regardless of how features are stored. The "FIM-guided"
+              part is an optional refinement; plain Reciprocal Attention (apply it to <em>all</em> nodes) is the simplest
+              thing to try first.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">Fraud Detection F1 — Higher is Better</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={raData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="name" stroke="#9ca3af" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis stroke="#9ca3af" domain={[0.07, 0.09]} tickFormatter={v => v.toFixed(2)} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155' }} />
+                  <Bar dataKey="f1" name="Test F1">
+                    {raData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="mt-2 p-3 bg-emerald-900/30 border border-emerald-700 rounded-lg text-center">
+                <span className="text-emerald-400 font-bold">+7% relative F1</span>
+                <span className="text-gray-400"> with FIM-guided RA vs baseline</span>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-4 text-gray-300">How It Works</h3>
+              <div className="space-y-3">
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-gray-500">
+                  <div className="font-semibold text-gray-400">Baseline GraphSAGE</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    Mean aggregation: msg = Σ h_neighbor / |N|
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-cyan-500">
+                  <div className="font-semibold text-cyan-400">RA + Variance</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Reciprocal attention (neighbors query center) + variance residual for all nodes
+                  </div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3 border-l-4 border-emerald-500">
+                  <div className="font-semibold text-emerald-400">FIM-Guided RA</div>
+                  <div className="text-sm text-gray-400 mt-1">
+                    Same as RA+Var but <strong className="text-white">selective</strong>: only bottom 33% by FIM trace get RA treatment
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gradient-to-r from-cyan-900/30 to-emerald-900/30 rounded-lg p-4 border border-cyan-700/50">
+            <h3 className="text-cyan-400 font-semibold mb-3">The FIM Connection</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              This completes the FIM-guidance story across all our work:
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-xs">
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-blue-400 font-bold">Pruning</div>
+                <div className="text-gray-500">FIM → importance</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-purple-400 font-bold">Quantization</div>
+                <div className="text-gray-500">FIM → precision</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-orange-400 font-bold">KVSplice</div>
+                <div className="text-gray-500">FIM → compression</div>
+              </div>
+              <div className="bg-gray-900 rounded p-2">
+                <div className="text-emerald-400 font-bold">GNN RA</div>
+                <div className="text-gray-500">FIM → node selection</div>
+              </div>
+            </div>
+            <p className="text-gray-500 text-sm text-center mt-3">
+              Low-FIM nodes are uncertain → they benefit most from enhanced attention mechanisms.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Apply-to-your-own-GNN recipe (portable Reciprocal Attention)
+    function ApplyRASection() {
+      const raCode = `# Reciprocal Attention aggregation, portable to any
+# message-passing GNN. Standard attention has a node QUERY its
+# neighbors (Q@K.T); reciprocal flips it so neighbors QUERY the
+# node (K@Q.T). It is a drop-in replacement for mean/sum
+# aggregation inside one conv layer.
+import torch
+from torch_scatter import scatter_add, scatter_mean, scatter_softmax
+
+def reciprocal_aggregate(x, edge_index):
+    # x: [N, D] node features; edge_index: [2, E] as (src, dst)
+    src, dst = edge_index
+    x_src, x_dst = x[src], x[dst]            # per-edge endpoints
+    scale = x.size(-1) ** -0.5
+
+    # score each edge as neighbor . center (the reciprocal direction)
+    logits = (x_src * x_dst).sum(-1) * scale          # [E]
+    attn = scatter_softmax(logits, dst, dim=0)        # softmax per center
+    msg = scatter_add(x_src * attn.unsqueeze(-1), dst,
+                      dim=0, dim_size=x.size(0))
+    return msg                               # [N, D] weighted neighbors
+
+# Optional variance residual: keeps neighbor DISAGREEMENT as signal
+# (helps when a useful minority of neighbors would be averaged away).
+def variance_residual(x, edge_index, var_proj):
+    src, dst = edge_index
+    mean = scatter_mean(x[src], dst, dim=0, dim_size=x.size(0))
+    var = scatter_mean((x[src] - mean[dst]) ** 2, dst,
+                       dim=0, dim_size=x.size(0))
+    return var_proj(var)                     # add to layer output`;
+
+      const fimCode = `# FIM-guided variant: spend attention only where the model is
+# UNCERTAIN. The FIM trace per node is just grad^2 of its hidden
+# state, captured for free during the normal backward pass.
+hidden.register_hook(
+    lambda g: accumulate(node_ids, (g ** 2).sum(-1)))  # FIM trace
+
+# After a few steps, route the bottom 33% (most uncertain) to RA
+# and leave confident nodes on cheap mean aggregation:
+thresh = torch.quantile(fim_trace, 0.33)
+ra_mask = fim_trace <= thresh                          # [N] bool
+msg = torch.where(ra_mask.unsqueeze(-1),
+                  reciprocal_aggregate(x, edge_index),
+                  scatter_mean(x[src], dst, dim=0, dim_size=x.size(0)))`;
+
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-cyan-400">Apply Reciprocal Attention to Your Own GNN</h2>
+          <p className="text-gray-400 mb-6">
+            Reciprocal Attention is architecture-agnostic: it replaces the neighbor-aggregation
+            step in a single message-passing layer. If your model uses mean or sum aggregation
+            (GraphSAGE, GCN, GIN), you can swap in the function below and A/B test it without
+            touching the rest of your pipeline. Code mirrors <code className="text-cyan-400">gnn/benchmark_ra.py</code>.
+          </p>
+
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">1. Drop-in aggregation</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-xs text-cyan-300 font-mono overflow-x-auto whitespace-pre">{raCode}</pre>
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">2. Optional FIM gating</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-xs text-emerald-300 font-mono overflow-x-auto whitespace-pre">{fimCode}</pre>
+            </div>
+          </div>
+
+          <div className="bg-gray-900 rounded-lg p-4 border border-gray-800 mb-6">
+            <h3 className="font-semibold text-emerald-400 mb-2">How to evaluate it fairly</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              Hold everything else fixed — same data, splits, epochs, learning rate, and seed —
+              and change only the aggregator. Compare on a metric that respects your class balance
+              (F1 / PR-AUC for imbalanced fraud-style tasks, not raw accuracy). Try the variants
+              in increasing order of complexity and stop at the first that wins:
+            </p>
+            <ol className="text-sm text-gray-400 space-y-1 list-decimal list-inside">
+              <li><strong className="text-white">Plain RA</strong> — reciprocal aggregation on all nodes.</li>
+              <li><strong className="text-white">RA + variance residual</strong> — add the disagreement signal.</li>
+              <li><strong className="text-white">FIM-guided RA</strong> — apply RA only to the uncertain bottom 33%.</li>
+            </ol>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <h3 className="font-semibold text-emerald-400 mb-2">When it tends to help</h3>
+              <p className="text-gray-400 text-sm">
+                The predictive signal lives in a <strong className="text-white">minority of a node's
+                neighbors</strong> — an outlier edge that uniform mean-pooling averages away.
+                Reciprocal attention can up-weight that informative neighbor (or down-weight a noisy
+                majority — the same operation), while the variance residual flags that the
+                neighborhood disagrees at all, which is itself a signal. Classic case: a fraud node
+                with mostly benign neighbors and one telling connection. Note it is
+                <em> intra-neighborhood</em> outliers that matter, not global dataset outliers.
+                Measured here: <strong className="text-white">+7% relative F1</strong> on DGraphFin.
+              </p>
+            </div>
+            <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
+              <h3 className="font-semibold text-red-400 mb-2">When it won't (don't expect magic)</h3>
+              <p className="text-gray-400 text-sm">
+                Strongly homophilous graphs where neighbors already agree — mean is near-optimal and
+                attention only adds parameters. And if you are <em>I/O-bound</em>, this is the wrong RA
+                to reach for: fix storage layout first (see Read Amplification above). Gains are real
+                but modest; validate on your own metric before adopting.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Conclusions Section
+    function ConclusionsSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-6 text-emerald-400">Key Conclusions</h2>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">✓</span>
+                <h3 className="font-semibold text-emerald-400">Know Your Regime</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                Cache-resident? Optimize batching. Memory-bound? Optimize locality.
+                Using the wrong strategy wastes engineering effort or leaves 4-10× on the table.
+              </p>
+            </div>
+
+            <div className="bg-cyan-900/20 border border-cyan-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">✓</span>
+                <h3 className="font-semibold text-cyan-400">Measure First</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                Check cache hit rates before optimizing. AMEX shows 68-95% hit rate = no locality wins.
+                DGraphFin shows random traversal = 4× locality wins with METIS.
+              </p>
+            </div>
+
+            <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-2xl">!</span>
+                <h3 className="font-semibold text-purple-400">Hard Capacity Cliffs</h3>
+              </div>
+              <p className="text-gray-400 text-sm">
+                Both workloads show sharp capacity limits, not graceful degradation.
+                AMEX: 10k TPS = 66% drop rate. DGraphFin: beyond 28× RA = I/O bound.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 bg-gradient-to-r from-emerald-900/30 to-cyan-900/30 rounded-lg p-6 border border-emerald-700/50 text-center">
+            <h3 className="text-xl font-bold text-white mb-2">The Systems Insight</h3>
+            <p className="text-gray-300 text-lg">
+              <span className="text-cyan-400 font-bold">When data fits</span>, batching dominates.
+              <span className="text-emerald-400 font-bold"> When data doesn't fit</span>, locality dominates.
+            </p>
+            <p className="text-gray-500 mt-2">
+              Both optimizations are valid — in their respective regimes.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Training Details Section
+    function TrainingSection() {
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-4 text-emerald-400">How We Train</h2>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Model</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Architecture:</strong> 2-layer GraphSAGE</li>
+                <li><strong>Hidden dim:</strong> 256</li>
+                <li><strong>Output:</strong> 2 logits (binary)</li>
+                <li><strong>Optimizer:</strong> Adam, lr=0.01</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Batching</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Core pages:</strong> 32 METIS partitions</li>
+                <li><strong>Boundary budget:</strong> 20%</li>
+                <li><strong>Boundary hops:</strong> 2 (matches GNN depth)</li>
+                <li><strong>Nodes/batch:</strong> ~2,300</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-900 rounded-lg p-4">
+              <h3 className="font-semibold text-gray-300 mb-3">Storage Model</h3>
+              <ul className="text-sm text-gray-400 space-y-2">
+                <li><strong>Page size:</strong> 4,096 bytes</li>
+                <li><strong>Feature size:</strong> 68 bytes (17 × float32)</li>
+                <li><strong>Nodes/page:</strong> ~60</li>
+                <li><strong>Layout:</strong> METIS + BFS ordering</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Reproduce & Verify Section
+    function ReproduceSection() {
+      const pushButton = `make defconfig-gnn-dgraphfin
+make`;
+      const forceSsd = `make defconfig-gnn-dgraphfin-force-ssd
+# point the store at the device you want to watch:
+#   make menuconfig -> GNN -> Force-SSD -> store directory
+make`;
+      return (
+        <div className="card rounded-xl p-6 mb-8">
+          <h2 className="text-2xl font-bold mb-2 text-emerald-400">Reproduce &amp; Verify Read Amplification</h2>
+          <p className="text-gray-400 mb-6">
+            The whole DGraphFin comparison is wired into the build. One defconfig
+            and <code className="text-cyan-400">make</code> prepares dependencies,
+            fetches the dataset, builds the METIS layout, and runs NeighborLoader
+            vs Page-Aware. A GPU is optional — it falls back to CPU.
+          </p>
+
+          <a href="gnn_ssd_report.html" className="inline-flex items-center gap-2 mb-6 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white font-medium transition-colors">
+            📊 View the force-ssd read-amplification report →
+          </a>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">Run the comparison</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-emerald-300 font-mono overflow-x-auto">{pushButton}</pre>
+              <p className="text-gray-500 text-sm mt-2">
+                Read amplification here is <em>modeled</em>: the sampler counts the
+                4 KB pages a batch would touch while features stay in RAM. No
+                block-device reads are issued.
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-300 mb-2">Make the reads real</h3>
+              <pre className="bg-gray-950 border border-gray-800 rounded-lg p-4 text-sm text-cyan-300 font-mono overflow-x-auto">{forceSsd}</pre>
+              <p className="text-gray-500 text-sm mt-2">
+                The force-ssd harness serves features from an SSD and reads each
+                batch's pages with <code className="text-cyan-400">O_DIRECT</code>,
+                so every page read hits the device regardless of dataset size.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 bg-gray-900 rounded-lg p-4 border border-gray-800">
+            <h3 className="font-semibold text-emerald-400 mb-2">Verify with your own tooling</h3>
+            <p className="text-gray-400 text-sm mb-3">
+              We don't run eBPF in the repo — the harness only produces the reads.
+              Attach your own observer to the device and confirm the per-I/O read
+              intent and amplification independently:
+            </p>
+            <div className="grid sm:grid-cols-2 gap-2 text-sm text-gray-400">
+              <div><code className="text-cyan-400">biosnoop</code> / <code className="text-cyan-400">biolatency</code> — per-I/O trace and latency</div>
+              <div><code className="text-cyan-400">blktrace</code> / <code className="text-cyan-400">btt</code> — block-layer request stream</div>
+              <div><code className="text-cyan-400">iostat -x</code> — device throughput and r/s</div>
+              <div><code className="text-cyan-400">results/gnn/force_ssd_ra.json</code> — our counts to cross-check</div>
+            </div>
+          </div>
+
+          <div className="mt-6 grid md:grid-cols-2 gap-6">
+            <div className="bg-emerald-900/20 border border-emerald-700 rounded-lg p-4">
+              <h3 className="font-semibold text-emerald-400 mb-2">neighbor access → the value</h3>
+              <p className="text-gray-400 text-sm">
+                Random training seeds expanded to their neighborhood. A locality-aware
+                layout keeps neighbors on a few pages, so RA_fetch falls from
+                <strong> natural</strong> to <strong> metis</strong> — fewer device
+                reads per useful byte.
+              </p>
+            </div>
+            <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4">
+              <h3 className="font-semibold text-purple-400 mb-2">page access → the gap</h3>
+              <p className="text-gray-400 text-sm">
+                Page-aligned sweep over training pages. RA_fetch is ~1× for every
+                layout, but only a fraction of nodes per page are supervised, so
+                RA_signal stays near the <strong>~4.3× floor</strong> no layout can close.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Main App
+    function App() {
+      return (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <HeroSection />
+          <TwoRegimesSection />
+          <AMEXCapacitySection />
+          <DatasetSection />
+          <SamplersSection />
+          <RAMetricsSection />
+          <ResultsSection />
+          <FIMGuidedRASection />
+          <ApplyRASection />
+          <ConclusionsSection />
+          <TrainingSection />
+          <ReproduceSection />
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
+            <p>
+              Part of <a href="index.html" className="text-emerald-400 hover:underline">knlp</a> ·
+              <a href="gnn-fraud.md" className="text-cyan-400 hover:underline ml-2">Overview</a> ·
+              <a href="gnn-amex.md" className="text-emerald-400 hover:underline ml-2">AMEX</a> ·
+              <a href="gnn-dgraphfin.md" className="text-purple-400 hover:underline ml-2">DGraphFin</a>
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
