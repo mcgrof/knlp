@@ -613,6 +613,70 @@ class FlexKVHarness:
         self.remove()
 
 
+class PerLayerKVHarness:
+    """Per-LAYER K/V fake-quant. Unlike FlexKVHarness (one spec over a layer set), this takes a
+    per-layer override MAP so a single install can put different layers at different formats -- e.g.
+    "all layers FP8-K except layer l which is BF16". k_specs/v_specs are dict[layer_idx -> parse_spec
+    dict]; layers absent from the map fall back to k_default/v_default. This is the instrument for the
+    bidirectional layer-intervention matrix (safe-side demotion from all-K16, failure-side repair from
+    all-FP8). Post-RoPE naive path only (prebias=False) -- it reproduces the production symmetric
+    FP8-K failure mode, not the pre-bias faithful fix."""
+
+    def __init__(
+        self, model, infos, k_specs=None, v_specs=None, k_default=None, v_default=None
+    ):
+        self.model = model
+        self.infos = infos
+        self.k_specs = k_specs or {}
+        self.v_specs = v_specs or {}
+        self.k_default = k_default or parse_spec("bf16")
+        self.v_default = v_default or parse_spec("bf16")
+        self.impl = model.config._attn_implementation
+        self.by_mod = {id(i["attn_module"]): i for i in infos}
+        self.orig = None
+
+    def install(self):
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        self.orig = ALL_ATTENTION_FUNCTIONS[self.impl]
+        orig = self.orig
+        h = self
+
+        def hook(module, q, k, v, attention_mask, scaling=None, dropout=0.0, **kw):
+            info = h.by_mod.get(id(module))
+            if info is not None:
+                li = info["layer_idx"]
+                ks = h.k_specs.get(li, h.k_default)
+                vs = h.v_specs.get(li, h.v_default)
+                if ks["fmt"] is not None:
+                    k = _quant_lastdims(
+                        k, ks["fmt"], ks["bits"], ks["layout"], ks["group"], False
+                    )
+                if vs["fmt"] is not None:
+                    v = _quant_lastdims(
+                        v, vs["fmt"], vs["bits"], vs["layout"], vs["group"], False
+                    )
+            return orig(
+                module, q, k, v, attention_mask, dropout=dropout, scaling=scaling, **kw
+            )
+
+        ALL_ATTENTION_FUNCTIONS[self.impl] = hook
+        return self
+
+    def remove(self):
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        if self.orig is not None:
+            ALL_ATTENTION_FUNCTIONS[self.impl] = self.orig
+            self.orig = None
+
+    def __enter__(self):
+        return self.install()
+
+    def __exit__(self, *a):
+        self.remove()
+
+
 @torch.no_grad()
 def real_ppl(model, tok, device, n=16, seq_len=2048, harness=None):
     """Real next-token PPL (NLL over the dataset's own targets) -- the near-serving metric, NOT a
