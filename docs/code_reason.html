@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Reasoning: pluggable certificates for domain-specific fault finding | knlp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f; --surface: #141821; --surface2: #191f2b;
+      --border: #2a303c; --border2: #3a4353;
+      --text: #eef2f8; --muted: #9aa6b8; --faint: #677386;
+      --cyan: #29d3c7; --green: #31d978; --amber: #f5b84b;
+      --blue: #62a8ff; --violet: #a98bff; --red: #ff6f7d;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(41,211,199,0.05), transparent 260px),
+        radial-gradient(circle at 50% 0%, rgba(98,168,255,0.10), transparent 420px),
+        var(--bg);
+      font-family: var(--sans); font-size: 15px; line-height: 1.65;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre, .mono { font-family: var(--mono); }
+    .wrap { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+
+    .site-nav {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(9,10,15,0.90); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .site-nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+    .brand-mark {
+      width: 32px; height: 32px; display: grid; place-items: center;
+      border: 1px solid rgba(41,211,199,0.45); background: rgba(41,211,199,0.10);
+      border-radius: 8px; color: var(--cyan); font-family: var(--mono); font-weight: 700;
+    }
+    .brand strong { font-family: var(--mono); font-size: 13px; letter-spacing: 0.5px; }
+    .nav-links a { color: var(--muted); font-size: 13px; margin-left: 18px; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    header.hero { padding: 60px 0 30px; }
+    .kicker {
+      font-family: var(--mono); font-size: 12px; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--cyan); margin-bottom: 14px;
+    }
+    h1 { font-size: 40px; line-height: 1.12; margin: 0 0 16px; font-weight: 700; }
+    h1 .accent { color: var(--cyan); }
+    .lede { font-size: 18px; color: var(--muted); max-width: 720px; }
+
+    section { padding: 26px 0; border-top: 1px solid var(--border); }
+    h2 { font-size: 24px; margin: 0 0 12px; font-weight: 700; }
+    h3 { font-size: 15px; margin: 22px 0 8px; color: var(--amber); font-family: var(--mono); font-weight: 600; }
+    p { color: #d6deea; }
+    .muted { color: var(--muted); }
+    strong { color: var(--text); }
+
+    .pill {
+      display: inline-block; font-family: var(--mono); font-size: 11px;
+      padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border2);
+      color: var(--muted); margin-right: 6px;
+    }
+    .callout {
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 3px solid var(--cyan); border-radius: 10px;
+      padding: 16px 18px; margin: 18px 0; color: #d6deea;
+    }
+
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+    th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--faint); font-family: var(--mono); font-weight: 600; font-size: 12px; }
+    tbody tr:hover { background: var(--surface); }
+    td.mono, th.mono { font-family: var(--mono); }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .best { color: var(--cyan); font-weight: 600; }
+    .tblnote { font-size: 12.5px; color: var(--faint); margin-top: 4px; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 680px) { .grid2 { grid-template-columns: 1fr; } h1 { font-size: 30px; } }
+    .box { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+    .box h4 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+    .box p { margin: 0; font-size: 13.5px; color: var(--muted); }
+
+    footer { border-top: 1px solid var(--border); padding: 30px 0 60px; color: var(--faint); font-size: 13px; }
+    footer code { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark">k</span><strong>knlp</strong></a>
+      <div class="nav-links">
+        <a href="index.html">All research</a>
+        <a href="https://github.com/mcgrof/knlp">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <header class="hero">
+      <div class="kicker">Code Reasoning &middot; R&amp;D</div>
+      <h1>Certificates that make a model <span class="accent">find the bug</span>.</h1>
+      <p class="lede">
+        We are studying whether a structured <em>certificate</em> — the model states premises
+        with cited file/line evidence, a trace, and a formal conclusion — makes a language model
+        better at static code-reasoning tasks like fault localization, and whether that structure
+        can be made <strong>pluggable</strong> and specialized to a target domain. Our target
+        domain is the Linux kernel.
+      </p>
+      <div style="margin-top:18px">
+        <span class="pill">execution-free</span>
+        <span class="pill">Kconfig-driven harness</span>
+        <span class="pill">condition-neutral grading</span>
+        <span class="pill">contamination-aware</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>The idea</h2>
+      <p>
+        "Agentic Code Reasoning" (<a href="https://arxiv.org/abs/2603.01896">arXiv:2603.01896</a>,
+        Ugare &amp; Chandra) reports that a <strong>semi-formal</strong> prompt beats plain
+        reasoning on static code tasks, and — importantly — that the benefit is
+        <strong>model-dependent</strong>: some models gain, others regress. If a certificate is a
+        prompt-level artifact rather than a property of the weights, then the certificate is a
+        <em>knob</em>: its premises, evidence rules, and proof obligations can be redesigned and
+        swapped without retraining, and specialized to the failure modes of a particular codebase.
+      </p>
+      <p>
+        The question we care about is not "does one certificate help on a public benchmark," but
+        "how do we <strong>evaluate</strong> pluggable certificate designs fairly, and which ones
+        transfer to a real, adversarial, non-memorized target — kernel-style C." Everything below
+        is the baseline that makes that evaluation trustworthy.
+      </p>
+    </section>
+
+    <section>
+      <h2>Baseline: the model-dependence claim reproduces</h2>
+      <p class="muted">
+        An independent, execution-free replication on the paper's two headline models, plus a
+        third model outside the paper. 37 Defects4J bugs (Commons Lang/Cli/Csv/Gson),
+        reconstructed with no JDK and no test runs; the bug set was frozen before any model call.
+        Single-shot, no extended thinking. The grader is the paper's Top-N hunk-overlap, reads
+        only the model's final ranked-predictions block — <strong>identically for every
+        condition, never the certificate's citations</strong> — so a certificate cannot win by
+        citing more lines.
+      </p>
+
+      <h3>semi-formal &minus; standard (percentage points)</h3>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Subset</th><th>n</th><th>Top-1 Any</th><th>Top-5 Any</th><th>Top-5 All</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Opus-4.5</strong></td><td>all</td><td class="mono">37</td><td class="mono pos">+5.4</td><td class="mono pos">+2.7</td><td class="mono pos">+5.4</td></tr>
+          <tr><td><strong>Opus-4.5</strong></td><td>non-mem</td><td class="mono">18</td><td class="mono">+0.0</td><td class="mono pos">+5.6</td><td class="mono pos">+5.6</td></tr>
+          <tr><td><strong>Sonnet-4.5</strong></td><td>all</td><td class="mono">37</td><td class="mono pos">+2.7</td><td class="mono neg">&minus;5.4</td><td class="mono neg">&minus;2.7</td></tr>
+          <tr><td><strong>Sonnet-4.5</strong></td><td>non-mem</td><td class="mono">21</td><td class="mono">+0.0</td><td class="mono neg">&minus;4.8</td><td class="mono neg">&minus;4.8</td></tr>
+          <tr><td>gpt-5.2</td><td>all</td><td class="mono">37</td><td class="mono">+0.0</td><td class="mono neg">&minus;2.7</td><td class="mono neg">&minus;2.7</td></tr>
+          <tr><td>gpt-5.2</td><td>non-mem</td><td class="mono">15</td><td class="mono neg">&minus;6.7</td><td class="mono neg">&minus;6.7</td><td class="mono">+0.0</td></tr>
+        </tbody>
+      </table>
+      <div class="tblnote">"non-mem" restricts to bugs a source-free probe missed — where the model cannot simply recall the benchmark. Positive = the certificate helps.</div>
+
+      <p style="margin-top:20px">
+        <strong>Opus-4.5 gains, and the gain is larger on the non-memorized bugs</strong>
+        (+5.6pp Top-5 All), so it is not a recall artifact. <strong>Sonnet-4.5 regresses, and the
+        regression deepens</strong> on the harder bugs. The two paper models split in exactly the
+        directions the paper reports; a third model (gpt-5.2) patterns with the regressing side.
+      </p>
+
+      <h3>per-condition absolute Top-5 All (all 37 bugs)</h3>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>standard</th><th>standard_matched</th><th>semiformal</th><th>evidence_only</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Opus-4.5</strong></td><td class="mono">54.1%</td><td class="mono">46.0%</td><td class="mono best">59.5%</td><td class="mono">51.4%</td></tr>
+          <tr><td><strong>Sonnet-4.5</strong></td><td class="mono">43.2%</td><td class="mono">46.0%</td><td class="mono">40.5%</td><td class="mono">46.0%</td></tr>
+          <tr><td>gpt-5.2</td><td class="mono">54.1%</td><td class="mono">54.1%</td><td class="mono">51.4%</td><td class="mono">56.8%</td></tr>
+        </tbody>
+      </table>
+      <div class="tblnote">
+        <code>standard_matched</code> = reason at length (a verbosity control);
+        <code>evidence_only</code> = cite evidence without the formal proof.
+      </div>
+
+      <div class="callout">
+        On Opus the certificate beats both the verbosity control and evidence-only citation, so the
+        gain is <strong>the certificate structure</strong> — not "reason more" and not
+        evidence-grounding alone. This is the property worth making pluggable.
+      </div>
+    </section>
+
+    <section>
+      <h2>The honest caveat: contamination</h2>
+      <p>
+        Defects4J is a decade-old public benchmark, and every model partly recalls it. A source-free
+        probe — failing-test name and candidate file list, <strong>no source code</strong> — still
+        localizes a large share of bugs (22/37 for one model). Absolute Top-N is therefore inflated
+        by memory for everyone. The <em>paired</em> semi-formal-vs-standard comparison is unaffected
+        (both conditions face the same recall) and the model-dependence split holds on the
+        non-memorized subset, so the finding survives — but the contamination is real, and it is the
+        reason the baseline cannot be a public Java benchmark. It has to move to a target the model
+        has not seen.
+      </p>
+    </section>
+
+    <section>
+      <h2>A harness you can rerun &mdash; and what it cost</h2>
+      <p>
+        The reproduction is a harness, not a one-off script. It is built
+        kernel-style: every experiment toggle flows through
+        <strong>Kconfig</strong>, so the paper reproduction and the augmented
+        certificate work are separate, pinned build targets
+        (<code>make defconfig-code-reason-paper</code> reproduces the paper's
+        static verifier with the standard and semi-formal conditions;
+        <code>make defconfig-code-reason</code> adds the knlp certificate
+        addendums, each independently ablatable). The bugs are reconstructed
+        <strong>execution-free</strong> &mdash; no JDK, no test runs &mdash; from
+        Defects4J's own metadata and our own buggy&rarr;fixed diff, and the bug
+        set is frozen before any model is called. Grading is one condition-neutral
+        function that reads only the model's final ranked predictions.
+      </p>
+      <p>
+        Every run saves the raw model output, and the grader
+        <strong>re-scores offline</strong> from that saved text with no API calls
+        (<code>faultloc_run.py --regrade</code>). A parsing fix, a metric change,
+        or an audit therefore costs nothing and never re-queries a model &mdash;
+        the numbers on this page can be regenerated from the archived raw
+        responses alone.
+      </p>
+
+      <h3>reproduction cost (API credits, tracked per run)</h3>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Access</th><th>Calls</th><th>Cost (USD)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>gpt-5.2 <span class="muted">(pre-paper snapshot)</span></td><td>OpenAI API</td><td class="mono">185</td><td class="mono">$7.77</td></tr>
+          <tr><td><strong>Opus-4.5</strong></td><td>Anthropic API</td><td class="mono">185</td><td class="mono">$40.92</td></tr>
+          <tr><td><strong>Sonnet-4.5</strong></td><td>Anthropic API</td><td class="mono">185</td><td class="mono">$8.80</td></tr>
+          <tr><td class="mono">total</td><td></td><td class="mono">555</td><td class="mono best">$57.49</td></tr>
+        </tbody>
+      </table>
+      <div class="tblnote">Single-shot, no extended thinking, 8192-token output cap. Cost is recorded per run in the archived reports.</div>
+
+      <div class="callout">
+        <strong>The API is not a convenience here &mdash; it is the only door.</strong>
+        The paper's headline model snapshots and the pre-paper gpt-5.2 are
+        proprietary, served-only, and rotated out over time; their weights cannot
+        be downloaded or pinned locally. To reproduce the paper faithfully on the
+        <em>era-correct</em> models, a hosted API is the sole access path. That is
+        also a fragility &mdash; a deprecated snapshot is a result you can no
+        longer reproduce &mdash; and it is one reason the forward work leans on
+        targets and models we can pin and share.
+      </div>
+    </section>
+
+    <section>
+      <h2>Where this goes: pluggable certificates for the Linux kernel</h2>
+      <p>
+        The baseline establishes two things a real program can build on: the certificate is a
+        prompt-level knob with a genuine structural effect, and public Java benchmarks are
+        memorization-capped. The next step is an evaluation framework for <strong>pluggable
+        certificate designs</strong> — different premise sets, evidence obligations, and proof
+        shapes — measured on a <strong>domain-specific, contamination-resistant target</strong>
+        rather than a leaderboard.
+      </p>
+      <p>
+        We are focusing that target on the <strong>Linux kernel</strong>: kernel-style C, the bug
+        classes that matter there (undefined behavior, memory-safety faults, concurrency and
+        resource errors), and ground truth established by construction and confirmed by sanitizers
+        rather than by recall. The harness is built kernel-style — every experiment toggle flows
+        through Kconfig, grading is blind to the certificate and neutral across conditions, and a
+        surface-matched control gates whether a design is measuring reasoning or leakage before any
+        expensive evaluation runs.
+      </p>
+      <div class="callout">
+        <strong>The central challenge is the benchmark itself.</strong> Defects4J showed that any
+        widely-available corpus is already in the models' memory, so the hard part is not the
+        prompt — it is finding or constructing a <strong>substantially hard, non-contaminated</strong>
+        benchmark for kernel-style C: hard enough that a strong model cannot solve it by pattern
+        alone, yet with ground truth we can prove by construction. It must work two ways at once —
+        leverageable by <strong>frontier models through their APIs</strong> (where the strongest
+        reasoning lives, but only rented access and rotating snapshots) <em>and</em> by the
+        <strong>latest open-source models we can run and pin ourselves</strong> (reproducible and
+        durable, closing the fragility the API-only path leaves behind). A benchmark that separates
+        reasoning from recall on both is what makes a certificate result on the kernel mean
+        something.
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <div class="box">
+          <h4>Pluggable by design</h4>
+          <p>Certificate premises, citation rules, and proof obligations are swappable and independently ablatable, so a domain expert can encode kernel-specific failure modes without retraining a model.</p>
+        </div>
+        <div class="box">
+          <h4>Contamination-resistant target</h4>
+          <p>Synthetic, construction-proven C with surface-matched safe/buggy siblings, held-out families, and a leakage gate — so a score reflects reasoning on unseen code, not memory of a benchmark.</p>
+        </div>
+        <div class="box">
+          <h4>Neutral, auditable grading</h4>
+          <p>The grader reads only the model's committed answer, identically for every condition, and every run re-scores offline from saved raw output — no result depends on a live model call.</p>
+        </div>
+        <div class="box">
+          <h4>Kernel-style workflow</h4>
+          <p>Kconfig defconfigs pin each experiment; the reproduction path and the augmented-certificate path are separate, versioned build targets.</p>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:18px">
+        This work is under active development and will be evaluated shortly. The baseline above is
+        the fixed point it builds on; the certificate-design and kernel-target results are
+        forthcoming.
+      </p>
+    </section>
+
+    <footer>
+      <p>
+        Substrate and runner: <code>research/code_reason/</code> in
+        <a href="https://github.com/mcgrof/knlp">knlp</a>. Baseline reports and locked bug set are
+        archived with per-call raw responses and an offline re-grader. This is a conceptual
+        replication with public data and single-shot prompting, powered enough to check the
+        model-dependence direction (n=37) but not the paper's exact agentic harness or a precise
+        effect size.
+      </p>
+      <p style="margin-top:10px"><a href="index.html">&larr; All knlp research</a></p>
+    </footer>
+  </div>
+</body>
+</html>
