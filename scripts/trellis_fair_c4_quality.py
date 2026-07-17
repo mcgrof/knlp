@@ -121,6 +121,7 @@ def build_cfg(arm, args, vocab):
             output_path="current",
             gamma_init=args.smd_gamma_init,
             trellis_layer0_gamma_mult=args.smd_layer0_gamma_mult,
+            trellis_ic_solver=args.smd_ic_solver,
         )
         return cfg, "trellis"
     cfg = TrellisConfig(
@@ -137,7 +138,7 @@ def build_cfg(arm, args, vocab):
     return cfg, arm
 
 
-def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt):
+def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt, val_rows=None):
     torch.manual_seed(seed)
     model = build_model(cfg, kind).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
@@ -146,6 +147,9 @@ def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt):
     t0 = time.time()
     ntok = 0
     last = float("nan")
+    milestones = sorted(int(m) for m in args.eval_milestones.split(",") if m.strip())
+    curve = []
+    mi = 0
     for step in range(steps):
         rows = train_rows[step * args.batch : (step + 1) * args.batch]
         idx = torch.tensor(rows, device=device)
@@ -161,6 +165,17 @@ def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt):
         last = loss.item()
         if not math.isfinite(last):
             return model, {"status": "diverged", "step": step, "loss": last}
+        # crossing-curve eval at each cumulative-token milestone
+        while val_rows is not None and mi < len(milestones) and ntok >= milestones[mi]:
+            ce, ppl = val_ppl(model, val_rows, args, device, dt)
+            curve.append({"tokens": ntok, "val_nll": ce, "val_ppl": ppl})
+            print(
+                f"    [{arm} s{seed}] milestone {ntok:,} tok: "
+                f"val_ppl={ppl} (nll={ce})",
+                flush=True,
+            )
+            model.train()
+            mi += 1
         if step % args.log_every == 0 or step == steps - 1:
             tps = ntok / (time.time() - t0)
             print(
@@ -173,6 +188,7 @@ def train_arm(arm, kind, seed, cfg, train_rows, args, device, dt):
         "status": "ok",
         "train_loss": round(last, 5),
         "train_tok_s": round(ntok / (time.time() - t0), 1),
+        "curve": curve,
     }
 
 
@@ -215,6 +231,11 @@ def main():
     # the smd_* arms.
     p.add_argument("--smd_gamma_init", type=float, default=0.05)
     p.add_argument("--smd_layer0_gamma_mult", type=float, default=0.5)
+    # smd_identity memory solver: "solve"/"neumann" (exact ic kernel) or
+    # "fla"/"fla_ref" (the gated-delta fast path, see trellis_lm/smd_fla.py).
+    p.add_argument("--smd_ic_solver", default="solve")
+    # eval the crossing curve at these cumulative-token milestones (plus final).
+    p.add_argument("--eval_milestones", default="")
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
     p.add_argument("--log_every", type=int, default=250)
     p.add_argument("--dataset", default="allenai/c4")
@@ -263,7 +284,7 @@ def main():
             cfg, kind = build_cfg(arm, args, vocab)
             try:
                 model, tr = train_arm(
-                    arm, kind, seed, cfg, train_rows, args, device, dt
+                    arm, kind, seed, cfg, train_rows, args, device, dt, val_rows
                 )
                 row = {
                     "arm": arm,
