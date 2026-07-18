@@ -27,6 +27,11 @@ include Makefile.cartridges
 # this overrides .DEFAULT_GOAL.
 include Makefile.kvio
 
+# Include KVTide NVMe-KV target + initiator bench targets (kvtide-doctor,
+# kvtide-fetch, kvtide-build, kvtide-target-up, kvtide-bench,
+# kvtide-report).  When CONFIG_KVTIDE=y this overrides .DEFAULT_GOAL.
+include Makefile.kvtide
+
 # Include FP8 KV-cache failure-atlas validation targets (quant-fp8-doctor,
 # quant-fp8-run, quant-fp8-report).  When CONFIG_KNLP_QUANT_FP8=y this
 # overrides .DEFAULT_GOAL.

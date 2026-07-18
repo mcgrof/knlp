@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the KVTide NVMe-KV target + initiator bench harness.
+#
+# Selecting one of:
+#   make defconfig-kvtide-ab       both initiators, A/B bake-off (default)
+#   make defconfig-kvtide-spdk     SPDK userspace initiator only
+#   make defconfig-kvtide-xnvme    xNVMe io_uring_cmd initiator only
+#   make defconfig-kvtide-nixl     A/B plus the NIXL XNVME_KV plugin tests
+# writes .config and enables CONFIG_KVTIDE.  Plain `make` after that runs
+# kvtide-doctor -> kvtide-fetch -> kvtide-build -> kvtide-target-up ->
+# kvtide-bench -> kvtide-report.  The target stays up afterwards so cells
+# can be re-run; `make kvtide-target-down` tears it down.
+#
+# The target is pure software (SPDK kvmalloc KV bdev over NVMe-oF/TCP on
+# loopback) so the whole harness runs inside a QEMU guest.  No PCI
+# rebinding is ever performed; local NVMe stays kernel-owned.
+#
+# All knobs live in Kconfig.kvtide ("KVTide NVMe-KV bench harness" menu):
+# source pins, target address/NQN/core mask, and the bench matrix.
+# Host-specific overrides append to .config, e.g.:
+#   echo 'CONFIG_KVTIDE_SRC_DIR="/home/me/kvtide"' >> .config
+#
+# See tools/reproduce/kvtide/README.md for the kdevops guest bring-up.
+
+KVTIDE_SH := tools/reproduce/kvtide
+
+.PHONY: kvtide kvtide-doctor kvtide-fetch kvtide-build kvtide-target-up \
+        kvtide-target-down kvtide-bench kvtide-nixl kvtide-report
+
+# When CONFIG_KVTIDE=y, plain `make` defaults to the kvtide pipeline.
+# Otherwise the existing all: target is unaffected.
+ifeq ($(CONFIG_KVTIDE),y)
+.DEFAULT_GOAL := kvtide
+endif
+
+kvtide: kvtide-doctor kvtide-fetch kvtide-build kvtide-target-up \
+	kvtide-bench kvtide-report
+
+kvtide-doctor:
+	@$(KVTIDE_SH)/doctor.sh
+
+kvtide-fetch:
+	@$(KVTIDE_SH)/fetch.sh
+
+kvtide-build:
+	@$(KVTIDE_SH)/build.sh
+
+kvtide-target-up:
+	@$(KVTIDE_SH)/target-up.sh
+
+kvtide-target-down:
+	@$(KVTIDE_SH)/target-down.sh
+
+kvtide-bench:
+	@$(KVTIDE_SH)/bench.sh
+
+kvtide-nixl:
+	@$(KVTIDE_SH)/nixl.sh
+
+kvtide-report:
+	@$(KVTIDE_SH)/report.sh
