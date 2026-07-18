@@ -228,6 +228,7 @@ source "Kconfig.fdec"
 source "Kconfig.quant"
 source "Kconfig.kri_tierkv"
 source "research/code_reason/Kconfig"
+source "research/cartridges_cas/Kconfig"
 
 menu "Advanced Options"
 
