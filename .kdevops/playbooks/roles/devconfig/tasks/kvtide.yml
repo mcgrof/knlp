@@ -27,6 +27,11 @@
       - uuid-dev
       - nasm
       - nvme-cli
+      - bison
+      - flex
+      - bc
+      - libelf-dev
+      - zstd
     state: present
     update_cache: yes
   when: ansible_facts['os_family'] == 'Debian'
