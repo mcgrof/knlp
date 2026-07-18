@@ -1,0 +1,219 @@
+# SPDX-License-Identifier: MIT
+#
+# KVTide -- portable, vendor-neutral tiered KV-cache I/O harness.
+#
+# Every experimental knob lives here so nothing is buried in shell
+# constants; the stage scripts under tools/reproduce/kvtide/ source the
+# generated .config and never hard-code experiment policy.
+
+menu "KVTide NVMe-KV bench harness"
+
+config KVTIDE
+	bool "Enable the KVTide NVMe-KV bench harness"
+	default n
+	help
+	  KVTide stands up a software NVMe key-value target (the SPDK
+	  kvmalloc KV bdev exported over NVMe-oF/TCP on loopback) and
+	  drives it with one or two initiators over the exact same
+	  matrix: the SPDK userspace kernel-bypass initiator
+	  (spdk_nvme_perf KV mode) and the xNVMe io_uring_cmd initiator,
+	  which goes through the kernel nvme-tcp host stack and a
+	  /dev/ngXnY char device. Identical workload, identical CPU
+	  accounting, one CSV -- easy A/B.
+
+	  No KV hardware is required: the target is pure software, so
+	  the whole harness runs inside a QEMU guest (see the kdevops
+	  integration in tools/reproduce/kvtide/README.md).
+
+	  Off by default so it never perturbs existing knlp defconfigs
+	  or make check.
+
+if KVTIDE
+
+choice
+	prompt "Initiator selection"
+	default KVTIDE_INITIATOR_BOTH
+	help
+	  Which initiator(s) to build and bench against the target.
+
+config KVTIDE_INITIATOR_SPDK
+	bool "SPDK userspace initiator (kernel-bypass)"
+	help
+	  Only spdk_nvme_perf in KV mode, connecting straight to the
+	  NVMe-oF/TCP target from userspace.
+
+config KVTIDE_INITIATOR_XNVME
+	bool "xNVMe io_uring_cmd initiator (kernel nvme-tcp)"
+	help
+	  Only the xNVMe path: the kernel nvme-tcp host attaches the
+	  target as a KV namespace char device (/dev/ngXnY) and
+	  xnvme_kv_perf drives it with io_uring passthrough commands.
+
+config KVTIDE_INITIATOR_BOTH
+	bool "Both initiators (A/B bake-off)"
+	help
+	  Build and bench both initiators against the same target with
+	  the same matrix and CPU accounting. Every cell lands in the
+	  same CSV tagged by initiator, so the A/B comparison is one
+	  sort away.
+
+endchoice
+
+config KVTIDE_SPDK
+	bool
+	default y if KVTIDE_INITIATOR_SPDK || KVTIDE_INITIATOR_BOTH
+
+config KVTIDE_XNVME
+	bool
+	default y if KVTIDE_INITIATOR_XNVME || KVTIDE_INITIATOR_BOTH
+
+menu "Sources"
+
+config KVTIDE_SRC_DIR
+	string "Source and build directory"
+	default "/data/kvtide"
+	help
+	  Where KVTide clones and builds SPDK, xNVMe and (optionally)
+	  NIXL, and where results land. The default matches the kdevops
+	  guest layout where /data is the large data disk; point it
+	  anywhere writable on other hosts. Use a path without spaces.
+
+config KVTIDE_SPDK_GIT
+	string "SPDK git URL"
+	default "https://review.spdk.io/spdk/spdk"
+	help
+	  The SPDK KV command set target stack (bdev/kvmalloc, nvmf KV
+	  namespace support, spdk_nvme_perf KV mode) is in review on
+	  SPDK Gerrit; a single change ref carries the whole stack plus
+	  its base.
+
+config KVTIDE_SPDK_REF
+	string "SPDK ref to fetch"
+	default "refs/changes/07/28307/12"
+	help
+	  Gerrit change ref for the KV target stack. Patchset 12 is the
+	  pinned, validated one; newer patchsets may exist. The ref is
+	  fetched directly into FETCH_HEAD, no full clone needed.
+
+config KVTIDE_SPDK_LOCAL_FIXES
+	bool "Apply local SPDK build fixes"
+	default y
+	help
+	  Apply tools/reproduce/kvtide/patches/spdk-kv-stack-local-fixes
+	  .patch: a GCC 15 / AVX10 probe fix in mk/spdk.common.mk, an
+	  rpc_autogen decoder-name collision fix in the kvmalloc RPCs,
+	  and the matching CLI/lint updates. Without it the stack does
+	  not build on current toolchains.
+
+config KVTIDE_XNVME_GIT
+	string "xNVMe git URL"
+	default "https://github.com/xnvme/xnvme.git"
+
+config KVTIDE_XNVME_REF
+	string "xNVMe ref to check out"
+	default "a5bf2a654ca038b246ed2fc9a64d81556a510ff6"
+	help
+	  Pinned upstream commit (v0.7.5-era master) validated with the
+	  io_uring_cmd backend. A branch name works too but loses
+	  bit-exact reproducibility.
+
+config KVTIDE_NIXL
+	bool "Also build the NIXL XNVME_KV plugin and run its tests"
+	default n
+	help
+	  Fetch and build NIXL with the XNVME_KV storage plugin (an
+	  NVMe-KV backend over xNVMe io_uring_cmd), run its mock-device
+	  unit tests, and run its hardware integration test against the
+	  KVTide target device. This validates a full transfer-library
+	  data path on top of the same target the perf initiators use.
+
+config KVTIDE_NIXL_GIT
+	string "NIXL git URL"
+	depends on KVTIDE_NIXL
+	default "https://github.com/mcgrof/nixl.git"
+
+config KVTIDE_NIXL_REF
+	string "NIXL branch or ref"
+	depends on KVTIDE_NIXL
+	default "20260717-xnvme-kv"
+	help
+	  Branch carrying the XNVME_KV plugin series (scaffolding and
+	  device layer, async data path, unit and integration tests,
+	  docs and focused benchmark).
+
+endmenu
+
+menu "Target"
+
+config KVTIDE_TARGET_ADDR
+	string "Target listen address"
+	default "127.0.0.1"
+
+config KVTIDE_TARGET_PORT
+	string "Target listen port"
+	default "4420"
+
+config KVTIDE_TARGET_NQN
+	string "Target subsystem NQN"
+	default "nqn.2016-06.io.spdk:cnode_kv"
+
+config KVTIDE_TARGET_CORE_MASK
+	string "Target reactor core mask"
+	default "0x3"
+	help
+	  Cores the SPDK target busy-polls on. These cores are excluded
+	  from initiator CPU accounting in the bench; keep the mask and
+	  the bench pin (KVTIDE_BENCH_INIT_CORE) disjoint.
+
+config KVTIDE_HUGEPAGES
+	int "Number of 2 MiB hugepages for the target"
+	default 1024
+	help
+	  Written to /proc/sys/vm/nr_hugepages before target start. The
+	  default reserves 2 GiB. KVTide never runs SPDK setup.sh and
+	  never rebinds PCI devices; local NVMe stays kernel-owned.
+
+config KVTIDE_TARGET_INCAPSULE
+	int "Transport in-capsule data size in bytes"
+	default 8192
+	help
+	  Passed to nvmf_create_transport -u. Writes no larger than
+	  this ride in the command capsule; larger ones go through the
+	  solicited-write (R2T) round trip on the kernel nvme-tcp path.
+	  This is exactly the knob behind the documented large-value
+	  store sensitivity at queue depth -- sweep it to study that
+	  behavior instead of accepting the default.
+
+endmenu
+
+menu "Bench matrix"
+
+config KVTIDE_BENCH_OPS
+	string "Operations to sweep"
+	default "store retrieve"
+
+config KVTIDE_BENCH_VSIZES
+	string "Value sizes in bytes to sweep"
+	default "4096 65536"
+
+config KVTIDE_BENCH_QDS
+	string "Queue depths to sweep"
+	default "1 16 64"
+
+config KVTIDE_BENCH_SECS
+	int "Seconds per cell"
+	default 8
+
+config KVTIDE_BENCH_INIT_CORE
+	int "CPU core the initiator is pinned to"
+	default 4
+	help
+	  Both initiators are pinned here with taskset so their CPU
+	  cost is measured the same way. Must not overlap the target
+	  core mask.
+
+endmenu
+
+endif
+
+endmenu
