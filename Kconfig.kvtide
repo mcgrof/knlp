@@ -186,6 +186,63 @@ config KVTIDE_TARGET_INCAPSULE
 
 endmenu
 
+menu "Kernel under test"
+
+config KVTIDE_LINUX
+	bool "Build, install and gate on a kernel under test"
+	default n
+	help
+	  Fetch and build a Linux tree, install it on this host, and
+	  gate the pipeline on actually running it: the first make
+	  stops after the install and asks for one reboot; re-running
+	  make after the reboot passes the gate and proceeds to the
+	  bench on the kernel under test. This pairs the xNVMe
+	  initiator's kernel data path with a kernel of choice -- the
+	  default tree and branch carry the blk_iobuf_pool series.
+
+	  Meant for disposable bench hosts (kdevops QEMU guests): the
+	  stage installs a kernel and updates the bootloader.
+
+if KVTIDE_LINUX
+
+# CLI overrides for the kernel tree/branch, resolved at defconfig
+# time.  Both
+#   make defconfig-kvtide-ab-linux LINUX_TREE=<url>
+#   make defconfig-kvtide-ab-linux LINUX_BRANCH=<ref>
+# work; unset ones fall back to the blk_iobuf_pool defaults below.
+# The kvtide-ab-linux defconfig deliberately omits the two string
+# symbols so olddefconfig fills them from these defaults.
+config KVTIDE_LINUX_TREE_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh LINUX_TREE)
+
+config KVTIDE_LINUX_BRANCH_SET_BY_CLI
+	bool
+	default $(shell, scripts/check-cli-set-var.sh LINUX_BRANCH)
+
+config KVTIDE_LINUX_TREE
+	string "Linux git tree"
+	default "$(LINUX_TREE)" if KVTIDE_LINUX_TREE_SET_BY_CLI
+	default "https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git"
+
+config KVTIDE_LINUX_BRANCH
+	string "Linux branch or ref"
+	default "$(LINUX_BRANCH)" if KVTIDE_LINUX_BRANCH_SET_BY_CLI
+	default "blk-iobuf-pool-v3"
+
+config KVTIDE_LINUX_ENABLE_BLK_IOBUF_POOL
+	bool "Enable CONFIG_BLK_IOBUF_POOL in the built kernel"
+	default y
+	help
+	  Turn on the per-queue large-folio buffer pool in the kernel
+	  under test (the built config is otherwise based on the
+	  running kernel's). Warns instead of failing when the chosen
+	  tree does not carry the option.
+
+endif
+
+endmenu
+
 menu "Bench matrix"
 
 config KVTIDE_BENCH_OPS

@@ -60,6 +60,43 @@ The target script never runs SPDK `scripts/setup.sh` — no PCI
 rebinding, no vfio/uio; local NVMe stays kernel-owned. Only hugepages
 are reserved (2 GiB by default).
 
+## Kernel under test (kvtide-ab-linux)
+
+`make defconfig-kvtide-ab-linux` adds a kernel dimension to the A/B: a
+`kvtide-linux` stage fetches a Linux tree (shallow, single branch),
+bases its config on the running kernel's, enables
+`CONFIG_BLK_IOBUF_POOL`, builds and installs it, then **gates** the
+pipeline on actually running it — the first `make` stops after the
+install and asks for one reboot; the second `make` passes the gate and
+runs the bench on the kernel under test. Each bench CSV gets a
+`.meta` sidecar recording `uname -r`, so runs on different kernels
+stay distinguishable.
+
+The tree and branch default to the blk_iobuf_pool v3 series on
+kernel.org and can be overridden as environment variables at defconfig
+time (requires python3 kconfiglib; the defconfig deliberately omits
+the two symbols so olddefconfig can fill them):
+
+```
+# default: the blk_iobuf_pool v3 series
+make defconfig-kvtide-ab-linux
+
+# any other tree/branch
+make defconfig-kvtide-ab-linux \
+    LINUX_TREE=https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git \
+    LINUX_BRANCH=blk-iobuf-pool-v3
+```
+
+This is meant for disposable bench hosts (kdevops QEMU guests) — the
+stage installs a kernel and updates the bootloader. The kernel-side
+tooling this pairs with is public in the kdevops project:
+[blk_iobuf_pool RFC](https://github.com/linux-kdevops/kdevops/blob/main/docs/rfc-20260630-v1-blk-iobuf-pool.html),
+[`defconfig-iobuf-nvme`](https://github.com/linux-kdevops/kdevops/blob/main/defconfigs/iobuf-nvme)
+and the
+[`iobuf_bench` scripts](https://github.com/linux-kdevops/kdevops/tree/main/scripts/workflows/iobuf_bench);
+the kernel branch is
+[mcgrof/linux `blk-iobuf-pool-v3`](https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=blk-iobuf-pool-v3).
+
 ## The NIXL stage (optional)
 
 `make defconfig-kvtide-nixl` additionally builds NIXL with the XNVME_KV

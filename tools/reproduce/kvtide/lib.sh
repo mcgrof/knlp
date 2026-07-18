@@ -58,6 +58,10 @@ want_nixl() {
 	[ "${CONFIG_KVTIDE_NIXL:-n}" = y ]
 }
 
+want_linux() {
+	[ "${CONFIG_KVTIDE_LINUX:-n}" = y ]
+}
+
 # The nvme-tcp attach of the KV target is only needed for the xNVMe
 # initiator and the NIXL integration test; SPDK connects userspace.
 want_kernel_attach() {

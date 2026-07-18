@@ -114,6 +114,12 @@ mkdir -p "$KVTIDE_RESULTS"
 CSV="$KVTIDE_RESULTS/kvtide-bench-$(date +%Y%m%d-%H%M%S).csv"
 echo "initiator,op,qd,vsize,iops,MBps,lat_us,p99_us,init_cpu_cores" > "$CSV"
 ln -sf "$(basename "$CSV")" "$KVTIDE_RESULTS/kvtide-bench-latest.csv"
+# Sidecar metadata so runs on different kernels stay distinguishable.
+{
+	echo "kernel=$(uname -r)"
+	echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	echo "secs=$SECS"
+} > "$CSV.meta"
 
 kvtide_log "matrix: ops='${CONFIG_KVTIDE_BENCH_OPS}'" \
 	"vsizes='${CONFIG_KVTIDE_BENCH_VSIZES}'" \
