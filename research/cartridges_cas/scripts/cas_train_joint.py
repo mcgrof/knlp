@@ -24,6 +24,7 @@ DATA_PARQUET = os.environ["DATA_PARQUET"]
 DISTRACTORS = os.environ.get("DISTRACTORS", "").split()
 ISO_CART_DIR = os.environ.get("ISO_CART_DIR", "/root/cart_out/carts")
 KV_TOKENS = int(os.environ.get("KV_TOKENS", "1024"))
+GLOBAL_BS = int(os.environ.get("GLOBAL_BS", "16"))
 STEPS = int(os.environ.get("STEPS", "300"))
 LR = float(os.environ.get("LR", "2e-2"))
 EPOCHS = int(os.environ.get("EPOCHS", "4"))
@@ -37,7 +38,7 @@ config = TrainConfig(
         target_text_source=REC, target_max_tokens=KV_TOKENS,
         distractor_paths=dpaths, num_frozen_tokens=0,  # frozen count comes from distractors
     ),
-    lr=LR, epochs=EPOCHS, global_batch_size=16, max_optimizer_steps=STEPS,
+    lr=LR, epochs=EPOCHS, global_batch_size=GLOBAL_BS, max_optimizer_steps=STEPS,
     dataset=TrainDataset.Config(
         data_sources=[DataSource(path=DATA_PARQUET, type="local")],
         top_k_logits=20, packed_seq_length=2048, packing_mode="truncate",
