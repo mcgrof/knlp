@@ -7,7 +7,7 @@ kind: Plugin
 
 metadata:
   name: knlp
-  version: 1.0.0
+  version: 1.1.0
   description: "Kernel Natural Language Processing - ML research workflow"
   author: "Luis Chamberlain <mcgrof@kernel.org>"
   license: "copyleft-next-0.3.1"

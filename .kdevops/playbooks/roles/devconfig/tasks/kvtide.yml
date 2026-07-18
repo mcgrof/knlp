@@ -1,0 +1,40 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+#
+# KVTide bench dependencies: packages needed to build the knlp KVTide
+# harness's software NVMe-KV target (SPDK), the xNVMe io_uring_cmd
+# initiator and the optional NIXL XNVME_KV plugin. The harness itself
+# is driven from the knlp checkout (make defconfig-kvtide-ab && make).
+
+- name: Install KVTide build dependencies (Debian family)
+  become: yes
+  ansible.builtin.apt:
+    name:
+      - gcc
+      - g++
+      - make
+      - git
+      - patch
+      - meson
+      - ninja-build
+      - pkg-config
+      - cmake
+      - python3-pyelftools
+      - liburing-dev
+      - libnuma-dev
+      - libssl-dev
+      - libaio-dev
+      - uuid-dev
+      - nasm
+      - nvme-cli
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Note unsupported OS family for KVTide dependencies
+  ansible.builtin.debug:
+    msg: >
+      KVTide dependency provisioning currently covers the Debian
+      family only; install the equivalents manually and run
+      'make kvtide-doctor' in the knlp checkout to verify.
+  when: ansible_facts['os_family'] != 'Debian'
