@@ -1,0 +1,137 @@
+# Cartridges-at-Scale (CAS) collapse->rescue replication.
+# Sourced from the top-level knlp Kconfig. Every experimental knob lives here so
+# nothing is buried in Python constants; the driver reads a JSON generated from
+# .config (scripts/gen_config_json.py) and never hard-codes experiment policy.
+#
+# CAS (arXiv:2606.04557) trains one KV-cache "cartridge" per document. Loading N
+# independently-trained cartridges at inference collapses accuracy toward chance;
+# mixed-visibility (joint) training rescues it. This harness reproduces that
+# split on Qwen3-8B / LongHealth. It depends on the HazyResearch cartridges
+# package (pinned + patched by bootstrap.sh) and a GPU + vLLM for synthesis.
+
+menu "Cartridges-at-Scale (CAS) replication"
+
+config CARTRIDGES_CAS
+	bool "Enable the CAS collapse->rescue replication harness"
+	default n
+	help
+	  Master switch. Off by default so it never perturbs existing knlp
+	  defconfigs or `make check`. When on, `make` bootstraps the pinned+
+	  patched cartridges package and runs the pipeline selected below.
+
+choice
+	prompt "Scale"
+	depends on CARTRIDGES_CAS
+	default CARTRIDGES_CAS_SMOKE
+	help
+	  Which replication scale to run.
+
+config CARTRIDGES_CAS_SMOKE
+	bool "Smoke (few patients, fast, recipe validation)"
+	help
+	  A small, fast run to validate the pipeline end to end and check that a
+	  single cartridge oracle beats its no-context floor.
+
+config CARTRIDGES_CAS_PAPER
+	bool "Paper-faithful (full panel, collapse + rescue)"
+	help
+	  The headline replication: train the full patient panel, show the
+	  isolated collapse, then the mixed-visibility rescue.
+
+endchoice
+
+menu "Model and data"
+	depends on CARTRIDGES_CAS
+
+config CARTRIDGES_CAS_MODEL
+	string "Base model (frozen; only the KV cache trains)"
+	default "Qwen/Qwen3-8B"
+
+config CARTRIDGES_CAS_NUM_PATIENTS
+	int "Number of LongHealth patients (cartridges)"
+	default 5 if CARTRIDGES_CAS_SMOKE
+	default 20 if CARTRIDGES_CAS_PAPER
+	help
+	  One cartridge per patient. More co-loaded cartridges give a stronger
+	  collapse signal.
+
+config CARTRIDGES_CAS_CONVOS_PER_PATIENT
+	int "Self-study convos synthesized per patient"
+	default 8000 if CARTRIDGES_CAS_SMOKE
+	default 8000 if CARTRIDGES_CAS_PAPER
+	help
+	  The dominant quality lever. 400 is far too few (cartridge stays below
+	  its floor); ~8000+ makes the oracle clearly beat the floor.
+
+config CARTRIDGES_CAS_MIN_PROB_MASS
+	string "Teacher top-k cumulative mass kept (richer distillation)"
+	default "0.998"
+	help
+	  Nucleus cutoff on the captured teacher logprobs. Lower values collapse
+	  the top-k distribution toward a hard label; the flatten edge-case patch
+	  keeps all K when this mass is never reached.
+
+endmenu
+
+menu "Cartridge and training"
+	depends on CARTRIDGES_CAS
+
+config CARTRIDGES_CAS_KV_TOKENS
+	int "Cartridge size in KV tokens"
+	default 512
+
+config CARTRIDGES_CAS_LR
+	string "Learning rate"
+	default "1e-3"
+
+config CARTRIDGES_CAS_GLOBAL_BATCH
+	int "Global batch size (small -> more optimizer steps/epoch)"
+	default 4
+
+config CARTRIDGES_CAS_STEPS
+	int "Max optimizer steps per cartridge"
+	default 2000 if CARTRIDGES_CAS_SMOKE
+	default 6000 if CARTRIDGES_CAS_PAPER
+
+config CARTRIDGES_CAS_EPOCHS
+	int "Epochs (upper bound; STEPS usually binds first)"
+	default 4 if CARTRIDGES_CAS_SMOKE
+	default 14 if CARTRIDGES_CAS_PAPER
+
+config CARTRIDGES_CAS_COMPILE_FLEX
+	bool "Compile FlexAttention (CUDA sm>=80; ~16x faster)"
+	default y
+	help
+	  Restores the upstream compiled FlexAttention path. Disable only on
+	  GPUs where compiled flex fails (e.g. AMD RDNA3 / W7900).
+
+endmenu
+
+menu "Phases"
+	depends on CARTRIDGES_CAS
+
+config CARTRIDGES_CAS_PHASE_SYNTH
+	bool "Synthesize self-study corpora"
+	default y
+
+config CARTRIDGES_CAS_PHASE_TRAIN_ISOLATED
+	bool "Train isolated cartridges"
+	default y
+
+config CARTRIDGES_CAS_PHASE_COLLAPSE
+	bool "Combine-at-inference collapse eval"
+	default y
+
+config CARTRIDGES_CAS_PHASE_TRAIN_JOINT
+	bool "Mixed-visibility (joint) training"
+	default y if CARTRIDGES_CAS_PAPER
+	default n if CARTRIDGES_CAS_SMOKE
+
+config CARTRIDGES_CAS_PHASE_RESCUE
+	bool "Rescue eval on joint cartridges"
+	default y if CARTRIDGES_CAS_PAPER
+	default n if CARTRIDGES_CAS_SMOKE
+
+endmenu
+
+endmenu
