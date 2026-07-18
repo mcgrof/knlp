@@ -60,8 +60,11 @@ config CARTRIDGES_CAS_CONVOS_PER_PATIENT
 	default 8000 if CARTRIDGES_CAS_SMOKE
 	default 8000 if CARTRIDGES_CAS_PAPER
 	help
-	  The dominant quality lever. 400 is far too few (cartridge stays below
-	  its floor); ~8000+ makes the oracle clearly beat the floor.
+	  The dominant quality lever, and the binding constraint. 400 is far too
+	  few (cartridge stays below its floor). 8000 makes some cartridges beat
+	  their floor but does not generalize across patients (8-patient mean
+	  oracle ~12.5%). The paper's regime is ~40000; expect synthesis to
+	  dominate wall-clock at that scale (~5 h/patient of vLLM generation).
 
 config CARTRIDGES_CAS_MIN_PROB_MASS
 	string "Teacher top-k cumulative mass kept (richer distillation)"
@@ -126,6 +129,12 @@ config CARTRIDGES_CAS_PHASE_TRAIN_JOINT
 	bool "Mixed-visibility (joint) training"
 	default y if CARTRIDGES_CAS_PAPER
 	default n if CARTRIDGES_CAS_SMOKE
+	help
+	  KNOWN-LIMITED. The current joint trainer uses a fixed-distractor,
+	  always-joint approximation of CAS's per-sample P_iso, and the combined
+	  joint cartridges collapse rather than rescue. A faithful per-sample
+	  P_iso is the main TODO -- see research/cartridges_cas/README.md. Until
+	  it lands, treat the rescue arm as unmeasured.
 
 config CARTRIDGES_CAS_PHASE_RESCUE
 	bool "Rescue eval on joint cartridges"

@@ -56,20 +56,54 @@ its no-context floor; ~8000 makes the oracle clearly beat it.
    only the top-1 token, silently collapsing the distribution to a hard label. The
    patch keeps all K in that case, so distillation gets the real teacher ranking.
 
-## Reproducibility notes
+## Eval — read this before trusting a number
 
-The eval reconstructs a trained cartridge as `[frozen sink | trainable]`; the
-frozen first token (an attention sink) is load-bearing — dropping it turns the
-cartridge into a degenerate control prefix. Eval uses the training-matched Qwen3
-boundary (`enable_thinking=True`, no injected empty think block). Both are baked
-into `cas_combine_eval.py` / `cas_gate_eval.py`.
+The eval is `cas_combine_eval.py`, and two mistakes silently produce garbage:
 
-Full history, the smoke findings, and the reload-bug correction are archived in
+- **Prompt format.** Use the letter-answer format with `enable_thinking=True`
+  (matched to how the cartridge was trained). The `<answer>` format overflows
+  Qwen3's thinking budget before the answer and roughly halves and flattens every
+  score. The harness eval uses the letter format.
+- **Cartridge reconstruction.** A `.pt` stores `trainable_keys` + `frozen_keys`.
+  For an *isolated* cartridge `frozen` is a single attention-sink token — load
+  `[frozen | trainable]`; the sink is load-bearing, dropping it makes a degenerate
+  control prefix. For a *joint* cartridge `frozen` is the distractor cartridges —
+  load `trainable-only` (the rescued target); baking the distractors in turns each
+  "oracle" into a collapse. The eval auto-detects by frozen token count (`SINK_MAX`).
+
+## Status (2026-07-18) — what works and what does not
+
+Validated and correct: the pipeline, compiled FlexAttention (~16× training
+speedup on CUDA sm≥80), the richer-target flatten fix, the reconstruction/eval
+above, and **combine-at-inference collapse**. The training itself is sound.
+
+**Not yet reproduced: the collapse→rescue headline.** The funded Tier-2 run (8
+patients, 8000 convos each; `results-archive/cas-replication-20260715/tier2-20260718/`)
+found two blockers:
+
+1. **Oracle strength does not generalize at 8000 convos.** One easy patient hits
+   ~40% but the 8-patient mean oracle is ~12.5% — most cartridges stay near their
+   floor, so the collapse is shallow and there is no strong ceiling to rescue
+   toward. **Convos-per-patient is the binding lever**; the paper's regime is
+   ~40000. Raise `CONFIG_CARTRIDGES_CAS_CONVOS_PER_PATIENT` accordingly and expect
+   the synthesis phase to dominate wall-clock (~5 h/patient of vLLM generation at
+   40k). The reusable 8×8k corpora are archived if you want a warm start.
+2. **The joint (rescue) arm is a known-limited approximation.** `cas_train_joint`
+   trains a target with the other cartridges present as *frozen, already-trained*
+   distractors (a fixed-distractor, always-joint stand-in for CAS's per-sample
+   `P_iso`). In practice the combined joint cartridges collapse to ~0% — it does
+   not teach coexistence. **A faithful `P_iso` is required and is the main TODO.**
+
+### Faithful `P_iso` (the rescue TODO)
+
+CAS trains all cartridges jointly with a per-sample mixed-visibility mask: hold N
+trainable cartridges in one cache; for each training example (belonging to patient
+p) make cartridge p always visible and each other cartridge visible with
+probability `1 - P_iso`; let gradients flow only into the visible target; the
+cartridges co-evolve. This is a custom training loop over the existing `seq_ids`
+flex-attention masking (a cartridge is hidden for a step by setting its cache
+`seq_ids` to a sentinel ≠ −1), not the stock single-cartridge trainer. Until this
+lands, treat the rescue result as unmeasured, not as a negative for the method.
+
+Full history — smoke, the reload-bug correction, and the Tier-2 findings — is in
 `results-archive/cas-replication-20260715/`.
-
-## Status
-
-The recipe is validated at the gate scale (a single cartridge oracle clears its
-no-context floor by a wide margin, non-degenerate). The `cas-paper` scale knobs
-are the current best recipe and are finalized once the full run confirms
-them; treat `cas-paper`'s convos/steps as provisional until then.
