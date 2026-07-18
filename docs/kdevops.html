@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Running knlp with kdevops | knlp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f; --surface: #141821; --surface2: #191f2b;
+      --border: #2a303c; --border2: #3a4353;
+      --text: #eef2f8; --muted: #9aa6b8; --faint: #677386;
+      --cyan: #29d3c7; --green: #31d978; --amber: #f5b84b;
+      --blue: #62a8ff; --violet: #a98bff; --red: #ff6f7d;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(41,211,199,0.05), transparent 260px),
+        radial-gradient(circle at 50% 0%, rgba(98,168,255,0.10), transparent 420px),
+        var(--bg);
+      font-family: var(--sans); font-size: 15px; line-height: 1.65;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre, .mono { font-family: var(--mono); }
+    pre {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; color: #d6deea;
+    }
+    pre .c { color: var(--faint); }
+    .wrap { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+    .site-nav {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(9,10,15,0.90); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .site-nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+    .brand-mark {
+      width: 32px; height: 32px; display: grid; place-items: center;
+      border: 1px solid rgba(41,211,199,0.45); background: rgba(41,211,199,0.10);
+      border-radius: 8px; color: var(--cyan); font-family: var(--mono); font-weight: 700;
+    }
+    .brand strong { font-family: var(--mono); font-size: 13px; letter-spacing: 0.5px; }
+    .nav-links a { color: var(--muted); font-size: 13px; margin-left: 18px; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    header.hero { padding: 60px 0 30px; }
+    .kicker {
+      font-family: var(--mono); font-size: 12px; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--cyan); margin-bottom: 14px;
+    }
+    h1 { font-size: 38px; line-height: 1.12; margin: 0 0 16px; font-weight: 700; }
+    h1 .accent { color: var(--cyan); }
+    .lede { font-size: 18px; color: var(--muted); max-width: 720px; }
+    section { padding: 26px 0; border-top: 1px solid var(--border); }
+    h2 { font-size: 24px; margin: 0 0 12px; font-weight: 700; }
+    h3 { font-size: 15px; margin: 22px 0 8px; color: var(--amber); font-family: var(--mono); font-weight: 600; }
+    p { color: #d6deea; }
+    .muted { color: var(--muted); }
+    strong { color: var(--text); }
+    .pill {
+      display: inline-block; font-family: var(--mono); font-size: 11px;
+      padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border2);
+      color: var(--muted); margin-right: 6px;
+    }
+    .callout {
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 3px solid var(--cyan); border-radius: 10px;
+      padding: 16px 18px; margin: 18px 0; color: #d6deea;
+    }
+    ol, ul { color: #d6deea; padding-left: 22px; }
+    li { margin: 6px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+    thead th { color: var(--faint); font-family: var(--mono); font-weight: 600; font-size: 12px; }
+    td.mono, th.mono { font-family: var(--mono); }
+    footer { border-top: 1px solid var(--border); padding: 30px 0 60px; color: var(--faint); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark">k</span><strong>knlp</strong></a>
+      <div class="nav-links">
+        <a href="index.html">All research</a>
+        <a href="https://github.com/mcgrof/knlp">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <header class="hero">
+      <div class="kicker">Provisioning &middot; Reproducibility</div>
+      <h1>Run knlp with <span class="accent">kdevops</span>.</h1>
+      <p class="lede">
+        knlp applies Linux-kernel development methodology to ML research, so it ships as a
+        first-class <a href="https://github.com/linux-kdevops/kdevops">kdevops</a> workflow. If you
+        already use kdevops to stand up bare-metal, cloud, or virtual machines, you can provision a
+        node and bring up a reproducible knlp checkout with a couple of <code>make</code> commands
+        — the same Kconfig-driven bringup you use for kernel test workflows.
+      </p>
+      <div style="margin-top:18px">
+        <span class="pill">kdevops plugin v1.0.0</span>
+        <span class="pill">Kconfig-driven bringup</span>
+        <span class="pill">bare metal / cloud / VM</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>What you get</h2>
+      <p>
+        kdevops provisions the machine (your choice of bare metal, a cloud provider, or local
+        virtualization), then a knlp bringup step clones the repository to a data path of your
+        choosing and installs its Python requirements into a virtualenv. From there the machine is
+        ready to run knlp's Kconfig experiments — for example the
+        <a href="code_reason.html">code-reasoning</a> harness or the GPT-2 ablations — with the same
+        reproducible <code>make defconfig-… &amp;&amp; make</code> flow knlp uses everywhere.
+      </p>
+      <p class="muted">
+        Requires kdevops ≥ 5.0.0 (the release that added the versioned plugin system). knlp is
+        packaged as a <strong>dedicated</strong> workflow plugin — its manifest lives in the repo at
+        <code>.kdevops/plugin.yaml</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Option A — install as a plugin (recommended)</h2>
+      <p>
+        knlp carries its own kdevops packaging under <code>.kdevops/</code>, so kdevops can install
+        it directly from GitHub as a versioned, taint-tracked plugin. From your kdevops checkout:
+      </p>
+      <pre><span class="c"># add the knlp plugin (GitHub tarball fetch; add REF=&lt;tag&gt; to pin a version)</span>
+make kdevops-plugin-add URL=https://github.com/mcgrof/knlp
+
+<span class="c"># select a base machine config plus the knlp workflow, then build + bring up</span>
+make defconfig-&lt;your-base&gt;+knlp
+make
+make bringup</pre>
+      <p>
+        The plugin installs to <code>~/.config/kdevops/plugins/knlp/</code> and is wired into the
+        build system through generated <code>Kconfig.plugins</code> / <code>Makefile.plugins</code>.
+        Because plugin content is externally maintained, kdevops marks the configuration as
+        <strong>tainted</strong> so it's clear which parts came from outside the tree. Pin a release
+        with <code>REF=&lt;git tag or branch&gt;</code> for reproducibility.
+      </p>
+    </section>
+
+    <section>
+      <h2>Option B — as a user-private workflow</h2>
+      <p>
+        If you'd rather not use the plugin manager, kdevops ships a complete worked example you can
+        copy into your user config. From your kdevops checkout:
+      </p>
+      <pre><span class="c"># copy the example knlp workflow into your user config dir</span>
+mkdir -p ~/.config/kdevops
+cp -r docs/user-workflows/example-knlp/* ~/.config/kdevops/
+
+<span class="c"># the +knlp fragment enables user-private workflows and the knlp workflow</span>
+make defconfig-&lt;your-base&gt;+knlp
+make
+make bringup</pre>
+      <p>
+        User-private workflows live in <code>~/.config/kdevops/</code> and let you keep custom
+        workflows outside the kdevops tree entirely. The example is the same content the plugin
+        installs; it's the right starting point if you want to adapt the workflow to your own fork
+        or branch.
+      </p>
+    </section>
+
+    <section>
+      <h2>What bringup does, and the knobs</h2>
+      <p>
+        The knlp role clones the repo and installs its requirements; the node/host generation tasks
+        stand up the machine kdevops will run it on. The workflow exposes a few Kconfig options
+        (under <em>knlp ML research workflow configuration</em> in <code>menuconfig</code>):
+      </p>
+      <table>
+        <thead><tr><th>Option</th><th>Default</th><th>What it sets</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">WORKFLOW_KNLP_GIT_URL</td><td class="mono">…/mcgrof/knlp.git</td><td>which repository to clone</td></tr>
+          <tr><td class="mono">WORKFLOW_KNLP_GIT_REF</td><td class="mono">main</td><td>branch, tag, or commit to check out</td></tr>
+          <tr><td class="mono">WORKFLOW_KNLP_DATA_PATH</td><td class="mono">/data/knlp</td><td>where knlp is cloned and installed</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        Bringup installs knlp's <code>requirements.txt</code> into a virtualenv. For an AMD GPU
+        target, install a ROCm PyTorch wheel instead of the default CUDA build — see the note at the
+        top of knlp's <code>requirements.txt</code>. The plugin provisions and checks out; you pick
+        the accelerator stack for the node.
+      </div>
+    </section>
+
+    <section>
+      <h2>References</h2>
+      <ul>
+        <li>kdevops plugin system — <a href="https://github.com/linux-kdevops/kdevops/blob/main/docs/plugins.md"><code>docs/plugins.md</code></a></li>
+        <li>User-private workflows and the knlp example — <a href="https://github.com/linux-kdevops/kdevops/blob/main/docs/user-workflows/README.md"><code>docs/user-workflows/README.md</code></a> and <code>docs/user-workflows/example-knlp/</code></li>
+        <li>knlp plugin manifest — <a href="https://github.com/mcgrof/knlp/blob/main/.kdevops/plugin.yaml"><code>.kdevops/plugin.yaml</code></a></li>
+        <li>kdevops — <a href="https://github.com/linux-kdevops/kdevops">github.com/linux-kdevops/kdevops</a></li>
+      </ul>
+      <p style="margin-top:14px"><a href="index.html">&larr; All knlp research</a></p>
+    </section>
+
+    <footer>
+      <p>
+        knlp is a research project applying Linux kernel development methodologies to ML
+        experimentation and reproducibility. kdevops is the community's Kconfig-driven provisioning
+        and workflow tool; the knlp plugin lets kdevops users bring up and run knlp with the same
+        muscle memory they use for kernel test workflows.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>
