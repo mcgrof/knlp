@@ -39,6 +39,21 @@ config WORKFLOW_KNLP_DATA_PATH
 	help
 	  The directory where knlp will be cloned and installed.
 
+config WORKFLOW_KNLP_KVTIDE
+	bool "Provision KVTide NVMe-KV bench dependencies"
+	default n
+	output yaml
+	help
+	  Install the packages knlp's KVTide harness needs to build its
+	  software NVMe-KV target (SPDK kvmalloc over NVMe-oF/TCP), the
+	  xNVMe io_uring_cmd initiator and the optional NIXL XNVME_KV
+	  plugin. The harness runs entirely inside the provisioned node,
+	  QEMU guests included; no KV hardware is required.
+
+	  After bringup, on the node:
+	    cd <knlp data path>
+	    make defconfig-kvtide-ab && make
+
 endmenu
 
 endif # KDEVOPS_USER_WORKFLOW_KNLP

@@ -25,3 +25,7 @@
   ansible.builtin.pip:
     requirements: "{{ workflow_knlp_data_path }}/requirements.txt"
     virtualenv: "{{ ansible_env.HOME }}/.venv"
+
+- name: Install KVTide bench dependencies
+  ansible.builtin.include_tasks: kvtide.yml
+  when: workflow_knlp_kvtide | default(false) | bool

@@ -9,6 +9,13 @@
     - knlp
     - deps
 
+- name: Install KVTide bench dependencies
+  ansible.builtin.include_tasks: kvtide.yml
+  when: workflow_knlp_kvtide | default(false) | bool
+  tags:
+    - knlp
+    - kvtide
+
 - name: Ensure parent directory exists for knlp
   ansible.builtin.file:
     path: "{{ knlp_data_path | dirname }}"
