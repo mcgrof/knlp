@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KVTide — NVMe-KV bench harness | knlp</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f; --surface: #141821; --surface2: #191f2b;
+      --border: #2a303c; --border2: #3a4353;
+      --text: #eef2f8; --muted: #9aa6b8; --faint: #677386;
+      --cyan: #29d3c7; --green: #31d978; --amber: #f5b84b;
+      --blue: #62a8ff; --violet: #a98bff; --red: #ff6f7d;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(98,168,255,0.05), transparent 260px),
+        radial-gradient(circle at 50% 0%, rgba(41,211,199,0.10), transparent 420px),
+        var(--bg);
+      font-family: var(--sans); font-size: 15px; line-height: 1.65;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre, .mono { font-family: var(--mono); }
+    pre {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; color: #d6deea;
+    }
+    pre .c { color: var(--faint); }
+    .wrap { width: min(920px, calc(100% - 40px)); margin: 0 auto; }
+    .site-nav {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(9,10,15,0.90); backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .site-nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); }
+    .brand-mark {
+      width: 32px; height: 32px; display: grid; place-items: center;
+      border: 1px solid rgba(41,211,199,0.45); background: rgba(41,211,199,0.10);
+      border-radius: 8px; color: var(--cyan); font-family: var(--mono); font-weight: 700;
+    }
+    .brand strong { font-family: var(--mono); font-size: 13px; letter-spacing: 0.5px; }
+    .nav-links a { color: var(--muted); font-size: 13px; margin-left: 18px; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    header.hero { padding: 60px 0 30px; }
+    .kicker {
+      font-family: var(--mono); font-size: 12px; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--blue); margin-bottom: 14px;
+    }
+    h1 { font-size: 38px; line-height: 1.12; margin: 0 0 16px; font-weight: 700; }
+    h1 .accent { color: var(--blue); }
+    .lede { font-size: 18px; color: var(--muted); max-width: 720px; }
+    section { padding: 26px 0; border-top: 1px solid var(--border); }
+    h2 { font-size: 24px; margin: 0 0 12px; font-weight: 700; }
+    h3 { font-size: 15px; margin: 22px 0 8px; color: var(--amber); font-family: var(--mono); font-weight: 600; }
+    p { color: #d6deea; }
+    .muted { color: var(--muted); }
+    strong { color: var(--text); }
+    .pill {
+      display: inline-block; font-family: var(--mono); font-size: 11px;
+      padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border2);
+      color: var(--muted); margin-right: 6px;
+    }
+    .callout {
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 3px solid var(--blue); border-radius: 10px;
+      padding: 16px 18px; margin: 18px 0; color: #d6deea;
+    }
+    ol, ul { color: #d6deea; padding-left: 22px; }
+    li { margin: 6px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+    thead th { color: var(--faint); font-family: var(--mono); font-weight: 600; font-size: 12px; }
+    td.mono, th.mono { font-family: var(--mono); }
+    footer { border-top: 1px solid var(--border); padding: 30px 0 60px; color: var(--faint); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="wrap">
+      <a class="brand" href="index.html"><span class="brand-mark">k</span><strong>knlp</strong></a>
+      <div class="nav-links">
+        <a href="index.html">All research</a>
+        <a href="https://github.com/mcgrof/knlp">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <header class="hero">
+      <div class="kicker">Storage &middot; NVMe-KV &middot; Reproducibility</div>
+      <h1><span class="accent">KVTide</span> — tiered KV-cache I/O, measured.</h1>
+      <p class="lede">
+        KVTide is a vendor-neutral harness for studying tiered KV-cache I/O over NVMe key-value
+        namespaces. It stands up a pure-software NVMe-KV target and drives it with two competing
+        data paths — a userspace kernel-bypass initiator and a kernel <code>io_uring_cmd</code>
+        initiator — over the exact same matrix, so the architecture question "which data path, at
+        what cost?" gets numbers instead of opinions. Everything runs in a QEMU guest; no KV
+        hardware required.
+      </p>
+      <div style="margin-top:18px">
+        <span class="pill">NVMe-KV</span>
+        <span class="pill">SPDK</span>
+        <span class="pill">xNVMe</span>
+        <span class="pill">io_uring_cmd</span>
+        <span class="pill">QEMU-friendly</span>
+        <span class="pill">kdevops</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>Why key-value, why measure</h2>
+      <p>
+        Inference serving tiers its KV-cache: accelerator memory, host DRAM, local NVMe, then
+        shared or remote storage. The interesting boundary is where addressing changes — block
+        storage wants offsets, but a shared cache tier wants <em>keys</em>, and the NVMe Key-Value
+        command set speaks that natively: <code>Store</code>, <code>Retrieve</code>,
+        <code>Exist</code>, <code>Delete</code> against 16-byte keys instead of LBAs. Two very
+        different host data paths can drive such a namespace:
+      </p>
+      <ul>
+        <li><strong>Userspace kernel-bypass</strong> — the SPDK NVMe driver connects to the
+          NVMe-oF/TCP target directly; the kernel never sees the I/O.</li>
+        <li><strong>Kernel passthrough</strong> — the kernel nvme-tcp host attaches the target as
+          a KV namespace char device (<code>/dev/ngXnY</code>) and userspace submits KV commands
+          via <code>io_uring_cmd</code> (here through <a href="https://github.com/xnvme/xnvme">xNVMe</a>).</li>
+      </ul>
+      <p>
+        The kernel path composes with everything the kernel gives you (scheduling, cgroups,
+        observability, the block layer's buffer machinery); the bypass path buys raw speed. KVTide
+        exists to quantify that trade both ways, reproducibly.
+      </p>
+    </section>
+
+    <section>
+      <h2>Architecture</h2>
+      <pre>
+             one guest, loopback TCP
+ ┌────────────────────────────────────────────────┐
+ │  SPDK nvmf_tgt (cores 0-1)                     │
+ │    kvmalloc KV bdev  ←  NVMe-oF/TCP :4420      │
+ └──────────────▲──────────────────▲──────────────┘
+                │                  │
+     userspace  │                  │  kernel nvme-tcp
+     TCP socket │                  │  KV namespace: /dev/ngXnY
+                │                  │
+ ┌──────────────┴──────┐  ┌────────┴───────────────┐
+ │ spdk_nvme_perf (KV) │  │ xnvme_kv_perf          │
+ │ kernel-bypass       │  │ io_uring_cmd passthru  │
+ └─────────────────────┘  └────────────────────────┘
+        same initiator core budget, same
+        op/value-size/queue-depth matrix, one CSV</pre>
+      <p>
+        The target is the SPDK <code>kvmalloc</code> KV bdev — an in-memory key-value store
+        exported over NVMe-oF/TCP on loopback. CPU accounting sums busy jiffies on every core
+        <em>except</em> the target's busy-polling reactor cores, so the initiator-side cost —
+        including the kernel path's softirq and kworker time that process accounting would miss —
+        is measured the same way for both.
+      </p>
+    </section>
+
+    <section>
+      <h2>Quick start</h2>
+      <pre><span class="c"># in a knlp checkout, on the bench host (a QEMU guest is fine)</span>
+make defconfig-kvtide-ab
+make</pre>
+      <p>
+        Plain <code>make</code> runs the staged pipeline; the target stays up afterwards so cells
+        can be re-run, and <code>make kvtide-target-down</code> tears it down.
+      </p>
+      <table>
+        <thead><tr><th>Stage</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">kvtide-doctor</td><td>verifies host prerequisites, one PASS/FAIL line each</td></tr>
+          <tr><td class="mono">kvtide-fetch</td><td>fetches pinned sources (the SPDK KV stack rides a single Gerrit change ref — no full clone)</td></tr>
+          <tr><td class="mono">kvtide-build</td><td>builds the target and the enabled initiators under one prefix; nothing touches the system</td></tr>
+          <tr><td class="mono">kvtide-target-up</td><td>hugepages, <code>nvmf_tgt</code>, KV bdev, subsystem, listener, then the kernel nvme-tcp attach when needed. Never runs SPDK <code>setup.sh</code>; local NVMe stays kernel-owned</td></tr>
+          <tr><td class="mono">kvtide-bench</td><td>runs the op &times; value-size &times; queue-depth matrix per initiator, one CSV row per cell</td></tr>
+          <tr><td class="mono">kvtide-report</td><td>renders the table plus per-cell A/B IOPS ratios</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Four defconfigs pick the initiator shape:
+        <code>kvtide-ab</code> (both — the A/B), <code>kvtide-spdk</code>,
+        <code>kvtide-xnvme</code>, and <code>kvtide-nixl</code>, which adds the
+        <a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">NIXL XNVME_KV plugin</a> —
+        a storage backend that moves buffers to and from KV namespaces over the same
+        <code>io_uring_cmd</code> path — and runs its unit and integration tests against the same
+        target. Every knob (pins, target address/NQN/core mask, the matrix) lives in the
+        <em>KVTide NVMe-KV bench harness</em> Kconfig menu.
+      </p>
+    </section>
+
+    <section>
+      <h2>What the A/B shows</h2>
+      <p>
+        Representative cells from a validated run (QEMU guest, 8 vCPUs, Debian 6.12 kernel,
+        loopback TCP, 8&nbsp;s per cell):
+      </p>
+      <table>
+        <thead><tr><th>cell</th><th>spdk</th><th>xnvme</th><th>ratio</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">store 4K qd64</td><td>1,075,250 IOPS</td><td>120,164 IOPS</td><td>8.9&times;</td></tr>
+          <tr><td class="mono">retrieve 4K qd64</td><td>869,465 IOPS</td><td>92,380 IOPS</td><td>9.4&times;</td></tr>
+          <tr><td class="mono">retrieve 64K qd64</td><td>8.3 GiB/s</td><td>3.2 GiB/s</td><td>2.6&times;</td></tr>
+          <tr><td class="mono">store 64K qd16</td><td>125,039 IOPS</td><td><strong>38 IOPS</strong></td><td>&mdash;</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The bypass initiator wins ~9&times; on raw small-op IOPS and ~5&times; on per-core
+        efficiency; the gap compresses to ~2.6&times; once cells go bandwidth-bound. One
+        disclosure on the recorded run: its driver passed the SPDK core selection as a bare
+        number, which SPDK parses as a <em>hex mask</em>, so the spdk cells actually ran three
+        workers — their full CPU cost (≈1.9 cores vs xnvme's ≈1.0) is in the CSV's
+        <code>init_cpu_cores</code> column, which is what the per-core comparison divides by. The
+        harness now pins spdk with the exact <code>-c [N]</code> core-list syntax, so fresh runs
+        measure a single-worker spdk.
+      </p>
+      <p>
+        The 38-IOPS cell is real and reproducible: large-value stores at queue depth collapse on
+        the kernel nvme-tcp <em>solicited-write</em> (R2T) path when writes exceed the target's
+        in-capsule data size (a harness knob, <code>KVTIDE_TARGET_INCAPSULE</code>) — the
+        userspace initiator never takes that path. That cell is exactly why the harness exists:
+        it is a kernel-side data-path problem you can now regress, bisect, and fix with a
+        one-command reproducer.
+      </p>
+    </section>
+
+    <section>
+      <h2>Kernel A/B with kdevops</h2>
+      <p>
+        knlp ships as a <a href="kdevops.html">kdevops plugin</a>, and the plugin can provision
+        every KVTide build dependency. That makes the guest a disposable, reproducible bench node
+        — and because kdevops also builds and boots kernels, you can put a <em>kernel of choice</em>
+        under the xNVMe initiator and A/B the kernel side too:
+      </p>
+      <pre><span class="c"># kdevops side: provision a guest with knlp + KVTide deps</span>
+make kdevops-plugin-add URL=https://github.com/mcgrof/knlp
+
+<span class="c"># kdevops resolves +fragments from ~/.config/kdevops/defconfigs/configs</span>
+mkdir -p ~/.config/kdevops/defconfigs/configs
+cp ~/.config/kdevops/plugins/knlp/defconfigs/configs/knlp-kvtide.config \
+   ~/.config/kdevops/defconfigs/configs/
+
+make defconfig-&lt;your-base&gt;+knlp-kvtide
+make
+make bringup
+
+<span class="c"># on the guest: knlp is already cloned at the data path</span>
+cd /data/knlp
+make defconfig-kvtide-ab
+make</pre>
+      <p>
+        kdevops carries block-layer buffer-pool validation tooling of its own (its
+        <code>defconfig-iobuf-nvme</code> and <code>iobuf_bench</code> scripts), so one workflow
+        covers both layers: boot the kernel branch under test, run the KVTide matrix on top, diff
+        the CSVs. The xNVMe initiator's passthrough commands exercise exactly the kernel paths that
+        block-layer work touches; the userspace initiator doubles as the control arm that skips the
+        kernel entirely.
+      </p>
+      <p class="muted">
+        Guest mode with QEMU is the validated path. For bare metal, kdevops'
+        <code>DECLARED_HOSTS</code> flips the same config to existing machines; the harness itself
+        only assumes enough cores to keep the target mask and the initiator pin disjoint.
+      </p>
+    </section>
+
+    <section>
+      <h2>Reproducibility pins</h2>
+      <table>
+        <thead><tr><th>Component</th><th>Source</th><th>Pin</th></tr></thead>
+        <tbody>
+          <tr><td>SPDK KV target stack</td><td><a href="https://review.spdk.io/c/spdk/spdk/+/28307">SPDK Gerrit change 28307</a> (in review)</td><td class="mono">refs/changes/07/28307/12</td></tr>
+          <tr><td>xNVMe</td><td><a href="https://github.com/xnvme/xnvme">github.com/xnvme/xnvme</a></td><td class="mono">a5bf2a65</td></tr>
+          <tr><td>NIXL + XNVME_KV plugin</td><td><a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">github.com/mcgrof/nixl</a></td><td class="mono">20260717-xnvme-kv</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The SPDK KV command set support (the <code>kvmalloc</code> bdev, NVMe-oF KV namespaces and
+        <code>spdk_nvme_perf</code> KV mode) is pending on SPDK Gerrit; a single change ref carries
+        the whole stack plus its base. A small vendored patch fixes a GCC&nbsp;15/AVX10 build probe
+        and an RPC decoder collision until those land upstream. The harness README
+        (<code>tools/reproduce/kvtide/README.md</code>) documents every default.
+      </p>
+    </section>
+
+    <section>
+      <h2>References</h2>
+      <ul>
+        <li>NVMe Key-Value command set — <a href="https://nvmexpress.org/specifications/">NVM Express specifications</a></li>
+        <li>SPDK KV target stack — <a href="https://review.spdk.io/c/spdk/spdk/+/28307">review.spdk.io change 28307</a></li>
+        <li>xNVMe — <a href="https://xnvme.io/">xnvme.io</a></li>
+        <li>NIXL XNVME_KV plugin branch — <a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">mcgrof/nixl @ 20260717-xnvme-kv</a></li>
+        <li>Running knlp with kdevops — <a href="kdevops.html">the kdevops integration page</a></li>
+        <li>kdevops — <a href="https://github.com/linux-kdevops/kdevops">github.com/linux-kdevops/kdevops</a></li>
+      </ul>
+      <p style="margin-top:14px"><a href="index.html">&larr; All knlp research</a></p>
+    </section>
+
+    <footer>
+      <p>
+        knlp is a research project applying Linux kernel development methodologies to ML
+        experimentation and reproducibility. KVTide is its storage-side harness: the same
+        Kconfig-driven, pinned, one-command flow, pointed at the NVMe-KV data paths that tiered
+        KV-cache serving will stand on.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>
