@@ -260,12 +260,43 @@ cd /data/knlp
 make defconfig-kvtide-ab
 make</pre>
       <p>
-        kdevops carries block-layer buffer-pool validation tooling of its own (its
-        <code>defconfig-iobuf-nvme</code> and <code>iobuf_bench</code> scripts), so one workflow
-        covers both layers: boot the kernel branch under test, run the KVTide matrix on top, diff
-        the CSVs. The xNVMe initiator's passthrough commands exercise exactly the kernel paths that
-        block-layer work touches; the userspace initiator doubles as the control arm that skips the
-        kernel entirely.
+        kdevops carries block-layer buffer-pool validation tooling of its own — the
+        <a href="https://github.com/linux-kdevops/kdevops/blob/main/docs/rfc-20260630-v1-blk-iobuf-pool.html">blk_iobuf_pool RFC page</a>,
+        <a href="https://github.com/linux-kdevops/kdevops/blob/main/defconfigs/iobuf-nvme"><code>defconfig-iobuf-nvme</code></a>
+        and the
+        <a href="https://github.com/linux-kdevops/kdevops/tree/main/scripts/workflows/iobuf_bench"><code>iobuf_bench</code> scripts</a> —
+        so one workflow covers both layers: boot the kernel branch under test, run the KVTide
+        matrix on top, diff the CSVs. The xNVMe initiator's passthrough commands exercise exactly
+        the kernel paths that block-layer work touches; the userspace initiator doubles as the
+        control arm that skips the kernel entirely.
+      </p>
+
+      <h3>the kernel under test, one command</h3>
+      <p>
+        The harness can also carry the kernel itself. <code>defconfig-kvtide-ab-linux</code> adds
+        a <code>kvtide-linux</code> stage that fetches a Linux tree (shallow), bases its config on
+        the running kernel's, enables <code>CONFIG_BLK_IOBUF_POOL</code>, builds, installs, and
+        then <em>gates</em> the pipeline on actually running it — one reboot, and the second
+        <code>make</code> benches on the kernel under test. Every bench CSV gets a
+        <code>.meta</code> sidecar recording <code>uname -r</code>, so runs on different kernels
+        stay distinguishable.
+      </p>
+      <pre><span class="c"># default kernel under test: the blk_iobuf_pool v3 series from
+# git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git</span>
+make defconfig-kvtide-ab-linux
+make            <span class="c"># builds target + initiators + kernel, installs, asks for ONE reboot</span>
+<span class="c"># reboot into the listed kernel, then:</span>
+make            <span class="c"># gate passes; bench runs on the kernel under test</span>
+
+<span class="c"># any other tree/branch, as environment variables at defconfig time:</span>
+make defconfig-kvtide-ab-linux LINUX_TREE=&lt;git url&gt; LINUX_BRANCH=&lt;ref&gt;</pre>
+      <p class="muted">
+        The <code>LINUX_TREE</code> / <code>LINUX_BRANCH</code> overrides resolve when the
+        defconfig loads (they need python3 kconfiglib, which fills the deliberately omitted
+        symbols); the defaults point at
+        <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=blk-iobuf-pool-v3">mcgrof/linux <code>blk-iobuf-pool-v3</code></a>.
+        The stage installs a kernel and updates the bootloader — use it on disposable bench
+        hosts, which is exactly what a kdevops guest is.
       </p>
       <p class="muted">
         Guest mode with QEMU is the validated path. For bare metal, kdevops'
@@ -300,6 +331,8 @@ make</pre>
         <li>SPDK KV target stack — <a href="https://review.spdk.io/c/spdk/spdk/+/28307">review.spdk.io change 28307</a></li>
         <li>xNVMe — <a href="https://xnvme.io/">xnvme.io</a></li>
         <li>NIXL XNVME_KV plugin branch — <a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">mcgrof/nixl @ 20260717-xnvme-kv</a></li>
+        <li>blk_iobuf_pool kernel branch — <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=blk-iobuf-pool-v3">mcgrof/linux @ blk-iobuf-pool-v3</a></li>
+        <li>blk_iobuf_pool RFC + tooling in kdevops — <a href="https://github.com/linux-kdevops/kdevops/blob/main/docs/rfc-20260630-v1-blk-iobuf-pool.html">RFC page</a>, <a href="https://github.com/linux-kdevops/kdevops/tree/main/scripts/workflows/iobuf_bench">iobuf_bench</a></li>
         <li>Running knlp with kdevops — <a href="kdevops.html">the kdevops integration page</a></li>
         <li>kdevops — <a href="https://github.com/linux-kdevops/kdevops">github.com/linux-kdevops/kdevops</a></li>
       </ul>
