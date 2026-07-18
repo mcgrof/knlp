@@ -51,6 +51,15 @@ if want_nixl; then
 	check "cmake"                command -v cmake
 fi
 
+if want_linux; then
+	check "kernel build: bison"      command -v bison
+	check "kernel build: flex"       command -v flex
+	check "kernel build: bc"         command -v bc
+	check "kernel build: libelf dev" sh -c \
+		'test -e /usr/include/libelf.h || pkg-config --exists libelf'
+	check "kernel build: zstd"       command -v zstd
+fi
+
 check "src dir parent writable" sh -c \
 	"test -w \"\$(dirname \"$KVTIDE_SRC\")\" || test -w \"$KVTIDE_SRC\""
 check "hugepage sysctl present" test -e /proc/sys/vm/nr_hugepages

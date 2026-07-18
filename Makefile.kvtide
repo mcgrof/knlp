@@ -2,14 +2,21 @@
 # Make targets for the KVTide NVMe-KV target + initiator bench harness.
 #
 # Selecting one of:
-#   make defconfig-kvtide-ab       both initiators, A/B bake-off (default)
-#   make defconfig-kvtide-spdk     SPDK userspace initiator only
-#   make defconfig-kvtide-xnvme    xNVMe io_uring_cmd initiator only
-#   make defconfig-kvtide-nixl     A/B plus the NIXL XNVME_KV plugin tests
+#   make defconfig-kvtide-ab        both initiators, A/B bake-off (default)
+#   make defconfig-kvtide-spdk      SPDK userspace initiator only
+#   make defconfig-kvtide-xnvme     xNVMe io_uring_cmd initiator only
+#   make defconfig-kvtide-nixl      A/B plus the NIXL XNVME_KV plugin tests
+#   make defconfig-kvtide-ab-linux  A/B plus a kernel under test
 # writes .config and enables CONFIG_KVTIDE.  Plain `make` after that runs
 # kvtide-doctor -> kvtide-fetch -> kvtide-build -> kvtide-target-up ->
 # kvtide-bench -> kvtide-report.  The target stays up afterwards so cells
 # can be re-run; `make kvtide-target-down` tears it down.
+#
+# kvtide-ab-linux adds a kvtide-linux stage before target-up: it fetches,
+# builds and installs a kernel, then gates on running it (one reboot,
+# then re-run `make`).  The tree/branch default to the blk_iobuf_pool v3
+# series and can be overridden at defconfig time:
+#   make defconfig-kvtide-ab-linux LINUX_TREE=<git url> LINUX_BRANCH=<ref>
 #
 # The target is pure software (SPDK kvmalloc KV bdev over NVMe-oF/TCP on
 # loopback) so the whole harness runs inside a QEMU guest.  No PCI
@@ -24,8 +31,9 @@
 
 KVTIDE_SH := tools/reproduce/kvtide
 
-.PHONY: kvtide kvtide-doctor kvtide-fetch kvtide-build kvtide-target-up \
-        kvtide-target-down kvtide-bench kvtide-nixl kvtide-report
+.PHONY: kvtide kvtide-doctor kvtide-fetch kvtide-build kvtide-linux \
+        kvtide-target-up kvtide-target-down kvtide-bench kvtide-nixl \
+        kvtide-report
 
 # When CONFIG_KVTIDE=y, plain `make` defaults to the kvtide pipeline.
 # Otherwise the existing all: target is unaffected.
@@ -33,8 +41,16 @@ ifeq ($(CONFIG_KVTIDE),y)
 .DEFAULT_GOAL := kvtide
 endif
 
-kvtide: kvtide-doctor kvtide-fetch kvtide-build kvtide-target-up \
-	kvtide-bench kvtide-report
+# With a kernel under test configured, gate the pipeline on running it
+# (after everything is built, so one reboot resumes straight into the
+# bench).
+KVTIDE_LINUX_STAGE :=
+ifeq ($(CONFIG_KVTIDE_LINUX),y)
+KVTIDE_LINUX_STAGE := kvtide-linux
+endif
+
+kvtide: kvtide-doctor kvtide-fetch kvtide-build $(KVTIDE_LINUX_STAGE) \
+	kvtide-target-up kvtide-bench kvtide-report
 
 kvtide-doctor:
 	@$(KVTIDE_SH)/doctor.sh
@@ -44,6 +60,9 @@ kvtide-fetch:
 
 kvtide-build:
 	@$(KVTIDE_SH)/build.sh
+
+kvtide-linux:
+	@$(KVTIDE_SH)/linux.sh
 
 kvtide-target-up:
 	@$(KVTIDE_SH)/target-up.sh

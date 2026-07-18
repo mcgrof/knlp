@@ -31,6 +31,10 @@ awk -F, '
 
 {
 	echo "KVTide bench summary -- $(readlink -f "$CSV")"
+	if [ -f "$(readlink -f "$CSV").meta" ]; then
+		tr '\n' ' ' < "$(readlink -f "$CSV").meta"
+		echo ""
+	fi
 	echo ""
 	column -s, -t < "$CSV"
 	if [ -s "$RATIOS" ]; then

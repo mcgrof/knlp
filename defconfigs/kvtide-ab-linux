@@ -1,0 +1,32 @@
+# KVTide A/B bake-off plus a kernel under test: fetch, build and
+# install the configured Linux tree, gate on one reboot, then bench
+# both initiators on it. The tree/branch deliberately are NOT listed
+# here -- olddefconfig fills them from Kconfig.kvtide, whose defaults
+# carry the blk_iobuf_pool v3 series and which honor defconfig-time
+# environment overrides (requires python3 kconfiglib):
+#   make defconfig-kvtide-ab-linux LINUX_TREE=<git url> LINUX_BRANCH=<ref>
+# See tools/reproduce/kvtide/README.md.
+CONFIG_KVTIDE=y
+CONFIG_KVTIDE_INITIATOR_BOTH=y
+CONFIG_KVTIDE_SPDK=y
+CONFIG_KVTIDE_XNVME=y
+CONFIG_KVTIDE_SRC_DIR="/data/kvtide"
+CONFIG_KVTIDE_SPDK_GIT="https://review.spdk.io/spdk/spdk"
+CONFIG_KVTIDE_SPDK_REF="refs/changes/07/28307/12"
+CONFIG_KVTIDE_SPDK_LOCAL_FIXES=y
+CONFIG_KVTIDE_XNVME_GIT="https://github.com/xnvme/xnvme.git"
+CONFIG_KVTIDE_XNVME_REF="a5bf2a654ca038b246ed2fc9a64d81556a510ff6"
+CONFIG_KVTIDE_NIXL=n
+CONFIG_KVTIDE_TARGET_ADDR="127.0.0.1"
+CONFIG_KVTIDE_TARGET_PORT="4420"
+CONFIG_KVTIDE_TARGET_NQN="nqn.2016-06.io.spdk:cnode_kv"
+CONFIG_KVTIDE_TARGET_CORE_MASK="0x3"
+CONFIG_KVTIDE_HUGEPAGES=1024
+CONFIG_KVTIDE_TARGET_INCAPSULE=8192
+CONFIG_KVTIDE_LINUX=y
+CONFIG_KVTIDE_LINUX_ENABLE_BLK_IOBUF_POOL=y
+CONFIG_KVTIDE_BENCH_OPS="store retrieve"
+CONFIG_KVTIDE_BENCH_VSIZES="4096 65536"
+CONFIG_KVTIDE_BENCH_QDS="1 16 64"
+CONFIG_KVTIDE_BENCH_SECS=8
+CONFIG_KVTIDE_BENCH_INIT_CORE=4
