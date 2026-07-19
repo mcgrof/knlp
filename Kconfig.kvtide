@@ -239,6 +239,18 @@ config KVTIDE_LINUX_ENABLE_BLK_IOBUF_POOL
 	  running kernel's). Warns instead of failing when the chosen
 	  tree does not carry the option.
 
+config KVTIDE_LINUX_ALLOW_BAREMETAL
+	bool "Allow the kernel stage on bare metal"
+	default n
+	help
+	  The kernel stage installs a kernel and updates the
+	  bootloader. Inside a VM that is always fine -- the host is
+	  disposable. On bare metal it changes what your real machine
+	  boots, so the stage refuses to run when systemd-detect-virt
+	  reports no virtualization unless this option says otherwise.
+	  The perf harness itself (target + bench) needs no such gate;
+	  it runs on bare metal as-is.
+
 endif
 
 endmenu

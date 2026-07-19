@@ -7,6 +7,7 @@
 #   make defconfig-kvtide-xnvme     xNVMe io_uring_cmd initiator only
 #   make defconfig-kvtide-nixl      A/B plus the NIXL XNVME_KV plugin tests
 #   make defconfig-kvtide-ab-linux  A/B plus a kernel under test
+#   make defconfig-kvtide-ab-linux-baremetal   same, allowed on bare metal
 # writes .config and enables CONFIG_KVTIDE.  Plain `make` after that runs
 # kvtide-doctor -> kvtide-fetch -> kvtide-build -> kvtide-target-up ->
 # kvtide-bench -> kvtide-report.  The target stays up afterwards so cells
@@ -17,6 +18,9 @@
 # then re-run `make`).  The tree/branch default to the blk_iobuf_pool v3
 # series and can be overridden at defconfig time:
 #   make defconfig-kvtide-ab-linux LINUX_TREE=<git url> LINUX_BRANCH=<ref>
+# The kernel stage refuses bare metal unless the -baremetal defconfig
+# (CONFIG_KVTIDE_LINUX_ALLOW_BAREMETAL=y) says otherwise; the perf
+# harness itself runs anywhere, VM or metal.
 #
 # The target is pure software (SPDK kvmalloc KV bdev over NVMe-oF/TCP on
 # loopback) so the whole harness runs inside a QEMU guest.  No PCI

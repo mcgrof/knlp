@@ -141,8 +141,43 @@ kdevops also carries blk_iobuf_pool validation tooling (its
 workflow can boot a kernel of choice and A/B the kernel-side block-layer
 path underneath the xNVMe initiator.
 
-Bare metal: kdevops `DECLARED_HOSTS` flips any config to existing
-hosts; the harness itself has no guest assumptions beyond core count.
+## Bare metal
+
+Two paths, both optional:
+
+**Via kdevops declared hosts** — kdevops' own `DECLARED_HOSTS`
+mechanism flips any configuration from guest bringup to existing
+machines at defconfig time (it selects `SKIP_BRINGUP` +
+`KDEVOPS_USE_DECLARED_HOSTS`; the knlp plugin's inventory hook
+respects declared hosts):
+
+```
+make defconfig-<base>+knlp-kvtide DECLARED_HOSTS="metal1 metal2"
+make
+make bringup      # provisions the declared hosts over ssh
+```
+
+**Direct** — clone knlp on the machine and run the harness; the perf
+harness (target + bench) has no VM assumptions beyond enough cores to
+keep the target mask and the initiator pin disjoint:
+
+```
+make defconfig-kvtide-ab && make
+```
+
+The **kernel stage** is the exception: it installs a kernel and
+updates the bootloader, so it refuses to run when
+`systemd-detect-virt` reports no virtualization. Bare-metal kernel
+testing is an explicit opt-in:
+
+```
+make defconfig-kvtide-ab-linux-baremetal
+```
+
+(equivalently `CONFIG_KVTIDE_LINUX_ALLOW_BAREMETAL=y`), taking the
+same `LINUX_TREE` / `LINUX_BRANCH` overrides. kdevops' own
+`defconfig-iobuf-baremetal` is the precedent for this kind of
+bare-metal block-layer testing.
 
 ## Results
 

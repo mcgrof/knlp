@@ -25,6 +25,18 @@ python3 kconfiglib and re-run make defconfig-kvtide-ab-linux (the \
 defconfig omits them so olddefconfig can fill in defaults/overrides)"
 fi
 
+# Installing a kernel is always fine in a VM (the host is disposable);
+# on bare metal it changes what the real machine boots, so require the
+# explicit opt-in. A missing systemd-detect-virt reads as bare metal.
+VIRT=$(systemd-detect-virt 2>/dev/null) || VIRT=none
+if [ "${VIRT:-none}" = none ] && \
+   [ "${CONFIG_KVTIDE_LINUX_ALLOW_BAREMETAL:-n}" != y ]; then
+	kvtide_die "this host looks like bare metal and the kernel stage \
+would install a kernel and update the bootloader -- use \
+'make defconfig-kvtide-ab-linux-baremetal' (or set \
+CONFIG_KVTIDE_LINUX_ALLOW_BAREMETAL=y) to allow that"
+fi
+
 LINUX_SRC="$KVTIDE_SRC/linux"
 
 if [ ! -e "$LINUX_SRC" ]; then
