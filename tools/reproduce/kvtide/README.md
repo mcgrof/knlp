@@ -193,16 +193,33 @@ Results land in `$KVTIDE_SRC_DIR/results/` (outside the repo);
 
 ## Status
 
-Validated: the full A/B matrix inside a QEMU guest (Debian, kernel
-6.12, loopback TCP), including the NIXL plugin unit + integration
-tests. That recorded run predates one harness fix worth knowing when
-comparing against it: its driver passed the SPDK core selection as a
-bare number, which SPDK parses as a hex mask, so the spdk cells ran
-three workers (measured ≈1.9 cores in the CSV) instead of one; the
-harness now pins spdk with the exact `-c [N]` core-list syntax.
-Per-core comparisons against the recorded CSV remain honest via its
-`init_cpu_cores` column. Known behavior: large-value stores at high
-queue depth are sensitive to the kernel nvme-tcp solicited-write (R2T)
-path when writes exceed the target's in-capsule data size — now a
-knob, `KVTIDE_TARGET_INCAPSULE`; the userspace initiator does not take
-that path. Provisional: bare-metal runs.
+Validated in a QEMU guest (Debian, kernel 6.12, loopback TCP,
+including the NIXL plugin unit + integration tests) **and on bare
+metal** (Latitude m4-metal-small, Ubuntu 24.04, 12 cores, kernel
+under test 7.2.0-rc1+ built from `blk-iobuf-pool-v3` via
+`defconfig-kvtide-ab-linux-baremetal` — the bare-metal interlock and
+the one-reboot gate both exercised on real hardware; full 24-cell
+A/B clean, spdk `init_cpu_cores ≈ 1.0` everywhere confirming the
+single-worker `-c [N]` pinning).
+
+The earlier guest CSV predates that pinning fix: its driver passed
+the SPDK core selection as a bare number, which SPDK parses as a hex
+mask, so its spdk cells ran three workers (measured ≈1.9 cores).
+Per-core comparisons against it remain honest via `init_cpu_cores`.
+
+Known behavior: large-value stores at high queue depth are sensitive
+to the kernel nvme-tcp solicited-write (R2T) path when writes exceed
+the target's in-capsule data size — a knob,
+`KVTIDE_TARGET_INCAPSULE`; the userspace initiator does not take
+that path. The guest's severe 64K-store collapse did not reproduce
+on bare metal (33.4k vs 38 IOPS at qd16) — kernel and hardware both
+differ, which is exactly the A/B the harness now supports. Open
+observation from the bare-metal run: xnvme qd=1 cells latch to ~1 ms
+per op on the 7.2-rc kernel (fine at qd ≥ 16); unexplained,
+recorded in the archived results.
+
+Kernel-stage caveat seen on Ubuntu server images: a distro dkms
+module (bnxt_en) can fail to build against an rc kernel and abort
+`make install` mid-way; the stage's install then needs a manual
+`update-initramfs -c -k <rel>` + `update-grub`. Check `dkms status`
+and your NIC driver before rebooting a remote machine.

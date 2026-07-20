@@ -45,9 +45,13 @@ if want_xnvme || want_nixl; then
 		if [ ! -x "$KVTIDE_SRC/xnvme_kv_perf" ] || \
 		   [ "$KVTIDE_DIR/src/xnvme_kv_perf.c" -nt "$KVTIDE_SRC/xnvme_kv_perf" ]; then
 			kvtide_log "building xnvme_kv_perf"
+			# rpath: the bench runs the tool under sudo, which
+			# strips LD_LIBRARY_PATH, and libxnvme lives under the
+			# harness's private prefix.
 			PKG_CONFIG_PATH="$PKGDIR" gcc -O2 \
 				"$KVTIDE_DIR/src/xnvme_kv_perf.c" \
 				$(PKG_CONFIG_PATH="$PKGDIR" pkg-config --cflags --libs xnvme) \
+				-Wl,-rpath,"$(dirname "$PKGDIR")" \
 				-o "$KVTIDE_SRC/xnvme_kv_perf"
 		else
 			kvtide_log "xnvme_kv_perf up to date"
