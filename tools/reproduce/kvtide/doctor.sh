@@ -28,8 +28,18 @@ check "python3"              command -v python3
 check "sudo"                 command -v sudo
 check "taskset (util-linux)" command -v taskset
 
+# knlp's config generation invokes bare python (python-is-python3 on
+# Ubuntu; Debian usually ships the alias).
+check "python (python-is-python3)" command -v python
+
 # SPDK is always needed: it provides the target even in xnvme-only mode.
+# The full canonical set is SPDK's scripts/pkgdep.sh; these are the ones
+# that actually bit on a stock Ubuntu 24.04 server.
 check "SPDK: python3-pyelftools" python3 -c 'import elftools'
+check "SPDK: python3-tabulate"   python3 -c 'import tabulate'
+check "SPDK: autotools (autoreconf)" command -v autoreconf
+check "SPDK: libtool (libtoolize)"   command -v libtoolize
+check "SPDK: libfuse3 dev"       pkg-config --exists fuse3
 check "SPDK: libnuma (numa.h)"   test -e /usr/include/numa.h
 check "SPDK: libssl dev"         pkg-config --exists openssl
 check "SPDK: uuid dev"           pkg-config --exists uuid
