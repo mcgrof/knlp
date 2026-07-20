@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P1 — retrieval-failure mechanism trace (lattice/KRI plan, regroup-20260720).
+"""Retrieval-failure mechanism trace (lattice/KRI plan, regroup-20260720).
 
 Question: does HARD orthogonal explain-away (`residual_rel`, α=1) kill multi-needle
 retrieval by removing the shared query/address direction after the first needle is
@@ -102,24 +102,29 @@ def main():
     sents = load_filler_sentences(args.seed)
     rng = random.Random(args.seed)
 
-    # Accumulators. We bucket every (layer, kv-head, needle) rank observation by
-    # greedy step and by whether ANOTHER needle has already been picked, separately
-    # for α=0 (recent-Q, no deflation) and α=1 (hard residual). The decisive contrast
-    # is the rank of a not-yet-picked needle BEFORE vs AFTER a sibling needle is
-    # selected, under α=1.
+    # Clean PAIRED metric (avoids the survivorship confound of pooling by step).
+    # For each (layer, kv-head, needle) we take r0 = its rank at step 0 (pure
+    # recent-Q relevance, identical for α=0/α=1), find the step the FIRST sibling
+    # needle is picked, and record delta = rank_after_that_sibling − r0 for the
+    # needle if it is still unpicked. Conditioned on FINDABILITY (r0 ≤ K, i.e.
+    # recent-Q alone would have kept it). Under α=0 a sibling pick just removes one
+    # block, so delta ≈ 0; under α=1 hard explain-away removes the shared address
+    # direction and, if that is the mechanism, a findable needle's rank balloons
+    # (delta ≫ 0). The α=1-vs-α=0 gap on FINDABLE needles is the gate.
+    FIND = args.budget
     stats = {
         a: {
-            "rank_step0": [],  # needle rank at step 0 (pure relevance) — the baseline
-            "rank_before_sibling": [],  # not-yet-picked needle, no sibling picked yet
-            "rank_after_sibling": [],  # not-yet-picked needle, >=1 sibling picked
-            "qcos_after_sibling": [],  # residual-query cos to q0 at those steps
-            "any_recall": [],  # per sample: frac of needles whose block ∈ final K
-            "all_recall": [],  # per sample: 1 if ALL needle blocks ∈ final K
+            "r0_all": [],  # step-0 rank of every needle (findability distribution)
+            "delta_findable": [],  # paired rank change after first sibling, findable
+            "delta_unfindable": [],  # same, control (needle not findable at step 0)
+            "qcos_at_after": [],  # residual cos to q0 at the after-sibling step (findable)
+            "recall_findable": [],  # per findable needle: block ∈ final selected set?
+            "any_recall": [],  # per sample: frac of needle blocks ∈ final K (mean over heads)
+            "all_recall": [],  # per sample: frac of heads keeping ALL needle blocks
         }
         for a in (0.0, 1.0)
     }
     n_used = 0
-    examples = []  # a few raw per-head traces for the writeup
 
     for ei in range(args.eval):
         text, spans, needles, (qk, qv) = build_context(
@@ -163,44 +168,51 @@ def main():
                 picks = leaky_residual(
                     p_rec, cent, args.budget, alpha=a, trace=tr, ans=ans_t
                 )  # [Hkv, K]
-                # needle index positions within ans_t
                 A = ans_t.shape[0]
-                # recall: needle block ∈ final selected set (per head)
-                sel = picks  # [Hkv, K]
                 for hh in range(Hkv):
-                    sset = set(sel[hh].tolist())
+                    sset = set(picks[hh].tolist())
                     hit = sum(1 for b in needle_blocks if b in sset)
                     recall_hits += hit
                     recall_all += int(hit == len(needle_blocks))
                     recall_n += 1
-                # walk the trace: for each step, each head, each needle
-                for entry in tr:
-                    s = entry["step"]
-                    ar = entry["ans_rank"]  # [Hkv][A]
-                    ca = entry["chosen_ans"]  # [Hkv][A]
-                    qcos = entry["q_cos"]  # [Hkv]
-                    for hh in range(Hkv):
-                        n_chosen_sib_total = sum(ca[hh])
+                    # per-needle trajectory for this head
+                    r0 = [tr[0]["ans_rank"][hh][ai] for ai in range(A)]
+                    pick_step = [None] * A
+                    for s, entry in enumerate(tr):
+                        pk = entry["pick"][hh]
                         for ai in range(A):
-                            if ca[hh][ai]:
-                                continue  # this needle already picked — skip
-                            r = ar[hh][ai]
-                            if s == 0:
-                                stats[a]["rank_step0"].append(r)
-                            # siblings = other needles already chosen
-                            sib = n_chosen_sib_total  # this needle not chosen, so all chosen are siblings
-                            if sib == 0:
-                                stats[a]["rank_before_sibling"].append(r)
-                            else:
-                                stats[a]["rank_after_sibling"].append(r)
-                                stats[a]["qcos_after_sibling"].append(qcos[hh])
-            stats[a]["any_recall"].append(recall_hits / max(1, recall_n) / len(needle_blocks))
-            stats[a]["all_recall"].append(recall_all / max(1, recall_n))
-        # save one example trace (mid layer, first head) per a for the writeup
-        if len(examples) < 3:
-            examples.append(
-                {"sample": ei, "n_needle_blocks": len(needle_blocks), "T": T, "NB": NB}
+                            if pick_step[ai] is None and pk == needle_blocks[ai]:
+                                pick_step[ai] = s
+                    for ai in range(A):
+                        stats[a]["r0_all"].append(r0[ai])
+                        findable = r0[ai] <= FIND
+                        if findable:
+                            stats[a]["recall_findable"].append(
+                                int(needle_blocks[ai] in sset)
+                            )
+                        sib = [
+                            pick_step[aj]
+                            for aj in range(A)
+                            if aj != ai and pick_step[aj] is not None
+                        ]
+                        if not sib:
+                            continue
+                        s_sib = min(sib)
+                        # needle ai still unpicked when the first sibling was chosen
+                        if pick_step[ai] is not None and pick_step[ai] <= s_sib:
+                            continue
+                        s_after = s_sib + 1
+                        if s_after >= len(tr):
+                            continue
+                        delta = tr[s_after]["ans_rank"][hh][ai] - r0[ai]
+                        bucket = "delta_findable" if findable else "delta_unfindable"
+                        stats[a][bucket].append(delta)
+                        if findable:
+                            stats[a]["qcos_at_after"].append(tr[s_after]["q_cos"][hh])
+            stats[a]["any_recall"].append(
+                recall_hits / max(1, recall_n) / len(needle_blocks)
             )
+            stats[a]["all_recall"].append(recall_all / max(1, recall_n))
         print(f"  [{n_used}/{args.eval}] needles={len(needle_blocks)} T={T}", flush=True)
 
     def summ(xs):
@@ -226,40 +238,47 @@ def main():
         "nL": nL,
         "alpha": {},
     }
+    def meanf(xs):
+        return round(sum(xs) / max(1, len(xs)), 4) if xs else None
+
     for a in (0.0, 1.0):
         out["alpha"][str(a)] = {
-            "rank_step0": summ(stats[a]["rank_step0"]),
-            "rank_before_sibling": summ(stats[a]["rank_before_sibling"]),
-            "rank_after_sibling": summ(stats[a]["rank_after_sibling"]),
-            "qcos_after_sibling": summ(stats[a]["qcos_after_sibling"]),
-            "any_recall_mean": round(
-                sum(stats[a]["any_recall"]) / max(1, len(stats[a]["any_recall"])), 4
-            ),
-            "all_recall_mean": round(
-                sum(stats[a]["all_recall"]) / max(1, len(stats[a]["all_recall"])), 4
-            ),
+            "r0_all": summ(stats[a]["r0_all"]),
+            "delta_findable": summ(stats[a]["delta_findable"]),
+            "delta_unfindable": summ(stats[a]["delta_unfindable"]),
+            "qcos_at_after": summ(stats[a]["qcos_at_after"]),
+            "recall_findable_mean": meanf(stats[a]["recall_findable"]),
+            "any_recall_mean": meanf(stats[a]["any_recall"]),
+            "all_recall_mean": meanf(stats[a]["all_recall"]),
         }
-    # the P1 gate signal: how much a not-yet-picked needle's rank inflates AFTER a
-    # sibling is picked, under α=1 (hard) vs α=0 (recent-Q, should be ~flat).
-    def infl(a):
-        b = summ(stats[a]["rank_before_sibling"])
-        af = summ(stats[a]["rank_after_sibling"])
-        if not b or not af:
-            return None
-        return round(af["median"] - b["median"], 3)
-
+    # gate: on FINDABLE needles (recent-Q would keep them), how much a needle's
+    # rank inflates after the first sibling is picked, α=1 (hard) vs α=0 (flat).
+    d1 = summ(stats[1.0]["delta_findable"])
+    d0 = summ(stats[0.0]["delta_findable"])
+    r1 = meanf(stats[1.0]["recall_findable"])
+    r0m = meanf(stats[0.0]["recall_findable"])
+    recall_drop = round((r0m or 0) - (r1 or 0), 4)
     out["gate"] = {
-        "rank_inflation_after_sibling_alpha1": infl(1.0),
-        "rank_inflation_after_sibling_alpha0": infl(0.0),
-        "verdict_hint": (
-            "hard explain-away collapses retrieval if alpha1 inflation >> alpha0"
+        # PRIMARY: on needles recent-Q would keep (rank ≤ K at step 0), how much
+        # does hard explain-away drop them from the final selected set?
+        "findable_recall_alpha0_recentQ": r0m,
+        "findable_recall_alpha1_hardresidual": r1,
+        "findable_recall_drop": recall_drop,
+        # SECONDARY: per-step rank inflation after the first sibling pick.
+        "findable_rank_inflation_alpha1_median": d1["median"] if d1 else None,
+        "findable_rank_inflation_alpha0_median": d0["median"] if d0 else None,
+        "mechanism_confirmed": bool(recall_drop >= 0.15),
+        "verdict": (
+            "MECHANISM: hard orthogonal explain-away removes findable needles from "
+            "the kept set (recall_drop >= 0.15) -> proceed with leaky/relevance-floor "
+            "blend. Else: stop blaming orthogonality, inspect probe/centroid/GQA."
         ),
     }
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, indent=2))
     print(json.dumps(out["alpha"], indent=2))
     print("GATE:", json.dumps(out["gate"]))
-    print(f"P1_TRACE_DONE {args.out}")
+    print(f"RETRIEVAL_TRACE_DONE {args.out}")
 
 
 if __name__ == "__main__":
