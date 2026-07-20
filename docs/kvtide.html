@@ -300,9 +300,11 @@ make defconfig-kvtide-ab-linux LINUX_TREE=&lt;git url&gt; LINUX_BRANCH=&lt;ref&g
       </p>
       <h3>bare metal, as an option</h3>
       <p>
-        Guest mode with QEMU is the validated path, but nothing about the perf harness needs a VM —
-        it only assumes enough cores to keep the target mask and the initiator pin disjoint. Two
-        bare-metal routes:
+        Both modes are validated: the QEMU guest flow, and the full bare-metal flow on a rented
+        12-core box (Ubuntu 24.04, two datacenter NVMe drives) — kernel built and booted from the
+        default <code>blk-iobuf-pool-v3</code> branch, one reboot, clean 24-cell A/B on the kernel
+        under test. The perf harness only assumes enough cores to keep the target mask and the
+        initiator pin disjoint. Two bare-metal routes:
       </p>
       <pre><span class="c"># via kdevops: DECLARED_HOSTS flips any config from guest bringup to
 # existing machines at defconfig time (SKIP_BRINGUP + declared hosts;
