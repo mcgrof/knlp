@@ -11,7 +11,7 @@ No larger lattice/KRI experiment starts until these pass:
 
 import torch
 
-from src.selectors import (
+from src.kv_selectors import (
     leaky_residual,
     top_k_relevance,
     top_k_mass,

@@ -46,19 +46,31 @@ def leaky_residual(
     alpha: float,
     eps: float = 1e-8,
     log: Optional[list] = None,
+    trace: Optional[list] = None,
+    ans: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Greedy leaky-orthogonal selection, vectorized over heads.
 
     Returns [H, K'] long tensor of selected block indices (K' = min(K, NB)),
     best-first. Reduces to plain recent-Q top-K at alpha=0 and to exact-span
-    orthogonal residual at alpha=1. Optionally append per-step score/rank info
-    to `log` (a list) for diagnostics.
+    orthogonal residual at alpha=1.
+
+    `log` (list): append per-step picks `{"step", "pick"}`.
+    `trace` (list) + `ans` (1-D LongTensor of answer/needle block indices, shared
+      across heads): the P1 retrieval-failure diagnostic. Per step, before the pick
+      is made, append per-head: `ans_rank` (rank of the best still-unchosen answer
+      block under the CURRENT residual query, 0=top), `q_cos` (cos of the residual
+      query to q0), `resid_ratio` (‖q0 − α·U Uᵀq0‖ / ‖q0‖), and the pick. This
+      records how the answer's rank moves as orthogonal explain-away deflates the
+      query — the mechanism test for whether hard projection kills retrieval.
     """
     H, NB, D = kc.shape
     Kk = min(K, NB)
     q0 = _normrows(q0.float())
     kcf = kc.float()
     device = kc.device
+    if ans is not None:
+        ans = torch.as_tensor(ans, device=device, dtype=torch.long).view(-1)
 
     chosen = torch.zeros(H, NB, dtype=torch.bool, device=device)
     basis: List[torch.Tensor] = []  # each [H, D], orthonormal per head
@@ -70,19 +82,40 @@ def leaky_residual(
             explained = torch.zeros_like(q0)
             for e in basis:
                 explained = explained + (q0 * e).sum(-1, keepdim=True) * e
-            q_score = _normrows(q0 - alpha * explained)
+            resid = q0 - alpha * explained
+            q_score = _normrows(resid)
             # where residual is numerically exhausted, fall back to q0
-            exhausted = (q0 - alpha * explained).norm(dim=-1) <= eps
+            exhausted = resid.norm(dim=-1) <= eps
             if exhausted.any():
                 q_score[exhausted] = q0[exhausted]
         else:
+            resid = q0
             q_score = q0
 
         scores = torch.einsum("hd,hnd->hn", q_score, kcf)  # [H, NB]
         scores = scores.masked_fill(chosen, _NEG_INF)
+        if trace is not None and ans is not None:
+            # per-needle rank [H, A]: for each answer block a, how many blocks
+            # score strictly higher under the current residual query (0 = top).
+            ans_sc = scores[:, ans]  # [H, A]
+            ans_rank = (scores.unsqueeze(1) > ans_sc.unsqueeze(2)).sum(dim=2)  # [H, A]
+            chosen_ans = chosen[:, ans]  # [H, A] which needle blocks already picked
+            q_cos = (q_score * q0).sum(-1)  # [H]
+            resid_ratio = resid.norm(dim=-1)  # [H] (q0 is unit-norm)
+            trace.append(
+                {
+                    "step": len(picks),
+                    "ans_rank": ans_rank.tolist(),  # [H][A]
+                    "chosen_ans": chosen_ans.tolist(),  # [H][A]
+                    "q_cos": [round(x, 4) for x in q_cos.tolist()],
+                    "resid_ratio": [round(x, 4) for x in resid_ratio.tolist()],
+                }
+            )
         pick = scores.argmax(dim=-1)  # [H]
         picks.append(pick)
         chosen.scatter_(-1, pick.unsqueeze(-1), True)
+        if trace is not None and ans is not None:
+            trace[-1]["pick"] = pick.tolist()
         if log is not None:
             log.append({"step": len(picks) - 1, "pick": pick.tolist()})
 
