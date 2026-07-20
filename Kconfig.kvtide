@@ -67,6 +67,36 @@ config KVTIDE_XNVME
 	bool
 	default y if KVTIDE_INITIATOR_XNVME || KVTIDE_INITIATOR_BOTH
 
+config KVTIDE_URING_FIXED
+	bool "Add the pool-backed fixed-buffer initiator arm"
+	default n
+	help
+	  Bench a third kernel-path arm: raw io_uring NVMe passthrough
+	  whose I/O buffers are allocated from the device queue's
+	  blk_iobuf pool (IORING_REGISTER_BUFFERS_ALLOC_FOR_FILE) and
+	  submitted with IORING_URING_CMD_FIXED. This is the pool's
+	  designed data path -- deterministic folio-backed buffers,
+	  zero-copy, no bounce -- measured against the plain
+	  malloc-buffer xNVMe arm on the same matrix.
+
+	  Requires a kernel with the blk_iobuf pool and the op-38
+	  registration (the default KVTIDE_LINUX branch), and a pool
+	  on the target's queue (see KVTIDE_IOBUF_FORCE_ORDER).
+
+config KVTIDE_IOBUF_FORCE_ORDER
+	int "blk_iobuf pool force order for the target queue"
+	depends on KVTIDE_URING_FIXED
+	default 4
+	range -1 10
+	help
+	  Written to /sys/module/blk_iobuf/parameters/iobuf_pool_force_
+	  order before the nvme-tcp attach, so the fabric KV namespace
+	  queue gets a pool at this folio order regardless of device
+	  geometry (pools are created at limits-commit time). -1 keeps
+	  auto geometry (typically no pool on plain 4K devices), 0
+	  disables pools, N forces order N (4 = 64 KiB folios, matching
+	  the default large value size).
+
 menu "Sources"
 
 config KVTIDE_SRC_DIR

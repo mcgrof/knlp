@@ -63,8 +63,13 @@ if [ ! -f .config ]; then
 	else
 		kvtide_die "no base kernel config found on this host"
 	fi
+	# The -kvtide localversion makes the gate unambiguous: a host may
+	# already run a same-version kernel from an earlier build of the
+	# same branch, which would otherwise falsely pass the release
+	# comparison.
 	./scripts/config --set-str SYSTEM_TRUSTED_KEYS "" \
 		--set-str SYSTEM_REVOCATION_KEYS "" \
+		--set-str LOCALVERSION "-kvtide" \
 		--disable DEBUG_INFO_BTF \
 		--disable DEBUG_INFO \
 		--enable DEBUG_INFO_NONE

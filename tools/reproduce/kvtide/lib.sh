@@ -62,10 +62,15 @@ want_linux() {
 	[ "${CONFIG_KVTIDE_LINUX:-n}" = y ]
 }
 
-# The nvme-tcp attach of the KV target is only needed for the xNVMe
-# initiator and the NIXL integration test; SPDK connects userspace.
+want_uring_fixed() {
+	[ "${CONFIG_KVTIDE_URING_FIXED:-n}" = y ]
+}
+
+# The nvme-tcp attach of the KV target is needed for every kernel-path
+# consumer (xNVMe, the pool-fixed arm, the NIXL integration test); SPDK
+# connects userspace.
 want_kernel_attach() {
-	want_xnvme || want_nixl
+	want_xnvme || want_nixl || want_uring_fixed
 }
 
 xnvme_pkgconfig_dir() {

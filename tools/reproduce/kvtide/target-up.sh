@@ -56,6 +56,19 @@ if ! $RPC nvmf_get_subsystems | grep -q "\"$TARGET_NQN\""; then
 fi
 kvtide_log "target serving $TARGET_NQN on $TARGET_ADDR:$TARGET_PORT"
 
+# Pools are created at limits-commit time, so the force-order knob must
+# be in place BEFORE the nvme-tcp attach creates the fabric queue.
+if want_uring_fixed; then
+	PARAM=/sys/module/blk_iobuf/parameters/iobuf_pool_force_order
+	if [ -e "$PARAM" ]; then
+		kvtide_log "setting iobuf_pool_force_order=${CONFIG_KVTIDE_IOBUF_FORCE_ORDER}"
+		echo "${CONFIG_KVTIDE_IOBUF_FORCE_ORDER}" | sudo tee "$PARAM" >/dev/null
+	else
+		kvtide_log "WARNING: $PARAM missing -- kernel lacks the pool" \
+			"force-order knob; the uring-fixed arm will fail"
+	fi
+fi
+
 if want_kernel_attach; then
 	if kv_dev >/dev/null; then
 		kvtide_log "KV namespace already attached: $(kv_dev)"
