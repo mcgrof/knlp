@@ -22,6 +22,7 @@ set +e
 
 SPDK_PERF="$SPDK_SRC/build/bin/spdk_nvme_perf"
 XNVME_PERF="$KVTIDE_SRC/xnvme_kv_perf"
+URING_FIXED_PERF="$KVTIDE_SRC/kv_uring_fixed"
 CORE=${CONFIG_KVTIDE_BENCH_INIT_CORE}
 SECS=${SECS:-${CONFIG_KVTIDE_BENCH_SECS}}
 TARGET_CORES=$(mask_to_cores "$TARGET_CORE_MASK")
@@ -63,8 +64,10 @@ run_cell() {
 		read -r iops mbps lat < <(echo "$out" | awk '/^Total /{print $3,$4,$5}')
 		p99="na"
 	else
+		local tool="$XNVME_PERF"
+		[ "$initiator" = uring-fixed ] && tool="$URING_FIXED_PERF"
 		dev=$(kv_dev)
-		out=$(sudo taskset -c "$CORE" "$XNVME_PERF" "$dev" "$op" \
+		out=$(sudo taskset -c "$CORE" "$tool" "$dev" "$op" \
 			"$qd" "$vsize" "$SECS" 2>/dev/null | tail -1)
 		iops=$(echo "$out" | grep -oE 'iops=[0-9.]+' | cut -d= -f2)
 		mbps=$(echo "$out" | grep -oE 'MBps=[0-9.]+' | cut -d= -f2)
@@ -95,19 +98,31 @@ if want_xnvme; then
 	require_kv_dev >/dev/null
 	test -x "$XNVME_PERF" || kvtide_die "xnvme_kv_perf not built"
 fi
+if want_uring_fixed; then
+	INITIATORS="$INITIATORS uring-fixed"
+	require_kv_dev >/dev/null
+	test -x "$URING_FIXED_PERF" || kvtide_die "kv_uring_fixed not built"
+fi
 if want_spdk; then
 	test -x "$SPDK_PERF" || kvtide_die "spdk_nvme_perf not built"
 fi
 
+# Pool counter snapshot for the no-bounce assertion: allocs may move at
+# registration time only; fallbacks must never move.
+pool_counters() {
+	grep -r . /sys/block/nvme*/queue/iobuf_pool_allocs \
+		/sys/block/nvme*/queue/iobuf_pool_fallbacks 2>/dev/null || true
+}
+
 if [ $# -eq 4 ]; then
 	case "$1" in
-	spdk|xnvme) ;;
-	*) kvtide_die "initiator must be spdk or xnvme, not '$1'" ;;
+	spdk|xnvme|uring-fixed) ;;
+	*) kvtide_die "initiator must be spdk, xnvme or uring-fixed, not '$1'" ;;
 	esac
 	run_cell "$1" "$2" "$3" "$4"
 	exit 0
 elif [ $# -ne 0 ]; then
-	kvtide_die "usage: bench.sh [<spdk|xnvme> <op> <qd> <vsize>]"
+	kvtide_die "usage: bench.sh [<spdk|xnvme|uring-fixed> <op> <qd> <vsize>]"
 fi
 
 mkdir -p "$KVTIDE_RESULTS"
@@ -125,6 +140,8 @@ kvtide_log "matrix: ops='${CONFIG_KVTIDE_BENCH_OPS}'" \
 	"vsizes='${CONFIG_KVTIDE_BENCH_VSIZES}'" \
 	"qds='${CONFIG_KVTIDE_BENCH_QDS}' secs=$SECS -> $CSV"
 
+pool_counters > "$CSV.pool-before"
+
 for op in ${CONFIG_KVTIDE_BENCH_OPS}; do
 	for vsize in ${CONFIG_KVTIDE_BENCH_VSIZES}; do
 		for qd in ${CONFIG_KVTIDE_BENCH_QDS}; do
@@ -135,5 +152,20 @@ for op in ${CONFIG_KVTIDE_BENCH_OPS}; do
 		done
 	done
 done
+
+pool_counters > "$CSV.pool-after"
+# No-bounce accounting: every arm is zero-copy by design, so pool
+# allocs may move only by the uring-fixed registrations (2 per cell,
+# one per direction slot). A delta far beyond that means the
+# transparent bounce consumer fired; fallbacks moving means the pool
+# ran dry. Both captures ride with the CSV for post-hoc audit.
+ALLOC_DELTA=$(paste <(grep -h allocs "$CSV.pool-before" | grep -oE '[0-9]+$') \
+		    <(grep -h allocs "$CSV.pool-after"  | grep -oE '[0-9]+$') 2>/dev/null | \
+	awk '{d += $2 - $1} END {print d + 0}')
+kvtide_log "pool allocs delta over the matrix: ${ALLOC_DELTA:-0}"
+if ! diff <(grep fallbacks "$CSV.pool-before") \
+	  <(grep fallbacks "$CSV.pool-after") >/dev/null 2>&1; then
+	kvtide_log "WARNING: iobuf_pool_fallbacks moved -- pool ran dry"
+fi
 
 kvtide_log "bench done: $CSV"

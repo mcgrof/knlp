@@ -35,7 +35,10 @@ if want_xnvme || want_nixl; then
 			-Dwith-cuda=disabled -Dwith-hip=disabled \
 			-Dwith-libvfn=disabled -Dprefix="$XNVME_PREFIX" && \
 		  meson compile -C build && \
-		  meson install -C build )
+		  { meson install -C build || \
+		    kvtide_log "xNVMe post-install extras failed (system" \
+			"bash-completion dir); the prefix artifacts are" \
+			"verified below"; } )
 	else
 		kvtide_log "xNVMe already installed at $XNVME_PREFIX"
 	fi
@@ -48,14 +51,28 @@ if want_xnvme || want_nixl; then
 			# rpath: the bench runs the tool under sudo, which
 			# strips LD_LIBRARY_PATH, and libxnvme lives under the
 			# harness's private prefix.
+			# -luring -laio: when pkg-config resolves the static
+			# libxnvme its private deps are not on the line.
 			PKG_CONFIG_PATH="$PKGDIR" gcc -O2 \
 				"$KVTIDE_DIR/src/xnvme_kv_perf.c" \
 				$(PKG_CONFIG_PATH="$PKGDIR" pkg-config --cflags --libs xnvme) \
+				-luring -laio \
 				-Wl,-rpath,"$(dirname "$PKGDIR")" \
 				-o "$KVTIDE_SRC/xnvme_kv_perf"
 		else
 			kvtide_log "xnvme_kv_perf up to date"
 		fi
+	fi
+fi
+
+if want_uring_fixed; then
+	if [ ! -x "$KVTIDE_SRC/kv_uring_fixed" ] || \
+	   [ "$KVTIDE_DIR/src/kv_uring_fixed.c" -nt "$KVTIDE_SRC/kv_uring_fixed" ]; then
+		kvtide_log "building kv_uring_fixed"
+		gcc -O2 "$KVTIDE_DIR/src/kv_uring_fixed.c" -luring \
+			-o "$KVTIDE_SRC/kv_uring_fixed"
+	else
+		kvtide_log "kv_uring_fixed up to date"
 	fi
 fi
 

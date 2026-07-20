@@ -44,7 +44,10 @@ check "SPDK: libnuma (numa.h)"   test -e /usr/include/numa.h
 check "SPDK: libssl dev"         pkg-config --exists openssl
 check "SPDK: uuid dev"           pkg-config --exists uuid
 check "SPDK: libaio (libaio.h)"  test -e /usr/include/libaio.h
-check "nvme-cli"                 command -v nvme
+# Debian installs nvme to /usr/sbin, outside a non-root PATH; the
+# harness invokes it under sudo whose secure_path covers sbin.
+check "nvme-cli"                 sh -c \
+	'command -v nvme || test -x /usr/sbin/nvme'
 check "column (bsdextrautils)"   command -v column
 
 if want_xnvme; then
