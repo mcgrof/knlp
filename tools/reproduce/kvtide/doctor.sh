@@ -56,7 +56,10 @@ if want_xnvme; then
 	check "pkg-config"           command -v pkg-config
 	check "liburing dev"         pkg-config --exists liburing
 	check "kernel nvme_tcp module" sh -c \
-		'modinfo nvme_tcp || test -d /sys/module/nvme_tcp'
+		'modinfo nvme_tcp 2>/dev/null || \
+		 /usr/sbin/modinfo nvme_tcp 2>/dev/null || \
+		 test -e "/lib/modules/$(uname -r)/kernel/drivers/nvme/host/nvme-tcp.ko" || \
+		 test -d /sys/module/nvme_tcp'
 fi
 
 if want_nixl; then
