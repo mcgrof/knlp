@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The KV-Cache Compression Frontier — which recipe to deploy, and what it costs</title>
+  <meta name="description" content="The deployable KV-cache byte-vs-quality Pareto across model families and bit budgets. Asymmetric K16/V8 is the lossless knee; key precision is the dominant lever (any sub-16-bit key collapses, worst on fragile keys); value granularity is second-order; a pre-RoPE prebias rescues symmetric 8-bit keys. Validated to 8K with confidence intervals, retrieval and generation probes, and under tensor parallelism. Served-throughput and a deploy recipe by byte budget and measured key fragility.">
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@1.8.5/umd/Recharts.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #0f172a; }
+    .gradient-text {
+      background: linear-gradient(135deg, #f59e0b, #ef4444);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .card {
+      background: linear-gradient(145deg, #1e293b, #1a2332);
+      border: 1px solid #334155; transition: all 0.3s ease;
+    }
+    .card:hover { border-color: #f59e0b; box-shadow: 0 4px 20px -5px rgba(245, 158, 11, 0.2); }
+    .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
+    .prose p { margin-bottom: 0.9rem; }
+    .prose strong { color: #e2e8f0; }
+    .kbd { font-family: ui-monospace, monospace; background:#0b1220; border:1px solid #334155; border-radius:4px; padding:1px 6px; color:#cbd5e1; }
+    .anchor { scroll-margin-top: 1.5rem; }
+    .pill { font-size: 0.7rem; padding: 1px 8px; border-radius: 9999px; font-weight: 600; }
+    .pill-tol { background:#064e3b; color:#6ee7b7; }
+    .pill-mat { background:#78350f; color:#fcd34d; }
+    .pill-cat { background:#7f1d1d; color:#fca5a5; }
+  </style>
+</head>
+<body class="min-h-screen text-gray-100">
+  <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
+      <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
+      <a href="kv-compression-frontier.html" class="px-3 py-1.5 bg-amber-600 rounded text-sm font-medium text-white">KV Frontier</a>
+      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
+      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Linear Attn</a>
+    </div>
+  </nav>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      LineChart, Line, BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid,
+      Tooltip, Legend, ResponsiveContainer, ReferenceLine, Cell, ZAxis, Label
+    } = Recharts;
+
+    const C = {
+      amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', green:'#10b981',
+      purple:'#a855f7', cyan:'#06b6d4', orange:'#f97316', gray:'#64748b', slate:'#334155'
+    };
+
+    // ───────────────────────── DATA (verbatim from the measured result sets) ─────────────────────────
+
+    // Recovery Pareto (Qwen DC-offset mechanism, recovery measured on Qwen2.5-7B):
+    // key-cache bytes/token vs recovery fraction.
+    const PARETO = [
+      {repair:'FP8-K per-tensor (the failure)', bytes:512, meta:0, rec:0.0, color:C.red},
+      {repair:'FP8-K per-channel', bytes:512, meta:0.0488, rec:0.0, color:C.red},
+      {repair:'QK-gauge', bytes:512, meta:0.0488, rec:0.0, color:C.red},
+      {repair:'INT8-K per-tensor', bytes:512, meta:0, rec:0.95, color:C.green},
+      {repair:'FP8-K pre-bias', bytes:512, meta:0.0488, rec:0.97, color:C.amber},
+      {repair:'K16/V8 (asym)', bytes:1024, meta:0, rec:1.0, color:C.blue},
+      {repair:'native K (bf16)', bytes:1024, meta:0, rec:1.0, color:C.gray},
+    ];
+
+    // Cross-model corrected frontier: ΔNLL vs K16/V16, ctx-2048, faithful quantizers, four families.
+    const XMODEL = [
+      {arm:'K16/V8', llama:0.0006, mistral:0.0002, qwen:-0.0001, phi:-0.0002, worst:0.0006, tag:'good'},
+      {arm:'pre-RoPE prebias-K8', llama:0.0029, mistral:0.0014, qwen:0.0022, phi:0.0268, worst:0.027, tag:'good'},
+      {arm:'K16/V2-PT+R', llama:0.048, mistral:0.011, qwen:0.066, phi:0.015, worst:0.066, tag:''},
+      {arm:'faithful KIVI (2-bit K)', llama:0.188, mistral:0.064, qwen:0.446, phi:0.092, worst:0.446, tag:'kivi'},
+    ];
+    const KIVI_FRAG = [{m:'Mistral-7B',d:0.064},{m:'Phi-2',d:0.092},{m:'Llama-8B',d:0.188},{m:'Qwen-7B',d:0.446}];
+
+    // 8K hardening — clean 24-doc WikiText-103 run, per-model ΔNLL@8K vs K16/V16 (H100).
+    const HARD8K = [
+      {model:'Qwen2.5-7B', k16v8:-0.0004, k16v2:0.0676, prebias:-0.0030, kivi:0.4788},
+      {model:'Llama-3.1-8B', k16v8:0.0003, k16v2:0.0458, prebias:0.0028, kivi:0.1971},
+      {model:'Qwen3-4B', k16v8:-0.0008, k16v2:0.0366, prebias:0.0006, kivi:0.0843},
+      {model:'Mistral-7B-v0.3', k16v8:0.0001, k16v2:0.0177, prebias:0.0014, kivi:0.0752},
+    ];
+
+    // TP composition (Qwen2.5-7B, 2×H100, vLLM v1 + FlashInfer). Teacher-forced NLL.
+    const TP = [
+      {config:'TP1 BF16', nll:2.67096, d:null},
+      {config:'TP1 K16/V8', nll:2.67096, d:0.0, tag:'good'},
+      {config:'TP1 symFP8', nll:4.25607, d:1.585, tag:'bad'},
+      {config:'TP2 K16/V8', nll:2.67102, d:0.0, tag:'good'},
+      {config:'TP2 symFP8', nll:4.25745, d:1.586, tag:'bad'},
+    ];
+    const HEADBIAS = [{h:'KV0',bias:171},{h:'KV1',bias:414},{h:'KV2',bias:108},{h:'KV3',bias:83.5}];
+
+    // Served throughput (H100, ISL/OSL 2048, residency-goodput sweep). Output tok/s at the noted concurrency.
+    const SERVED = [
+      {model:'Llama-3.1-8B', bf16:3984, k16v8:5004, k8v8:6413, conc:120},
+      {model:'Mistral-7B-v0.3', bf16:4111, k16v8:5222, k8v8:6849, conc:125},
+    ];
+
+    // KVTuner: format beats bits/granularity (Qwen2.5-7B, ΔNLL vs BF16, K quantized, V=FP8 per-tensor).
+    const KVT_FORMAT = [
+      {gran:'per-tensor', fp8:2.859, int8:0.027},
+      {gran:'per-token', fp8:4.091, int8:0.008},
+      {gran:'per-channel', fp8:2.315, int8:0.0003},
+    ];
+
+    // K-index decode tier (HELD): asym-TC attention-kernel speedup + fused-kernel end-to-end projection.
+    const KINDEX = [
+      {ctx:'4K', kernel:3.3, proj:1.29},
+      {ctx:'8K', kernel:6.3, proj:1.58},
+      {ctx:'16K', kernel:12.5, proj:1.96},
+      {ctx:'32K', kernel:24.6, proj:3.16},
+    ];
+
+    // ───────────────────────── small components (matching the atlas stack) ─────────────────────────
+    function StatCard({label, value, unit, sub, color}) {
+      return (
+        <div className="stat-card rounded-lg p-4 text-center">
+          <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{color: color||'#fff'}}>{value}<span className="text-sm text-gray-400 ml-1">{unit}</span></div>
+          {sub && <div className="text-xs text-gray-500 mt-1">{sub}</div>}
+        </div>
+      );
+    }
+    function Tip({active, payload, label}) {
+      if (!active || !payload || !payload.length) return null;
+      return (
+        <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm">
+          {label !== undefined && <div className="text-gray-400 mb-1">{label}</div>}
+          {payload.map((p, i) => (
+            <div key={i} style={{color: p.color || p.fill}}>
+              {p.name}: <strong>{typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    function Section({id, kicker, title, children}) {
+      return (
+        <section id={id} className="anchor card rounded-xl p-6 md:p-8 mb-8">
+          {kicker && <div className="text-xs uppercase tracking-widest mb-2" style={{color:C.amber}}>{kicker}</div>}
+          <h2 className="text-2xl font-bold mb-4">{title}</h2>
+          <div className="prose text-gray-400 text-[15px] leading-relaxed max-w-none">{children}</div>
+        </section>
+      );
+    }
+    function ChartFrame({title, sub, height, children}) {
+      return (
+        <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-5">
+          {title && <h4 className="text-sm font-semibold text-gray-200 mb-0.5">{title}</h4>}
+          {sub && <p className="text-gray-500 text-xs mb-3">{sub}</p>}
+          <ResponsiveContainer width="100%" height={height||320}>{children}</ResponsiveContainer>
+        </div>
+      );
+    }
+    const dcell = (v) => v>=0.2?C.red : v>=0.04?C.amber : C.green;
+
+    // ───────────────────────── the page ─────────────────────────
+    function App() {
+      return (
+        <div className="max-w-5xl mx-auto px-5 py-12">
+          <header className="text-center mb-10">
+            <a href="fp8-kv-failure-atlas.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; From the FP8 failure atlas</a>
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
+              The <span className="gradient-text">KV-Cache Compression Frontier</span>
+            </h1>
+            <p className="text-gray-400 max-w-3xl mx-auto text-lg">
+              The <a href="fp8-kv-failure-atlas.html" className="text-amber-300 hover:underline">failure atlas</a> answers
+              <em> why</em> symmetric FP8 keys break. This page answers the deployment question: across model families and
+              bit budgets, <strong className="text-gray-200">which KV-cache compression recipe should you ship, and what
+              does it cost?</strong> One thesis runs through all of it &mdash; <strong className="text-gray-200">key
+              precision is the dominant lever</strong>. Asymmetric <span className="kbd">K16/V8</span> is the lossless knee;
+              any sub-16-bit key collapses (worst on fragile keys); value granularity is second-order; a pre-RoPE prebias
+              rescues symmetric 8-bit keys. Validated to 8K with confidence intervals, retrieval and generation probes,
+              and under tensor parallelism &mdash; then a deploy recipe by byte budget and measured fragility.
+            </p>
+          </header>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+            <StatCard label="Lossless knee" value="K16/V8" sub="~2× vs K16, TP-invariant" color={C.green}/>
+            <StatCard label="Key vs value" value="~7×" sub="2-bit K costs 7× a 2-bit V" color={C.amber}/>
+            <StatCard label="2-bit-K worst" value="+0.48" sub="ΔNLL on fragile Qwen2.5" color={C.red}/>
+            <StatCard label="Validated to" value="8K" sub="CIs · retrieval · generation" />
+            <StatCard label="Deploy by" value="fragility" sub="measured, per model" color={C.blue}/>
+          </div>
+
+          <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.amber}}>
+            <h3 className="font-semibold text-amber-400 mb-2">The frontier in one breath</h3>
+            <p className="text-gray-300 text-[15px] leading-relaxed">
+              KV-cache byte reduction is a two-axis choice &mdash; keys and values &mdash; and the axes are not symmetric.
+              Dropping <em>values</em> to 8-bit is essentially free as long as keys stay at 16-bit: that is
+              <strong className="text-white"> K16/V8</strong>, the lossless knee at ~2× compression. Dropping <em>keys</em>
+              below 16-bit is where quality dies, and it dies hardest on the models the atlas flags as fragile (large
+              pre-RoPE key structure). On the same model at the same bit budget, 2-bit values cost ~+0.07 nats while 2-bit
+              keys cost ~+0.48. So the deployment rule is short: protect the keys, quantize the values, and
+              <strong className="text-white"> pick the key precision by each model's measured fragility</strong> &mdash;
+              symmetric FP8 keys where they are quality-admissible (robust-key Llama/Mistral/Qwen3), asymmetric K16/V8 where
+              they are not (Qwen2/2.5).
+            </p>
+          </div>
+
+          {/* 1. recovery pareto */}
+          <Section id="byte-frontier" kicker="The fix and its cost" title="Recovery vs bytes: the cheapest repair that works">
+            <p>
+              Quality is only half the deployment decision; the other half is bytes and side-metadata. This Pareto is for
+              the Qwen key-center (DC-offset) mechanism, recovery measured on Qwen2.5-7B. Putting recovery against key-cache
+              cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for first
+              &mdash; per-channel FP8 scaling and the QK-gauge &mdash; both <strong>recover nothing</strong> (recovery 0),
+              because neither re-centers an additive bias. The two that work at 8 bits are <strong>INT8-K</strong> (recovery
+              0.95, same 512 bytes, zero metadata &mdash; a drop-in format swap) and <strong>FP8 pre-bias</strong> (0.97, but
+              it must store the per-channel bias). Above 8 bits, <strong>K16/V8</strong> is the zero-metadata fallback at 1024
+              bytes. For a Qwen-style biased model: INT8-K if you must hold 8-bit keys, K16/V8 for the conservative default
+              &mdash; and don&rsquo;t reach for the elegant linear-algebra fixes, which do nothing for <em>this</em> mechanism.
+            </p>
+            <ChartFrame title="Recovery vs key-cache bytes per token (Qwen anchor)"
+              sub="Up and to the left is better. Red = recovers nothing; amber/green = the working 8-bit repairs; blue = the bf16-key fallback." height={340}>
+              <ScatterChart margin={{top:12, right:28, left:8, bottom:36}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis type="number" dataKey="bytes" name="K bytes/token" stroke="#94a3b8" domain={[400,1120]} ticks={[512,1024]}
+                  label={{value:'key-cache bytes / token', position:'insideBottom', offset:-6, fill:'#94a3b8'}}/>
+                <YAxis type="number" dataKey="rec" name="recovery" stroke="#94a3b8" domain={[-0.05,1.08]}
+                  label={{value:'recovery fraction', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <ZAxis range={[200,200]}/>
+                <Tooltip content={<Tip/>} cursor={{strokeDasharray:'3 3'}}/>
+                <Scatter data={PARETO} name="repair">
+                  {PARETO.map((d,i)=><Cell key={i} fill={d.color}/>)}
+                </Scatter>
+              </ScatterChart>
+            </ChartFrame>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm mt-2">
+                <thead><tr className="border-b border-gray-700 text-gray-400">
+                  <th className="text-left py-2 px-3">Repair</th><th className="text-right py-2 px-3">K bytes/tok</th>
+                  <th className="text-right py-2 px-3">Metadata</th><th className="text-right py-2 px-3">Recovery</th>
+                </tr></thead>
+                <tbody className="text-gray-300">
+                  {PARETO.map((r,i)=>(
+                    <tr key={i} className="border-b border-gray-800">
+                      <td className="py-2 px-3">{r.repair}</td>
+                      <td className="py-2 px-3 text-right font-mono">{r.bytes}</td>
+                      <td className="py-2 px-3 text-right font-mono">{r.meta}%</td>
+                      <td className="py-2 px-3 text-right font-mono" style={{color: r.rec>=0.95?C.green: r.rec>0?C.amber:C.red}}>{r.rec.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Section>
+
+          {/* 2. cross-model frontier */}
+          <Section id="cross-model" kicker="The corrected map" title="The cross-model frontier: a well-designed low-bit key avoids collapse">
+            <p>
+              The single-model story generalizes. Across four model families with <em>faithful</em> implementations, every
+              arm reproduces its method&rsquo;s real behavior (two earlier &ldquo;collapses&rdquo; were implementation
+              artifacts a self-audit caught: a mislabeled post-RoPE symmetric FP8-K, and a 3-level no-residual KIVI
+              strawman). The corrected table below is teacher-forced ΔNLL vs the lossless K16/V16 baseline at 2048 tokens.
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-3">arm &mdash; ΔNLL vs K16/V16</th>
+                  <th className="text-right px-2">Llama-8B</th><th className="text-right px-2">Mistral-7B</th>
+                  <th className="text-right px-2">Qwen-7B</th><th className="text-right px-2">Phi-2</th>
+                  <th className="text-right px-2 text-gray-300">worst</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  {XMODEL.map((r,i)=>(
+                    <tr key={i} className="border-t border-gray-800">
+                      <td className={"py-1 pr-3 " + (r.tag==='good'?'text-green-400':r.tag==='kivi'?'text-amber-400':'')}>{r.arm}</td>
+                      <td className="text-right px-2">{r.llama>=0?'+':''}{r.llama.toFixed(4)}</td>
+                      <td className="text-right px-2">{r.mistral>=0?'+':''}{r.mistral.toFixed(4)}</td>
+                      <td className="text-right px-2">{r.qwen>=0?'+':'−'}{Math.abs(r.qwen).toFixed(4)}</td>
+                      <td className="text-right px-2">{r.phi>=0?'+':'−'}{Math.abs(r.phi).toFixed(4)}</td>
+                      <td className="text-right px-2" style={{color:dcell(r.worst)}}>{r.worst.toFixed(3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p>
+              <strong className="text-gray-200">Faithful KIVI never collapses &mdash; its 2-bit-key cost just scales with
+              key fragility.</strong> The 4-level affine per-channel KIVI (over token-groups, with a residual window) is
+              viable on all four families; the cost rises monotonically with the model&rsquo;s key-bias geometry.
+            </p>
+            <ChartFrame title="Faithful KIVI (2-bit K) cost scales with key fragility — no collapse anywhere"
+              sub="ΔNLL vs K16/V16; the 2-bit-key cost rising with the model's K-bias geometry, Mistral → Qwen." height={240}>
+              <BarChart data={KIVI_FRAG} margin={{top:8,right:16,left:0,bottom:4}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
+                <XAxis dataKey="m" stroke="#64748b" tick={{fontSize:12}}/>
+                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="d" name="ΔNLL" fill={C.amber} radius={[4,4,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
+              <p className="text-sm text-gray-300"><strong className="text-green-400">The tiers (4 families).</strong>
+              {' '}<strong>K16/V8</strong> the lossless knee (~2× vs K16, TP-invariant); <strong>pre-RoPE prebias-K8</strong>
+              near-lossless at ~8-bit (the bias amortizes to &lt;0.07 bits/token); <strong>K16/V2</strong> a high-capacity
+              tier; <strong>faithful KIVI</strong> a viable 2-bit-K option whose cost is predictable from the model&rsquo;s
+              bias geometry. K-quant failure is geometry- and placement-controlled, not bit-width alone.</p>
+            </div>
+          </Section>
+
+          {/* 3. 8K hardening */}
+          <Section id="hardening-8k" kicker="Hardening the frontier" title="At 8K: intervals, retrieval, and generation">
+            <p>
+              The 2048-token frontier is a single teacher-forced step. This pass closes three extensions across the four
+              long-context families on <strong>24 independent WikiText-103 documents at 8192 tokens</strong>: a
+              <strong> block-bootstrap CI</strong> over documents on every ΔNLL, a <strong>passkey / needle</strong>
+              retrieval probe, and <strong>autoregressive divergence</strong> through a real incremental cache (the
+              cache-lifecycle a one-step measurement cannot see). Per-model ΔNLL@8K vs the lossless K16/V16 baseline:
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-3">model @ 8K</th>
+                  <th className="text-right px-2 text-green-400">K16/V8</th>
+                  <th className="text-right px-2">prebias-K8/V8</th>
+                  <th className="text-right px-2">K16/V2</th>
+                  <th className="text-right px-2 text-amber-400">KIVI (2-bit K)</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  {HARD8K.map((r,i)=>(
+                    <tr key={i} className="border-t border-gray-800">
+                      <td className="py-1 pr-3 text-gray-300">{r.model}</td>
+                      <td className="text-right px-2" style={{color:C.green}}>{r.k16v8>=0?'+':'−'}{Math.abs(r.k16v8).toFixed(4)}</td>
+                      <td className="text-right px-2">{r.prebias>=0?'+':'−'}{Math.abs(r.prebias).toFixed(4)}</td>
+                      <td className="text-right px-2">+{r.k16v2.toFixed(4)}</td>
+                      <td className="text-right px-2" style={{color:C.amber}}>+{r.kivi.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <ChartFrame title="2-bit keys collapse worst on fragile keys — ΔNLL@8K, KIVI vs K16/V8"
+              sub="Green = asymmetric K16/V8 (near-zero on every model); amber = KIVI's 2-bit keys, tracking each model's key fragility." height={260}>
+              <BarChart data={HARD8K} margin={{top:8,right:16,left:0,bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:11}}/>
+                <YAxis stroke="#94a3b8" tick={{fontSize:11}} label={{value:'ΔNLL @ 8K', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Bar dataKey="k16v8" name="K16/V8" fill={C.green} radius={[3,3,0,0]}/>
+                <Bar dataKey="kivi" name="KIVI 2-bit K" fill={C.amber} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <p>
+              <strong className="text-gray-200">Retrieval is robust; generation is sensitive.</strong> On the three models
+              whose full-precision passkey is perfect (Llama-3.1-8B, Qwen3-4B, Mistral-7B) the planted needle is recovered
+              <strong> 1.000 of the time under every arm</strong> &mdash; even KIVI, whose ΔNLL reaches +0.20 on Llama. Yet
+              the same KIVI cache, run through greedy generation, agrees with the full-precision continuation only
+              <strong> 11&ndash;38%</strong> of the time. The failure mode of aggressive KV quantization is <em>generation
+              drift, not retrieval loss</em>: the cache-lifecycle amplifies a quality gap a single teacher-forced step
+              understates, and KIVI&rsquo;s AR collapse tracks its raised NLL while K16/V8&rsquo;s agreement stays high (its
+              sub-1.0 agreement is benign argmax tie-flips &mdash; the NLL is flat).
+            </p>
+            <p className="text-xs text-gray-500">
+              ctx-8192, 24 WikiText-103 documents, 95% block-bootstrap CI over documents (2000 resamples). K16/V8 worst-case
+              ΔNLL across families is +0.0003 with a CI bracketing zero. Phi-2 is excluded from the 8K axes (native context
+              2048; its 8K rows probe out-of-window extrapolation, passkey 0.000 even at full precision) but remains valid on
+              the 2048 frontier above. Qwen2.5-7B is excluded from the passkey axis only (0.083 even at full precision on this
+              raw-text probe with no chat template) &mdash; a model-capability artifact, not a quantization effect.
+            </p>
+          </Section>
+
+          {/* 4. TP composition */}
+          <Section id="tp-composition" kicker="Multi-GPU" title="The fix composes under tensor parallelism — keys and values">
+            <p>
+              7B+ models are served with <strong className="text-gray-200">tensor parallelism</strong>: the KV heads split
+              across GPUs and each rank quantizes its own shard. For asymmetric K16/V8 to ship it has to survive that. It was
+              validated end-to-end through a modified vLLM&nbsp;v1 + FlashInfer stack on 2&times;H100, TP=1 vs TP=2 on
+              Qwen2.5-7B. K16/V8 is bit-identical to BF16 at both, and the difference-in-differences interaction is
+              <strong className="text-gray-200"> exactly 0</strong> (CI95 [0,0]); symmetric FP8 collapses +1.585&nbsp;/&nbsp;+1.586 nats.
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="text-sm w-full">
+                <thead><tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-1 pr-4">config</th><th className="text-right px-3">teacher-forced NLL</th><th className="text-right px-3">Δ vs BF16</th>
+                </tr></thead>
+                <tbody className="font-mono">
+                  {TP.map((r,i)=>(
+                    <tr key={i} className="border-t border-gray-800">
+                      <td className={"py-1 pr-4 " + (r.tag==='good'?'text-green-400':r.tag==='bad'?'text-red-400':'')}>{r.config}</td>
+                      <td className="text-right px-3">{r.nll.toFixed(5)}</td>
+                      <td className="text-right px-3" style={{color:r.d===null?C.gray:r.tag==='good'?C.green:C.red}}>{r.d===null?'—':(r.d===0?'0.00000':'+'+r.d.toFixed(3))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p>
+              <strong className="text-gray-200">The V side, measured in decode.</strong> Prefill NLL is K-precision-sensitive;
+              FP8-V only surfaces when <em>decode</em> reads the fp8 V cache. In autoregressive decode, K16/V8 reaches
+              decode-NLL identical to BF16 with <strong className="text-gray-200">100% token agreement</strong> at TP=1 and
+              TP=2 &mdash; FP8-V is lossless in decode and composes under TP too. Both halves of the recipe are rigorous, not
+              just the keys.
+            </p>
+            <p>
+              <strong className="text-gray-200">Fragility is head-dominated, so head-sharding can&rsquo;t fix it.</strong>
+              Qwen2.5-7B&rsquo;s four KV heads carry wildly different key-bias magnitudes &mdash; head 1 (|bias| = 414) is the
+              single catastrophic head. A function-preserving balanced permutation that moves the 414 head onto a different
+              rank leaves K16/V8 <strong>exactly assignment-invariant</strong> (perm &minus; default = 0.0) while
+              symmetric FP8&rsquo;s collapse is grouping-insensitive (1.586 clustered vs 1.582 balanced). So the fragility
+              cannot be engineered away by sharding or scale-domain tricks &mdash; only by protecting the keys.
+            </p>
+            <ChartFrame title="Per-KV-head max|K-bias| (Qwen2.5-7B)"
+              sub="Head 1 is the 414-magnitude catastrophic head; the others are an order of magnitude smaller." height={240}>
+              <BarChart data={HEADBIAS} margin={{top:8,right:16,left:0,bottom:4}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
+                <XAxis dataKey="h" stroke="#64748b" tick={{fontSize:12}}/>
+                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
+                <Tooltip content={<Tip/>}/>
+                <Bar dataKey="bias" name="max|K-bias|" radius={[4,4,0,0]}>
+                  {HEADBIAS.map((d,i)=><Cell key={i} fill={d.bias>300?C.red:C.slate}/>)}
+                </Bar>
+              </BarChart>
+            </ChartFrame>
+          </Section>
+
+          {/* 5. served fragility */}
+          <Section id="served-fragility" kicker="What actually ships" title="Served throughput: symmetric FP8 wins where it is admissible, asym wins where it is not">
+            <p>
+              The quality frontier above says K16/V8 is lossless and symmetric FP8-K garbles fragile Qwen. Serving adds a
+              second lens &mdash; throughput under concurrency &mdash; and the two lenses look like they disagree until you
+              qualify the regime. Under a residency-goodput concurrency sweep on <strong>robust-key</strong> models, the more
+              aggressive symmetric FP8 (2× capacity) <em>Pareto-dominates</em> asymmetric K16/V8 (1.33× capacity): more output
+              tokens/sec at every concurrency point, with zero preemptions.
+            </p>
+            <ChartFrame title="Served output tok/s (H100, ISL/OSL 2048) — robust-key models"
+              sub="At high concurrency, symmetric FP8 (2× capacity) beats asym K16/V8 (1.33×) beats bf16 — on models whose keys tolerate FP8." height={280}>
+              <BarChart data={SERVED} margin={{top:8,right:16,left:0,bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="model" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" tick={{fontSize:11}} label={{value:'output tok/s', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Bar dataKey="bf16" name="BF16 (1×)" fill={C.gray} radius={[3,3,0,0]}/>
+                <Bar dataKey="k16v8" name="asym K16/V8 (1.33×)" fill={C.blue} radius={[3,3,0,0]}/>
+                <Bar dataKey="k8v8" name="sym FP8 (2×)" fill={C.green} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.amber}}>
+              <p className="text-sm text-gray-300"><strong className="text-amber-400">Why this is not a contradiction.</strong>
+              {' '}Symmetric FP8 only wins throughput where it is <em>quality-admissible</em>. On the fragile Qwen2.5 family it
+              is inadmissible &mdash; symmetric FP8-K collapses GSM8K to <strong>0.01</strong> &mdash; so the admissible Pareto
+              there is bf16 vs K16/V8, and K16/V8 wins it. So the two results compose into one rule:
+              <strong className="text-gray-200"> pick key precision by measured fragility.</strong> Robust keys
+              (Llama-3.x, Mistral, Phi-4, Qwen3) &rarr; symmetric FP8 for the 2× throughput. Fragile keys (Qwen2/2.5)
+              &rarr; asymmetric K16/V8, the only lossless option.</p>
+            </div>
+            <p className="text-xs text-gray-500">
+              H100 80GB, ISL/OSL 2048, output tok/s at the noted concurrency (Llama conc 120, Mistral conc 125); K16/V8
+              realizes 1.333× KV capacity, symmetric FP8 2×, both with 0 preemptions vs bf16&rsquo;s 57&ndash;60. These are
+              throughput numbers from one residency sweep; the quality admissibility is the gate, measured separately.
+            </p>
+          </Section>
+
+          {/* 6. kvtuner */}
+          <Section id="kvtuner" kicker="Don't over-engineer it" title="It's the format, not the bit budget — and one layer, not a per-layer map">
+            <p>
+              A tempting way to push below K16 is a <em>per-layer</em> bit-allocation map: spend more bits where the model is
+              sensitive. On Qwen2.5-7B that instinct is wrong twice over. First, the sensitivity is not spread across layers
+              &mdash; demoting <strong>layer 0 alone</strong> to FP8-K accounts for <strong>98.6%</strong> of the entire
+              uniform-FP8 damage (+2.832 of +2.859 ΔNLL), and restoring layer 0 to BF16 rescues 98.8% of the failure. Second,
+              a static key-bias map can&rsquo;t even find it: the largest-bias layer is L27 (|bias| 414, demoting it costs only
+              +0.031), while the culprit L0 has only the 2nd-largest bias. Spearman(ΔNLL, K-bias) = +0.22.
+            </p>
+            <p>
+              The deeper reason a per-layer map is the wrong tool: the failure is the <strong>e4m3 format</strong> (3 mantissa
+              bits), not the bit budget. At every granularity FP8 is catastrophic and INT8 is near-lossless &mdash; same 8
+              bits, opposite outcome.
+            </p>
+            <ChartFrame title="Format beats granularity — Qwen2.5-7B, ΔNLL vs BF16 (log scale)"
+              sub="FP8 catastrophic at every granularity; INT8 near-lossless at every granularity. It is the format, not the scaling." height={260}>
+              <BarChart data={KVT_FORMAT} margin={{top:8,right:16,left:0,bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="gran" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" scale="log" domain={[0.0002, 6]} ticks={[0.001,0.01,0.1,1,5]} tick={{fontSize:11}} label={{value:'ΔNLL (log)', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Bar dataKey="fp8" name="FP8 e4m3" fill={C.red} radius={[3,3,0,0]}/>
+                <Bar dataKey="int8" name="INT8" fill={C.green} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
+              <p className="text-sm text-gray-300"><strong className="text-green-400">Uniform INT8-K dominates the per-layer
+              map.</strong> A single uniform INT8-K at 0.5× (ΔNLL +0.008, no per-layer metadata, no detector, no mixed
+              kernel) beats the best per-layer bit-allocation you could build &mdash; because the fix is a format swap, not a
+              budget you distribute. Reach for a per-layer allocator only after a format swap is off the table.</p>
+            </div>
+          </Section>
+
+          {/* 7. decode tier (HELD) */}
+          <Section id="decode-tier" kicker="A parked build-decision" title="Beyond storage: routing the decode read (held, not shipped)">
+            <p>
+              Everything above is about <em>storage</em> bytes. There is a second, distinct axis &mdash; the decode-time
+              <em> read</em> traffic &mdash; and a parked result on it worth stating honestly. On top of the asymmetric K16/V8
+              cache, a per-token <strong>INT8 key-index page router</strong> can route decode attention to only the pages that
+              matter: near-lossless on robust models down to <strong>~2&ndash;4% of pages</strong> (Llama KL 0.001&ndash;0.03,
+              greedy agreement 1.0; routed 8K NIAH exactly equals dense). The index must be INT8 &mdash; INT4/FP8 fail on
+              fragile keys, the same fragility the rest of this page is about.
+            </p>
+            <ChartFrame title="Attention-kernel speedup and projected end-to-end decode speedup"
+              sub="Routing to ~3% of pages: the real asym-TC attention kernel is 24.6× faster at 32K; with a fused index-scan kernel the projected end-to-end decode step is ~3.2× (both HELD)." height={260}>
+              <BarChart data={KINDEX} margin={{top:8,right:16,left:0,bottom:8}}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
+                <XAxis dataKey="ctx" stroke="#94a3b8" tick={{fontSize:12}}/>
+                <YAxis stroke="#94a3b8" tick={{fontSize:11}} label={{value:'× speedup', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
+                <Tooltip content={<Tip/>}/>
+                <Legend verticalAlign="top" wrapperStyle={{paddingBottom:6, fontSize:12}}/>
+                <Bar dataKey="kernel" name="attention kernel ×" fill={C.cyan} radius={[3,3,0,0]}/>
+                <Bar dataKey="proj" name="projected end-to-end ×" fill={C.purple} radius={[3,3,0,0]}/>
+              </BarChart>
+            </ChartFrame>
+            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.amber}}>
+              <p className="text-sm text-gray-300"><strong className="text-amber-400">Why it is HELD, not shipped.</strong>
+              {' '}The 24.6× is the <em>attention kernel</em> only. A naive PyTorch index-scan selection costs 1.8&ndash;13.8 ms
+              and makes the total decode step a net loss (0.17&ndash;0.29×); the ~3× end-to-end figure is a projection that
+              assumes a fused index-scan kernel nobody has built yet. There is also an open caveat &mdash; the candidate-key
+              fetch doesn&rsquo;t amortize to a small hot cache, so this is more a decode-traffic play than a KV-capacity win.
+              Odds of an end-to-end win are ~50&ndash;60%, gated on that kernel. Listed here for completeness, not as a
+              deployable recipe.</p>
+            </div>
+          </Section>
+
+          {/* 8. recipe */}
+          <Section id="recipe" kicker="What to deploy" title="The recipe: by byte budget, after per-model fragility triage">
+            <p>
+              Put it together as a deployment ladder. First triage each model for key fragility (measure max|K-bias| or run a
+              tiny fake-quant check &mdash; fragile is the Qwen2/2.5 family; tolerant is Llama-3.x, Mistral, Phi-4, Qwen3).
+              Then choose by the KV byte budget you need:
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-gray-700 text-gray-400 text-xs uppercase">
+                  <th className="text-left py-2 px-3">Byte budget</th><th className="text-left py-2 px-3">Recipe</th><th className="text-left py-2 px-3">Notes</th>
+                </tr></thead>
+                <tbody className="text-gray-300">
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-mono text-green-400">24 bit&nbsp;·&nbsp;1.33×</td>
+                    <td className="py-2 px-3"><strong className="text-gray-100">K16/V8</strong></td>
+                    <td className="py-2 px-3">BF16 keys + FP8 values. Lossless on every family, TP-invariant, zero-metadata. The zero-thought safe default (vLLM <span className="kbd">auto,fp8_e4m3</span> / FlashInfer asym).</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-mono text-green-400">16 bit&nbsp;·&nbsp;2×</td>
+                    <td className="py-2 px-3"><strong className="text-gray-100">FP8/INT8-KV, key-repaired if fragile</strong></td>
+                    <td className="py-2 px-3">The recommended lossless 2× tier. Tolerant keys: plain FP8-KV. Fragile keys: a key-specific repair (Smooth/prebias-K + FP8, or INT8-per-channel-K + FP8) &mdash; naive symmetric FP8 keys collapse on Qwen2.5.</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-mono text-amber-400">~8 bit&nbsp;·&nbsp;4×</td>
+                    <td className="py-2 px-3">KVQuant / KVTuner / KIVI</td>
+                    <td className="py-2 px-3">Aggressive. Real but small quality cost; fragile models need a mixed 4-bit-key allocation. <span className="text-gray-500">[literature methods]</span></td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 px-3 font-mono text-red-400">~2.5 bit&nbsp;·&nbsp;12×</td>
+                    <td className="py-2 px-3">KVLinC / RotateKV / KIVI-2bit</td>
+                    <td className="py-2 px-3">Extreme; a real quality gap, and some rotation methods fail outright on Qwen2.5. Not a safe default. <span className="text-gray-500">[literature; verify against source]</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              The through-line: <strong className="text-gray-200">keys carry the risk, values carry the savings.</strong>
+              Every safe tier keeps keys at high precision (16-bit, or an INT8/repaired 8-bit) and spends the compression on
+              values; every collapse is a key dropped below what its geometry tolerates. Triage first, then pick the tier.
+            </p>
+          </Section>
+
+          {/* 9. reproduce */}
+          <Section id="reproduce" kicker="The receipts" title="Provenance and how to reproduce">
+            <p>
+              The <strong>quality frontier</strong> (recovery Pareto, cross-model ΔNLL, the 8K hardening pass with CIs /
+              retrieval / generation) is faithful fake-quant, teacher-forced, on the published harness &mdash; the 2048 arms
+              run free on a W7900; the 8K pass ran on one H100 (Qwen2.5-7B does not fit at 8K on a 48GB card). The
+              <strong> serving</strong> and <strong>tensor-parallelism</strong> results are a modified vLLM v1 + FlashInfer
+              stack on H100 / 2&times;H100. The <strong>KVTuner</strong> mechanism test and the <strong>K-index</strong> decode
+              study are free-GPU fake-quant plus a real FlashInfer asym-TC kernel measurement (K-index end-to-end is a
+              projection, held). Numbers marked as literature methods should be confirmed against their source before you
+              rely on them.
+            </p>
+            <p>
+              For <em>why</em> symmetric FP8 keys fail in the first place &mdash; the causal mechanism, the bias-magnitude
+              predictor, the failure taxonomy, and the release-time preflight &mdash; see the
+              <a href="fp8-kv-failure-atlas.html" className="text-amber-300 hover:underline"> FP8 KV-cache failure atlas</a>.
+              This page is the deployment half; the atlas is the diagnosis half.
+            </p>
+          </Section>
+
+          <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
+            <p className="mb-2">
+              <a href="fp8-kv-failure-atlas.html" className="hover:text-gray-400">FP8 failure atlas</a>
+              <span className="mx-2">&middot;</span>
+              <a href="index.html" className="hover:text-gray-400">knlp</a>
+            </p>
+            <p>Keys carry the risk, values carry the savings &mdash; protect the keys, quantize the values, choose key precision by measured fragility.</p>
+          </footer>
+        </div>
+      );
+    }
+    ReactDOM.render(<App/>, document.getElementById('root'));
+  </script>
+</body>
+</html>
