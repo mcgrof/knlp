@@ -40,6 +40,7 @@ check "SPDK: python3-tabulate"   python3 -c 'import tabulate'
 check "SPDK: autotools (autoreconf)" command -v autoreconf
 check "SPDK: libtool (libtoolize)"   command -v libtoolize
 check "SPDK: libfuse3 dev"       pkg-config --exists fuse3
+check "SPDK: ncurses dev"        pkg-config --exists ncurses
 check "SPDK: libnuma (numa.h)"   test -e /usr/include/numa.h
 check "SPDK: libssl dev"         pkg-config --exists openssl
 check "SPDK: uuid dev"           pkg-config --exists uuid
