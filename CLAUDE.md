@@ -161,6 +161,20 @@ Architectural changes include:
 - If a path name is historically misleading, fix the repo layout if practical.
   Do not leave the doc to carry the whole burden of explaining a bad structure.
 - Documentation edits should reduce confusion, not relocate it.
+- **PUBLISHED PAGES ARE PUBLIC — no internal plan/lab names anywhere in them.**
+  The same rule as the commit log applies to every published doc and HTML page
+  (knlp.io pages, `docs/*.html`, `docs/*.md`): a reader who has never seen
+  results-archive must be able to read it. NEVER use internal plan/phase labels
+  (`Phase-6`, `P0`/`P1`, `A6`, `M2`, `Node 1`), run-directory or campaign
+  codenames, or key-results paths — not in visible text, not in section titles
+  or kickers, not in HTML `id=`/anchor names, and not even in source comments
+  (they ship in the page). Name each section by what it actually is
+  (`id="hardening-8k"`, not `id="phase6"`). This has been flagged repeatedly;
+  before publishing or editing a page, grep it for `phase[- ]?[0-9]`, bare
+  `P[0-9]`/`A[0-9]`, and any key-results dir name, and rename each to a
+  descriptive term. Genuine public terms (dataset/model/library names, and
+  self-explanatory in-page labels a reader can decode without external notes)
+  are fine.
 
 ## GPT2 Model Naming Convention
 
