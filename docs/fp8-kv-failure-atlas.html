@@ -151,7 +151,7 @@
       {repair:'K16/V8 (asym)', bytes:1024, meta:0, rec:1.0, color:C.blue},
       {repair:'native K (bf16)', bytes:1024, meta:0, rec:1.0, color:C.gray},
     ];
-    // Phase-10 serving-by-reference (real vLLM + FlashInfer, H100, Qwen2.5-7B-Instruct).
+    // serving-by-reference (real vLLM + FlashInfer, H100, Qwen2.5-7B-Instruct).
     const SERVING = [
       {config:'FP16 native', ppl:6.997, coherent:true, color:C.blue},
       {config:'FP8-sym K8/V8', ppl:214.3, coherent:false, color:C.red},
@@ -1152,10 +1152,10 @@
             </p>
           </Section>
 
-          {/* 10c. Phase-6: 8K, intervals, retrieval, generation */}
-          <Section id="phase6" kicker="Hardening the frontier" title="At 8K, with intervals, retrieval, and generation">
+          {/* 10c. hardening the frontier: 8K, intervals, retrieval, generation */}
+          <Section id="hardening-8k" kicker="Hardening the frontier" title="At 8K, with intervals, retrieval, and generation">
             <p>
-              The frontier above is a single teacher-forced step at 2048 tokens. Phase-6 closes the three extensions the
+              The frontier above is a single teacher-forced step at 2048 tokens. This 8K hardening pass closes the three extensions the
               footnote named &mdash; long context, confidence intervals, and probes beyond next-token loss &mdash; across
               five families on <strong>24 independent wikitext documents</strong> at 8192 tokens. It adds a
               <strong> block-bootstrap CI</strong> over documents on every &Delta;NLL, a <strong>passkey / needle</strong>
