@@ -1039,176 +1039,20 @@
             </ChartFrame>
           </Section>
 
-          {/* 10. Recovery Pareto */}
-          <Section id="pareto" kicker="The fix and its cost" title="Recovery Pareto: the cheapest repair that works">
+          {/* the deployment frontier moved to its own page */}
+          <Section id="deployment-frontier" kicker="The fix and its cost" title="The deployment frontier lives on its own page">
             <p>
-              Quality is only half the deployment decision; the other half is bytes and side-metadata. This Pareto is
-              <strong> for the Qwen DC-offset mechanism</strong> (recovery measured on Qwen2.5-7B). Putting recovery against
-              key-cache cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for
-              first — per-channel FP8 scaling and the QK-gauge — both <strong>recover nothing on Qwen</strong> (recovery 0),
-              because neither re-centers an additive bias. (The QK-gauge is not useless in general — it has real value on the
-              partial-RoPE Phi-2 mechanism; it just can&rsquo;t fix a DC offset.) The two that work at 8 bits are
-              <strong> INT8-K</strong> (recovery 0.95, same 512 bytes, zero metadata — a drop-in format swap) and
-              <strong> FP8 pre-bias</strong> (0.97, but it must store the per-channel bias). Above 8 bits,
-              <strong> K16/V8</strong> is the zero-metadata fallback at 1024 bytes. So, for a Qwen-style biased model: INT8-K if
-              you must hold 8-bit keys, K16/V8 if you want the conservative default — and don&rsquo;t reach for the elegant
-              linear-algebra fixes, which do nothing for <em>this</em> mechanism.
+              The atlas answers <em>why</em> symmetric FP8 keys fail. The deployment half &mdash; the full quality-vs-bytes
+              Pareto (recovery cost, the cross-model frontier, the 8K hardening pass with confidence intervals, retrieval and
+              generation probes, tensor-parallel composition), the served-throughput trade-off, and a deploy recipe by byte
+              budget and measured fragility &mdash; now lives on a dedicated page.
             </p>
-            <ChartFrame title="Recovery vs key-cache bytes per token (Qwen anchor)"
-              sub="Up and to the left is better. Red = recovers nothing; amber/green = the working 8-bit repairs; blue = the bf16-key fallback." height={340}>
-              <ScatterChart margin={{top:12, right:28, left:8, bottom:36}}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
-                <XAxis type="number" dataKey="bytes" name="K bytes/token" stroke="#94a3b8" domain={[400,1120]} ticks={[512,1024]}
-                  label={{value:'key-cache bytes / token', position:'insideBottom', offset:-6, fill:'#94a3b8'}}/>
-                <YAxis type="number" dataKey="rec" name="recovery" stroke="#94a3b8" domain={[-0.05,1.08]}
-                  label={{value:'recovery fraction', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
-                <ZAxis range={[200,200]}/>
-                <Tooltip content={<Tip/>} cursor={{strokeDasharray:'3 3'}}/>
-                <Scatter data={PARETO} name="repair">
-                  {PARETO.map((d,i)=><Cell key={i} fill={d.color}/>)}
-                </Scatter>
-              </ScatterChart>
-            </ChartFrame>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm mt-2">
-                <thead><tr className="border-b border-gray-700 text-gray-400">
-                  <th className="text-left py-2 px-3">Repair</th><th className="text-right py-2 px-3">K bytes/tok</th>
-                  <th className="text-right py-2 px-3">Metadata</th><th className="text-right py-2 px-3">Recovery</th>
-                </tr></thead>
-                <tbody className="text-gray-300">
-                  {PARETO.map((r,i)=>(
-                    <tr key={i} className="border-b border-gray-800">
-                      <td className="py-2 px-3">{r.repair}</td>
-                      <td className="py-2 px-3 text-right font-mono">{r.bytes}</td>
-                      <td className="py-2 px-3 text-right font-mono">{r.meta}%</td>
-                      <td className="py-2 px-3 text-right font-mono" style={{color: r.rec>=0.95?C.green: r.rec>0?C.amber:C.red}}>{r.rec.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-
-          {/* 10b. Cross-model corrected Pareto */}
-          <Section id="crossmodel" kicker="The corrected map" title="The corrected cross-model frontier: a well-designed low-bit K avoids collapse">
-            <p>
-              The single-model story generalizes. We re-measured the full K-protection frontier across four model
-              families with <em>faithful</em> implementations — and two arms that had looked like catastrophic collapses
-              turned out to be <strong>implementation artifacts</strong>, exactly the confirmation-bias trap a self-audit
-              flagged. Corrected, every arm reproduces its method&rsquo;s real behavior.
+            <p className="my-3">
+              <a href="kv-compression-frontier.html" className="inline-block px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-medium transition-colors">The KV-Cache Compression Frontier &rarr;</a>
             </p>
-
-            <div className="overflow-x-auto my-4">
-              <table className="text-sm w-full">
-                <thead><tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-1 pr-3">arm &mdash; &Delta;NLL vs K16/V16</th>
-                  <th className="text-right px-2">Llama-8B</th><th className="text-right px-2">Mistral-7B</th>
-                  <th className="text-right px-2">Qwen-7B</th><th className="text-right px-2">Phi-2</th>
-                  <th className="text-right px-2 text-gray-300">worst</th>
-                </tr></thead>
-                <tbody className="font-mono">
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">K16/V8</td><td className="text-right px-2">+0.0006</td><td className="text-right px-2">+0.0002</td><td className="text-right px-2">&minus;0.0001</td><td className="text-right px-2">&minus;0.0002</td><td className="text-right px-2 text-green-400">0.0006</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">pre-RoPE prebias-K8</td><td className="text-right px-2">+0.0029</td><td className="text-right px-2">+0.0014</td><td className="text-right px-2">+0.0022</td><td className="text-right px-2">+0.0268</td><td className="text-right px-2 text-green-400">0.027</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">K16/V2-PT+R</td><td className="text-right px-2">+0.048</td><td className="text-right px-2">+0.011</td><td className="text-right px-2">+0.066</td><td className="text-right px-2">+0.015</td><td className="text-right px-2 text-gray-300">0.066</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-amber-400">faithful KIVI (2-bit K)</td><td className="text-right px-2">+0.188</td><td className="text-right px-2">+0.064</td><td className="text-right px-2 text-amber-400">+0.446</td><td className="text-right px-2">+0.092</td><td className="text-right px-2 text-amber-400">0.446</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            <p>
-              <strong className="text-gray-200">Both &ldquo;collapses&rdquo; were artifacts.</strong> The
-              &ldquo;prebias&rdquo; that read +2.83 on Qwen was a mislabeled post-RoPE symmetric FP8-K (no bias handling);
-              wired to the validated <em>pre-RoPE</em> intercept it is near-lossless on all four families (Qwen
-              5.06&rarr;2.23, &Delta;+0.0022 — matching the 444&times; replay). The &ldquo;KIVI&rdquo; that read +6.19 was a
-              3-level no-residual strawman; faithful KIVI (4-level affine per-channel over token-groups + a residual window)
-              never collapses — its 2-bit-K cost just scales monotonically with key fragility:
-            </p>
-            <ChartFrame title="Faithful KIVI cost scales with key fragility — no collapse anywhere" sub="ΔNLL vs K16/V16; viable on all four families, the 2-bit-K cost rising with the model's K-bias geometry" height={240}>
-              <BarChart data={[{m:'Mistral-7B',d:0.064},{m:'Phi-2',d:0.092},{m:'Llama-8B',d:0.188},{m:'Qwen-7B',d:0.446}]} margin={{top:8,right:16,left:0,bottom:4}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
-                <XAxis dataKey="m" stroke="#64748b" tick={{fontSize:12}}/>
-                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
-                <Tooltip contentStyle={{background:'#0b1220',border:'1px solid #374151',borderRadius:8}}/>
-                <Bar dataKey="d" fill={C.amber} radius={[4,4,0,0]}/>
-              </BarChart>
-            </ChartFrame>
-
-            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
-              <p className="text-sm text-gray-300"><strong className="text-green-400">The corrected thesis (4 families).</strong>
-              {' '}K-quant failure is <strong>geometry- and placement-controlled, not bit-width alone</strong> — a
-              <em> well-designed</em> low-bit K avoids collapse. The deployable tiers: <strong>K16/V8</strong> the lossless
-              knee (~2&times; vs K16, TP-invariant); <strong>pre-RoPE prebias-K8</strong> near-lossless at ~8-bit (the bias
-              amortizes to &lt;0.07 bits/token); <strong>K16/V2</strong> a high-capacity tier; <strong>faithful KIVI</strong>
-              a viable 2-bit-K option whose cost is predictable from the model&rsquo;s bias geometry. No strawmen, no
-              self-contradiction — every arm reproduces its published behavior.</p>
-            </div>
-            <p className="text-xs text-gray-500">
-              ctx-2048 teacher-forced NLL, faithful quantizers, measured free on a W7900. Independently re-run on a
-              separate date and W7900 &mdash; the four arms reproduce to the digit &mdash; with a second biasless family
-              added as a control (Qwen3-4B: prebias-K8 +0.0022, K16/V8 +0.0030), confirming that on a model without a
-              key bias, plain 8-bit keys are already near-lossless and the pre-RoPE split changes nothing. The three
-              extensions this footnote used to defer &mdash; ctx-8K with block-bootstrap CIs, a NIAH probe, and the
-              cache-lifecycle &mdash; are delivered in the next section.
-            </p>
-          </Section>
-
-          {/* 10c. hardening the frontier: 8K, intervals, retrieval, generation */}
-          <Section id="hardening-8k" kicker="Hardening the frontier" title="At 8K, with intervals, retrieval, and generation">
-            <p>
-              The frontier above is a single teacher-forced step at 2048 tokens. This 8K hardening pass closes the three extensions the
-              footnote named &mdash; long context, confidence intervals, and probes beyond next-token loss &mdash; across
-              five families on <strong>24 independent wikitext documents</strong> at 8192 tokens. It adds a
-              <strong> block-bootstrap CI</strong> over documents on every &Delta;NLL, a <strong>passkey / needle</strong>
-              retrieval probe, and <strong>autoregressive divergence</strong> through a real incremental cache (the
-              cache-lifecycle a one-step measurement cannot see). The result is a two-axis split the 2048 table hid.
-            </p>
-
-            <div className="overflow-x-auto my-4">
-              <table className="text-sm w-full">
-                <thead><tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-1 pr-3">arm</th>
-                  <th className="text-right px-2">&Delta;NLL@8K worst [95% CI]</th>
-                  <th className="text-right px-2">passkey</th>
-                  <th className="text-right px-2">AR-agree (worst&ndash;best)</th>
-                </tr></thead>
-                <tbody className="font-mono">
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">K16/V8</td><td className="text-right px-2">+0.0005 [&minus;0.0003, +0.0012]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.56&ndash;0.97</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-green-400">pre-RoPE prebias-K8/V8</td><td className="text-right px-2">+0.0027 [+0.0023, +0.0031]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.45&ndash;0.71</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3">K16/V2-PT+R</td><td className="text-right px-2">+0.068 [+0.062, +0.074]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2">0.17&ndash;0.59</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-3 text-amber-400">faithful KIVI (2-bit K)</td><td className="text-right px-2 text-amber-400">+0.473 [+0.452, +0.493]</td><td className="text-right px-2 text-green-400">1.00</td><td className="text-right px-2 text-amber-400">0.11&ndash;0.38</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            <p>
-              <strong className="text-gray-200">Retrieval is robust; generation is sensitive.</strong> On the three
-              models whose full-precision passkey is perfect (Llama-3.1-8B, Qwen3-4B, Mistral-7B) the planted needle is
-              still recovered <strong>1.000 of the time under every arm</strong> &mdash; even faithful KIVI, whose &Delta;NLL
-              reaches +0.20 on Llama. Yet the same KIVI cache, run through greedy generation, agrees with the
-              full-precision continuation only <strong>11&ndash;38%</strong> of the time and forks on nearly every prompt.
-              The failure mode of aggressive KV quantization is <em>generation drift, not retrieval loss</em> &mdash; the
-              cache-lifecycle amplifies the quality gap a single teacher-forced step understates, and KIVI&rsquo;s AR
-              collapse tracks its raised NLL while K16/V8&rsquo;s stays high.
-            </p>
-
-            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
-              <p className="text-sm text-gray-300"><strong className="text-green-400">K16/V8 clears all three axes.</strong>
-              {' '}Lossless &Delta;NLL at 8K with a CI that brackets zero on every long-context family, perfect needle
-              retrieval, and the highest generation agreement of any arm. Its sub-1.0 AR-agreement is dominated by benign
-              argmax tie-flips &mdash; the NLL is flat, so the differing tokens are equal-quality continuations, not
-              degradation. AR-agreement here is a strict <em>comparative</em> sensitivity probe: it is diagnostic because
-              KIVI diverges three-to-five times more, and there the NLL confirms the loss is real.</p>
-            </div>
-            <p className="text-xs text-gray-500">
-              ctx-8192, 24 wikitext-103 documents, five families, 95% block-bootstrap CI over documents (2000 resamples).
-              Worst is the max &Delta;NLL across the four long-context families; passkey and AR-agreement are read on the
-              three whose full-precision retrieval is 1.0. <strong>Phi-2 is excluded from the 8K axes</strong> &mdash; its
-              native context is 2048, so its 8K rows probe out-of-window extrapolation (passkey 0.000 even at full
-              precision); it remains valid on the ctx-2048 frontier above. Qwen2.5-7B is excluded from the passkey axis
-              only (low raw-text-probe baseline, no chat template). The one remaining refinement is the per-query streaming
-              residual window; the arms here keep a global-tail residual. The retrieval and cache-lifecycle axes connect
-              to the <a href="prefix-integrity-analysis.html" className="underline">prefix-integrity analysis</a>.
-              Measured free on an A100 (employer-billed neocloud).
+            <p className="text-sm text-gray-500">
+              The short version: <strong className="text-gray-300">K16/V8</strong> is the lossless knee; key precision is the
+              dominant lever; any sub-16-bit key collapses (worst on fragile keys); value granularity is second-order.
             </p>
           </Section>
 
@@ -1240,78 +1084,6 @@
               cache corrupts generation on the <em>first</em> token, with an overturned logit margin of 8.17) → full serving (×30).
               The fragility is real at every level, and so is the fix.
             </p>
-          </Section>
-
-          {/* 11b. TP validation */}
-          <Section id="tpvalid" kicker="Multi-GPU" title="The fix composes under tensor parallelism — K and V, validated">
-            <p>
-              7B+ models are served with <strong className="text-gray-200">tensor parallelism</strong>: the KV heads are split
-              across GPUs and each rank quantizes its own shard. For the asymmetric K16/V8 recipe to ship, it has to survive
-              that. We validated it end-to-end through a modified vLLM&nbsp;v1 + FlashInfer stack on 2&times;H100, comparing
-              TP=1 vs TP=2 on Qwen2.5-7B.
-            </p>
-
-            <h4 className="text-gray-200 font-semibold mt-5 mb-1">Quality composes: zero TP interaction</h4>
-            <p>
-              Teacher-forced NLL. K16/V8 is bit-identical to BF16 at both TP=1 and TP=2; the difference-in-differences
-              interaction is <strong className="text-gray-200">exactly 0</strong> (CI95 [0,0]). Symmetric FP8 collapses by
-              +1.585 / +1.586 nats — and that collapse is itself ~TP-invariant.
-            </p>
-            <div className="overflow-x-auto my-4">
-              <table className="text-sm w-full">
-                <thead><tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-1 pr-4">config</th><th className="text-right px-3">teacher-forced NLL</th><th className="text-right px-3">&Delta; vs BF16</th>
-                </tr></thead>
-                <tbody className="font-mono">
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-4">TP1 BF16</td><td className="text-right px-3">2.67096</td><td className="text-right px-3 text-gray-500">—</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-green-400">TP1 K16/V8</td><td className="text-right px-3">2.67096</td><td className="text-right px-3 text-green-400">0.00000</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-red-400">TP1 symFP8</td><td className="text-right px-3">4.25607</td><td className="text-right px-3 text-red-400">+1.585</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-green-400">TP2 K16/V8</td><td className="text-right px-3">2.67102</td><td className="text-right px-3 text-green-400">0.00000</td></tr>
-                  <tr className="border-t border-gray-800"><td className="py-1 pr-4 text-red-400">TP2 symFP8</td><td className="text-right px-3">4.25745</td><td className="text-right px-3 text-red-400">+1.586</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            <h4 className="text-gray-200 font-semibold mt-5 mb-1">The V side, measured in decode</h4>
-            <p>
-              Prefill NLL is K-precision-sensitive; FP8-V only surfaces when <em>decode</em> reads the fp8 V cache. In
-              autoregressive decode, K16/V8 reaches decode-NLL identical to BF16 with <strong className="text-gray-200">100%
-              token agreement</strong> at both TP=1 and TP=2 — FP8-V is lossless in decode and composes under TP as well.
-              Both halves of the recipe are rigorous, not just the keys (symFP8 decode degrades +0.184 / +0.171).
-            </p>
-
-            <h4 className="text-gray-200 font-semibold mt-5 mb-1">The causal head-permutation: fragility is head-dominated</h4>
-            <p>
-              Qwen2.5-7B&rsquo;s four KV heads carry wildly different K-bias magnitudes. Head&nbsp;1 (|bias|&nbsp;=&nbsp;414) is
-              the single catastrophic head — exactly the head-level fragility the atlas&rsquo;s bias-magnitude mechanism predicts.
-            </p>
-            <ChartFrame title="Per-KV-head max|K-bias| (Qwen2.5-7B)" sub="head 1 is the 414-magnitude catastrophic head; the others are an order of magnitude smaller" height={240}>
-              <BarChart data={[{h:'KV0',bias:171},{h:'KV1',bias:414},{h:'KV2',bias:108},{h:'KV3',bias:83.5}]} margin={{top:8,right:16,left:0,bottom:4}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
-                <XAxis dataKey="h" stroke="#64748b" tick={{fontSize:12}}/>
-                <YAxis stroke="#64748b" tick={{fontSize:12}}/>
-                <Tooltip contentStyle={{background:'#0b1220',border:'1px solid #374151',borderRadius:8}}/>
-                <Bar dataKey="bias" radius={[4,4,0,0]}>
-                  {[171,414,108,83.5].map((v,i)=><Cell key={i} fill={v>300?C.red:C.slate}/>)}
-                </Bar>
-              </BarChart>
-            </ChartFrame>
-            <p>
-              We built a <em>function-preserving</em> balanced permutation that moves the 414 head onto a different rank
-              (permuting the KV heads, the matching Q-group, and the k/v/q/o projection weights; BF16 output invariant to the
-              &minus;0.0005 GEMM-reorder floor). The result is decisive: <strong className="text-gray-200">K16/V8 is exactly
-              assignment-invariant</strong> (perm &minus; default = 0.0), while symFP8&rsquo;s collapse is
-              <strong className="text-gray-200"> grouping-insensitive</strong> (1.586 clustered vs 1.582 balanced). So
-              Qwen&rsquo;s FP8-K fragility <em>cannot</em> be fixed by head-sharding or scale-domain engineering — only by
-              protecting the keys, which K16/V8 does TP- and assignment-invariantly.
-            </p>
-            <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
-              <p className="text-sm text-gray-300">
-                <strong className="text-green-400">Deployable bottom line.</strong> Asymmetric K16/V8 is the answer the whole
-                atlas points to: lossless (K and V), at the byte knee (~2&times; vs K16), and invariant to tensor parallelism
-                and to head assignment. The failure is real all the way to production; so is the fix.
-              </p>
-            </div>
           </Section>
 
           {/* 12. Preflight */}
