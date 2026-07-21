@@ -3,12 +3,14 @@
 This page is the standing summary of knlp's work on the linear-attention /
 bounded-memory family of sequence mixers. A dense Transformer keeps a key-value
 cache that grows with context; the models here replace it with a fixed-size
-recurrent state that is constant in sequence length. We reimplemented three of
-them from scratch in one matched harness — DeltaNet, Gated DeltaNet, and Trellis
-— to ask whether Trellis's *nonlinear* memory writer beats its *linear* cousins
-at matched size. The work is preliminary and still in progress, aimed at matching
-the paper's original intent, so what follows is where the line stands today rather
-than a settled verdict.
+recurrent state that is constant in sequence length. We implemented Trellis in one
+matched harness and compared it against the FLA reference DeltaNet and Gated
+DeltaNet layers — to ask whether Trellis's *nonlinear* memory writer beats its
+*linear* cousins at matched size. The line is now closed as a spend decision
+(2026-07-05): the top-line verdict is settled — Gated DeltaNet is the matched-state
+quality leader and Trellis loses to both linear cousins at reachable scale — while
+one clean measurement (the isolated write cost, below) remains open. The paper's
+125M/790M scale claims are parked, not disproven.
 
 The short version, stated up front: at the scale we can afford to train (≈4.7M
 non-embedding parameters), our Trellis *currently* loses to both DeltaNet and
@@ -25,7 +27,14 @@ the stale-chunk gradient approximation (exact gradients don't close it), and *no
 the inner step size γ (sweeping it doesn't either) — it was the **missing paper
 shell fidelity** (the final value-readout activation + output block), which once
 restored narrows the gap to **~1.3–1.4×** (ln_silu+shell 182.8 vs identity 127.9),
-robust across budgets. So the honest statement is: with fidelity restored, the
+robust across budgets. A later provenance audit (2026-07-20) found a second
+confound the shell-fidelity fix did not address: our harness ties the write
+nonlinearity `φ` and the inter-pass map `f` to one activation field, so the
+identity arm linearized *both* — the control is a joint `φ/f` linearization, not
+write-only. The paper's own clean write-only ablation (`φ`=identity with `f` held
+at LN-SiLU) puts the write's isolated cost at 11.65 vs 10.87 = **0.78 ppl**; so
+the clean write-only magnitude is unresolved pending a rerun that holds `f` fixed.
+So the honest statement is: with fidelity restored, the
 nonlinear write is **modestly behind** the linear delta rule at 5M, consistent with
 below-crossover (the paper's nonlinear win is 125M+). One fidelity gap stays open —
 the compression φ is a guess (the paper specifies `f` but not φ) — and the decisive
@@ -250,14 +259,14 @@ Verified against the arXiv HTML (arXiv:2512.23852):
 
 - **790M params / 30B tokens (C4), Table 1.** Trellis **20.28** (best) <
   Gated DeltaNet 21.40 < Transformer++ 25.89 < TTT 27.05 < Mamba2 28.91.
-- **125M params (The Pile), Table 2 ablation.** Trellis **10.87** < TTT 11.44 <
-  DeltaNet 11.58. There is no Gated DeltaNet row in *this ablation table* — but a
-  ChatGPT-Pro review reports Gated DeltaNet **does** appear at 125M elsewhere
-  (reportedly Table 4 at 11.31, vs Trellis 10.87 / DeltaNet 11.58), so the earlier
-  "Gated DeltaNet only at 790M" reading was wrong and needs reconciling against the
-  arXiv HTML. Replacing the
-  nonlinear `φ` with the identity (reducing Trellis to the delta rule) gives
-  11.65 — so the nonlinear write is worth ~0.78 ppl here. Removing the forget
+- **125M params (The Pile).** Two distinct tables. The *component ablation*
+  (Table 2) has no Gated DeltaNet row: Trellis **10.87** < TTT 11.44 < DeltaNet
+  11.58, and replacing the nonlinear `φ` with the identity while holding `f` at
+  LN-SiLU gives 11.65 — the paper's clean write-only cost, ~0.78 ppl. The *full
+  comparison* (Table 4, Pile-2k) **does** include Gated DeltaNet: Trellis 10.87
+  vs Gated DeltaNet **11.31** vs DeltaNet 11.58. Verified against the arXiv PDF
+  and HTML (2026-07-20). An earlier version of this doc conflated the two tables
+  and wrongly said Gated DeltaNet is compared only at 790M. Removing the forget
   gate gives 11.28; non-chunked (`b=1`) gives 10.75, slightly *better* than the
   chunked 10.87.
 - **1B params, RULER / S-NIAH recall, Table 3.** Trellis 79.8 > Gated DeltaNet
@@ -280,8 +289,10 @@ and sweep the knobs it leaves unstated, before paying for anything at scale. The
 ablations to run, roughly in order of expected leverage:
 
 - Turn the paper-faithful defaults on: the final value-readout activation
-  `y = φ(Mᵀr)`, the `PostNorm → GeLU → projection` output block, and the softmax
-  write target `α = Softmax(Wₐ x)`.
+  `y = φ(Mᵀr)` and the `PostNorm → GeLU → projection` output block. (The Trellis
+  write target is a linear projection `α = Wₐ x` per the method; the
+  `Softmax(Wₐ x)` target belongs to the paper's ABC discussion, not Trellis, so it
+  is *not* a paper-faithful Trellis default.)
 - Resolve the `f` / `φ` distinction. The paper defines `f` as an L2-normalized
   SiLU in the method but calls the baseline `f` "LN-SiLU" in the ablation, and it
   never cleanly specifies `φ`. Screen `φ` ∈ {LN-SiLU, L2-SiLU, SiLU, identity},

@@ -480,12 +480,12 @@
             <span class="text-xs bg-violet-900 text-violet-300 px-2 py-1 rounded ml-3 whitespace-nowrap">DeltaNet &middot; Trellis</span>
           </div>
           <p class="text-gray-500 text-sm">
-            A from-scratch, matched-harness study of the bounded-memory family &mdash; DeltaNet, Gated
-            DeltaNet, and Trellis (arXiv:2512.23852)
+            A matched-harness study of the bounded-memory family &mdash; Trellis vs the fla reference DeltaNet and Gated
+            DeltaNet (arXiv:2512.23852)
             &mdash; whose fixed-size recurrent state replaces a growing KV cache. A fused Triton kernel closes the
             throughput gap <strong class="text-gray-300">6.4&times;</strong>, and a matched run puts our Trellis
-            cleanly between dense and its linear cousins. Preliminary work, still being brought into line with the
-            paper&rsquo;s original intent &mdash; Gated DeltaNet is the standout at the scale we can train.
+            cleanly between dense and its linear cousins. Line closed &mdash; Gated DeltaNet is the standout at the scale
+            we can train; the paper&rsquo;s 790M scale claim is parked, not disproven.
           </p>
           <div class="mt-3 flex gap-3 text-xs">
             <span class="text-violet-400">9 interactive panels</span>
