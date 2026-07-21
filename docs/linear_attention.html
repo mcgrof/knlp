@@ -516,20 +516,25 @@
           </Section>
 
           {/* 8b. DeltaProduct on language loss */}
-          <Section id="deltaproduct" kicker="The other expressivity bet" title="GatedDeltaProduct: wins exact overwrite, loses language loss">
+          <Section id="deltaproduct" kicker="The other expressivity bet" title="GatedDeltaProduct-2: aces overwrite, trails GDN on LM at pilot scale">
             <p>
               A different way to add power to a delta rule is <strong>GatedDeltaProduct</strong>: several Householder
               rotations per step &mdash; a more expressive but still state-linear (affine) transition &mdash; which give
-              exact multi-step overwrite, delete-then-write in one token. On a
-              synthetic overwrite/binding grid it solves the task near-perfectly (1.000) &mdash; the task its extra
-              rotations are built for &mdash; but Gated DeltaNet essentially ties it there (0.996); the real divide is
-              that both solve it while Trellis and the nonlinear-write variants stay near chance. The question is whether
-              the exact-overwrite machinery transfers to real language modeling. On a matched C4-en run &mdash; 46.7M
-              parameters, <span className="kbd">d512/L10</span>, sequence 2048, 20M tokens, three seeds, fla reference
-              layers on one packed stream &mdash; it does not.
+              exact multi-step overwrite, delete-then-write in one token. We test the paper&rsquo;s exact headline variant,
+              <strong> Gated DeltaProduct-2</strong> (nh2, negative eigenvalues, forget gate on &mdash; the fla reference
+              layer). On a synthetic overwrite/binding grid it solves the task near-perfectly (1.000) &mdash; the task its
+              extra rotations are built for &mdash; but Gated DeltaNet essentially ties it there (0.996), and both solve it
+              while Trellis and the nonlinear-write variants stay near chance. This is directional evidence of strong
+              synthetic overwrite behaviour, not a replication of the paper&rsquo;s permutation-group state-tracking. The
+              question is whether the exact-overwrite machinery transfers to real language modeling. On a
+              <span className="kbd"> d512/L10</span> pilot &mdash; sequence 2048, 20M tokens, three seeds, fla reference
+              layers on one packed stream &mdash; not at this scale: Gated DeltaNet wins on C4 loss. Note this is
+              <em> width-matched, not parameter-matched</em> &mdash; DeltaProduct-2 carries <strong>49.9M</strong> params
+              to GDN&rsquo;s <strong>44.7M</strong> (+12%) and does two Householder micro-steps per token (~2&times; the
+              recurrence work), so it was given <em>more</em> compute and still lost.
             </p>
-            <ChartFrame title="Matched C4-en family run — val PPL (lower better), 46.7M / 20M tokens / 3 seeds"
-              sub="Gated DeltaNet leads; GatedDeltaProduct's exact-overwrite rotations do not carry to LM loss. Green = leader, violet = DeltaProduct, red = dense.">
+            <ChartFrame title="C4-en pilot — val PPL (lower better), d512/L10, 20M tokens, 3 seeds"
+              sub="At this pilot scale Gated DeltaNet leads on C4 loss; DeltaProduct-2 got more params + compute and still trailed. Green = leader, violet = DeltaProduct-2, red = dense.">
               <BarChart data={DPROD} margin={{top:8, right:16, left:0, bottom:60}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
                 <XAxis dataKey="short" stroke="#94a3b8" angle={-25} textAnchor="end" height={80} interval={0} tick={{fontSize:11}}/>
@@ -541,14 +546,17 @@
               </BarChart>
             </ChartFrame>
             <p>
-              Gated DeltaNet wins at <strong>215.7</strong>; GatedDeltaProduct trails at <strong>224.4</strong>, a tight
-              near-constant ~0.04 nats behind at every token milestone (5/10/15/20M), with no sign of an imminent
-              crossing through 20M. The
-              pattern rhymes with Trellis: an architecture that adds expressivity to the write &mdash; extra rotations
-              here, a nonlinear gain there &mdash; wins a targeted synthetic task but loses to plain soft gated decay on
-              real language loss. Soft, well-conditioned forgetting generalizes better than either kind of extra
-              machinery. Gated DeltaNet is the quality leader across every comparison we ran &mdash; the state-matched
-              46.7M and smd runs, and the param-matched FAIR run alike.
+              At the 20M-token endpoint Gated DeltaNet reaches <strong>215.7</strong> vs Gated DeltaProduct-2&rsquo;s
+              <strong> 224.4</strong> &mdash; about <strong>0.039 nats/token</strong> (~4% relative), reproducible across
+              three non-overlapping seed sets. That is a configuration-specific <em>early-training</em> result (0.43
+              tokens per parameter), not a converged or best-tuned verdict. Crucially it does <em>not</em> refute the
+              paper: their 35B-token FineWeb comparison used negative eigenvalues for <em>both</em> models and put a 393M
+              Gated DeltaProduct-2 against a 340M Gated DeltaNet at ~0.033 nats/token &mdash; a similar magnitude to ours
+              but opposite sign, un-matched on params and FLOPs, and shrinking to just 0.14 ppl under the one
+              parameter-matched control they run. So DeltaProduct&rsquo;s LM edge is real but thin and compute-favored,
+              and at our pilot scale it has not appeared. At this scale, for this recipe, Gated DeltaNet is the quality
+              leader across every comparison we ran &mdash; the state-matched d512/L10 and smd runs and the param-matched
+              FAIR run alike.
             </p>
           </Section>
 
@@ -559,9 +567,11 @@
               is the keeper. Within the family, at every scale we could afford, <strong>Gated DeltaNet is the
               matched-state quality leader</strong>: simpler, lower-variance, exact-chunkable, faster, and better on
               loss. The two ways of adding expressivity to the write that we studied &mdash; Trellis&rsquo;s nonlinear
-              gain and GatedDeltaProduct&rsquo;s extra rotations &mdash; each win a targeted task and each lose to plain
-              soft gated decay on real language-model loss. Trellis carries the extra burden of forfeiting the exact
-              training kernel on top of that. We are closing this as an active line.
+              gain and GatedDeltaProduct&rsquo;s extra rotations &mdash; each win a targeted task; at the pilot scale we
+              can afford both trail plain soft gated decay on real C4 loss (DeltaProduct-2 only by a thin ~4%, and its LM
+              advantage over GDN is a modest, compute-favored effect the paper reports only at 340M/35B tokens). Trellis
+              carries the extra burden of forfeiting the standard exact training kernel on top of that. We are closing
+              this as an active line.
             </p>
             <div className="grid md:grid-cols-2 gap-4 my-2">
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
@@ -570,7 +580,7 @@
                   <li>Bounded memory beat matched dense at every PG19 length we tested &mdash; the structural win the family exists for.</li>
                   <li>Gated DeltaNet as the trusted matched-state baseline for downstream KV / decode work.</li>
                   <li>The fused Triton kernel and an fla-mapped fast path &mdash; reusable regardless of Trellis.</li>
-                  <li>The negatives as knowledge: extra write expressivity (nonlinear gain, exact rotations) does not buy language-model quality at reachable scale.</li>
+                  <li>The negatives as knowledge: at the pilot scale we can afford, extra write expressivity (nonlinear gain, exact rotations) buys no C4-loss win over plain gated decay; DeltaProduct-2&rsquo;s modest LM edge is a 340M/35B-token, compute-favored effect.</li>
                 </ul>
               </div>
               <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
@@ -608,7 +618,7 @@
               <a href="index.html" className="hover:text-gray-400">knlp</a>
             </p>
             <p>Line closed &mdash; Gated DeltaNet is the matched-state quality leader; the paper&rsquo;s 790M scale claim is parked, not disproven.</p>
-            <p className="mt-2 text-xs">Last claim audit: 2026-07-20 &mdash; retired the &ldquo;only at 790M&rdquo; fact, the clean write-only causal read of the ~2&times; gap, and the &ldquo;theorem rules out&rdquo; / &ldquo;no-parallel-scan floor&rdquo; prose. Ledger: <a href="https://github.com/mcgrof/knlp/blob/main/reports/trellis_claim_audit.md" className="hover:text-gray-400">reports/trellis_claim_audit.md</a>.</p>
+            <p className="mt-2 text-xs">Last claim audit: 2026-07-21 &mdash; retired the &ldquo;only at 790M&rdquo; fact and the clean write-only causal read of the ~2&times; gap; softened the &ldquo;theorem rules out&rdquo; / &ldquo;no-parallel-scan floor&rdquo; prose; scoped the GatedDeltaProduct-2 LM result to pilot scale (nats/relative, real per-arm params; the paper&rsquo;s own comparison is un-matched at 393M vs 340M). Ledger: <a href="https://github.com/mcgrof/knlp/blob/main/reports/trellis_claim_audit.md" className="hover:text-gray-400">reports/trellis_claim_audit.md</a>.</p>
           </footer>
         </div>
       );
