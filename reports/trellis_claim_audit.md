@@ -42,6 +42,25 @@ chunk). Until then, the write's isolated cost is bounded above by the paper's ow
 ## What is untouched and solid
 
 The fair param-matched A100 run (Trellis 152.54 vs GDN 78.49 vs DeltaNet 89.77 vs dense
-224.89), the structural point that Trellis loses the *standard* WY/UT transform, the fused
-Triton kernel and its throughput numbers, and the GatedDeltaProduct LM-loss result
-(GDN 215.72 < DeltaProduct 224.39) all stand as stated.
+224.89), the structural point that Trellis loses the *standard* WY/UT transform, and the
+fused Triton kernel and its throughput numbers all stand as stated.
+
+## Addendum 2026-07-21: GatedDeltaProduct-2 LM comparison scoped
+
+An external review (arXiv:2502.10297, DeltaProduct) prompted a fairness/faithfulness
+check of the "GatedDeltaProduct wins the binding grid but loses to GDN on C4 loss" claim
+(GDN 215.72 vs GatedDeltaProduct-2 224.39, 3 seeds).
+
+| # | Public claim | Status | Evidence / correction |
+|---|---|---|---|
+| 12 | "GatedDeltaProduct's extra-overwrite rotations do not carry to LM loss" (architecture-wide) | **supported but overbroad** | Faithfulness confirmed: the arm is the fla reference `GatedDeltaProduct`, nh2, `allow_neg_eigval=True`, `expand_v=1.0` (matches the paper repo), and — verified — `use_forget_gate=True` via the FLA v0.4.2 layer default (we build the layer directly, not the HF-config path that defaults it off), so it is the paper's exact Gated DeltaProduct-2[-1,1]. But our run is a d512/L10, 20M-token pilot (0.43 tokens/param) vs the paper's 340-393M / 35B tokens (~89-103 tokens/param). The comparison is width-matched, **not** parameter- or FLOP-matched: DeltaProduct-2 carries 49.9M params vs GDN 44.7M (+12%) and ~2x the recurrence work (two Householder micro-steps/token), so it got *more* compute and still lost by ~0.039 nats/token (~4%). Scoped to an early-training pilot result; report nats/relative, not raw PPL. |
+| 13 | Implicit "the paper's DeltaProduct>GDN LM claim is the strong one" | **corrected** | The paper's headline gated LM pair is **neither parameter- nor FLOP-matched** (393M GatedDeltaProduct-2 vs 340M GDN, same 8 heads, ~2x recurrence FLOPs). Its only parameter-matched control (ungated, DeltaNet-12h 392M vs DeltaProduct-2 392M) shrinks the win to **0.14 ppl**; no iso-FLOP comparison exists. So the paper's LM edge (~0.85 ppl / ~0.033 nats at 340M/35B) is real but thin and compute-favored. Our pilot result neither tests nor refutes it. |
+
+Two of my own review claims were retracted after the external red-team: the `[0,1]` vs
+`[-1,1]` eigenvalue-range asymmetry is a confound of **unknown** LM sign (not "generous to
+DeltaProduct"), and "scale caused the reversal" is an unverified story, not a finding — the
+honest statement is "at this pilot scale GDN wins; the paper's claim is untested." The
+binding-grid win is directional evidence of synthetic overwrite behaviour, not a
+replication of the paper's permutation-group state-tracking. Open items if the line reopens:
+a GDN[-1,1] arm (to match the paper's config) and disclosure of the optimizer-step / warmup
+schedule (a 512-step warmup at 20M tokens can dominate).
