@@ -38,6 +38,7 @@
       - autoconf
       - automake
       - libtool
+      - libncurses-dev
       - bsdextrautils
     state: present
     update_cache: yes
