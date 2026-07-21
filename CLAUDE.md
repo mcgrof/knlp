@@ -53,6 +53,19 @@ Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
   that is the sole place attribution belongs. Extended collaboration,
   review, or plan-grading material is kept in `/data/results-archive`,
   not in the knlp commit log.
+- **PUBLICLY SELF-CONTAINED — no internal codenames**: knlp is public and
+  results-archive is private, so a commit message must make sense to a
+  reader who has never seen results-archive. Describe the actual change
+  or test in plain public terms. NEVER put internal plan names, phase
+  labels (`P0`/`P1`/…), run-directory or campaign codenames, key-results
+  paths, or in-house shorthand (`smd`, the `FAIR` run, plan IDs) in the
+  log — those live only in results-archive; rename each to what it
+  actually is. Expand any acronym, dataset, or library name a general
+  reader would not instantly recognize, on first use — write "the C4
+  (Colossal Clean Crawled Corpus) dataset", not a bare "C4". Public
+  dataset/library/paper names are fine once expanded; internal shorthand
+  is not. Before committing, reread the message as an outsider: if any
+  token would send them to results-archive to decode it, replace it.
 
 **Enforcement.** knlp ships an MACP-lite `commit-msg` validator at
 `scripts/commit-msg-hook` (the lighter profile of the agents protocol: it
