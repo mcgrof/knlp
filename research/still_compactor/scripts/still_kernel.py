@@ -246,7 +246,7 @@ if __name__ == "__main__":
         print(f"  T={T:>6}: S0={f(res['S0'])}  S1(SDPA)={f(res['S1'])}  "
               f"S2(fp32-dot)={f(res['S2'])}  S3(native-bf16)={f(res['S3'])}")
 
-    print("\nM3 VALIDATED: streaming softmax bit-exact to reference in fp32, "
+    print("\nKERNEL VALIDATED: streaming softmax bit-exact to reference in fp32, "
           "as accurate as reference at bf16; no t x T workspace (flat 2 MB vs "
           "up to 2560 MB); S3 native-bf16 beats SDPA (S1) and is ~4x faster "
           "than the fp32-dot S2; Triton path proven to execute. Remaining S3 "
