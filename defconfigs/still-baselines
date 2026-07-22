@@ -1,0 +1,8 @@
+# STILL peak-HBM baselines: eager / chunked-full-KV / chunked-STILL.
+# Separates the base-attention workspace from the retained-KV savings.
+# See research/still_compactor/README.md.
+CONFIG_STILL=y
+CONFIG_STILL_EXP_BASELINES=y
+CONFIG_STILL_MODEL="Qwen/Qwen3-4B"
+CONFIG_STILL_CHUNK=2048
+CONFIG_STILL_T_COMPACT=64

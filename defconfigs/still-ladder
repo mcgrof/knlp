@@ -1,0 +1,13 @@
+# STILL generalization ladder: train the compactor, held-out eval.
+# 2000 fresh procedural contexts, 512 balanced held-out, 4x compression.
+# See research/still_compactor/README.md.
+CONFIG_STILL=y
+CONFIG_STILL_EXP_LADDER=y
+CONFIG_STILL_MODEL="Qwen/Qwen3-4B"
+CONFIG_STILL_CTX_TOKENS=512
+CONFIG_STILL_T_COMPACT=128
+CONFIG_STILL_N_TRAIN=2000
+CONFIG_STILL_N_EVAL=512
+CONFIG_STILL_EPOCHS=4
+CONFIG_STILL_BATCH=16
+CONFIG_STILL_SEED=0

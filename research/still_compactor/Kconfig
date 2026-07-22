@@ -1,0 +1,132 @@
+# STILL runtime KV-cache compactor harness.
+# Sourced from the top-level knlp Kconfig. Every experimental knob lives here so
+# nothing is buried in Python constants; the driver reads a JSON generated from
+# .config (gen_config.py) and dispatches to the selected experiment.
+#
+# STILL (arXiv:2606.07878) is a runtime KV-cache compactor: a small per-layer
+# Perceiver module that, after a prefill, reads the full source KV and writes a
+# much smaller compact KV -- for each new context at inference. This harness
+# provides a faithful PyTorch reference compactor, a fused streaming Triton
+# kernel, the memory/concurrency/IO accounting, and a generalization-training
+# ladder, all on one GPU. Pure PyTorch + Triton + transformers; no external
+# package bootstrap. Validated on an AMD W7900 (gfx1100, ROCm 6.4).
+
+menu "STILL runtime KV-cache compactor"
+
+config STILL
+	bool "Enable the STILL runtime KV-cache compactor harness"
+	default n
+	help
+	  Master switch. Off by default so it never perturbs existing knlp
+	  defconfigs or `make check`. When on, `make defconfig-still-*` selects
+	  an experiment and its knobs; the driver runs it on a GPU host.
+
+choice
+	prompt "Experiment"
+	depends on STILL
+	default STILL_EXP_KERNEL
+	help
+	  Which STILL experiment to run.
+
+config STILL_EXP_KERNEL
+	bool "Fused Triton kernel (correctness + HBM workspace + latency)"
+	help
+	  Validate the streaming compactor-attention kernel against the
+	  materialized reference (fp32 exactness, bf16 accuracy), prove the
+	  quadratic t x T workspace is eliminated, and time it vs SDPA.
+
+config STILL_EXP_LEDGER
+	bool "HBM ledger: post-prefill-replace vs chunked-streaming"
+	help
+	  Byte-accurate peak-HBM microbenchmark over context length and
+	  concurrency, contrasting the two construction schedules.
+
+config STILL_EXP_BASELINES
+	bool "Peak-HBM baselines: eager / chunked-full-KV / chunked-STILL"
+	help
+	  Separate the eager base-attention workspace from the retained-KV
+	  savings by comparing against a chunked full-KV baseline.
+
+config STILL_EXP_CHUNKED
+	bool "Chunked-streaming construction on the real model"
+	help
+	  Build a context chunk-by-chunk, compacting and freeing each chunk, and
+	  measure that peak HBM stays bounded vs a full prefill.
+
+config STILL_EXP_CONCURRENCY
+	bool "Contended-memory concurrency projection"
+	help
+	  Fit and validate peak = weights + C*compact + transient, and project
+	  the concurrent-request ceiling under serialized vs parallel compaction.
+
+config STILL_EXP_IO
+	bool "I/O, query-reuse break-even, and SSD-offload projection"
+	help
+	  HBM/PCIe/NVMe byte accounting, the reuse break-even, and the storage
+	  tiering go/no-go.
+
+config STILL_EXP_LADDER
+	bool "Generalization ladder (train the compactor, held-out eval)"
+	help
+	  Train the compactor with forward-KL distillation (base frozen) on fresh
+	  procedural contexts and evaluate held-out generalization -- the test of
+	  whether the compactor learns an amortized rule rather than memorizing.
+
+endchoice
+
+menu "Model and shapes"
+	depends on STILL
+
+config STILL_MODEL
+	string "Base model (frozen; only the compactor trains)"
+	default "Qwen/Qwen3-4B"
+
+config STILL_CTX_TOKENS
+	int "Context length in tokens (ladder / training)"
+	default 512
+	help
+	  Source context length for the generalization ladder. Compression is
+	  CTX_TOKENS / T_COMPACT.
+
+config STILL_CHUNK
+	int "Streaming chunk size (systems experiments)"
+	default 2048
+	help
+	  Source residency under chunked streaming is bounded by this, so it is
+	  the main knob on the transient working set.
+
+config STILL_T_COMPACT
+	int "Compact length (per chunk for systems, per context for the ladder)"
+	default 64
+
+endmenu
+
+menu "Generalization ladder (training)"
+	depends on STILL && STILL_EXP_LADDER
+
+config STILL_N_TRAIN
+	int "Number of fresh procedural training contexts"
+	default 2000
+	help
+	  Thousands of unique contexts, never a small recycled set -- recycling a
+	  handful measures memorization, not an amortized compaction rule.
+
+config STILL_N_EVAL
+	int "Number of balanced held-out eval contexts"
+	default 512
+
+config STILL_EPOCHS
+	int "Training epochs"
+	default 4
+
+config STILL_BATCH
+	int "Effective batch (gradient accumulation)"
+	default 16
+
+config STILL_SEED
+	int "Random seed"
+	default 0
+
+endmenu
+
+endmenu
