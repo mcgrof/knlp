@@ -28,6 +28,32 @@ def rmsnorm(x, eps=1e-6):
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
+def cache_to_legacy(cache):
+    """Read per-layer (K, V) from a HF cache, transformers 4.x and 5.x.
+
+    4.x exposes to_legacy_cache(); 5.x dropped it and stores per-layer tensors
+    on cache.layers[i].keys / .values."""
+    if hasattr(cache, "to_legacy_cache"):
+        return cache.to_legacy_cache()
+    return tuple((layer.keys, layer.values) for layer in cache.layers)
+
+
+def legacy_to_cache(legacy):
+    """Build a DynamicCache from per-layer (K, V), transformers 4.x and 5.x."""
+    from transformers import DynamicCache
+    legacy = tuple(legacy)
+    from_legacy = getattr(DynamicCache, "from_legacy_cache", None)
+    if from_legacy is not None:
+        try:
+            return from_legacy(legacy)
+        except Exception:
+            pass
+    dc = DynamicCache()                       # 5.x: populate lazily via update()
+    for i, (k, v) in enumerate(legacy):
+        dc.update(k, v, i)
+    return dc
+
+
 def _rope_tables(positions, dim, theta, device, dtype):
     inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device,
                                              dtype=torch.float32) / dim))
