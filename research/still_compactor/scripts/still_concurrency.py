@@ -23,7 +23,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from still_compactor import (STILLCompactorLayer, apply_rope,
-                             cache_to_legacy, legacy_to_cache)  # noqa: E402
+                             cache_to_legacy, legacy_to_cache,
+                             rope_theta)  # noqa: E402
 
 GiB = 2 ** 30
 BYTES_PER_TOKEN = 36 * 8 * 128 * 2 * 2            # Qwen3-4B, K+V bf16, all layers
@@ -82,7 +83,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model, dtype=torch.bfloat16, attn_implementation="eager").to(dev).eval()
     cfg = model.config
-    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, float(cfg.rope_theta)
+    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, rope_theta(cfg)
     W = live(di)
     print(f"{args.model}: weights W={W:.2f} GiB")
 

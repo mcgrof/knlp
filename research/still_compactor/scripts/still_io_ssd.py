@@ -13,7 +13,8 @@ from transformers import AutoModelForCausalLM, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from still_compactor import (STILLCompactorLayer, apply_rope,
-                             cache_to_legacy, legacy_to_cache)  # noqa: E402
+                             cache_to_legacy, legacy_to_cache,
+                             rope_theta)  # noqa: E402
 
 GiB = 2 ** 30
 MiB = 2 ** 20
@@ -73,7 +74,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model, dtype=torch.bfloat16, attn_implementation="eager").to(dev).eval()
     cfg = model.config
-    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, float(cfg.rope_theta)
+    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, rope_theta(cfg)
     comp = STILLCompactorLayer(H, d, t=64, base_theta=theta).to(dev, torch.bfloat16)
 
     # --- measured construction + decode times ---

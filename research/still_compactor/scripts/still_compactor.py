@@ -28,6 +28,18 @@ def rmsnorm(x, eps=1e-6):
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
+def rope_theta(cfg):
+    """rope_theta across transformers 4.x (attr) and 5.x (rope_parameters)."""
+    t = getattr(cfg, "rope_theta", None)
+    if t is not None:
+        return float(t)
+    for key in ("rope_parameters", "rope_scaling"):
+        rp = getattr(cfg, key, None)
+        if isinstance(rp, dict) and rp.get("rope_theta") is not None:
+            return float(rp["rope_theta"])
+    return 1e6
+
+
 def cache_to_legacy(cache):
     """Read per-layer (K, V) from a HF cache, transformers 4.x and 5.x.
 
