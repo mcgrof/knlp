@@ -20,7 +20,8 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from still_compactor import STILLCompactorLayer, apply_rope  # noqa: E402
+from still_compactor import (STILLCompactorLayer, apply_rope,
+                             cache_to_legacy, legacy_to_cache)  # noqa: E402
 
 ANIMALS = ("owl fox cat dog bat elk ram jay cod hen ape eel yak boa asp gnu koi "
            "pug sow wren crow moth wolf lynx hare seal toad newt crab moose "
@@ -83,7 +84,7 @@ def teacher_targets(model, tok, it, dev, topk=200):
 
 def compact_prefix(comp, model, ctx_ids, theta, dev, grad):
     with torch.no_grad():
-        leg = model(ctx_ids.to(dev), use_cache=True).past_key_values.to_legacy_cache()
+        leg = model(ctx_ids.to(dev), use_cache=cache_to_legacy(True).past_key_values)
     sp = torch.arange(ctx_ids.shape[1], device=dev)
     ctxm = torch.enable_grad if grad else torch.no_grad
     out = []
@@ -96,7 +97,7 @@ def compact_prefix(comp, model, ctx_ids, theta, dev, grad):
 
 
 def student_cont_logits(model, cl, ctxlen, q_ids, cont_ids, dev):
-    cache = DynamicCache.from_legacy_cache(tuple(cl))
+    cache = legacy_to_cache(tuple(cl))
     phys = cache.get_seq_length()
     seq = torch.cat([q_ids.to(dev), cont_ids.to(dev)], 1)
     n = seq.shape[1]
@@ -166,7 +167,7 @@ def main():
     @torch.no_grad()
     def letters_still(h):
         cl = compact_prefix(comp, model, h["ctx_ids"], theta, dev, False)
-        cache = DynamicCache.from_legacy_cache(tuple(cl))
+        cache = legacy_to_cache(tuple(cl))
         phys = cache.get_seq_length()
         qn = h["q_ids"].shape[1]
         return model(h["q_ids"].to(dev), past_key_values=cache, use_cache=True,

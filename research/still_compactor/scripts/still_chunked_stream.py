@@ -26,7 +26,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from still_compactor import STILLCompactorLayer, apply_rope  # noqa: E402
+from still_compactor import (STILLCompactorLayer, apply_rope,
+                             cache_to_legacy, legacy_to_cache)  # noqa: E402
 
 GiB = 2 ** 30
 
@@ -88,7 +89,7 @@ def main():
         with torch.no_grad():
             out = model(chunk_ids, past_key_values=compact_cache, use_cache=True,
                         position_ids=pos_ids, cache_position=cache_pos)
-        full = out.past_key_values.to_legacy_cache()
+        full = cache_to_legacy(out.past_key_values)
         src_pos = torch.arange(s, e, device=dev)
         new_compact = []
         with torch.no_grad():
@@ -105,7 +106,7 @@ def main():
                 prior[li] = (c_k, c_v)
         del out, full                                     # FREE raw chunk KV
         gc.collect(); torch.cuda.empty_cache()
-        compact_cache = DynamicCache.from_legacy_cache(tuple(new_compact))
+        compact_cache = legacy_to_cache(tuple(new_compact))
         pk_live = torch.cuda.max_memory_allocated(di) / GiB
         chunk_peaks.append(pk_live)
         print(f"  chunk {ci+1}/{n_chunks} [{s}:{e}] compact_len="

@@ -20,7 +20,8 @@ import torch
 from transformers import AutoModelForCausalLM, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from still_compactor import STILLCompactorLayer, apply_rope  # noqa: E402
+from still_compactor import (STILLCompactorLayer, apply_rope,
+                             cache_to_legacy, legacy_to_cache)  # noqa: E402
 
 GiB = 2 ** 30
 
@@ -63,7 +64,7 @@ def chunked_still(model, comp, ids, chunk, tchunk, theta, di):
             out = model(ids[:, s:e], past_key_values=cache, use_cache=True,
                         position_ids=pos.unsqueeze(0),
                         cache_position=torch.arange(Lc, Lc + (e - s), device=dev))
-        full = out.past_key_values.to_legacy_cache()
+        full = cache_to_legacy(out.past_key_values)
         new = []
         with torch.no_grad():
             for li, (k, v) in enumerate(full):
@@ -75,7 +76,7 @@ def chunked_still(model, comp, ids, chunk, tchunk, theta, di):
                 new.append((c_k.unsqueeze(0), c_v.unsqueeze(0)))
                 prior[li] = (c_k, c_v)
         del out, full; gc.collect(); torch.cuda.empty_cache()
-        cache = DynamicCache.from_legacy_cache(tuple(new))
+        cache = legacy_to_cache(tuple(new))
     return peak_since_reset(di), cache.get_seq_length()
 
 

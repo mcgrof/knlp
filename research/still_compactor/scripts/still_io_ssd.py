@@ -12,7 +12,8 @@ import torch
 from transformers import AutoModelForCausalLM, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from still_compactor import STILLCompactorLayer, apply_rope  # noqa: E402
+from still_compactor import (STILLCompactorLayer, apply_rope,
+                             cache_to_legacy, legacy_to_cache)  # noqa: E402
 
 GiB = 2 ** 30
 MiB = 2 ** 20
@@ -46,7 +47,7 @@ def build_compact(model, comp, ids, T, chunk, tchunk, theta, di):
             out = model(ids[:, s:e], past_key_values=cc, use_cache=True,
                         position_ids=pos.unsqueeze(0),
                         cache_position=torch.arange(Lc, Lc + (e - s), device=dev))
-        full = out.past_key_values.to_legacy_cache()
+        full = cache_to_legacy(out.past_key_values)
         new = []
         with torch.no_grad():
             for li, (k, v) in enumerate(full):
@@ -58,7 +59,7 @@ def build_compact(model, comp, ids, T, chunk, tchunk, theta, di):
                 new.append((c_k.unsqueeze(0), c_v.unsqueeze(0)))
                 prior[li] = (c_k, c_v)
         del out, full; gc.collect(); torch.cuda.empty_cache()
-        cc = DynamicCache.from_legacy_cache(tuple(new))
+        cc = legacy_to_cache(tuple(new))
     return cc
 
 
@@ -88,8 +89,8 @@ def main():
 
         def dec():
             with torch.no_grad():
-                model(nxt, past_key_values=DynamicCache.from_legacy_cache(
-                    cc.to_legacy_cache()), use_cache=True,
+                model(nxt, past_key_values=legacy_to_cache(
+                    cache_to_legacy(cc)), use_cache=True,
                     position_ids=torch.tensor([[T]], device=dev),
                     cache_position=torch.tensor([phys], device=dev))
         td = timed(dec, di)

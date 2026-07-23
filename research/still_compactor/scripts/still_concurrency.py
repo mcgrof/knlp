@@ -22,7 +22,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from still_compactor import STILLCompactorLayer, apply_rope  # noqa: E402
+from still_compactor import (STILLCompactorLayer, apply_rope,
+                             cache_to_legacy, legacy_to_cache)  # noqa: E402
 
 GiB = 2 ** 30
 BYTES_PER_TOKEN = 36 * 8 * 128 * 2 * 2            # Qwen3-4B, K+V bf16, all layers
@@ -52,7 +53,7 @@ def build_compact(model, comp, ids, T, chunk, t_chunk, theta, di,
             out = model(ids[:, s:e], past_key_values=compact_cache,
                         use_cache=True, position_ids=pos.unsqueeze(0),
                         cache_position=torch.arange(Lc, Lc + (e - s), device=dev))
-        full = out.past_key_values.to_legacy_cache()
+        full = cache_to_legacy(out.past_key_values)
         new = []
         with torch.no_grad():
             for li, (k, v) in enumerate(full):
@@ -67,7 +68,7 @@ def build_compact(model, comp, ids, T, chunk, t_chunk, theta, di,
         max_transient = max(max_transient, transient)
         del out, full
         gc.collect(); torch.cuda.empty_cache()
-        compact_cache = DynamicCache.from_legacy_cache(tuple(new))
+        compact_cache = legacy_to_cache(tuple(new))
     return compact_cache, max_transient
 
 
