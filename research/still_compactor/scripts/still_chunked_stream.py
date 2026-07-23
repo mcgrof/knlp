@@ -27,7 +27,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from still_compactor import (STILLCompactorLayer, apply_rope,
-                             cache_to_legacy, legacy_to_cache)  # noqa: E402
+                             cache_to_legacy, legacy_to_cache,
+                             rope_theta)  # noqa: E402
 
 GiB = 2 ** 30
 
@@ -51,7 +52,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.model, dtype=dt, attn_implementation="eager").to(dev).eval()
     cfg = model.config
-    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, float(cfg.rope_theta)
+    H, d, theta = cfg.num_key_value_heads, cfg.head_dim, rope_theta(cfg)
     comp = STILLCompactorLayer(H, d, t=args.t_chunk, base_theta=theta).to(dev, dt)
     base_live = live(di)
     print(f"{args.model}: layers={cfg.num_hidden_layers} kv_heads={H} "
