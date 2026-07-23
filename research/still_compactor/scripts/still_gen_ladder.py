@@ -85,7 +85,7 @@ def teacher_targets(model, tok, it, dev, topk=200):
 
 def compact_prefix(comp, model, ctx_ids, theta, dev, grad):
     with torch.no_grad():
-        leg = model(ctx_ids.to(dev), use_cache=cache_to_legacy(True).past_key_values)
+        leg = cache_to_legacy(model(ctx_ids.to(dev), use_cache=True).past_key_values)
     sp = torch.arange(ctx_ids.shape[1], device=dev)
     ctxm = torch.enable_grad if grad else torch.no_grad
     out = []
