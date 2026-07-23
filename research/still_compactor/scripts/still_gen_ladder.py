@@ -14,7 +14,7 @@ animal / needle depth / option order / filler. Track held-out accuracy, gold
 margin, and KL - not just discrete accuracy. Base model frozen.
 """
 import os
-import argparse, json, sys, random
+import argparse, json, sys, random, string
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
@@ -61,6 +61,35 @@ def make_item(rng, tok, target_tokens=512):
     letter = "ABCD"[correct]
     cont = (f"\nBased on the record the secret animal is {secret}, so the "
             f"answer is ({letter}).")
+    return dict(ctx=ctx, q=q, cont=cont, correct=correct,
+                letters=[tok(l, add_special_tokens=False).input_ids[0] for l in "ABCD"])
+
+
+def make_item_multifact(rng, tok, n_facts=64):
+    """Target-predictability control (the harder, faithful test): N equally
+    formatted key->value facts, the question selects one UNIFORMLY and is unknown
+    at compaction time. The compactor must preserve ALL bindings, not learn to
+    extract a single marked field. Fresh keys/values/order every time."""
+    keys, vals, seen = [], [], set()
+    while len(keys) < n_facts:
+        k = "".join(rng.choice(string.ascii_uppercase) for _ in range(4))
+        if k in seen:
+            continue
+        seen.add(k); keys.append(k)
+        vals.append("".join(rng.choice(string.digits) for _ in range(4)))
+    facts = [f"Record {i + 1}: the passcode for {keys[i]} is {vals[i]}."
+             for i in range(n_facts)]
+    rng.shuffle(facts)
+    ctx = " ".join(facts)
+    j = rng.randrange(n_facts)                          # queried key (uniform)
+    cval = vals[j]
+    opts = rng.sample([vals[k] for k in range(n_facts) if k != j], 3) + [cval]
+    rng.shuffle(opts)
+    correct = opts.index(cval)
+    q = (f"\nQuestion: What is the passcode for {keys[j]}?\n(A) {opts[0]} "
+         f"(B) {opts[1]} (C) {opts[2]} (D) {opts[3]}\nAnswer: (")
+    cont = (f"\nThe passcode for {keys[j]} is {cval}, so the answer is "
+            f"({'ABCD'[correct]}).")
     return dict(ctx=ctx, q=q, cont=cont, correct=correct,
                 letters=[tok(l, add_special_tokens=False).input_ids[0] for l in "ABCD"])
 
@@ -116,6 +145,11 @@ def main():
     ap.add_argument("--n-eval", type=int, default=512)
     ap.add_argument("--ctx-tokens", type=int, default=512)
     ap.add_argument("--t-compact", type=int, default=128)     # 512/128 = 4x
+    ap.add_argument("--task", choices=["animal", "multifact"], default="animal",
+                    help="animal: single marked needle (predictable); multifact: "
+                         "N unpredictable key/value facts (target-predictability "
+                         "control)")
+    ap.add_argument("--n-facts", type=int, default=64)
     ap.add_argument("--epochs", type=int, default=4)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seed", type=int, default=0)
@@ -133,13 +167,20 @@ def main():
     H, d, theta = cfg.num_key_value_heads, cfg.head_dim, rope_theta(cfg)
     comp = STILLCompactorLayer(H, d, t=args.t_compact, base_theta=theta).to(dev, torch.bfloat16)
 
+    def mk(r):
+        if args.task == "multifact":
+            return make_item_multifact(r, tok, args.n_facts)
+        return make_item(r, tok, args.ctx_tokens)
+
     rng = random.Random(args.seed)
     print(f"building {args.n_train} train + {args.n_eval} held-out fresh "
-          f"contexts (~{args.ctx_tokens} tok, {args.ctx_tokens//args.t_compact}x)...")
-    train = [teacher_targets(model, tok, make_item(rng, tok, args.ctx_tokens), dev)
+          f"contexts (task={args.task}"
+          + (f", n_facts={args.n_facts}" if args.task == "multifact"
+             else f", ~{args.ctx_tokens} tok") + f", t={args.t_compact})...")
+    train = [teacher_targets(model, tok, mk(rng), dev)
              for _ in range(args.n_train)]
     heldrng = random.Random(args.seed + 99991)
-    held = [teacher_targets(model, tok, make_item(heldrng, tok, args.ctx_tokens), dev)
+    held = [teacher_targets(model, tok, mk(heldrng), dev)
             for _ in range(args.n_eval)]
     balance = [0, 0, 0, 0]
     for h in held:
