@@ -58,11 +58,25 @@ def all_questions(rng, tok, keys, vals):
     return qs
 
 
+def build_eval_item(tok, rng, n_facts, dev):
+    """Context + all N questions, NO teacher forward (accuracy eval only)."""
+    ctx, keys, vals = gen_context(rng, n_facts)
+    ci = tok(ctx, return_tensors="pt").input_ids
+    out = []
+    for q in all_questions(rng, tok, keys, vals):
+        out.append(dict(
+            q_ids=tok(q["q"], add_special_tokens=False, return_tensors="pt").input_ids,
+            correct=q["correct"], letters=q["letters"]))
+    return dict(ctx_ids=ci, ctxlen=ci.shape[1], qs=out)
+
+
 @torch.no_grad()
-def build_item(model, tok, rng, n_facts, dev, topk=200):
+def build_item(model, tok, rng, n_facts, dev, topk=200, q_keep=None):
     ctx, keys, vals = gen_context(rng, n_facts)
     ci = tok(ctx, return_tensors="pt").input_ids.to(dev)
     qs = all_questions(rng, tok, keys, vals)
+    if q_keep is not None and q_keep < len(qs):
+        qs = rng.sample(qs, q_keep)          # dense-but-sampled coverage per ctx
     out = []
     for q in qs:
         qi = tok(q["q"], add_special_tokens=False, return_tensors="pt").input_ids.to(dev)
@@ -132,7 +146,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="Qwen/Qwen3-4B")
     ap.add_argument("--control",
-                    choices=["identity", "still_overfit", "cartridge"], required=True)
+                    choices=["identity", "still_overfit", "cartridge",
+                             "dense_amortized"], required=True)
+    ap.add_argument("--n-train", type=int, default=1024)
+    ap.add_argument("--n-eval", type=int, default=128)
+    ap.add_argument("--q-sample", type=int, default=16)  # dense Qs/train context
     ap.add_argument("--n-facts", type=int, default=64)
     ap.add_argument("--t-compact", type=int, default=256)
     ap.add_argument("--n-ctx", type=int, default=16)     # fixed contexts (overfit)
@@ -152,6 +170,57 @@ def main():
     rng = random.Random(args.seed)
     print(f"control={args.control} n_facts={args.n_facts} t={args.t_compact} "
           f"n_ctx={args.n_ctx}")
+
+    if args.control == "dense_amortized":
+        # Train STILL on FRESH contexts with DENSE within-context supervision
+        # (q_sample questions each), evaluate HELD-OUT contexts on all N.
+        comp = STILLCompactorLayer(H, d, t=args.t_compact,
+                                   base_theta=theta).to(dev, torch.bfloat16)
+        print(f"building {args.n_train} train (q_sample={args.q_sample}) + "
+              f"{args.n_eval} held-out contexts...")
+        train = [build_item(model, tok, rng, args.n_facts, dev, q_keep=args.q_sample)
+                 for _ in range(args.n_train)]
+        erng = random.Random(args.seed + 99991)
+        held = [build_eval_item(tok, erng, args.n_facts, dev)
+                for _ in range(args.n_eval)]
+        decay = [p for p in comp.parameters() if p.dim() > 1]
+        nod = [p for p in comp.parameters() if p.dim() <= 1]
+        opt = torch.optim.AdamW([{"params": decay, "weight_decay": 0.01},
+                                 {"params": nod, "weight_decay": 0.0}],
+                                lr=4e-5, betas=(0.9, 0.95))
+        ev = lambda it: still_cache(comp, model, it["ctx_ids"], theta, dev, False)
+        a0, c0, t0 = eval_dense(model, ev, held, dev)
+        print(f"[dense_amortized] untrained HELD-OUT acc = {a0:.3f} ({c0}/{t0})")
+        for step in range(args.steps):
+            it = train[step % len(train)]
+            cl = still_cache(comp, model, it["ctx_ids"], theta, dev, True)
+            qs = random.sample(it["qs"], min(args.q_batch, len(it["qs"])))
+            loss = 0.0
+            for q in qs:
+                slg = student_cont_logits(model, cl, it["ctxlen"], q["q_ids"],
+                                          q["cont_ids"], dev).float()
+                loss = loss + F.kl_div(
+                    F.log_softmax(slg.gather(1, q["support"].to(dev)), -1),
+                    q["tprob"].to(dev), reduction="batchmean")
+            loss = loss / len(qs)
+            lr = 4e-5 * min(1.0, (step + 1) / 100)
+            for g in opt.param_groups:
+                g["lr"] = lr
+            opt.zero_grad(); loss.backward()
+            torch.nn.utils.clip_grad_norm_(comp.parameters(), 1.0); opt.step()
+            if step % 300 == 0 or step == args.steps - 1:
+                a, c, t = eval_dense(model, ev, held, dev)
+                print(f"  step {step:>4} loss={loss.item():.3f} "
+                      f"HELD-OUT acc={a:.3f} ({c}/{t})")
+        a, c, t = eval_dense(model, ev, held, dev)
+        print(f"[dense_amortized FINAL] HELD-OUT acc = {a:.3f} ({c}/{t}) -> "
+              f"{'GENERALIZES with dense supervision' if a >= 0.35 else 'no generalization'}")
+        print("READ: held-out above chance (0.25) and rising vs the sparse "
+              "one-question run (flat at chance) = supervision geometry was the "
+              "problem and STILL generalizes given dense coverage; flat here = "
+              "amortization fails even with dense supervision.")
+        return
+
     items = [build_item(model, tok, rng, args.n_facts, dev) for _ in range(args.n_ctx)]
     print(f"built {len(items)} contexts x {args.n_facts} questions; "
           f"ctxlen~{items[0]['ctxlen']}")
