@@ -131,7 +131,8 @@ def eval_dense(model, legacy_builder, items, dev):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="Qwen/Qwen3-4B")
-    ap.add_argument("--control", choices=["identity", "still_overfit"], required=True)
+    ap.add_argument("--control",
+                    choices=["identity", "still_overfit", "cartridge"], required=True)
     ap.add_argument("--n-facts", type=int, default=64)
     ap.add_argument("--t-compact", type=int, default=256)
     ap.add_argument("--n-ctx", type=int, default=16)     # fixed contexts (overfit)
@@ -160,6 +161,46 @@ def main():
                                items, dev)
         print(f"[identity t=T] dense acc = {acc:.3f} ({c}/{t}) "
               f"-> {'PATH OK (approx 1.0 expected)' if acc > 0.9 else 'PATH BROKEN'}")
+        return
+
+    if args.control == "cartridge":
+        # Directly optimize a t x KV cartridge PER context on all its questions.
+        # No compactor network: if this reaches high accuracy, the frozen decoder
+        # CAN consume a compact dictionary and STILL's synthesis is the bottleneck.
+        accs = []
+        for ci, it in enumerate(items[: min(args.n_ctx, 4)]):
+            out_pos = torch.linspace(0, it["ctxlen"] - 1, args.t_compact,
+                                     device=dev).round().long()
+            L = cfg.num_hidden_layers
+            rk = torch.nn.Parameter(0.02 * torch.randn(L, H, args.t_compact, d,
+                                    device=dev, dtype=torch.bfloat16))
+            vv = torch.nn.Parameter(0.02 * torch.randn(L, H, args.t_compact, d,
+                                    device=dev, dtype=torch.bfloat16))
+            opt = torch.optim.AdamW([rk, vv], lr=1e-3, betas=(0.9, 0.95))
+
+            def cart_legacy(grad):
+                cm = torch.enable_grad if grad else torch.no_grad
+                with cm():
+                    return [(apply_rope(rk[l], out_pos, theta).unsqueeze(0),
+                             vv[l].unsqueeze(0)) for l in range(L)]
+            for step in range(args.steps):
+                qs = random.sample(it["qs"], min(args.q_batch, len(it["qs"])))
+                cl = cart_legacy(True); loss = 0.0
+                for q in qs:
+                    slg = student_cont_logits(model, cl, it["ctxlen"], q["q_ids"],
+                                              q["cont_ids"], dev).float()
+                    loss = loss + F.kl_div(
+                        F.log_softmax(slg.gather(1, q["support"].to(dev)), -1),
+                        q["tprob"].to(dev), reduction="batchmean")
+                loss = loss / len(qs)
+                opt.zero_grad(); loss.backward()
+                torch.nn.utils.clip_grad_norm_([rk, vv], 1.0); opt.step()
+            a, c, t = eval_dense(model, lambda _it: cart_legacy(False), [it], dev)
+            accs.append(a)
+            print(f"  ctx {ci}: cartridge dense acc = {a:.3f} ({c}/{t})")
+        m = statistics.mean(accs)
+        print(f"[cartridge FINAL] mean dense acc = {m:.3f} over {len(accs)} ctx "
+              f"-> {'decoder CAN consume a compact dictionary' if m >= 0.9 else 'even a directly-optimized cartridge fails (decoder/budget limit)'}")
         return
 
     # still_overfit: train the compactor on the fixed contexts, all questions
