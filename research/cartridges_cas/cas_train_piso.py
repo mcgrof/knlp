@@ -31,7 +31,8 @@ Env:
   PATIENTS      space-sep patient ids co-trained in one cache (>=2)
   RECORDS_DIR   dir of <patient>.txt record files (cart init source)
   DATA_DIR      dir holding per-patient synth output (searched for parquet)
-  P_ISO         per-sample hide prob for a non-target cartridge (default 0.9)
+  P_ISO         prob a sample sees the gold cartridge ALONE; else gold +
+                k~U(1,N-1) sampled distractors (CAS section 2.1; default 0.75)
   KV_TOKENS     tokens per cartridge (default 1024)
   STEPS         optimizer steps (default 600)
   ACCUM         samples accumulated per optimizer step (default 16)
@@ -69,7 +70,7 @@ MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 PATIENTS = os.environ.get("PATIENTS", "patient_01 patient_02 patient_03").split()
 RECORDS_DIR = os.environ.get("RECORDS_DIR", "/home/mcgrof/cas_out/records")
 DATA_DIR = os.environ.get("DATA_DIR", "/home/mcgrof/cas_out/synth")
-P_ISO = float(os.environ.get("P_ISO", "0.9"))
+P_ISO = float(os.environ.get("P_ISO", "0.75"))
 KV_TOKENS = int(os.environ.get("KV_TOKENS", "1024"))
 STEPS = int(os.environ.get("STEPS", "600"))
 ACCUM = int(os.environ.get("ACCUM", "16"))
@@ -199,18 +200,33 @@ def main():
             j = rng.randrange(N)                      # target cartridge
             ds = datasets[j]
             el = ds.elements[rng.randrange(len(ds.elements))]
-            # reveal: target always on; each other cart on w.p. (1 - P_iso)
+            # CAS section 2.1 mixed visibility: w.p. P_iso the gold cartridge
+            # is visible ALONE; otherwise gold plus k ~ U(1, N-1) sampled
+            # distractor cartridges (not independent per-distractor masking).
+            # Paper value: P_iso = 0.75.
             reveal = reveal_base.clone()
             reveal[j] = 1.0
-            for c in range(N):
-                if c != j and rng.random() > P_ISO:
+            if rng.random() > P_ISO:
+                k = rng.randint(1, N - 1)
+                for c in rng.sample([c for c in range(N) if c != j], k):
                     reveal[c] = 1.0
             _STATE["reveal"] = reveal
 
             ids = el.input_ids.to(DEVICE)
             R = ids.shape[0]
             sids = torch.zeros(R, dtype=torch.long, device=DEVICE)   # single sample
-            pos = torch.arange(R, dtype=torch.long, device=DEVICE)
+            # Per-sample positions must reflect the VISIBLE prefix, not the
+            # physical one: the model forward adds num_cartridge_tokens()
+            # (= N*KV_TOKENS, all resident carts) to position_ids, but a
+            # gold-alone sample should see the request at position
+            # KV_TOKENS+i -- the geometry a solo-loaded cart serves at
+            # inference. Without this, every cart trains exclusively at the
+            # co-load offset and fails when loaded alone (observed: oracle
+            # 0.22 vs co-load 0.45). Offset by (visible - total) so the
+            # forward's +total nets to +visible.
+            visible_tokens = int(reveal.sum().item()) * KV_TOKENS
+            pos = (torch.arange(R, dtype=torch.long, device=DEVICE)
+                   + visible_tokens - N * KV_TOKENS)
             idxs = el.topk_token_idxs.to(DEVICE)
             tids = el.topk_token_ids.to(DEVICE)
             tlp = el.topk_logprobs.to(DEVICE)
