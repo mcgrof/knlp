@@ -19,7 +19,7 @@ cousins at toy scale, which is where the Trellis paper says it should be, becaus
 the paper only claims a win at 125M parameters and up. We have not trained at that
 scale, and we are still working on it. A same-shell causal control we added on
 2026-06-24 — the nonlinearity removed so the write reduces to the linear delta
-rule — first looked like a *2×* win for linear (127.9 vs 248.4), but a ChatGPT-Pro
+rule — first looked like a *2×* win for linear (127.9 vs 248.4), but an external
 review flagged that as an over-read, and a six-step validation loop (2026-06-25)
 confirmed it: the **2× was an under-specified-reimplementation artifact**. It is
 *not* a meta-gradient bug (the exact backward is bit-exact for both writes), *not*
@@ -28,15 +28,19 @@ the inner step size γ (sweeping it doesn't either) — it was the **missing pap
 shell fidelity** (the final value-readout activation + output block), which once
 restored narrows the gap to **~1.3–1.4×** (ln_silu+shell 182.8 vs identity 127.9),
 robust across budgets. A later provenance audit (2026-07-20) found a second
-confound the shell-fidelity fix did not address: our harness ties the write
+confound the shell-fidelity fix did not address: our harness *tied* the write
 nonlinearity `φ` and the inter-pass map `f` to one activation field, so the
-identity arm linearized *both* — the control is a joint `φ/f` linearization, not
-write-only. The paper's own clean write-only ablation (`φ`=identity with `f` held
-at LN-SiLU) puts the write's isolated cost at 11.65 vs 10.87 = **0.78 ppl**; so
-the clean write-only magnitude is unresolved pending a rerun that holds `f` fixed.
-So the honest statement is: with fidelity restored, the
-nonlinear write is **modestly behind** the linear delta rule at 5M, consistent with
-below-crossover (the paper's nonlinear win is 125M+). One fidelity gap stays open —
+identity arm linearized *both* — a joint `φ/f` linearization, not write-only.
+That is now fixed — `φ` and `f` are independent knobs — and the clean write-only
+rerun (`φ` varied, `f` held at LN-SiLU) has been run on the associative-recall
+probe: the nonlinear write lands behind the linear one (0.62 vs a perfect 1.0
+recall, 3 seeds). The paper's own clean write-only ablation (`φ`=identity with
+`f` held at LN-SiLU) puts the write's isolated *LM* cost at 11.65 vs 10.87 =
+**0.78 ppl**; the C4 perplexity magnitude with `f` fixed is still the open rerun.
+So the honest statement is: the clean write-only rerun on the recall probe has
+the nonlinear write behind the linear; the 5M C4 perplexity magnitude with `f`
+fixed is still open, and the paper's own write-only cost at 125M is only ~0.78
+ppl (below-crossover — its nonlinear win is 125M+). One fidelity gap stays open —
 the compression φ is a guess (the paper specifies `f` but not φ) — and the decisive
 test is the gap-versus-scale ladder, not more 5M tuning (see
 [Next: forward ablation ideas](#next-forward-ablation-ideas-to-evaluate)). The
@@ -162,10 +166,11 @@ details the paper leaves unspecified are our guesses.
   operations do not commute.
 - The paper distinguishes `f` (the inter-pass map, defined in the method as an
   L2-normalized SiLU) from `φ` (the inner compression activation, never cleanly
-  specified). We use one LayerNorm-SiLU for both. A change to `φ` alters the
-  entire inner optimizer, not just one activation.
+  specified). We previously used one LN-SiLU for both; `φ` and `f` are now
+  separate configurable knobs (the default `f` stays LN-SiLU). A change to `φ`
+  still alters the entire inner optimizer, not just one activation.
 - The paper's Trellis write target is a plain linear projection `α = Wₐ x`, which
-  **is** our default — so this is faithful, not a departure. (A ChatGPT-Pro review
+  **is** our default — so this is faithful, not a departure. (An external review
   corrected an earlier note here: the `Softmax(Wₐ x)` target belongs to the paper's
   ABC discussion, not the Trellis definition. We have a softmax option but it is
   off-thesis for Trellis, and pairing it with `φ=ln_silu` explodes at init — a
@@ -320,22 +325,25 @@ defaults on cuts ln_silu 260.6 → 182.8 (a real free lever, but still above
 linear), and identity only trains at LR 3e-4 (it diverges at 1e-3 / 3e-3 —
 `φ=identity` drops the LayerNorm that bounds `u = Mw − α`, so the state blows up).
 
-**But a ChatGPT-Pro review and our own meta-gradient check say this is not yet
+**But an external review and our own meta-gradient check say this is not yet
 "linear beats Trellis" — it is "a gated linear control beats our *current
 under-specified* reimplementation."** The exact-inner backward is bit-exact
 correct for both φ (no Hessian-dropping bug), but the **stale-chunk gradient
 approximation our training used (chunk 16) is ~100% wrong for the nonlinear write
 vs ~10% for the linear one** — an asymmetric handicap that alone could inflate the
 gap. On top of that the nonlinear arm carries reconstruction gaps that are *no-ops
-under φ=identity*: the compression φ is undefined in the paper (we guessed
+under φ=identity*: the compression φ was undefined in the paper (we had guessed
 LN-SiLU for both f and φ), the final value-readout activation `y=φ(Mᵀr)` is off by
 default, the output-block order differs, and γ is fixed/un-swept. The honest
 read: the *direction* may survive a faithful, separately-tuned rerun (Pro puts
-~25–30% on the full 2× surviving), but the magnitude is probably an artifact. The
-validation sequence — meta-gradient check (done: no bug), exact/chunk-1 rerun,
-one-at-a-time shell ablation, per-φ LR/γ tuning, faithful DeltaNet/GDN with
-key-norm, then the gap-versus-scale ladder — is what resolves it. Full writeup,
-caveats, and artifacts: `results-archive/trellis-fidelity-20260624/`.
+~25–30% on the full 2× surviving), but the magnitude is probably an artifact.
+Since then the harness has been made faithful on this axis — `φ` and `f` are
+decoupled and the final value-readout activation is exposed — and the clean
+write-only rerun has been run on the associative-recall probe (the nonlinear
+write lands behind the linear one). What remains is the C4 perplexity magnitude
+with `f` held fixed, via the exact/chunk-1 rerun and per-`φ` LR/γ tuning, then
+the gap-versus-scale ladder. Fidelity write-up and the write-only rerun:
+[`reports/trellis_paper_fidelity.md`](https://github.com/mcgrof/knlp/blob/main/reports/trellis_paper_fidelity.md).
 
 On scale: we are 26.6× below the paper's parameter floor but only 6.8× below its
 token floor, and at ≈75 tokens per non-embedding parameter we are if anything
