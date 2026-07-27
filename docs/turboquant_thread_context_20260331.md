@@ -5,23 +5,20 @@ Target thread:
 - `<#1488646053207998464>`
 
 ## Read first
-1. `/data/knlp/docs/turboquant_public_note_20260331.md`
-2. `/home/mcgrof/.openclaw/workspace/logs/turboquant-vs-fused-quant-h100-20260331.log`
-3. `/home/mcgrof/.openclaw/workspace/plans/turboquant-public-informed-rerun-20260331.md`
-4. `/home/mcgrof/.openclaw/workspace/plans/turboquant-abcd-ablation-h100-20260331.md`
-5. `/home/mcgrof/.openclaw/workspace/plans/turboquant-vs-fused-quant-h100-plan-20260331.md`
+1. `turboquant_public_note_20260331.md`
+2. internal working notes (logs and rerun plans), kept privately
 
 ## Durable results
 - `turboquant-abcd-h100-20260331T195241Z/` (in the private results archive)
 - `turboquant-public-informed-h100-20260331T203533Z/` (in the private results archive)
 
 ## Repo-local results copies
-- `/data/knlp/results/turboquant-abcd-h100-20260331T195241Z/`
-- `/data/knlp/results/turboquant-public-informed-h100-20260331T203533Z/`
+- `results/turboquant-abcd-h100-20260331T195241Z/`
+- `results/turboquant-public-informed-h100-20260331T203533Z/`
 
 ## Repo-local code copies
-- `/data/knlp/tools/turboquant_eval/turboquant_abcd_ablation_h100.py`
-- `/data/knlp/tools/turboquant_eval/turboquant_public_informed_rerun_h100.py`
+- `tools/turboquant_eval/turboquant_abcd_ablation_h100.py`
+- `tools/turboquant_eval/turboquant_public_informed_rerun_h100.py`
 
 ## Main conclusions to remember
 - D = current fused quantization baseline
