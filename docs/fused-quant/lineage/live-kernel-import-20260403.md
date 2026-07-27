@@ -9,7 +9,7 @@ Remote H100 lane file:
 - path: `/data/vllm/vllm/v1/attention/backends/fused_int4.py`
 
 Imported into prune `knlp` as:
-- `/data/knlp/artifacts/fused-quant/fused_int4.py.remote-h100-20260403`
+- `artifacts/fused-quant/fused_int4.py.remote-h100-20260403`
 
 ## Why this import exists
 Do not leave the latest fused-quant kernel state trapped on the H100 pod.

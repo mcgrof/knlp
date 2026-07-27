@@ -11,7 +11,7 @@ This bundle includes:
 
 ## Code landed in knlp
 Copied into:
-- `/data/knlp/tools/skillsbench_cartridges/`
+- `tools/skillsbench_cartridges/`
 
 Files:
 - `eval_cartridge.py`

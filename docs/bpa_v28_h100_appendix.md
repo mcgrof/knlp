@@ -75,7 +75,7 @@ python3 scripts/v28_benchmark_current_path.py
 python3 scripts/v28_triton_int4_dequant.py
 ```
 
-Python environment: `/home/mcgrof/bpa_env/bin/python3`
+Python environment: `~/bpa_env/bin/python3`
 
 ## DynamicCache Compatibility
 

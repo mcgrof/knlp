@@ -15,7 +15,7 @@ Primary durable sink on prune:
 - the private results archive
 
 Repo-local copy for source-tree context:
-- `/data/knlp/results/turboquant-abcd-h100-20260331T195241Z/`
+- `results/turboquant-abcd-h100-20260331T195241Z/`
 
 ## Corrected A/B/C/D result summary
 At `head_dim=128` on the tested H100 matrix:
@@ -71,8 +71,7 @@ But public evidence suggests a fairer next test should focus on:
   `https://oliverchurch.com/turboquant-for-ggml-achieving-4.57x-kv-cache-compression-in-llama.cpp.html`
 
 ## Recommended next rerun
-See workspace plan:
-- `/home/mcgrof/.openclaw/workspace/plans/turboquant-public-informed-rerun-20260331.md`
+The next-rerun plan is kept as an internal working note.
 
 That rerun gives TurboQuant a more fair shot by:
 - biasing toward longer contexts

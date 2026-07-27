@@ -68,7 +68,7 @@ asym tuple writer.
 ### Paper build
 
 ```bash
-cd /home/mcgrof/devel/paper-memory-decode && make
+cd ~/devel/paper-memory-decode && make
 ```
 
 Generates figures via Python scripts, then runs pdflatex (3 passes
