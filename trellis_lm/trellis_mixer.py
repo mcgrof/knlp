@@ -153,8 +153,11 @@ class TrellisMixer(nn.Module):
         self.use_v_conv = cfg.use_short_conv_v
         if self.use_v_conv:
             self.v_conv = CausalDWConv1d(H * D, cfg.conv_kernel)
-        self.phi = get_activation(cfg.activation)
-        self.f = get_activation(cfg.activation)
+        # phi (write nonlinearity, Eq. 4) and f (inter-pass map, Eq. 14) are
+        # separate in the paper; decouple them, falling back to `activation`
+        # when the per-role knob is unset (backward compatible).
+        self.phi = get_activation(cfg.phi_activation or cfg.activation)
+        self.f = get_activation(cfg.f_activation or cfg.activation)
         self.alpha_act = get_activation(cfg.alpha_mode)
         self.value_alpha_correction_raw = None
         self.value_read_query_gate_proj = None
