@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -31,6 +31,23 @@ class TrellisConfig:
     # "identity" reduces the nonlinear write to the (gated) delta rule -- the
     # same-shell control for "does the nonlinear write help?" (paper ablation).
     activation: str = "ln_silu"  # ["ln_silu","l2_silu","softmax","identity"]
+    # phi and f are DISTINCT functions in the paper and must be decouplable:
+    #   phi -- the write nonlinearity inside the compression loss
+    #          ||phi(M w) - alpha||^2 (Eq. 4). The paper never states the
+    #          baseline phi; ln_silu here is a documented reconstruction, not a
+    #          paper value. phi = identity is a paper ablation (reduces the
+    #          two passes to the gated delta rule).
+    #   f   -- the inter-pass map applied to the key readout before the value
+    #          pass. The method text defines f = normalized SiLU (Eq. 14), but
+    #          the reported experimental baseline uses LN-SiLU (L2-SiLU is a
+    #          listed modification: 10.98 vs 10.87). So ln_silu is the
+    #          better-supported f for reproducing the tables.
+    # The paper varies f independently and ablates phi separately, so a single
+    # shared knob cannot express those. phi_activation / f_activation override
+    # `activation` independently; None (default) ties both to `activation` for
+    # backward compatibility.
+    phi_activation: Optional[str] = None
+    f_activation: Optional[str] = None
     # trellis_write_mode selects the innovation rule. "nonlinear_phi" (default)
     # is the paper's state-dependent write u_t = J_phi(z)^T(phi(z)-alpha), whose
     # state-dependent Jacobian forfeits the delta-rule free lunch (no cheap exact
@@ -135,7 +152,14 @@ class TrellisConfig:
     trellis_value_read_query_gate_init: float = 0.05
     trellis_value_read_query_gate_max: float = 0.75
     exact_inner: bool = True  # exact sequential VJP (Phase 0)
-    chunk_size: int = 1  # 1 = pure sequential
+    # chunk_size = 1 is the pure sequential recurrence. In paper terms this is
+    # the "fully non-linear recurrence" ablation (chunk B=1), which the paper
+    # reports at slightly BETTER perplexity (10.75 vs 10.87) than its headline
+    # result -- it is NOT the reported baseline. The reported baseline uses the
+    # stale-gradient chunk approximation with C>1, but the paper never states
+    # the baseline C, so an exact numerical reproduction of it is not possible
+    # from the published text (see reports/trellis_paper_fidelity.md).
+    chunk_size: int = 1  # 1 = pure sequential (paper's B=1 ablation)
     chunk_refine: int = 0  # intra-chunk z refinement passes (faithful chunkwise)
     post_gate: bool = True  # SwiGLU-style post gate on mixer output
     forget_gate: bool = True  # if False, beta is forced to 1 (no decay)
@@ -147,7 +171,7 @@ class TrellisConfig:
     tie_embeddings: bool = True
 
     def __post_init__(self):
-        assert self.activation in (
+        _acts = (
             "silu",
             "ln_silu",
             "norm_silu",
@@ -155,7 +179,14 @@ class TrellisConfig:
             "softmax",
             "identity",
             "scaled_identity",
-        ), self.activation
+        )
+        assert self.activation in _acts, self.activation
+        assert (
+            self.phi_activation is None or self.phi_activation in _acts
+        ), self.phi_activation
+        assert (
+            self.f_activation is None or self.f_activation in _acts
+        ), self.f_activation
         assert self.alpha_mode in (
             "linear",
             "softmax",
@@ -316,3 +347,37 @@ class TrellisConfig:
     def from_dict(cls, d: dict) -> "TrellisConfig":
         fields = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in fields})
+
+    @classmethod
+    def faithful_baseline(cls, **overrides) -> "TrellisConfig":
+        """Config set to the paper's *reported-baseline* choices, to the extent
+        the text pins them down. It does NOT claim bit-exact reproduction --
+        several details (the write phi, the baseline chunk size C, the gamma
+        source/granularity) are simply unspecified by the paper and are marked
+        here as reconstructions. See reports/trellis_paper_fidelity.md.
+
+        Set relative to the defaults:
+          - f_activation = ln_silu       : the reported baseline's inter-pass f
+                                           (the method text's L2-SiLU is a listed
+                                           modification, not the baseline).
+          - value_readout_act = ln_silu  : the paper's final phi on the value
+                                           read, y = phi(M^T r) (off by default).
+          - output_path = "paper"        : Fig. 1 shell (Trellis -> Norm ->
+                                           GeLU-gated branch -> Linear).
+          - trellis_beta_min = 1e-3      : the paper's forget gate spans (0,1)
+                                           and can erase memory; do not floor it
+                                           near 1.
+          - phi_activation left None (ties to `activation`=ln_silu) because the
+            paper never defines the baseline phi -- override to sweep it.
+        chunk_size is left at the default (1 = the B=1 ablation); the reported
+        baseline's stale C>1 is unspecified, so pick C explicitly if reproducing
+        the throughput regime.
+        """
+        cfg = dict(
+            f_activation="ln_silu",
+            value_readout_act="ln_silu",
+            output_path="paper",
+            trellis_beta_min=1e-3,
+        )
+        cfg.update(overrides)
+        return cls(**cfg)
