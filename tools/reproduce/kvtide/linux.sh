@@ -53,8 +53,15 @@ fi
 cd "$LINUX_SRC"
 
 # Configure once: base on the running kernel's config, drop the distro
-# signing keys and heavy debug info for a fast bench build, then apply
-# the pool knob.
+# signing keys, then apply the pool knob. BTF stays ON: the kvio eBPF
+# tracers (nvme_uring_cmd_monitor, nvme_tp_monitor) attach via
+# fentry/tp_btf and need /sys/kernel/btf/vmlinux plus module BTF on the
+# kernel under test -- exactly the kernel whose I/O behavior these
+# benches study, so tracing must work there. Distro kernels ship BTF;
+# an earlier version of this stage stripped it for build speed, which
+# silently made every kvtide kernel untraceable. BTF requires DWARF at
+# build time (and pahole -- see kvtide-doctor); modules are stripped at
+# install so /lib/modules stays small (.BTF sections survive strip).
 if [ ! -f .config ]; then
 	if [ -f "/boot/config-$(uname -r)" ]; then
 		cp "/boot/config-$(uname -r)" .config
@@ -70,9 +77,11 @@ if [ ! -f .config ]; then
 	./scripts/config --set-str SYSTEM_TRUSTED_KEYS "" \
 		--set-str SYSTEM_REVOCATION_KEYS "" \
 		--set-str LOCALVERSION "-kvtide" \
-		--disable DEBUG_INFO_BTF \
-		--disable DEBUG_INFO \
-		--enable DEBUG_INFO_NONE
+		--disable DEBUG_INFO_NONE \
+		--disable DEBUG_INFO_REDUCED \
+		--enable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
+		--enable DEBUG_INFO_BTF \
+		--enable DEBUG_INFO_BTF_MODULES
 	if [ "${CONFIG_KVTIDE_LINUX_ENABLE_BLK_IOBUF_POOL:-n}" = y ]; then
 		./scripts/config --enable BLK_IOBUF_POOL
 	fi
@@ -80,6 +89,11 @@ if [ ! -f .config ]; then
 	if [ "${CONFIG_KVTIDE_LINUX_ENABLE_BLK_IOBUF_POOL:-n}" = y ] && \
 	   ! grep -q '^CONFIG_BLK_IOBUF_POOL=y' .config; then
 		kvtide_log "WARNING: CONFIG_BLK_IOBUF_POOL not available in $BRANCH"
+	fi
+	if ! grep -q '^CONFIG_DEBUG_INFO_BTF=y' .config; then
+		kvtide_log "WARNING: CONFIG_DEBUG_INFO_BTF was dropped by \
+olddefconfig -- pahole (dwarves) is probably missing; the kvio eBPF \
+tracers will not attach on this kernel"
 	fi
 fi
 
@@ -92,7 +106,7 @@ fi
 kvtide_log "building $REL"
 make -j"$(nproc)"
 kvtide_log "installing $REL"
-sudo make modules_install install
+sudo make INSTALL_MOD_STRIP=1 modules_install install
 if command -v update-grub >/dev/null 2>&1; then
 	sudo update-grub
 fi
