@@ -7,6 +7,7 @@
 #   make trellis-recall           # synthetic associative-recall toy (both models)
 #   make trellis-smoke            # TinyStories LM smoke (both models)
 #   make trellis-bench            # memory + latency: trellis bounded vs dense KV
+#   make trellis-router           # episodic tool-router microscope (ln_silu vs identity write-phi)
 
 TRELLIS_DEFCONFIG := configs/defconfig-trellis-tiny
 TRELLIS_PY ?= python3
@@ -34,6 +35,7 @@ TR_LR      := $(or $(call _tr_num,CONFIG_TRELLIS_LR),0.003)
 TR_DATASET := $(or $(call _tr_str,CONFIG_TRELLIS_DATASET),roneneldan/TinyStories)
 TR_BENCHL  := $(or $(call _tr_str,CONFIG_TRELLIS_BENCH_SEQ_LENS),256,512,1024,2048)
 TR_OUT     := $(or $(call _tr_str,CONFIG_TRELLIS_OUTPUT_BASE),/data/results-archive/trellis-lm)
+TR_ROUTERSTEPS := $(or $(call _tr_num,CONFIG_TRELLIS_ROUTER_STEPS),1500)
 
 TR_ARGS := --d_model $(TR_DMODEL) --n_layers $(TR_LAYERS) --n_heads $(TR_HEADS) \
            --d_head $(TR_DHEAD) --n_slots $(TR_SLOTS) --activation $(TR_ACT) \
@@ -72,6 +74,14 @@ trellis-bench:
 	$(TRELLIS_PY) trellis_lm/bench_memory_latency.py --seq_lens $(TR_BENCHL) \
 	  --d_model $(TR_DMODEL) --n_layers $(TR_LAYERS) --n_heads $(TR_HEADS) \
 	  --d_head $(TR_DHEAD) --n_slots $(TR_SLOTS) --output $(TR_OUT)/bench.json
+
+.PHONY: trellis-router
+trellis-router:
+	@mkdir -p $(TR_OUT)
+	$(TRELLIS_PY) scripts/trellis_tool_router.py --phi ln_silu \
+	  --steps $(TR_ROUTERSTEPS) --output $(TR_OUT)/router_ln_silu.pt
+	$(TRELLIS_PY) scripts/trellis_tool_router.py --phi identity \
+	  --steps $(TR_ROUTERSTEPS) --output $(TR_OUT)/router_identity.pt
 
 .PHONY: trellis
 trellis: trellis-test trellis-recall
