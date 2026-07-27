@@ -130,3 +130,40 @@ the Fig. 1 shell are faithful. The one substantive fix was decoupling `φ` and
 labelling correction (`C = 1` is an ablation), or a detail the paper leaves
 open, which is documented here as a reconstruction rather than presented as the
 paper's specification.
+
+## Addendum: the clean write-only ablation, now run
+
+Decoupling `φ` from `f` made the write-only ablation runnable for the first
+time — vary the write nonlinearity `φ` while holding the inter-pass map `f` at
+LN-SiLU. Run on the synthetic associative-recall task (2 key/value pairs,
+d_model 256, 2 layers, 4 heads, 64 slots, batch 256, 3000 steps, W7900, fp32),
+mean ± std over 3 seeds of the last-6-eval recall accuracy:
+
+| write `φ` | `f` | recall_acc | final loss |
+|---|---|---|---|
+| identity (linear) | LN-SiLU | **1.000 ± 0.000** | 0.000 |
+| LN-SiLU (nonlinear) | LN-SiLU | **0.617 ± 0.130** | 0.781 |
+| dense transformer (reference) | — | 0.725 ± 0.142 | 0.482 |
+
+With `f` held fixed, the linear write (which at `φ = identity` is the gated
+delta rule) solves the binding task perfectly and beats the dense baseline,
+while the nonlinear write does not converge and trails both. So the isolation
+the fix enables makes the nonlinear write look *worse*, not better — fixing the
+confound did not rescue it.
+
+Scope, stated plainly: this is the binding/recall probe, not LM perplexity, and
+not the Trellis-vs-Gated-DeltaNet comparison the line's closure rests on (that
+needs the FLA baselines, unavailable on this ROCm box). It is mechanism-level
+evidence, consistent with the closure, not a re-run of the headline comparison.
+Note the task-dependence: the paper reports the nonlinear write *helping* LM by
+~0.78 ppl, whereas here it *hurts* associative recall — the write
+nonlinearity's value has opposite sign on the two tasks.
+
+Reproduce (per arm, `phi_activation` in {identity, ln_silu}):
+
+```
+python -m trellis_lm.train --task recall --model trellis --steps 3000 \
+  --batch 256 --lr 3e-3 --n_pairs 2 --d_model 256 --n_layers 2 --n_heads 4 \
+  --d_head 64 --n_slots 64 --dtype fp32 \
+  --phi_activation <identity|ln_silu> --f_activation ln_silu
+```
