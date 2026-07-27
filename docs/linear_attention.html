@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Linear Attention &amp; Bounded Memory — DeltaNet, Gated DeltaNet, DeltaProduct, Trellis</title>
-  <meta name="description" content="knlp's matched-harness study of the linear-attention / bounded-memory family — Trellis (implemented here) vs the FLA reference DeltaNet, Gated DeltaNet, and GatedDeltaProduct (arXiv:2512.23852). Verdict: at reachable scale Trellis's nonlinear memory write does not pay for itself — a param-matched A100 run puts it well behind both linear cousins. A structural point (the write is not affine in the state, so the standard exact WY/UT chunk transform does not apply) and a same-shell control (a linearized write beats the nonlinear one ~2x, though our control linearizes the inter-pass map too, so a clean write-only attribution still needs a rerun). GatedDeltaProduct and Gated DeltaNet both solve the exact-overwrite binding grid, but GatedDeltaProduct loses to Gated DeltaNet on language-model loss. Gated DeltaNet is the matched-state quality leader.">
+  <meta name="description" content="knlp's matched-harness study of the linear-attention / bounded-memory family — Trellis (implemented here) vs the FLA reference DeltaNet, Gated DeltaNet, and GatedDeltaProduct (arXiv:2512.23852). Verdict: at reachable scale Trellis's nonlinear memory write does not pay for itself — a param-matched A100 run puts it well behind both linear cousins. A structural point (the write is not affine in the state, so the standard exact WY/UT chunk transform does not apply) and a same-shell control (a linearized write beats the nonlinear one ~2x; our earlier control also linearized the inter-pass map, since decoupled, and a clean write-only rerun on the associative-recall probe puts the nonlinear write behind the linear). GatedDeltaProduct and Gated DeltaNet both solve the exact-overwrite binding grid, but GatedDeltaProduct loses to Gated DeltaNet on language-model loss. Gated DeltaNet is the matched-state quality leader.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -63,7 +63,7 @@
 
     // Matched A100 run: C4 d256/L4, seq2048, ~352M tok (~20/total-param incl emb),
     // fp32-master + bf16-autocast, AdamW, fla REFERENCE baselines, Trellis fused-Triton kernel, one pod.
-    const FAIR = [
+    const MATCHED = [
       {model:'Gated DeltaNet', short:'GatedDelta', ppl:78.49,  params:4.48, klass:'win',  note:'fla reference'},
       {model:'DeltaNet',       short:'DeltaNet',   ppl:89.77,  params:4.21, klass:'win',  note:'fla reference'},
       {model:'Trellis',        short:'Trellis',    ppl:152.54, params:4.74, klass:'mid',  note:'this work'},
@@ -109,7 +109,8 @@
     ];
 
     // Empirical proof: same-shell identity-φ control (our harness, ~4.7M, d256/L4,
-    // C4, 120M tok, seed0). Varies ONLY φ. Linear delta rule beats nonlinear ~2×.
+    // C4, 120M tok, seed0). Joint φ/f control (tied then; now decoupled);
+    // linear delta rule beats nonlinear ~2× here.
     const IDENTITY = [
       {row:'identity-φ (linear delta rule)', lr:'3e-4', ppl:127.90, kind:'linear'},
       {row:'ln_silu + all paper toggles',    lr:'3e-3', ppl:182.83, kind:'nl'},
@@ -204,7 +205,7 @@
             <StatCard label="Models" value="3 + dense" sub="one matched harness" />
             <StatCard label="Trained scale" value="4.7" unit="M" sub="paper floor is 125M" />
             <StatCard label="Decode state" value="O(1)" sub="constant in context" color={C.green}/>
-            <StatCard label="Nonlinear write" value="~2×" sub="same-shell; φ and f both linearized" color={C.red}/>
+            <StatCard label="Nonlinear write" value="~2×" sub="same-shell joint φ/f control (since decoupled)" color={C.red}/>
             <StatCard label="Quality leader" value="GatedDelta" sub="matched-state C4" color={C.green}/>
             <StatCard label="Status" value="closed" sub="GDN leads; 790M parked" color={C.amber}/>
           </div>
@@ -221,9 +222,10 @@
               <strong className="text-white"> Empirical:</strong> a param-matched A100 run puts Trellis well behind both
               linear cousins, and a same-shell control that <em>linearizes</em> the write (identity &phi;, reducing it
               toward the delta rule) is nearly <strong className="text-white">2× better</strong> (127.9 vs 248.4 PPL)
-              &mdash; though our harness linearizes the inter-pass map alongside the write, so that magnitude is a joint
-              control, not a clean write-only number (the paper&rsquo;s own write-only ablation puts the cost at
-              ~0.78 ppl); the nonlinearity buys training stability, not quality. Separately, GatedDeltaProduct
+              &mdash; though that control also linearized the inter-pass map (since decoupled), so the 2&times; is a joint
+              control; the clean write-only rerun on the associative-recall probe puts the nonlinear write behind the
+              linear, and the paper&rsquo;s own write-only LM cost is ~0.78 ppl; the nonlinearity buys training stability,
+              not quality. Separately, GatedDeltaProduct
               &mdash; whose extra rotations ace an exact-overwrite task &mdash; also loses to Gated DeltaNet on real
               language-model loss. Gated DeltaNet is the matched-state leader. The one thing we did <em>not</em> test is
               the paper&rsquo;s 790M-parameter scale claim; it is parked, not disproven.
@@ -300,13 +302,13 @@
             </p>
             <ChartFrame title="Validation perplexity — matched A100 run (lower is better)"
               sub="fla reference baselines, Trellis fused-Triton kernel, identical protocol. Green = linear cousins, violet = Trellis, red = dense.">
-              <BarChart data={FAIR} margin={{top:8, right:16, left:0, bottom:60}}>
+              <BarChart data={MATCHED} margin={{top:8, right:16, left:0, bottom:60}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
                 <XAxis dataKey="short" stroke="#94a3b8" angle={-25} textAnchor="end" height={80} interval={0} tick={{fontSize:11}}/>
                 <YAxis stroke="#94a3b8" domain={[0,240]} label={{value:'val PPL', angle:-90, position:'insideLeft', fill:'#94a3b8'}}/>
                 <Tooltip content={<Tip/>}/>
                 <Bar dataKey="ppl" name="val PPL" radius={[3,3,0,0]}>
-                  {FAIR.map((d,i)=><Cell key={i} fill={KLASS[d.klass]}/>)}
+                  {MATCHED.map((d,i)=><Cell key={i} fill={KLASS[d.klass]}/>)}
                 </Bar>
               </BarChart>
             </ChartFrame>
@@ -469,21 +471,23 @@
           </Section>
 
           {/* 8. empirical proof: identity-φ control */}
-          <Section id="identity" kicker="The empirical control" title="Linearizing the write: the nonlinear one is worse (magnitude confounded)">
+          <Section id="identity" kicker="The empirical control" title="Linearizing the write: the nonlinear one is worse (2× is a joint φ/f control)">
             <p>
               The theorem says the nonlinear write costs the standard exact kernel. The obvious next question is whether
               it at least buys quality to pay for that. The intended test is a <strong>same-shell control</strong>: the
               identical Trellis mixer, projections, two-pass shell, and parameter budget, changing the write nonlinearity
-              <span className="kbd"> φ</span>. <strong className="text-amber-300">A caveat we owe the reader:</strong> our
-              harness ties <span className="kbd">φ</span> and the inter-pass map <span className="kbd">f</span> to one
-              activation field, so setting <span className="kbd">φ = identity</span> linearized <em>both</em> &mdash; this
-              is a joint <span className="kbd">φ/f</span> linearization, not a clean write-only control, and it also ran
-              under the stale-chunk-16 approximation, which is far harsher on the nonlinear arm. The paper&rsquo;s own
-              clean write-only control holds <span className="kbd">f</span> at LN-SiLU and puts the write&rsquo;s cost at
-              11.65 vs 10.87 = 0.78 ppl. Here is our joint control, at matched learning rate and tokens.
+              <span className="kbd"> φ</span>. <strong className="text-amber-300">A caveat we owe the reader (since resolved):</strong> our
+              harness <em>previously tied</em> <span className="kbd">φ</span> and the inter-pass map <span className="kbd">f</span> to one
+              activation field, so setting <span className="kbd">φ = identity</span> linearized <em>both</em> &mdash; a
+              joint <span className="kbd">φ/f</span> linearization, not a clean write-only control, and it also ran
+              under the stale-chunk-16 approximation, which is far harsher on the nonlinear arm. <span className="kbd">φ</span> and <span className="kbd">f</span> are
+              now decoupled, and the clean write-only rerun (<span className="kbd">φ</span> varied, <span className="kbd">f</span> held at LN-SiLU) has been run
+              on the associative-recall probe: the nonlinear write lands behind the linear (0.62 vs a perfect 1.0 recall,
+              3 seeds). The paper&rsquo;s own clean write-only control holds <span className="kbd">f</span> at LN-SiLU and puts the write&rsquo;s LM cost at
+              11.65 vs 10.87 = 0.78 ppl. The chart below is the original joint control, at matched learning rate and tokens.
             </p>
             <ChartFrame title="Same-shell φ control — val PPL (lower better), ~4.7M / C4 / 120M tokens"
-              sub="The write nonlinearity and the inter-pass map both change (tied in our harness). Green = linearized (φ=identity); violet = the nonlinear ln_silu write in several configs.">
+              sub="The write nonlinearity and the inter-pass map both change (φ/f were tied for this run; since decoupled). Green = linearized (φ=identity); violet = the nonlinear ln_silu write in several configs.">
               <BarChart data={IDENTITY} layout="vertical" margin={{top:8, right:44, left:20, bottom:8}}>
                 <CartesianGrid strokeDasharray="3 3" stroke={C.slate}/>
                 <XAxis type="number" stroke="#94a3b8" domain={[0,280]} label={{value:'val PPL', position:'insideBottom', offset:-2, fill:'#94a3b8'}}/>
@@ -500,10 +504,12 @@
               <strong className="text-white"> 248.4</strong> &mdash; nearly 2× lower perplexity. The paper-shell nonlinear
               config (output path, value-readout activation, high &beta;-init) reaches 182.8, still behind. The
               <em>direction</em> &mdash; linearized &ge; nonlinear at this scale &mdash; is consistent with the fair A100
-              run, so this is not merely a reconstruction artifact. But the <em>magnitude</em> is confounded: the control
-              linearizes the inter-pass map alongside the write and runs under the stale-chunk-16 handicap, and the
-              paper&rsquo;s clean write-only ablation puts the isolated cost at only ~0.78 ppl. The clean write-only
-              number is unresolved pending a rerun that holds <span className="kbd">f</span> at LN-SiLU.
+              run, so this is not merely a reconstruction artifact. But the <em>magnitude</em> is a joint control: it also
+              linearized the inter-pass map (since decoupled) and ran under the stale-chunk-16 handicap. The write-only
+              rerun with <span className="kbd">f</span> held at LN-SiLU has now been run on the associative-recall probe
+              &mdash; the nonlinear write lands behind the linear, so the direction holds &mdash; while the C4 perplexity
+              magnitude with <span className="kbd">f</span> fixed is still the open rerun; the paper&rsquo;s clean
+              write-only ablation puts the isolated LM cost at ~0.78 ppl.
             </p>
             <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400">
               <strong className="text-gray-200">What the nonlinearity actually buys: stability.</strong> The
@@ -555,8 +561,8 @@
               but opposite sign, un-matched on params and FLOPs, and shrinking to just 0.14 ppl under the one
               parameter-matched control they run. So DeltaProduct&rsquo;s LM edge is real but thin and compute-favored,
               and at our pilot scale it has not appeared. At this scale, for this recipe, Gated DeltaNet is the quality
-              leader across every comparison we ran &mdash; the state-matched d512/L10 and smd runs and the param-matched
-              FAIR run alike.
+              leader across every comparison we ran &mdash; the state-matched d512/L10 runs and the param-matched A100
+              run alike.
             </p>
           </Section>
 
@@ -601,8 +607,9 @@
               Bottom line: at the scale we can afford, the linear delta rule with a good forget gate is the thing to
               build on; Trellis&rsquo;s nonlinear write does not pay for itself &mdash; structurally it loses the standard
               exact kernel, and empirically it trails both linear cousins in the fair matched run (a same-shell
-              linearization is ~2× better, though that magnitude is confounded and the paper&rsquo;s clean write-only cost
-              is ~0.78 ppl). The paper&rsquo;s 790M scale claim is parked, not disproven.
+              linearization is ~2× better, though that 2× is a joint <span className="kbd">φ/f</span> control since
+              decoupled &mdash; a write-only recall rerun confirms the direction, and the paper&rsquo;s clean write-only
+              LM cost is ~0.78 ppl). The paper&rsquo;s 790M scale claim is parked, not disproven.
             </p>
           </Section>
 
@@ -618,7 +625,7 @@
               <a href="index.html" className="hover:text-gray-400">knlp</a>
             </p>
             <p>Line closed &mdash; Gated DeltaNet is the matched-state quality leader; the paper&rsquo;s 790M scale claim is parked, not disproven.</p>
-            <p className="mt-2 text-xs">Last claim audit: 2026-07-21 &mdash; retired the &ldquo;only at 790M&rdquo; fact and the clean write-only causal read of the ~2&times; gap; softened the &ldquo;theorem rules out&rdquo; / &ldquo;no-parallel-scan floor&rdquo; prose; scoped the GatedDeltaProduct-2 LM result to pilot scale (nats/relative, real per-arm params; the paper&rsquo;s own comparison is un-matched at 393M vs 340M). Ledger: <a href="https://github.com/mcgrof/knlp/blob/main/reports/trellis_claim_audit.md" className="hover:text-gray-400">reports/trellis_claim_audit.md</a>.</p>
+            <p className="mt-2 text-xs">Last claim audit: 2026-07-27 &mdash; decoupled the write <span className="kbd">&phi;</span> and inter-pass <span className="kbd">f</span> (previously tied to one field) and ran the clean write-only ablation with <span className="kbd">f</span> held at LN-SiLU on the associative-recall probe (nonlinear write behind linear); the C4 perplexity magnitude with <span className="kbd">f</span> fixed remains the open rerun. 2026-07-21 &mdash; retired the &ldquo;only at 790M&rdquo; fact and the clean write-only causal read of the ~2&times; gap; softened the &ldquo;theorem rules out&rdquo; / &ldquo;no-parallel-scan floor&rdquo; prose; scoped the GatedDeltaProduct-2 LM result to pilot scale (nats/relative, real per-arm params; the paper&rsquo;s own comparison is un-matched at 393M vs 340M). Ledger: <a href="https://github.com/mcgrof/knlp/blob/main/reports/trellis_claim_audit.md" className="hover:text-gray-400">reports/trellis_claim_audit.md</a>.</p>
           </footer>
         </div>
       );
