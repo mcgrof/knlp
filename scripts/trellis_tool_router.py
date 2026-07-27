@@ -65,6 +65,12 @@ class RouterConfig:
 
     phi: str = "ln_silu"
     exact_inner_backward: bool = False
+    # tie_f_to_phi reproduces the earlier confounded ablation: a single knob
+    # drove BOTH the memory-write phi and the inter-pass map f, so choosing
+    # phi=identity silently linearized f too. The faithful control (default,
+    # False) holds f fixed at LN-SiLU so the write-nonlinearity ablation changes
+    # ONLY the write. Set True to measure how much the tie distorts the result.
+    tie_f_to_phi: bool = False
 
 
 @dataclass
@@ -170,8 +176,10 @@ class TrellisToolRouter(nn.Module):
         else:
             raise ValueError(f"Unsupported phi {cfg.phi!r}; use ln_silu or identity")
 
-        # Keep f fixed across phi ablations.
-        self.inter_pass_f = ln_silu
+        # Faithful control (default): f is held at LN-SiLU while phi varies, so
+        # the write-nonlinearity ablation isolates the write. tie_f_to_phi
+        # reproduces the earlier confound by driving f from the same knob as phi.
+        self.inter_pass_f = self.write_phi if cfg.tie_f_to_phi else ln_silu
 
         self.reset_parameters()
 
@@ -652,6 +660,7 @@ def train(args: argparse.Namespace) -> None:
         gamma_init=args.gamma_init,
         phi=args.phi,
         exact_inner_backward=args.exact_inner_backward,
+        tie_f_to_phi=args.tie_f_phi,
     )
 
     model = TrellisToolRouter(cfg).to(device)
@@ -666,7 +675,10 @@ def train(args: argparse.Namespace) -> None:
 
     print(f"device:                {device}")
     print(f"write phi:             {cfg.phi}")
-    print(f"inter-pass f:          ln_silu")
+    print(
+        f"inter-pass f:          {cfg.phi if cfg.tie_f_to_phi else 'ln_silu'}"
+        f"{'  (TIED to phi -- confound)' if cfg.tie_f_to_phi else '  (fixed)'}"
+    )
     print(f"tools / chance:        {cfg.n_tools} / {chance:.3f}")
     print(f"bindings per episode:  {cfg.n_bindings}")
     print(f"exact inner backward:  {cfg.exact_inner_backward}")
@@ -791,6 +803,13 @@ def parse_args() -> argparse.Namespace:
     # This changes outer training gradients, not the forward-time memory rule.
     parser.add_argument(
         "--exact-inner-backward",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    # Reproduce the earlier confounded ablation (f driven by the same knob as
+    # phi). Default off = the faithful control (f fixed at LN-SiLU).
+    parser.add_argument(
+        "--tie-f-phi",
         action=argparse.BooleanOptionalAction,
         default=False,
     )

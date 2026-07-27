@@ -35,7 +35,10 @@ def test_A_chunk_c1_equals_sequential():
             w, rd, a, b, g, ln_silu, mode, training=False, exact_inner=False
         )
         ck = run_trellis_memory_chunked(w, rd, a, b, g, ln_silu, mode, chunk_size=1)
-        assert (seq - ck).abs().max().item() < 1e-5, mode
+        # scale-relative: absolute fp32 rounding here is op-order (hence thread-
+        # count) dependent, so gate on the relative error, not a raw magnitude.
+        rel = (seq - ck).abs().max().item() / (seq.abs().max().item() + 1e-6)
+        assert rel < 1e-4, f"{mode}: rel {rel}"
 
 
 def test_B_chunk_exact_mode_is_serial_oracle():
@@ -74,7 +77,8 @@ def test_C_phi_identity_is_gated_delta_rule():
         Mst = bt.unsqueeze(-1) * Mst - g.view(1, H, 1, 1) * outer
         ys.append(torch.einsum("bhmd,bhd->bhm", Mst, rt))  # write-before-read
     y_ref = torch.stack(ys, dim=2)
-    assert (y_op - y_ref).abs().max().item() < 1e-4
+    rel = (y_op - y_ref).abs().max().item() / (y_ref.abs().max().item() + 1e-6)
+    assert rel < 1e-4, f"rel {rel}"
 
 
 def test_D_write_before_read_includes_current_token():
@@ -116,3 +120,39 @@ def test_E_phi_and_f_decouple():
     assert fb.value_readout_act == "ln_silu"
     assert fb.output_path == "paper"
     assert fb.trellis_beta_min < 0.9  # forget gate not floored near 1
+
+
+def test_F_mixer_wires_phi_and_f_independently():
+    """Regression for the tied phi/f bug in trellis_mixer.py. The old mixer set
+    self.phi = self.f = get_activation(cfg.activation), so phi=identity forced
+    f=identity too and the paper's write-only ablation was unreachable. The
+    mixer must now wire the two from independent knobs, and the split must reach
+    the actual forward, not just the config."""
+    from trellis_lm.trellis_mixer import TrellisMixer
+
+    x = torch.randn(4, 8)
+    # default: both fall back to `activation` -> the two callables agree
+    tied = TrellisMixer(tiny_cfg(activation="ln_silu"), layer_idx=0)
+    assert torch.allclose(tied.phi(x), tied.f(x))
+    # phi=identity while f stays ln_silu -- impossible under the single-knob
+    # wiring (both would be identity). They must differ now.
+    split = TrellisMixer(
+        tiny_cfg(activation="ln_silu", phi_activation="identity"), layer_idx=0
+    )
+    assert not torch.allclose(split.phi(x), split.f(x))
+
+    # And it must change the forward: same seed/init, only phi=identity vs
+    # f=identity differ (each holding the other at ln_silu) -> distinct outputs.
+    def _fwd(**kw):
+        torch.manual_seed(0)
+        cfg = tiny_cfg(**kw)
+        m = TrellisMixer(cfg, layer_idx=0).eval()
+        torch.manual_seed(1)
+        xb = torch.randn(2, 6, cfg.d_model)
+        with torch.no_grad():
+            y = m(xb, training=False)
+        return y[0] if isinstance(y, tuple) else y
+
+    only_phi_id = _fwd(activation="ln_silu", phi_activation="identity")
+    only_f_id = _fwd(activation="ln_silu", f_activation="identity")
+    assert not torch.allclose(only_phi_id, only_f_id, atol=1e-5)
