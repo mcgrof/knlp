@@ -73,6 +73,8 @@ def run_recall(args, device, dt):
         max_seq_len=2 * n_pairs + 8,
         dtype=args.dtype,
         activation=args.activation,
+        phi_activation=args.phi_activation,
+        f_activation=args.f_activation,
         alpha_mode=args.alpha_mode,
         beta_mode=args.beta_mode,
         forget_gate=not args.no_forget,
@@ -159,6 +161,8 @@ def run_lm(args, device, dt):
         max_seq_len=args.seq_len,
         dtype=args.dtype,
         activation=args.activation,
+        phi_activation=args.phi_activation,
+        f_activation=args.f_activation,
         alpha_mode=args.alpha_mode,
         beta_mode=args.beta_mode,
         forget_gate=not args.no_forget,
@@ -245,6 +249,10 @@ def main():
     p.add_argument("--d_head", type=int, default=32)
     p.add_argument("--n_slots", type=int, default=64)
     p.add_argument("--activation", default="ln_silu")
+    # write phi and inter-pass f, independent of `activation` (None ties them to
+    # it). Needed for the clean write-only ablation: vary phi, hold f=ln_silu.
+    p.add_argument("--phi_activation", default=None)
+    p.add_argument("--f_activation", default=None)
     p.add_argument("--alpha_mode", default="linear")
     p.add_argument("--beta_mode", default="scalar_per_head")
     # paper-faithful toggles (default off; the fidelity sweep flips them on)
