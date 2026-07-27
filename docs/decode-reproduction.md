@@ -5,8 +5,8 @@
 (`asym-prefill-refactor-stage` / `asymmetric-kv-plumbing`) do NOT: they fail on
 `v_cache bf16 != fp8` (cross-repo dtype drift). Requires torch 2.10.0+cu128 and
 setuptools_scm/build deps preinstalled (`--no-build-isolation` skips them). The
-tested recipe (H100 SECURE pod, RunPod; mirrors
-`results-archive/tp-asym-validation-20260624/harness/pod_build.sh`):
+tested recipe (H100 SECURE pod, RunPod; mirrors the build script in the private
+results archive):
 
 ```bash
 # 0. torch 2.10 cu128 (pin it; vllm/flashinfer otherwise bump it to 2.12 and

@@ -241,8 +241,7 @@ sensible attention output?
   asymmetric-kv-plumbing fork (commit 5b4cc97)
 - Patch script: `knlp/scripts/lmcache_asym_vllm_patches.py`
   (idempotent, applies all 8 patch families above)
-- Storage results JSON + logs:
-  `prune:/data/results-archive/lmcache_asym_perf_quality_20260426/`
+- Storage results JSON + logs: the private results archive
 - Status doc: `knlp/docs/lmcache_asym_kv_status_20260427.md`
 
 ## What I'm asking for

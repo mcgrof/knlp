@@ -229,7 +229,7 @@ Before running any GPT-2 experiment:
 
 ## Historical Test Matrix Results
 
-**Location**: [results-archive repository](https://github.com/mcgrof/results-archive/tree/master/key_results/test_matrix_results_20250923_010926/)
+**Location**: the private results archive
 
 **Tests run**:
 - `gpt2_adamwprune_bitter0_state_50`
@@ -282,7 +282,7 @@ CONFIG_COMPILE_MODEL=y
 
 ## References
 
-- Historical results: [results-archive repository](https://github.com/mcgrof/results-archive)
+- Historical results: the private results archive
 - Old baseline config: `gpt2/defconfigs/gpt2-finewebedu-w7900`
 - New baselines: `defconfigs/gpt2-vanilla-baseline`, `defconfigs/gpt2-ra-mla-baseline`
 - RA+MLA integration: `docs/bitter10_integration.md`

@@ -157,11 +157,11 @@ All benchmarks write JSON artifacts into a single results tree:
     └── fused/
 ```
 
-After the run, archive results to the key-results repo:
+After the run, archive results to the private results archive:
 
 ```bash
-cp -a <RESULTS_DIR>/ /data/results-archive/fused_kv_bench/
-cd /data/results-archive && git add fused_kv_bench/ && git commit
+cp -a <RESULTS_DIR>/ /path/to/results-archive/fused_kv_bench/
+cd /path/to/results-archive && git add fused_kv_bench/ && git commit
 ```
 
 ## Thresholds

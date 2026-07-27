@@ -265,8 +265,8 @@ LongBench, InfiniteBench).
 ## Step 5: Archive Results
 
 ```bash
-cp -a $RESULTS_DIR/ /data/results-archive/fused_kv_bench/
-cd /data/results-archive && git add fused_kv_bench/ && git commit \
+cp -a $RESULTS_DIR/ /path/to/results-archive/fused_kv_bench/
+cd /path/to/results-archive && git add fused_kv_bench/ && git commit \
   -m "bench: quickstart results $(date +%Y%m%d)"
 ```
 

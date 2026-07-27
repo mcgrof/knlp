@@ -84,8 +84,7 @@ Historical KNLP cartridge results labeled `sci` before 2026-06-30 should be
 read as `strided_rope` unless the run metadata explicitly says
 `init_method_canonical: sci_chunk`.
 
-The corrected W7900 ablation at
-`/data/results-archive/cartridges/sci-fixed-ablation-20260630/` compares
+The corrected W7900 ablation in the private results archive compares
 `first_k`, paper `sci_chunk`, and `strided_rope` on `citation-check` with
 Qwen2.5-7B-Instruct and a 4096-token prefix:
 

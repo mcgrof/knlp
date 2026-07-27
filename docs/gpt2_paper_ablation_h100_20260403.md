@@ -25,4 +25,4 @@ The empirical conclusion from the completed H100 run is straightforward. In this
 
 That does not mean the newer functional-trace-affinity direction is useless. The current read is narrower: at this GPT-2 / ~150M-ish scale, the attention-probability trace proxy is weaker than regular FIM trace in the matched 1-hour ablation. The value of functional trace affinities may emerge later, after this regime, when the model and behavior are rich enough for that signal to pay for itself.
 
-The durable result bundle and seed-by-seed summary live in `results-archive` under `paper-fim/gpt2-h100-paper-ablation/`.
+The durable result bundle and seed-by-seed summary live in the private results archive.

@@ -1,8 +1,7 @@
 # SkillsBench cartridges stage status — 2026-03-31
 
 ## Durable artifact root
-Full SkillsBench/cartridge artifact bundle is being collected into:
-- `/data/results-archive/cartridges/skillsbench-cartridges-20260331T202500Z/`
+Full SkillsBench/cartridge artifact bundle is being collected into the private results archive.
 
 This bundle includes:
 - `tier1-results/`

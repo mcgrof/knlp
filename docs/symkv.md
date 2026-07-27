@@ -72,9 +72,9 @@ at contexts 512 and 1024, and teacher-force ≥8 future positions. Compare `full
 at each `m`. Primary axes: bytes vs next-token KL, bytes vs ΔNLL, raw-KV-MSE vs
 predictive-KL (the decoupling the whole hypothesis rides on), `u0` energy per
 layer, and the angle between `u0` and the PCA subspace. The verdict is written to
-`VERDICT.md` in the dated result directory under `results-archive`, whichever way
-it falls.
+`VERDICT.md` in the dated result directory in the private results archive,
+whichever way it falls.
 
-Provenance and the full brief live in
-`/data/results-archive/symkv-20260713/` (`BRIEF.md`, `PHASE0_AUDIT.md`). This
-line runs on the free local W7900; it carries no cloud-spend tag.
+Provenance and the full brief live in the private results archive (`BRIEF.md`,
+`PHASE0_AUDIT.md`). This line runs on the free local W7900; it carries no
+cloud-spend tag.
