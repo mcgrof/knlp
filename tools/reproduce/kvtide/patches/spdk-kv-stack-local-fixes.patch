@@ -1,0 +1,90 @@
+diff --git a/mk/spdk.common.mk b/mk/spdk.common.mk
+index 2757ad72e..d4fdae352 100644
+--- a/mk/spdk.common.mk
++++ b/mk/spdk.common.mk
+@@ -84,7 +84,7 @@ ifneq (,$(shell $(CC) --target-help 2>/dev/null | grep -e -mavx512f >/dev/null &
+ COMMON_CFLAGS += -mno-avx512f
+ endif
+ # Fix for GCC 15+ environments with AVX10 hardware
+-ifneq (,$(shell $(CC) --target-help 2>/dev/null | grep -e -mavx10.1 >/dev/null && echo 1))
++ifneq (,$(shell echo | $(CC) -mno-avx10.1 -E - >/dev/null 2>&1 && echo 1))
+ COMMON_CFLAGS += -mno-avx10.1
+ endif
+ endif
+diff --git a/module/bdev/kvmalloc/bdev_kvmalloc_rpc.c b/module/bdev/kvmalloc/bdev_kvmalloc_rpc.c
+index cf2e24761..7780f2371 100644
+--- a/module/bdev/kvmalloc/bdev_kvmalloc_rpc.c
++++ b/module/bdev/kvmalloc/bdev_kvmalloc_rpc.c
+@@ -8,7 +8,7 @@
+ #include "spdk/log.h"
+ #include "spdk_internal/rpc_autogen.h"
+ 
+-static const struct spdk_json_object_decoder rpc_bdev_kvmalloc_create_decoders[] = {
++static const struct spdk_json_object_decoder rpc_bdev_kvmalloc_create_decoders_manual[] = {
+ 	{"name", offsetof(struct rpc_bdev_kvmalloc_create_ctx, name), spdk_json_decode_string, true},
+ 	{"uuid", offsetof(struct rpc_bdev_kvmalloc_create_ctx, uuid), spdk_json_decode_uuid, true},
+ 	{"max_key_size", offsetof(struct rpc_bdev_kvmalloc_create_ctx, max_key_size), spdk_json_decode_uint32, true},
+@@ -29,8 +29,8 @@ rpc_bdev_kvmalloc_create(struct spdk_jsonrpc_request *request,
+ 
+ 	req.numa_id = SPDK_ENV_NUMA_ID_ANY;
+ 
+-	if (params && spdk_json_decode_object(params, rpc_bdev_kvmalloc_create_decoders,
+-					      SPDK_COUNTOF(rpc_bdev_kvmalloc_create_decoders),
++	if (params && spdk_json_decode_object(params, rpc_bdev_kvmalloc_create_decoders_manual,
++					      SPDK_COUNTOF(rpc_bdev_kvmalloc_create_decoders_manual),
+ 					      &req)) {
+ 		SPDK_DEBUGLOG(bdev_kvmalloc, "spdk_json_decode_object failed\n");
+ 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+@@ -63,7 +63,7 @@ cleanup:
+ }
+ SPDK_RPC_REGISTER("bdev_kvmalloc_create", rpc_bdev_kvmalloc_create, SPDK_RPC_RUNTIME)
+ 
+-static const struct spdk_json_object_decoder rpc_bdev_kvmalloc_delete_decoders[] = {
++static const struct spdk_json_object_decoder rpc_bdev_kvmalloc_delete_decoders_manual[] = {
+ 	{"name", offsetof(struct rpc_bdev_kvmalloc_delete_ctx, name), spdk_json_decode_string},
+ };
+ 
+@@ -85,8 +85,8 @@ rpc_bdev_kvmalloc_delete(struct spdk_jsonrpc_request *request,
+ {
+ 	struct rpc_bdev_kvmalloc_delete_ctx req = {};
+ 
+-	if (spdk_json_decode_object(params, rpc_bdev_kvmalloc_delete_decoders,
+-				    SPDK_COUNTOF(rpc_bdev_kvmalloc_delete_decoders),
++	if (spdk_json_decode_object(params, rpc_bdev_kvmalloc_delete_decoders_manual,
++				    SPDK_COUNTOF(rpc_bdev_kvmalloc_delete_decoders_manual),
+ 				    &req)) {
+ 		SPDK_DEBUGLOG(bdev_kvmalloc, "spdk_json_decode_object failed\n");
+ 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+diff --git a/python/spdk/cli/bdev.py b/python/spdk/cli/bdev.py
+index 251809bba..4349f7a8c 100644
+--- a/python/spdk/cli/bdev.py
++++ b/python/spdk/cli/bdev.py
+@@ -159,7 +159,14 @@ def add_parser(subparsers):
+     p.set_defaults(func=bdev_ocf_flush_status)
+ 
+     def bdev_kvmalloc_create(args):
+-        params = strip_globals(vars(args))
++        params = {k: v for k, v in {
++            "name": args.name,
++            "uuid": args.uuid,
++            "max_key_size": args.max_key_size,
++            "max_value_size": args.max_value_size,
++            "optimal_value_granularity": args.optimal_value_granularity,
++            "numa_id": args.numa_id,
++        }.items() if v is not None}
+         print_json(args.client.bdev_kvmalloc_create(**params))
+     p = subparsers.add_parser('bdev_kvmalloc_create', help='Create a bdev with kvmalloc backend (KV command set)')
+     p.add_argument('-b', '--name', help="Name of the bdev")
+diff --git a/scripts/genrpc.py b/scripts/genrpc.py
+index a5c5e4f02..937dd0669 100755
+--- a/scripts/genrpc.py
++++ b/scripts/genrpc.py
+@@ -47,6 +47,8 @@ def lint_c_code(schema: Dict[str, Any]) -> None:
+     # TODO: migrate remaining manual decoders to autogen and remove this set
+     manual_decoders: set[str] = {
+         "bdev_nvme_send_cmd",
++        "bdev_kvmalloc_create",
++        "bdev_kvmalloc_delete",
+         "bdev_rbd_create",
+         "bdev_rbd_register_cluster",
+         "nvmf_set_config",

@@ -16,6 +16,9 @@ results/
 *.pth
 *.pt
 *.patch
+# ...but vendored patches under tools/reproduce are part of the
+# reproduce pipeline (kvtide-fetch applies them) and must ship.
+!tools/reproduce/**/patches/*.patch
 /data
 
 # Large checkpoint directories
