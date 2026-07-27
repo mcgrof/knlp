@@ -780,7 +780,7 @@ done
 ```
 
 The smoke directory can be deleted after review. Smoke results
-are not archived to the key-results repo since they have no
+are not archived to the private results archive since they have no
 evidentiary value.
 
 ---

@@ -204,15 +204,15 @@ full tree layout.
 
 ## 6. Archival Procedure
 
-Results must be committed to the key-results repo, not the code
+Results must be committed to the private results archive, not the code
 repo. The code repo stays slim.
 
 ```bash
 # Copy results
-cp -a $RESULTS_DIR/ /data/results-archive/fused_kv_bench/
+cp -a $RESULTS_DIR/ /path/to/results-archive/fused_kv_bench/
 
-# Commit to key-results repo
-cd /data/results-archive
+# Commit to the private results archive
+cd /path/to/results-archive
 git add fused_kv_bench/
 git commit -m "bench: fused KV results $(date +%Y%m%d)"
 ```
@@ -287,7 +287,7 @@ Before submitting or publishing results, confirm:
 - [ ] Required benchmarks completed (Section 3)
 - [ ] All pass/fail criteria evaluated (Section 4)
 - [ ] All JSON artifacts saved (Section 5)
-- [ ] Results archived to key-results repo (Section 6)
+- [ ] Results archived to the private results archive (Section 6)
 - [ ] No common mistakes apply (Section 7)
 - [ ] Results reproducible from committed configs and pinned vLLM
 - [ ] Multiple attention backends tested where hardware permits

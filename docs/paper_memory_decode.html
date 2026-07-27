@@ -1139,7 +1139,7 @@ llm = LLM(
   </div>
 
   <div class="citation-block">
-    Source: <code>/data/results-archive/h100-flashinfer/h100_throughput_sweep.json</code>.
+    Source: the private results archive.
     Measurements at batch 32 through vLLM 0.19 + FlashInfer 0.6.7 with our K16/V8 branch applied
     (<a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>).
     Asymmetric K16/V8 requires the small vLLM/FlashInfer dtype-split extension described in the paper —
@@ -1313,8 +1313,7 @@ llm = LLM(
     84.5% — a 169.5-point absolute improvement over static-calibrated FP8.  Calibration cannot solve a
     precision-floor problem; what it can do is shift which part of the distribution gets sacrificed.
     Archive at
-    <a href="https://github.com/mcgrof/results-archive/tree/main/qwen-fragility-bundled-20260425" style="color:var(--cyan);">
-    qwen-fragility-bundled-20260425</a>.
+    qwen-fragility-bundled-20260425 (archived privately).
   </div>
 
   <div class="key-result" style="margin-top:16px;">

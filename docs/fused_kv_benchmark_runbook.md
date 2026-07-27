@@ -636,12 +636,12 @@ For every benchmark that measures latency or throughput, report:
     └── fused/
 ```
 
-Every JSON artifact must be committed to the key-results repo
+Every JSON artifact must be committed to the private results archive
 for reproducibility:
 
 ```bash
-cp -a <RESULTS_DIR>/ /data/results-archive/fused_kv_bench/
-cd /data/results-archive && git add fused_kv_bench/ && git commit
+cp -a <RESULTS_DIR>/ /path/to/results-archive/fused_kv_bench/
+cd /path/to/results-archive && git add fused_kv_bench/ && git commit
 ```
 
 ---
@@ -704,7 +704,7 @@ fi
 - [ ] `config_diff.txt` documents the exact flag difference
 - [ ] FP16 and FUSED use identical model weights, TP, max-model-len
 - [ ] FP16 and FUSED use the same attention backend
-- [ ] All JSON results committed to key-results repo
+- [ ] All JSON results committed to the private results archive
 - [ ] lm-eval accuracy delta <1% on all standard tasks
 - [ ] NIAH retrieval 100% at all tested (depth, length) pairs
 - [ ] Latency and throughput numbers reported with p50/p95/p99

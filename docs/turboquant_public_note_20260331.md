@@ -12,7 +12,7 @@ So **D is our incumbent fused quantization path**, not an uncompressed baseline.
 
 ## Durable artifact roots
 Primary durable sink on prune:
-- `/data/results-archive/fused-quant/turboquant-abcd-h100-20260331T195241Z/`
+- the private results archive
 
 Repo-local copy for source-tree context:
 - `/data/knlp/results/turboquant-abcd-h100-20260331T195241Z/`

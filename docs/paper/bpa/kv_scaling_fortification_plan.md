@@ -31,7 +31,7 @@ The paper should be able to make five claims cleanly and with auditable evidence
   into the core scaling-law section.
 - Fit diagnostics and uncertainty need explicit artifacts, not just prose.
 - Cross-GPU comparison needs a single artifact schema and manifest layer.
-- The private `results-archive` tree is too messy to point at directly; we need
+- The private results archive is too messy to point at directly; we need
   a clean `knlp-paper-memory-decode` export layout.
 
 ## Coverage Audit of the Current Framework
@@ -97,8 +97,8 @@ knlp-paper-memory-decode/
     reruns/
 ```
 
-The export tree is what the paper references. `results-archive` remains the
-private source of truth during collection, but only data that survives manifest
+The export tree is what the paper references. The private results archive remains the
+source of truth during collection, but only data that survives manifest
 validation and packaging should move into the paper-facing tree.
 
 ## Experiment Lanes
@@ -317,7 +317,7 @@ Recommended split strategy:
 
 ## Public-Subset Packaging Plan
 
-`results-archive` remains private. Public release should export only the
+The private results archive is not published. Public release should export only the
 paper-relevant subset through `package_results.py`.
 
 Export rules:

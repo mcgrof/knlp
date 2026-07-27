@@ -12,8 +12,8 @@ Target thread:
 5. `/home/mcgrof/.openclaw/workspace/plans/turboquant-vs-fused-quant-h100-plan-20260331.md`
 
 ## Durable results
-- `/data/results-archive/fused-quant/turboquant-abcd-h100-20260331T195241Z/`
-- `/data/results-archive/fused-quant/turboquant-public-informed-h100-20260331T203533Z/`
+- `turboquant-abcd-h100-20260331T195241Z/` (in the private results archive)
+- `turboquant-public-informed-h100-20260331T203533Z/` (in the private results archive)
 
 ## Repo-local results copies
 - `/data/knlp/results/turboquant-abcd-h100-20260331T195241Z/`

@@ -89,7 +89,7 @@ HuggingFace cache mounts, results mounts, and environment variables:
 HIP_VISIBLE_DEVICES=1 ./container/run-bench.sh
 
 # Write results to a specific directory
-BENCH_RESULTS_DIR=/data/results-archive/fused_kv_bench \
+BENCH_RESULTS_DIR=/path/to/results-archive/fused_kv_bench \
   ./container/run-bench.sh
 
 # Use a different image tag
@@ -240,7 +240,7 @@ are no longer the canonical benchmark lane. Use them only for:
 - Quick one-off experiments that do not produce archival results
 
 Any results intended for publication or archival to
-`/data/results-archive/` must come from the container path.
+the private results archive must come from the container path.
 
 ## Rebuilding after upstream updates
 

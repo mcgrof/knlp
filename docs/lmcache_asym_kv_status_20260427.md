@@ -31,8 +31,7 @@ backend are landed in real LMCache and measured correct on H100:
   `tobytes()` reinterpretation, ~10000× faster.  Committed on the
   `asymmetric-kv-codec` branch.
 
-JSONs at
-`prune:/data/results-archive/lmcache_asym_perf_quality_20260426/`.
+JSONs in the private results archive.
 
 **Caveat: pinned-memory pressure under concurrent serving.**
 `SPLIT_K_CPU_V_NVME` puts K on host pinned memory.  Pinned pages
@@ -290,8 +289,7 @@ Code:
 - `scripts/test_flashinfer_asym_kv.py` — the gate test.  Decode
   passes; prefill assert fails by design until the JIT dispatch is
   extended.
-- Run logs at
-  `prune:/data/results-archive/lmcache_asym_perf_quality_20260426/m1_gate_full.log`
+- Run logs in the private results archive
 
 Extend `BatchPrefillWithPagedKVCacheWrapper.plan()` and
 `BatchDCPPrefillWrapper.plan()` to accept `k_data_type` and
@@ -502,4 +500,4 @@ report `K cache dtype = BF16/FP16`, `V cache dtype = FP8 e4m3`,
   (committed on `prune:/data/lmcache`)
 - vLLM fork: `mcgrof/vllm:asymmetric-kv-plumbing`
 - FlashInfer fork: `mcgrof/flashinfer:asymmetric-kv-dtype`
-- Storage results: `prune:/data/results-archive/lmcache_asym_perf_quality_20260426/`
+- Storage results: the private results archive

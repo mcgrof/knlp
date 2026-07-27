@@ -511,6 +511,6 @@ See `docs/fim_analysis.md` for detailed documentation.
 
 - SPDA Paper: "Scaled Dot-Product Attention as One-Sided Entropic Optimal Transport"
 - Code for FIM metrics: `gpt2/trainers/ra.py` (FisherMetricsCallback)
-- Experimental results: [test_matrix_results_20251123_231956](https://github.com/mcgrof/results-archive/tree/main/key_results/test_matrix_results_20251123_231956)
+- Experimental results: test_matrix_results_20251123_231956 (archived privately)
 - FIM Analysis Tools: `scripts/analyze_fim_metrics.py`, `scripts/fim_wandb_viz.py`
 - Full FIM Analysis Guide: `docs/fim_analysis.md`
