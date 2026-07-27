@@ -79,6 +79,10 @@ if want_linux; then
 	check "kernel build: libelf dev" sh -c \
 		'test -e /usr/include/libelf.h || pkg-config --exists libelf'
 	check "kernel build: zstd"       command -v zstd
+	# BTF generation: the kernel stage keeps CONFIG_DEBUG_INFO_BTF on
+	# so the kvio eBPF tracers can attach to the kernel under test;
+	# without pahole, olddefconfig silently drops the symbol.
+	check "kernel build: pahole (dwarves)" command -v pahole
 fi
 
 check "src dir parent writable" sh -c \
