@@ -35,6 +35,12 @@ check "python (python-is-python3)" command -v python
 # SPDK is always needed: it provides the target even in xnvme-only mode.
 # The full canonical set is SPDK's scripts/pkgdep.sh; these are the ones
 # that actually bit on a stock Ubuntu 24.04 server.
+# meson/ninja are needed by EVERY SPDK build (the bundled DPDK submodule
+# builds with meson), not just the xNVMe arm -- checking them only under
+# want_xnvme let the spdk-only config pass doctor and then die at
+# dpdkbuild with "meson: not found" (seen on stock Debian 13).
+check "SPDK: meson (DPDK build)" command -v meson
+check "SPDK: ninja (DPDK build)" command -v ninja
 check "SPDK: python3-pyelftools" python3 -c 'import elftools'
 check "SPDK: python3-tabulate"   python3 -c 'import tabulate'
 check "SPDK: autotools (autoreconf)" command -v autoreconf
@@ -52,8 +58,6 @@ check "nvme-cli"                 sh -c \
 check "column (bsdextrautils)"   command -v column
 
 if want_xnvme; then
-	check "meson"                command -v meson
-	check "ninja"                command -v ninja
 	check "pkg-config"           command -v pkg-config
 	check "liburing dev"         pkg-config --exists liburing
 	check "kernel nvme_tcp module" sh -c \
