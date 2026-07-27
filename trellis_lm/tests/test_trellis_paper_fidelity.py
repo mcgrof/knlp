@@ -156,3 +156,41 @@ def test_F_mixer_wires_phi_and_f_independently():
     only_phi_id = _fwd(activation="ln_silu", phi_activation="identity")
     only_f_id = _fwd(activation="ln_silu", f_activation="identity")
     assert not torch.allclose(only_phi_id, only_f_id, atol=1e-5)
+
+
+def test_G_phi_f_fix_does_not_reopen_the_gate():
+    """Litmus / decision guard: the phi/f decoupling improves fidelity but does
+    NOT lift the closure of the Trellis line.
+
+    The closure rests on the fair param-matched run (reports/
+    trellis_claim_audit.md, "What is untouched and solid"), where Gated DeltaNet
+    is the matched-state quality leader by a wide margin -- NOT on the phi/f
+    confound. That confound only inflated a secondary claim; the write
+    nonlinearity's isolated effect is bounded by the paper's own clean phi-only
+    control (f held at LN-SiLU) at ~0.78 ppl, which is an order of magnitude too
+    small to close the Trellis-vs-GDN gap. So fixing phi/f cannot lift the gate.
+
+    This test hard-codes the load-bearing numbers so any future "the fix reopens
+    Trellis" claim has to confront them. If a genuinely faithful run competes
+    with GDN, update these constants WITH the new evidence -- do not loosen the
+    assertion to make a hoped-for conclusion pass.
+    """
+    # Fair param-matched leaderboard, lower PPL better (audit: untouched/solid).
+    matched = {"trellis": 152.54, "gdn": 78.49, "deltanet": 89.77, "dense": 224.89}
+    # Paper's own clean phi-only control: 11.65 (identity write) vs 10.87
+    # (nonlinear write), f held at LN-SiLU in both.
+    write_only = (11.65, 10.87)
+
+    trellis, gdn = matched["trellis"], matched["gdn"]
+    # GDN leads the matched-state comparison by a wide margin.
+    assert gdn < matched["deltanet"] < trellis < matched["dense"]
+    gap_rel = (trellis - gdn) / gdn  # ~0.94: our Trellis is ~2x worse than GDN
+    # The entire write-nonlinearity budget as a relative effect (its ceiling).
+    write_only_rel = abs(write_only[0] - write_only[1]) / max(write_only)  # ~0.067
+
+    # The fix's ceiling is far too small to close the gap...
+    assert write_only_rel < gap_rel / 5, (write_only_rel, gap_rel)
+    # ...and applying the FULL write-only budget to Trellis still leaves it well
+    # above GDN, so the phi/f fix cannot make Trellis competitive.
+    trellis_best_case = trellis * (1.0 - write_only_rel)
+    assert trellis_best_case > gdn, (trellis_best_case, gdn)
