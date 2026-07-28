@@ -43,6 +43,11 @@ CLIENT_A_URL = os.environ.get("CLIENT_A_URL", "http://localhost:8006/v1")
 CLIENT_A_MODEL = os.environ.get("CLIENT_A_MODEL", "qwen3-14b-qgen")
 CLIENT_B_URL = os.environ.get("CLIENT_B_URL", "http://localhost:8005/v1")
 CLIENT_B_MODEL = os.environ.get("CLIENT_B_MODEL", "qwen3-8b-ans")
+# Faithful-arm overrides: prob_thinking=1.0 + a 2048 cap gives the paper's
+# thinking-on teacher trajectories (the #1 fidelity lever); the 0.2/1024 defaults
+# are the fast pilot mix. See PROB_THINKING / MAXTOK_B below.
+PROB_THINKING = float(os.environ.get("PROB_THINKING", "0.2"))
+MAXTOK_B = int(os.environ.get("MAXTOK_B", "1024"))
 pstr = PATIENT.replace("patient_", "p")
 
 # Bot A: the stronger question generator (Qwen3-14B).
@@ -66,13 +71,13 @@ config = SynthesizeConfig(
         max_rounds=1,
         temperature_a=0.6,
         max_completion_tokens_a=1024,
-        # Match the iso5-baseline answer config (synth_pod) so the ONLY variable
-        # vs baseline is the question generator (14B decoupled bot A). Always-on
-        # thinking (prob_thinking=1.0, max 2048) is ~14 h/patient here -- too slow
-        # for the pilot; keep the baseline's 0.2 mix and 1024 cap.
-        prob_thinking=0.2,
+        # prob_thinking / cap are env-driven (PROB_THINKING / MAXTOK_B). Defaults
+        # 0.2 / 1024 = the fast pilot mix; the faithful arm sets 1.0 / 2048 for
+        # the paper's always-thinking teacher trajectories. Greedy teacher
+        # (temperature_b=0.0) matches the paper either way.
+        prob_thinking=PROB_THINKING,
         temperature_b=0.0,
-        max_completion_tokens_b=1024,
+        max_completion_tokens_b=MAXTOK_B,
         use_tools_a=False,
         use_tools_b=False,
         tools=[],
@@ -92,12 +97,12 @@ config = SynthesizeConfig(
     ),
     num_samples=NUM_SAMPLES,
     batch_size=16,
-    # 16 x 16 = 256 concurrent = the top of the library's recommended
-    # batch_size*num_batches range (128-256, see synthesize.py). Safe on bot B's
-    # ~370k-token KV cache now that answers are short (prob_thinking=0.2, 1024
-    # cap). 16x32=512 thrashed the cache; 16x8 with always-thinking was too slow.
-    max_num_batches_in_parallel=16,
-    worker_timeout=15 * 60,
+    # batch_size * max_num_batches = concurrent requests. 16x16=256 is safe for
+    # the short (0.2/1024) pilot; thinking-on (1.0/2048) needs LOWER concurrency
+    # (longer answers thrash bot B's ~370k-token KV cache) and a longer worker
+    # timeout. Both env-driven so the faithful arm can dial them down/up.
+    max_num_batches_in_parallel=int(os.environ.get("MAX_BATCHES", "16")),
+    worker_timeout=int(os.environ.get("WORKER_TIMEOUT", str(15 * 60))),
     output_dir=os.environ["CARTRIDGES_OUTPUT_DIR"],
     name=FormatStringVariable(f"synth_decoupled_14bq_8ba_{pstr}_n{{num_samples}}"),
     run_id=FormatStringVariable(f"synth_decoupled_14bq_8ba_{pstr}_n{{num_samples}}"),
