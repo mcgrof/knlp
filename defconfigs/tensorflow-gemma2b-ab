@@ -1,0 +1,15 @@
+# TensorFlow Gemma 2B reference-versus-candidate build and runtime campaign.
+# Supply the candidate with TF_ALT_BUILDER=/path/to/adapter.
+CONFIG_KNLP_TF_REPRO=y
+CONFIG_KNLP_TF_BUILDER_AB=y
+CONFIG_KNLP_TF_SOURCE_DIR="/data/tensorflow"
+CONFIG_KNLP_TF_TARGET="//knlp_tensorflow:gemma_savedmodel_runner"
+CONFIG_KNLP_TF_ARTIFACT_RELPATH="knlp_tensorflow/gemma_savedmodel_runner"
+CONFIG_KNLP_TF_BUILD_ARGS="--config=opt --config=cuda --copt=-Wno-unused-command-line-argument"
+CONFIG_KNLP_TF_JOBS=0
+CONFIG_KNLP_TF_RESULTS_ROOT="./results/tensorflow-gemma2b"
+CONFIG_KNLP_TF_REFERENCE_BUILDER="tools/reproduce/tensorflow_ab/builders/bazel.py"
+CONFIG_KNLP_TF_ALTERNATIVE_BUILDER=""
+CONFIG_KNLP_TF_BAZEL_BIN="bazel"
+CONFIG_KNLP_TF_PROFILE=y
+CONFIG_KNLP_TF_FAIL_ON_DIRTY_SOURCE=y

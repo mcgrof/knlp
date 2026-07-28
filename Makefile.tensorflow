@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: MIT
+# TensorFlow build-system A/B reproduction targets.
+
+TF_REPRO_ORCH := python3 -m tools.reproduce.tensorflow_ab.run
+TF_RUNTIME_ORCH := python3 -m tools.reproduce.tensorflow_ab.runtime
+
+ifneq ($(strip $(TF_SOURCE)),)
+export KNLP_TF_SOURCE := $(TF_SOURCE)
+endif
+ifneq ($(strip $(TF_ALT_BUILDER)),)
+export KNLP_TF_ALTERNATIVE_BUILDER := $(TF_ALT_BUILDER)
+endif
+ifneq ($(strip $(TF_REFERENCE_BUILDER)),)
+export KNLP_TF_REFERENCE_BUILDER := $(TF_REFERENCE_BUILDER)
+endif
+ifneq ($(strip $(TF_RESULTS)),)
+export KNLP_TF_RESULTS := $(TF_RESULTS)
+endif
+ifneq ($(strip $(TF_TARGET)),)
+export KNLP_TF_TARGET := $(TF_TARGET)
+endif
+ifneq ($(strip $(TF_BUILD_ARGS)),)
+export KNLP_TF_BUILD_ARGS := $(TF_BUILD_ARGS)
+endif
+ifneq ($(strip $(TF_JOBS)),)
+export KNLP_TF_JOBS := $(TF_JOBS)
+endif
+ifneq ($(strip $(TF_BAZEL)),)
+export KNLP_TF_BAZEL := $(TF_BAZEL)
+endif
+ifneq ($(strip $(TF_ALLOW_DIRTY)),)
+export KNLP_TF_ALLOW_DIRTY := $(TF_ALLOW_DIRTY)
+endif
+
+.PHONY: tensorflow-repro tensorflow-doctor tensorflow-stage \
+	tensorflow-build tensorflow-report tensorflow-clean tensorflow-export \
+	tensorflow-reference tensorflow-runtime
+
+ifeq ($(CONFIG_KNLP_TF_REPRO),y)
+.DEFAULT_GOAL := tensorflow-repro
+endif
+
+tensorflow-repro: tensorflow-doctor tensorflow-stage tensorflow-build \
+	tensorflow-report
+
+tensorflow-doctor:
+	@$(TF_REPRO_ORCH) doctor --config .config
+
+tensorflow-stage:
+	@$(TF_REPRO_ORCH) stage --config .config
+
+tensorflow-build:
+	@$(TF_REPRO_ORCH) build --config .config
+
+tensorflow-report:
+	@$(TF_REPRO_ORCH) report --config .config
+
+tensorflow-clean:
+	@$(TF_REPRO_ORCH) clean --config .config
+
+tensorflow-export:
+	@python3 -m tools.reproduce.tensorflow_ab.export_gemma $(TF_EXPORT_ARGS)
+
+tensorflow-reference:
+	@python3 -m tools.reproduce.tensorflow_ab.reference $(TF_REFERENCE_ARGS)
+
+tensorflow-runtime:
+	@$(TF_RUNTIME_ORCH) $(TF_RUNTIME_ARGS)
