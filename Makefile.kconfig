@@ -8,8 +8,9 @@ CONFIG_OLD := .config.old
 DEFCONFIG_DIR := defconfigs
 
 # Python-based Kconfig tools
-PYCONF := python3 scripts/pyconf.py
-PYMENUCONFIG := python3 scripts/pymenuconfig.py
+PYTHON ?= python3
+PYCONF := $(PYTHON) scripts/pyconf.py
+PYMENUCONFIG := $(PYTHON) scripts/pymenuconfig.py
 
 # Export for sub-makefiles
 export KCONFIG_CONFIG := $(CONFIG_FILE)
@@ -58,7 +59,7 @@ defconfig:
 	fi; \
 	echo "Loading defconfig: $(DEFCONFIG) from $$found_config"; \
 	cp "$$found_config" $(CONFIG_FILE); \
-	if python3 -c "import kconfiglib" 2>/dev/null; then \
+	if $(PYTHON) -c "import kconfiglib" 2>/dev/null; then \
 		$(PYCONF) $(KCONFIG) --olddefconfig --config=$(CONFIG_FILE); \
 	else \
 		echo "Note: kconfiglib not installed, using defconfig as-is"; \
@@ -165,10 +166,10 @@ generate-config: $(CONFIG_FILE)
 		fi; \
 	fi; \
 	if [ "$$NEED_TMP" = "1" ]; then \
-		python scripts/kconfig2py.py .config.tmp > config.py; \
+		$(PYTHON) scripts/kconfig2py.py .config.tmp > config.py; \
 		rm .config.tmp; \
 	else \
-		python scripts/kconfig2py.py $(CONFIG_FILE) > config.py; \
+		$(PYTHON) scripts/kconfig2py.py $(CONFIG_FILE) > config.py; \
 	fi
 	@echo "Configuration saved to config.py"
 
