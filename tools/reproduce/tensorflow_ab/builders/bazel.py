@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import time
@@ -33,6 +34,18 @@ def write_json(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
+def request_environment(request: dict[str, object]) -> dict[str, str]:
+    requested = request.get("environment", {})
+    if not isinstance(requested, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in requested.items()
+    ):
+        raise ValueError("request environment keys and values must be strings")
+    environment = os.environ.copy()
+    environment.update(requested)
+    return environment
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request", type=Path, required=True)
@@ -49,6 +62,23 @@ def main() -> None:
     log_path = output / "build.log"
     bazel = build["bazel_executable"]
     build_arguments = shlex.split(build["arguments"])
+    environment = request_environment(request)
+    cuda_capabilities = environment.get("TF_CUDA_COMPUTE_CAPABILITIES")
+    capability_prefix = "--repo_env=TF_CUDA_COMPUTE_CAPABILITIES="
+    capability_arguments = [
+        argument.removeprefix(capability_prefix)
+        for argument in build_arguments
+        if argument.startswith(capability_prefix)
+    ]
+    if cuda_capabilities:
+        if capability_arguments and any(
+            value != cuda_capabilities for value in capability_arguments
+        ):
+            raise ValueError(
+                "TF_CUDA_COMPUTE_CAPABILITIES conflicts with build arguments"
+            )
+        if not capability_arguments:
+            build_arguments.append(f"{capability_prefix}{cuda_capabilities}")
     command = [
         bazel,
         f"--output_base={output_base}",
@@ -73,6 +103,7 @@ def main() -> None:
             version_result = subprocess.run(
                 [bazel, "--version"],
                 cwd=source,
+                env=environment,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -82,6 +113,7 @@ def main() -> None:
             status = subprocess.run(
                 command,
                 cwd=source,
+                env=environment,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 check=False,
@@ -97,6 +129,7 @@ def main() -> None:
                 info = subprocess.run(
                     info_command,
                     cwd=source,
+                    env=environment,
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=log,
