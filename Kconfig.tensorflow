@@ -54,7 +54,7 @@ config KNLP_TF_ARTIFACT_RELPATH
 
 config KNLP_TF_BUILD_ARGS
 	string "Common TensorFlow build arguments"
-	default "--config=opt --config=cuda --copt=-Wno-unused-command-line-argument"
+	default "--config=opt --config=cuda --repo_env=TF_NEED_TENSORRT=0 --copt=-Wno-unused-command-line-argument"
 	depends on KNLP_TF_REPRO
 	help
 	  Shell-style argument list passed unchanged to every builder.
