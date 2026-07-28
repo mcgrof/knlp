@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: MIT
+#
+# TensorFlow build-system A/B reproduction.
+
+menu "TensorFlow build-system reproduction"
+
+config KNLP_TF_REPRO
+	bool "Enable TensorFlow build-system reproduction"
+	default n
+	help
+	  Build the same TensorFlow target with its reference builder, an
+	  externally supplied alternative builder, or both. The public harness
+	  knows only the adapter contract; alternative implementations remain
+	  outside this repository.
+
+choice
+	prompt "TensorFlow builder selection"
+	depends on KNLP_TF_REPRO
+	default KNLP_TF_BUILDER_REFERENCE
+	help
+	  REFERENCE builds only with TensorFlow's default builder.
+	  ALTERNATIVE builds only with an external adapter.
+	  A/B sends the same canonical request to both adapters.
+
+config KNLP_TF_BUILDER_REFERENCE
+	bool "Reference TensorFlow builder only"
+
+config KNLP_TF_BUILDER_ALTERNATIVE
+	bool "Alternative TensorFlow builder only"
+
+config KNLP_TF_BUILDER_AB
+	bool "A/B: reference and alternative builders"
+
+endchoice
+
+config KNLP_TF_SOURCE_DIR
+	string "Pinned TensorFlow source directory"
+	default "/data/tensorflow"
+	depends on KNLP_TF_REPRO
+	help
+	  Existing TensorFlow checkout used by every selected builder. The
+	  orchestrator records its Git commit and rejects unrelated dirt by
+	  default.
+
+config KNLP_TF_TARGET
+	string "TensorFlow target"
+	default "//knlp_tensorflow:gemma_savedmodel_runner"
+	depends on KNLP_TF_REPRO
+
+config KNLP_TF_ARTIFACT_RELPATH
+	string "Artifact path relative to the configured binary directory"
+	default "knlp_tensorflow/gemma_savedmodel_runner"
+	depends on KNLP_TF_REPRO
+
+config KNLP_TF_BUILD_ARGS
+	string "Common TensorFlow build arguments"
+	default "--config=opt --config=cuda --copt=-Wno-unused-command-line-argument"
+	depends on KNLP_TF_REPRO
+	help
+	  Shell-style argument list passed unchanged to every builder.
+
+config KNLP_TF_JOBS
+	int "Parallel build jobs (0 = detected CPU count)"
+	default 0
+	range 0 512
+	depends on KNLP_TF_REPRO
+
+config KNLP_TF_RESULTS_ROOT
+	string "Build-system reproduction results root"
+	default "./results/tensorflow-ab"
+	depends on KNLP_TF_REPRO
+
+config KNLP_TF_REFERENCE_BUILDER
+	string "Reference builder adapter"
+	default "tools/reproduce/tensorflow_ab/builders/bazel.py"
+	depends on KNLP_TF_REPRO && !KNLP_TF_BUILDER_ALTERNATIVE
+
+config KNLP_TF_ALTERNATIVE_BUILDER
+	string "Alternative builder adapter"
+	default ""
+	depends on KNLP_TF_REPRO && !KNLP_TF_BUILDER_REFERENCE
+	help
+	  Executable implementing the public JSON builder contract. It can also
+	  be supplied at invocation time with TF_ALT_BUILDER=/path/to/adapter.
+
+config KNLP_TF_BAZEL_BIN
+	string "Reference Bazel executable"
+	default "bazel"
+	depends on KNLP_TF_REPRO && !KNLP_TF_BUILDER_ALTERNATIVE
+
+config KNLP_TF_PROFILE
+	bool "Capture build profiles"
+	default y
+	depends on KNLP_TF_REPRO
+
+config KNLP_TF_FAIL_ON_DIRTY_SOURCE
+	bool "Reject unrelated TensorFlow source changes"
+	default y
+	depends on KNLP_TF_REPRO
+	help
+	  The managed knlp_tensorflow workload package is excluded from this
+	  check. Set TF_ALLOW_DIRTY=1 for an intentional local source change.
+
+config KNLP_TF_DRY_RUN
+	bool "Emit requests without invoking builders"
+	default n
+	depends on KNLP_TF_REPRO
+
+endmenu
