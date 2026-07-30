@@ -31,6 +31,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.environ.setdefault("KERAS_BACKEND", "tensorflow")
+    import keras  # noqa: PLC0415
     import keras_hub  # noqa: PLC0415
     import tensorflow as tf  # noqa: PLC0415
 
@@ -59,12 +60,10 @@ def main() -> None:
             return {"output_0": logits}
 
     module = ExportModule(model.backbone)
-    concrete = module.serve.get_concrete_function()
-    tf.saved_model.save(
-        module,
-        str(args.model_output),
-        signatures={"serve": concrete},
-    )
+    archive = keras.export.ExportArchive()
+    archive.track(model.backbone)
+    archive.add_endpoint(name="serve", fn=module.serve)
+    archive.write_out(str(args.model_output))
 
     args.feeds_output.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(args.seed)

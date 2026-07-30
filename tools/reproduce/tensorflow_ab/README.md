@@ -88,7 +88,18 @@ the fields above.
 
 ## Prepare the Gemma workload
 
-On a GPU host with TensorFlow, Keras, KerasHub, and model access:
+Create an isolated model-export environment on the GPU host. KerasHub's
+Hugging Face loader imports `sentencepiece` and `safetensors` as optional
+dependencies, so install them explicitly:
+
+```bash
+python3 -m venv .venv-tensorflow-model
+. .venv-tensorflow-model/bin/activate
+pip install "tensorflow[and-cuda]==2.20.0" keras-hub huggingface-hub \
+  sentencepiece safetensors
+```
+
+With model access configured:
 
 ```bash
 make tensorflow-export TF_EXPORT_ARGS='
