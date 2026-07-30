@@ -119,6 +119,8 @@ footer a { color: var(--cyan); text-decoration: none; }
   <tr><td>Llama-2-7b (MHA)</td><td>32</td><td class="warn">128 MB</td><td>4,856 MB</td></tr>
 </table>
 <p>GQA models produce <strong>8.5x smaller cartridges</strong> than MHA models at the same prefix length. GQA is strongly preferred for cartridge deployment.</p>
+
+<div class="note"><strong>Cartridges at Scale.</strong> Scaling from one document to a whole collection introduces a training-rule effect: independently trained cartridges collapse toward the no-context floor when co-loaded, and mixed-visibility joint training rescues them. A separate page documents an independent reproduction on Qwen3-8B and LongHealth &mdash; the baselines and the collapse/rescue effect reproduce, a single cartridge reaches 0.50 against the paper's 0.736, and it traces exactly where that gap lives. See <a href="cas.html">Cartridges at Scale: a LongHealth reproduction</a>.</div>
 </div>
 
 <!-- ============================================================ -->
