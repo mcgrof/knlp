@@ -71,39 +71,52 @@ The eval is `cas_combine_eval.py`, and two mistakes silently produce garbage:
   load `trainable-only` (the rescued target); baking the distractors in turns each
   "oracle" into a collapse. The eval auto-detects by frozen token count (`SINK_MAX`).
 
-## Status (2026-07-18) — what works and what does not
+## Status — what reproduces and what does not
 
 Validated and correct: the pipeline, compiled FlexAttention (~16× training
 speedup on CUDA sm≥80), the richer-target flatten fix, the reconstruction/eval
-above, and **combine-at-inference collapse**. The training itself is sound.
+above, the training-contract alignments (per-token distillation reduction,
+learning-rate warmup before the first optimizer step, an enlarged packing window),
+and **both the collapse and the rescue**.
 
-**Not yet reproduced: the collapse→rescue headline.** The funded Tier-2 run (8
-patients, 8000 convos each; `results-archive/cas-replication-20260715/tier2-20260718/`)
-found two blockers:
+**Collapse and rescue reproduce.** With five per-document cartridges on Qwen3-8B /
+LongHealth, an isolated cartridge that scores 0.58 alone drops to 0.38 (the
+no-context floor) when co-loaded, while a mixed-visibility cartridge holds — 0.44
+alone, 0.46 co-loaded. The co-load delta flips sign (−0.20 → +0.02); that sign
+flip is the rescue, mirroring the paper's larger-N result. Getting this right
+requires per-sample cache assembly (most samples present the target alone, a
+minority alongside sampled distractors) and a matched per-cartridge budget; a
+naive always-resident joint trainer instead teaches only the co-loaded geometry
+and inverts the result.
 
-1. **Oracle strength does not generalize at 8000 convos.** One easy patient hits
-   ~40% but the 8-patient mean oracle is ~12.5% — most cartridges stay near their
-   floor, so the collapse is shallow and there is no strong ceiling to rescue
-   toward. **Convos-per-patient is the binding lever**; the paper's regime is
-   ~40000. Raise `CONFIG_CARTRIDGES_CAS_CONVOS_PER_PATIENT` accordingly and expect
-   the synthesis phase to dominate wall-clock (~5 h/patient of vLLM generation at
-   40k). The reusable 8×8k corpora are archived if you want a warm start.
-2. **The joint (rescue) arm is a known-limited approximation.** `cas_train_joint`
-   trains a target with the other cartridges present as *frozen, already-trained*
-   distractors (a fixed-distractor, always-joint stand-in for CAS's per-sample
-   `P_iso`). In practice the combined joint cartridges collapse to ~0% — it does
-   not teach coexistence. **A faithful `P_iso` is required and is the main TODO.**
+**Open item: the single-cartridge quality gap.** A single isolated cartridge
+reaches about 0.50 (best 0.58) against the paper's 0.736. The baselines land on
+the paper (no-context 0.39, full document 0.855), and an untrained cartridge
+holding the full document KV scores 0.86 through the same path — so the path is
+lossless and the ceiling is 0.86. The gap survives every controlled variable:
+evaluation protocol, sampler, execution path, training length (loss reaches 0.017
+at 80 epochs), data volume, cartridge capacity, initialization, and every
+synthetic-distribution reshaping tried (hard question forms, hard-negative entity
+binding, direct question-distribution alignment). The load-bearing observation is
+a gap between the training objective and free generation: a cartridge minimizes
+the teacher-forced distillation loss (~0.035) yet free-generates the correct
+answer only ~0.4–0.5 of the time, even on questions it was trained on. The
+remaining distance is an objective-to-generation transfer problem, and the levers
+left are the paper's exact self-study distribution and its faithful batch-128 /
+linear-schedule optimizer regime.
 
-### Faithful `P_iso` (the rescue TODO)
+### Faithful `P_iso`
 
-CAS trains all cartridges jointly with a per-sample mixed-visibility mask: hold N
-trainable cartridges in one cache; for each training example (belonging to patient
-p) make cartridge p always visible and each other cartridge visible with
-probability `1 - P_iso`; let gradients flow only into the visible target; the
-cartridges co-evolve. This is a custom training loop over the existing `seq_ids`
-flex-attention masking (a cartridge is hidden for a step by setting its cache
-`seq_ids` to a sentinel ≠ −1), not the stock single-cartridge trainer. Until this
-lands, treat the rescue result as unmeasured, not as a negative for the method.
+The joint trainer trains all cartridges together with a per-sample
+mixed-visibility mask: hold N trainable cartridges in one cache; for each training
+example (belonging to document p) make cartridge p always visible and reveal the
+target alone 75% of the time, otherwise reveal it alongside `k ~ U(1, N-1)`
+sampled distractor cartridges; let gradients flow only into the revealed
+cartridges. Because the library block mask cannot express a per-sample random
+reveal, the mask is replaced with a full-length reveal-vector lookup keyed by
+cartridge slot (`kv_idx // KV_TOKENS`).
 
-Full history — smoke, the reload-bug correction, and the Tier-2 findings — is in
-`results-archive/cas-replication-20260715/`.
+The full reproduction — baselines, the lossless-path control, collapse/rescue, the
+single-cartridge gap, the deltas against the public implementation, and where the
+next gains come from — is written up at
+[docs/cas.md](../../docs/cas.md).
