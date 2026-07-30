@@ -55,6 +55,7 @@ PATIENTS = os.environ.get(
     "PATIENTS", "patient_01 patient_02 patient_03 patient_05 patient_06"
 ).split()
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
+Q_START = int(os.environ.get("Q_START", "0"))
 MAX_COMPLETION = int(os.environ.get("MAX_COMPLETION", "2048"))
 RUNS = int(os.environ.get("RUNS", "3"))
 TOP_K = int(os.environ.get("TOP_K", "20"))
@@ -214,7 +215,7 @@ def main():
         idx = 0
         for patient in present:
             cache = make_cache(os.path.join(CART_DIR, f"{patient.patient_id}.pt"))
-            for q in patient.questions[:MAX_Q]:
+            for q in patient.questions[Q_START : Q_START + MAX_Q]:
                 ids = (
                     tok.apply_chat_template(
                         [
