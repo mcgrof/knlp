@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LMCache ReadPlan L2: Metadata-Aware KV-Cache Offload Reads</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e14; --bg2: #10151c; --bg3: #161d26;
+  --surface: #1a222e; --border: #2a3444; --border2: #3a4a5c;
+  --text: #c8d6e5; --text2: #7a8ea0; --text3: #4a5e70;
+  --green: #00e87c; --green2: #00b85f; --green-bg: #00e87c18;
+  --cyan: #00d4c8; --amber: #f0a030; --red: #e84040;
+  --purple: #a070e8; --blue: #4090e8; --orange: #e87840;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px; }
+header { text-align: center; padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+header h1 { font-family: var(--mono); font-size: 23px; font-weight: 600; color: var(--green); margin-bottom: 6px; letter-spacing: 0.5px; }
+header .sub { font-family: var(--mono); font-size: 13px; color: var(--cyan); margin-bottom: 14px; }
+header p { color: var(--text2); font-size: 13px; max-width: 720px; margin: 0 auto 6px; }
+header a { color: var(--cyan); text-decoration: none; }
+header a:hover { text-decoration: underline; }
+section { margin-bottom: 40px; scroll-margin-top: 20px; }
+h2 { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--cyan); margin: 22px 0 10px; }
+p { margin-bottom: 14px; color: var(--text2); }
+strong { color: var(--text); font-weight: 600; }
+em { color: var(--amber); font-style: normal; }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul { margin: 0 0 14px 20px; color: var(--text2); }
+li { margin-bottom: 6px; }
+code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
+.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 0 0 32px; columns: 2; column-gap: 32px; font-family: var(--mono); font-size: 12px; }
+.toc a { color: var(--text2); display: block; padding: 3px 0; }
+.toc a:hover { color: var(--green); text-decoration: none; }
+pre { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; margin: 16px 0; font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text2); }
+.note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
+.note strong { color: var(--green); }
+.note.amber { background: #f0a03018; border-left-color: var(--amber); }
+.note.amber strong { color: var(--amber); }
+.papers { list-style: none; margin-left: 0; }
+.papers li { margin-bottom: 12px; padding-left: 14px; border-left: 2px solid var(--border2); }
+.papers .t { color: var(--text); font-weight: 600; }
+footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
+footer a { color: var(--text2); }
+@media (max-width: 640px) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>LMCache ReadPlan L2</h1>
+  <div class="sub">Metadata-Aware KV-Cache Offload Reads</div>
+  <p>Can a cached read plan reduce the control-path latency of a KV-cache offload
+  hit? This is a project inception note for an optional LMCache secondary-storage
+  adapter that caches <em>where a KV chunk lives and how to read it</em>, so
+  repeated hits can amortize backend metadata resolution before bytes move. It is
+  an unvalidated hypothesis, stated so it can be falsified.</p>
+</header>
+
+<div class="toc">
+  <a href="#motivation">1. Motivation</a>
+  <a href="#hypothesis">2. Hypothesis</a>
+  <a href="#shape">3. Proposed shape</a>
+  <a href="#improve">4. What it might improve</a>
+  <a href="#flexfiles">5. Flex Files v2 as a future use case</a>
+  <a href="#falsify">6. What would falsify this</a>
+  <a href="#status">7. Status and references</a>
+</div>
+
+<section id="motivation">
+<h2>1. Motivation</h2>
+<p>KV-cache offloading is usually framed as a bandwidth problem: move reusable
+inference state from a slower or larger tier back to the serving engine faster
+than recomputing it. But every successful offload hit begins with a control-path
+question — where is the object, which backend holds it, which byte range must be
+read, and is that location still valid? Depending on the backend, an L2 hit can
+require a key-existence check, a metadata or manifest lookup, selection among
+adapters or locations, resolving an object name into paths, ranges, offsets or
+extents, opening a file or obtaining a handle, registering a transfer path, and
+handling leases or stale locations — all before the first KV byte is read.</p>
+<p>For local storage this work may be negligible, and data transfer may still
+dominate. The point of the project is to <em>measure</em> whether metadata and
+setup are material in realistic KV-offload regimes, not to assume that they are.</p>
+</section>
+
+<section id="hypothesis">
+<h2>2. Hypothesis</h2>
+<div class="note"><strong>Hypothesis.</strong> An optional LMCache L2 adapter could
+cache a compact read plan for frequently accessed KV chunks or object ranges,
+allowing repeated L2 hits to bypass or amortize backend metadata resolution and
+begin data movement sooner.</div>
+<p>A read plan, at brush-stroke level, records a cache key or object identity, a
+backend or location, a byte range, a generation or validity token, an expiry, and
+a transfer hint. It caches the answer to "how do I read this," not the KV bytes
+themselves, and it must be cheap to validate and safe to invalidate.</p>
+</section>
+
+<section id="shape">
+<h2>3. Proposed shape</h2>
+<p>The adapter sits inside LMCache's existing secondary-storage path, splitting
+plan resolution from byte movement:</p>
+<pre>vLLM / inference engine
+         |
+      LMCache
+         |
+   ReadPlan L2 adapter
+      /          \
+plan lookup     byte backend
+                   |
+         POSIX / GDS / NIXL / object store</pre>
+<p>It is optional and preserves ordinary LMCache behavior when disabled. The first
+prototype uses an ordinary storage backend — likely POSIX — and does not depend on
+pNFS Flex Files or any distributed metadata service. The inference engine remains
+unaware that a storage plan exists.</p>
+</section>
+
+<section id="improve">
+<h2>4. What it might improve</h2>
+<p>Possible benefits, none promised until measured: lower L2 lookup latency; lower
+warm-hit time-to-first-token; fewer repeated metadata calls and fewer sequential
+backend probes; a place to cache backend capabilities and transfer preparation;
+easier prefetching of metadata before bytes are needed; and a common home for
+future tier and locality policy.</p>
+<p>The likely value grows with many small chunks, high cache reuse, multiple L2
+backends, remote metadata services, network filesystems, object storage, or
+backends whose data placement changes independently of LMCache. It shrinks toward
+zero when the backend already caches all relevant metadata cheaply.</p>
+</section>
+
+<section id="flexfiles">
+<h2>5. Flex Files v2 as a future use case</h2>
+<p>One intended future provider behind the generic ReadPlan interface is pNFS
+Flexible File Layout v2. Flex Files layouts can describe file ranges and
+data-server mirrors; the metadata server can provide a per-layout mirror-utility
+estimate; and the storage system retains authority over placement, replication,
+and tiering. A future provider might translate an inference object's latency,
+locality, trust, durability, or reuse requirements into storage policy and return
+a cached plan to LMCache, amortizing one broad object-range plan over many chunk
+reads.</p>
+<div class="note amber"><strong>Kept honest.</strong> Flex Files v2 does not today
+standardize an arbitrary inference-SLO request such as "put this KV range in the
+lowest-latency secure tier," and userspace LMCache cannot currently inspect or
+select kernel pNFS layouts directly. Flex Files is one potential provider behind a
+generic interface, not a mandatory dependency and not the project's reason to
+exist.</div>
+</section>
+
+<section id="falsify">
+<h2>6. What would falsify this</h2>
+<ul>
+<li>metadata and setup are negligible next to the data path;</li>
+<li>current backends already cache all relevant metadata efficiently;</li>
+<li>an extra adapter adds more synchronization and queuing than it removes;</li>
+<li>warm-hit time-to-first-token does not improve;</li>
+<li>plan invalidation proves too expensive or unreliable;</li>
+<li>or gains appear only under artificial metadata delays.</li>
+</ul>
+<p>A negative result is useful: it redirects effort toward chunk layout,
+gather/scatter, DMA granularity, prefetching, or the storage data path, and says
+plainly that the control path was not where the time went.</p>
+</section>
+
+<section id="status">
+<h2>7. Status and references</h2>
+<p><strong>Status: project inception / unvalidated hypothesis.</strong> The first
+step is a backend-independent, optional LMCache secondary-storage adapter with a
+POSIX byte backend, instrumented to separate control-path time from data-path time
+before any caching is added.</p>
+<ul class="papers">
+<li><span class="t"><a href="https://docs.lmcache.ai/mp/l2_storage/index.html">LMCache — Secondary (L2) KV Storage</a></span><br>
+The multiprocess L2 architecture and the plugin adapter interface this project builds on.</li>
+<li><span class="t"><a href="https://datatracker.ietf.org/doc/draft-haynes-nfsv4-flexfiles-v2/04/">draft-haynes-nfsv4-flexfiles-v2 — Parallel NFS (pNFS) Flexible File Layout Version 2</a></span><br>
+Range-scoped layouts, per-layout mirror-utility hints, and lease/reacquisition semantics.</li>
+<li><span class="t"><a href="https://www.rfc-editor.org/rfc/rfc8435">RFC 8435 — Parallel NFS (pNFS) Flexible File Layout</a></span><br>
+Established pNFS Flexible File background.</li>
+</ul>
+</section>
+
+<footer>
+<a href="cartridges_visualization.html">Cartridges</a>
+&nbsp;&middot;&nbsp;
+<a href="cas.html">Cartridges at Scale</a>
+&nbsp;&middot;&nbsp;
+<a href="kmesh.html">KMesh</a>
+&nbsp;&middot;&nbsp;
+<a href="learned_prefix_caches.html">Learned Prefix Caches</a>
+</footer>
+
+</div>
+</body>
+</html>
