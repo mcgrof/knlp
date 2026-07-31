@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KMesh: Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e14; --bg2: #10151c; --bg3: #161d26;
+  --surface: #1a222e; --border: #2a3444; --border2: #3a4a5c;
+  --text: #c8d6e5; --text2: #7a8ea0; --text3: #4a5e70;
+  --green: #00e87c; --green2: #00b85f; --green-bg: #00e87c18;
+  --cyan: #00d4c8; --amber: #f0a030; --red: #e84040;
+  --purple: #a070e8; --blue: #4090e8; --orange: #e87840;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px; }
+header { text-align: center; padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+header h1 { font-family: var(--mono); font-size: 24px; font-weight: 600; color: var(--green); margin-bottom: 6px; letter-spacing: 0.5px; }
+header .sub { font-family: var(--mono); font-size: 13px; color: var(--cyan); margin-bottom: 14px; }
+header p { color: var(--text2); font-size: 13px; max-width: 720px; margin: 0 auto 6px; }
+header a { color: var(--cyan); text-decoration: none; }
+header a:hover { text-decoration: underline; }
+section { margin-bottom: 40px; scroll-margin-top: 20px; }
+h2 { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--cyan); margin: 22px 0 10px; }
+p { margin-bottom: 14px; color: var(--text2); }
+strong { color: var(--text); font-weight: 600; }
+em { color: var(--amber); font-style: normal; }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul { margin: 0 0 14px 20px; color: var(--text2); }
+li { margin-bottom: 8px; }
+code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
+.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 0 0 32px; columns: 2; column-gap: 32px; font-family: var(--mono); font-size: 12px; }
+.toc a { color: var(--text2); display: block; padding: 3px 0; }
+.toc a:hover { color: var(--green); text-decoration: none; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+.stat .val { font-family: var(--mono); font-size: 20px; font-weight: 700; color: var(--green); }
+.stat .val.cyan { color: var(--cyan); }
+.stat .val.amber { color: var(--amber); }
+.stat .label { font-size: 10px; color: var(--text3); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.4; }
+.table-wrap { overflow-x: auto; margin: 16px 0; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2px solid var(--border); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; white-space: nowrap; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text2); vertical-align: top; }
+td.hi { color: var(--green); font-weight: 600; white-space: nowrap; }
+tr:hover td { background: var(--bg3); }
+.note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
+.note strong { color: var(--green); }
+.note.amber { background: #f0a03018; border-left-color: var(--amber); }
+.note.amber strong { color: var(--amber); }
+.papers { list-style: none; margin-left: 0; }
+.papers li { margin-bottom: 14px; padding-left: 14px; border-left: 2px solid var(--border2); }
+.papers .t { color: var(--text); font-weight: 600; }
+footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
+footer a { color: var(--text2); }
+@media (max-width: 640px) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>KMesh</h1>
+  <div class="sub">Sharing Keyed Inference State Across Agentic and Test-Time-Scaled Workloads</div>
+  <p>Request-centric inference execution flattens round, segment, branch, and
+  lineage structure before it reaches the runtime, forcing the engine to
+  rediscover relationships the orchestrator already knew — or miss them. KMesh
+  investigates whether an inference engine can be given explicit, keyed state
+  relationships so that recovery, scheduling, and storage operate on groups of
+  related requests rather than isolated token streams. This page states the goals;
+  it does not yet report results.</p>
+  <p><a href="https://arxiv.org/abs/2602.21548">DualPath</a>
+  &middot; <a href="https://arxiv.org/abs/2604.03143">TokenDance</a>
+  &middot; <a href="https://arxiv.org/abs/2604.06370">ForkKV</a></p>
+</header>
+
+<div class="stat-grid">
+  <div class="stat"><div class="val">cross-turn</div><div class="label">temporal reuse<br>(DualPath)</div></div>
+  <div class="stat"><div class="val cyan">cross-agent</div><div class="label">sibling redundancy<br>(TokenDance)</div></div>
+  <div class="stat"><div class="val amber">vLLM</div><div class="label">first milestone,<br>correctness-first</div></div>
+</div>
+
+<div class="toc">
+  <a href="#redundancies">1. Two redundancies, one missing structure</a>
+  <a href="#current">2. What TokenDance and ForkKV show</a>
+  <a href="#generalization">3. The generalization: keyed inference state</a>
+  <a href="#unresolved">4. The long-term architecture is unresolved</a>
+  <a href="#milestone">5. The first milestone</a>
+  <a href="#papers">6. Papers</a>
+</div>
+
+<section id="redundancies">
+<h2>1. Two redundancies, one missing structure</h2>
+<p>Agentic inference exposes at least two distinct forms of KV-cache redundancy,
+and it is worth keeping them separate.
+<a href="https://arxiv.org/abs/2602.21548">DualPath</a> reports high cross-turn
+reuse in long-context, short-append agent trajectories — the same trajectory
+revisiting most of its own context turn after turn.
+<a href="https://arxiv.org/abs/2604.03143">TokenDance</a> reports high cross-agent
+KV-block similarity after position-independent recovery in synchronized
+All-Gather rounds — sibling agents that share most of a round's state. The former
+is temporal reuse within a trajectory; the latter is sibling-state redundancy
+across concurrent requests. They are related architectural pressures, not the same
+measurement or reuse mechanism, and collapsing them into a single "shared cache"
+number obscures both.</p>
+<p>What they share is the diagnosis. Request-centric execution usually flattens
+round, segment, branch, and lineage structure before it reaches the runtime. The
+serving engine sees token streams and has to rediscover relationships the agent
+orchestrator already knows — or misses them and recomputes state it could have
+reused. The opportunity is not that a clever cache would help; it is that the
+structure needed to exploit reuse safely is discarded at the door.</p>
+</section>
+
+<section id="current">
+<h2>2. What TokenDance and ForkKV show</h2>
+<p>Two lines of work recover that structure deliberately, and both point past
+their own scope.</p>
+<p><a href="https://arxiv.org/abs/2604.03143">TokenDance</a> lifts the unit of
+optimization from a single request to an agentic round. It is built from four
+separable mechanisms: round-aware segment indexing that preserves logical block
+boundaries even at different absolute positions; collective position-independent
+KV reuse that pays the recovery cost once per round instead of once per request;
+a Master&ndash;Mirror diff-aware storage scheme that encodes sibling caches as
+sparse differences against one dense master; and fused sparse restoration on
+transfer. It is the right shape — but no open-source implementation was released,
+so an open baseline has to be reconstructed before anything can be generalized
+from it.</p>
+<p><a href="https://arxiv.org/abs/2604.06370">ForkKV</a> shows the opportunity is
+larger than the KV cache alone. Multi-LoRA agents co-hosted on one base model
+diverge in their KV because each adapter changes the activations for the same
+context, which defeats naive prefix caching. ForkKV borrows process semantics
+directly — fork the massive shared cache and apply copy-on-write for the
+lightweight, agent-specific remainder, tracked by a radix tree and reconstructed
+on chip. The lesson is that the shareable unit is the keyed inference state: the
+KV, the adapter-affected activations, and the prefixes they hang on.</p>
+</section>
+
+<section id="generalization">
+<h2>3. The generalization: keyed inference state</h2>
+<p>The same shared-trunk, per-branch-diff structure is not agentic-specific.
+Chain-of-thought reasoning revisits and branches its own context; test-time
+scaling forks a common prefix into parallel samples, best-of-N, or tree search;
+speculative decoding branches and prunes. These are the same pattern that
+TokenDance and ForkKV exploit for agents, and there is no reason the machinery
+should stay agent-specific.</p>
+<p>KMesh investigates whether an inference engine — vLLM first — can expose
+explicit, keyed state relationships that let recovery, scheduling, storage, and
+later memory tiering operate on groups of related requests. The unit is the keyed
+inference state: a per-context artifact keyed by the context it derives from, so a
+workload that provably shares that context can share, fork, or diff the state
+instead of recomputing it. Agentic serving, chain-of-thought, and test-time
+scaling then become callers of one mechanism rather than three separate
+optimizations. Whether that unification holds is a question to answer with an
+implementation, not to assume.</p>
+</section>
+
+<section id="unresolved">
+<h2>4. The long-term architecture is unresolved</h2>
+<p>The long-term architecture is intentionally unresolved, and saying so is the
+point. Linux virtual-memory primitives, accelerator memory, CXL tiers, and a
+generalized inference-object model may eventually matter — but those are
+hypotheses, and announcing that the operating system needs new interfaces before
+an inference engine has shown which mechanism is actually missing puts the
+cathedral before the door. The immediate work is empirical: use a real vLLM
+implementation to identify the smallest reusable abstractions and the precise
+mechanisms current runtimes lack.</p>
+<p>One interface question is already concrete. TokenDance carries segment
+structure with a separator token in the prompt; that is a fine paper-compatibility
+mode, but a reasoning or sampling orchestrator already knows its own branch and
+segment boundaries and should not have to inject control tokens into a model
+prompt to tell the runtime about them. So the mechanism should consume explicit
+segment metadata, with the in-prompt separator as one encoding of it rather than
+the internal contract. Getting that boundary right is what keeps a TokenDance
+reproduction from foreclosing chain-of-thought support later.</p>
+</section>
+
+<section id="milestone">
+<h2>5. The first milestone</h2>
+<p>The first milestone is a correctness-first reproduction of TokenDance-style,
+segment-aware collective reuse and Master&ndash;Mirror storage in vLLM. The
+comparison is built up in stages under controlled, deterministic All-Gather
+workloads, each stage validated against the one below it before any performance
+claim is made.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Stage</th><th>What it establishes</th></tr>
+<tr><td class="hi">Baselines</td><td>Ordinary vLLM with prefix caching off and on, and the existing serial position-independent recovery path, measured on controlled workloads.</td></tr>
+<tr><td class="hi">Observer</td><td>Typed request and segment metadata, compatibility grouping, and structural-overlap metrics that change nothing about scheduling or output — reporting how much workload structure the engine could exploit before any cache is touched.</td></tr>
+<tr><td class="hi">Collective reuse</td><td>Group recovery driven under one plan, validated to agree with the serial recovery baseline within declared tolerances, with operation counters that show whether the work is actually shared rather than merely batched.</td></tr>
+<tr><td class="hi">Master&ndash;Mirror</td><td>A codec that encodes a family of recovered caches as one dense master plus sparse mirror diffs, with exact round-trip tests and real serialized-byte accounting — not a changed-block oracle.</td></tr>
+</table>
+</div>
+<p>Only then does the API extend toward chain-of-thought and other
+test-time-scaling branches. Results on a single workstation-class GPU are labeled
+as functional or trend results; a comparison against the paper's numbers waits for
+comparable data-center-class hardware, with every material difference disclosed.
+The standard is not that the code runs — it is that the workload is controlled,
+the mechanism is observable, the comparison is fair, the fallback is safe, and the
+claim says no more than the evidence.</p>
+<div class="note amber"><strong>The abstraction is the deliverable, and it is not
+yet known.</strong> KMesh is a search for the smallest reusable structure that a
+runtime needs to share keyed inference state safely, run as experiments on an open
+vLLM baseline, not a finished system.</div>
+</section>
+
+<section id="papers">
+<h2>6. Papers</h2>
+<ul class="papers">
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2602.21548">DualPath: Breaking the Storage Bandwidth Bottleneck in Agentic LLM Inference</a></span><br>
+  Cross-turn temporal KV reuse in long-context, short-append agent trajectories,
+  and a dual-path loading scheme that rebalances the resulting storage-bandwidth
+  bottleneck.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2604.03143">TokenDance: Scaling Multi-Agent LLM Serving via Collective KV Cache Sharing</a></span><br>
+  Round-aware segment indexing, collective position-independent KV reuse, and
+  Master&ndash;Mirror diff-aware storage for sibling agents in synchronized
+  All-Gather rounds. The design KMesh reconstructs as its open baseline.
+</li>
+<li>
+  <span class="t"><a href="https://arxiv.org/abs/2604.06370">ForkKV: Scaling Multi-LoRA Agent Serving via Copy-on-Write Disaggregated KV Cache</a></span><br>
+  Fork-with-copy-on-write for multi-LoRA agents: a shared trunk plus lightweight
+  per-agent divergence. The evidence that the shareable unit extends past the KV
+  cache to adapter-affected state.
+</li>
+</ul>
+</section>
+
+<footer>
+<a href="cartridges_visualization.html">Cartridges</a>
+&nbsp;&middot;&nbsp;
+<a href="cas.html">Cartridges at Scale</a>
+&nbsp;&middot;&nbsp;
+<a href="learned_prefix_caches.html">Learned Prefix Caches</a>
+</footer>
+
+</div>
+</body>
+</html>
