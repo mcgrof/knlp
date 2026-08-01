@@ -40,6 +40,7 @@ include Makefile.quant
 # Include TensorFlow build-system reproduction targets. When
 # CONFIG_KNLP_TF_REPRO=y this overrides .DEFAULT_GOAL.
 include Makefile.tensorflow
+include Makefile.modular
 
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
