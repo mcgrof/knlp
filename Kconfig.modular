@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: MIT
+#
+# Modular build-system A/B reproduction.
+
+menu "Modular build-system reproduction"
+
+config KNLP_MODULAR_REPRO
+	bool "Enable Modular build-system reproduction"
+	default n
+	help
+	  Build the same pinned Modular target with its reference builder, an
+	  externally supplied alternative builder, or both. The public harness
+	  knows only the adapter contract; alternative implementations remain
+	  outside this repository.
+
+choice
+	prompt "Modular builder selection"
+	depends on KNLP_MODULAR_REPRO
+	default KNLP_MODULAR_BUILDER_REFERENCE
+	help
+	  REFERENCE builds only with Modular's Bazel wrapper.
+	  ALTERNATIVE builds only with an external adapter.
+	  A/B sends the same canonical request to both adapters.
+
+config KNLP_MODULAR_BUILDER_REFERENCE
+	bool "Reference Modular builder only"
+
+config KNLP_MODULAR_BUILDER_ALTERNATIVE
+	bool "Alternative Modular builder only"
+
+config KNLP_MODULAR_BUILDER_AB
+	bool "A/B: reference and alternative builders"
+
+endchoice
+
+config KNLP_MODULAR_SOURCE_DIR
+	string "Pinned Modular source directory"
+	default "/data/modular"
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_SOURCE_COMMIT
+	string "Required Modular source commit"
+	default "cc7155d854a049dce99aefc8d2570311e1e0b15f"
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Exact public Modular revision used by the workload. Leave empty only
+	  when deliberately testing another recorded revision.
+
+config KNLP_MODULAR_TARGET
+	string "Modular target"
+	default "//mojo/examples/gpu-block-and-warp:tiled_matmul"
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_ARTIFACT_RELPATH
+	string "Artifact path relative to the configured binary directory"
+	default "mojo/examples/gpu-block-and-warp/tiled_matmul"
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_BUILD_ARGS
+	string "Common Modular build arguments"
+	default ""
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Shell-style argument list passed unchanged to every builder.
+
+config KNLP_MODULAR_JOBS
+	int "Parallel build jobs (0 = detected CPU count)"
+	default 0
+	range 0 512
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_RESULTS_ROOT
+	string "Build-system reproduction results root"
+	default "./results/modular-tiled-matmul"
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_REFERENCE_BUILDER
+	string "Reference builder adapter"
+	default "tools/reproduce/modular_ab/builders/bazel.py"
+	depends on KNLP_MODULAR_REPRO && !KNLP_MODULAR_BUILDER_ALTERNATIVE
+
+config KNLP_MODULAR_ALTERNATIVE_BUILDER
+	string "Alternative builder adapter"
+	default ""
+	depends on KNLP_MODULAR_REPRO && !KNLP_MODULAR_BUILDER_REFERENCE
+	help
+	  Executable implementing the public JSON builder contract. It can also
+	  be supplied with MODULAR_ALT_BUILDER=/path/to/adapter.
+
+config KNLP_MODULAR_BAZEL_BIN
+	string "Reference Bazel executable"
+	default "./bazelw"
+	depends on KNLP_MODULAR_REPRO && !KNLP_MODULAR_BUILDER_ALTERNATIVE
+
+config KNLP_MODULAR_PROFILE
+	bool "Capture build profiles"
+	default y
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_FAIL_ON_DIRTY_SOURCE
+	bool "Reject dirty Modular source"
+	default y
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Set MODULAR_ALLOW_DIRTY=1 for an intentional local source change.
+
+config KNLP_MODULAR_RUNTIME_ARGS
+	string "Common runtime arguments"
+	default ""
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_RUNTIME_WARMUPS
+	int "Warm-up runs per artifact"
+	default 1
+	range 0 100
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_RUNTIME_RUNS
+	int "Measured runs per artifact"
+	default 10
+	range 1 1000
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_RUNTIME_TIMEOUT
+	int "Runtime timeout in seconds"
+	default 300
+	range 1 86400
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_RUNTIME_MARKER
+	string "Required successful-runtime output"
+	default "Validation PASSED"
+	depends on KNLP_MODULAR_REPRO
+
+config KNLP_MODULAR_DRY_RUN
+	bool "Emit requests without invoking builders"
+	default n
+	depends on KNLP_MODULAR_REPRO
+
+endmenu

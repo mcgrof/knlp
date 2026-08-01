@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: MIT
+# Modular build-system A/B reproduction targets.
+
+MODULAR_REPRO_ORCH := python3 -m tools.reproduce.modular_ab.run
+
+ifneq ($(strip $(MODULAR_SOURCE)),)
+export KNLP_MODULAR_SOURCE := $(MODULAR_SOURCE)
+endif
+ifneq ($(strip $(MODULAR_SOURCE_COMMIT)),)
+export KNLP_MODULAR_SOURCE_COMMIT := $(MODULAR_SOURCE_COMMIT)
+endif
+ifneq ($(strip $(MODULAR_ALT_BUILDER)),)
+export KNLP_MODULAR_ALTERNATIVE_BUILDER := $(MODULAR_ALT_BUILDER)
+endif
+ifneq ($(strip $(MODULAR_REFERENCE_BUILDER)),)
+export KNLP_MODULAR_REFERENCE_BUILDER := $(MODULAR_REFERENCE_BUILDER)
+endif
+ifneq ($(strip $(MODULAR_RESULTS)),)
+export KNLP_MODULAR_RESULTS := $(MODULAR_RESULTS)
+endif
+ifneq ($(strip $(MODULAR_TARGET)),)
+export KNLP_MODULAR_TARGET := $(MODULAR_TARGET)
+endif
+ifneq ($(strip $(MODULAR_BUILD_ARGS)),)
+export KNLP_MODULAR_BUILD_ARGS := $(MODULAR_BUILD_ARGS)
+endif
+ifneq ($(strip $(MODULAR_JOBS)),)
+export KNLP_MODULAR_JOBS := $(MODULAR_JOBS)
+endif
+ifneq ($(strip $(MODULAR_BAZEL)),)
+export KNLP_MODULAR_BAZEL := $(MODULAR_BAZEL)
+endif
+ifneq ($(strip $(MODULAR_ALLOW_DIRTY)),)
+export KNLP_MODULAR_ALLOW_DIRTY := $(MODULAR_ALLOW_DIRTY)
+endif
+ifneq ($(strip $(MODULAR_RUNTIME_ARGS)),)
+export KNLP_MODULAR_RUNTIME_ARGS := $(MODULAR_RUNTIME_ARGS)
+endif
+ifneq ($(strip $(MODULAR_RUNTIME_WARMUPS)),)
+export KNLP_MODULAR_RUNTIME_WARMUPS := $(MODULAR_RUNTIME_WARMUPS)
+endif
+ifneq ($(strip $(MODULAR_RUNTIME_RUNS)),)
+export KNLP_MODULAR_RUNTIME_RUNS := $(MODULAR_RUNTIME_RUNS)
+endif
+
+.PHONY: modular-repro modular-campaign modular-doctor modular-build \
+	modular-runtime modular-report modular-clean
+
+ifeq ($(CONFIG_KNLP_MODULAR_REPRO),y)
+.DEFAULT_GOAL := modular-repro
+endif
+
+modular-repro: modular-doctor modular-build modular-report
+
+modular-campaign: modular-doctor modular-build modular-runtime modular-report
+
+modular-doctor:
+	@$(MODULAR_REPRO_ORCH) doctor --config .config
+
+modular-build:
+	@$(MODULAR_REPRO_ORCH) build --config .config
+
+modular-runtime:
+	@$(MODULAR_REPRO_ORCH) runtime --config .config \
+		$(MODULAR_RUNTIME_OPTIONS)
+
+modular-report:
+	@$(MODULAR_REPRO_ORCH) report --config .config
+
+modular-clean:
+	@$(MODULAR_REPRO_ORCH) clean --config .config
