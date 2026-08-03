@@ -96,6 +96,23 @@ def ln_silu_vjp_from_alpha(z: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor
     return (silu_grad * ds).to(z.dtype)
 
 
+def silu_vjp_from_alpha(z: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Fused phi(z)=silu(z) AND u = J_phi^T(phi(z)-alpha) for elementwise SiLU.
+
+    J_phi is diagonal (silu'(z)), so u = silu'(z) * (silu(z) - alpha). Built
+    from differentiable elementwise ops with no internal detach: called on a
+    detached z it is the first-order inner code, called on a live z ordinary
+    autograd delivers the full du/dz (the bilevel second-order path) with no
+    nested autograd.grad graph. Reductions-free, bf16-safe via fp32 upcast.
+    """
+    work = torch.float32 if z.dtype in (torch.bfloat16, torch.float16) else z.dtype
+    z32 = z.to(work)
+    sig = torch.sigmoid(z32)
+    s = z32 * sig  # silu(z)
+    silu_grad = sig + s * (1.0 - sig)  # d silu / d z
+    return (silu_grad * (s - alpha.to(work))).to(z.dtype)
+
+
 def l2_silu(x: torch.Tensor) -> torch.Tensor:
     """SiLU(x) / (||SiLU(x)|| + eps) over the last dim."""
     s = F.silu(x)
@@ -128,9 +145,9 @@ def scaled_identity(x: torch.Tensor) -> torch.Tensor:
 
 
 _ACT = {
-    "silu": silu,                 # plain SiLU -- unconstrained nonlinear phi candidate
-    "ln_silu": ln_silu,           # LayerNorm-SiLU (param-free), the current default
-    "norm_silu": ln_silu,         # explicit paper-review alias for normalized SiLU
+    "silu": silu,  # plain SiLU -- unconstrained nonlinear phi candidate
+    "ln_silu": ln_silu,  # LayerNorm-SiLU (param-free), the current default
+    "norm_silu": ln_silu,  # explicit paper-review alias for normalized SiLU
     "l2_silu": l2_silu,
     "softmax": softmax,
     "identity": identity,
