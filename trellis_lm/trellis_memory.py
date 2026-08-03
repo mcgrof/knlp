@@ -27,10 +27,13 @@ from typing import Optional
 import torch
 
 from .activations import (
+    identity,
     ln_silu,
     ln_silu_vjp,
     ln_silu_vjp_from_alpha,
     ln_silu_alpha_adjoint,
+    silu,
+    silu_vjp_from_alpha,
 )
 
 # --- Phase-1 iso-wall-clock refactor (Codex collab): split the true-stale
@@ -53,6 +56,10 @@ def _trellis_vjp(phi, zin: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     z = zin.detach()
     if phi is ln_silu:
         return ln_silu_vjp_from_alpha(z, alpha)
+    if phi is silu:
+        return silu_vjp_from_alpha(z, alpha)
+    if phi is identity:
+        return z - alpha
     zr = z.requires_grad_(True)
     cg = alpha.requires_grad
     with torch.enable_grad():
@@ -706,9 +713,7 @@ def run_trellis_memory_chunked(
                 # unrolled C−1 sweeps into a handful of kernels.
                 u = rhs_cm
                 for _ in range(C - 1):
-                    u = rhs_cm - gval1 * a_g * torch.einsum(
-                        "bhts,bhsm->bhtm", coef, u
-                    )
+                    u = rhs_cm - gval1 * a_g * torch.einsum("bhts,bhsm->bhtm", coef, u)
             else:
                 # Λ[b,h,m,t,s] = γ a_{t,m} coef[t,s]  (strict lower, per slot)
                 Lam = gval * a_g.permute(0, 1, 3, 2).unsqueeze(-1) * coef.unsqueeze(2)
