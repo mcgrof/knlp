@@ -139,6 +139,57 @@ def _trellis_vjp_stabilized(
     return u if cg else u.detach()
 
 
+def _trellis_vjp_bilevel(
+    phi,
+    z: torch.Tensor,
+    alpha: torch.Tensor,
+    stabilizer: str = "none",
+    innovation_rms_cap: float = 0.0,
+    detach_scale: bool = True,
+) -> torch.Tensor:
+    """u = J_phi(z)^T (phi(z) - alpha) with z KEPT in the graph.
+
+    The full-bilevel counterpart of _trellis_vjp_stabilized: the outer loss
+    differentiates through du/dz (the second-order path into the state
+    recurrence) instead of cutting it. The forward VALUE of u is identical to
+    the detached mode; only the backward differs. Closed forms for
+    identity/silu/ln_silu avoid building a nested per-chunk autograd graph;
+    other phi (and the capped stabilizer) fall back to autograd.grad with
+    create_graph=True on the live z.
+    """
+    capped = _innovation_cap_enabled(stabilizer, innovation_rms_cap)
+    if not capped:
+        if phi is identity:
+            return z - alpha
+        if phi is silu:
+            return silu_vjp_from_alpha(z, alpha)
+        if phi is ln_silu:
+            return ln_silu_vjp_from_alpha(z, alpha)
+    if not (torch.is_grad_enabled() and z.requires_grad):
+        # no-grad / frozen-input evaluation: mode cannot change the value
+        return _trellis_vjp_stabilized(
+            phi,
+            z,
+            alpha,
+            stabilizer=stabilizer,
+            innovation_rms_cap=innovation_rms_cap,
+            detach_scale=detach_scale,
+        )
+    with torch.enable_grad():
+        pred = phi(z)
+        err = pred - alpha
+        if capped:
+            err, _ = _apply_innovation_rms_cap(
+                err,
+                innovation_rms_cap,
+                detach_scale=detach_scale,
+            )
+        (u,) = torch.autograd.grad(
+            pred, z, grad_outputs=err, create_graph=True, retain_graph=True
+        )
+    return u
+
+
 def _apply_delta_ratio_cap_to_u(
     u: torch.Tensor,
     write: torch.Tensor,
@@ -207,9 +258,22 @@ def run_trellis_memory_chunked_state_evolution(
     trellis_delta_ratio_cap: float = 0.0,
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
+    outer_gradient_mode: str = "first_order_detached",
 ):
-    """True-stale chunk state evolution. No readout. Returns per-chunk
-    start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad."""
+    """Chunk-start-stale state evolution. No readout. Returns per-chunk
+    start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad.
+
+    The FORWARD is chunk-start stale for either gradient mode: every z in a
+    chunk uses the chunk-start state M0. outer_gradient_mode selects the
+    backward only: "first_order_detached" (historical) cuts z before the inner
+    VJP; "full_bilevel" keeps z in the graph so the outer loss retains du/dz
+    and every cross-chunk dependency -- exact differentiation THROUGH the
+    approximate forward.
+    """
+    assert outer_gradient_mode in (
+        "first_order_detached",
+        "full_bilevel",
+    ), outer_gradient_mode
     B, H, T, D = write.shape
     M = alpha.shape[-1]
     C = chunk_size
@@ -237,16 +301,28 @@ def run_trellis_memory_chunked_state_evolution(
         Wf = W.reshape(N, C, D)
         M0f = M0.reshape(N, M, D).to(Wf.dtype)
         M0W = torch.bmm(Wf, M0f.transpose(1, 2)).view(B, H, C, M)
-        u = _trellis_vjp_stabilized(
-            phi,
-            M0W,
-            A,
-            stabilizer=trellis_update_stabilizer,
-            innovation_rms_cap=trellis_innovation_rms_cap,
-            detach_scale=trellis_stabilizer_detach_scale,
-        )
-        if residual_update_mix:
-            u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
+        if outer_gradient_mode == "full_bilevel":
+            u = _trellis_vjp_bilevel(
+                phi,
+                M0W,
+                A,
+                stabilizer=trellis_update_stabilizer,
+                innovation_rms_cap=trellis_innovation_rms_cap,
+                detach_scale=trellis_stabilizer_detach_scale,
+            )
+            if residual_update_mix:
+                u = u + residual_update_mix * (phi(M0W) - A)
+        else:
+            u = _trellis_vjp_stabilized(
+                phi,
+                M0W,
+                A,
+                stabilizer=trellis_update_stabilizer,
+                innovation_rms_cap=trellis_innovation_rms_cap,
+                detach_scale=trellis_stabilizer_detach_scale,
+            )
+            if residual_update_mix:
+                u = u + residual_update_mix * _trellis_residual(phi, M0W, A)
         if Gp is not None:
             u = u * Gp[:, :, c]
         if _delta_ratio_cap_enabled(trellis_update_stabilizer, trellis_delta_ratio_cap):
@@ -299,6 +375,66 @@ def run_trellis_memory_chunked_batched_readout(
         y = first - gf * torch.bmm(G, Wf)
         return y.view(B, H, nC, C, D).reshape(B, H, nC * C, D)[:, :, :T_out]
     raise ValueError(read_mode)
+
+
+def run_trellis_memory_chunked_full_bilevel_reference(
+    write: torch.Tensor,  # [B,H,T,D]
+    read: torch.Tensor,  # [B,H,T,D] (key) or [B,H,T,M] (value)
+    alpha: torch.Tensor,  # [B,H,T,M]
+    beta: torch.Tensor,  # [B,H,T,1]  (per-head only)
+    gamma: torch.Tensor,  # [H]
+    phi,
+    read_mode: str,  # "M_q" | "M_T_r"
+    chunk_size: int,
+    update_gate: Optional[torch.Tensor] = None,
+    residual_update_mix: float = 0.0,
+    trellis_update_stabilizer: str = "none",
+    trellis_innovation_rms_cap: float = 0.0,
+    trellis_delta_ratio_cap: float = 0.0,
+    trellis_state_rms_floor: float = 1e-3,
+    trellis_stabilizer_detach_scale: bool = True,
+):
+    """Chunk-start-stale FORWARD with exact differentiation through it.
+
+    The forward is the paper-style chunk approximation: every z_t in a chunk
+    uses the chunk-start state M0, so outputs are bit-identical to the
+    first-order state-evolution path. The backward keeps z in the graph: the
+    outer loss retains du/dz, its Hessian-vector products, and every
+    cross-chunk dependency (M0 stays connected to the prior chunk graph).
+    This is NOT an exact recurrence -- it is exact differentiation THROUGH
+    the deliberately stale forward. PyTorch reference; per-head beta only.
+    """
+    P, rmat, _ = trellis_chunk_decay(beta, chunk_size)
+    M0s, us, P, rmat, _ = run_trellis_memory_chunked_state_evolution(
+        write,
+        alpha,
+        beta,
+        gamma,
+        phi,
+        chunk_size,
+        P=P,
+        rmat=rmat,
+        update_gate=update_gate,
+        residual_update_mix=residual_update_mix,
+        trellis_update_stabilizer=trellis_update_stabilizer,
+        trellis_innovation_rms_cap=trellis_innovation_rms_cap,
+        trellis_delta_ratio_cap=trellis_delta_ratio_cap,
+        trellis_state_rms_floor=trellis_state_rms_floor,
+        trellis_stabilizer_detach_scale=trellis_stabilizer_detach_scale,
+        outer_gradient_mode="full_bilevel",
+    )
+    return run_trellis_memory_chunked_batched_readout(
+        write,
+        read,
+        M0s,
+        us,
+        P,
+        rmat,
+        gamma,
+        read_mode,
+        chunk_size,
+        T_out=write.shape[2],
+    )
 
 
 class TrellisStateEvolutionFn(torch.autograd.Function):
