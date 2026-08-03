@@ -66,6 +66,12 @@ TRELLIS_ARMS = {
         "trellis_outer_gradient_mode": "full_bilevel",
         "phi_activation": "identity",
     },
+    # matched-mode write-only control: identity under the SAME first-order
+    # gradient as the historical candidate, so phi is the only difference
+    "trellis_identity_first_order": {
+        "trellis_outer_gradient_mode": "first_order_detached",
+        "phi_activation": "identity",
+    },
 }
 BASELINE_ARMS = ("dense", "delta_ref", "gated_delta_ref", "delta")
 
