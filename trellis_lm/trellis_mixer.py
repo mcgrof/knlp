@@ -845,6 +845,7 @@ class TrellisMixer(nn.Module):
                             cfg.trellis_stabilizer_detach_scale
                         ),
                         outer_gradient_mode=grad_mode,
+                        hypergradient_rho=cfg.trellis_hypergradient_rho,
                     )
                     return M0, u
 

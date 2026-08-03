@@ -177,6 +177,11 @@ class TrellisConfig:
     # unconditionally).
     trellis_state_mode: Optional[str] = None
     trellis_outer_gradient_mode: Optional[str] = None
+    # scale ONLY the higher-order path: u = u_detached + rho*(u_live -
+    # u_detached). Values are numerically equal, so the forward update is
+    # unchanged for any rho; rho=1 is full bilevel, rho=0 matches
+    # first-order gradients. Meaningful only under full_bilevel.
+    trellis_hypergradient_rho: float = 1.0
     # DEPRECATED: use trellis_state_mode / trellis_outer_gradient_mode. Kept
     # only for checkpoint/config compatibility and read only by the resolver.
     exact_inner: Optional[bool] = None
@@ -365,6 +370,9 @@ class TrellisConfig:
             "first_order_detached",
         ), self.trellis_outer_gradient_mode
         assert self.exact_inner in (None, True, False), self.exact_inner
+        assert (
+            0.0 <= self.trellis_hypergradient_rho <= 1.0
+        ), self.trellis_hypergradient_rho
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
         if self.update_gate_mode != "none":
