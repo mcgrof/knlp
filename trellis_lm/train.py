@@ -79,7 +79,9 @@ def run_recall(args, device, dt):
         beta_mode=args.beta_mode,
         forget_gate=not args.no_forget,
         use_short_conv_qk=not args.no_conv,
-        exact_inner=not args.stale,
+        exact_inner=(False if args.stale else None),
+        trellis_state_mode=args.state_mode,
+        trellis_outer_gradient_mode=args.outer_gradient_mode,
         chunk_size=args.chunk_size,
         chunk_refine=args.chunk_refine,
         trellis_write_mode=args.write_mode,
@@ -167,7 +169,9 @@ def run_lm(args, device, dt):
         beta_mode=args.beta_mode,
         forget_gate=not args.no_forget,
         use_short_conv_qk=not args.no_conv,
-        exact_inner=not args.stale,
+        exact_inner=(False if args.stale else None),
+        trellis_state_mode=args.state_mode,
+        trellis_outer_gradient_mode=args.outer_gradient_mode,
         chunk_size=args.chunk_size,
         chunk_refine=args.chunk_refine,
         output_path=args.output_path,
@@ -286,7 +290,20 @@ def main():
     p.add_argument(
         "--stale",
         action="store_true",
-        help="stale-gradient inner step (exact_inner=False); fast path for long context",
+        help="deprecated alias for --outer_gradient_mode first_order_detached",
+    )
+    p.add_argument(
+        "--state_mode",
+        default=None,
+        choices=["sequential_current", "chunk_start_stale"],
+        help="forward state source (default: derived from chunk_size)",
+    )
+    p.add_argument(
+        "--outer_gradient_mode",
+        default=None,
+        choices=["full_bilevel", "first_order_detached"],
+        help="outer training gradient (default: full_bilevel sequential, "
+        "first_order_detached chunked -- the resolver warns on the latter)",
     )
     p.add_argument(
         "--chunk_size",
@@ -295,7 +312,11 @@ def main():
         help="chunked stale-gradient kernel; >1 enables the parallel path (per-head beta)",
     )
     p.add_argument(
-        "--chunk_refine", type=int, default=2, help="intra-chunk z refinement passes"
+        "--chunk_refine",
+        type=int,
+        default=0,
+        help="intra-chunk z refinement passes: 0 chunk-start stale, <0 exact "
+        "forward oracle; any fixed 0<passes<C-1 is the documented trap zone",
     )
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--dtype", default="fp32", choices=["bf16", "fp16", "fp32"])
