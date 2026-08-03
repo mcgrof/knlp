@@ -174,6 +174,6 @@ def test_update_gate_layer_mode_and_diagnostics():
     assert layer0["value_state"]["rms"] >= 0.0
     assert layer0["value_update"]["rms"] >= 0.0
     assert layer0["backend"] in (
-        "pytorch_state_evolution",
-        "triton_state_evolution",
+        "pytorch_chunk_start_first_order",
+        "triton_chunk_start_first_order",
     )

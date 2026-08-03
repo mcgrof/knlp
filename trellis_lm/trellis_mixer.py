@@ -69,6 +69,10 @@ class TrellisMixer(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.layer_idx = layer_idx
+        # Resolve and validate the training semantics once at build time so an
+        # unservable request (e.g. full_bilevel on the refine path) fails at
+        # model construction, not mid-run. Warn from layer 0 only.
+        self.training_semantics = cfg.resolve_training_semantics(warn=layer_idx == 0)
         H, D, M, d = cfg.n_heads, cfg.d_head, cfg.n_slots, cfg.d_model
         self.H, self.D, self.M = H, D, M
         self.norm = RMSNorm(d)
@@ -537,6 +541,8 @@ class TrellisMixer(nn.Module):
         return {
             "layer": self.layer_idx,
             "backend": backend,
+            "state_mode": self.training_semantics["state_mode"],
+            "outer_gradient_mode": self.training_semantics["outer_gradient_mode"],
             "update_gate_layer_mode": self.cfg.trellis_update_gate_layer_mode,
             "update_gate_target": self.cfg.trellis_update_gate_target,
             "update_gate_context_mode": self.cfg.trellis_update_gate_context_mode,
@@ -733,6 +739,9 @@ class TrellisMixer(nn.Module):
         # else the exact sequential path.
         use_chunk = cfg.chunk_size > 1 and beta.shape[-1] == 1 and write_gate is None
         ic_chunk = write_gate is not None and cfg.chunk_size > 1 and beta.shape[-1] == 1
+        sem = self.training_semantics
+        grad_mode = sem["outer_gradient_mode"]
+        bilevel = grad_mode == "full_bilevel"
         qf, kf, vf = q.float(), k.float(), v.float()
         af, bf, gf = alpha.float(), beta.float(), gamma.float()
         if BF16_INPUTS:
@@ -759,12 +768,16 @@ class TrellisMixer(nn.Module):
                 triton_fused_update = cfg.trellis_update_stabilizer != (
                     "delta_ratio_cap"
                 )
+                # the fused Triton kernel is first-order by construction; a
+                # full_bilevel request must never select it
                 fused_backend = (
                     HAS_TRITON
                     and nvidia_cuda
                     and triton_fused_update
                     and (triton_pointwise or triton_ln_silu)
+                    and not bilevel
                 )
+                assert not (bilevel and fused_backend)
                 forward_diag = self._base_forward_diag(
                     beta=bf,
                     gamma=gf,
@@ -773,9 +786,13 @@ class TrellisMixer(nn.Module):
                     value_update_gate=value_update_gate,
                     seq_len=T,
                     backend=(
-                        "triton_state_evolution"
+                        "triton_chunk_start_first_order"
                         if fused_backend
-                        else "pytorch_state_evolution"
+                        else (
+                            "pytorch_chunk_start_full_bilevel"
+                            if bilevel
+                            else "pytorch_chunk_start_first_order"
+                        )
                     ),
                 )
                 if local_key_address is not None:
@@ -822,6 +839,7 @@ class TrellisMixer(nn.Module):
                         trellis_stabilizer_detach_scale=(
                             cfg.trellis_stabilizer_detach_scale
                         ),
+                        outer_gradient_mode=grad_mode,
                     )
                     return M0, u
 
@@ -931,6 +949,12 @@ class TrellisMixer(nn.Module):
                         T_out=T,
                     )
             elif use_chunk:
+                if bilevel:
+                    raise NotImplementedError(
+                        "full_bilevel is not implemented for the chunk_refine "
+                        "path; use chunk_refine=0 (chunk_start_stale) or "
+                        "chunk_size=1"
+                    )
                 forward_diag = self._base_forward_diag(
                     beta=bf,
                     gamma=gf,
@@ -938,7 +962,7 @@ class TrellisMixer(nn.Module):
                     key_update_gate=key_update_gate,
                     value_update_gate=value_update_gate,
                     seq_len=T,
-                    backend="pytorch_chunked_refine",
+                    backend="pytorch_chunk_refine_first_order",
                 )
                 cs = cfg.chunk_size
                 yhat = run_trellis_memory_chunked(
@@ -1002,6 +1026,12 @@ class TrellisMixer(nn.Module):
                     ),
                 )
             else:
+                if sem["write_path"] == "input_conditioned_affine":
+                    seq_backend = "input_conditioned_affine_exact"
+                elif bilevel:
+                    seq_backend = "pytorch_sequential_full_bilevel"
+                else:
+                    seq_backend = "pytorch_sequential_first_order"
                 forward_diag = self._base_forward_diag(
                     beta=bf,
                     gamma=gf,
@@ -1009,9 +1039,9 @@ class TrellisMixer(nn.Module):
                     key_update_gate=key_update_gate,
                     value_update_gate=value_update_gate,
                     seq_len=T,
-                    backend="pytorch_sequential",
+                    backend=seq_backend,
                 )
-                ex = cfg.exact_inner
+                ex = bilevel
 
                 def _ic_or_seq(write_in, read_in, alpha_in, read_mode, ugate):
                     # input-conditioned: exact affine chunk kernel when
