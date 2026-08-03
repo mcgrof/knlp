@@ -20,9 +20,11 @@ below Gated DeltaNet (423) in the operator that already FLATTERS Trellis
 (chunk16 trains to lower ppl than seq here)? A loss in chunk16 is the
 conservative statement, since seq is strictly worse for Trellis.
 
-Phase 2 -- seq (faithful, ~5h). One anchor at the best gamma from the full
-chunk16 curve, run in the slow exact-sequential operator, to slot a tuned
-Trellis number into the seq-mode table. Combined with the existing
+Phase 2 -- seq (exact-forward, ~5h). One anchor at the best gamma from the
+full chunk16 curve, run in the slow exact-forward sequential operator (still
+the first-order gradient: firmup's seq mode sets exact_inner=False, so this
+is NOT the bilevel objective), to slot a tuned Trellis number into the
+seq-mode table. Combined with the existing
 seq gamma=0.01 point (584.5) this gives the seq trend at tuned gamma.
 
 Baselines are NOT recomputed: dense and the linear cousins (DeltaNet /

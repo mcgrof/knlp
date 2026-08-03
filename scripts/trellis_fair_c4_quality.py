@@ -87,7 +87,10 @@ def backend_of(model):
 # silu/linear-alpha, gamma=0.05, layer0 gamma mult 0.5, write_l2norm on for
 # stability); the scope (per_slot=diagonal vs scalar) is picked by the arm name.
 # The exact chunk-16 kernel is numerically identical to the chunk-1 sequential
-# path the anchor used but far faster at seq2048.
+# path the anchor used but far faster at seq2048. That identity holds for the
+# affine input-conditioned arms ONLY: a plain nonlinear-phi "trellis" arm at
+# the same chunk_size=16 default runs the chunk-start-stale first-order
+# operator instead (+35-46% PPL handicap; see trellis_firmup.py).
 SMD_ARMS = {
     "smd_diag": "per_slot",
     "smd_scalar": "scalar",

@@ -6,11 +6,14 @@ cache that grows with context; the models here replace it with a fixed-size
 recurrent state that is constant in sequence length. We implemented Trellis in one
 matched harness and compared it against the FLA reference DeltaNet and Gated
 DeltaNet layers — to ask whether Trellis's *nonlinear* memory writer beats its
-*linear* cousins at matched size. The line is now closed as a spend decision
-(2026-07-05): the top-line verdict is settled — Gated DeltaNet is the matched-state
-quality leader and Trellis loses to both linear cousins at reachable scale — while
-one clean measurement (the isolated write cost, below) remains open. The paper's
-125M/790M scale claims are parked, not disproven.
+*linear* cousins at matched size. The line was closed as a spend decision
+(2026-07-05) and REOPENED FOR A BOUNDED CORRECTNESS AUDIT (2026-08-02): the
+training-mode flag selecting the paper's bilevel objective was silently ignored
+by every chunked backend, so our first-order reconstruction — which loses to
+Gated DeltaNet at reachable scale — is the only regime these comparisons ever
+tested. That first-order verdict stands for what was run; full-bilevel Trellis,
+the isolated write cost, and the paper's 125M/790M scale claims remain
+incompletely tested, parked, not disproven.
 
 The short version, stated up front: at the scale we can afford to train (≈4.7M
 non-embedding parameters), our Trellis *currently* loses to both DeltaNet and
