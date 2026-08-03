@@ -321,7 +321,9 @@ Gutenberg books — documents of 68k–567k characters, where bounded memory sho
 actually matter), three seeds, and **held-out validation PPL on a disjoint
 slice** (driver `scripts/trellis_firmup.py`). Matched-size Trellis vs the dense
 tiny baseline (≈4.3–5.2M params each, same d_model/layers/heads, same tokens),
-400 steps, W7900 fp32. L512 uses the full-strength sequential operator; the
+400 steps, W7900 fp32. L512 uses the exact-forward sequential operator (first-order
+gradient: the driver's seq mode sets `exact_inner=False`, so no arm in this
+section trains the bilevel objective); the
 longer lengths use the true-stale chunked operator (the only tractable choice at
 4k). It turns out the chunked operator is *not* a handicap on this corpus — see
 the full-strength confirmation below, which re-runs 1024/2048 sequentially and
@@ -329,7 +331,7 @@ finds the win holds either way.
 
 ```
  length  operator            trellis ppl       dense ppl     trellis vs dense
-   512   seq (full)          1542 +- 31       1581 +- 131         -2.5%   (tie)
+   512   seq (exact fwd)     1542 +- 31       1581 +- 131         -2.5%   (tie)
   1024   chunk16 (handicap)  1359 +-  6       1665 +- 114        -18.4%
   2048   chunk16              534 +- 31        616 +-  11        -13.3%   (clean)
   4096   chunk16              546 +-  2        622 +-   5        -12.1%   (clean)
@@ -340,30 +342,32 @@ Two honest reads. (1) **The win is real and it is a long-context effect.** At
 beats dense's *best* — so the 12–13% margin is signal, not noise. This turns the
 noisy single-seed ≥4k PARTIAL into a clean multi-seed result on a standard
 long-range benchmark. (2) **The short-length "clean win" does NOT replicate on
-this harder corpus.** At 512, full strength, it is a tie (dense σ=131 — one lucky
+this harder corpus.** At 512, sequential, it is a tie (dense σ=131 — one lucky
 seed at 1399); PG19-512 is short-context and undertrained (PPL ~1500), so
 bounded memory has little to exploit. The earlier "−32% at 512" was on an easier
 corpus. Data: `results-archive/trellis-lm/firmup-20260603/`.
 
-### Full-strength confirmation — and a reversed assumption
+### Sequential-operator confirmation — and a reversed assumption
 
 The long-length cells above used the chunked operator. To check that the win is
-not a chunking artifact, we re-ran 1024 and 2048 with the full-strength exact
-sequential operator (Trellis at its strongest), same seeds/steps/tokens:
+not a chunking artifact, we re-ran 1024 and 2048 with the exact-forward
+sequential operator, same seeds/steps/tokens ("seq (exact fwd)" below means
+the exact forward recurrence with the first-order gradient — not the paper's
+bilevel objective, which none of these runs trained):
 
 ```
  length  operator      trellis ppl       dense ppl     trellis vs dense
   1024   chunk16       1359 +-  6       1665 +- 114        -18.4%
-  1024   seq (full)    1517 +- 91       1635 +-  69         -7.3%
+  1024   seq (exact fwd) 1517 +- 91       1635 +-  69         -7.3%
   2048   chunk16        534 +- 31        616 +-  11        -13.3%
-  2048   seq (full)     585 +-  9        621 +-  11         -5.9%
+  2048   seq (exact fwd)  585 +-  9        621 +-  11         -5.9%
 ```
 
-Two things, one expected and one not. **Expected:** full-strength Trellis still
+Two things, one expected and one not. **Expected:** sequential-operator Trellis still
 beats matched dense at both lengths (−7.3%, −5.9%), so the core "beats dense at
 length" result is *not* an artifact of the chunked operator — the most important
-robustness check passes. **Unexpected:** full strength is *worse* than the
-chunked operator here (seq is +11.6% at 1024 and +9.5% at 2048 above chunk16),
+robustness check passes. **Unexpected:** the sequential operator is *worse* than the
+chunked one here (seq is +11.6% at 1024 and +9.5% at 2048 above chunk16),
 the opposite of the assumption that chunked is a conservative handicap. This also
 *reverses* the earlier-corpus chunking penalty quoted in §11 (where sequential
 beat true-stale chunked). So the chunked operator's quality effect is
@@ -383,7 +387,8 @@ corpus-specific, not universal.
 Trellis's *nonlinear* inner step buys anything over its *linear* cousins —
 DeltaNet and Gated DeltaNet, the same gated-delta-rule fast-weight memory with a
 linear inner step (added in `trellis_lm/linear_baselines.py`). Same harness,
-same untuned lr=3e-3, matched size/tokens/seeds, full-strength sequential, PG19:
+same untuned lr=3e-3, matched size/tokens/seeds, exact-forward sequential
+(first-order gradient), PG19:
 
 ```
             L1024 (vs dense)        L2048 (vs dense)

@@ -64,3 +64,34 @@ binding-grid win is directional evidence of synthetic overwrite behaviour, not a
 replication of the paper's permutation-group state-tracking. Open items if the line reopens:
 a GDN[-1,1] arm (to match the paper's config) and disclosure of the optimizer-step / warmup
 schedule (a 512-step warmup at 20M tokens can dominate).
+
+## Addendum 2026-08-02: gradient-mode defect and the bounded reopening
+
+A code audit found that `TrellisConfig.exact_inner` — the flag selecting the
+paper's full bilevel training objective — was read only by the sequential
+dispatch branch. Every chunked path (the PyTorch state evolution and the fused
+Triton kernel) detached z unconditionally, and `chunk_refine` could repair only
+the forward. Consequence: every chunked nonlinear-Trellis run in this program
+trained first-order with a chunk-start-stale forward, whatever the config
+stored, and the sequential "seq" cells driven by `trellis_firmup.py` were
+exact-forward but also first-order (`exact_inner=False`). No production-scale
+nonlinear LM run ever trained the bilevel objective.
+
+| # | Public claim | Status | Evidence / correction |
+|---|---|---|---|
+| 14 | The fair param-matched A100 run is "untouched and solid" as stated | **supported but underspecified** | The numbers stand for what was run, but the Trellis arm trained first-order + chunk-start-stale (the fused kernel is first-order by construction) against fla baselines with exact gradients for their linear recurrences. The doc treats the stale approximation as paper-faithful; the paper's outer-gradient treatment through its chunk approximation is not determinable from its text, and its B=1 sequential ablation is slightly BETTER than its chunked baseline, so the axis was live. Relabel: "GDN is the matched-state quality leader over the FIRST-ORDER Trellis reconstruction"; the bilevel variant is untested at this scale. |
+| 15 | Row 1's residual "~1.3-1.4x under exact gradients" (the chunk-1 rerun) | **supported but underpowered and still confounded** | That rerun (5M tokens, seq256) really was bilevel — the only bilevel LM datapoints in the archive besides the toy phases — but phi and f were still tied, so it bounds the joint phi/f effect, not the write-only cost. The clean write-only rerun in row 1's "open experiment" remains unrun for LM. |
+
+The code now names both axes explicitly (`trellis_state_mode`,
+`trellis_outer_gradient_mode`), fails loudly on unservable requests, resolves
+legacy configs to what actually executed, and carries an oracle-checked
+full-bilevel chunk-start reference plus a float64 gradient test matrix
+(`trellis_lm/tests/test_trellis_semantics.py`). The litmus test that froze the
+closure leaderboard as assertions was removed with the same change: scientific
+conclusions are records for reports, not API invariants — especially when the
+frozen numbers were first-order-trained. The line is reopened for a bounded
+correctness audit: prior negatives remain valid for the implementations
+tested, and the toy-scale bilevel evidence on file (the recall-toy pivot,
+the chunk-1 rerun, the write-only recall probe) leans against a bilevel
+rescue rather than for it. The audit ends with labeled full-bilevel versus
+first-order comparisons; it does not presume their outcome.
