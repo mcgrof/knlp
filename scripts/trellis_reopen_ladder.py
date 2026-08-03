@@ -112,11 +112,19 @@ def build_arm_cfg(arm, args, vocab):
                 f"arm {arm} requires --trellis_profile (named profiles only; "
                 "this driver never inherits silent semantics defaults)"
             )
+        overrides = {}
+        for kv in args.cfg or []:
+            key, _, val = kv.partition("=")
+            try:
+                overrides[key] = json.loads(val)
+            except json.JSONDecodeError:
+                overrides[key] = val
         cfg = TrellisConfig.profile(
             args.trellis_profile,
             chunk_size=args.chunk_size,
             **dims,
             **TRELLIS_ARMS[arm],
+            **overrides,
         )
         return cfg, "trellis"
     if arm not in BASELINE_ARMS:
@@ -383,6 +391,15 @@ def main():
     p.add_argument("--chunk_size", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--eval_milestones", default="2000000,5000000,10000000,20000000")
+    p.add_argument(
+        "--cfg",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="extra TrellisConfig override for the trellis arms (repeatable; "
+        "values parsed as JSON, else kept as strings); recorded in the "
+        "manifest like every other knob",
+    )
     p.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "fp32"])
     p.add_argument("--log_every", type=int, default=250)
     p.add_argument("--dataset", default="allenai/c4")
@@ -398,7 +415,9 @@ def main():
     seeds = [int(s) for s in args.seeds.split(",") if s != ""]
     milestones = [int(m) for m in args.eval_milestones.split(",") if m.strip()]
 
-    n_train_seqs = args.train_tokens // args.seq_len
+    # ceil: the final milestone must be reachable (floor packing left a 10M
+    # request at 9.998M tokens, so the last milestone never fired)
+    n_train_seqs = -(-args.train_tokens // args.seq_len)
     print(
         f"packing {n_train_seqs} train + {args.val_seqs} val seqs "
         f"@ seq_len={args.seq_len} from {args.dataset}/{args.dataset_config}",
