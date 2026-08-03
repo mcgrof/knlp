@@ -215,20 +215,32 @@ def test_forward_equal_gradients_differ_across_modes(phi_name):
     assert diff > 1e-9, "gradient modes are indistinguishable: dead toggle"
 
 
-def test_silu_closed_form_matches_autograd_to_second_order():
+@pytest.mark.parametrize("phi_name", list(PHIS))
+def test_closed_form_inner_code_matches_autograd_to_second_order(phi_name):
+    """Each closed-form inner code, evaluated on a LIVE z, must equal the
+    nested-autograd VJP in value and in what the outer backward derives
+    from it (the HVP into z and the adjoint into alpha)."""
+    from trellis_lm.activations import ln_silu_vjp_from_alpha
+
+    closed = {
+        "identity": lambda z, a: z - a,
+        "silu": silu_vjp_from_alpha,
+        "ln_silu": ln_silu_vjp_from_alpha,
+    }[phi_name]
+    phi = PHIS[phi_name]
     torch.manual_seed(0)
     z = torch.randn(3, M, dtype=DT, requires_grad=True)
     a = torch.randn(3, M, dtype=DT, requires_grad=True)
-    u_ref = _inner_u(silu, z, a)
-    u_cf = silu_vjp_from_alpha(z, a)
+    u_ref = _inner_u(phi, z, a)
+    u_cf = closed(z, a)
     assert (u_ref - u_cf).abs().max().item() < 1e-13
     bar = torch.randn_like(u_ref)
     g_ref = torch.autograd.grad((u_ref * bar).sum(), (z, a), retain_graph=True)
     g_cf = torch.autograd.grad((u_cf * bar).sum(), (z, a), retain_graph=True)
     for gr, gc in zip(g_ref, g_cf):
         assert (gr - gc).abs().max().item() < 1e-12
-    assert torch.autograd.gradcheck(silu_vjp_from_alpha, (z, a))
-    assert torch.autograd.gradgradcheck(silu_vjp_from_alpha, (z, a))
+    assert torch.autograd.gradcheck(closed, (z, a))
+    assert torch.autograd.gradgradcheck(closed, (z, a))
 
 
 def _model(mode, **kw):

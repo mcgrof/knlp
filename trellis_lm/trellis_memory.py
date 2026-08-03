@@ -629,40 +629,57 @@ def run_trellis_memory(
                 raise ValueError(read_mode)
             outs.append(y)
             continue
-        # u_t = J_phi(z)^T (phi(z) - alpha) via VJP.
+        # u_t = J_phi(z)^T (phi(z) - alpha).
         # exact_inner: keep z in the graph -> u carries both the M (2nd-order)
         # and alpha gradients. stale: detach z (cut the expensive M 2nd-order
         # through the recurrence) but KEEP alpha in `err` so alpha_proj still
-        # trains (first-order). create_graph only while training.
+        # trains (first-order). For the uncapped standard phi the closed-form
+        # inner code replaces the per-token nested autograd graph: on a live z
+        # the outer backward differentiates the known formula once (the full
+        # bilevel HVP), on a detached z it is the first-order code -- same
+        # values either way.
         exact = exact_inner and z.requires_grad
-        z_req = z if exact else z.detach().requires_grad_(True)
-        cg = z.requires_grad
-        with torch.enable_grad():
-            pred = phi(z_req)  # [B,H,M]
-            err = pred - a  # alpha stays in graph
-            if _innovation_cap_enabled(
-                trellis_update_stabilizer, trellis_innovation_rms_cap
-            ):
-                err, _ = _apply_innovation_rms_cap(
-                    err,
-                    trellis_innovation_rms_cap,
-                    detach_scale=trellis_stabilizer_detach_scale,
-                )
-            (u,) = torch.autograd.grad(
-                pred,
-                z_req,
-                grad_outputs=err,
-                create_graph=cg,
-                retain_graph=True,
-            )
-        if not cg:
-            u = u.detach()
-        if residual_update_mix:
-            if exact:
-                resid = err
+        capped = _innovation_cap_enabled(
+            trellis_update_stabilizer, trellis_innovation_rms_cap
+        )
+        closed_form = phi is identity or phi is silu or phi is ln_silu
+        if closed_form and not capped:
+            zin = z if exact else z.detach()
+            if phi is identity:
+                u = zin - a
+            elif phi is silu:
+                u = silu_vjp_from_alpha(zin, a)
             else:
-                resid = _trellis_residual(phi, z, a)
-            u = u + residual_update_mix * resid
+                u = ln_silu_vjp_from_alpha(zin, a)
+            if residual_update_mix:
+                u = u + residual_update_mix * (phi(zin) - a)
+        else:
+            z_req = z if exact else z.detach().requires_grad_(True)
+            cg = z.requires_grad
+            with torch.enable_grad():
+                pred = phi(z_req)  # [B,H,M]
+                err = pred - a  # alpha stays in graph
+                if capped:
+                    err, _ = _apply_innovation_rms_cap(
+                        err,
+                        trellis_innovation_rms_cap,
+                        detach_scale=trellis_stabilizer_detach_scale,
+                    )
+                (u,) = torch.autograd.grad(
+                    pred,
+                    z_req,
+                    grad_outputs=err,
+                    create_graph=cg,
+                    retain_graph=True,
+                )
+            if not cg:
+                u = u.detach()
+            if residual_update_mix:
+                if exact:
+                    resid = err
+                else:
+                    resid = _trellis_residual(phi, z, a)
+                u = u + residual_update_mix * resid
         if update_gate is not None:
             u = u * update_gate[:, :, t, :]
         if _delta_ratio_cap_enabled(trellis_update_stabilizer, trellis_delta_ratio_cap):
