@@ -167,3 +167,53 @@ python -m trellis_lm.train --task recall --model trellis --steps 3000 \
   --d_head 64 --n_slots 64 --dtype fp32 \
   --phi_activation <identity|ln_silu> --f_activation ln_silu
 ```
+
+## Outer-gradient semantics: the meta-learning provenance
+
+Trellis has the nested-gradient structure of gradient-based
+meta-learning: an inner gradient update to the fast memory, then an
+outer loss evaluated after that update. The literal end-to-end bilevel
+derivative therefore corresponds to
+[MAML](https://proceedings.mlr.press/v70/finn17a/finn17a.pdf)-style
+differentiation through the inner gradient — a "gradient through a
+gradient" carrying Hessian-vector terms — and detaching the inner
+correction is the named first-order approximation of
+[FOMAML](https://arxiv.org/abs/1803.02999). (Reptile, from the same
+paper, is related first-order precedent but moves the initialization
+toward adapted parameters; it is not the direct stop-gradient
+analogue.) The provenance runs deeper than external convention: the
+architectural predecessor Trellis builds on,
+[TTT](https://arxiv.org/abs/2407.04620), states outright that its
+forward pass contains the gradient operator and that backward through
+it takes "gradients of gradients", distinguishing the inner-loop
+gradient on the fast weights from the outer-loop gradient on the slow
+parameters. That is nearly a specification of what our full-bilevel
+mode computes.
+
+Two separations keep this honest. First, the
+[paper's](https://arxiv.org/abs/2512.23852) chunk approximation
+freezes only *which state the inner gradient is evaluated at* (the
+chunk start); that is a forward-side choice and does not by itself
+imply the backward is detached — which state feeds `u_t` and whether
+the outer backward differentiates through `u_t` are independent
+decisions, and only the first is declared. The faithful paper-style
+reading is chunk-start-stale forward *with* full differentiation
+through that approximate computation — exactly the
+`chunk_start_stale + full_bilevel` combination the code now
+implements as a reference. Second, the paper's bilevel sentence also
+cites [BOME](https://arxiv.org/abs/2209.08709), a first-order bilevel
+solver, so the bibliography does not unambiguously mandate
+second-order training; the paper never says it applies BOME's
+algorithm, never labels its training first-order, and never describes
+stopping gradients through `u_t`, so the citation introduces
+ambiguity rather than an answer.
+
+The defensible statement, then: full-bilevel differentiation is the
+default semantics of the method as written — by MAML convention, by
+the cited TTT lineage, and by ordinary total differentiation — while
+a detached first-order implementation is a reasonable engineering
+approximation that is a *distinct algorithmic choice*. Because the
+paper discloses neither stop-gradient nor higher-order-backward
+semantics, both modes are implemented and must be reported
+explicitly; the labeled comparisons will speak louder than any
+reading of the text.
