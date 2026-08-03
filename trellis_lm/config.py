@@ -151,7 +151,35 @@ class TrellisConfig:
     trellis_value_read_query_mode: str = "key_readout"
     trellis_value_read_query_gate_init: float = 0.05
     trellis_value_read_query_gate_max: float = 0.75
-    exact_inner: bool = True  # exact sequential VJP (Phase 0)
+    # --- training semantics: the two independent axes the deprecated
+    # exact_inner flag conflated. State staleness (which state feeds z_t) and
+    # outer-gradient order (whether the outer loss differentiates through the
+    # inner correction, du/dz) are DIFFERENT approximations.
+    #   trellis_state_mode:
+    #     "sequential_current"  z_t = M_{t-1} @ w_t from the live state.
+    #                           Requires chunk_size=1 (per-head beta), or any
+    #                           chunk_size with per-slot beta (which always
+    #                           dispatches sequentially).
+    #     "chunk_start_stale"   z_t = M_0 @ w_t from the chunk-start state --
+    #                           the paper's chunked training scheme. Requires
+    #                           chunk_refine=0 and per-head beta; chunk_size=1
+    #                           coincides with sequential_current.
+    #   trellis_outer_gradient_mode:
+    #     "full_bilevel"          keep z in the graph: the outer loss retains
+    #                             du/dz (the paper's stated bilevel objective).
+    #     "first_order_detached"  detach z before the inner VJP (the historical
+    #                             fast mode; u still carries the alpha grad).
+    # None (default) resolves through resolve_training_semantics(). A legacy
+    # explicit exact_inner maps True->full_bilevel / False->first_order_detached
+    # ONLY on the sequential path where the flag was ever honored; any chunked
+    # configuration resolves to first_order_detached regardless of exact_inner,
+    # because the chunked backends never received the flag (they detached
+    # unconditionally).
+    trellis_state_mode: Optional[str] = None
+    trellis_outer_gradient_mode: Optional[str] = None
+    # DEPRECATED: use trellis_state_mode / trellis_outer_gradient_mode. Kept
+    # only for checkpoint/config compatibility and read only by the resolver.
+    exact_inner: Optional[bool] = None
     # chunk_size = 1 is the pure sequential recurrence. In paper terms this is
     # the "fully non-linear recurrence" ablation (chunk B=1), which the paper
     # reports at slightly BETTER perplexity (10.75 vs 10.87) than its headline
@@ -326,6 +354,17 @@ class TrellisConfig:
         assert (
             0.0 < self.trellis_value_read_query_gate_max <= 1.0
         ), self.trellis_value_read_query_gate_max
+        assert self.trellis_state_mode in (
+            None,
+            "sequential_current",
+            "chunk_start_stale",
+        ), self.trellis_state_mode
+        assert self.trellis_outer_gradient_mode in (
+            None,
+            "full_bilevel",
+            "first_order_detached",
+        ), self.trellis_outer_gradient_mode
+        assert self.exact_inner in (None, True, False), self.exact_inner
         assert 0.0 < self.beta_init < 1.0, self.beta_init
         assert 0.0 < self.update_gate_init < 1.0, self.update_gate_init
         if self.update_gate_mode != "none":
@@ -340,6 +379,121 @@ class TrellisConfig:
     def inner_dim(self) -> int:
         return self.n_heads * self.d_head
 
+    def resolve_training_semantics(self, warn: bool = True) -> dict:
+        """Resolve the training semantics this config actually selects.
+
+        Returns a manifest-ready dict with keys write_path, state_mode,
+        outer_gradient_mode, legacy_exact_inner and notes. Raises ValueError
+        for combinations no backend can honor -- a request must fail loudly,
+        never silently downgrade. Legacy configs (exact_inner set, new axes
+        unset) resolve to what the code ACTUALLY did: the chunked backends
+        never received exact_inner, so any chunked legacy config is
+        first_order_detached even if it stored exact_inner=True.
+        """
+        import warnings as _warnings
+
+        notes: List[str] = []
+
+        def _note(msg: str) -> None:
+            notes.append(msg)
+            if warn:
+                _warnings.warn(msg, stacklevel=3)
+
+        if self.trellis_write_mode == "input_conditioned":
+            # affine-in-M write: exact forward recurrence reconstruction and
+            # exact outer gradient by construction (no inner VJP exists), for
+            # both the sequential and the chunked kernel.
+            return {
+                "write_path": "input_conditioned_affine",
+                "state_mode": "sequential_current",
+                "outer_gradient_mode": "exact_affine",
+                "legacy_exact_inner": self.exact_inner,
+                "notes": notes,
+            }
+
+        per_head = self.beta_mode == "scalar_per_head"
+        chunk_dispatch = self.chunk_size > 1 and per_head
+
+        state = self.trellis_state_mode
+        if state == "sequential_current":
+            if chunk_dispatch:
+                raise ValueError(
+                    "trellis_state_mode='sequential_current' requires "
+                    f"chunk_size=1 with per-head beta (got chunk_size="
+                    f"{self.chunk_size}); use 'chunk_start_stale' for "
+                    "chunked training"
+                )
+        elif state == "chunk_start_stale":
+            if self.chunk_refine != 0:
+                raise ValueError(
+                    "trellis_state_mode='chunk_start_stale' requires "
+                    f"chunk_refine=0 (got {self.chunk_refine})"
+                )
+            if self.chunk_size > 1 and not per_head:
+                raise ValueError(
+                    "the chunked path supports per-head beta only "
+                    f"(beta_mode={self.beta_mode!r})"
+                )
+        else:  # derive from the legacy knobs
+            if not chunk_dispatch:
+                state = "sequential_current"
+                if self.chunk_size > 1:
+                    _note(
+                        "chunk_size>1 with per-slot beta dispatches to the "
+                        "sequential path; resolved state_mode="
+                        "'sequential_current'"
+                    )
+            elif self.chunk_refine == 0:
+                state = "chunk_start_stale"
+            else:
+                # legacy diagnostic path: refined (possibly exact) forward,
+                # unconditionally first-order backward
+                state = "chunk_start_refined"
+
+        grad = self.trellis_outer_gradient_mode
+        if grad is None:
+            if self.exact_inner is not None:
+                _note(
+                    "TrellisConfig.exact_inner is deprecated; set "
+                    "trellis_outer_gradient_mode explicitly"
+                )
+                if state == "sequential_current":
+                    grad = (
+                        "full_bilevel" if self.exact_inner else "first_order_detached"
+                    )
+                else:
+                    grad = "first_order_detached"
+                    if self.exact_inner:
+                        _note(
+                            "exact_inner=True never reached the chunked "
+                            "backends (they detach z unconditionally); "
+                            "resolved to first_order_detached. Set "
+                            "trellis_outer_gradient_mode='full_bilevel' to "
+                            "request the bilevel chunk reference."
+                        )
+            elif state == "sequential_current":
+                grad = "full_bilevel"
+            else:
+                grad = "first_order_detached"
+                _note(
+                    "chunked Trellis without an explicit "
+                    "trellis_outer_gradient_mode resolves to "
+                    "first_order_detached (the historical behavior); set "
+                    "the mode explicitly to silence this warning"
+                )
+        if grad == "full_bilevel" and state == "chunk_start_refined":
+            raise ValueError(
+                "full_bilevel is not implemented for the chunk_refine path; "
+                "use chunk_refine=0 (chunk_start_stale) or chunk_size=1"
+            )
+        return {
+            "write_path": "nonlinear_phi",
+            "state_mode": state,
+            "outer_gradient_mode": grad,
+            "legacy_exact_inner": self.exact_inner,
+            "notes": notes,
+        }
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -347,6 +501,71 @@ class TrellisConfig:
     def from_dict(cls, d: dict) -> "TrellisConfig":
         fields = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in fields})
+
+    # Named research profiles. Kept as plain class attributes (no field
+    # annotation) so the dataclass machinery ignores them.
+    _PROFILES = {
+        # the correctness default: live sequential state, full bilevel
+        # gradient, reference PyTorch backend
+        "correctness_oracle": dict(
+            trellis_state_mode="sequential_current",
+            trellis_outer_gradient_mode="full_bilevel",
+            chunk_size=1,
+        ),
+        # the paper-style chunk approximation trained under its literal
+        # end-to-end bilevel reading; chunk size and phi must be explicit
+        # because the paper states neither
+        "paper_chunk_full": dict(
+            trellis_state_mode="chunk_start_stale",
+            trellis_outer_gradient_mode="full_bilevel",
+        ),
+        # the historical fast mode, now explicitly labeled
+        "fast_first_order": dict(
+            trellis_state_mode="chunk_start_stale",
+            trellis_outer_gradient_mode="first_order_detached",
+        ),
+        # the repaired SiLU candidate recipe under bilevel semantics. The
+        # archived first-order runs of this candidate TIED f to SiLU through
+        # the single activation knob; this profile pins the paper-specified
+        # f = LN-SiLU and makes phi explicit, so the tie cannot recur.
+        "repaired_silu_full": dict(
+            trellis_state_mode="chunk_start_stale",
+            trellis_outer_gradient_mode="full_bilevel",
+            phi_activation="silu",
+            f_activation="ln_silu",
+            alpha_mode="linear",
+            value_readout_act="none",
+            output_path="paper",
+            use_short_conv_v=True,
+            n_slots=48,
+            beta_init=0.99,
+            gamma_init=0.005,
+        ),
+    }
+    _PROFILE_REQUIRED = {
+        "paper_chunk_full": ("chunk_size", "phi_activation"),
+        "fast_first_order": ("chunk_size",),
+        "repaired_silu_full": ("chunk_size",),
+    }
+
+    @classmethod
+    def profile(cls, name: str, **overrides) -> "TrellisConfig":
+        """Build a config from a named research profile.
+
+        Profiles pin the training-semantics axes explicitly; experiment
+        drivers should require one instead of inheriting silent defaults.
+        Knobs listed in _PROFILE_REQUIRED must be passed by the caller.
+        """
+        if name not in cls._PROFILES:
+            raise ValueError(
+                f"unknown profile {name!r}; known: {sorted(cls._PROFILES)}"
+            )
+        missing = [k for k in cls._PROFILE_REQUIRED.get(name, ()) if k not in overrides]
+        if missing:
+            raise ValueError(f"profile {name!r} requires explicit {missing}")
+        kwargs = dict(cls._PROFILES[name])
+        kwargs.update(overrides)
+        return cls(**kwargs)
 
     @classmethod
     def faithful_baseline(cls, **overrides) -> "TrellisConfig":
