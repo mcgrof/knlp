@@ -259,6 +259,7 @@ def run_trellis_memory_chunked_state_evolution(
     trellis_state_rms_floor: float = 1e-3,
     trellis_stabilizer_detach_scale: bool = True,
     outer_gradient_mode: str = "first_order_detached",
+    hypergradient_rho: float = 1.0,
 ):
     """Chunk-start-stale state evolution. No readout. Returns per-chunk
     start-states M0s [B,H,nC,M,D], codes us [B,H,nC,C,M], and P/rmat/pad.
@@ -310,6 +311,18 @@ def run_trellis_memory_chunked_state_evolution(
                 innovation_rms_cap=trellis_innovation_rms_cap,
                 detach_scale=trellis_stabilizer_detach_scale,
             )
+            if hypergradient_rho < 1.0:
+                # temper only the higher-order path: values are equal, so
+                # the forward is unchanged and rho scales du/dz alone
+                u_det = _trellis_vjp_stabilized(
+                    phi,
+                    M0W,
+                    A,
+                    stabilizer=trellis_update_stabilizer,
+                    innovation_rms_cap=trellis_innovation_rms_cap,
+                    detach_scale=trellis_stabilizer_detach_scale,
+                )
+                u = u_det + hypergradient_rho * (u - u_det)
             if residual_update_mix:
                 u = u + residual_update_mix * (phi(M0W) - A)
         else:
