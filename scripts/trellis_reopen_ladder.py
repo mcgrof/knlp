@@ -256,7 +256,8 @@ def train_cell(arm, kind, seed, cfg, rows, val_rows, args, device, dt, hashes):
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     model.train()
     steps = min(
-        len(rows) // args.batch, args.train_tokens // (args.batch * args.seq_len)
+        len(rows) // args.batch,
+        -(-args.train_tokens // (args.batch * args.seq_len)),
     )
     milestones = sorted(int(m) for m in args.eval_milestones.split(",") if m.strip())
     curve, mi, ntok, t0 = [], 0, 0, time.time()
@@ -415,9 +416,11 @@ def main():
     seeds = [int(s) for s in args.seeds.split(",") if s != ""]
     milestones = [int(m) for m in args.eval_milestones.split(",") if m.strip()]
 
-    # ceil: the final milestone must be reachable (floor packing left a 10M
-    # request at 9.998M tokens, so the last milestone never fired)
-    n_train_seqs = -(-args.train_tokens // args.seq_len)
+    # round the packed stream UP to a whole number of batches covering the
+    # token budget, so the final milestone is always reachable (floor packing
+    # plus a floored step cap left a 10M request at 9.99M trained tokens)
+    steps_target = -(-args.train_tokens // (args.batch * args.seq_len))
+    n_train_seqs = steps_target * args.batch
     print(
         f"packing {n_train_seqs} train + {args.val_seqs} val seqs "
         f"@ seq_len={args.seq_len} from {args.dataset}/{args.dataset_config}",
