@@ -22,15 +22,39 @@ Clean write-nonlinearity control:
 
 The identity run keeps the inter-pass function fixed as LN-SiLU. It changes
 only the memory-write phi, unlike our regrettably educational earlier ablation.
+
+Outer gradient semantics (SEQUENTIAL path only): --outer-gradient-mode
+selects how the outer loss differentiates through the inner VJP.
+"full_bilevel" (default) keeps the inner VJP in the graph -- exact, the
+correctness default. "first_order_detached" cuts z before the inner VJP --
+the historical fast mode. Forward is identical either way; only the
+backward differs (--assert-step0-equivalence verifies both claims).
+
+Two memory regimes, both driven by the existing --bindings/--slots flags:
+
+  * surplus (bindings <= slots, the default): every binding can own a
+    slot, so this is the correctness probe -- errors are semantics bugs,
+    not capacity limits;
+  * oversubscribed (bindings > slots, e.g. --bindings 64 --slots 16):
+    the capacity probe -- the memory must compress under pressure, where
+    the write nonlinearity could earn its keep.
+
+Paired arms: episodes are drawn from a dedicated generator seeded from
+--seed, decoupled from model-init RNG, so two arms with the same seed but
+different phi or gradient mode see identical episode streams. --jsonl
+appends per-step training curves and a final eval record for offline
+comparison.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
@@ -43,8 +67,11 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from trellis_lm.activations import identity, ln_silu  # noqa: E402
+from trellis_lm.activations import get_activation, ln_silu  # noqa: E402
 from trellis_lm.trellis_memory import run_trellis_memory  # noqa: E402
+
+OUTER_GRADIENT_MODES = ("full_bilevel", "first_order_detached")
+PHI_CHOICES = ("ln_silu", "silu", "identity")
 
 
 @dataclass(frozen=True)
@@ -58,12 +85,20 @@ class RouterConfig:
 
     n_tools: int = 6
     n_bindings: int = 4
+    n_overwrites: int = 1
 
     beta_floor: float = 0.98
     beta_ceiling: float = 0.999
     gamma_init: float = 0.05
 
     phi: str = "ln_silu"
+    # Outer training gradient through the inner VJP: "full_bilevel" keeps it
+    # in the graph (exact_inner=True), "first_order_detached" cuts it. The
+    # forward-time memory rule is unaffected.
+    outer_gradient_mode: str = "full_bilevel"
+    # Deprecated: the pre-split boolean spelling of outer_gradient_mode
+    # (True == full_bilevel). Kept only so old checkpoint configs still
+    # load; the mode string is authoritative everywhere.
     exact_inner_backward: bool = False
     # tie_f_to_phi reproduces the earlier confounded ablation: a single knob
     # drove BOTH the memory-write phi and the inter-pass map f, so choosing
@@ -89,6 +124,14 @@ class FastMemoryState:
 
 @dataclass
 class EpisodeBatch:
+    """
+    Shapes:
+        aliases:          [B, K, alias_dim]
+        tools:            [B, K]
+        overwrite_index:  [B, N_ow]  applied in column order; last write wins
+        replacement_tool: [B, N_ow]
+    """
+
     aliases: torch.Tensor
     tools: torch.Tensor
     overwrite_index: torch.Tensor
@@ -169,12 +212,15 @@ class TrellisToolRouter(nn.Module):
         # Temperature for tied tool-vector classification.
         self.logit_scale = nn.Parameter(torch.tensor(math.log(10.0)))
 
-        if cfg.phi == "ln_silu":
-            self.write_phi = ln_silu
-        elif cfg.phi == "identity":
-            self.write_phi = identity
-        else:
-            raise ValueError(f"Unsupported phi {cfg.phi!r}; use ln_silu or identity")
+        if cfg.phi not in PHI_CHOICES:
+            raise ValueError(f"Unsupported phi {cfg.phi!r}; use one of {PHI_CHOICES}")
+        self.write_phi = get_activation(cfg.phi)
+
+        if cfg.outer_gradient_mode not in OUTER_GRADIENT_MODES:
+            raise ValueError(
+                f"Unsupported outer_gradient_mode {cfg.outer_gradient_mode!r}; "
+                f"use one of {OUTER_GRADIENT_MODES}"
+            )
 
         # Faithful control (default): f is held at LN-SiLU while phi varies, so
         # the write-nonlinearity ablation isolates the write. tie_f_to_phi
@@ -344,6 +390,7 @@ class TrellisToolRouter(nn.Module):
         keys, _, alpha, beta = self._project_aliases(aliases)
         values = self._project_tools(tool_ids)
         gamma = self.effective_gamma()
+        exact_inner = self.cfg.outer_gradient_mode == "full_bilevel"
 
         # The exact operator performs write-before-read. We only need the
         # resulting state during binding, so its read vectors are zero.
@@ -367,7 +414,7 @@ class TrellisToolRouter(nn.Module):
             phi=self.write_phi,
             read_mode="M_q",
             training=self.training,
-            exact_inner=self.cfg.exact_inner_backward,
+            exact_inner=exact_inner,
             M_init=state.key,
             return_state=True,
         )
@@ -381,7 +428,7 @@ class TrellisToolRouter(nn.Module):
             phi=self.write_phi,
             read_mode="M_T_r",
             training=self.training,
-            exact_inner=self.cfg.exact_inner_backward,
+            exact_inner=exact_inner,
             M_init=state.value,
             return_state=True,
         )
@@ -450,18 +497,23 @@ def make_episode_batch(
     *,
     batch_size: int,
     device: torch.device,
+    generator: torch.Generator | None = None,
 ) -> EpisodeBatch:
     """
     Create completely new continuous aliases for every episode.
 
     The model cannot memorize alias -> tool mappings in its slow parameters,
     because the alias vectors and assignments are regenerated every batch.
+
+    All draws happen on CPU through `generator` (decoupled from model-init
+    RNG) and move to `device` afterwards, so arms with the same seed see
+    identical episodes on any device.
     """
     aliases = torch.randn(
         batch_size,
         cfg.n_bindings,
         cfg.alias_dim,
-        device=device,
+        generator=generator,
     )
     aliases = F.normalize(aliases, dim=-1)
 
@@ -469,33 +521,45 @@ def make_episode_batch(
         low=0,
         high=cfg.n_tools,
         size=(batch_size, cfg.n_bindings),
-        device=device,
+        generator=generator,
     )
 
-    overwrite_index = torch.randint(
-        low=0,
-        high=cfg.n_bindings,
-        size=(batch_size,),
-        device=device,
-    )
+    # Sequential overwrites: each picks a binding index and a replacement
+    # tool different from that binding's CURRENT tool at that point. Later
+    # overwrites may hit the same index -- last write wins.
+    rows = torch.arange(batch_size)
+    current = tools.clone()
 
-    rows = torch.arange(batch_size, device=device)
-    old_tool = tools[rows, overwrite_index]
+    overwrite_index = torch.empty(batch_size, cfg.n_overwrites, dtype=torch.long)
+    replacement_tool = torch.empty_like(overwrite_index)
 
-    # Draw uniformly from all tools except the current one.
-    replacement_tool = torch.randint(
-        low=0,
-        high=cfg.n_tools - 1,
-        size=(batch_size,),
-        device=device,
-    )
-    replacement_tool = replacement_tool + (replacement_tool >= old_tool).long()
+    for j in range(cfg.n_overwrites):
+        index = torch.randint(
+            low=0,
+            high=cfg.n_bindings,
+            size=(batch_size,),
+            generator=generator,
+        )
+        old_tool = current[rows, index]
+
+        # Draw uniformly from all tools except the current one.
+        replacement = torch.randint(
+            low=0,
+            high=cfg.n_tools - 1,
+            size=(batch_size,),
+            generator=generator,
+        )
+        replacement = replacement + (replacement >= old_tool).long()
+
+        current[rows, index] = replacement
+        overwrite_index[:, j] = index
+        replacement_tool[:, j] = replacement
 
     return EpisodeBatch(
-        aliases=aliases,
-        tools=tools,
-        overwrite_index=overwrite_index,
-        replacement_tool=replacement_tool,
+        aliases=aliases.to(device),
+        tools=tools.to(device),
+        overwrite_index=overwrite_index.to(device),
+        replacement_tool=replacement_tool.to(device),
     )
 
 
@@ -534,27 +598,25 @@ def episode_forward(
         episode.aliases,
     )
 
-    # Overwrite one binding per episode.
+    # Apply overwrites sequentially: each is a single-token bind against the
+    # live intermediate state, mirroring how they were sampled.
     rows = torch.arange(batch_size, device=device)
-
-    overwritten_alias = episode.aliases[
-        rows,
-        episode.overwrite_index,
-    ].unsqueeze(1)
-
-    replacement_tool = episode.replacement_tool.unsqueeze(1)
-
-    state = model.bind(
-        state,
-        overwritten_alias,
-        replacement_tool,
-    )
-
     targets_after = episode.tools.clone()
-    targets_after[
-        rows,
-        episode.overwrite_index,
-    ] = episode.replacement_tool
+
+    for j in range(episode.overwrite_index.shape[1]):
+        index = episode.overwrite_index[:, j]
+        replacement = episode.replacement_tool[:, j]
+
+        overwritten_alias = episode.aliases[rows, index].unsqueeze(1)
+
+        state = model.bind(
+            state,
+            overwritten_alias,
+            replacement.unsqueeze(1),
+        )
+
+        # In-order assignment: a later overwrite of the same index wins.
+        targets_after[rows, index] = replacement
 
     logits_after = model.query(
         state,
@@ -579,33 +641,23 @@ def score_episode(
     predictions_before = logits_before.argmax(dim=-1)
     predictions_after = logits_after.argmax(dim=-1)
 
-    overwrite_correct = (
-        predictions_after[
-            rows,
-            episode.overwrite_index,
-        ]
-        == episode.replacement_tool
-    )
+    # Mark every index touched by any overwrite; duplicates collapse to one
+    # mask entry, and targets_after already carries the LAST written value.
+    overwritten = torch.zeros_like(episode.tools, dtype=torch.bool)
+    overwritten[rows.unsqueeze(1), episode.overwrite_index] = True
 
-    collateral_mask = torch.ones_like(
-        episode.tools,
-        dtype=torch.bool,
-    )
-    collateral_mask[
-        rows,
-        episode.overwrite_index,
-    ] = False
+    after_correct = predictions_after == targets_after
+    untouched = ~overwritten
 
     return {
         "before": (predictions_before == episode.tools).float().mean().item(),
-        "after": (predictions_after == targets_after).float().mean().item(),
-        "overwrite": overwrite_correct.float().mean().item(),
+        "after": after_correct.float().mean().item(),
+        "overwrite": after_correct[overwritten].float().mean().item(),
         "collateral": (
-            predictions_after[collateral_mask] == targets_after[collateral_mask]
-        )
-        .float()
-        .mean()
-        .item(),
+            after_correct[untouched].float().mean().item()
+            if untouched.any()
+            else float("nan")
+        ),
     }
 
 
@@ -617,6 +669,7 @@ def evaluate(
     device: torch.device,
     batch_size: int,
     batches: int = 20,
+    generator: torch.Generator | None = None,
 ) -> dict[str, float]:
     model.eval()
 
@@ -632,6 +685,7 @@ def evaluate(
             cfg,
             batch_size=batch_size,
             device=device,
+            generator=generator,
         )
 
         outputs = episode_forward(model, episode)
@@ -646,6 +700,83 @@ def evaluate(
     return {name: value / batches for name, value in totals.items()}
 
 
+def check_step0_equivalence(
+    model: TrellisToolRouter,
+    cfg: RouterConfig,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[bool, bool]:
+    """
+    Cheap pre-training probe of the outer-gradient toggle.
+
+    Forward must be mode-independent: a weight-tied twin built with the
+    OPPOSITE outer_gradient_mode must produce allclose outputs on one
+    identical episode batch. Backward must not be: after one loss+backward
+    on each, at least one parameter grad must differ, or the toggle is dead.
+
+    Returns (forward_ok, grads_differ).
+    """
+    other = (
+        "first_order_detached"
+        if cfg.outer_gradient_mode == "full_bilevel"
+        else "full_bilevel"
+    )
+    # RouterConfig is frozen: build a second config for the twin.
+    cfg_other = replace(
+        cfg,
+        outer_gradient_mode=other,
+        exact_inner_backward=(other == "full_bilevel"),
+    )
+    twin = TrellisToolRouter(cfg_other).to(device)
+    twin.load_state_dict(model.state_dict())
+
+    # Dedicated generator: the probe must not consume the training episode
+    # stream, or enabling the flag would break cross-arm pairing.
+    probe_generator = torch.Generator().manual_seed(args.seed)
+    episode = make_episode_batch(
+        cfg,
+        batch_size=min(args.batch_size, 8),
+        device=device,
+        generator=probe_generator,
+    )
+
+    model.train()
+    twin.train()
+
+    outputs = {}
+    for name, net in (("main", model), ("twin", twin)):
+        logits_before, logits_after, targets_after = episode_forward(net, episode)
+
+        loss = F.cross_entropy(
+            logits_before.flatten(0, 1),
+            episode.tools.flatten(),
+        ) + args.overwrite_weight * F.cross_entropy(
+            logits_after.flatten(0, 1),
+            targets_after.flatten(),
+        )
+
+        net.zero_grad(set_to_none=True)
+        loss.backward()
+
+        outputs[name] = (logits_before.detach(), logits_after.detach())
+
+    forward_ok = torch.allclose(
+        outputs["main"][0], outputs["twin"][0], rtol=1e-5, atol=1e-5
+    ) and torch.allclose(outputs["main"][1], outputs["twin"][1], rtol=1e-5, atol=1e-5)
+
+    grads_differ = False
+    for p_main, p_twin in zip(model.parameters(), twin.parameters()):
+        g_main = p_main.grad if p_main.grad is not None else torch.zeros_like(p_main)
+        g_twin = p_twin.grad if p_twin.grad is not None else torch.zeros_like(p_twin)
+        if (g_main - g_twin).abs().max().item() > 0:
+            grads_differ = True
+            break
+
+    model.zero_grad(set_to_none=True)
+
+    return forward_ok, grads_differ
+
+
 def train(args: argparse.Namespace) -> None:
     device = torch.device(args.device)
 
@@ -657,9 +788,12 @@ def train(args: argparse.Namespace) -> None:
         n_slots=args.slots,
         n_tools=args.tools,
         n_bindings=args.bindings,
+        n_overwrites=args.overwrites,
         gamma_init=args.gamma_init,
         phi=args.phi,
-        exact_inner_backward=args.exact_inner_backward,
+        outer_gradient_mode=args.outer_gradient_mode,
+        # Deprecated mirror of the mode, kept coherent for old readers.
+        exact_inner_backward=(args.outer_gradient_mode == "full_bilevel"),
         tie_f_to_phi=args.tie_f_phi,
     )
 
@@ -672,17 +806,61 @@ def train(args: argparse.Namespace) -> None:
     )
 
     chance = 1.0 / cfg.n_tools
+    f_name = cfg.phi if cfg.tie_f_to_phi else "ln_silu"
+
+    # Surplus (bindings <= slots) probes correctness; oversubscribed probes
+    # compression under capacity pressure.
+    regime = (
+        "oversubscribed (capacity probe)"
+        if cfg.n_bindings > cfg.n_slots
+        else "surplus (correctness probe)"
+    )
 
     print(f"device:                {device}")
+    print(f"seed:                  {args.seed}")
     print(f"write phi:             {cfg.phi}")
     print(
-        f"inter-pass f:          {cfg.phi if cfg.tie_f_to_phi else 'ln_silu'}"
+        f"inter-pass f:          {f_name}"
         f"{'  (TIED to phi -- confound)' if cfg.tie_f_to_phi else '  (fixed)'}"
     )
     print(f"tools / chance:        {cfg.n_tools} / {chance:.3f}")
     print(f"bindings per episode:  {cfg.n_bindings}")
-    print(f"exact inner backward:  {cfg.exact_inner_backward}")
+    print(f"overwrites per episode:{cfg.n_overwrites:2d}")
+    print(f"slots:                 {cfg.n_slots}  [{regime}]")
+    print(f"outer gradient mode:   {cfg.outer_gradient_mode}")
     print()
+
+    if args.assert_step0_equivalence:
+        forward_ok, grads_differ = check_step0_equivalence(model, cfg, args, device)
+        passed = forward_ok and grads_differ
+        print(
+            f"step0 equivalence: forward_allclose={forward_ok} "
+            f"grads_differ={grads_differ} -> {'PASS' if passed else 'FAIL'}"
+        )
+        if not passed:
+            sys.exit(1)
+
+    # Episode stream generator: dedicated CPU generator seeded AFTER model
+    # construction, so arms sharing a seed get identical episodes no matter
+    # how model init consumed the global RNG.
+    episode_generator = torch.Generator().manual_seed(args.seed)
+
+    jsonl_file = None
+    if args.jsonl:
+        jsonl_path = Path(args.jsonl)
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        # Line-buffered append so curves survive interruption.
+        jsonl_file = open(jsonl_path, "a", buffering=1)
+
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+    def peak_mem_mb() -> float:
+        if device.type == "cuda":
+            return torch.cuda.max_memory_allocated(device) / 2**20
+        return 0.0
+
+    start_time = time.monotonic()
 
     for step in range(1, args.steps + 1):
         model.train()
@@ -691,6 +869,7 @@ def train(args: argparse.Namespace) -> None:
             cfg,
             batch_size=args.batch_size,
             device=device,
+            generator=episode_generator,
         )
 
         (
@@ -744,17 +923,66 @@ def train(args: argparse.Namespace) -> None:
                 f"gamma={gamma}"
             )
 
+            if jsonl_file is not None:
+                record = {
+                    "kind": "train",
+                    "step": step,
+                    "loss": loss.item(),
+                    "before": metrics["before"],
+                    "after": metrics["after"],
+                    "overwrite": metrics["overwrite"],
+                    "collateral": metrics["collateral"],
+                    "gamma": gamma,
+                    "wall_s": time.monotonic() - start_time,
+                    "peak_mem_mb": peak_mem_mb(),
+                }
+                jsonl_file.write(json.dumps(record) + "\n")
+
     metrics = evaluate(
         model,
         cfg,
         device=device,
         batch_size=args.batch_size,
         batches=args.eval_batches,
+        generator=episode_generator,
     )
 
     print("\nHeld-out episodes, model weights frozen:")
     for name, value in metrics.items():
         print(f"  {name:12s}: {value:.4f}")
+
+    if jsonl_file is not None:
+        record = {
+            "kind": "eval",
+            **metrics,
+            "wall_s": time.monotonic() - start_time,
+            "peak_mem_mb": peak_mem_mb(),
+            "config": {
+                "outer_gradient_mode": cfg.outer_gradient_mode,
+                "phi": cfg.phi,
+                "f": f_name,
+                "tie_f_phi": cfg.tie_f_to_phi,
+                "seed": args.seed,
+                "tools": cfg.n_tools,
+                "bindings": cfg.n_bindings,
+                "overwrites": cfg.n_overwrites,
+                "slots": cfg.n_slots,
+                "alias_dim": cfg.alias_dim,
+                "d_model": cfg.d_model,
+                "heads": cfg.n_heads,
+                "head_dim": cfg.d_head,
+                "gamma_init": cfg.gamma_init,
+                "steps": args.steps,
+                "batch_size": args.batch_size,
+                "eval_batches": args.eval_batches,
+                "lr": args.lr,
+                "weight_decay": args.weight_decay,
+                "overwrite_weight": args.overwrite_weight,
+                "device": str(device),
+            },
+        }
+        jsonl_file.write(json.dumps(record) + "\n")
+        jsonl_file.close()
 
     checkpoint = {
         "config": cfg.__dict__,
@@ -779,8 +1007,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=3000)
     parser.add_argument("--batch-size", type=int, default=128)
 
+    parser.add_argument("--seed", type=int, default=0)
+
     parser.add_argument("--tools", type=int, default=6)
     parser.add_argument("--bindings", type=int, default=4)
+    parser.add_argument("--overwrites", type=int, default=1)
     parser.add_argument("--alias-dim", type=int, default=32)
 
     parser.add_argument("--d-model", type=int, default=64)
@@ -790,7 +1021,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--phi",
-        choices=("ln_silu", "identity"),
+        choices=PHI_CHOICES,
         default="ln_silu",
     )
     parser.add_argument("--gamma-init", type=float, default=0.05)
@@ -802,9 +1033,18 @@ def parse_args() -> argparse.Namespace:
 
     # This changes outer training gradients, not the forward-time memory rule.
     parser.add_argument(
+        "--outer-gradient-mode",
+        choices=OUTER_GRADIENT_MODES,
+        default=None,
+        help="outer gradient through the inner VJP; default full_bilevel",
+    )
+    # Deprecated boolean spelling of --outer-gradient-mode; only takes
+    # effect when --outer-gradient-mode is not given.
+    parser.add_argument(
         "--exact-inner-backward",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=None,
+        help="deprecated: use --outer-gradient-mode",
     )
     # Reproduce the earlier confounded ablation (f driven by the same knob as
     # phi). Default off = the faithful control (f fixed at LN-SiLU).
@@ -820,6 +1060,16 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="results/trellis_tool_router.pt",
     )
+    parser.add_argument(
+        "--jsonl",
+        default=None,
+        help="append per-step train records and a final eval record here",
+    )
+    parser.add_argument(
+        "--assert-step0-equivalence",
+        action="store_true",
+        help="pre-training check: forward mode-independent, backward not",
+    )
 
     args = parser.parse_args()
 
@@ -827,8 +1077,24 @@ def parse_args() -> argparse.Namespace:
         parser.error("--tools must be at least 2")
     if args.bindings < 1:
         parser.error("--bindings must be positive")
+    if args.overwrites < 1:
+        parser.error("--overwrites must be positive")
     if args.gamma_init <= 0:
         parser.error("--gamma-init must be positive")
+
+    # Resolve the outer gradient mode. The mode flag wins; the deprecated
+    # boolean maps True -> full_bilevel, False -> first_order_detached.
+    if args.outer_gradient_mode is None:
+        if args.exact_inner_backward is not None:
+            args.outer_gradient_mode = (
+                "full_bilevel" if args.exact_inner_backward else "first_order_detached"
+            )
+            print(
+                "note: --[no-]exact-inner-backward is deprecated; use "
+                f"--outer-gradient-mode {args.outer_gradient_mode}"
+            )
+        else:
+            args.outer_gradient_mode = "full_bilevel"
 
     return args
 
@@ -836,11 +1102,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    random.seed(0)
-    torch.manual_seed(0)
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(0)
+        torch.cuda.manual_seed_all(args.seed)
 
     torch.set_float32_matmul_precision("high")
 
