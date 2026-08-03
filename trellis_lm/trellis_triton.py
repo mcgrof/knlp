@@ -241,9 +241,9 @@ if HAS_TRITON:
                     err_for_u = resid * scale[:, None]
                 emean_u = tl.sum(err_for_u, axis=1) / M
                 eymean_u = tl.sum(err_for_u * y, axis=1) / M
-                ds_u = (
-                    err_for_u - emean_u[:, None] - y * eymean_u[:, None]
-                ) / std[:, None]
+                ds_u = (err_for_u - emean_u[:, None] - y * eymean_u[:, None]) / std[
+                    :, None
+                ]
                 u_aug = silu_grad * ds_u
                 if RESIDUAL_UPDATE_MIX != 0.0:
                     u_aug += RESIDUAL_UPDATE_MIX * resid
@@ -302,7 +302,7 @@ if HAS_TRITON:
         tl.store(gG_ptr + n, tl.sum(gG))
 
     def _activation_code(activation):
-        if activation == "ln_silu":
+        if activation in ("ln_silu", "norm_silu"):
             return 0
         if activation == "silu":
             return 1
@@ -611,9 +611,9 @@ if HAS_TRITON:
             if gate_width == 1:
                 grad_gate = gGate.view(B, H, nC * C, 1)[:, :, :T, :].contiguous()
             elif gate_width > 1:
-                grad_gate = (
-                    gGate.view(B, H, nC * C, M)[:, :, :T, :M_actual].contiguous()
-                )
+                grad_gate = gGate.view(B, H, nC * C, M)[
+                    :, :, :T, :M_actual
+                ].contiguous()
             else:
                 grad_gate = None
             grads = (

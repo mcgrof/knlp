@@ -758,9 +758,14 @@ class TrellisMixer(nn.Module):
                 # memory case because LN reductions are over the true slot count.
                 # Pointwise SiLU/identity can pad slots internally, so the
                 # Stage-2 winner/control at n_slots=48,d_head=64 can stay fused.
-                triton_pointwise = cfg.activation in ("silu", "identity")
+                # eligibility and the kernel argument must follow the
+                # RESOLVED write phi, not the legacy shared activation knob:
+                # with phi_activation set, keying off cfg.activation would
+                # skip the kernel -- or worse, hand it the wrong phi
+                phi_name = cfg.phi_activation or cfg.activation
+                triton_pointwise = phi_name in ("silu", "identity")
                 triton_ln_silu = (
-                    cfg.activation == "ln_silu" and cfg.n_slots == cfg.d_head
+                    phi_name in ("ln_silu", "norm_silu") and cfg.n_slots == cfg.d_head
                 )
                 nvidia_cuda = kf.is_cuda and (
                     getattr(torch.version, "hip", None) is None
@@ -815,7 +820,7 @@ class TrellisMixer(nn.Module):
                             rmat_in.contiguous(),
                             gf,
                             cs,
-                            cfg.activation,
+                            phi_name,
                             cfg.trellis_update_stabilizer,
                             cfg.trellis_innovation_rms_cap,
                             gate_in,
