@@ -7,13 +7,40 @@ recurrent state that is constant in sequence length. We implemented Trellis in o
 matched harness and compared it against the FLA reference DeltaNet and Gated
 DeltaNet layers — to ask whether Trellis's *nonlinear* memory writer beats its
 *linear* cousins at matched size. The line was closed as a spend decision
-(2026-07-05) and REOPENED FOR A BOUNDED CORRECTNESS AUDIT (2026-08-02): the
-training-mode flag selecting the paper's bilevel objective was silently ignored
-by every chunked backend, so our first-order reconstruction — which loses to
-Gated DeltaNet at reachable scale — is the only regime these comparisons ever
-tested. That first-order verdict stands for what was run; full-bilevel Trellis,
-the isolated write cost, and the paper's 125M/790M scale claims remain
-incompletely tested, parked, not disproven.
+(2026-07-05), reopened for a bounded correctness audit (2026-08-02), and
+re-closed with the audit complete (2026-08-04). The audit found and repaired a
+real semantic defect: closure-era chunked runs labeled exact or full-bilevel
+had executed detached first-order outer gradients, because the flag selecting
+the bilevel objective never reached the chunked backends. Full-bilevel
+sequential and chunk-start-stale implementations now match independent
+higher-order references in float64, and backend semantics are explicit,
+tested, and enforced.
+
+With both gradient modes finally labeled and runnable, the findings are
+sharper than the original closure. Full-bilevel training robustly improves
+learned fast-memory behavior on a synthetic routing task after sufficient
+optimization, with a larger gain for the nonlinear SiLU writer in
+slot-surplus regimes — but the benefit does not translate cleanly to language
+modeling. On C4 the write nonlinearity and the outer-gradient semantics
+interact strongly: under first-order training SiLU outperforms identity,
+while full-bilevel training substantially improves and stabilizes the
+identity writer (the best fully stable Trellis configuration in the 20M
+factorial) but destabilizes SiLU at full hypergradient strength, with one of
+three seeds completing healthily. No write-nonlinearity ranking is therefore
+valid independently of gradient semantics. A tempered higher-order
+correction (scaling only the gradient path through the inner code, forward
+update unchanged) completes all three seeds at half strength and improves on
+first-order training in every paired seed by roughly 0.006 nats per token —
+recorded as a separate algorithmic finding, below the pre-registered scaling
+threshold. Gated DeltaNet and identity-bilevel are effectively tied at 20M
+tokens; at 40M Gated DeltaNet has the best mean by roughly 0.01 nats per
+token, one seed still slightly favors identity-bilevel, and all three paired
+gaps move toward Gated DeltaNet as the budget grows, so it remains the
+practical matched-state leader in this harness. No context-length dependence
+appeared from 2K to 32K under packed short-document C4 at an early
+optimization horizon, which does not test the paper's coherent-books result.
+The paper's 125M-790M parameter, 2.4B-30B-token, and coherent-books scaling
+claims remain untested and parked, not refuted.
 
 The short version, stated up front: at the scale we can afford to train (≈4.7M
 non-embedding parameters), our Trellis *currently* loses to both DeltaNet and
