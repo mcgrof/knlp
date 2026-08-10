@@ -147,6 +147,28 @@ def deep_update(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _validate_head_score_metric(metric: str) -> None:
+    """Reject degenerate or unknown head-score metrics.
+
+    exact_eigmax is INVALID as a ranking metric: the batch-mean
+    post-softmax attention matrix is row-stochastic, so its spectral
+    radius is exactly 1 for every head (Perron-Frobenius). Empirically
+    the spread across 704 heads was 1.79e-6 — the resulting selection
+    is random tie-breaking. See docs/ra-evidence.md.
+    """
+    if metric == "exact_eigmax":
+        raise ValueError(
+            "head_score_metric 'exact_eigmax' is degenerate: a "
+            "row-stochastic attention matrix has spectral radius "
+            "exactly 1 for every head (Perron-Frobenius), so this "
+            "metric ranks heads by floating-point noise. Choose "
+            "'inbound_mass_var' explicitly (itself non-diagnostic "
+            "for RA placement; see docs/ra-evidence.md)."
+        )
+    if metric != "inbound_mass_var":
+        raise ValueError(f"unknown head_score_metric: {metric!r}")
+
+
 @dataclass
 class AttentionStatsCollector:
     num_layers: int
@@ -161,6 +183,8 @@ class AttentionStatsCollector:
     head_score: torch.Tensor = field(init=False)
 
     def __post_init__(self) -> None:
+        if self.enabled:
+            _validate_head_score_metric(self.score_metric)
         self.layer_sum = torch.zeros(self.num_layers, dtype=torch.float64)
         self.layer_count = torch.zeros(self.num_layers, dtype=torch.float64)
         self.head_sum = torch.zeros(
@@ -174,14 +198,14 @@ class AttentionStatsCollector:
         )
 
     def _score_head(self, mean_attn: torch.Tensor) -> float:
-        if self.score_metric == "inbound_mass_var":
-            inbound = mean_attn.sum(dim=0)
-            return float(inbound.var(unbiased=False).item())
-        try:
-            eigvals = torch.linalg.eigvals(mean_attn).real
-            return float(eigvals.abs().max().item())
-        except Exception:
-            return float("nan")
+        _validate_head_score_metric(self.score_metric)
+        # inbound_mass_var: variance of column sums of the mean causal
+        # attention matrix. Not algebraically degenerate, but it measures
+        # sink/concentration structure, not standard-vs-reciprocal
+        # complementarity — non-diagnostic for RA placement (see
+        # docs/ra-evidence.md).
+        inbound = mean_attn.sum(dim=0)
+        return float(inbound.var(unbiased=False).item())
 
     def update(self, layer_idx: int, attn_probs: torch.Tensor) -> None:
         if not self.enabled:
