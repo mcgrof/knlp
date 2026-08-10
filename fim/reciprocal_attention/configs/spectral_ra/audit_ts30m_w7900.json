@@ -1,0 +1,31 @@
+{
+  "_comment": "Stage 2a shakeout audit on the 30M TinyStories baseline checkpoint. Trusted-analog placement mirrors the bang experiment (middle band layers {2,3,4}, last two heads {4,5}). Controls: the same heads in out-of-band layers {0,5} plus in-band non-RA heads {0,1} of layer 3. ~1.3M calibration tokens, 100 permutation nulls.",
+  "checkpoint": "/data/knlp-key-results/ra-spectral-modes-20260810/training/ts30m_baseline_seed0/ckpt_latest.pt",
+  "data": {
+    "train_bin": "/data/knlp/data/tinystories/train.bin"
+  },
+  "selection": {
+    "heads": {
+      "2": [4, 5],
+      "3": [4, 5],
+      "4": [4, 5]
+    },
+    "control_heads": {
+      "0": [4, 5],
+      "5": [4, 5],
+      "3": [0, 1]
+    }
+  },
+  "calibration": {
+    "seed": 1234,
+    "batches": 100,
+    "batch_size": 32,
+    "score_batches": 4,
+    "n_perm": 100,
+    "null_rows": 65536
+  },
+  "gates": {
+    "min_trusted_fraction": 0.5
+  },
+  "out_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/audit/ts30m_seed0"
+}

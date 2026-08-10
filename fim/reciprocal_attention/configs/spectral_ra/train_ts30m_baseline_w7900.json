@@ -1,0 +1,32 @@
+{
+  "_comment": "Stage 2a shakeout: 30M TinyStories baseline on prune's W7900. Mirrors the gpt2-ra-bang-tinystories-20260611 architecture/training (6L/6H/384d, block 256, bias false, 4000 steps, batch 32, lr 6e-4 cosine, bf16) but trains from the archived token bins instead of streaming HF, and saves fork-ready checkpoints (the bang script saved none).",
+  "seed": 0,
+  "model": {
+    "n_layer": 6,
+    "n_head": 6,
+    "n_embd": 384,
+    "block_size": 256,
+    "vocab_size": 50257,
+    "dropout": 0.0,
+    "bias": false
+  },
+  "data": {
+    "train_bin": "/data/knlp/data/tinystories/train.bin",
+    "val_bin": "/data/knlp/data/tinystories/val.bin"
+  },
+  "train": {
+    "batch_size": 32,
+    "max_steps": 4000,
+    "lr": 6e-4,
+    "min_lr": 6e-5,
+    "warmup_steps": 200,
+    "weight_decay": 0.1,
+    "betas": [0.9, 0.95],
+    "clip": 1.0,
+    "eval_interval": 500,
+    "eval_batches": 20,
+    "ckpt_interval": 1000,
+    "log_interval": 50
+  },
+  "out_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/training/ts30m_baseline_seed0"
+}

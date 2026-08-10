@@ -1,0 +1,32 @@
+{
+  "_comment": "Stage 2b anchor reconstruction: GPT-2 124M FineWebEdu baseline on prune's W7900, trusted architecture (12L/12H/768d, block 1024, bias true, dropout 0.1, vocab 50304, weight tying) and the exact bins the December 2025 ablation used. DEVIATION, recorded: optimizer is plain AdamW (0.9,0.95) wd 0.1 rather than the trusted AdamWSPAM, and this is single-GPU without DDP/HYPER_PARAM_AUTO. The checkpoint is a measurement platform for the spectral audit, not a reproduction of the trusted run. ~20k steps x 8x1024 tokens = ~164M tokens; checkpoints every 2000 steps so the audit can track spectrum stability across training time.",
+  "seed": 0,
+  "model": {
+    "n_layer": 12,
+    "n_head": 12,
+    "n_embd": 768,
+    "block_size": 1024,
+    "vocab_size": 50304,
+    "dropout": 0.1,
+    "bias": true
+  },
+  "data": {
+    "train_bin": "/data/knlp/data/finewebedu/train.bin",
+    "val_bin": "/data/knlp/data/finewebedu/val.bin"
+  },
+  "train": {
+    "batch_size": 8,
+    "max_steps": 20000,
+    "lr": 6e-4,
+    "min_lr": 6e-5,
+    "warmup_steps": 2000,
+    "weight_decay": 0.1,
+    "betas": [0.9, 0.95],
+    "clip": 1.0,
+    "eval_interval": 500,
+    "eval_batches": 20,
+    "ckpt_interval": 2000,
+    "log_interval": 50
+  },
+  "out_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/training/gpt2_124m_fwe_baseline_seed0"
+}
