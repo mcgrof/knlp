@@ -219,6 +219,8 @@ scripts/kv_*.py
 scripts/mla_*.py
 scripts/benchmark_*.py
 scripts/check_*.py
+# the RA documentation-claim guard is tracked (tests depend on it)
+!scripts/check_ra_claims.py
 scripts/compare_*.py
 scripts/egg_*.py
 scripts/extract_*.py
