@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Marin 32B RA head-count scaling screen
+# Marin 32B RA head-count scaling screen — NON_DIAGNOSTIC (historical)
+#
+# This screen used a uniform-band selection: one fixed head (19) in
+# 20/24/28/32 middle layers, head_score_metric=uniform. No validated
+# per-head selector was tested, so its (negative) short-run results
+# carry no information about RA-with-a-working-selector at 32B. Kept
+# for the record only; see docs/ra-evidence.md before citing anything
+# produced by this script. Note: in the RA-N names below, N counts
+# selected LAYERS (each with fixed head 19), not heads.
+#
 # Hardware: 4x H100 80GB, FSDP full-shard
 # Sweep: baseline, RA-20, RA-24, RA-28, RA-32 @ 20 min each
 

@@ -135,6 +135,15 @@ The paired 1-hour comparison is complete on 4xH100:
 
 RA-8 achieves a 9.4% perplexity improvement under identical conditions.
 
+Evidence caveats (added 2026-08-09): this is a single-seed result, and
+a later postmortem found no surviving per-step trajectory, checkpoint,
+or training log for these runs — only summary JSON was retained. The
+number therefore cannot be independently revalidated today, and the
+result was not reproduced at 1B (the matched 1B variants were neutral
+within noise; see [LLAMA1B_AUDIT.md](LLAMA1B_AUDIT.md) and
+[docs/ra-evidence.md](../../docs/ra-evidence.md)). It is
+supported-but-limited evidence, not a headline scaling claim.
+
 Elapsed-accounting nuance: the RA-8 completion event originally recorded
 `elapsed_s=4200.111` even though the last eval event showed
 `elapsed_s=3600.002`. The ~600s gap was post-stop teardown and DDP barrier

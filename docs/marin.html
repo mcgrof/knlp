@@ -113,7 +113,7 @@
             <tr>
               <td class="py-3 px-4 font-medium text-cyan-300">Reciprocal attention</td>
               <td class="py-3 px-4 text-gray-400">In principle &mdash; a structural attention change</td>
-              <td class="py-3 px-4 text-gray-400">Unproven &mdash; the small-scale signal did not survive scale-up</td>
+              <td class="py-3 px-4 text-gray-400">Unproven &mdash; no robust benefit established beyond small scale</td>
               <td class="py-3 px-4" style="color:#9ca3af">Not ready &mdash; still R&amp;D</td>
             </tr>
           </tbody>
@@ -175,8 +175,9 @@
         <p class="text-gray-300 mb-3">
           RA is a structural attention change and is, in principle, the kind of thing Marin would review. But it is still
           R&amp;D, and its scaling record argues against contributing it. We scaled several RA levers &mdash; layer
-          and head selectors (FIM-trace, Fisher eigenmax), head count, and the residual mix &mdash; and the small-scale
-          signal did not survive: it tops out around 150M and is neutral-to-negative by 1B. Until there is a new
+          and head selectors (FIM-trace, Fisher eigenmax), head count, and the residual mix &mdash; and no robust
+          scaling benefit was established: the matched 1B evidence was neutral within noise, an 8B screen was
+          invalidated by methodology, and the 32B experiment used uniform placement and is non-diagnostic. Until there is a new
           inductive-bias hypothesis and a quality-per-FLOP gain to show, there is nothing here that would move
           Marin&rsquo;s curve. The full scaling story is on the
           <a href="ra_visualization.html" class="text-cyan-400 hover:underline">RA page</a>.

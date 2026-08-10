@@ -18,7 +18,7 @@ Catalog of experiments conducted within knlp.
 
 | Name | Purpose | Hardware | Status |
 |------|---------|----------|--------|
-| Reciprocal Attention | Learned Q@K.T / K@Q.T alternation | W7900, B200 | Active |
+| Reciprocal Attention | Learned Q@K.T / K@Q.T mixing (GPT-2 small-scale signal; 1B neutral) | W7900, B200 | Parked |
 | KVSplice | FIM-guided KV cache compression on top of MLA | W7900, A100, H100, B200 | Active |
 | Multi-head Latent Attention | DeepSeek-style cache compression | W7900, B200 | Active |
 | Adam State-Based Pruning | bitter7 importance scoring via exp_avg_sq | W7900, B200 | Active |
