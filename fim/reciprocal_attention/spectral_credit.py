@@ -214,14 +214,27 @@ def split_half_overlap(
     r: torch.Tensor,
     ranks: Sequence[int] = (1, 2, 4, 8),
     seed: int = 0,
+    rows_per_block: int = 1,
 ) -> Dict[str, float]:
     """Stability of the top-r credit subspace across two disjoint halves.
 
-    Rows are split by a seeded random permutation so batch-order
-    artifacts do not masquerade as instability.
+    With rows_per_block > 1 the split happens at sequence granularity
+    so rows of one sequence never land in both halves — a row-level
+    split would let within-sequence autocorrelation inflate the
+    apparent stability.
     """
     n = g.shape[0]
-    perm = torch.randperm(n, generator=torch.Generator().manual_seed(seed))
+    gen = torch.Generator().manual_seed(seed)
+    if rows_per_block > 1:
+        n = (n // rows_per_block) * rows_per_block
+        g, r = g[:n], r[:n]
+        n_blocks = n // rows_per_block
+        block_perm = torch.randperm(n_blocks, generator=gen)
+        perm = (
+            block_perm[:, None] * rows_per_block + torch.arange(rows_per_block)[None, :]
+        ).reshape(-1)
+    else:
+        perm = torch.randperm(n, generator=gen)
     half = n // 2
     ia, ib = perm[:half], perm[half : 2 * half]
     out: Dict[str, float] = {}
@@ -244,23 +257,42 @@ def permutation_null(
     r: torch.Tensor,
     n_perm: int = 100,
     seed: int = 0,
+    rows_per_block: int = 1,
 ) -> Dict[str, object]:
-    """Null distribution of normalized spectral mass under row shuffling.
+    """Null distribution of normalized spectral mass under shuffling.
 
-    Permuting the rows of R relative to G preserves both marginal
-    distributions while destroying the G-R row pairing, which is
-    exactly the association the credit operator measures.
+    rows_per_block=1 permutes individual rows of R against G: it
+    preserves both marginal distributions while destroying the G-R
+    row pairing. Rows from contiguous token positions are strongly
+    autocorrelated, so the row-level null destroys within-sequence
+    structure too and is EASY to beat — empirically, control heads
+    beat it almost as often as trusted heads. With rows_per_block =
+    tokens-per-sequence, whole sequences of R are permuted against G
+    instead: within-sequence autocorrelation survives in both
+    tensors and only the cross-tensor pairing breaks. Audits report
+    both; the block null is the conservative one.
     """
     n = g.shape[0]
+    if rows_per_block > 1:
+        n = (n // rows_per_block) * rows_per_block
+        g, r = g[:n], r[:n]
     g64 = _to_cpu64(g)
     r64 = _to_cpu64(r)
     gr_norm_mean = float((g64.norm(dim=1) * r64.norm(dim=1)).mean())
     actual_lam, _ = sym_eig_by_abs(signed_credit_from_m(g64.T @ r64 / n))
     actual = signed_spectrum_stats(actual_lam, gr_norm_mean)
     gen = torch.Generator().manual_seed(seed)
+    n_blocks = n // rows_per_block
     null_mass = []
     for _ in range(n_perm):
-        perm = torch.randperm(n, generator=gen)
+        if rows_per_block == 1:
+            perm = torch.randperm(n, generator=gen)
+        else:
+            block_perm = torch.randperm(n_blocks, generator=gen)
+            perm = (
+                block_perm[:, None] * rows_per_block
+                + torch.arange(rows_per_block)[None, :]
+            ).reshape(-1)
         lam_p, _ = sym_eig_by_abs(signed_credit_from_m(g64.T @ r64[perm] / n))
         null_mass.append(
             signed_spectrum_stats(lam_p, gr_norm_mean)["normalized_spectral_mass"]
@@ -269,6 +301,7 @@ def permutation_null(
     actual_mass = actual["normalized_spectral_mass"]
     return {
         "actual_normalized_spectral_mass": actual_mass,
+        "rows_per_block": rows_per_block,
         "null_mean": float(null.mean()),
         "null_p95": float(null.quantile(0.95)),
         "null_p99": float(null.quantile(0.99)),
