@@ -180,7 +180,13 @@ class SpectralDeltaAttention(CausalSelfAttention_KNLP):
             self._audit = {}
             yb.register_hook(self._store_grad)
 
+        # The correction path is always dropout-free: delta must be
+        # the Q/K-swap counterfactual, not the difference of two
+        # independently dropout-noised outputs. In train mode with
+        # dropout > 0 the standard side of the delta is therefore
+        # recomputed clean (the main yb path keeps its dropout).
         rec = None
+        std_clean = None
         if need_rec:
             rec_ctx = torch.no_grad() if self.audit_capture else nullcontext()
             with rec_ctx:
@@ -189,13 +195,23 @@ class SpectralDeltaAttention(CausalSelfAttention_KNLP):
                     q[:, sel],  # swapped: queries act as keys
                     v[:, sel],
                     attn_mask=None,
-                    dropout_p=self.dropout if self.training else 0,
+                    dropout_p=0.0,
                     is_causal=True,
                 )  # [B, S, T, d]
+                if self.training and self.dropout > 0:
+                    std_clean = F.scaled_dot_product_attention(
+                        q[:, sel],
+                        k[:, sel],
+                        v[:, sel],
+                        attn_mask=None,
+                        dropout_p=0.0,
+                        is_causal=True,
+                    )
+                else:
+                    std_clean = yb[:, sel]
 
         if self.audit_capture and rec is not None:
-            std_sel = yb[:, sel]
-            self._audit["delta"] = (rec - std_sel).detach()
+            self._audit["delta"] = (rec - std_clean).detach()
             self._audit["q_sel"] = q[:, sel].detach()
             self._audit["k_sel"] = k[:, sel].detach()
             if self.capture_scores:
@@ -207,11 +223,11 @@ class SpectralDeltaAttention(CausalSelfAttention_KNLP):
             beta = self.beta_max * torch.tanh(self.raw_beta)
             std_sel = yb[:, sel]
             if self.gate_mode == "scalar_delta":
-                corr = beta[None, :, None, :] * (rec - std_sel)
+                corr = beta[None, :, None, :] * (rec - std_clean)
             elif self.gate_mode == "coordinate_diag":
-                corr = beta[None, :, None, :] * (rec - std_sel)
+                corr = beta[None, :, None, :] * (rec - std_clean)
             elif self.gate_mode == "spectral":
-                delta = rec - std_sel
+                delta = rec - std_clean
                 modes = torch.einsum("bstd,sdr->bstr", delta, self.basis_u)
                 corr = torch.einsum(
                     "bstr,sdr->bstd", modes * beta[None, :, None, :], self.basis_u
@@ -342,6 +358,29 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _git_dirty() -> Optional[bool]:
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return bool(out)
+    except Exception:
+        return None
+
+
+def _lane_code_sha256() -> str:
+    """Content hash of the lane's two source files — code identity
+    that survives running from a dirty or stale-HEAD mirror."""
+    h = hashlib.sha256()
+    for name in ("spectral_credit.py", "gpt2_spectral_ra.py"):
+        h.update((Path(__file__).parent / name).read_bytes())
+    return h.hexdigest()
+
+
 def _sha256_file(path: str, max_bytes: int = 1 << 24) -> str:
     h = hashlib.sha256()
     p = Path(path)
@@ -382,6 +421,8 @@ def _amp_ctx(device: str, precision: str = "bf16"):
 def _manifest(cfg: Dict, extra: Dict) -> Dict:
     man = {
         "code_commit": _git_commit(),
+        "code_dirty": _git_dirty(),
+        "lane_code_sha256": _lane_code_sha256(),
         "config_hash": _sha256_json(cfg),
         "config": cfg,
         "created_unix": time.time(),
@@ -430,6 +471,9 @@ def save_checkpoint(
     batch_counter: int,
     cfg: Dict,
 ) -> None:
+    # Atomic write: a chained/concurrent audit must never read a
+    # half-written checkpoint.
+    tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(
         {
             "model_state": model.state_dict(),
@@ -442,9 +486,11 @@ def save_checkpoint(
             ),
             "train_config": cfg,
             "code_commit": _git_commit(),
+            "code_dirty": _git_dirty(),
         },
-        path,
+        tmp,
     )
+    tmp.replace(path)
 
 
 def cmd_train_baseline(cfg: Dict, device: str, out_dir: Path) -> None:
@@ -575,42 +621,37 @@ def load_model_from_checkpoint(
     return model, ckpt
 
 
-def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    selection = _selection_from_cfg(cfg["selection"]["heads"])
-    controls = _selection_from_cfg(cfg["selection"].get("control_heads", {}))
-    merged: Dict[int, List[int]] = {}
-    for src in (selection, controls):
-        for layer, heads in src.items():
-            merged.setdefault(layer, [])
-            merged[layer] = sorted(set(merged[layer]) | set(heads))
-    model, ckpt = load_model_from_checkpoint(
-        cfg["checkpoint"], merged, gate_mode="none", device=device
-    )
-    model.eval()
-    mods = spectral_modules(model)
-    for mod in mods.values():
-        mod.audit_capture = True
-    d_head = model.config.n_embd // model.config.n_head
+def _calibration_pass(
+    model,
+    mods,
+    cfg: Dict,
+    device: str,
+    d_head: int,
+    seed: int,
+    retain_raw: bool,
+    collect_extras: bool,
+):
+    """One audit calibration pass over the training bin.
 
+    Returns (credit accumulators, qk accumulators, score ratios); the
+    latter two are empty when collect_extras is False (the cross-seed
+    replication pass only needs the credit matrices).
+    """
     acc: Dict[str, sc.HeadCreditAccumulator] = {}
     qk_acc: Dict[str, sc.QKAsymmetryAccumulator] = {}
     s_ratios: Dict[str, List[float]] = {}
-    head_keys: Dict[str, Tuple[int, int, int]] = {}
     for layer, mod in mods.items():
         for slot, head in enumerate(mod.selected_heads.tolist()):
             key = f"L{layer}H{head}"
-            acc[key] = sc.HeadCreditAccumulator(d=d_head, retain_raw=True)
-            qk_acc[key] = sc.QKAsymmetryAccumulator(d=d_head)
-            s_ratios[key] = []
-            head_keys[key] = (layer, head, slot)
-
+            acc[key] = sc.HeadCreditAccumulator(d=d_head, retain_raw=retain_raw)
+            if collect_extras:
+                qk_acc[key] = sc.QKAsymmetryAccumulator(d=d_head)
+                s_ratios[key] = []
     data = BinData(cfg["data"]["train_bin"], model.config.block_size)
-    gen = torch.Generator().manual_seed(cfg["calibration"]["seed"])
+    gen = torch.Generator().manual_seed(seed)
     n_batches = cfg["calibration"]["batches"]
     batch_size = cfg["calibration"]["batch_size"]
-    score_batches = cfg["calibration"].get("score_batches", 2)
-
+    score_batches = cfg["calibration"].get("score_batches", 2) if collect_extras else 0
     audit_precision = cfg["calibration"].get("precision", "fp32")
     for b in range(n_batches):
         for mod in mods.values():
@@ -629,16 +670,70 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
                 g = g_full[:, head].reshape(-1, d_head)
                 r = delta[:, slot].reshape(-1, d_head)
                 acc[key].update(g, r)
-                qk_acc[key].update(
-                    audit["q_sel"][:, slot].float().reshape(-1, d_head),
-                    audit["k_sel"][:, slot].float().reshape(-1, d_head),
-                )
-                if "scores_premask" in audit:
-                    s_ratios[key].append(
-                        sc.s_pm_ratio(audit["scores_premask"][:, slot])
+                if collect_extras:
+                    qk_acc[key].update(
+                        audit["q_sel"][:, slot].float().reshape(-1, d_head),
+                        audit["k_sel"][:, slot].float().reshape(-1, d_head),
                     )
+                    if "scores_premask" in audit:
+                        s_ratios[key].append(
+                            sc.s_pm_ratio(audit["scores_premask"][:, slot])
+                        )
             mod._audit = {}
     model.zero_grad(set_to_none=True)
+    return acc, qk_acc, s_ratios
+
+
+def _haar_seed(key: str, calibration_seed: int) -> int:
+    """Deterministic per-head seed for the random-basis control.
+
+    Never Python's salted hash(): the O10 control basis must be bit-
+    identical when the same audit command is re-run.
+    """
+    digest = hashlib.sha256(f"{key}:{calibration_seed}".encode()).digest()
+    return int.from_bytes(digest[:4], "big")
+
+
+def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if (out_dir / "audit_results.json").exists():
+        raise RuntimeError(
+            f"refusing to overwrite existing audit in {out_dir}; "
+            "pass a fresh --out (bases already gated on may live here)"
+        )
+    selection = _selection_from_cfg(cfg["selection"]["heads"])
+    controls = _selection_from_cfg(cfg["selection"].get("control_heads", {}))
+    merged: Dict[int, List[int]] = {}
+    for src in (selection, controls):
+        for layer, heads in src.items():
+            merged.setdefault(layer, [])
+            merged[layer] = sorted(set(merged[layer]) | set(heads))
+    # Hash the checkpoint at LOAD time (training may still be
+    # appending checkpoints; the hash must identify what was audited).
+    checkpoint_sha = _sha256_file(cfg["checkpoint"])
+    model, ckpt = load_model_from_checkpoint(
+        cfg["checkpoint"], merged, gate_mode="none", device=device
+    )
+    checkpoint_step = int(ckpt.get("step", -1))
+    model.eval()
+    mods = spectral_modules(model)
+    for mod in mods.values():
+        mod.audit_capture = True
+    d_head = model.config.n_embd // model.config.n_head
+
+    seed1 = cfg["calibration"]["seed"]
+    seed2 = cfg["calibration"].get("seed2", seed1 + 1)
+    acc, qk_acc, s_ratios = _calibration_pass(
+        model, mods, cfg, device, d_head, seed1, retain_raw=True, collect_extras=True
+    )
+    # Second, independent calibration pass (preregistered two-seed
+    # stability check): fresh batches, credit matrices only.
+    acc2, _, _ = _calibration_pass(
+        model, mods, cfg, device, d_head, seed2, retain_raw=False, collect_extras=False
+    )
+    n_batches = cfg["calibration"]["batches"]
+    batch_size = cfg["calibration"]["batch_size"]
+    audit_precision = cfg["calibration"].get("precision", "fp32")
 
     trusted_keys = {
         f"L{layer}H{head}" for layer, heads in selection.items() for head in heads
@@ -684,13 +779,19 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
             "split_half": sc.split_half_overlap(
                 g_raw, r_raw, seed=2, rows_per_block=block
             ),
-            "split_half_seed2": sc.split_half_overlap(
-                g_raw, r_raw, seed=3, rows_per_block=block
-            ),
             "split_half_rowlevel": sc.split_half_overlap(g_raw, r_raw, seed=2),
             "s_pm_ratio_mean": (
                 float(np.mean(s_ratios[key])) if s_ratios[key] else None
             ),
+        }
+        # Cross-calibration-seed stability: overlap between this
+        # pass's credit basis and an independent second pass's basis.
+        lam2, u2 = sc.sym_eig_by_abs(acc2[key].finalize()["H"])
+        entry["cross_seed"] = {
+            f"cross_seed_overlap_r{r}": sc.subspace_overlap(
+                u[:, : min(r, u.shape[1])], u2[:, : min(r, u2.shape[1])]
+            )
+            for r in (1, 2, 4, 8)
         }
         qk = qk_acc[key].finalize()
         entry["qk_asym"] = {
@@ -717,7 +818,7 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
             torch.float64
         )
         bases_by_source.setdefault("random", {})[key] = sc.haar_random_basis(
-            d_head, d_head, seed=abs(hash(key)) % (2**31)
+            d_head, d_head, seed=_haar_seed(key, seed1)
         )
         lams_by_source.setdefault("random", {})[key] = torch.zeros(
             d_head, dtype=torch.float64
@@ -726,12 +827,16 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
     gates = evaluate_audit_gates(results, cfg)
     meta_common = {
         "model_commit": _git_commit(),
+        "code_dirty": _git_dirty(),
+        "lane_code_sha256": _lane_code_sha256(),
         "checkpoint": cfg["checkpoint"],
-        "checkpoint_sha256": _sha256_file(cfg["checkpoint"]),
+        "checkpoint_sha256": checkpoint_sha,
+        "checkpoint_step": checkpoint_step,
         "config_hash": _sha256_json(cfg),
         "dataset": cfg["data"]["train_bin"],
         "dataset_sha256": _sha256_file(cfg["data"]["train_bin"]),
-        "calibration_seed": cfg["calibration"]["seed"],
+        "calibration_seed": seed1,
+        "calibration_seed2": seed2,
         "calibration_tokens": int(n_batches * batch_size * model.config.block_size),
         "audit_precision": audit_precision,
         "d_head": d_head,
@@ -759,56 +864,89 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
     print(json.dumps(gates, indent=2))
 
 
+def _head_survival(v: Dict, mass_bar: float, overlap_bar: float) -> Dict:
+    """Per-head evaluation of the preregistered conjunction.
+
+    r_star is the smallest rank in {1,2,4} whose top-r absolute-
+    eigenvalue mass reaches mass_bar; stability is tied to THAT rank
+    (memo section 9 condition 3: "at that rank"), and requires both
+    the within-pass sequence-level split-half AND the independent
+    second-calibration-seed overlap. A head survives only if it beats
+    the block-permutation null AND is low-rank AND stable — jointly,
+    not as separately-averaged conditions.
+
+    Every survival condition already refutes the random-bases
+    explanation: a Haar-random rank-r basis captures r/d_head of the
+    mass in expectation, far below mass_bar.
+    """
+    beats = bool(v["permutation_null"]["exceeds_p95"])
+    r_star = None
+    for r in (1, 2, 4):
+        if v["signed"][f"top{r}_mass_fraction"] >= mass_bar:
+            r_star = r
+            break
+    low_rank = r_star is not None
+    stable = False
+    if low_rank:
+        split = v["split_half"].get(f"split_half_overlap_r{r_star}", 0.0)
+        cross = v.get("cross_seed", {}).get(f"cross_seed_overlap_r{r_star}", 0.0)
+        stable = split >= overlap_bar and cross >= overlap_bar
+    cancel_ok = beats and v["signed"]["cancellation_ratio"] >= 0.50
+    return {
+        "beats_null": beats,
+        "r_star": r_star,
+        "low_rank": low_rank,
+        "stable": stable,
+        "survives": beats and low_rank and stable,
+        "cancellation_ok": cancel_ok,
+    }
+
+
 def evaluate_audit_gates(results: Dict[str, Dict], cfg: Dict) -> Dict:
-    """Preregistered survival conditions (PLAN.md Stage 2 hard gate)."""
-    trusted = {k: v for k, v in results.items() if v["role"] == "trusted"}
-    controls = {k: v for k, v in results.items() if v["role"] == "control"}
-
-    def frac(items, pred):
-        items = list(items)
-        return sum(1 for x in items if pred(x)) / max(1, len(items))
-
-    beats_null = frac(trusted.values(), lambda v: v["permutation_null"]["exceeds_p95"])
-    low_rank = frac(
-        trusted.values(), lambda v: v["signed"]["top4_mass_fraction"] >= 0.60
-    )
-    stable = frac(
-        trusted.values(),
-        lambda v: max(
-            v["split_half"].get("split_half_overlap_r1", 0.0),
-            v["split_half"].get("split_half_overlap_r2", 0.0),
-            v["split_half"].get("split_half_overlap_r4", 0.0),
-        )
-        >= 0.60,
-    )
-    cancel = frac(
-        trusted.values(),
-        lambda v: v["signed"]["cancellation_ratio"] >= 0.50
-        and v["permutation_null"]["exceeds_p95"],
-    )
-    control_beats_null = frac(
-        controls.values(), lambda v: v["permutation_null"]["exceeds_p95"]
-    )
+    """Preregistered survival conditions (PLAN.md Stage 2 hard gate,
+    with the 2026-08-10 amendments: block null, per-head conjunction,
+    rank-tied stability incl. cross-calibration-seed, controls
+    margin)."""
     thresholds = cfg.get("gates", {})
     min_frac = thresholds.get("min_trusted_fraction", 0.5)
-    gates = {
-        "trusted_frac_beats_perm_null_p95": beats_null,
-        "trusted_frac_top4_mass_ge_060": low_rank,
-        "trusted_frac_split_half_ge_060": stable,
-        "trusted_frac_cancellation_ge_050_and_nonnull": cancel,
-        "control_frac_beats_perm_null_p95": control_beats_null,
-        "pass_existence": beats_null >= min_frac,
-        "pass_low_rank": low_rank >= min_frac,
-        "pass_stability": stable >= min_frac,
-        "pass_cancellation": cancel > 0.0,
-        "controls_distinct": control_beats_null < beats_null,
+    mass_bar = thresholds.get("mass_bar", 0.60)
+    overlap_bar = thresholds.get("overlap_bar", 0.60)
+    margin = thresholds.get("controls_margin", 0.25)
+
+    per_head = {
+        k: _head_survival(v, mass_bar, overlap_bar) for k, v in results.items()
     }
+    trusted = [k for k, v in results.items() if v["role"] == "trusted"]
+    controls = [k for k, v in results.items() if v["role"] == "control"]
+
+    def frac(keys, field):
+        return sum(1 for k in keys if per_head[k][field]) / max(1, len(keys))
+
+    gates = {
+        "per_head": per_head,
+        "trusted_frac_beats_null": frac(trusted, "beats_null"),
+        "trusted_frac_low_rank": frac(trusted, "low_rank"),
+        "trusted_frac_stable": frac(trusted, "stable"),
+        "trusted_frac_survives": frac(trusted, "survives"),
+        "trusted_frac_cancellation_ok": frac(trusted, "cancellation_ok"),
+        "control_frac_survives": frac(controls, "survives"),
+        "control_frac_beats_null": frac(controls, "beats_null"),
+    }
+    gates["pass_existence"] = gates["trusted_frac_beats_null"] >= min_frac
+    gates["pass_low_rank"] = gates["trusted_frac_low_rank"] >= min_frac
+    gates["pass_stability"] = gates["trusted_frac_stable"] >= min_frac
+    # The decisive condition: the same heads jointly clear everything.
+    gates["pass_joint_survival"] = gates["trusted_frac_survives"] >= min_frac
+    gates["pass_cancellation"] = gates["trusted_frac_cancellation_ok"] > 0.0
+    # Placement specificity with a margin, on the joint criterion —
+    # not a margin-free strict inequality on a single sub-condition.
+    gates["controls_distinct"] = (
+        gates["trusted_frac_survives"] >= gates["control_frac_survives"] + margin
+    )
     gates["pass_all"] = all(
         gates[k]
         for k in (
-            "pass_existence",
-            "pass_low_rank",
-            "pass_stability",
+            "pass_joint_survival",
             "pass_cancellation",
             "controls_distinct",
         )
@@ -821,8 +959,27 @@ def evaluate_audit_gates(results: Dict[str, Dict], cfg: Dict) -> Dict:
 # ----------------------------------------------------------------------
 
 
-def _load_arm_basis(model: GPT2_KNLP, basis_dir: str, rank: int) -> None:
+def _load_arm_basis(
+    model: GPT2_KNLP, basis_dir: str, rank: int, expected_checkpoint_sha: str
+) -> Dict:
+    """Install a basis bundle and validate its provenance.
+
+    The basis must have been derived from the SAME checkpoint the
+    oracle runs on — a basis from another checkpoint (e.g. an audit
+    re-run after training extended ckpt_latest.pt) silently changes
+    the experiment, so it is an error, not a warning.
+    Returns the bundle metadata for the run manifest.
+    """
     bundle = sc.load_basis(Path(basis_dir))
+    meta = bundle["meta"]
+    basis_ckpt_sha = meta.get("checkpoint_sha256")
+    if basis_ckpt_sha and basis_ckpt_sha != expected_checkpoint_sha:
+        raise RuntimeError(
+            f"basis in {basis_dir} was derived from checkpoint "
+            f"{basis_ckpt_sha[:12]}, but the oracle checkpoint hashes "
+            f"to {expected_checkpoint_sha[:12]}; regenerate the basis "
+            "or point the oracle at the audited checkpoint"
+        )
     u_map = bundle["U_by_layer_head"]
     for layer, mod in spectral_modules(model).items():
         if mod.basis_u is None:
@@ -834,6 +991,7 @@ def _load_arm_basis(model: GPT2_KNLP, basis_dir: str, rank: int) -> None:
                 raise KeyError(f"basis for {key} not in {basis_dir}")
             stacked.append(u_map[key][:, :rank])
         mod.set_basis(torch.stack(stacked))
+    return meta
 
 
 def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
@@ -843,6 +1001,7 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
     rank = arm.get("rank", 0)
     selection = _selection_from_cfg(cfg["selection"]["heads"])
     torch.manual_seed(cfg["seed"])
+    checkpoint_sha = _sha256_file(cfg["checkpoint"])
     model, ckpt = load_model_from_checkpoint(
         cfg["checkpoint"],
         selection,
@@ -851,8 +1010,11 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
         beta_max=arm.get("beta_max", 1.0),
         device=device,
     )
+    basis_meta = None
     if gate_mode in ("spectral", "standard_extra_lowrank"):
-        _load_arm_basis(model, arm["basis_dir"], rank)
+        basis_meta = _load_arm_basis(
+            model, arm["basis_dir"], rank, expected_checkpoint_sha=checkpoint_sha
+        )
     for p in model.parameters():
         p.requires_grad_(False)
     gates = gate_parameters(model)
@@ -867,9 +1029,16 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
             cfg,
             {
                 "event": "start",
-                "checkpoint_sha256": _sha256_file(cfg["checkpoint"]),
+                "checkpoint_sha256": checkpoint_sha,
+                "checkpoint_step": int(ckpt.get("step", -1)),
+                "basis_source": (basis_meta or {}).get("basis_source"),
+                "basis_pt_sha256": (basis_meta or {}).get("basis_pt_sha256"),
+                "basis_calibration_seed": (basis_meta or {}).get("calibration_seed"),
+                "dataset_train_sha256": _sha256_file(cfg["data"]["train_bin"]),
+                "dataset_val_sha256": _sha256_file(cfg["data"]["val_bin"]),
                 "device": device,
                 "n_gate_params": sum(p.numel() for p in gates),
+                "gate_training_eval_mode": True,
             },
         ),
     )
@@ -898,7 +1067,12 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
 
     base_val = val_loss()
     _jsonl(log, {"event": "eval", "step": -1, "val_loss": base_val})
-    model.train()
+    # Gate training runs in EVAL mode deliberately: every base
+    # parameter is frozen, so train() would change nothing except
+    # activating dropout — which would replace the audited eval-mode
+    # counterfactual objective with a dropout-noised one (the 124M
+    # anchor carries dropout 0.1). Gradients still flow to raw_beta.
+    model.eval()
     for step in range(ocfg["steps"]):
         x, y = train_data.batch(ocfg["batch_size"], gen, device)
         with _amp_ctx(device, oracle_precision):

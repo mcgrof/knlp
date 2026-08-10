@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fim.reciprocal_attention import spectral_credit as sc  # noqa: E402
 from fim.reciprocal_attention.gpt2_spectral_ra import (  # noqa: E402
     SpectralDeltaAttention,
+    evaluate_audit_gates,
     build_model,
     cmd_audit,
     cmd_oracle,
@@ -427,3 +428,225 @@ def test_end_to_end_cpu_smoke(tmp_path):
     # beta trajectory was logged
     train_events = [e for e in events if e["event"] == "train"]
     assert all("betas" in e for e in train_events)
+
+
+def test_deterministic_basis_generation(tmp_path):
+    """Same checkpoint + same calibration seed -> bit-identical basis
+    artifacts for EVERY source, including the Haar-random control."""
+    train_bin, val_bin = _write_bins(tmp_path)
+    train_cfg = {
+        "seed": 0,
+        "model": dict(TINY),
+        "data": {"train_bin": train_bin, "val_bin": val_bin},
+        "train": {
+            "batch_size": 4,
+            "max_steps": 6,
+            "lr": 1e-3,
+            "warmup_steps": 2,
+            "eval_interval": 5,
+            "eval_batches": 1,
+            "ckpt_interval": 5,
+            "log_interval": 4,
+        },
+    }
+    train_out = tmp_path / "train"
+    cmd_train_baseline(train_cfg, "cpu", train_out)
+    audit_cfg = {
+        "checkpoint": str(train_out / "ckpt_latest.pt"),
+        "data": {"train_bin": train_bin},
+        "selection": {"heads": {"1": [0]}},
+        "calibration": {
+            "seed": 1,
+            "batches": 3,
+            "batch_size": 4,
+            "n_perm": 10,
+            "score_batches": 0,
+        },
+    }
+    cmd_audit(audit_cfg, "cpu", tmp_path / "a1")
+    cmd_audit(audit_cfg, "cpu", tmp_path / "a2")
+    for source in (
+        "signed_credit",
+        "random",
+        "qk_asymmetry",
+        "gradient_covariance",
+    ):
+        b1 = (tmp_path / "a1" / f"basis_{source}" / "basis.pt").read_bytes()
+        b2 = (tmp_path / "a2" / f"basis_{source}" / "basis.pt").read_bytes()
+        assert b1 == b2, source
+
+
+def test_audit_refuses_overwrite(tmp_path):
+    out = tmp_path / "audit"
+    out.mkdir()
+    (out / "audit_results.json").write_text("{}")
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        cmd_audit({"selection": {"heads": {}}}, "cpu", out)
+
+
+def test_delta_path_is_dropout_free_in_train_mode(monkeypatch):
+    """In train mode with dropout > 0, the two SDPA calls building the
+    delta must run with dropout_p=0; only the main path keeps dropout."""
+    import torch.nn.functional as F
+
+    cfg_kwargs = dict(TINY)
+    cfg_kwargs["dropout"] = 0.5
+    torch.manual_seed(40)
+    var = build_model(cfg_kwargs, {0: [1]}, gate_mode="scalar_delta")
+    calls = []
+    real_sdpa = F.scaled_dot_product_attention
+
+    def spy(q, k, v, **kw):
+        calls.append(kw.get("dropout_p", None))
+        return real_sdpa(q, k, v, **kw)
+
+    monkeypatch.setattr(F, "scaled_dot_product_attention", spy)
+    var.train()
+    x, y = _batch(seed=41)
+    with torch.no_grad():
+        spectral_modules(var)[0].raw_beta.fill_(0.3)
+    _, loss = var(x, y)
+    # layer 0 (spectral module): main call dropout 0.5, then rec and
+    # std_clean at 0.0; layer 1 is stock attention at 0.5
+    layer0_calls = calls[:3]
+    assert layer0_calls[0] == 0.5
+    assert layer0_calls[1] == 0.0 and layer0_calls[2] == 0.0
+
+
+def test_oracle_rejects_mismatched_basis_checkpoint(tmp_path):
+    train_bin, val_bin = _write_bins(tmp_path)
+    base_train = {
+        "seed": 0,
+        "model": dict(TINY),
+        "data": {"train_bin": train_bin, "val_bin": val_bin},
+        "train": {
+            "batch_size": 4,
+            "max_steps": 5,
+            "lr": 1e-3,
+            "warmup_steps": 2,
+            "eval_interval": 4,
+            "eval_batches": 1,
+            "ckpt_interval": 4,
+            "log_interval": 4,
+        },
+    }
+    out_a = tmp_path / "ta"
+    cmd_train_baseline(base_train, "cpu", out_a)
+    out_b = tmp_path / "tb"
+    cmd_train_baseline({**base_train, "seed": 5}, "cpu", out_b)
+    audit_cfg = {
+        "checkpoint": str(out_a / "ckpt_latest.pt"),
+        "data": {"train_bin": train_bin},
+        "selection": {"heads": {"1": [0]}},
+        "calibration": {
+            "seed": 1,
+            "batches": 2,
+            "batch_size": 4,
+            "n_perm": 5,
+            "score_batches": 0,
+        },
+    }
+    audit_out = tmp_path / "audit_a"
+    cmd_audit(audit_cfg, "cpu", audit_out)
+    oracle_cfg = {
+        "seed": 0,
+        "checkpoint": str(out_b / "ckpt_latest.pt"),  # WRONG checkpoint
+        "data": {"train_bin": train_bin, "val_bin": val_bin},
+        "selection": {"heads": {"1": [0]}},
+        "arm": {
+            "name": "mismatch",
+            "gate_mode": "spectral",
+            "rank": 2,
+            "basis_dir": str(audit_out / "basis_signed_credit"),
+        },
+        "oracle": {"steps": 1, "batch_size": 4, "lr": 1e-2, "eval_batches": 1},
+    }
+    with pytest.raises(RuntimeError, match="derived from checkpoint"):
+        cmd_oracle(oracle_cfg, "cpu", tmp_path / "oracle")
+
+
+def _gate_head(
+    beats=True,
+    top1=0.7,
+    top2=0.7,
+    top4=0.7,
+    split_r1=0.9,
+    cross_r1=0.9,
+    cancel=0.9,
+    role="trusted",
+):
+    return {
+        "role": role,
+        "permutation_null": {"exceeds_p95": beats},
+        "signed": {
+            "top1_mass_fraction": top1,
+            "top2_mass_fraction": top2,
+            "top4_mass_fraction": top4,
+            "cancellation_ratio": cancel,
+        },
+        "split_half": {
+            "split_half_overlap_r1": split_r1,
+            "split_half_overlap_r2": split_r1,
+            "split_half_overlap_r4": split_r1,
+        },
+        "cross_seed": {
+            "cross_seed_overlap_r1": cross_r1,
+            "cross_seed_overlap_r2": cross_r1,
+            "cross_seed_overlap_r4": cross_r1,
+        },
+    }
+
+
+def test_gates_require_joint_per_head_survival():
+    """Three trusted heads each passing a different PAIR of conditions
+    must NOT pass: the conjunction is per head, not per condition."""
+    results = {
+        "A": _gate_head(beats=True, top1=0.7, split_r1=0.1, cross_r1=0.1),
+        "B": _gate_head(beats=True, top1=0.1, top2=0.1, top4=0.1),
+        "C": _gate_head(beats=False, top1=0.7),
+        "X": _gate_head(role="control", beats=False, top1=0.1),
+    }
+    gates = evaluate_audit_gates(results, {})
+    assert gates["pass_existence"]  # 2/3 beat the null
+    assert not gates["pass_joint_survival"]  # but no head survives jointly
+    assert not gates["pass_all"]
+
+
+def test_gates_stability_tied_to_mass_rank():
+    """A head whose mass needs rank 4 must be stable at rank 4; an
+    incidental rank-1 overlap must not rescue it."""
+    head = _gate_head(top1=0.1, top2=0.2, top4=0.65)
+    head["split_half"] = {
+        "split_half_overlap_r1": 0.95,
+        "split_half_overlap_r2": 0.95,
+        "split_half_overlap_r4": 0.10,
+    }
+    from fim.reciprocal_attention.gpt2_spectral_ra import _head_survival
+
+    s = _head_survival(head, mass_bar=0.60, overlap_bar=0.60)
+    assert s["r_star"] == 4
+    assert not s["stable"]
+    assert not s["survives"]
+
+
+def test_gates_controls_margin():
+    """controls_distinct needs a margin, not a strict inequality."""
+    results = {
+        "A": _gate_head(),
+        "B": _gate_head(),
+        "C": _gate_head(),
+        "X": _gate_head(role="control"),
+        "Y": _gate_head(role="control"),
+        "Z": _gate_head(role="control", beats=False),
+    }
+    # trusted 3/3 vs controls 2/3: 1.0 >= 2/3 + 0.25 -> distinct
+    gates = evaluate_audit_gates(results, {})
+    assert gates["trusted_frac_survives"] == 1.0
+    assert abs(gates["control_frac_survives"] - 2 / 3) < 1e-9
+    assert gates["controls_distinct"]
+    # all controls surviving too: no margin left -> not distinct
+    results["Z"] = _gate_head(role="control")
+    gates = evaluate_audit_gates(results, {})
+    assert gates["control_frac_survives"] == 1.0
+    assert not gates["controls_distinct"]
+    assert not gates["pass_all"]
