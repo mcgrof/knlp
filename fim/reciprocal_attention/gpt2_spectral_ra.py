@@ -648,18 +648,21 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
     results: Dict[str, Dict] = {}
     bases_by_source: Dict[str, Dict[str, torch.Tensor]] = {}
     lams_by_source: Dict[str, Dict[str, torch.Tensor]] = {}
+    block = model.config.block_size
     for key in sorted(acc):
         fin = acc[key].finalize()
         raw = acc[key].raw()
         g_raw, r_raw = raw["G"], raw["R"]
-        if g_raw.shape[0] > null_rows:
-            keep = torch.randperm(
-                g_raw.shape[0],
-                generator=torch.Generator().manual_seed(0),
-            )[:null_rows]
-            g_null, r_null = g_raw[keep], r_raw[keep]
-        else:
-            g_null, r_null = g_raw, r_raw
+        # Row indices are b*T + t, so whole sequences are contiguous
+        # blocks of block_size rows. Subsample at SEQUENCE granularity
+        # so the block-permutation null keeps its structure.
+        n_seq_total = g_raw.shape[0] // block
+        n_seq_keep = max(1, min(n_seq_total, null_rows // block))
+        seq_keep = torch.randperm(
+            n_seq_total, generator=torch.Generator().manual_seed(0)
+        )[:n_seq_keep]
+        keep = (seq_keep[:, None] * block + torch.arange(block)[None, :]).reshape(-1)
+        g_null, r_null = g_raw[keep], r_raw[keep]
         lam, u = sc.sym_eig_by_abs(fin["H"])
         gr_norm_mean = float(fin["gr_norm_mean"])
         entry = {
@@ -669,11 +672,22 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
             "psd": {
                 name: sc.psd_spectrum_stats(fin[name]) for name in ("C_z", "C_r", "C_g")
             },
+            # Gate-relevant null: sequence-block permutation (the
+            # conservative one; within-sequence autocorrelation
+            # survives on both sides). Row-level kept for reference.
             "permutation_null": sc.permutation_null(
+                g_null, r_null, n_perm=n_perm, seed=1, rows_per_block=block
+            ),
+            "permutation_null_rowlevel": sc.permutation_null(
                 g_null, r_null, n_perm=n_perm, seed=1
             ),
-            "split_half": sc.split_half_overlap(g_raw, r_raw, seed=2),
-            "split_half_seed2": sc.split_half_overlap(g_raw, r_raw, seed=3),
+            "split_half": sc.split_half_overlap(
+                g_raw, r_raw, seed=2, rows_per_block=block
+            ),
+            "split_half_seed2": sc.split_half_overlap(
+                g_raw, r_raw, seed=3, rows_per_block=block
+            ),
+            "split_half_rowlevel": sc.split_half_overlap(g_raw, r_raw, seed=2),
             "s_pm_ratio_mean": (
                 float(np.mean(s_ratios[key])) if s_ratios[key] else None
             ),

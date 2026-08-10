@@ -236,3 +236,51 @@ def test_signed_stats_normalization():
     assert abs(stats["normalized_spectral_mass"] - 0.5) < 1e-9
     assert abs(stats["positive_mass"] - 2.5) < 1e-12
     assert abs(stats["negative_mass"] - 1.0) < 1e-12
+
+
+def test_block_null_controls_sequence_autocorrelation():
+    """Independent G and R with strong within-sequence structure:
+    the row-level null is spuriously beaten (coherent per-sequence
+    pairing survives in the actual but not in row-permuted nulls),
+    while the sequence-block null correctly controls it."""
+    t, s, d = 32, 40, 8
+    gen = torch.Generator().manual_seed(30)
+    a = torch.randn(s, d, generator=gen)
+    b = torch.randn(s, d, generator=gen)  # independent of a
+    noise = 0.05
+    g = a.repeat_interleave(t, dim=0) + noise * torch.randn(s * t, d, generator=gen)
+    r = b.repeat_interleave(t, dim=0) + noise * torch.randn(s * t, d, generator=gen)
+    row = sc.permutation_null(g, r, n_perm=60, seed=31)
+    blk = sc.permutation_null(g, r, n_perm=60, seed=31, rows_per_block=t)
+    assert row["exceeds_p95"]  # the failure mode being controlled
+    assert not blk["exceeds_p95"]
+
+
+def test_block_null_detects_true_sequence_pairing():
+    """A genuine G-R pairing at sequence granularity must still beat
+    the sequence-block null."""
+    t, s, d = 32, 60, 8
+    gen = torch.Generator().manual_seed(32)
+    u = sc.haar_random_basis(d, 1, seed=33).squeeze(1).to(torch.float32)
+    c = torch.randn(s, 1, generator=gen)
+    noise = 0.05
+    g = (-c * u).repeat_interleave(t, dim=0) + noise * torch.randn(
+        s * t, d, generator=gen
+    )
+    r = (c * u).repeat_interleave(t, dim=0) + noise * torch.randn(
+        s * t, d, generator=gen
+    )
+    blk = sc.permutation_null(g, r, n_perm=60, seed=34, rows_per_block=t)
+    assert blk["exceeds_p95"]
+
+
+def test_block_split_half_bounds_and_stability():
+    t, s, d = 16, 100, 8
+    gen = torch.Generator().manual_seed(35)
+    u = sc.haar_random_basis(d, 1, seed=36).T.to(torch.float32)
+    scale = torch.randn(s * t, 1, generator=gen)
+    g = -scale * u + 0.05 * torch.randn(s * t, d, generator=gen)
+    r = scale * u + 0.05 * torch.randn(s * t, d, generator=gen)
+    out = sc.split_half_overlap(g, r, ranks=(1, 2), seed=37, rows_per_block=t)
+    assert out["split_half_overlap_r1"] > 0.95
+    assert 0.0 <= out["split_half_overlap_r2"] <= 1.0 + 1e-9
