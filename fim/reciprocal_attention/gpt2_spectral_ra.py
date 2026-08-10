@@ -366,8 +366,15 @@ def _selection_from_cfg(sel_cfg: Dict) -> Dict[int, List[int]]:
     return {int(k): [int(h) for h in v] for k, v in sel_cfg.items()}
 
 
-def _amp_ctx(device: str):
-    if device.startswith("cuda"):
+def _amp_ctx(device: str, precision: str = "bf16"):
+    """bf16 autocast for training; fp32 for measurement passes.
+
+    The audit defaults to fp32: delta = rec - std is a difference of
+    two near-equal tensors, and bf16's ~8 mantissa bits would inject
+    relative noise into exactly the quantity whose spectrum is being
+    measured. Training keeps bf16 (matches the trusted lanes).
+    """
+    if device.startswith("cuda") and precision == "bf16":
         return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     return nullcontext()
 
@@ -524,6 +531,7 @@ def evaluate(
     batch_size: int,
     device: str,
     seed: int,
+    precision: str = "bf16",
 ) -> float:
     """Mean loss over a FIXED batch set (same seed -> same batches)."""
     was_training = model.training
@@ -532,7 +540,7 @@ def evaluate(
     total = 0.0
     for _ in range(n_batches):
         x, y = data.batch(batch_size, gen, device)
-        with _amp_ctx(device):
+        with _amp_ctx(device, precision):
             _, loss = model(x, y)
         total += float(loss.item())
     if was_training:
@@ -603,12 +611,13 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
     batch_size = cfg["calibration"]["batch_size"]
     score_batches = cfg["calibration"].get("score_batches", 2)
 
+    audit_precision = cfg["calibration"].get("precision", "fp32")
     for b in range(n_batches):
         for mod in mods.values():
             mod.capture_scores = b < score_batches
         x, y = data.batch(batch_size, gen, device)
         model.zero_grad(set_to_none=True)
-        with _amp_ctx(device):
+        with _amp_ctx(device, audit_precision):
             _, loss = model(x, y)
         loss.backward()
         for layer, mod in mods.items():
@@ -710,6 +719,7 @@ def cmd_audit(cfg: Dict, device: str, out_dir: Path) -> None:
         "dataset_sha256": _sha256_file(cfg["data"]["train_bin"]),
         "calibration_seed": cfg["calibration"]["seed"],
         "calibration_tokens": int(n_batches * batch_size * model.config.block_size),
+        "audit_precision": audit_precision,
         "d_head": d_head,
         "creation_command": " ".join(sys.argv),
     }
@@ -856,6 +866,11 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
     optimizer = torch.optim.Adam(gates, lr=ocfg["lr"]) if gates else None
     val_seed = cfg["seed"] + 9999
 
+    # Oracle-scale effects can be ~1e-3 nats; measure in fp32 by
+    # default (config-overridable) so bf16 forward noise never sits
+    # inside the effect being compared.
+    oracle_precision = ocfg.get("precision", "fp32")
+
     def val_loss() -> float:
         return evaluate(
             model,
@@ -864,6 +879,7 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
             ocfg["batch_size"],
             device,
             seed=val_seed,
+            precision=oracle_precision,
         )
 
     base_val = val_loss()
@@ -871,7 +887,7 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
     model.train()
     for step in range(ocfg["steps"]):
         x, y = train_data.batch(ocfg["batch_size"], gen, device)
-        with _amp_ctx(device):
+        with _amp_ctx(device, oracle_precision):
             _, loss = model(x, y)
         if optimizer is not None:
             optimizer.zero_grad(set_to_none=True)
