@@ -1,0 +1,32 @@
+{
+  "_comment": "Stage 3 beta-only oracle template (30M shakeout scale). One file per arm x seed at launch time: set arm.name/gate_mode/rank/basis_dir and seed. Arms per PLAN.md: O0 none, O1 scalar_delta, O2-O5 spectral r1/r2/r4/r8 (basis_signed_credit), O6 basis_elementwise_credit_second_moment r4, O7 basis_reciprocal_activation r4, O8 basis_gradient_covariance r4, O9 basis_qk_asymmetry r4, O10 basis_random r4, O11 coordinate_diag, O12 standard_extra_lowrank r4. Bases come from the audit output directory; never from validation data.",
+  "seed": 0,
+  "checkpoint": "/data/knlp-key-results/ra-spectral-modes-20260810/training/ts30m_baseline_seed0/ckpt_latest.pt",
+  "data": {
+    "train_bin": "/data/knlp/data/tinystories/train.bin",
+    "val_bin": "/data/knlp/data/tinystories/val.bin"
+  },
+  "selection": {
+    "heads": {
+      "2": [4, 5],
+      "3": [4, 5],
+      "4": [4, 5]
+    }
+  },
+  "arm": {
+    "name": "spectral_credit_r4",
+    "gate_mode": "spectral",
+    "rank": 4,
+    "basis_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/audit/ts30m_seed0/basis_signed_credit",
+    "beta_max": 1.0
+  },
+  "oracle": {
+    "steps": 400,
+    "batch_size": 32,
+    "lr": 1e-2,
+    "eval_batches": 40,
+    "eval_interval": 50,
+    "log_interval": 5
+  },
+  "out_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/oracle/ts30m"
+}

@@ -1,0 +1,32 @@
+{
+  "_comment": "Stage 2b primary audit on the GPT-2 124M FineWebEdu anchor checkpoint. Trusted placement per TRUSTED_GPT2_ANCHOR.md: layers {5,6,7}, head 11 (the legacy last-head selection). Controls: head 11 in out-of-band layers {0,2,10}, and non-RA heads {3,7} inside band layer 6. ~1.3M calibration tokens at block 1024.",
+  "checkpoint": "/data/knlp-key-results/ra-spectral-modes-20260810/training/gpt2_124m_fwe_baseline_seed0/ckpt_latest.pt",
+  "data": {
+    "train_bin": "/data/knlp/data/finewebedu/train.bin"
+  },
+  "selection": {
+    "heads": {
+      "5": [11],
+      "6": [11],
+      "7": [11]
+    },
+    "control_heads": {
+      "0": [11],
+      "2": [11],
+      "10": [11],
+      "6": [3, 7]
+    }
+  },
+  "calibration": {
+    "seed": 1234,
+    "batches": 160,
+    "batch_size": 8,
+    "score_batches": 2,
+    "n_perm": 100,
+    "null_rows": 65536
+  },
+  "gates": {
+    "min_trusted_fraction": 0.5
+  },
+  "out_dir": "/data/knlp-key-results/ra-spectral-modes-20260810/audit/gpt2_124m_fwe_seed0"
+}
