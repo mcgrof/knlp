@@ -409,9 +409,17 @@ Both paths have **identical FLOP count**:
 ## Performance Implications
 
 ### Theoretical
-- **Same FLOP count** for both paths
-- **Same memory footprint** (T×T scores materialized in both)
+- **Same FLOP count** for both paths (one reciprocal pass costs the
+  same as one standard pass)
+- **Same memory footprint** per path (T×T scores materialized in both)
 - **Same causal masking** optimization applies
+
+Important scope note: the statements above compare a single reciprocal
+pass against a single standard pass. The *mixed* RA implementation
+actually used in experiments computes BOTH branches on selected heads
+(`y = y_std + beta * LN(y_rec)`), so a selected head costs roughly one
+extra attention computation. Mixed RA is therefore not FLOP-neutral
+relative to standard attention.
 
 ### Practical (GPU)
 - Transpose overhead negligible (handled by cuBLAS efficiently)

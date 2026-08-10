@@ -16,7 +16,7 @@ This document covers our research into enhanced transformer architectures. For f
 
 ### Our Philosophy: Minimal Parameters, Maximum Impact
 
-We want to add **capabilities** (bidirectional information flow, adaptive gating) with **minimal parameter overhead**.
+We want to add **capabilities** (alternate causal routing, adaptive gating) with **minimal parameter overhead**.
 
 **Bad example from early experiments**:
 ```python

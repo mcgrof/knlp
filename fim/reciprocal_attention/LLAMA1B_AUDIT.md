@@ -181,6 +181,40 @@ bash scripts/setup_llama1b_cloud.sh
 bash scripts/run_llama1b_full_pipeline.sh
 ```
 
-## Results
+## Results (updated 2026-08-09)
 
-Pending cloud execution.
+Cloud execution happened; this section replaces the stale "pending"
+status. Four matched single-seed 1-hour data points exist at 1B, across
+two selector families and two head counts. All are statistically
+indistinguishable from baseline:
+
+| Date | Selector | Heads (N) | Mean per-step Δ vs baseline | σ |
+|---|---|---|---|---|
+| 2026-04-09 | FIM trace | 28 | −0.80% | 1.00% |
+| 2026-04-09 | synthetic-query JSD | 28 | +0.45% | 1.28% |
+| 2026-04-25 | FIM trace + fisher_eigmax | 8 | +0.49% | 0.91% |
+| 2026-04-26 | FIM trace + fisher_eigmax | 28 | +0.52% | 0.92% |
+
+N counts selected (layer, head) pairs. Read across the four points:
+
+- All point estimates sit within ±1σ of zero; the evidence is neutral —
+  not a clear win, not a clear degradation.
+- Increasing N from 8 to 28 did not unlock a benefit.
+- Changing the selector did not either.
+
+Placement limitation discovered at this scale: at 150M the per-layer
+FIM traces spanned ~15x with clear bands, so the categorical
+high/mid/low layer filter meant something. At 1B the measured spread
+was only ~1.5x across 22 layers, so the filter stopped discriminating
+and effectively admitted almost every layer — the 1B runs carried no
+meaningful layer filter in practice.
+
+The earlier RA-4 negative control in this file (322.02 vs 331.63,
++2.98%) used the inbound_mass_var-derived selection with only 4 heads
+and is non-diagnostic; the four points above supersede it.
+
+Conclusion: **no robust benefit was established at 1B.** Do not read
+this as "RA fails at 1B" or "RA tops out at 150M" — single-seed runs
+at σ ≈ 1% cannot support either statement. See
+[docs/ra-evidence.md](../../docs/ra-evidence.md) for the full evidence
+classification.

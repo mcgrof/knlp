@@ -289,7 +289,7 @@ The KV-fused approach has several benefits:
 4. **Attention mixing**: Standard and reciprocal attention can be combined
 5. **Weight sharing**: The projection learns both forward and backward attention jointly
 
-The reciprocal component (K_low · Q_low) allows tokens to "query back" through the attention mechanism, enabling richer bidirectional information flow compared to standard causal attention.
+The reciprocal component (K_low · Q_low) lets keys act as queries within the causal mask — an alternate causal routing alongside the standard one. (No future-token information is involved; both routings respect causality.)
 
 ## Implementation Note
 

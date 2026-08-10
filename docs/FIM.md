@@ -161,13 +161,16 @@ change the information geometry.
 enabling better low-rank compression of the KV cache.
 
 **Result**: Hypothesis rejected. RA shows:
-- **Lower eigmax** (0.0352 vs higher in MLA) = flatter optimization, not sharper
+- **Lower eigmax** (0.0352 vs higher in MLA) = flatter curvature of the attention-distribution Fisher, not sharper
 - **Similar trace** = no increase in total Fisher information
 - **Low energy concentration** (37% in top 16 modes) = information diffuse, not concentrated
 
-The FIM metrics revealed that RA's value comes from **smoother optimization
-geometry** (lower eigmax, easier training), not from concentrating information
-into compressible modes.
+What the FIM metrics established is negative: RA does not concentrate
+information into compressible modes. The remaining reading — that RA's
+value comes from smoother optimization geometry (lower eigmax, easier
+training) — is a **hypothesis** suggested by these measurements, not a
+demonstrated mechanism. No experiment here causally linked the eigmax
+difference to the observed quality results.
 
 ## Mathematical Introspection: What Does RA Add?
 
@@ -222,25 +225,38 @@ F_fwd  from softmax(Q * K^T / τ)    # Forward geometry
 F_rev  from softmax(K * Q^T / τ)    # Reverse geometry
 ```
 
-Each layer experiences one geometry, alternating across depth. The FIM metrics
-revealed that this alternation produces:
+Each layer experiences one geometry, alternating across depth. The FIM
+metrics measured lower eigmax on the attention-distribution Fisher for
+RA runs. Interpretations built on that measurement — flatter curvature
+easing optimization, gradient-flow benefits compensating for MLA
+compression losses, more stable training — are **hypotheses**; none was
+directly tested by an intervention.
 
-- **Flatter curvature** (lower eigmax) = easier optimization
-- **Better gradient flow** = compensates for compression losses in MLA
-- **More stable training** = particularly helpful for compressed representations
+A caution on objects: the categorical Fisher of attention
+probabilities (what these metrics compute), the parameter-space Fisher
+information matrix, empirical gradient-square statistics
+(Adam's exp_avg_sq), and per-layer proxy traces are four different
+mathematical objects. Statements about one do not automatically
+transfer to another; this document's "FIM" metrics are the first kind
+unless stated otherwise.
 
-But RA does **not** produce:
+RA does **not** produce:
 - Higher total Fisher Information (trace similar/lower)
 - Concentrated information modes (energy_r16 remains ~37%)
 - Improved compressibility from geometric changes alone
 
-This explains why RA helps MLA (optimization benefits) but doesn't predict or
-enable further compression (no structural changes to information geometry).
+If the optimization-benefit hypothesis were right it would explain the
+RA+MLA observations, but it remains untested; what is established is
+only that RA does not enable further compression (no structural changes
+to information geometry). Note also that RA's quality evidence is
+scoped to small models — see [ra-evidence.md](ra-evidence.md); matched
+1B runs were neutral within noise.
 
 ## Practical Implications
 
 **For RA usage**:
-- Expect optimization benefits (flatter curvature, better gradient flow)
+- RA's quality evidence is configuration-specific (GPT-2 small scale);
+  see [ra-evidence.md](ra-evidence.md) before citing any gain
 - Do not expect FIM-guided compression opportunities
 - Learned compression (KVSplice) works independently of RA's geometric properties
 

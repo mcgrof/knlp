@@ -177,7 +177,7 @@ FIM-based applications in this project:
 | **bitter7 pruning** | exp_avg_sq^0.25 | Training-time Adam state | 15.6% better PPL |
 | **Mobile quantization** | Explicit g² sum | Per-tensor gradient analysis | 1.26% better PPL |
 | **KVSplice layers** | FIM trace | Post-training calibration | 25% better PPL |
-| **RA layer selection** | FIM trace | Post-training calibration | 5% better PPL |
+| **RA layer selection** | FIM trace | Post-training calibration | 5% better PPL (GPT-2 small-scale only; 1B neutral, scaling unproven) |
 
 All four applications identify "important" parameters/layers using the same
 underlying signal: E[g²]. The difference is *when* and *how* they compute it:

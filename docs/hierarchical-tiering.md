@@ -89,17 +89,21 @@ fim_score[tensor] = Σ (param.grad ** 2) / num_batches
 **Note**: KVSplice uses post-training FIM on calibration data. Whether
 training-time exp_avg_sq produces the same layer rankings is unvalidated.
 
-### 4. Attention Pattern Selection (Reciprocal Attention)
+### 4. Attention Pattern Selection (Reciprocal Attention) — historical/exploratory
 
 ```python
-# Current: Post-training FIM trace analysis to select RA layers
-# Middle layers benefit from reciprocal attention
-# Early/late layers should use standard attention
+# Historical: post-training FIM trace analysis to select RA layers
+# (middle-layer placement heuristic)
 
 # Hypothesis: Could use exp_avg_sq (needs validation)
 ```
 
-**Result**: 5% better perplexity and +2 HellaSwag with selective RA
+**Result**: 5% better perplexity and +2 HellaSwag with selective RA in a
+GPT-2 small-scale FineWebEdu experiment. Scope caveat: matched 1B runs
+were neutral within noise and no robust benefit at scale was
+established, so this row is a historical exploratory use of the FIM
+placement heuristic, not a validated application of a universal signal.
+See [ra-evidence.md](ra-evidence.md).
 
 **Note**: Same caveat as KVSplice. Layer selection was based on post-training
 analysis, not training-time Adam state.
@@ -347,10 +351,11 @@ we must verify that:
 2. Layer rankings match between the two methods
 3. Compression/attention decisions based on exp_avg_sq produce similar results
 
-If validated, this would enable:
-- **Automatic KVSplice layer selection** during training
-- **Dynamic RA layer assignment** based on training dynamics
-- **Unified tiering hints** from a single training run
+If validated, this could enable automatic KVSplice layer selection
+during training and unified tiering hints from a single training run.
+(A dynamic RA layer assignment was once listed here too; with the RA
+line parked and no established scaling benefit, that idea is shelved —
+see [ra-evidence.md](ra-evidence.md).)
 
 ## Implementation Details
 
