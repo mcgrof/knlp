@@ -650,3 +650,117 @@ def test_gates_controls_margin():
     assert gates["control_frac_survives"] == 1.0
     assert not gates["controls_distinct"]
     assert not gates["pass_all"]
+
+
+def test_bindata_skip_matches_stream(tmp_path):
+    """Fast-forwarding the seeded stream reproduces the unforked
+    order: batches 5..9 after skip(5) equal batches 5..9 straight."""
+    from fim.reciprocal_attention.gpt2_spectral_ra import BinData
+
+    train_bin, _ = _write_bins(tmp_path)
+    data = BinData(train_bin, TINY["block_size"])
+    g1 = torch.Generator().manual_seed(7)
+    straight = [data.batch(4, g1, "cpu")[0] for _ in range(10)]
+    g2 = torch.Generator().manual_seed(7)
+    data.skip(5, 4, g2)
+    forked = [data.batch(4, g2, "cpu")[0] for _ in range(5)]
+    for a, b in zip(straight[5:], forked):
+        assert torch.equal(a, b)
+
+
+def _mk_warmup(tmp_path, stop=6, max_steps=20):
+    train_bin, val_bin = _write_bins(tmp_path)
+    cfg = {
+        "seed": 0,
+        "model": dict(TINY),
+        "data": {"train_bin": train_bin, "val_bin": val_bin},
+        "selection": {"heads": {"1": [0]}},
+        "arm": {"type": "baseline", "name": "warmup"},
+        "train": {
+            "batch_size": 4,
+            "max_steps": max_steps,
+            "stop_step": stop,
+            "lr": 1e-3,
+            "warmup_steps": 2,
+            "eval_interval": 100,
+            "eval_batches": 1,
+            "log_interval": 100,
+            "gate_log_interval": 100,
+        },
+    }
+    out = tmp_path / "warmup"
+    from fim.reciprocal_attention.gpt2_spectral_ra import cmd_train_arm
+
+    cmd_train_arm(cfg, "cpu", out)
+    return cfg, out / "ckpt_warmup_seed0.pt"
+
+
+def test_fork_identity_gated_arms(tmp_path):
+    """legacy_ra, scalar_delta, and spectral arms forked from a
+    warmup checkpoint start EXACTLY at the warmup model (gates zero
+    at init); sdpa_gate does not (fresh gate params perturb it) and
+    that is the documented exception."""
+    from fim.reciprocal_attention.gpt2_spectral_ra import build_arm_model
+
+    cfg, ckpt_path = _mk_warmup(tmp_path)
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    torch.manual_seed(99)
+    base, _ = build_arm_model(cfg["model"], {"type": "baseline"}, {})
+    base.load_state_dict(ckpt["model_state"], strict=False)
+    base.eval()
+    x, _ = _batch(seed=50)
+    with torch.no_grad():
+        ref, _ = base(x)
+    for arm in (
+        {"type": "legacy_ra"},
+        {"type": "scalar_delta"},
+        {"type": "spectral", "rank": 2},
+    ):
+        torch.manual_seed(123)
+        m, allow = build_arm_model(cfg["model"], arm, {1: [0]})
+        missing, unexpected = m.load_state_dict(ckpt["model_state"], strict=False)
+        assert not [k for k in unexpected if "attn.bias" not in k]
+        assert all(any(a in k for a in allow) for k in missing), (arm, missing)
+        if arm["type"] == "spectral":
+            _install_basis(m)
+        m.eval()
+        with torch.no_grad():
+            got, _ = m(x)
+        assert torch.allclose(ref, got, atol=1e-6), arm["type"]
+    torch.manual_seed(123)
+    gate_model, _ = build_arm_model(cfg["model"], {"type": "sdpa_gate"}, {})
+    gate_model.load_state_dict(ckpt["model_state"], strict=False)
+    gate_model.eval()
+    with torch.no_grad():
+        gated, _ = gate_model(x)
+    assert not torch.allclose(ref, gated, atol=1e-3)
+
+
+def test_train_arm_fork_end_to_end(tmp_path):
+    """Warmup -> forked legacy_ra arm: events, gate logging, final
+    on/off ablation all present; fork metadata recorded."""
+    from fim.reciprocal_attention.gpt2_spectral_ra import cmd_train_arm
+
+    cfg, ckpt_path = _mk_warmup(tmp_path)
+    arm_cfg = json.loads(json.dumps(cfg))
+    arm_cfg["arm"] = {
+        "type": "legacy_ra",
+        "name": "legacy",
+        "fork_from": str(ckpt_path),
+    }
+    arm_cfg["train"]["stop_step"] = 10
+    arm_cfg["train"]["log_interval"] = 2
+    arm_cfg["train"]["gate_log_interval"] = 2
+    out = tmp_path / "arm"
+    cmd_train_arm(arm_cfg, "cpu", out)
+    events = [json.loads(l) for l in open(out / "train_legacy_seed0.jsonl")]
+    kinds = {e["event"] for e in events}
+    assert {"start", "train", "gate", "eval", "final"} <= kinds
+    start = [e for e in events if e["event"] == "start"][0]
+    assert start["start_step"] == 6
+    assert start["fork_sha256"]
+    final = [e for e in events if e["event"] == "final"][0]
+    assert final["val_loss_gates_off"] is not None
+    gate_events = [e for e in events if e["event"] == "gate"]
+    assert all("L" in list(g["state"])[0] for g in gate_events)
+    assert (out / "final_model_legacy_seed0.pt").exists()
