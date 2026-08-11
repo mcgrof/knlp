@@ -339,6 +339,21 @@ class BinData:
             )
         return x.to(device), y.to(device)
 
+    def skip(self, n_batches: int, batch_size: int, gen: torch.Generator) -> None:
+        """Fast-forward the seeded stream past n_batches draws.
+
+        Replays exactly the randint calls batch() would make, so a
+        forked run consumes the same data order the unforked run
+        would have seen (unit-tested).
+        """
+        for _ in range(n_batches):
+            torch.randint(
+                0,
+                len(self.data) - self.block_size - 1,
+                (batch_size,),
+                generator=gen,
+            )
+
 
 # ----------------------------------------------------------------------
 # Shared plumbing
@@ -592,6 +607,260 @@ def evaluate(
     if was_training:
         model.train()
     return total / n_batches
+
+
+# ----------------------------------------------------------------------
+# train-arm (Stage-4 warmup-and-fork matrix)
+# ----------------------------------------------------------------------
+
+ARM_TYPES = (
+    "baseline",
+    "sdpa_gate",
+    "legacy_ra",
+    "scalar_delta",
+    "spectral",
+    "spectral_random",
+    "standard_extra_lowrank",
+    "coordinate_diag",
+)
+
+_SPECTRAL_GATE_MODE = {
+    "scalar_delta": "scalar_delta",
+    "spectral": "spectral",
+    "spectral_random": "spectral",
+    "standard_extra_lowrank": "standard_extra_lowrank",
+    "coordinate_diag": "coordinate_diag",
+}
+
+
+def build_arm_model(model_cfg: Dict, arm: Dict, selection: Dict[int, List[int]]):
+    """Model for a Stage-4 arm + allowlist of fork-missing key
+    substrings (parameters the arm adds on top of a baseline
+    checkpoint)."""
+    t = arm["type"]
+    if t not in ARM_TYPES:
+        raise ValueError(f"unknown arm type {t!r}")
+    if t == "baseline":
+        return build_model(model_cfg, {}), []
+    if t == "sdpa_gate":
+        model = GPT2_KNLP(
+            GPT2_KNLP_Config(use_sdpa_gate=True, use_ra=False, **model_cfg)
+        )
+        return model, ["sdpa_gate"]
+    if t == "legacy_ra":
+        model = GPT2_KNLP(
+            GPT2_KNLP_Config(
+                use_sdpa_gate=False,
+                use_ra=True,
+                n_ra_layers=arm.get("n_ra_layers", 3),
+                n_ra_heads=arm.get("n_ra_heads", 1),
+                **model_cfg,
+            )
+        )
+        return model, ["ra_logit", "ra_head_proj", "ra_ln"]
+    model = build_model(
+        model_cfg,
+        selection,
+        gate_mode=_SPECTRAL_GATE_MODE[t],
+        rank=arm.get("rank", 0),
+        beta_max=arm.get("beta_max", 1.0),
+    )
+    return model, ["raw_beta", "basis_u", "selected_heads"]
+
+
+def _gate_state(model: nn.Module, arm_type: str) -> Dict:
+    if arm_type == "legacy_ra":
+        return {
+            f"L{i}": float(torch.tanh(b.attn.ra_logit.detach()).item())
+            for i, b in enumerate(model.transformer.h)
+            if getattr(b.attn, "use_ra", False)
+        }
+    if arm_type == "sdpa_gate":
+        norms = [
+            float(b.attn.sdpa_gate.weight.detach().norm())
+            for b in model.transformer.h
+            if getattr(b.attn, "use_sdpa_gate", False)
+        ]
+        return {"gate_weight_norm_mean": sum(norms) / len(norms)} if norms else {}
+    mods = spectral_modules(model)
+    return {
+        f"L{layer}": [float(v) for v in m.raw_beta.detach().cpu().reshape(-1)]
+        for layer, m in mods.items()
+        if m.raw_beta is not None
+    }
+
+
+def _arm_gate_params(model: nn.Module, arm_type: str) -> List[nn.Parameter]:
+    if arm_type == "legacy_ra":
+        return [
+            b.attn.ra_logit
+            for b in model.transformer.h
+            if getattr(b.attn, "use_ra", False)
+        ]
+    if arm_type in _SPECTRAL_GATE_MODE:
+        return gate_parameters(model)
+    return []
+
+
+def cmd_train_arm(cfg: Dict, device: str, out_dir: Path) -> None:
+    """One Stage-4 arm: warmup (no fork_from) or forked continuation.
+
+    The LR schedule is the GLOBAL cosine over train.max_steps; a
+    warmup run simply stops early at train.stop_step and saves a
+    fork-ready checkpoint. Forked arms load it strict-modulo the
+    arm's own new parameters, fast-forward the seed-paired data
+    stream, and train with a FRESH optimizer (preregistered: equal
+    optimizer reset for every arm preserves pairing).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    arm = cfg["arm"]
+    arm_type = arm["type"]
+    tcfg = cfg["train"]
+    selection = _selection_from_cfg(cfg.get("selection", {}).get("heads", {}))
+    torch.manual_seed(cfg["seed"])
+    model, allow = build_arm_model(cfg["model"], arm, selection)
+
+    start_step, batch_counter = 0, 0
+    fork_sha = None
+    if arm.get("fork_from"):
+        fork_sha = _sha256_file(arm["fork_from"])
+        ckpt = torch.load(arm["fork_from"], map_location="cpu", weights_only=False)
+        missing, unexpected = model.load_state_dict(ckpt["model_state"], strict=False)
+        unexpected = [k for k in unexpected if "attn.bias" not in k]
+        if unexpected:
+            raise RuntimeError(f"unexpected fork keys: {unexpected}")
+        bad = [k for k in missing if not any(a in k for a in allow)]
+        if bad:
+            raise RuntimeError(f"missing fork keys outside arm allowlist: {bad}")
+        start_step = int(ckpt["step"]) + 1
+        batch_counter = int(ckpt["batch_counter"])
+    model.to(device)
+    if arm_type in ("spectral", "spectral_random", "standard_extra_lowrank"):
+        if not arm.get("basis_dir"):
+            raise ValueError(f"arm {arm_type} requires basis_dir")
+        _load_arm_basis(
+            model,
+            arm["basis_dir"],
+            arm["rank"],
+            expected_checkpoint_sha=fork_sha or "",
+        )
+
+    name = arm.get("name", arm_type)
+    log = out_dir / f"train_{name}_seed{cfg['seed']}.jsonl"
+    _jsonl(
+        log,
+        _manifest(
+            cfg,
+            {
+                "event": "start",
+                "arm": name,
+                "arm_type": arm_type,
+                "fork_from": arm.get("fork_from"),
+                "fork_sha256": fork_sha,
+                "start_step": start_step,
+                "device": device,
+                "n_params": sum(p.numel() for p in model.parameters()),
+            },
+        ),
+    )
+    train_data = BinData(cfg["data"]["train_bin"], cfg["model"]["block_size"])
+    val_data = BinData(cfg["data"]["val_bin"], cfg["model"]["block_size"])
+    gen = torch.Generator().manual_seed(cfg["seed"])
+    if batch_counter:
+        train_data.skip(batch_counter, tcfg["batch_size"], gen)
+    val_seed = cfg["seed"] + 1000
+    eval_precision = tcfg.get("eval_precision", "fp32")
+
+    def val_loss() -> float:
+        return evaluate(
+            model,
+            val_data,
+            tcfg.get("eval_batches", 20),
+            tcfg["batch_size"],
+            device,
+            seed=val_seed,
+            precision=eval_precision,
+        )
+
+    optimizer = make_optimizer(model, tcfg)
+    stop_step = int(tcfg.get("stop_step", tcfg["max_steps"]))
+    gate_interval = tcfg.get("gate_log_interval", 50)
+    tokens_per_step = tcfg["batch_size"] * cfg["model"]["block_size"]
+    t0 = time.time()
+    model.train()
+    for step in range(start_step, stop_step):
+        lr = cosine_lr(step, tcfg)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        x, y = train_data.batch(tcfg["batch_size"], gen, device)
+        batch_counter += 1
+        with _amp_ctx(device):
+            _, loss = model(x, y)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.get("clip", 1.0))
+        optimizer.step()
+        if step % tcfg.get("log_interval", 50) == 0:
+            elapsed = time.time() - t0
+            done = step - start_step + 1
+            _jsonl(
+                log,
+                {
+                    "event": "train",
+                    "step": step,
+                    "loss": float(loss.item()),
+                    "lr": lr,
+                    "elapsed_s": elapsed,
+                    "tokens_per_s": tokens_per_step * done / elapsed,
+                },
+            )
+        if step % gate_interval == 0:
+            state = _gate_state(model, arm_type)
+            if state:
+                _jsonl(log, {"event": "gate", "step": step, "state": state})
+        if step % tcfg.get("eval_interval", 1000) == 0 or step == stop_step - 1:
+            _jsonl(log, {"event": "eval", "step": step, "val_loss": val_loss()})
+    save_checkpoint(
+        out_dir / f"ckpt_{name}_seed{cfg['seed']}.pt",
+        model,
+        optimizer,
+        stop_step - 1,
+        batch_counter,
+        cfg,
+    )
+    torch.save(
+        {"model_state": model.state_dict(), "arm": name, "seed": cfg["seed"]},
+        out_dir / f"final_model_{name}_seed{cfg['seed']}.pt",
+    )
+    final_on = val_loss()
+    final_off = None
+    gates = _arm_gate_params(model, arm_type)
+    if gates:
+        saved = [p.detach().clone() for p in gates]
+        with torch.no_grad():
+            for p in gates:
+                p.zero_()
+        final_off = val_loss()
+        with torch.no_grad():
+            for p, s in zip(gates, saved):
+                p.copy_(s)
+    _jsonl(
+        log,
+        {
+            "event": "final",
+            "arm": name,
+            "seed": cfg["seed"],
+            "stop_step": stop_step,
+            "val_loss_final": final_on,
+            "val_loss_gates_off": final_off,
+            "gate_state": _gate_state(model, arm_type),
+        },
+    )
+    print(
+        json.dumps(
+            {"arm": name, "seed": cfg["seed"], "final": final_on, "off": final_off}
+        )
+    )
 
 
 # ----------------------------------------------------------------------
@@ -913,9 +1182,7 @@ def evaluate_audit_gates(results: Dict[str, Dict], cfg: Dict) -> Dict:
     overlap_bar = thresholds.get("overlap_bar", 0.60)
     margin = thresholds.get("controls_margin", 0.25)
 
-    per_head = {
-        k: _head_survival(v, mass_bar, overlap_bar) for k, v in results.items()
-    }
+    per_head = {k: _head_survival(v, mass_bar, overlap_bar) for k, v in results.items()}
     trusted = [k for k, v in results.items() if v["role"] == "trusted"]
     controls = [k for k, v in results.items() if v["role"] == "control"]
 
@@ -1154,7 +1421,9 @@ def cmd_oracle(cfg: Dict, device: str, out_dir: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["train-baseline", "audit", "oracle"])
+    parser.add_argument(
+        "mode", choices=["train-baseline", "train-arm", "audit", "oracle"]
+    )
     parser.add_argument("--config", required=True)
     parser.add_argument("--device", default=None)
     parser.add_argument("--out", default=None)
@@ -1164,6 +1433,8 @@ def main() -> int:
     out_dir = Path(args.out or cfg.get("out_dir", "out/spectral_ra"))
     if args.mode == "train-baseline":
         cmd_train_baseline(cfg, device, out_dir)
+    elif args.mode == "train-arm":
+        cmd_train_arm(cfg, device, out_dir)
     elif args.mode == "audit":
         cmd_audit(cfg, device, out_dir)
     else:
