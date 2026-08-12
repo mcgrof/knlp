@@ -16,11 +16,20 @@ Sub-commands:
           strongest or none). Group-aware train/test split.
   train   Fine-tune the encoder (default ModernBERT-base) with K
           masked sigmoid heads on the train split.
-  route   Derive capability profiles from train-split accuracies
-          (affine map into the predictor's empirical score band),
-          run shortfall matching over the test split across a tau
-          sweep, emit frontier.json + GATE.json with paired
-          bootstrap statistics.
+  route   Two calibration modes over the same model-blind predictor
+          scores r_hat (catalog-side calibration in both, so the
+          HyDRA predictor/catalog separation is preserved):
+          --mode shortfall (default): derive capability profiles
+          from train-split accuracies (affine map into the
+          predictor's empirical score band), shortfall matching
+          across a tau sweep, fail-open to least-shortfall.
+          --mode solveprob: fit per-model per-dimension isotonic
+          regressions P(correct | r_hat, dim) on the train split,
+          sweep a target solve probability p_target, route to the
+          cheapest model whose calibrated P(solve) >= p_target,
+          fail-open to always-strong (strong-by-default).
+          Both emit the same frontier + gate structure with paired
+          bootstrap non-inferiority statistics.
 """
 
 import argparse
@@ -151,22 +160,62 @@ def _predict(df, ckpt, max_len=512, batch=64):
     from transformers import AutoModel, AutoTokenizer  # noqa: PLC0415
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tok = AutoTokenizer.from_pretrained(ckpt)
-    backbone = AutoModel.from_pretrained(ckpt).to(device).eval()
+    try:
+        tok = AutoTokenizer.from_pretrained(ckpt)
+    except ValueError:
+        # ckpt saved by a newer transformers whose tokenizer_class
+        # name this version does not know; tokenizer.json suffices
+        from transformers import PreTrainedTokenizerFast  # noqa: PLC0415
+
+        tok = PreTrainedTokenizerFast.from_pretrained(ckpt)
+    backbone, load_kw = None, {}
+    for attn in ("sdpa", "eager", None):
+        kw = {"attn_implementation": attn} if attn else {}
+        try:
+            backbone = AutoModel.from_pretrained(ckpt, **kw).to(device).eval()
+            load_kw = kw
+            break
+        except (ValueError, ImportError):
+            continue
+    if backbone is None:
+        raise RuntimeError(f"could not load backbone from {ckpt}")
     head = torch.nn.Linear(backbone.config.hidden_size, len(DIM_ORDER)).to(device)
     head.load_state_dict(torch.load(f"{ckpt}/head.pt", map_location=device))
     head.eval()
+    cpu_backbone, cpu_head = None, None
     preds = []
     with torch.no_grad():
         for i in range(0, len(df), batch):
             enc = _tokenize(tok, df["prompt"].iloc[i : i + batch], max_len)
-            with torch.autocast(device, dtype=torch.float16):
-                h = backbone(
-                    input_ids=enc["input_ids"].to(device),
-                    attention_mask=enc["attention_mask"].to(device),
+            ids = enc["input_ids"].to(device)
+            mask = enc["attention_mask"].to(device)
+            for _ in range(5):
+                with torch.autocast(device, dtype=torch.float16):
+                    h = backbone(input_ids=ids, attention_mask=mask)
+                    logits = head(h.last_hidden_state[:, 0])
+                p = torch.sigmoid(logits).float().cpu().numpy()
+                # some ROCm kernels intermittently emit NaN rows
+                # (nondeterministic; CPU is clean); retrying the
+                # same batch usually clears them
+                if not np.isnan(p).any():
+                    break
+            else:
+                # stubborn batch: use the clean fp32 CPU path
+                if cpu_backbone is None:
+                    cpu_backbone = AutoModel.from_pretrained(ckpt, **load_kw).eval()
+                    cpu_head = torch.nn.Linear(
+                        cpu_backbone.config.hidden_size, len(DIM_ORDER)
+                    )
+                    cpu_head.load_state_dict(
+                        torch.load(f"{ckpt}/head.pt", map_location="cpu")
+                    )
+                    cpu_head.eval()
+                h = cpu_backbone(
+                    input_ids=enc["input_ids"],
+                    attention_mask=enc["attention_mask"],
                 )
-                logits = head(h.last_hidden_state[:, 0])
-            preds.append(torch.sigmoid(logits).float().cpu().numpy())
+                p = torch.sigmoid(cpu_head(h.last_hidden_state[:, 0])).numpy()
+            preds.append(p)
     return np.vstack(preds)
 
 
@@ -212,12 +261,35 @@ def cmd_route(args):
     strong = max(ladder, key=lambda m: np.mean([profiles[m][d] for d in DIM_ORDER]))
     cheap = ladder[0]
 
-    def route(tau):
+    p_solve = None
+    if args.mode == "solveprob":
+        from sklearn.isotonic import IsotonicRegression  # noqa: PLC0415
+
+        dim_idx_tr = np.array([DIM_ORDER.index(d) for d in tr["dim"]])
+        r_hat_tr = scores_tr[np.arange(len(tr)), dim_idx_tr]
+        p_solve = {m: np.empty(len(te)) for m in ladder}
+        for mdl in ladder:
+            y_tr = tr[f"correct::{mdl}"].values
+            for k in range(len(DIM_ORDER)):
+                m_tr = dim_idx_tr == k
+                m_te = dim_idx_te == k
+                iso = IsotonicRegression(increasing="auto", out_of_bounds="clip")
+                iso.fit(r_hat_tr[m_tr], y_tr[m_tr])
+                if m_te.any():
+                    p_solve[mdl][m_te] = iso.predict(r_hat[m_te])
+
+    def route(param):
         picked = []
         for i in range(len(te)):
+            if args.mode == "solveprob":
+                eligible = [m for m in ladder if p_solve[m][i] >= param]
+                picked.append(
+                    min(eligible, key=lambda m: costs[m]) if eligible else strong
+                )
+                continue
             dim = te["dim"].iloc[i]
             shortfalls = {m: max(0.0, r_hat[i] - profiles[m][dim]) for m in ladder}
-            eligible = [m for m in ladder if shortfalls[m] <= tau]
+            eligible = [m for m in ladder if shortfalls[m] <= param]
             picked.append(
                 min(eligible, key=lambda m: costs[m])
                 if eligible
@@ -231,12 +303,16 @@ def cmd_route(args):
     strong_cost = cost[strong]
     rng = np.random.RandomState(0)
     rand_pick = rng.choice(ladder, size=len(te))
+    if args.mode == "solveprob":
+        sweep, pkey = np.linspace(0.5, 0.99, 41), "p_target"
+    else:
+        sweep, pkey = np.linspace(0, 1.0, 41), "tau"
     frontier = []
-    for tau in np.linspace(0, 1.0, 41):
-        _, acc, c = route(float(tau))
+    for param in sweep:
+        _, acc, c = route(float(param))
         frontier.append(
             {
-                "tau": round(float(tau), 3),
+                pkey: round(float(param), 3),
                 "accuracy": float(acc.mean()),
                 "gpu_s": float(c.mean()),
                 "cost_saving_vs_strong": float(1 - c.mean() / strong_cost.mean()),
@@ -284,7 +360,7 @@ def cmd_route(args):
 
     gate = {"margin": margin, "pass": best is not None, "best_point": best}
     if best is not None:
-        picked, acc, _ = route(best["tau"])
+        picked, acc, _ = route(best[pkey])
         deltas = acc.astype(float) - always_strong.astype(float)
         boots = []
         rs = np.random.RandomState(1)
@@ -309,6 +385,7 @@ def cmd_route(args):
     gate["dominates_random"] = bool(rand_dom)
 
     out = {
+        "mode": args.mode,
         "ladder": ladder,
         "beta_bands": beta,
         "profiles": profiles,
@@ -345,6 +422,7 @@ def main():
     r = sub.add_parser("route")
     r.add_argument("--trace", default="trace_labeled.parquet")
     r.add_argument("--ckpt", default="predictor_ckpt")
+    r.add_argument("--mode", choices=["shortfall", "solveprob"], default="shortfall")
     r.add_argument("--margin", type=float, default=0.05)
     r.add_argument("--out", default="frontier.json")
     r.set_defaults(fn=cmd_route)
