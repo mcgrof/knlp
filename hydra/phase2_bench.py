@@ -58,13 +58,31 @@ def cmd_gen(args):
 
     out = []
 
-    ds = load_dataset("openai/gsm8k", "main", split="test")
-    n = min(args.gsm8k, len(ds))
-    for i, r in enumerate(ds.select(range(n))):
+    def take(name, config, want):
+        """Yield up to `want` rows: test split first, then train.
+
+        Train-split prompts are legitimate here — labels come from
+        model correctness against gold answers, not from tuning on
+        the benchmark's own test split.
+        """
+        got = 0
+        for split in ("test", "train"):
+            if got >= want:
+                return
+            try:
+                ds = load_dataset(name, config, split=split)
+            except ValueError:
+                continue
+            n = min(want - got, len(ds))
+            for i, r in enumerate(ds.select(range(n))):
+                yield split, got + i, r
+            got += n
+
+    for split, i, r in take("openai/gsm8k", "main", args.gsm8k):
         gold = r["answer"].split("####")[-1].strip().replace(",", "")
         out.append(
             {
-                "qid": f"gsm8k-{i}",
+                "qid": f"gsm8k-{split}-{i}",
                 "benchmark": "gsm8k",
                 "dim": DIMS["gsm8k"],
                 "kind": "gen",
@@ -77,11 +95,11 @@ def cmd_gen(args):
             }
         )
 
-    ds = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="test")
-    n = min(args.arc, len(ds))
-    for i, r in enumerate(ds.select(range(n))):
+    for split, i, r in take("allenai/ai2_arc", "ARC-Challenge", args.arc):
         labels = r["choices"]["label"]
         texts = r["choices"]["text"]
+        if r["answerKey"] not in labels or len(labels) > len(LETTERS):
+            continue
         norm = dict(zip(labels, texts))
         letters = LETTERS[: len(labels)]
         remap = {let: norm[lab] for let, lab in zip(letters, labels)}
@@ -89,7 +107,7 @@ def cmd_gen(args):
         opts = "\n".join(f"{let}. {remap[let]}" for let in letters)
         out.append(
             {
-                "qid": f"arc-{i}",
+                "qid": f"arc-{split}-{i}",
                 "benchmark": "arc",
                 "dim": DIMS["arc"],
                 "kind": "choice",
@@ -112,6 +130,24 @@ def cmd_gen(args):
         "world_religions",
         "econometrics",
         "logical_fallacies",
+        "abstract_algebra",
+        "anatomy",
+        "astronomy",
+        "business_ethics",
+        "clinical_knowledge",
+        "college_mathematics",
+        "computer_security",
+        "conceptual_physics",
+        "formal_logic",
+        "high_school_chemistry",
+        "high_school_physics",
+        "international_law",
+        "machine_learning",
+        "moral_disputes",
+        "philosophy",
+        "prehistory",
+        "professional_accounting",
+        "virology",
     ]
     per_subj = max(1, args.mmlu // len(subjects))
     for subj in subjects:
@@ -366,9 +402,9 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("gen")
-    g.add_argument("--gsm8k", type=int, default=800)
-    g.add_argument("--arc", type=int, default=600)
-    g.add_argument("--mmlu", type=int, default=600)
+    g.add_argument("--gsm8k", type=int, default=5000)
+    g.add_argument("--arc", type=int, default=2200)
+    g.add_argument("--mmlu", type=int, default=3600)
     g.add_argument("--out", default="prompts.jsonl")
     g.set_defaults(fn=cmd_gen)
 
