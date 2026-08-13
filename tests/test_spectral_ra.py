@@ -764,3 +764,24 @@ def test_train_arm_fork_end_to_end(tmp_path):
     gate_events = [e for e in events if e["event"] == "gate"]
     assert all("L" in list(g["state"])[0] for g in gate_events)
     assert (out / "final_model_legacy_seed0.pt").exists()
+
+
+def test_gated_arms_forward_under_bf16_autocast():
+    """Regression: under bf16 autocast the pointwise gate modes
+    (scalar_delta, coordinate_diag) promote fp32 and must cast back
+    before the indexed head assignment (seed-0 stage-4 crash)."""
+    for mode, rank in (
+        ("scalar_delta", 0),
+        ("coordinate_diag", 0),
+        ("spectral", 2),
+    ):
+        _, var = _pair({1: [0]}, gate_mode=mode, rank=rank, seed=60)
+        _install_basis(var)
+        with torch.no_grad():
+            for m in spectral_modules(var).values():
+                m.raw_beta.fill_(0.3)
+        var.train()
+        x, y = _batch(seed=61)
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            _, loss = var(x, y)
+        assert torch.isfinite(loss), mode
