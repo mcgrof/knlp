@@ -9,14 +9,18 @@ lives in [ra-evidence.md](ra-evidence.md).
 
 ## Current status
 
-**Experimental / parked.** A matched GPT-2 small-scale FineWebEdu
-experiment produced a clear positive result (below), and one
-single-seed matched 150M run reported a larger improvement with an
-incomplete retained artifact set. Matched 1B runs were neutral within
-noise, an 8B screen was invalidated by methodology, and a short 32B run
-used uniform placement and is non-diagnostic. No robust benefit at
-larger scale has been established. The line is parked pending a new
-inductive-bias hypothesis, not more selector tuning.
+**Closed (2026-08).** A matched GPT-2 small-scale FineWebEdu
+experiment produced a clear positive result (below); matched 1B runs
+were neutral within noise, an 8B screen was invalidated by
+methodology, and a short 32B run used uniform placement and is
+non-diagnostic. A final measurement-first program (credit audit,
+frozen-model gate test, and a preregistered three-seed matched
+training matrix) found real but sign-cancelling, high-rank
+reciprocal credit structure that no RA variant — including the
+original learned-beta implementation — converted into a training
+advantage over paired baselines. The line is closed; the full record
+and the mechanistic explanation are in
+[ra-evidence.md](ra-evidence.md).
 
 ## Validated small-scale result
 
@@ -217,14 +221,19 @@ picture. Audit:
 - Plot script for the validated GPT-2 comparison:
   `scripts/plot_ra_comparison.py`
 
-## Conditions for reopening the line
+## Why the line is closed
 
-1. A new inductive-bias framing written down first — not more selector
-   tweaking. The standing candidate is the view-divergence selector
-   above.
-2. A falsifiable prediction about the mixing-coefficient trajectory
-   stated before any training run.
-3. A logging hook so the prediction can actually be checked.
+The 2026-08 program satisfied the reopening conditions once (a new
+credit-spectrum framing with preregistered beta-trajectory
+predictions and logging), ran it end to end, and closed the line on
+its own stop rules: the reciprocal credit is real but high-rank and
+sign-cancelling; frozen mode gates can read it on a frozen model;
+nothing in the family — original implementation, scalar delta,
+spectral gates at the measured rank, or capacity controls — beats a
+paired baseline under matched three-seed training. Details and the
+per-stage verdicts: [ra-evidence.md](ra-evidence.md). Any future
+work would need a genuinely new framing; selector, rank, and gating
+variations are exhausted under preregistered stop rules.
 
 ## References
 
