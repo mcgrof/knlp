@@ -119,15 +119,47 @@ in that configuration. Because the placement was uniform rather than
 selected, it carries no information about whether RA with a working
 selector could help or hurt at 32B.
 
-## Current status
+## Closure: the 2026-08 measurement-first program
 
-RA is experimental and parked. The small-scale GPT-2 result stands on
-its own terms; favorable scaling remains unproven. Reopening the line
-requires a new inductive-bias hypothesis (a proposed view-divergence
-selector — score heads by how much their standard and reciprocal
-attention views disagree — is written down but untested), a falsifiable
-prediction about the mixing-coefficient trajectory, and logging to
-check it.
+The line was closed in August 2026 by a preregistered three-stage
+program (each stage's gates and predictions were committed before its
+compute ran):
+
+1. **Credit audit.** The reciprocal branch's usefulness was measured
+   directly as a signed per-head operator (the cross-covariance of
+   the output gradient with the reciprocal-vs-standard delta). The
+   structure is real — it beats conservative permutation nulls, is
+   placement-specific, and reproduces across independent calibration
+   data — but it is high-rank (spread over tens of feature
+   directions) and almost perfectly sign-cancelling. The cancellation
+   explains mechanistically why scalar RA coefficients trained to
+   zero effect throughout this program's history: a single scalar
+   sees only the trace of the operator, which the opposing modes
+   cancel.
+2. **Frozen-model gate test.** With the base model frozen, per-mode
+   gates in the measured eigenbasis (rank 8-32) consistently improved
+   held-out loss across seeds while scalar gates and matched-rank
+   random bases did not: the signal exists, and the discovered basis
+   matters — on a frozen model.
+3. **Matched training matrix.** Three seeds, seven arms, shared
+   warmup checkpoints, paired data and matched budgets (~1.5B forked
+   tokens per arm at 124M): no reciprocal-attention variant beat its
+   paired baseline in all seeds. The original learned-beta
+   implementation was statistically indistinguishable from baseline,
+   with a final on/off ablation showing the trained branch slightly
+   hurting — reproducing the earlier autopsy on fresh runs. The
+   frozen-basis spectral gate was consistently worse than baseline:
+   a basis measured at the warmup checkpoint goes stale as the model
+   co-adapts. One control won large and reproducibly in every seed:
+   the Qwen-style SDPA output gate (arXiv:2505.06708), which is not
+   a reciprocal mechanism.
+
+**Status: CLOSED.** The historical small-scale measurement stands as
+recorded; its mechanism did not reproduce an advantage under
+controlled paired conditions, and the measurement-first program
+explains why. Reopening would require a genuinely new framing — not
+another selector, rank, or gating variant, all of which were tested
+to preregistered stop rules.
 
 ## Canonical summary
 

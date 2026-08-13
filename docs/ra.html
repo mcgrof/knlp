@@ -50,8 +50,10 @@
         RA mixes the standard attention routing <span class="font-mono">softmax(Q@K.T)</span> with the swapped
         routing <span class="font-mono">softmax(K@Q.T)</span> on selected heads. This page reports what has
         actually been measured at each scale, with each result's evidence status. Status:
-        <strong class="text-gray-200">experimental / parked</strong> — a validated small-model result exists,
-        matched 1B evidence is neutral, and no robust scaling benefit has been established.
+        <strong class="text-gray-200">closed (2026-08)</strong> — a validated small-model result exists,
+        matched 1B evidence is neutral, and a preregistered three-seed matched training matrix
+        found no RA variant beating paired baselines, closing the line with a mechanistic
+        account (sign-cancelling, high-rank reciprocal credit).
       </p>
       <div class="mt-4 flex justify-center gap-4">
         <a href="https://github.com/mcgrof/knlp/blob/main/docs/ra.md"
