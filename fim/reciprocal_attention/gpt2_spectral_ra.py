@@ -238,7 +238,11 @@ class SpectralDeltaAttention(CausalSelfAttention_KNLP):
                     "bstr,sdr->bstd", modes * beta[None, :, None, :], self.basis_u
                 )
             yb = yb.clone()
-            yb[:, sel] = std_sel + corr
+            # Under bf16 autocast the pointwise gate modes (scalar,
+            # coordinate) promote to fp32 (fp32 beta parameter times
+            # bf16 delta) while einsum-based modes stay bf16; index
+            # assignment requires matching dtypes, so cast explicitly.
+            yb[:, sel] = (std_sel + corr).to(yb.dtype)
 
         y = yb.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_dropout(self.c_proj(y))
