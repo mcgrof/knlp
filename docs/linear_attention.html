@@ -39,6 +39,7 @@
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
       <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-violet-600 rounded text-sm font-medium text-white">Linear Attn</a>
+      <a href="wy_ut.html" class="px-3 py-1.5 bg-gray-800 hover:bg-indigo-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">WY/UT</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
       <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
       <a href="ra_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">RA</a>
@@ -217,7 +218,8 @@
               Trellis&rsquo;s defining feature is a <em>nonlinear</em> memory write. At the scale we can afford to
               train, that write is a <strong className="text-white">liability</strong>, and the study closes on two
               load-bearing findings. <strong className="text-white">Structural:</strong> the nonlinear write is not
-              affine in the recurrent state, so DeltaNet&rsquo;s exact chunkwise WY/UT factorization does not apply.
+              affine in the recurrent state, so DeltaNet&rsquo;s exact chunkwise
+              <a href="wy_ut.html" className="hover:text-white" style={{color:C.violet}}> WY/UT factorization</a> does not apply.
               Trellis still trains chunk-parallel &mdash; the paper freezes the state at each chunk&rsquo;s start, making
               the within-chunk recurrence locally linear and parallelizable by parallel scan &mdash; but that form is
               exact only for the linearized system; the true nonlinear recurrence costs a sequential pass.
@@ -362,7 +364,10 @@
               each step is a fixed affine map of the state, affine maps compose, and the within-chunk coupling is a
               strictly-lower-triangular (nilpotent) system solved once &mdash; a whole chunk of serial rank-1 edits
               collapses into a few matmuls plus one small triangular solve: the WY low-rank representation compacts the
-              chunk&rsquo;s rank-one transitions, and the UT triangular solve constructs those factors. This is the
+              chunk&rsquo;s rank-one transitions, and the UT triangular solve constructs those factors. (That machinery
+              is much older than linear attention &mdash; Householder 1958, the WY representation 1987, compact WY
+              1989, LAPACK &mdash; and its full lineage has
+              <a href="wy_ut.html" className="hover:text-gray-300" style={{color:C.violet}}> its own page</a>.) This is the
               entire training speedup, and this factorization does not apply to Trellis&rsquo;s nonlinear write. The reason
               is structural, provable by composition over the chunk &mdash; a statement about this specific transform, not
               a proof that no exact method of any kind can exist:
@@ -375,7 +380,8 @@
               <span className="kbd">L_t, c_t</span> independent of the state), an exact fixed-finite-dimensional linear
               chunk transform exists. With <span className="kbd">Ψ = id</span> this is affine-in-<span className="kbd">M</span>,
               which the delta rule satisfies. We do <em>not</em> claim the converse in general &mdash; only that the
-              original-state WY/UT transform specifically requires affine-in-<span className="kbd">M</span>, and that for
+              original-state <a href="wy_ut.html" className="hover:text-gray-300" style={{color:C.violet}}>WY/UT transform</a> specifically
+              requires affine-in-<span className="kbd">M</span>, and that for
               the paper&rsquo;s normalized-SiLU write no exact fixed finite lift is known.</span>
             </div>
             <p>
@@ -386,7 +392,8 @@
               <span className="kbd"> z</span> only if the Jacobian gain <span className="kbd">Jφ(z)</span> is constant, i.e.
               <span className="kbd"> φ</span> affine. For a generic state-dependent nonlinearity &mdash; the paper&rsquo;s
               normalized SiLU &mdash; <em>no</em> fixed finite affine lift is known, the within-chunk equations become
-              nonlinear-triangular rather than a linear nilpotent solve, and the exact WY/UT transform is gone. What the
+              nonlinear-triangular rather than a linear nilpotent solve, and the exact
+              <a href="wy_ut.html" className="hover:text-gray-300" style={{color:C.violet}}> WY/UT transform</a> is gone. What the
               paper actually does is explicit in its chunk form: it <em>freezes</em> the state &mdash; hence the
               Jacobian &mdash; at the chunk-start index, which makes the within-chunk recurrence locally linear and, in
               the paper&rsquo;s words, parallelizable by parallel scan. The parallelism survives; the exactness does
@@ -413,7 +420,8 @@
               from 0.04&times; to 0.26&times; of dense throughput and shrinking the gap to fla Gated DeltaNet from ~25&times;
               to <strong>~4&times;</strong>. The same kernel runs unmodified on the W7900 (ROCm) for an 8&ndash;12&times; win.
               It made the comparison tractable &mdash; but a fast kernel for the approximate recurrence does not recover
-              the exact running-state one; no compact exact WY/UT transform is known for this nonlinear write.
+              the exact running-state one; no compact exact
+              <a href="wy_ut.html" className="hover:text-gray-300" style={{color:C.violet}}> WY/UT transform</a> is known for this nonlinear write.
             </p>
             <ChartFrame title="Mixer throughput, fwd+bwd (A100, B8·T2048·d256·H4)"
               sub="Thousands of tokens/sec. The linear baselines (fla) beat dense attention; the fused Trellis kernel closes most — not all — of the gap. The ~4× residual is the measured cost of these implementations (two passes, nonlinear VJP, fp32 state), not a proven lower bound.">
@@ -450,7 +458,8 @@
             <h3 className="font-semibold text-gray-200 mt-6 mb-2">Axis 1 &mdash; the forward state: exact factorization vs. chunk-start linearization</h3>
             <p>
               The linear cousins take the exact route. Each of their steps is affine in the state, affine maps
-              compose, and a chunk of rank-one updates collapses into the WY/UT factorization &mdash; the WY low-rank
+              compose, and a chunk of rank-one updates collapses into the
+              <a href="wy_ut.html" className="hover:text-gray-300" style={{color:C.violet}}> WY/UT factorization</a> &mdash; the WY low-rank
               representation compacts the chunk&rsquo;s transitions, a UT triangular solve constructs the factors, and
               the recurrence being computed is the <em>true</em> one. Trellis&rsquo;s write is not affine in the state,
               so this factorization does not exist for it. The paper&rsquo;s strategy is different, and explicit:
