@@ -99,7 +99,8 @@
           </defs>
           {/* hyperplane (mirror): line through center at 30 deg */}
           <line x1="60" y1="215" x2="500" y2="45" stroke={DIM} strokeWidth="2"/>
-          <text x="470" y="32" fill={DIM}>mirror (hyperplane &perp; v)</text>
+          <text x="548" y="32" textAnchor="end" fill={DIM}>mirror (hyperplane &perp; v)</text>
+          <text x="20" y="26" fill={DIM} fontSize="12">H = I &minus; 2vv&#7488;/v&#7488;v &nbsp;&nbsp;(orthogonal: &#8214;Hx&#8214; = &#8214;x&#8214;)</text>
           {/* normal v from a point on the plane */}
           <line x1="280" y1="130" x2="336" y2="200" stroke={C.violet} strokeWidth="2.5" markerEnd="url(#ar1v)"/>
           <text x="342" y="212" fill={C.violet}>v (normal)</text>
@@ -111,9 +112,8 @@
           <text x="358" y="252" fill={C.green}>Hx</text>
           {/* dashed connector showing the flip of the parallel part */}
           <line x1="420" y1="120" x2="352" y2="240" stroke={DIM} strokeWidth="1.5" strokeDasharray="5 4"/>
-          <text x="410" y="185" fill={DIM} fontSize="12">flip the &parallel;-to-v part,</text>
+          <text x="410" y="185" fill={DIM} fontSize="12">flip the &#8741;-to-v part,</text>
           <text x="410" y="201" fill={DIM} fontSize="12">keep the &perp; part</text>
-          <text x="64" y="245" fill={DIM} fontSize="12">H = I &minus; 2vv&#7488;/v&#7488;v &nbsp;&nbsp;(orthogonal: &Vert;Hx&Vert; = &Vert;x&Vert;)</text>
         </svg>
       );
     }
@@ -191,9 +191,9 @@
           {/* skinny V, small T */}
           <rect x="600" y="50" width="26" height="180" rx="4" fill="#172554" stroke={C.blue}/>
           <text x="613" y="145" textAnchor="middle" fill={C.blue}>V</text>
-          <rect x="646" y="50" width="42" height="42" rx="4" fill="#1c1633" stroke={C.violet}/>
-          <path d="M 646 50 L 688 50 L 688 92 Z" fill="#2e1065"/>
-          <text x="672" y="76" textAnchor="middle" fill={C.violet}>T</text>
+          <rect x="646" y="50" width="42" height="42" rx="4" fill="#0f172a" stroke={C.amber}/>
+          <path d="M 646 50 L 688 50 L 688 92 Z" fill="rgba(245,158,11,0.30)"/>
+          <text x="672" y="76" textAnchor="middle" fill={C.amber}>T</text>
           <path d="M 592 140 C 585 140, 585 140, 578 140" fill="none" stroke={C.green} strokeWidth="2" markerEnd="url(#ar3g)"/>
           <text x="740" y="252" fill={C.green} textAnchor="end">C &minus; V&middot;(T&middot;(V&#7488;C)): two GEMMs + one small triangle</text>
           <text x="740" y="268" fill={DIM} textAnchor="end">one pass over C; matrix&ndash;matrix work per byte moved</text>
@@ -203,30 +203,57 @@
 
     // ───────────── SVG: the triangular interaction matrix ─────────────
     function AlgebraSVG() {
+      const cs = 44, tx = 252, ty = 118;
+      const tCells = [];
+      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+        const upper = j > i, diag = i === j;
+        tCells.push(
+          <g key={i + '-' + j}>
+            <rect x={tx + j*cs} y={ty + i*cs} width={cs} height={cs}
+              fill={diag ? 'rgba(16,185,129,0.14)' : upper ? 'rgba(245,158,11,0.22)' : '#0f172a'}
+              stroke={upper ? 'rgba(245,158,11,0.55)' : '#293548'}/>
+            <text x={tx + j*cs + cs/2} y={ty + i*cs + cs/2 + 5} textAnchor="middle"
+              fill={diag ? C.green : upper ? C.amber : '#3e4c63'}
+              fontSize={upper && i === 0 && j === 1 ? 10 : 15}>
+              {diag ? '1' : upper ? (i === 0 && j === 1 ? '−v₁ᵀu₂' : '∗') : '0'}
+            </text>
+          </g>
+        );
+      }
+      const p = (c, r) => (tx + c*cs) + ' ' + (ty + r*cs);
+      const stair = 'M ' + p(1,0) + ' L ' + p(4,0) + ' L ' + p(4,3) + ' L ' + p(3,3)
+        + ' L ' + p(3,2) + ' L ' + p(2,2) + ' L ' + p(2,1) + ' L ' + p(1,1) + ' Z';
       return (
-        <svg viewBox="0 0 760 240" fontFamily="ui-monospace, monospace" fontSize="14">
-          <text x="20" y="34" fill={INK}>(I &minus; u&#8321;v&#8321;&#7488;)(I &minus; u&#8322;v&#8322;&#7488;)&nbsp;&nbsp;=&nbsp;&nbsp;I &minus; u&#8321;v&#8321;&#7488; &minus; u&#8322;v&#8322;&#7488; + u&#8321;(v&#8321;&#7488;u&#8322;)v&#8322;&#7488;</text>
-          <text x="20" y="78" fill={INK}>=&nbsp;&nbsp;I &minus;</text>
-          {/* [u1 u2] */}
-          <rect x="100" y="58" width="54" height="110" rx="4" fill="#172554" stroke={C.blue}/>
-          <line x1="127" y1="58" x2="127" y2="168" stroke="#0f172a" strokeWidth="2"/>
-          <text x="113" y="118" textAnchor="middle" fill={C.blue}>u&#8321;</text>
-          <text x="141" y="118" textAnchor="middle" fill={C.blue}>u&#8322;</text>
-          {/* T */}
-          <rect x="172" y="58" width="86" height="86" rx="4" fill="#1c1633" stroke={C.violet}/>
-          <text x="196" y="88" textAnchor="middle" fill={INK}>1</text>
-          <text x="236" y="88" textAnchor="middle" fill={C.amber}>&minus;v&#8321;&#7488;u&#8322;</text>
-          <text x="196" y="128" textAnchor="middle" fill={DIM}>0</text>
-          <text x="236" y="128" textAnchor="middle" fill={INK}>1</text>
-          {/* [v1 v2]^T */}
-          <rect x="276" y="58" width="110" height="54" rx="4" fill="#052e2b" stroke={C.green}/>
-          <line x1="276" y1="85" x2="386" y2="85" stroke="#0f172a" strokeWidth="2"/>
-          <text x="331" y="76" textAnchor="middle" fill={C.green}>v&#8321;&#7488;</text>
-          <text x="331" y="104" textAnchor="middle" fill={C.green}>v&#8322;&#7488;</text>
-          {/* annotation */}
-          <line x1="236" y1="96" x2="236" y2="180" stroke={C.amber} strokeWidth="1.5" strokeDasharray="4 4"/>
-          <text x="248" y="196" fill={C.amber} fontFamily="ui-sans-serif, system-ui" fontSize="13">the triangle records the causal interaction between the rank-one factors</text>
-          <text x="20" y="226" fill={DIM} fontFamily="ui-sans-serif, system-ui" fontSize="13">b factors &rarr; skinny U, skinny V, and one small b&times;b triangular T. The whole product is identity minus one rank-&le;b correction.</text>
+        <svg viewBox="0 0 760 440" fontFamily="ui-monospace, monospace" fontSize="15">
+          {/* step 1: multiply two factors, one cross term appears */}
+          <text x="20" y="30" fill={INK}>(I &minus; u&#8321;v&#8321;&#7488;)(I &minus; u&#8322;v&#8322;&#7488;)</text>
+          <text x="20" y="62" fill={INK}>= I &minus; u&#8321;v&#8321;&#7488; &minus; u&#8322;v&#8322;&#7488; +</text>
+          <rect x="222" y="43" width="136" height="27" rx="5" fill="rgba(245,158,11,0.15)" stroke={C.amber}/>
+          <text x="230" y="62" fill={C.amber}>u&#8321;(v&#8321;&#7488;u&#8322;)v&#8322;&#7488;</text>
+          <text x="372" y="62" fill={DIM} fontSize="13" fontFamily="ui-sans-serif, system-ui">&larr; one cross term: factor 1 feeding into factor 2</text>
+          <text x="20" y="100" fill={DIM} fontSize="13" fontFamily="ui-sans-serif, system-ui">collect b = 4 factors:</text>
+          <line x1="300" y1="74" x2={tx + 1.5*cs} y2={ty - 4} stroke={C.amber} strokeWidth="1.5" strokeDasharray="4 4"/>
+          {/* I minus U T V^T */}
+          <text x="20" y="225" fill={INK} fontSize="18">I &minus;</text>
+          <rect x="76" y="118" width="100" height="200" rx="4" fill="rgba(59,130,246,0.12)" stroke={C.blue}/>
+          {[1,2,3].map(k => <line key={'u'+k} x1={76 + k*25} y1="118" x2={76 + k*25} y2="318" stroke="#293548"/>)}
+          {['u₁','u₂','u₃','u₄'].map((s, k) =>
+            <text key={s} x={76 + k*25 + 12.5} y="223" textAnchor="middle" fill="#93c5fd" fontSize="13">{s}</text>)}
+          <text x="126" y="340" textAnchor="middle" fill={DIM} fontSize="12" fontFamily="ui-sans-serif, system-ui">U &mdash; skinny, n&times;b</text>
+          <text x="212" y="225" fill={DIM} fontSize="18">&middot;</text>
+          {tCells}
+          <path d={stair} fill="none" stroke={C.amber} strokeWidth="2.5"/>
+          <text x={tx + 88} y="316" textAnchor="middle" fill={C.amber} fontSize="12" fontFamily="ui-sans-serif, system-ui">T &mdash; b&times;b: the triangle</text>
+          <text x="440" y="225" fill={DIM} fontSize="18">&middot;</text>
+          <rect x="452" y="148" width="188" height="100" rx="4" fill="rgba(16,185,129,0.10)" stroke={C.green}/>
+          {[1,2,3].map(k => <line key={'v'+k} x1="452" y1={148 + k*25} x2="640" y2={148 + k*25} stroke="#293548"/>)}
+          {['v₁ᵀ','v₂ᵀ','v₃ᵀ','v₄ᵀ'].map((s, k) =>
+            <text key={s} x="546" y={148 + k*25 + 17} textAnchor="middle" fill="#6ee7b7" fontSize="12">{s}</text>)}
+          <text x="546" y="270" textAnchor="middle" fill={DIM} fontSize="12" fontFamily="ui-sans-serif, system-ui">V&#7488; &mdash; skinny, b&times;n</text>
+          {/* takeaway */}
+          <text x="20" y="384" fill={C.amber} fontSize="13" fontFamily="ui-sans-serif, system-ui">The amber staircase is the triangle: cell (i, j) holds the cross term from factor i feeding into a later factor j.</text>
+          <text x="20" y="406" fill={DIM} fontSize="13" fontFamily="ui-sans-serif, system-ui">Below the diagonal: zeros &mdash; later factors cannot influence earlier ones. The whole product of b rank-one maps</text>
+          <text x="20" y="424" fill={DIM} fontSize="13" fontFamily="ui-sans-serif, system-ui">collapses to identity minus one U&middot;T&middot;V&#7488; block: skinny, skinny, and one small triangle.</text>
         </svg>
       );
     }
@@ -256,15 +283,16 @@
           <text x="420" y="26" fill={INK} fontSize="14" fontWeight="bold">Chunked delta rule (linear attention)</text>
           {[0,1,2,3,4,5,6,7].map(i => tok(420 + i*24, 44, i < 4 ? '#172554' : '#1e293b'))}
           <rect x="416" y="40" width="100" height="28" rx="5" fill="none" stroke={C.blue} strokeWidth="1.5"/>
-          <text x="618" y="59" fill={DIM}>tokens: k, v, &beta; all known up front</text>
+          <text x="486" y="88" fill={DIM}>tokens: k, v, &beta; all known up front</text>
           <line x1="466" y1="76" x2="466" y2="94" stroke={DIM} strokeWidth="1.5" markerEnd="url(#ar4)"/>
           {/* triangular system */}
-          <rect x="420" y="100" width="92" height="92" rx="5" fill="#1c1633" stroke={C.violet}/>
-          <path d="M 420 100 L 512 100 L 420 192 Z" fill="#0f172a" opacity="0.55"/>
-          <text x="452" y="168" fill={C.violet}>tril</text>
+          <rect x="420" y="100" width="92" height="92" rx="5" fill="#0f172a" stroke={C.amber}/>
+          <path d="M 420 100 L 420 192 L 512 192 Z" fill="rgba(245,158,11,0.28)"/>
+          <text x="444" y="174" fill={C.amber}>tril</text>
+          <text x="490" y="124" fill="#3e4c63" fontSize="12">0</text>
           <text x="524" y="130" fill={INK}>T = (I + tril(diag(&beta;)KK&#7488;, &minus;1))&#8315;&#185;diag(&beta;)</text>
           <text x="524" y="152" fill={INK}>W = TK,&nbsp; U = TV</text>
-          <text x="524" y="174" fill={DIM}>one small causal triangular solve per chunk</text>
+          <text x="524" y="174" fill={DIM}>one small triangular solve per chunk</text>
           <line x1="466" y1="200" x2="466" y2="218" stroke={DIM} strokeWidth="1.5" markerEnd="url(#ar4)"/>
           <text x="420" y="242" fill={C.green}>state update + outputs become GEMMs across the chunk</text>
           <text x="420" y="272" fill={DIM}>Unlike QR, nothing must be &ldquo;generated&rdquo; sequentially:</text>
@@ -366,8 +394,8 @@
               appears; collect the factors into skinny matrices and the cross terms land in a small triangular matrix
               that records who influenced whom, in causal order:
             </p>
-            <Fig label="Two identity-minus-rank-one factors compose into identity minus a skinny-U, triangular-T, skinny-V product; the off-diagonal triangle entry is the interaction term"
-                 caption="The product of b rank-one factors is identity minus one rank-at-most-b correction. The triangular middle factor is the entire memory of the sequence's internal causality — build it, and the factors can be applied together instead of one at a time.">
+            <Fig label="Multiplying two identity-minus-rank-one factors produces one highlighted cross term; collecting four factors yields identity minus skinny-U times a four-by-four upper-triangular T times skinny-V-transpose, where the strictly-upper cells form an amber staircase holding all the cross terms and everything below the diagonal is zero"
+                 caption="Top: multiply two factors and one cross term (amber) appears — factor 1 feeding into factor 2. Bottom: collect b = 4 factors and every such cross term files into the strictly-upper part of a small b×b matrix T — the amber staircase is the triangle. It is the entire memory of the sequence's internal causality: build it, and the factors can be applied together instead of one at a time.">
               <AlgebraSVG/>
             </Fig>
           </Section>
