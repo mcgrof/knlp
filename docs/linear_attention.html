@@ -227,7 +227,8 @@
               &mdash; though that control also linearized the inter-pass map (since decoupled), so the 2&times; is a joint
               control; the clean write-only rerun on the associative-recall probe puts the nonlinear write behind the
               linear, and the paper&rsquo;s own write-only LM cost is ~0.78 ppl; the 2026-08 correctness audit sharpened
-              this further &mdash; the write ranking depends on the outer-gradient semantics (audit trail below). Separately, GatedDeltaProduct
+              this further &mdash; the write ranking depends on the outer-gradient semantics (see the
+              training-strategy section). Separately, GatedDeltaProduct
               &mdash; whose extra rotations ace an exact-overwrite task &mdash; also loses to Gated DeltaNet on real
               language-model loss. Gated DeltaNet is the matched-state leader. The one thing we did <em>not</em> test is
               the paper&rsquo;s 790M-parameter scale claim; it is parked, not disproven.
@@ -390,11 +391,9 @@
               Jacobian &mdash; at the chunk-start index, which makes the within-chunk recurrence locally linear and, in
               the paper&rsquo;s words, parallelizable by parallel scan. The parallelism survives; the exactness does
               not: the scanned system is the linearization, with error growing with the step size, the chunk length,
-              and the curvature of <span className="kbd">φ</span>. The true within-chunk recurrence remains recoverable
-              &mdash; the coupling is nilpotent, so a within-chunk iteration converges to it exactly &mdash; but at the
-              cost of the sequential pass. Separate from this <em>forward</em> choice is whether the outer loss
-              differentiates <em>through</em> the frozen inner gradient; the 2026-08 audit made that axis explicit and
-              testable.
+              and the curvature of <span className="kbd">φ</span>. This forward choice is only half of the training strategy; the
+              other half &mdash; whether the outer loss differentiates <em>through</em> the frozen inner gradient
+              &mdash; is an independent axis with its own section below.
             </p>
             <p className="text-xs text-gray-500">
               Two overclaims retired for honesty: &ldquo;nonlinear &rArr; no exact chunk&rdquo; is false in general
@@ -436,6 +435,81 @@
               context. That is the reason the family connects to knlp&rsquo;s decode and KV-compression work: a bounded
               state is an aggressive form of KV compression.
             </div>
+          </Section>
+
+          {/* 6b. the two training strategies */}
+          <Section id="strategies" kicker="The training strategy" title="How Trellis trains anyway: two independent choices">
+            <p>
+              Losing the exact factorization does not mean training sequentially. Two choices, often conflated,
+              define how a nonlinear fast-weight memory is actually trained: <strong className="text-white">which
+              forward state the inner correction sees</strong>, and <strong className="text-white">whether the outer
+              loss differentiates through that correction</strong>. They are independent axes. This study spent weeks
+              treating them as one knob, and the distinction turned out to carry most of the final result.
+            </p>
+
+            <h3 className="font-semibold text-gray-200 mt-6 mb-2">Axis 1 &mdash; the forward state: exact factorization vs. chunk-start linearization</h3>
+            <p>
+              The linear cousins take the exact route. Each of their steps is affine in the state, affine maps
+              compose, and a chunk of rank-one updates collapses into the WY/UT factorization &mdash; the WY low-rank
+              representation compacts the chunk&rsquo;s transitions, a UT triangular solve constructs the factors, and
+              the recurrence being computed is the <em>true</em> one. Trellis&rsquo;s write is not affine in the state,
+              so this factorization does not exist for it. The paper&rsquo;s strategy is different, and explicit:
+              <em> freeze the state at each chunk&rsquo;s start</em>. With the state frozen, the within-chunk recurrence
+              becomes locally linear, and a parallel scan computes it. The wall-clock shape of training is the same
+              chunk-parallel pattern its cousins use; what differs is the object being computed.
+            </p>
+            <div className="bg-[#0b1220] border-l-4 rounded-lg p-4 my-4 text-sm" style={{borderLeftColor:C.violet}}>
+              <strong className="text-violet-300">Identical parallelism, different system.</strong>
+              <span className="text-gray-400"> Both families train chunk-parallel. The linear cousins scan the true
+              recurrence, because it already is linear. Trellis scans a <em>linearization</em> of its recurrence,
+              because the true one cannot be factorized this way &mdash; and the gap between the two grows with the
+              step size, the chunk length, and the curvature of <span className="kbd">φ</span>. The true within-chunk
+              recurrence stays recoverable (the coupling is nilpotent, so an in-chunk iteration converges to it
+              exactly), but only at the cost of the sequential pass &mdash; a correctness oracle, not a speed win.</span>
+            </div>
+
+            <h3 className="font-semibold text-gray-200 mt-6 mb-2">Axis 2 &mdash; the outer gradient: differentiate through the inner correction, or not</h3>
+            <p>
+              The memory update is itself a gradient step on an inner objective, so training the surrounding network
+              means differentiating a loss that <em>contains a gradient</em>. Keeping that path &mdash; the
+              <span className="kbd"> &part;u/&part;z</span> term, with its Hessian-vector products &mdash; is the full
+              bilevel objective, the same gradient-through-a-gradient that MAML formalized and that TTT, this
+              architecture&rsquo;s direct ancestor, describes outright. Cutting it &mdash; detaching
+              <span className="kbd"> z</span> before the inner correction &mdash; is the first-order approximation:
+              cheaper, and the only gradient the update still carries flows through the write target. The two modes
+              produce <em>bit-identical forward values</em>; only the parameter gradients differ. That is precisely why
+              a dead switch went unnoticed here for a month: the flag selecting the bilevel objective never reached the
+              chunked backends, so every chunked run had silently trained first-order while the configuration said
+              otherwise. Both modes are now explicit, enforced by the dispatcher, and covered by tests that assert
+              equal forwards and strictly different gradients.
+            </p>
+            <p>
+              There is also a principled middle ground: compute both corrections &mdash; numerically equal &mdash; and
+              blend only their gradient paths, <span className="kbd">u = u_detached + ρ·(u_live − u_detached)</span>.
+              The forward update is unchanged for any <span className="kbd">ρ</span>; the higher-order signal alone is
+              scaled. At <span className="kbd">ρ=0.5</span> this tempered form completed every seed where full strength
+              failed two of three, and beat first-order training in every paired seed by a small, consistent margin.
+            </p>
+
+            <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 my-4 text-sm text-gray-400">
+              <strong className="text-gray-200">Why the axes must not be conflated.</strong> The completed factorial at
+              20M tokens (three paired seeds, identical data, stabilized recipe) gives a different answer in every cell:
+              <span className="block mt-2 font-mono text-xs leading-relaxed">
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;first-order&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;full-bilevel<br/>
+                identity&nbsp;&nbsp;&nbsp;~253 ppl (3/4 clean)&nbsp;&nbsp;&nbsp;244.5 (3/3, best stable)<br/>
+                SiLU&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;251.6 (3/3)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;1/3 seeds complete
+              </span>
+              <span className="block mt-2">Under first-order training the nonlinear write beats the linear one; under
+              the full bilevel objective the linear write is best and fully stable while full-strength SiLU
+              hypergradients destabilize training. No write-nonlinearity ranking exists independent of the gradient
+              semantics &mdash; a comparison that fixes one axis and varies the other is measuring the interaction,
+              not the write.</span>
+            </div>
+            <p className="text-xs text-gray-500">
+              The paper specifies axis 1 (the chunk-start freeze) and leaves axis 2 undeclared &mdash; its bilevel
+              framing and its ancestry point one way, one of its citations points the other. Both readings are
+              implemented here and reported side by side rather than argued from the text.
+            </p>
           </Section>
 
           {/* 7. paper claims */}
