@@ -4,21 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Linear Attention &amp; Bounded Memory — DeltaNet, Gated DeltaNet, DeltaProduct, Trellis</title>
-  <meta name="description" content="A matched-harness study of bounded-memory linear-attention models: what fixed recurrent state means, how DeltaNet, Gated DeltaNet, GatedDeltaProduct and Trellis differ, what the matched A100 runs show, why WY/UT applies exactly to affine state updates, and why Trellis training depends on both forward linearization and outer-gradient semantics.">
+  <meta name="description" content="Measured comparisons of bounded-memory sequence models: DeltaNet, Gated DeltaNet, GatedDeltaProduct and Trellis. Defines the memory updates, training semantics, datasets and metrics before reporting matched A100, C4, PG19 and throughput results.">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root { --bg:#0f172a; --panel:#111827; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
+    :root { --bg:#0f172a; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
       --blue:#60a5fa; --green:#34d399; --amber:#fbbf24; --violet:#a78bfa; --red:#f87171; --cyan:#22d3ee; }
-    html { scroll-behavior:smooth; } body { background:var(--bg); color:var(--text); }
+    html { scroll-behavior:smooth; }
+    body { background:var(--bg); color:var(--text); }
     .card { background:linear-gradient(145deg,rgba(30,41,59,.96),rgba(17,24,39,.96)); border:1px solid var(--line); }
     .formula { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#09111f; border:1px solid #263449; border-radius:.5rem; padding:.75rem 1rem; overflow-x:auto; color:#dbeafe; }
     .kbd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#09111f; border:1px solid #334155; border-radius:.35rem; padding:.08rem .35rem; color:#cbd5e1; white-space:nowrap; }
-    .proseish p { margin:.82rem 0; line-height:1.72; color:var(--muted); } .proseish strong { color:var(--text); }
+    .proseish p { margin:.82rem 0; line-height:1.72; color:var(--muted); }
+    .proseish strong { color:var(--text); }
     .proseish a { color:var(--blue); text-decoration:underline; text-decoration-color:#315b88; text-underline-offset:3px; }
-    .anchor { scroll-margin-top:5rem; } .eyebrow { color:var(--violet); letter-spacing:.12em; text-transform:uppercase; font-size:.72rem; font-weight:700; }
+    .anchor { scroll-margin-top:5rem; }
+    .eyebrow { color:var(--violet); letter-spacing:.12em; text-transform:uppercase; font-size:.72rem; font-weight:700; }
     .callout { border-left:4px solid var(--blue); background:#09111f; border-radius:.5rem; padding:1rem; }
-    .mini { color:var(--dim); font-size:.8rem; } table { border-collapse:collapse; } th { color:#cbd5e1; font-weight:600; }
-    td,th { border-bottom:1px solid #263449; vertical-align:top; } .good { color:var(--green); } .warn { color:var(--amber); } .bad { color:var(--red); }
+    .mini { color:var(--dim); font-size:.8rem; }
+    table { border-collapse:collapse; }
+    th { color:#cbd5e1; font-weight:600; }
+    td,th { border-bottom:1px solid #263449; vertical-align:top; }
+    .good { color:var(--green); }
+    .warn { color:var(--amber); }
+    .bad { color:var(--red); }
   </style>
 </head>
 <body class="min-h-screen">
@@ -36,271 +44,294 @@
 
   <main class="max-w-5xl mx-auto px-5 py-12">
     <header class="mb-10">
-      <div class="eyebrow mb-3">Measured, not just diagrammed</div>
-      <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">Linear attention and bounded memory, in ordinary English</h1>
+      <div class="eyebrow mb-3">DeltaNet · Gated DeltaNet · GatedDeltaProduct · Trellis</div>
+      <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">Linear attention and bounded memory</h1>
       <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed">
-        Dense attention remembers old tokens by keeping their keys and values. That memory grows with context length.
-        The models on this page try a different bargain: keep a <strong class="text-slate-200">fixed-size matrix state</strong>,
-        update it as tokens arrive, and read from that state later. We implemented Trellis and compared it with reference
-        DeltaNet, Gated DeltaNet, and GatedDeltaProduct layers under matched runs.
+        Standard causal attention keeps past keys and values in a KV cache, so the stored history grows with context length.
+        The models studied here replace that growing history with a <strong class="text-slate-200">fixed-size recurrent matrix state</strong>.
+        Each token modifies the state and later tokens query it.
       </p>
       <p class="text-slate-400 mt-4 max-w-4xl leading-relaxed">
-        The result is simpler than the old version of this page made it sound. <strong class="text-slate-200">Gated DeltaNet is the best model we measured at the scales we could afford.</strong>
-        Trellis's nonlinear write did not close that gap. But the reason is not “nonlinear writes are bad.” Our final correctness audit showed that the write comparison changes when the outer training gradient changes.
-        The paper's much larger 790M / 30B-token result remains untested here, so it is parked, not refuted.
+        Across the matched experiments reported here, <strong class="text-slate-200">Gated DeltaNet is the strongest bounded-state baseline</strong>.
+        Trellis beats the matched dense Transformer on long-document experiments, but does not beat Gated DeltaNet at the scales tested.
+        Trellis results published at 125M parameters and above were not reproduced here.
       </p>
     </header>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="first-principles">
-      <div class="eyebrow">1. Start with the problem</div>
-      <h2 class="text-2xl font-bold mt-2">What “bounded memory” means</h2>
-      <p>In ordinary causal attention, each new token produces a key and a value. Future tokens may need them, so inference keeps those key/value vectors in the <strong>KV cache</strong>. Double the context length and, roughly speaking, you double the amount of cached history.</p>
-      <p>A bounded-memory model does not keep one record per old token. It compresses history into a fixed-size state matrix. The state changes every token, but its dimensions do not grow with the sequence.</p>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="bounded-memory">
+      <div class="eyebrow">1. Memory model</div>
+      <h2 class="text-2xl font-bold mt-2">Growing KV cache versus fixed recurrent state</h2>
+      <p>In causal attention, a token produces a key and a value. Future queries may attend to them, so inference retains those vectors. If the context doubles, the number of stored key/value vectors also doubles.</p>
+      <p>A bounded-memory model instead compresses prior tokens into a state whose dimensions are fixed by the architecture. The state can change indefinitely without becoming larger.</p>
       <div class="grid md:grid-cols-2 gap-4 mt-5">
-        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-5">
-          <div class="text-red-300 font-semibold">Dense attention</div>
-          <p class="text-sm text-slate-400 mt-2">Store past keys and values. A new query can look back at them directly.</p>
-          <div class="formula mt-3">memory ∝ context length</div>
+        <div class="rounded-xl border border-rose-900/60 bg-rose-950/20 p-5">
+          <div class="text-rose-300 font-semibold">Dense causal attention</div>
+          <p class="text-sm text-slate-400 mt-2">Retain one key/value record for every cached token.</p>
+          <div class="formula mt-3">KV memory ∝ context length</div>
         </div>
         <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
           <div class="text-emerald-300 font-semibold">Bounded recurrent memory</div>
-          <p class="text-sm text-slate-400 mt-2">Fold old information into a fixed matrix state and query that state.</p>
-          <div class="formula mt-3">memory state size = fixed</div>
+          <p class="text-sm text-slate-400 mt-2">Fold token history into a fixed matrix and query that matrix.</p>
+          <div class="formula mt-3">state dimensions = fixed</div>
         </div>
       </div>
-      <div class="callout mt-5" style="border-left-color:var(--green)">
-        <strong>The trade-off:</strong> dense attention keeps detailed token-level history but pays memory and bandwidth as context grows. A bounded state caps the memory footprint, but every write must decide what to preserve, overwrite, or forget.
-      </div>
+      <p>The trade-off is compression. Dense attention retains token-level history explicitly. A bounded state must decide what to preserve, overwrite, or forget.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="delta-rule">
-      <div class="eyebrow">2. The basic writer</div>
-      <h2 class="text-2xl font-bold mt-2">DeltaNet treats the state like a tiny online associative memory</h2>
-      <p>Let <span class="kbd">S</span> be the state matrix. For one token, let <span class="kbd">k</span> be the direction used to address memory, <span class="kbd">v</span> the value we want that key to retrieve, <span class="kbd">β</span> the write strength, and <span class="kbd">q</span> the query used to read the state.</p>
-      <div class="formula">S ← S + β(v − Sk)kᵀ<br>o = Sq</div>
-      <p>The term <span class="kbd">Sk</span> is what memory currently returns for key <span class="kbd">k</span>. The error <span class="kbd">v − Sk</span> says how wrong that association is. The update writes back a correction along <span class="kbd">k</span>. This is the delta rule used as a fast-weight memory.</p>
-      <p><strong>Write-before-read</strong> simply means the current token updates the state first and then reads from the updated state. Nothing mystical is hiding in that phrase.</p>
-      <p>The important systems property is that this update is <strong>affine in the state</strong>: after the token-derived quantities are known, the old state appears only linearly. That is what allows several token updates to be combined exactly into a chunk.</p>
+      <div class="eyebrow">2. Delta rule</div>
+      <h2 class="text-2xl font-bold mt-2">DeltaNet stores key-value associations in a matrix</h2>
+      <p>Let <span class="kbd">S ∈ R<sup>dᵥ×dₖ</sup></span> be the recurrent memory. For one token:</p>
+      <ul class="list-disc pl-6 text-slate-400 space-y-1">
+        <li><span class="kbd">k ∈ R<sup>dₖ</sup></span> is the key used to address memory.</li>
+        <li><span class="kbd">v ∈ R<sup>dᵥ</sup></span> is the value that key should retrieve.</li>
+        <li><span class="kbd">β</span> is a learned write strength.</li>
+        <li><span class="kbd">q ∈ R<sup>dₖ</sup></span> is the query used to read memory.</li>
+      </ul>
+      <div class="formula mt-4">S ← S + β(v − Sk)kᵀ<br>o = Sq</div>
+      <p><span class="kbd">Sk</span> is the value currently associated with <span class="kbd">k</span>. The error <span class="kbd">v − Sk</span> measures how far that association is from the desired value. The outer product with <span class="kbd">kᵀ</span> writes a correction back into the state.</p>
+      <p>When the current token updates the state before its query reads it, the implementation is <strong>write-before-read</strong>.</p>
+      <p>The update can also be written as:</p>
+      <div class="formula">S ← S(I − βkkᵀ) + βvkᵀ</div>
+      <p>This form exposes the identity-minus-rank-one transition that connects DeltaNet to the <a href="wy_ut.html">WY/UT blocking machinery</a>.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="models">
-      <div class="eyebrow">3. What changes between the models</div>
-      <h2 class="text-2xl font-bold mt-2">Same fixed-state idea, different write rules</h2>
-      <div class="grid md:grid-cols-3 gap-4 mt-5">
+      <div class="eyebrow">3. Model differences</div>
+      <h2 class="text-2xl font-bold mt-2">Four ways to update a bounded state</h2>
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
         <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
           <div class="text-emerald-300 font-semibold">DeltaNet</div>
-          <p class="text-sm text-slate-400 mt-2">Uses the delta-rule correction above. The state update is affine, so a chunk can be evaluated exactly with the classical WY/UT-style reorganization.</p>
+          <p class="text-sm text-slate-400 mt-2">Uses the delta-rule update above. After <span class="kbd">k</span>, <span class="kbd">v</span>, and <span class="kbd">β</span> are known, the old state appears only linearly.</p>
         </div>
         <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
           <div class="text-emerald-300 font-semibold">Gated DeltaNet</div>
-          <p class="text-sm text-slate-400 mt-2">Adds a learned decay <span class="kbd">α</span> so old memory can fade:</p>
+          <p class="text-sm text-slate-400 mt-2">Adds a learned retention factor <span class="kbd">α</span> so old state can decay:</p>
           <div class="formula mt-3">S ← αS + β(v − αSk)kᵀ</div>
-          <p class="text-sm text-slate-400 mt-3">Still affine in <span class="kbd">S</span>, so it keeps the exact chunking property.</p>
+          <p class="text-sm text-slate-400 mt-3">The update remains affine in <span class="kbd">S</span>.</p>
+        </div>
+        <div class="rounded-xl border border-blue-900/60 bg-blue-950/20 p-5">
+          <div class="text-blue-300 font-semibold">GatedDeltaProduct</div>
+          <p class="text-sm text-slate-400 mt-2">Uses several structured Householder-like updates per token. This increases overwrite capacity while keeping the transition affine in the recurrent state.</p>
         </div>
         <div class="rounded-xl border border-violet-900/60 bg-violet-950/20 p-5">
           <div class="text-violet-300 font-semibold">Trellis</div>
-          <p class="text-sm text-slate-400 mt-2">Turns the inner memory write into a nonlinear gradient step. If <span class="kbd">z = Mw</span>, it transforms <span class="kbd">z</span> through a nonlinear <span class="kbd">φ</span> and writes using the gradient of that inner objective.</p>
-          <p class="text-sm text-slate-400 mt-3">That extra state-dependent nonlinearity is the important difference. It changes both the math of chunking and the training gradients.</p>
+          <p class="text-sm text-slate-400 mt-2">Uses a learned nonlinear compression objective inside the memory update. Let <span class="kbd">M ∈ R<sup>m×d</sup></span> be memory, <span class="kbd">k ∈ R<sup>d</sup></span> an input key, and <span class="kbd">a ∈ R<sup>m</sup></span> the target memory code:</p>
+          <div class="formula mt-3">L = ‖φ(Mk) − a‖²</div>
+          <p class="text-sm text-slate-400 mt-3">With <span class="kbd">z = Mk</span> and <span class="kbd">u = Jφ(z)ᵀ(φ(z) − a)</span>, one write has the form:</p>
+          <div class="formula mt-3">M ← βM − γukᵀ</div>
+          <p class="text-sm text-slate-400 mt-3"><span class="kbd">φ</span> is the compression nonlinearity, <span class="kbd">Jφ</span> its Jacobian, <span class="kbd">β</span> the retention gate, and <span class="kbd">γ</span> the inner step size. Because <span class="kbd">u</span> depends nonlinearly on <span class="kbd">M</span>, this update is not affine in the state.</p>
         </div>
       </div>
-      <p>GatedDeltaProduct takes a different route: it stays affine in the state but uses multiple structured Householder-like steps per token to make overwrite operations more expressive.</p>
+      <p><strong>Affine in the state</strong> means that, after token-derived coefficients are fixed, the old state is only multiplied, scaled, and added to other terms. No nonlinear function of the current state appears in those coefficients.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="matched">
-      <div class="eyebrow">4. The comparison that matters most</div>
-      <h2 class="text-2xl font-bold mt-2">Matched A100 run: Gated DeltaNet wins</h2>
-      <p>This run used one protocol on one A100 pod: C4, model width 256, four layers, sequence length 2048, about 352M training tokens, fp32 master weights with bf16 autocast, FLA reference DeltaNet and Gated DeltaNet layers, and the fused Trellis Triton kernel.</p>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="terms">
+      <div class="eyebrow">4. Datasets, library, and metrics</div>
+      <h2 class="text-2xl font-bold mt-2">Terms used in the results</h2>
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[680px]">
-          <thead><tr><th class="text-left py-3 pr-5">Model</th><th class="text-left py-3 pr-5">Val PPL ↓</th><th class="text-left py-3 pr-5">Approx. non-embedding params</th><th class="text-left py-3">Read</th></tr></thead>
+        <table class="w-full text-sm min-w-[760px]">
+          <thead><tr><th class="text-left py-3 pr-5">Term</th><th class="text-left py-3">Meaning</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5"><strong class="good">Gated DeltaNet</strong></td><td class="py-4 pr-5">78.49</td><td class="py-4 pr-5">4.48M</td><td class="py-4">best bounded-state result</td></tr>
-            <tr><td class="py-4 pr-5"><strong class="good">DeltaNet</strong></td><td class="py-4 pr-5">89.77</td><td class="py-4 pr-5">4.21M</td><td class="py-4">second</td></tr>
-            <tr><td class="py-4 pr-5"><strong class="text-violet-300">Trellis</strong></td><td class="py-4 pr-5">152.54</td><td class="py-4 pr-5">4.74M</td><td class="py-4">better than dense, well behind the linear-state writers</td></tr>
-            <tr><td class="py-4 pr-5"><strong class="bad">dense Transformer</strong></td><td class="py-4 pr-5">224.89</td><td class="py-4 pr-5">4.72M</td><td class="py-4">worst in this run</td></tr>
+            <tr><td class="py-4 pr-5"><strong>C4</strong></td><td class="py-4"><strong>Colossal Clean Crawled Corpus</strong>, a large cleaned web-text dataset derived from Common Crawl and widely used for language-model training.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>PG19</strong></td><td class="py-4">A long-document language-modeling dataset built from Project Gutenberg books. It is useful here because documents are much longer than ordinary short web samples.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>FLA</strong></td><td class="py-4"><strong>Flash Linear Attention</strong>, the library supplying the reference DeltaNet, Gated DeltaNet, and GatedDeltaProduct implementations used in the matched comparisons.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>PPL</strong></td><td class="py-4"><strong>Perplexity</strong>. Lower is better. It is the exponential of the mean token negative log-likelihood.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>NLL</strong></td><td class="py-4"><strong>Negative log-likelihood</strong>. Here it is reported in natural-log units, or nats, per token. Lower is better.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Trellis is not “basically dense” here. It clearly beats the dense baseline. But it still loses by a large margin to both affine-state models despite carrying slightly more non-embedding parameters than either one. At matched tokens, the gap is about +0.53 nat/token to DeltaNet and +0.66 to Gated DeltaNet.</p>
-      <div class="callout mt-5" style="border-left-color:var(--green)">
-        <strong>Why this run carries the verdict:</strong> the baselines are the FLA reference layers, the hardware and training protocol are shared, and the models are close enough in size that the comparison is not hiding behind a toy baseline.
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="a100-anchor">
+      <div class="eyebrow">5. Matched A100 anchor</div>
+      <h2 class="text-2xl font-bold mt-2">Gated DeltaNet leads the first-order Trellis comparison</h2>
+      <p>The A100 anchor used C4, model width 256, four layers, sequence length 2048, about 352M training tokens, fp32 master weights with bf16 autocast, FLA reference linear-attention layers, and the fused Trellis Triton kernel.</p>
+      <p>The Trellis arm used a <strong>chunk-start-stale forward</strong>: within each chunk, the nonlinear inner gradient is evaluated from the state at the start of the chunk rather than from the running token-by-token state. Its outer gradient was <strong>first-order</strong>, meaning it did not differentiate through the inner gradient computation. The FLA affine baselines use their exact chunked recurrences.</p>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[780px]">
+          <thead><tr><th class="text-left py-3 pr-5">Model</th><th class="text-left py-3 pr-5">Val PPL ↓</th><th class="text-left py-3 pr-5">Approx. non-embedding params</th><th class="text-left py-3">Training semantics</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-4 pr-5"><strong class="good">Gated DeltaNet</strong></td><td class="py-4 pr-5">78.49</td><td class="py-4 pr-5">4.48M</td><td class="py-4">exact affine recurrence</td></tr>
+            <tr><td class="py-4 pr-5"><strong class="good">DeltaNet</strong></td><td class="py-4 pr-5">89.77</td><td class="py-4 pr-5">4.21M</td><td class="py-4">exact affine recurrence</td></tr>
+            <tr><td class="py-4 pr-5"><strong class="text-violet-300">Trellis</strong></td><td class="py-4 pr-5">152.54</td><td class="py-4 pr-5">4.74M</td><td class="py-4">chunk-start-stale forward, first-order outer gradient</td></tr>
+            <tr><td class="py-4 pr-5">dense Transformer</td><td class="py-4 pr-5">224.89</td><td class="py-4 pr-5">4.72M</td><td class="py-4">dense causal attention</td></tr>
+          </tbody>
+        </table>
       </div>
+      <p>This run establishes the ordering for those implementations and semantics. It does not compare Gated DeltaNet against full-bilevel Trellis at a 352M-token budget.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="training-semantics">
+      <div class="eyebrow">6. Trellis training semantics</div>
+      <h2 class="text-2xl font-bold mt-2">The forward approximation and the outer gradient are independent choices</h2>
+      <h3 class="text-xl font-semibold mt-6">Chunk-start forward</h3>
+      <p>The Trellis paper divides the sequence into chunks and evaluates all nonlinear inner gradients in a chunk using the state at the beginning of that chunk. The paper explicitly presents this as an approximation that locally linearizes the nonlinear recurrence and enables a parallel scan.</p>
+      <p>The exact running-state recurrence instead recomputes each token's nonlinear write from the state produced by all earlier tokens. That path is sequential inside the chunk.</p>
+
+      <h3 class="text-xl font-semibold mt-7">First-order versus full bilevel outer gradient</h3>
+      <p>Trellis writes memory by taking a gradient of an inner objective. Training the surrounding language model can either differentiate through that inner gradient or treat the inner correction as a fixed value.</p>
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-5">
+          <div class="font-semibold text-slate-200">First-order</div>
+          <p class="text-sm text-slate-400 mt-2">Detach the state used to form the inner gradient. The forward memory update is unchanged, but the higher-order derivative path is removed.</p>
+        </div>
+        <div class="rounded-xl border border-violet-900/60 bg-violet-950/20 p-5">
+          <div class="font-semibold text-violet-300">Full bilevel</div>
+          <p class="text-sm text-slate-400 mt-2">Differentiate through the inner gradient. This introduces second-derivative terms, commonly evaluated as Hessian-vector products.</p>
+        </div>
+      </div>
+      <p>The two modes can therefore produce identical forward values and different parameter gradients.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="c4-semantics">
+      <div class="eyebrow">7. Semantics-controlled C4 result</div>
+      <h2 class="text-2xl font-bold mt-2">Gated DeltaNet and identity-bilevel Trellis tie at 20M tokens; Gated DeltaNet leads at 40M</h2>
+      <p>These runs use model width 256, four layers, sequence length 2048, three paired seeds, the same packed C4 stream, and explicit Trellis forward/gradient semantics. For the Trellis write comparison, the inter-pass activation is held fixed while the compression write changes.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Write nonlinearity depends on gradient semantics</h3>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[720px]">
+          <thead><tr><th class="text-left py-3 pr-5">Trellis write</th><th class="text-left py-3 pr-5">Outer gradient</th><th class="text-left py-3 pr-5">20M result</th><th class="text-left py-3">Stability</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-4 pr-5">identity / linear</td><td class="py-4 pr-5">first-order</td><td class="py-4 pr-5">~253.2 PPL across clean completions</td><td class="py-4">3 clean completions / 4 attempted seeds</td></tr>
+            <tr><td class="py-4 pr-5">SiLU nonlinear</td><td class="py-4 pr-5">first-order</td><td class="py-4 pr-5">251.6 PPL</td><td class="py-4">3/3</td></tr>
+            <tr><td class="py-4 pr-5"><strong>identity / linear</strong></td><td class="py-4 pr-5"><strong>full bilevel</strong></td><td class="py-4 pr-5"><strong>244.5 PPL</strong></td><td class="py-4"><strong>3/3</strong></td></tr>
+            <tr><td class="py-4 pr-5">SiLU nonlinear</td><td class="py-4 pr-5">full bilevel</td><td class="py-4 pr-5">no stable three-seed mean</td><td class="py-4"><span class="bad">1/3 completed healthily</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Under first-order training, SiLU is slightly better than the identity write. Under full-bilevel training, the identity write improves substantially while full-strength SiLU becomes unstable. The write cannot be ranked without stating the outer-gradient semantics.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Budget extension</h3>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[720px]">
+          <thead><tr><th class="text-left py-3 pr-5">Arm</th><th class="text-left py-3 pr-5">20M mean NLL ↓</th><th class="text-left py-3 pr-5">40M mean NLL ↓</th><th class="text-left py-3">40M PPL ↓</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-4 pr-5"><strong class="good">Gated DeltaNet</strong></td><td class="py-4 pr-5">5.4965</td><td class="py-4 pr-5"><strong>5.1033</strong></td><td class="py-4"><strong>164.6</strong></td></tr>
+            <tr><td class="py-4 pr-5">identity-bilevel Trellis</td><td class="py-4 pr-5">5.4981</td><td class="py-4 pr-5">5.1132</td><td class="py-4">166.2</td></tr>
+            <tr><td class="py-4 pr-5">SiLU first-order Trellis</td><td class="py-4 pr-5">5.5300</td><td class="py-4 pr-5">5.1596</td><td class="py-4">174.1</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>At 20M tokens, Gated DeltaNet and identity-bilevel Trellis differ by only 0.0016 nat/token on mean NLL. At 40M, the Gated DeltaNet lead grows to 0.0099 nat/token. One seed still slightly favors identity-bilevel, but all three paired seed gaps move toward Gated DeltaNet as the budget increases.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Tempering the higher-order gradient</h3>
+      <p>A tempered Trellis variant scales only the higher-order gradient path:</p>
+      <div class="formula">u = u_detached + ρ(u_live − u_detached)</div>
+      <p>The forward value of <span class="kbd">u</span> is unchanged. With <span class="kbd">ρ = 0.5</span>, all three seeds completed, where full-strength <span class="kbd">ρ = 1</span> SiLU lost two of three seeds. The tempered arm beat its paired first-order SiLU run in all three seeds by about 0.006 nat/token on average. The gain is small; the main result is the stability recovery.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="pg19">
-      <div class="eyebrow">5. Why bounded memory is still interesting</div>
-      <h2 class="text-2xl font-bold mt-2">Trellis beat matched dense attention at every PG19 context length we tested</h2>
-      <p>The earlier PG19 runs answer a narrower question: does a bounded state help relative to the matched dense baseline as context grows? In those runs, yes.</p>
+      <div class="eyebrow">8. Long-document result</div>
+      <h2 class="text-2xl font-bold mt-2">PG19 shows a long-context advantage over the matched dense baseline</h2>
+      <p>The PG19 comparison uses three seeds and held-out perplexity. These runs predate the later bilevel study: Trellis uses a first-order outer gradient. The operator column states whether the forward uses the exact running state or the chunk-start approximation.</p>
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm">
-          <thead><tr><th class="text-left py-3 pr-5">Context</th><th class="text-left py-3 pr-5">Trellis PPL</th><th class="text-left py-3 pr-5">Dense PPL</th><th class="text-left py-3">Trellis advantage</th></tr></thead>
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-5">Context</th><th class="text-left py-3 pr-5">Trellis forward</th><th class="text-left py-3 pr-5">Trellis PPL</th><th class="text-left py-3 pr-5">Dense PPL</th><th class="text-left py-3">Read</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-3 pr-5">512</td><td class="py-3 pr-5">1542</td><td class="py-3 pr-5">1581</td><td class="py-3">2.5%</td></tr>
-            <tr><td class="py-3 pr-5">1024</td><td class="py-3 pr-5">1517</td><td class="py-3 pr-5">1635</td><td class="py-3">7.3%</td></tr>
-            <tr><td class="py-3 pr-5">2048</td><td class="py-3 pr-5">585</td><td class="py-3 pr-5">621</td><td class="py-3">5.9%</td></tr>
-            <tr><td class="py-3 pr-5">4096</td><td class="py-3 pr-5">546</td><td class="py-3 pr-5">622</td><td class="py-3">12.1%</td></tr>
+            <tr><td class="py-4 pr-5">512</td><td class="py-4 pr-5">running-state</td><td class="py-4 pr-5">1542 ± 31</td><td class="py-4 pr-5">1581 ± 131</td><td class="py-4">tie; dense variance is large</td></tr>
+            <tr><td class="py-4 pr-5">1024</td><td class="py-4 pr-5">chunk-start, C=16</td><td class="py-4 pr-5">1359 ± 6</td><td class="py-4 pr-5">1665 ± 114</td><td class="py-4">Trellis lower</td></tr>
+            <tr><td class="py-4 pr-5">1024</td><td class="py-4 pr-5">running-state confirmation</td><td class="py-4 pr-5">1517 ± 91</td><td class="py-4 pr-5">1635 ± 69</td><td class="py-4">win holds, high variance</td></tr>
+            <tr><td class="py-4 pr-5">2048</td><td class="py-4 pr-5">chunk-start, C=16</td><td class="py-4 pr-5">534 ± 31</td><td class="py-4 pr-5">616 ± 11</td><td class="py-4"><strong>clean non-overlap</strong></td></tr>
+            <tr><td class="py-4 pr-5">2048</td><td class="py-4 pr-5">running-state confirmation</td><td class="py-4 pr-5">585 ± 9</td><td class="py-4 pr-5">621 ± 11</td><td class="py-4">win holds</td></tr>
+            <tr><td class="py-4 pr-5">4096</td><td class="py-4 pr-5">chunk-start, C=16</td><td class="py-4 pr-5">546 ± 1.5</td><td class="py-4 pr-5">622 ± 5</td><td class="py-4"><strong>clean non-overlap</strong></td></tr>
           </tbody>
         </table>
       </div>
-      <p>Do not use this table to rank Trellis against Gated DeltaNet. These were earlier hand-rolled baselines. The matched A100 run above is the family comparison. This table only supports the dense-vs-bounded direction.</p>
+      <p>The 512-token cell is not evidence for a short-context win. The clear signal appears at longer contexts, especially 2048 and 4096. Running-state confirmations at 1024 and 2048 show that the dense-beating direction is not created solely by the chunk-start approximation.</p>
+      <p>On the same PG19 harness, Gated DeltaNet remains substantially stronger than Trellis: at context 1024, Gated DeltaNet reaches 1188 PPL versus Trellis 1517 and dense 1635; at 2048, it reaches 423 versus Trellis 585 and dense 621.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="kernels">
-      <div class="eyebrow">6. Why DeltaNet gets the easy chunking algebra</div>
-      <h2 class="text-2xl font-bold mt-2">“Exact chunk parallel” means the chunk gives the same answer as token-by-token execution</h2>
-      <p>A <strong>chunk</strong> is just a short consecutive group of tokens. If every token update has the form</p>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="chunking">
+      <div class="eyebrow">9. Why affine updates chunk exactly</div>
+      <h2 class="text-2xl font-bold mt-2">DeltaNet composes exact state maps; Trellis linearizes its nonlinear write</h2>
+      <p>For a token whose state update has the form</p>
       <div class="formula">S' = SA + B</div>
-      <p>with <span class="kbd">A</span> and <span class="kbd">B</span> fixed after the token quantities are computed, then several updates compose into another affine update. The whole chunk can be summarized without changing the answer.</p>
-      <p>DeltaNet and Gated DeltaNet have exactly this property. Their rank-one transitions can be collected using the same family of algebra described on the <a href="wy_ut.html">WY/UT page</a>: a compact low-rank representation plus a small triangular dependency solve turns many token steps into matrix multiplies.</p>
-      <p>Trellis's normalized-SiLU write is different. Its Jacobian depends on the current state through <span class="kbd">z = Mw</span>. Once the coefficients of the next update depend nonlinearly on the state being updated, the original-state WY/UT factorization is no longer an exact representation of the recurrence.</p>
+      <p>with <span class="kbd">A</span> and <span class="kbd">B</span> fixed after the token quantities are known, the update is affine in <span class="kbd">S</span>. Composing two such updates gives another affine update, and the same remains true for an entire chunk.</p>
+      <p>DeltaNet and Gated DeltaNet have this property. Their rank-one transitions can be collected into compact factors and a triangular dependency solve, then applied with matrix multiplications. The historical route from Householder reflectors to this <a href="wy_ut.html">WY/UT representation</a> is described separately.</p>
+      <p>Trellis does not satisfy the same condition because <span class="kbd">u = Jφ(Mk)ᵀ(φ(Mk) − a)</span> changes nonlinearly with the running memory <span class="kbd">M</span>. The paper therefore evaluates those nonlinear gradients from the state at the beginning of each chunk, making the within-chunk recurrence locally linear and parallelizable by scan.</p>
       <div class="callout mt-5" style="border-left-color:var(--amber)">
-        <strong>Careful claim:</strong> this does not prove that every nonlinear recurrence is impossible to parallelize exactly. It says the particular fixed finite WY/UT factorization used by the affine-state models no longer applies. Special nonlinearities can have other representations.
+        <strong>Scope of the claim:</strong> the standard fixed finite WY/UT factorization applies exactly to the affine-state recurrence and does not represent Trellis's running-state nonlinear recurrence exactly. This is not a theorem that every nonlinear recurrence lacks every possible exact parallel algorithm.
       </div>
-
-      <h3 class="text-xl font-semibold mt-7">The fused kernel fixes Python overhead, not the algebra</h3>
-      <p>The first Trellis implementation was mostly paying for a Python launch-bound loop. A fused Triton kernel keeps the per-head state tile resident, performs the LayerNorm-SiLU VJP in the program, and uses a hand-derived backward.</p>
-      <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[720px]">
-          <thead><tr><th class="text-left py-3 pr-5">Mixer</th><th class="text-left py-3 pr-5">A100 fwd+bwd</th><th class="text-left py-3">Relative interpretation</th></tr></thead>
-          <tbody class="text-slate-400">
-            <tr><td class="py-3 pr-5">FLA Gated DeltaNet</td><td class="py-3 pr-5">3891k tok/s</td><td class="py-3">fastest measured</td></tr>
-            <tr><td class="py-3 pr-5">FLA DeltaNet</td><td class="py-3 pr-5">3315k tok/s</td><td class="py-3">faster than dense</td></tr>
-            <tr><td class="py-3 pr-5">dense MHA</td><td class="py-3 pr-5">2941k tok/s</td><td class="py-3">reference point</td></tr>
-            <tr><td class="py-3 pr-5">Trellis fused Triton</td><td class="py-3 pr-5">770k tok/s</td><td class="py-3">about 4× below Gated DeltaNet</td></tr>
-            <tr><td class="py-3 pr-5">Trellis Python</td><td class="py-3 pr-5">121k tok/s</td><td class="py-3">launch-bound implementation</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>The fused path raises the full mixer from about 120.7k to 769.8k tok/s, a 6.4× gain on A100. The same kernel delivered an 8–12× improvement on the W7900. That makes the experiment practical, but the remaining gap is a measured implementation gap, not a proven lower bound for all nonlinear memories.</p>
-      <p>At decode, the trade changes again. A fixed state does not grow with context, but it is still a dense read-modify-write object every token. Whether it beats a modern GQA KV cache depends on state size, precision, batch, context, and hardware.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="strategies">
-      <div class="eyebrow">7. Trellis training has two separate choices</div>
-      <h2 class="text-2xl font-bold mt-2">Forward approximation and training gradient are not the same knob</h2>
-      <p>This distinction is the most important correction from the final audit. The old page mixed two decisions together.</p>
-
-      <h3 class="text-xl font-semibold mt-7">Choice A: what state does the within-chunk forward use?</h3>
-      <p>The affine models can combine the <em>true</em> token-by-token recurrence exactly. Trellis cannot use the same factorization for its nonlinear write, so the paper freezes the state at the start of the chunk. With that state fixed, the local write response becomes linear enough to evaluate in parallel with a scan.</p>
-      <p>That gives chunk-parallel execution, but it computes a <strong>chunk-start linearization</strong> of the nonlinear recurrence rather than the exact running-state recurrence. The approximation error depends on how far the state moves inside the chunk and how nonlinear the write is.</p>
-
-      <h3 class="text-xl font-semibold mt-7">Choice B: does the outer loss differentiate through the inner gradient step?</h3>
-      <p>Trellis writes memory by taking a gradient of an inner objective. The outer language-model loss can either differentiate through that gradient or treat it as a fixed value.</p>
-      <div class="grid md:grid-cols-2 gap-4 mt-5">
-        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-5">
-          <div class="text-slate-200 font-semibold">First-order</div>
-          <p class="text-sm text-slate-400 mt-2">Detach the state used to form the inner correction. Cheaper. The forward values are unchanged, but the second-derivative path is removed.</p>
-        </div>
-        <div class="rounded-xl border border-violet-900/60 bg-violet-950/20 p-5">
-          <div class="text-violet-300 font-semibold">Full bilevel</div>
-          <p class="text-sm text-slate-400 mt-2">Differentiate through the inner gradient step. This keeps Hessian-vector-product terms. Same forward values; different parameter gradients.</p>
-        </div>
-      </div>
-      <p>A dispatcher bug originally made the configuration claim “bilevel” while the chunked backends were actually training first-order. Because the forward values are identical, ordinary forward checks did not expose it. The modes are now explicit and tested for equal forwards but different gradients.</p>
-
-      <h3 class="text-xl font-semibold mt-7">The final factorial is why “nonlinear write bad” was too simple</h3>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="throughput">
+      <div class="eyebrow">10. Training throughput</div>
+      <h2 class="text-2xl font-bold mt-2">The fused Trellis kernel removes launch overhead but remains slower than the affine kernels</h2>
+      <p>Mixer-level forward-plus-backward throughput on an NVIDIA A100 with batch 8, sequence length 2048, model width 256, and four heads:</p>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[700px]">
-          <thead><tr><th class="text-left py-3 pr-5">Write</th><th class="text-left py-3 pr-5">First-order</th><th class="text-left py-3">Full bilevel</th></tr></thead>
+          <thead><tr><th class="text-left py-3 pr-5">Mixer</th><th class="text-left py-3 pr-5">Tokens/s</th><th class="text-left py-3">Interpretation</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5"><strong>identity / linear write</strong></td><td class="py-4 pr-5">~253 PPL, 3/4 clean</td><td class="py-4">244.5, 3/3 seeds, best stable result</td></tr>
-            <tr><td class="py-4 pr-5"><strong>SiLU nonlinear write</strong></td><td class="py-4 pr-5">251.6, 3/3 seeds</td><td class="py-4">only 1/3 seeds completed at full higher-order strength</td></tr>
+            <tr><td class="py-4 pr-5"><strong class="good">FLA Gated DeltaNet</strong></td><td class="py-4 pr-5">3.891M</td><td class="py-4">fastest measured</td></tr>
+            <tr><td class="py-4 pr-5">FLA DeltaNet</td><td class="py-4 pr-5">3.315M</td><td class="py-4">faster than dense attention in this mixer benchmark</td></tr>
+            <tr><td class="py-4 pr-5">dense multi-head attention</td><td class="py-4 pr-5">2.941M</td><td class="py-4">dense reference</td></tr>
+            <tr><td class="py-4 pr-5">Trellis fused Triton</td><td class="py-4 pr-5">0.770M</td><td class="py-4">about 4× below Gated DeltaNet</td></tr>
+            <tr><td class="py-4 pr-5">Trellis Python</td><td class="py-4 pr-5">0.121M</td><td class="py-4">launch-bound implementation</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Under first-order training, SiLU is slightly ahead. Under the full bilevel objective, the linear write is the best stable arm and the full-strength SiLU higher-order gradients are unstable. So there is no honest write ranking without stating the gradient semantics.</p>
-      <p>A tempered version scales only the higher-order gradient path:</p>
-      <div class="formula">u = u_detached + ρ(u_live − u_detached)</div>
-      <p>The forward update is unchanged. With <span class="kbd">ρ = 0.5</span>, every seed completed and the result beat first-order training by a small, consistent margin.</p>
-    </section>
-
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="paper">
-      <div class="eyebrow">8. What the Trellis paper reports</div>
-      <h2 class="text-2xl font-bold mt-2">The paper wins at scales we did not reproduce</h2>
-      <p>The paper does compare Trellis and Gated DeltaNet below 790M. An earlier version of this page got that wrong by confusing the 125M component-ablation table with the separate head-to-head table.</p>
-      <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[760px]">
-          <thead><tr><th class="text-left py-3 pr-5">Published setting</th><th class="text-left py-3 pr-5">Trellis</th><th class="text-left py-3 pr-5">Gated DeltaNet</th><th class="text-left py-3">Result</th></tr></thead>
-          <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5">125M, Pile-2k head-to-head</td><td class="py-4 pr-5">10.87 PPL</td><td class="py-4 pr-5">11.31</td><td class="py-4">Trellis ahead</td></tr>
-            <tr><td class="py-4 pr-5">790M / 30B, C4</td><td class="py-4 pr-5">20.28</td><td class="py-4 pr-5">21.40</td><td class="py-4">Trellis ahead by 1.12 PPL</td></tr>
-            <tr><td class="py-4 pr-5">1B, RULER / S-NIAH</td><td class="py-4 pr-5">79.8</td><td class="py-4 pr-5">75.8</td><td class="py-4">Trellis ahead on recall</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>The separate 125M component ablation reports Trellis 10.87, no chunking 10.75, no forget gate 11.28, TTT 11.44, DeltaNet 11.58, and a linear-<span class="kbd">φ</span> write with the inter-pass map held nonlinear at 11.65. That last row is a clean write-only ablation in the paper: linearizing the write costs about 0.78 PPL there.</p>
-      <p>Our largest faithful family comparison is nowhere near the paper's 790M / 30B regime. The correct statement is therefore: <strong>we found no Trellis advantage at our reachable scale; the paper reports one at larger scale; we did not test whether that crossover is real.</strong></p>
-    </section>
-
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="write-control">
-      <div class="eyebrow">9. The write ablations</div>
-      <h2 class="text-2xl font-bold mt-2">The original “2×” control is useful, but it is not a clean write-only experiment</h2>
-      <p>The first control kept the Trellis shell and switched <span class="kbd">φ</span> to identity. At matched learning rate and tokens it reached 127.9 PPL versus 248.4 for the nonlinear arm, nearly a 2× difference.</p>
-      <p>But that old harness tied two activations to one configuration field: the write nonlinearity <span class="kbd">φ</span> and the inter-pass map <span class="kbd">f</span>. Setting <span class="kbd">φ = identity</span> therefore linearized both. It also used the old stale-chunk-16 approximation. So the 2× number is a <strong>joint φ/f control</strong>, not an isolated measurement of the write.</p>
-      <p>After the two activations were separated, the clean write-only associative-recall test held <span class="kbd">f</span> at LN-SiLU and varied only <span class="kbd">φ</span>. The linear write reached 1.00 recall while the nonlinear write reached 0.62 across three seeds. That supports the direction on this synthetic task. The paper's language-model ablation goes the other way at 125M: nonlinear Trellis beats the linear-write control by 0.78 PPL.</p>
-      <div class="callout mt-5" style="border-left-color:var(--amber)">
-        <strong>So keep the evidence scoped.</strong> The old 2× number shows that the linearized shell was much easier to optimize in that run. The clean recall test favors the linear write. The paper's 125M language-model ablation favors the nonlinear write. The final bilevel factorial says gradient semantics can flip the ranking again.
-      </div>
-      <p>The nonlinear activation also tolerated a much higher learning rate in the original small run. The identity write diverged at 1e-3 and above while the nonlinear version remained trainable, so the nonlinearity was clearly buying optimization stability even when it did not buy lower loss in that experiment.</p>
+      <p>The fused kernel raises Trellis from about 0.121M to 0.770M tokens/s, a 6.4× gain. The remaining gap is a measurement of these implementations, not a lower bound on nonlinear recurrent memory.</p>
+      <p>Decode has a different trade-off. A bounded state does not grow with context, but it is still a dense read-modify-write object every generated token. Its crossover against a grouped-query-attention KV cache depends on state size, precision, batch, context length, and hardware.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="deltaproduct">
-      <div class="eyebrow">10. Another expressivity bet</div>
-      <h2 class="text-2xl font-bold mt-2">GatedDeltaProduct solves overwrite nicely, but Gated DeltaNet still won our C4 pilot</h2>
-      <p>GatedDeltaProduct adds multiple structured Householder-like steps per token while keeping the state transition affine. The extra steps are designed to perform richer overwrite operations without giving up exact chunking.</p>
-      <p>On the synthetic overwrite/binding grid, GatedDeltaProduct-2 scored 1.000 and Gated DeltaNet 0.996. Both solved the task. The interesting question was whether the extra recurrence work helped ordinary language modeling.</p>
-      <p>In the width-matched C4 pilot, model width 512, ten layers, sequence 2048, 20M tokens, three seeds:</p>
+      <div class="eyebrow">11. GatedDeltaProduct</div>
+      <h2 class="text-2xl font-bold mt-2">Extra overwrite machinery does not improve the 20M-token C4 pilot</h2>
+      <p>GatedDeltaProduct-2 uses two structured state micro-steps per token. On the synthetic overwrite/binding test it reaches 1.000 while Gated DeltaNet reaches 0.996, so both solve the intended overwrite task.</p>
+      <p>The language-model pilot uses C4, model width 512, ten layers, sequence length 2048, 20M tokens, and three seeds. It is width-matched rather than parameter-matched: GatedDeltaProduct-2 has about 49.9M parameters versus 44.7M for Gated DeltaNet and performs more recurrent work per token.</p>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[700px]">
           <thead><tr><th class="text-left py-3 pr-5">Model</th><th class="text-left py-3 pr-5">Val PPL ↓</th><th class="text-left py-3">Notes</th></tr></thead>
           <tbody class="text-slate-400">
             <tr><td class="py-4 pr-5"><strong class="good">Gated DeltaNet</strong></td><td class="py-4 pr-5">215.72</td><td class="py-4">44.7M params</td></tr>
-            <tr><td class="py-4 pr-5"><strong class="text-violet-300">GatedDeltaProduct-2</strong></td><td class="py-4 pr-5">224.39</td><td class="py-4">49.9M params, about 12% larger, two micro-steps/token</td></tr>
-            <tr><td class="py-4 pr-5">DeltaNet</td><td class="py-4 pr-5">254.50</td><td class="py-4">reference affine baseline</td></tr>
-            <tr><td class="py-4 pr-5">dense Transformer</td><td class="py-4 pr-5">377.91</td><td class="py-4">dense baseline</td></tr>
+            <tr><td class="py-4 pr-5">GatedDeltaProduct-2</td><td class="py-4 pr-5">224.39</td><td class="py-4">49.9M params; two micro-steps/token</td></tr>
+            <tr><td class="py-4 pr-5">DeltaNet</td><td class="py-4 pr-5">254.50</td><td class="py-4">FLA reference</td></tr>
+            <tr><td class="py-4 pr-5">dense Transformer</td><td class="py-4 pr-5">377.91</td><td class="py-4">dense reference</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The Gated DeltaNet advantage over GatedDeltaProduct-2 is about 0.039 nat/token, roughly 4% in PPL, across the three seed sets. This is an early-training pilot, not a converged verdict. The DeltaProduct paper reports a thin advantage at much larger scale under a compute-favored comparison, and its parameter-matched control shrinks to about 0.14 PPL. Our result says only that the larger recurrence did not pay off in this pilot.</p>
+      <p>Gated DeltaNet leads GatedDeltaProduct-2 by about 0.039 nat/token in this early-training pilot. This result is specific to this scale and training budget.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="verdict">
-      <div class="eyebrow">11. What we actually concluded</div>
-      <h2 class="text-2xl font-bold mt-2">Close the experiment, keep the useful pieces</h2>
-      <div class="grid md:grid-cols-2 gap-4 mt-5">
-        <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
-          <div class="text-emerald-300 font-semibold">Keep</div>
-          <ul class="list-disc pl-5 text-sm text-slate-400 space-y-2 mt-3">
-            <li>Bounded memory beat matched dense attention at every PG19 context length tested.</li>
-            <li>Gated DeltaNet is the trusted matched-state baseline for downstream decode and KV work.</li>
-            <li>The fused Trellis kernel is reusable systems work even though the architecture lost the comparison.</li>
-            <li>The WY/UT boundary is useful: affine state updates admit the exact classical chunking route; state-dependent nonlinear writes need something else.</li>
-            <li>The final audit exposed a general lesson: forward semantics and gradient semantics must be tested separately.</li>
-          </ul>
-        </div>
-        <div class="rounded-xl border border-amber-900/60 bg-amber-950/20 p-5">
-          <div class="text-amber-300 font-semibold">Park, do not declare dead</div>
-          <p class="text-sm text-slate-400 mt-3">The paper's 790M / 30B scale claim. We never trained that regime. A faithful 125M / 2.4B reproduction would be the next meaningful scale test, but every cheaper family comparison we ran favored Gated DeltaNet, so the line is closed unless a new reason makes that run worth the cost.</p>
-        </div>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="paper-results">
+      <div class="eyebrow">12. Published Trellis results</div>
+      <h2 class="text-2xl font-bold mt-2">The paper reports Trellis wins at larger scales</h2>
+      <p>The <a href="https://arxiv.org/html/2512.23852">Trellis paper</a> reports results well above the model and token budgets used in this study.</p>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[780px]">
+          <thead><tr><th class="text-left py-3 pr-5">Published setting</th><th class="text-left py-3 pr-5">Trellis</th><th class="text-left py-3 pr-5">Gated DeltaNet</th><th class="text-left py-3">Result</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-4 pr-5">125M / 2.4B tokens, The Pile, 2K context</td><td class="py-4 pr-5">10.87 PPL</td><td class="py-4 pr-5">11.31 PPL</td><td class="py-4">Trellis lower</td></tr>
+            <tr><td class="py-4 pr-5">large C4 LM, 30B tokens</td><td class="py-4 pr-5">20.28 PPL</td><td class="py-4 pr-5">21.40 PPL</td><td class="py-4">Trellis lower</td></tr>
+            <tr><td class="py-4 pr-5">1B, RULER S-NIAH</td><td class="py-4 pr-5">79.8 average</td><td class="py-4 pr-5">75.8 average</td><td class="py-4">Trellis higher</td></tr>
+          </tbody>
+        </table>
       </div>
-      <p><strong>Bottom line:</strong> for the scales and recipes tested here, the best bargain is still a linear delta-rule memory with a good forget gate. Trellis's nonlinear writer did not beat that baseline, and GatedDeltaProduct's extra overwrite machinery did not beat it in our pilot either. That is an empirical conclusion, not a theorem that expressive writes can never win.</p>
+      <p><strong>RULER</strong> is a synthetic long-context evaluation suite. <strong>S-NIAH</strong> denotes its single-needle-in-a-haystack retrieval tasks.</p>
+      <p>There is a small parameter-count inconsistency inside the paper: Table 1 labels the large language-model comparison <strong>790M parameters / 30B tokens</strong>, while the appendix architecture table lists the corresponding large model as <strong>780M / 30B</strong>. The values above are the Table 1 language-model results.</p>
+      <p>The 125M ablation also reports a linear compression write with the inter-pass activation held at LN-SiLU: 11.65 PPL versus 10.87 for full Trellis. At that published scale, the nonlinear write improves language-model perplexity by 0.78.</p>
+      <p>None of the 125M-and-larger published scale claims were reproduced in this study.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="audit">
-      <div class="eyebrow">12. Audit trail</div>
-      <h2 class="text-2xl font-bold mt-2">The conclusions changed as bugs and confounds were removed</h2>
-      <p><strong>2026-08-04:</strong> the correctness audit found that the flag selecting the bilevel objective never reached the chunked backends. Closure-era chunked runs had trained first-order. After explicit state-mode × gradient-mode semantics and higher-order reference checks landed, the write ranking became gradient-dependent. The tempered higher-order path at <span class="kbd">ρ=0.5</span> was stable in all seeds and gave a small consistent gain.</p>
-      <p><strong>2026-07-27:</strong> the write activation <span class="kbd">φ</span> and inter-pass map <span class="kbd">f</span> were decoupled. The earlier 2× identity result was reclassified as a joint φ/f control. A clean write-only associative-recall rerun kept <span class="kbd">f</span> fixed and still put the nonlinear write behind the linear one on that task.</p>
-      <p><strong>2026-07-21:</strong> the page retired the claim that Trellis was compared with Gated DeltaNet only at 790M, removed over-strong statements that nonlinearity proves no exact parallel method can exist, and scoped the DeltaProduct result to its actual pilot regime.</p>
-      <p>Detailed record: <a href="https://github.com/mcgrof/knlp/blob/main/reports/trellis_claim_audit.md">reports/trellis_claim_audit.md</a>.</p>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="conclusion">
+      <div class="eyebrow">13. Result</div>
+      <h2 class="text-2xl font-bold mt-2">Gated DeltaNet is the practical baseline for the measured regime</h2>
+      <p>The experiments support four separate conclusions:</p>
+      <ul class="list-disc pl-6 text-slate-400 space-y-2">
+        <li>Bounded recurrent memory can beat the matched dense Transformer on long-document language modeling; the clean PG19 signal appears at longer contexts, not at 512 tokens.</li>
+        <li>Within the bounded-state family tested here, Gated DeltaNet has the strongest language-model results and the fastest measured training mixer.</li>
+        <li>Trellis's nonlinear write changes both chunking and training-gradient behavior. Full-bilevel gradients help the linear identity write at 20M tokens but destabilize full-strength SiLU; tempering the higher-order path restores stability with a small gain.</li>
+        <li>The published Trellis advantage at 125M parameters and above remains an untested scaling result, not a result contradicted by these smaller experiments.</li>
+      </ul>
     </section>
 
     <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-4">
-      <p><a href="https://github.com/mcgrof/knlp/blob/main/docs/linear-attention.md" class="hover:text-slate-400">Full write-up</a> ·
-         <a href="https://github.com/mcgrof/knlp/tree/main/trellis_lm" class="hover:text-slate-400">trellis_lm/ code</a> ·
+      <p><a href="https://github.com/mcgrof/knlp/tree/main/trellis_lm" class="hover:text-slate-400">trellis_lm/ code</a> ·
          <a href="https://arxiv.org/abs/2512.23852" class="hover:text-slate-400">Trellis paper</a> ·
+         <a href="wy_ut.html" class="hover:text-slate-400">WY/UT background</a> ·
          <a href="index.html" class="hover:text-slate-400">knlp</a></p>
-      <p class="mt-2">Status: line closed on the measured scale; larger-scale Trellis crossover remains parked, not disproven.</p>
     </footer>
   </main>
 </body>
