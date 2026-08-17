@@ -34,6 +34,7 @@
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-300">&larr; Home</a>
       <a href="linear_attention.html" class="px-3 py-1.5 bg-violet-600 rounded text-sm text-white">Linear Attn</a>
+      <a href="least_squares_lineage.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-700 rounded text-sm text-gray-300">Least Squares</a>
       <a href="wy_ut.html" class="px-3 py-1.5 bg-gray-800 hover:bg-indigo-600 rounded text-sm text-gray-300">WY/UT</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm text-gray-300">FP8 Atlas</a>
       <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm text-gray-300">KVSplice</a>
@@ -90,6 +91,9 @@
       </ul>
       <div class="formula mt-4">S ← S + β(v − Sk)kᵀ<br>o = Sq</div>
       <p><span class="kbd">Sk</span> is the value currently associated with <span class="kbd">k</span>. The error <span class="kbd">v − Sk</span> measures how far that association is from the desired value. The outer product with <span class="kbd">kᵀ</span> writes a correction back into the state.</p>
+      <div class="callout mt-5" style="border-left-color:var(--cyan)">
+        <strong>Least-squares lineage.</strong> This correction is the matrix-valued Widrow&ndash;Hoff delta rule: minimize squared retrieval error, then move the memory weights along its gradient. The same least-squares objective also has a batch numerical branch through Householder QR. <a href="least_squares_lineage.html">The least-squares lineage page</a> traces those two branches and shows where they reunite in DeltaNet.
+      </div>
       <p>When the current token updates the state before its query reads it, the implementation is <strong>write-before-read</strong>.</p>
       <p>The update can also be written as:</p>
       <div class="formula">S ← S(I − βkkᵀ) + βvkᵀ</div>
@@ -330,6 +334,7 @@
     <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-4">
       <p><a href="https://github.com/mcgrof/knlp/tree/main/trellis_lm" class="hover:text-slate-400">trellis_lm/ code</a> ·
          <a href="https://arxiv.org/abs/2512.23852" class="hover:text-slate-400">Trellis paper</a> ·
+         <a href="least_squares_lineage.html" class="hover:text-slate-400">least-squares lineage</a> ·
          <a href="wy_ut.html" class="hover:text-slate-400">WY/UT background</a> ·
          <a href="index.html" class="hover:text-slate-400">knlp</a></p>
     </footer>
