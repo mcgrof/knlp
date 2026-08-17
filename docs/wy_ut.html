@@ -39,7 +39,7 @@
   <main class="max-w-5xl mx-auto px-5 py-12">
     <header class="mb-10">
       <div class="eyebrow mb-3">Numerical linear algebra → GPU kernels</div>
-      <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">WY / UT without the 1970s prerequisite course</h1>
+      <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">WY / UT: from Householder reflectors to linear attention</h1>
       <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed">
         Why does a modern linear-attention paper suddenly talk about Householder matrices, triangular solves, and blocked kernels?
         Because the same systems problem keeps returning: <strong class="text-slate-200">many small dependent matrix updates are mathematically convenient, but hardware prefers fewer large matrix operations.</strong>
@@ -49,7 +49,7 @@
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="map">
       <div class="eyebrow">The map first</div>
-      <h2 class="text-2xl font-bold mt-2">The lineage, without unexplained acronyms</h2>
+      <h2 class="text-2xl font-bold mt-2">From Householder reflections to linear attention</h2>
       <div class="grid md:grid-cols-5 gap-3 mt-5 text-sm">
         <div class="rounded-lg border border-emerald-900/60 bg-emerald-950/20 p-4"><div class="text-emerald-300 font-semibold">1958</div><div class="mt-1 text-slate-300">Householder reflection</div><div class="mini mt-2">A stable way to zero selected matrix entries.</div></div>
         <div class="rounded-lg border border-slate-700 bg-slate-950/30 p-4"><div class="text-slate-400 font-semibold">next</div><div class="mt-1 text-slate-300">Triangular factorization</div><div class="mini mt-2">Repeated reflections turn A into an upper triangle.</div></div>
@@ -76,27 +76,27 @@
       <p>Pick a vector <span class="kbd">v</span>. The matrix <span class="kbd">H</span> flips the component parallel to <span class="kbd">v</span> and leaves every perpendicular component unchanged. Geometrically, it is a reflection across the hyperplane perpendicular to <span class="kbd">v</span>.</p>
       <p>It is also an <strong>orthogonal matrix</strong>: <span class="kbd">HᵀH = I</span>. That means it preserves lengths instead of stretching some directions while shrinking others.</p>
 
-      <h3 class="text-xl font-semibold mt-7">Now define QR, because the acronym is otherwise useless</h3>
-      <p><strong>QR factorization</strong> is a way to rewrite a matrix <span class="kbd">A</span> as</p>
+      <h3 class="text-xl font-semibold mt-7">QR factorization</h3>
+      <p><a href="https://en.wikipedia.org/wiki/QR_decomposition"><strong>QR factorization</strong></a> rewrites a matrix <span class="kbd">A</span> as</p>
       <div class="formula">A = QR</div>
-      <p><span class="kbd">Q</span> is orthogonal. <span class="kbd">R</span> is upper triangular, meaning everything below its main diagonal is zero. Why bother? Because triangular systems are easy to solve by substitution.</p>
+      <p><span class="kbd">Q</span> is orthogonal. <span class="kbd">R</span> is upper triangular, meaning everything below its main diagonal is zero. Triangular systems are easy to solve by substitution, so the factorization turns a general matrix problem into a simpler triangular one.</p>
       <p>Householder reflections give a practical way to build this factorization. Choose the first reflector so the first column of <span class="kbd">A</span> is mapped onto the first coordinate axis. That zeros every entry below the first diagonal element. Then do the same to the second column, then the third, and so on. After the sweep, the transformed matrix is <span class="kbd">R</span>; the accumulated reflections make <span class="kbd">Q</span>.</p>
 
       <div class="callout mt-5" style="border-left-color:var(--green)">
-        <strong>Keep the categories straight.</strong> A rank-one update is the broad shape. <span class="kbd">I − βkkᵀ</span> is Householder-shaped. It is a true Householder reflector only when the coefficient makes the matrix orthogonal. DeltaNet uses the broader shape, not generally an exact reflection.
+        <strong>Rank-one update versus Householder reflector.</strong> A rank-one update is the broad shape. <span class="kbd">I − βkkᵀ</span> is Householder-shaped. It is a true Householder reflector only when the coefficient makes the matrix orthogonal. DeltaNet uses the broader shape, not generally an exact reflection.
       </div>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="history">
-      <div class="eyebrow">3. Why this became infrastructure</div>
-      <h2 class="text-2xl font-bold mt-2">The user wanted a solved problem; the reflector was plumbing</h2>
+      <div class="eyebrow">3. Numerical use</div>
+      <h2 class="text-2xl font-bold mt-2">Householder reflectors became numerical infrastructure</h2>
       <p>Householder worked at Oak Ridge during the transition from hand and electromechanical computation to electronic machines. Matrix problems were real machine workloads. His 1958 work gave a stable orthogonal route to triangularizing a nonsymmetric matrix.</p>
       <p>By 1965, Businger and Golub had published Householder-based least-squares software. Least squares appears whenever measurements outnumber unknown parameters: fit the model parameters that best explain noisy data. The application asks for the fitted orbit, calibration, survey, or regression coefficients. It does not care that a chain of reflections produced them.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="software-history">
-      <div class="eyebrow">4. The missing middle</div>
-      <h2 class="text-2xl font-bold mt-2">EISPACK, LINPACK, BLAS, and LAPACK are different layers, not sequel numbers</h2>
+      <div class="eyebrow">4. Numerical software stack</div>
+      <h2 class="text-2xl font-bold mt-2">EISPACK, LINPACK, BLAS, and LAPACK solve different parts of the stack</h2>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[820px]">
           <thead><tr><th class="text-left py-3 pr-5">Thing</th><th class="text-left py-3 pr-5">What it was</th><th class="text-left py-3 pr-5">Main job</th><th class="text-left py-3">Why it matters here</th></tr></thead>
@@ -117,14 +117,14 @@
       </div>
       <p>Matrix-matrix multiplication can reuse loaded tiles many times. That is why the move from Level 2 to Level 3 matters: it changes how much arithmetic the machine can do per byte moved.</p>
       <div class="callout mt-5" style="border-left-color:var(--amber)">
-        <strong>This creates the WY problem.</strong> Householder QR naturally generates one reflector at a time. LAPACK wants the expensive update of the large trailing matrix to happen as a block matrix operation. WY is the representation that lets both things be true.
+        <strong>Why WY is needed.</strong> Householder QR naturally generates one reflector at a time. LAPACK wants the expensive update of the large trailing matrix to happen as a block matrix operation. WY is the representation that lets both things be true.
       </div>
-      <p><strong>And the LINPACK benchmark?</strong> Separate the package from the benchmark. The benchmark grew from timing a standard solve in the LINPACK Users' Guide. It later became a machine-comparison tradition. Same name, different object.</p>
+      <p><strong>LINPACK package versus LINPACK benchmark.</strong> The package provides numerical routines. The benchmark grew from timing a standard solve in the LINPACK Users' Guide and later became a machine-comparison tradition.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="wy">
       <div class="eyebrow">5. The 1987 systems complaint</div>
-      <h2 class="text-2xl font-bold mt-2">Stop applying reflectors one at a time to the big matrix</h2>
+      <h2 class="text-2xl font-bold mt-2">Accumulate reflectors before updating the trailing matrix</h2>
       <p>Suppose a narrow group of columns has produced <span class="kbd">b</span> Householder reflectors, and all of them must update a much larger matrix <span class="kbd">C</span>.</p>
       <div class="grid md:grid-cols-2 gap-4 mt-5">
         <div class="rounded-xl border border-rose-900/60 bg-rose-950/20 p-5">
@@ -168,7 +168,7 @@
         <li><strong>Accumulate the panel's reflectors.</strong> Build the compact block representation, including the small triangular factor.</li>
         <li><strong>Apply the block to the trailing matrix.</strong> This is the large update, now expressed as Level-3 BLAS instead of a pile of rank-one passes.</li>
       </ol>
-      <p><strong>Panel</strong> just means the narrow block of columns being factored now. <strong>Trailing matrix</strong> means the big part to its right that still needs updating. These are ordinary words once someone bothers to define them.</p>
+      <p>A <strong>panel</strong> is the narrow block of columns currently being factored. The <strong>trailing matrix</strong> is the larger block to its right that still needs updating.</p>
       <p>In LAPACK, routines such as <span class="kbd">xLARFT</span> form the triangular factor and <span class="kbd">xLARFB</span> apply the block reflector. This is why WY became invisible: it turned into library plumbing.</p>
     </section>
 
@@ -205,7 +205,7 @@
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="timeline">
       <div class="eyebrow">10. The chronology</div>
-      <h2 class="text-2xl font-bold mt-2">The thread without historical teleportation</h2>
+      <h2 class="text-2xl font-bold mt-2">From Householder to DeltaNet</h2>
       <div class="timeline mt-5 text-sm text-slate-400">
         <div class="tick"><strong class="text-emerald-300">1958 · Householder</strong><br>Orthogonal triangularization using reflections.</div>
         <div class="tick"><strong class="text-emerald-300">1965 · Businger &amp; Golub</strong><br>Householder least-squares software makes the method a practical fitting engine.</div>
