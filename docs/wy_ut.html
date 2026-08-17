@@ -29,6 +29,7 @@
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-300">&larr; Home</a>
       <a href="linear_attention.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm text-gray-300">Linear Attn</a>
+      <a href="least_squares_lineage.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-700 rounded text-sm text-gray-300">Least Squares</a>
       <a href="wy_ut.html" class="px-3 py-1.5 bg-indigo-600 rounded text-sm text-white">WY/UT</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm text-gray-300">FP8 Atlas</a>
       <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm text-gray-300">KVSplice</a>
@@ -92,6 +93,7 @@
       <h2 class="text-2xl font-bold mt-2">Householder reflectors became numerical infrastructure</h2>
       <p>Householder worked at Oak Ridge during the transition from hand and electromechanical computation to electronic machines. Matrix problems were real machine workloads. His 1958 work gave a stable orthogonal route to triangularizing a nonsymmetric matrix.</p>
       <p>By 1965, Businger and Golub had published Householder-based least-squares software. Least squares appears whenever measurements outnumber unknown parameters: fit the model parameters that best explain noisy data. The application asks for the fitted orbit, calibration, survey, or regression coefficients. It does not care that a chain of reflections produced them.</p>
+      <p>The same squared-error objective also produced a separate online-learning branch: Widrow and Hoff's delta rule updates weights one observation at a time instead of factoring the full data matrix. <a href="least_squares_lineage.html">The least-squares lineage</a> follows both branches from Householder QR and ADALINE through their reunion in DeltaNet.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="software-history">
@@ -178,6 +180,9 @@
       <p>DeltaNet keeps a fixed-size matrix state <span class="kbd">S</span>. For token <span class="kbd">t</span>, let <span class="kbd">kₜ</span> be the key direction, <span class="kbd">vₜ</span> the value to write, and <span class="kbd">βₜ</span> the learned write strength. One orientation of the update is:</p>
       <div class="formula">Sₜ = Sₜ₋₁ (I − βₜ kₜkₜᵀ) + βₜ vₜkₜᵀ</div>
       <p>The factor <span class="kbd">I − βₜkₜkₜᵀ</span> is Householder-shaped, but it is generally not an orthogonal reflection because <span class="kbd">βₜ</span> is learned rather than fixed to the reflector coefficient.</p>
+      <div class="callout mt-5" style="border-left-color:var(--cyan)">
+        <strong>Why these branches meet here.</strong> DeltaNet did not begin as a Householder algorithm; its update comes from the Widrow&ndash;Hoff delta rule, a streaming least-squares gradient correction. Rewriting that matrix-valued correction exposes the Householder-shaped factor above. <a href="least_squares_lineage.html">The least-squares lineage page</a> derives this reunion from Householder QR and ADALINE before the WY machinery enters.
+      </div>
       <p>The 2024 DeltaNet parallelization work groups consecutive tokens into chunks and compacts their ordered state transitions. The expensive operations become matrix multiplies instead of a strictly token-by-token state update.</p>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[760px]">
@@ -200,7 +205,7 @@
       <div class="formula">S' = SA + B</div>
       <p>where <span class="kbd">A</span> and <span class="kbd">B</span> are determined without depending on the current value of <span class="kbd">S</span>. Affine maps compose into affine maps, so a whole chunk can still be represented by fixed factors.</p>
       <p>If the coefficients themselves depend nonlinearly on the current state, that closure disappears. The specific WY/UT factorization above no longer gives the exact recurrence. A model can still choose an approximation, for example by linearizing around the state at the start of a chunk, but that is a different computation.</p>
-      <p>This is the exact connection to the <a href="linear_attention.html#strategies">Trellis training discussion</a>: its chunk-parallel forward freezes the nonlinear state at the chunk boundary to recover a locally linear problem.</p>
+      <p>This is the exact connection to the <a href="linear_attention.html#training-semantics">Trellis training discussion</a>: its chunk-parallel forward freezes the nonlinear state at the chunk boundary to recover a locally linear problem.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="timeline">
@@ -235,7 +240,7 @@
     </section>
 
     <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-4">
-      <p><a href="linear_attention.html" class="hover:text-slate-400">Linear-attention study</a> · <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-400">knlp</a> · <a href="index.html" class="hover:text-slate-400">Home</a></p>
+      <p><a href="least_squares_lineage.html" class="hover:text-slate-400">least-squares lineage</a> · <a href="linear_attention.html" class="hover:text-slate-400">linear-attention study</a> · <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-400">knlp</a> · <a href="index.html" class="hover:text-slate-400">Home</a></p>
       <p class="mt-2">Many small ordered updates → compact block representation → large matrix operations. That is the reusable idea.</p>
     </footer>
   </main>
