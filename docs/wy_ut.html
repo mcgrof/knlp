@@ -308,16 +308,16 @@
        d:'One reflector at a time. Built at Oak Ridge for the matrices behind reactor criticality, pipe stress, and cross-section fitting: reflect so that a column of entries becomes zero, without destroying numerical information. Orthogonality preserves lengths; stability is the product.',
        link:'https://dl.acm.org/doi/10.1145/320941.320947'},
       {y:'1965', c:C.green,  t:'Businger &amp; Golub — Householder least squares',
-       d:'The reflector becomes the standard route to linear least squares, linear systems, and matrix inversion — the workhorse form scientists actually call.',
+       d:'Businger and Golub publish the code that makes the reflector the standard engine for linear least squares — the fitting step behind satellite orbit determination, geodetic survey adjustment, and regression across the experimental sciences — plus linear systems and matrix inversion.',
        link:'https://pages.stat.wisc.edu/~bwu62/771/businger1965.pdf'},
       {y:'1987', c:C.blue,   t:'Bischof &amp; Van Loan — the WY representation',
        d:'The hardware complaint, stated in the paper: Householder algorithms should contain more matrix–matrix multiplication for high-performance machines. Q = I + WYᵀ packs b reflectors into two skinny matrices; demonstrated with QR on the FPS-164/MAX, an attached vector processor of the era. W and Y are just matrix names — they expand to nothing.',
        link:'https://epubs.siam.org/doi/10.1137/0908009'},
       {y:'1988', c:C.blue,   t:'Walker — the representation later called UT',
-       d:'Introduced inside a Householder-based version of GMRES, an iterative solver for large linear systems: Q = I − UT⁻¹Uᵀ with T triangular. The inverse never gets formed — applying Q means solving the small triangular system TZ = UᵀC (cheap, by substitution), then computing C − UZ.',
+       d:'Born in fluid-dynamics territory: GMRES is the iterative solver for the huge sparse systems that discretized flow and transport problems produce, and Walker builds a Householder-based version of it. Inside sits Q = I − UT⁻¹Uᵀ with T triangular. The inverse never gets formed — applying Q means solving the small triangular system TZ = UᵀC (cheap, by substitution), then computing C − UZ.',
        link:'https://www.cs.utexas.edu/~flame/pubs/p169-joffrain.pdf'},
       {y:'1989', c:C.blue,   t:'Schreiber &amp; Van Loan — compact WY',
-       d:'Q = I + YTYᵀ (LAPACK’s sign convention resembles I − VTVᵀ). The Householder vectors themselves serve as Y; only the small triangular T is extra storage. This is what runs whenever a serious blocked QR runs today.',
+       d:'Q = I + YTYᵀ (LAPACK’s sign convention resembles I − VTVᵀ). The Householder vectors themselves serve as Y; only the small triangular T is extra storage. Dense least-squares and eigenvalue software adopted this form, and it runs whenever a serious blocked QR runs today.',
        link:'https://epubs.siam.org/doi/10.1137/0910005'},
       {y:'1992', c:C.gray,   t:'Puglisi — rediscovers Walker’s representation',
        d:'The 1988 result was barely known; it gets found again for QR work. Academia misplaces a useful identity while continuing to cite itself.',
@@ -332,7 +332,7 @@
        d:'LAPACK is the standard dense linear-algebra library, built on BLAS, that scientific languages call under the hood. In it, larft forms the triangular T, larfb applies the block reflector, and geqrt is blocked QR on compact WY. Every caller of QR uses the machinery; almost nobody sees it. Ubiquity and invisibility, in one move.',
        link:'https://www.netlib.org/lapack/explore-html/df/d9a/group__larfb.html'},
       {y:'2017', c:C.cyan,   t:'Householder products enter neural networks',
-       d:'Sequences of reflectors parameterize orthogonal recurrent matrices (Mhammedi et al.); follow-up work parallelizes the products. The bridge era: same algebra, new consumers.',
+       d:'Sequences of reflectors parameterize orthogonal recurrent matrices (Mhammedi et al.) — orthogonal transitions keep recurrent-network gradients from exploding or vanishing over long sequences. Follow-up work parallelizes the products. The bridge era: same algebra, new consumers.',
        link:'https://proceedings.mlr.press/v70/mhammedi17a/mhammedi17a.pdf'},
       {y:'2021', c:C.violet, t:'DeltaNet — linear transformers as fast weight programmers',
        d:'Schlag, Irie and Schmidhuber connect linear attention — transformer variants that replace the growing key-value cache with a fixed-size state matrix updated token by token — to the delta rule, the classic error-correcting learning update. The per-token state transition is S ← S(I − βkkᵀ) + βvkᵀ: identity-minus-rank-one, Householder-shaped, but with a learned gain β, so generally not orthogonal and not a reflection. “Householder-like,” precisely.',
@@ -441,7 +441,7 @@
               <QRSweepSVG/>
             </Fig>
             <p className="text-sm">
-              A useful containment to keep straight: <span className="kbd">rank-one update</span> &nbsp;&sup;&nbsp;
+              Keep the containment straight: <span className="kbd">rank-one update</span> &nbsp;&sup;&nbsp;
               <span className="kbd">Householder-like transform (I &minus; &beta;kk&#7488;)</span> &nbsp;&sup;&nbsp;
               <span className="kbd">actual reflector (orthogonal, &beta; = 2/k&#7488;k)</span>. The delta rule&rsquo;s
               transition lives in the middle tier: the Householder <em>shape</em> without the reflection <em>geometry</em>,
@@ -450,7 +450,7 @@
           </Section>
 
           {/* 3. why anyone cared */}
-          <Section id="why" kicker="The recurring demand" title="Why anyone cared: three machines, one complaint">
+          <Section id="why" kicker="The recurring demand" title="Why anyone cared: six decades of customers, one complaint">
             <p>
               None of this was math for its own sake. Householder ran the mathematics division at Oak Ridge National
               Laboratory in the 1950s, and the computing time went to the reactor program: criticality calculations
@@ -458,8 +458,16 @@
               across energy ranges), stress analysis of the plant&rsquo;s steam and coolant piping (literal metal
               pipes &mdash; will they hold under pressure and heat), and fitting nuclear cross sections (the measured
               probabilities that a nucleus absorbs or scatters a passing neutron). Every one of those ends in
-              <em> solve the matrix problem</em>, and his 1958 contribution was making that step numerically
-              trustworthy on finite-precision hardware.
+              <em> solve the matrix problem</em>. His 1958 contribution made that step numerically trustworthy on
+              finite-precision hardware.
+            </p>
+            <p>
+              The reactor program was the first customer, not the only one. Businger and Golub&rsquo;s published 1965
+              code made Householder QR the standard engine for <em>linear least squares</em> &mdash; fit measured data
+              by minimizing squared error &mdash; and least squares was the computation of that decade: satellite
+              orbit determination for the space program, geodetic survey adjustment, photogrammetric mapping,
+              regression across the experimental sciences. Wherever measurements outnumbered unknowns, the reflector
+              chain was the trusted route to the best-fit answer.
             </p>
             <div className="bg-[#0b1220] border-l-4 rounded-lg p-4 my-4 text-sm" style={{borderLeftColor:C.blue}}>
               <strong className="text-blue-300">BLAS, in one paragraph.</strong>
@@ -475,7 +483,10 @@
               algorithm so its inner loop is big matrix multiplication.</span>
             </div>
             <p>
-              By 1987 the answer was trusted and the machines had changed. Applying reflectors one at a time streams
+              By 1987 the answer was trusted, the machines had changed, and so had the workloads: finite-element
+              structural analysis of airframes and vehicles, quantum-chemistry eigenproblems, and radar signal
+              processing were feeding ever larger dense matrices to vector supercomputers. Applying reflectors one at
+              a time streams
               the whole matrix they act on through memory once per reflector, doing thin matrix&ndash;vector
               (level-2) work each pass &mdash; the access pattern vector processors and cache hierarchies handle
               worst. Bischof and Van Loan state their motivation outright: reorganize Householder algorithms so the
@@ -500,10 +511,58 @@
                 <p className="text-gray-400 m-0">&ldquo;Stop handing the GPU rank-one kernels. Hand it a <strong>GEMM</strong>.&rdquo;</p>
               </div>
             </div>
+            <p>
+              Put the whole customer history in one place. Same algebra, six decades of different people paying for
+              it:
+            </p>
+            <div className="overflow-x-auto my-4">
+              <table className="w-full text-sm text-left">
+                <thead className="text-gray-300 border-b border-gray-700">
+                  <tr>
+                    <th className="py-2 pr-4">Era</th>
+                    <th className="py-2 pr-4">Who ran it</th>
+                    <th className="py-2 pr-4">The question they asked</th>
+                    <th className="py-2">The matrix job</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-400">
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 pr-4">1950s</td>
+                    <td className="py-2 pr-4">reactor program</td>
+                    <td className="py-2 pr-4">will the chain reaction stay controlled; will the piping hold</td>
+                    <td className="py-2">stable dense solves and eigenvalues (Householder 1958)</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 pr-4">1960s</td>
+                    <td className="py-2 pr-4">space program, geodesy, statistics</td>
+                    <td className="py-2 pr-4">where is the satellite; what do the measurements imply</td>
+                    <td className="py-2">least squares by Householder QR (Businger&ndash;Golub 1965)</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 pr-4">1970s&ndash;80s</td>
+                    <td className="py-2 pr-4">structural engineering, quantum chemistry, aerodynamics</td>
+                    <td className="py-2 pr-4">will the airframe hold; what are the molecular energies; how does the flow behave</td>
+                    <td className="py-2">blocked QR and eigensolvers on vector machines (WY 1987, compact WY 1989); GMRES on discretized flow (Walker 1988)</td>
+                  </tr>
+                  <tr className="border-b border-gray-800">
+                    <td className="py-2 pr-4">1990s&ndash;2000s</td>
+                    <td className="py-2 pr-4">everyone calling MATLAB, R, NumPy</td>
+                    <td className="py-2 pr-4">fit this model; solve this system</td>
+                    <td className="py-2">LAPACK&rsquo;s larft/larfb/geqrt, invisibly</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4">2020s</td>
+                    <td className="py-2 pr-4">ML systems groups</td>
+                    <td className="py-2 pr-4">train long-context language models at GPU speed</td>
+                    <td className="py-2">chunkwise WY/UT in linear attention (DeltaNet 2024)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <p className="text-sm text-gray-500">
-              The machine changes; the reorganization of the same mathematics recurs. The end user never wanted
-              reflectors — they wanted the reactor answer, the fitted parameters, or the trained long-context model,
-              faster than the naive formulation allowed.
+              The machine changes; the reorganization of the same mathematics recurs. No customer ever wanted
+              reflectors &mdash; they wanted the orbit, the stress margin, the fitted model, the trained long-context
+              model, faster than the naive formulation allowed.
             </p>
           </Section>
 
@@ -576,7 +635,7 @@
           {/* 6. the two batching problems */}
           <Section id="batching" kicker="A crucial distinction" title="Two different batching problems — and the one ML added">
             <p>
-              Part of why no tutorial connects the eras: <em>batching</em> hides two distinct problems.
+              No tutorial connects the eras because <em>batching</em> hides two distinct problems.
               <strong> Problem A</strong>: given already-determined reflectors, accumulate and apply them as a block
               &mdash; the classical WY story, and it batches only the <em>application</em>.
               <strong> Problem B</strong>: generate the reflectors themselves in parallel &mdash; blocked QR never
