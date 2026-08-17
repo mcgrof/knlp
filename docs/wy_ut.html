@@ -311,10 +311,10 @@
        d:'The reflector becomes the standard route to linear least squares, linear systems, and matrix inversion — the workhorse form scientists actually call.',
        link:'https://pages.stat.wisc.edu/~bwu62/771/businger1965.pdf'},
       {y:'1987', c:C.blue,   t:'Bischof &amp; Van Loan — the WY representation',
-       d:'The hardware complaint, stated in the paper: Householder algorithms should contain more matrix–matrix multiplication for high-performance machines. Q = I + WYᵀ packs b reflectors into two skinny matrices; demonstrated with QR on the FPS-164/MAX. W and Y are just matrix names — they expand to nothing.',
+       d:'The hardware complaint, stated in the paper: Householder algorithms should contain more matrix–matrix multiplication for high-performance machines. Q = I + WYᵀ packs b reflectors into two skinny matrices; demonstrated with QR on the FPS-164/MAX, an attached vector processor of the era. W and Y are just matrix names — they expand to nothing.',
        link:'https://epubs.siam.org/doi/10.1137/0908009'},
       {y:'1988', c:C.blue,   t:'Walker — the representation later called UT',
-       d:'Introduced inside Householder GMRES: Q = I − UT⁻¹Uᵀ with T triangular. The inverse never gets formed — applying Q is a small triangular solve, TZ = UᵀC, then C − UZ.',
+       d:'Introduced inside a Householder-based version of GMRES, an iterative solver for large linear systems: Q = I − UT⁻¹Uᵀ with T triangular. The inverse never gets formed — applying Q means solving the small triangular system TZ = UᵀC (cheap, by substitution), then computing C − UZ.',
        link:'https://www.cs.utexas.edu/~flame/pubs/p169-joffrain.pdf'},
       {y:'1989', c:C.blue,   t:'Schreiber &amp; Van Loan — compact WY',
        d:'Q = I + YTYᵀ (LAPACK’s sign convention resembles I − VTVᵀ). The Householder vectors themselves serve as Y; only the small triangular T is extra storage. This is what runs whenever a serious blocked QR runs today.',
@@ -329,19 +329,19 @@
        d:'Reconstructs the lost history (1988 → 1992 → independent re-arrival), names the UT transform, and shows UT and compact WY are two faces of the same accumulation. The closest thing to a central page — written for people who already know why block reflectors matter.',
        link:'https://www.cs.utexas.edu/~flame/pubs/p169-joffrain.pdf'},
       {y:'→ LAPACK', c:C.gray, t:'The idea becomes plumbing: larft, larfb, geqrt',
-       d:'xLARFT forms the triangular T; xLARFB applies the block reflector; xGEQRT is blocked QR on compact WY. Every caller of QR uses the machinery; almost nobody sees it. Ubiquity and invisibility, in one move.',
+       d:'LAPACK is the standard dense linear-algebra library, built on BLAS, that scientific languages call under the hood. In it, larft forms the triangular T, larfb applies the block reflector, and geqrt is blocked QR on compact WY. Every caller of QR uses the machinery; almost nobody sees it. Ubiquity and invisibility, in one move.',
        link:'https://www.netlib.org/lapack/explore-html/df/d9a/group__larfb.html'},
       {y:'2017', c:C.cyan,   t:'Householder products enter neural networks',
        d:'Sequences of reflectors parameterize orthogonal recurrent matrices (Mhammedi et al.); follow-up work parallelizes the products. The bridge era: same algebra, new consumers.',
        link:'https://proceedings.mlr.press/v70/mhammedi17a/mhammedi17a.pdf'},
       {y:'2021', c:C.violet, t:'DeltaNet — linear transformers as fast weight programmers',
-       d:'Schlag, Irie &amp; Schmidhuber connect linear attention to the delta rule: the recurrent state update S ← S(I − βkkᵀ) + βvkᵀ. The transition is identity-minus-rank-one — Householder-shaped, but with learned β, so generally not orthogonal and not a reflection. “Householder-like,” precisely.',
+       d:'Schlag, Irie and Schmidhuber connect linear attention — transformer variants that replace the growing key-value cache with a fixed-size state matrix updated token by token — to the delta rule, the classic error-correcting learning update. The per-token state transition is S ← S(I − βkkᵀ) + βvkᵀ: identity-minus-rank-one, Householder-shaped, but with a learned gain β, so generally not orthogonal and not a reflection. “Householder-like,” precisely.',
        link:'https://arxiv.org/abs/2102.11174'},
       {y:'2024', c:C.violet, t:'Yang, Wang, Zhang, Shen &amp; Kim — chunkwise WY/UT DeltaNet',
        d:'The Bischof/Van Loan move, replayed for GPUs: compress a chunk of Householder-like transitions with compact-WY algebra, build the factors through a small causal triangular system (the UT step), and turn a token-sequential recurrence into GEMMs. Gated variants (Gated DeltaNet, DeltaProduct) inherit the kernel.',
        link:'https://arxiv.org/abs/2406.06484'},
       {y:'boundary', c:C.red, t:'Where the factorization stops: nonlinear writes',
-       d:'The whole construction rests on each step being affine in the state. Make the write nonlinear — as Trellis does — and no fixed finite WY/UT factorization exists; such models train chunk-parallel on a chunk-start linearization instead, trading exactness for the scan. That boundary, and what it costs, is measured on our linear-attention page.',
+       d:'The whole construction rests on each step being affine in the state. Make the write nonlinear — as Trellis does — and no fixed finite WY/UT factorization exists; such models train chunk-parallel on a chunk-start linearization instead, trading exactness for parallelism. That boundary, and what it costs, is measured on our linear-attention page.',
        link:'linear_attention.html#strategies'},
     ];
 
@@ -355,11 +355,12 @@
               <span className="gradient-text">WY &amp; UT</span>: one idea, sixty-six years
             </h1>
             <p className="text-gray-400 max-w-3xl mx-auto text-lg">
-              How <strong className="text-gray-200">products of identity-minus-rank-one transformations</strong> went
-              from Householder&rsquo;s 1958 reflectors, through the WY and UT representations that made QR fast on
-              supercomputers, into LAPACK&rsquo;s plumbing &mdash; and resurfaced as the
-              <strong className="text-gray-200"> chunkwise kernels that parallelize linear attention</strong>. There was
-              no central page for this lineage. This is that page.
+              How <strong className="text-gray-200">products of identity-minus-rank-one transformations</strong> &mdash;
+              chains of the simplest possible matrix updates &mdash; went from Householder&rsquo;s 1958 reflectors,
+              through the WY and UT representations that made matrix factorization fast on supercomputers, into the
+              standard numerical libraries &mdash; and resurfaced as the
+              <strong className="text-gray-200"> GPU kernels that parallelize linear attention</strong>. Every term in
+              that sentence is defined below, in order. There was no central page for this lineage. This is that page.
             </p>
           </header>
 
@@ -367,18 +368,30 @@
             <StatCard label="The idea" value="1" sub="many rank-1 steps → one block"/>
             <StatCard label="Notations" value="4" sub="WY, YTYᵀ, VTVᵀ, UT⁻¹Uᵀ"/>
             <StatCard label="Span" value="1958→" sub="reactors to transformers" color={C.green}/>
-            <StatCard label="The payoff" value="GEMMs" sub="+ one small triangle" color={C.blue}/>
-            <StatCard label="Where it hides" value="LAPACK" sub="larft / larfb / geqrt" color={C.gray}/>
+            <StatCard label="The payoff" value="GEMMs" sub="big matrix multiplies" color={C.blue}/>
+            <StatCard label="Where it hides" value="LAPACK" sub="the standard library" color={C.gray}/>
             <StatCard label="The boundary" value="affine" sub="nonlinear writes fall off" color={C.red}/>
           </div>
 
           {/* 1. the idea */}
           <Section id="idea" kicker="The unnamed subject" title="The idea nobody gave a searchable name">
             <p>
+              First, the object everything on this page is made of. Multiply a column vector
+              <span className="kbd"> u</span> by a row vector <span className="kbd">v&#7488;</span> and you get a full
+              matrix, <span className="kbd">uv&#7488;</span> &mdash; but a maximally simple one: it reads its input along
+              the single direction <span className="kbd">v</span> and writes its output along the single direction
+              <span className="kbd"> u</span>. Such a matrix has <em>rank one</em>, and
+              <span className="kbd"> I &minus; uv&#7488;</span> &mdash; the identity matrix corrected by one rank-one term
+              &mdash; is the smallest interesting change you can make to a linear map: leave everything alone except a
+              single read-one-direction, write-one-direction adjustment. This page is about what happens when you
+              apply many of these in a row.
+            </p>
+            <p>
               The literature never agreed that <em>batching Householder-like matrix updates</em> was a subject.
-              Numerical linear algebra filed the machinery under QR implementation details, high-performance computing
-              renamed it <em>blocking</em>, LAPACK buried it inside helper routines, and machine learning rediscovered
-              it as <em>chunkwise WY/UT</em>. One representation was published in 1988, rediscovered in 1992, and
+              Numerical linear algebra filed the machinery under the implementation details of QR factorization
+              (defined in the next section), high-performance computing renamed it <em>blocking</em>, the standard
+              libraries buried it inside helper routines, and machine learning rediscovered it as
+              <em> chunkwise WY/UT</em>. One representation was published in 1988, rediscovered in 1992, and
               independently re-arrived at again before a 2006 paper reassembled the history and observed that few
               people knew the original existed. The concept survived; the name never did.
             </p>
@@ -391,8 +404,9 @@
             </div>
             <p>
               The algebra is small enough to show whole. Multiply two identity-minus-rank-one factors and a cross term
-              appears; collect the factors into skinny matrices and the cross terms land in a small triangular matrix
-              that records who influenced whom, in causal order:
+              appears; collect the factors into skinny matrices and the cross terms land in a small <em>triangular</em>
+              matrix &mdash; one whose entries all sit on one side of the diagonal &mdash; that records who influenced
+              whom, in causal order:
             </p>
             <Fig label="Multiplying two identity-minus-rank-one factors produces one highlighted cross term; collecting four factors yields identity minus skinny-U times a four-by-four upper-triangular T times skinny-V-transpose, where the strictly-upper cells form an amber staircase holding all the cross terms and everything below the diagonal is zero"
                  caption="Top: multiply two factors and one cross term (amber) appears — factor 1 feeding into factor 2. Bottom: collect b = 4 factors and every such cross term files into the strictly-upper part of a small b×b matrix T — the amber staircase is the triangle. It is the entire memory of the sequence's internal causality: build it, and the factors can be applied together instead of one at a time.">
@@ -416,8 +430,11 @@
               The engineering value is not the geometry but <strong>zero generation</strong>: choose
               <span className="kbd"> v</span> so the reflection maps an arbitrary column onto a coordinate axis, and one
               reflector annihilates everything below the diagonal in that column. March across the columns and an
-              arbitrary matrix becomes triangular &mdash; QR factorization, with every step orthogonal, so no direction
-              gets scaled by 10&sup2;&#8304; on the way to the answer.
+              arbitrary matrix becomes triangular. That procedure is <strong>QR factorization</strong> &mdash; the
+              matrix ends up written as Q (the accumulated reflections) times R (the triangle) &mdash; and it is the
+              standard numerically safe route to least-squares fitting and equation solving: a triangular system is
+              trivial to solve by substitution, and because every reflection is orthogonal (length-preserving), no
+              direction gets scaled by 10&sup2;&#8304; on the way there.
             </p>
             <Fig label="Three Householder reflectors applied in sequence progressively zero the subdiagonal entries of a four-by-three matrix, producing upper-triangular R"
                  caption="The QR sweep: each reflector zeroes one column's subdiagonal. For decades the product H₁H₂…Hₖ was treated as a sequence of operations, not as an object worth representing compactly.">
@@ -435,21 +452,38 @@
           {/* 3. why anyone cared */}
           <Section id="why" kicker="The recurring demand" title="Why anyone cared: three machines, one complaint">
             <p>
-              None of this was math for its own sake. Householder worked at Oak Ridge in the 1950s, where the computer
-              time went to reactor criticality, multigroup neutron calculations, pipe-stress analysis, diffraction
-              inversion, and cross-section fitting. Every one of those ends in <em>solve the matrix problem</em>:
-              will the reactor stay subcritical, will the pipe survive, what absorption does this material have. His
-              1958 contribution was making that plumbing numerically trustworthy on finite-precision hardware.
+              None of this was math for its own sake. Householder ran the mathematics division at Oak Ridge National
+              Laboratory in the 1950s, and the computing time went to the reactor program: criticality calculations
+              (will the chain reaction stay controlled), neutron-transport calculations (tracking neutron populations
+              across energy ranges), stress analysis of the plant&rsquo;s steam and coolant piping (literal metal
+              pipes &mdash; will they hold under pressure and heat), and fitting nuclear cross sections (the measured
+              probabilities that a nucleus absorbs or scatters a passing neutron). Every one of those ends in
+              <em> solve the matrix problem</em>, and his 1958 contribution was making that step numerically
+              trustworthy on finite-precision hardware.
             </p>
+            <div className="bg-[#0b1220] border-l-4 rounded-lg p-4 my-4 text-sm" style={{borderLeftColor:C.blue}}>
+              <strong className="text-blue-300">BLAS, in one paragraph.</strong>
+              <span className="text-gray-400"> BLAS (Basic Linear Algebra Subprograms) is the standard menu of
+              low-level matrix and vector operations that scientific software is built on, graded into three levels by
+              the shape of the work: level 1 is vector&ndash;vector (a dot product), level 2 is matrix&ndash;vector
+              (a matrix times one vector), level 3 is matrix&ndash;matrix (a matrix times a matrix). The level matters
+              because of memory traffic: a level-2 operation does only a couple of arithmetic steps per number it
+              loads, so it runs at memory speed; a level-3 operation reuses every number it loads many times, so it
+              can run at the machine&rsquo;s full arithmetic speed. GEMM (general matrix&ndash;matrix multiply) is the
+              flagship level-3 routine &mdash; the computation modern hardware, GPUs above all, is built around.
+              &ldquo;Make it BLAS-3&rdquo; and &ldquo;hand it a GEMM&rdquo; both mean the same thing: reorganize the
+              algorithm so its inner loop is big matrix multiplication.</span>
+            </div>
             <p>
               By 1987 the answer was trusted and the machines had changed. Applying reflectors one at a time streams
-              the whole trailing matrix through memory once per reflector, doing thin matrix&ndash;vector work each
-              pass &mdash; the access pattern vector processors and cache hierarchies handle worst. Bischof and Van
-              Loan state their motivation outright: reorganize Householder algorithms so the work becomes
-              matrix&ndash;matrix multiplication. Accumulate the block, then apply it whole:
+              the whole matrix they act on through memory once per reflector, doing thin matrix&ndash;vector
+              (level-2) work each pass &mdash; the access pattern vector processors and cache hierarchies handle
+              worst. Bischof and Van Loan state their motivation outright: reorganize Householder algorithms so the
+              work becomes matrix&ndash;matrix multiplication. Accumulate a block of reflectors, then apply them all
+              at once &mdash; the reorganization high-performance computing calls <em>blocking</em>:
             </p>
             <Fig label="Left: applying b reflectors one at a time streams the large matrix C through memory b times doing rank-one work; right: the accumulated block form applies all reflectors with two skinny matrix multiplications and one small triangular operation in a single pass"
-                 caption="The 1987 reorganization. Same mathematics, different granularity: C − V(T(VᵀC)) replaces b full passes with one, and the work per byte moved becomes matrix–matrix. Their test vehicle was QR on the FPS-164/MAX; the complaint is indistinguishable from a modern GPU engineer's.">
+                 caption="The 1987 reorganization, with C the matrix the reflectors act on. Same mathematics, different granularity: C − V(T(VᵀC)) replaces b full passes with one, and the work per byte moved becomes matrix–matrix. Their test vehicle was QR on the FPS-164/MAX, an attached vector processor of the era; the complaint is indistinguishable from a modern GPU engineer's.">
               <BlasSVG/>
             </Fig>
             <div className="grid md:grid-cols-3 gap-4 my-4 text-sm">
@@ -525,7 +559,7 @@
                   <tr>
                     <td className="py-2 pr-4"><span className="kbd">Q = I &minus; UT&#8315;&#185;U&#7488;</span></td>
                     <td className="py-2 pr-4">UT &mdash; Walker 1988; named by Joffrain et al. 2006</td>
-                    <td className="py-2">no inverse formed: triangular solve TZ = U&#7488;C, then C &minus; UZ</td>
+                    <td className="py-2">no inverse formed: solve the triangular system TZ = U&#7488;C, then C &minus; UZ</td>
                   </tr>
                 </tbody>
               </table>
@@ -546,19 +580,23 @@
               <strong> Problem A</strong>: given already-determined reflectors, accumulate and apply them as a block
               &mdash; the classical WY story, and it batches only the <em>application</em>.
               <strong> Problem B</strong>: generate the reflectors themselves in parallel &mdash; blocked QR never
-              fully escapes this; each panel reflector depends on its predecessor&rsquo;s transformation, so panel
-              factorization stays partly sequential. The ML setting is a third shape: the token-derived keys, values,
+              fully escapes this; inside the <em>panel</em> (the narrow block of columns currently being factored),
+              each reflector depends on its predecessor&rsquo;s transformation, so panel factorization stays partly
+              sequential. The ML setting is a third shape: the token-derived keys, values,
               and gates of a chunk are all available up front, so nothing needs sequential <em>generation</em> &mdash;
               the remaining causal coupling is exactly the triangular system, and the whole chunk collapses into the
               triangle plus GEMMs.
             </p>
             <Fig label="Left: blocked QR factors a narrow panel sequentially, accumulates its reflectors, then applies the block to the trailing matrix as one large multiplication; right: a chunked delta-rule recurrence has all token quantities available up front, builds the causal triangular system T, and turns state updates and outputs into chunk-level matrix multiplications"
-                 caption="Same algebra, different dependency structure. Blocked QR batches the application while generation stays sequential in the panel; the chunked recurrence has no generation step at all — its only sequential residue is one state hand-off between consecutive chunks.">
+                 caption="Same algebra, different dependency structure. In blocked QR the panel is the narrow block of columns being factored and the trailing matrix is everything to its right, still waiting; the application is batched while generation stays sequential inside the panel. The chunked recurrence has no generation step at all — its only sequential residue is one state hand-off between consecutive chunks. In the formula, tril(·, −1) keeps only the entries strictly below the diagonal (earlier tokens feeding later ones) and diag(β) arranges the per-token write strengths on a diagonal.">
               <ChunkSVG/>
             </Fig>
             <p>
               Concretely, DeltaNet&rsquo;s per-token transition
-              <span className="kbd"> S &larr; S(I &minus; &beta;kk&#7488;) + &beta;vk&#7488;</span> is a Householder-like
+              <span className="kbd"> S &larr; S(I &minus; &beta;kk&#7488;) + &beta;vk&#7488;</span> &mdash; where
+              <span className="kbd">S</span> is the fixed-size memory matrix, <span className="kbd">k</span> and
+              <span className="kbd"> v</span> are the token&rsquo;s key and value vectors, and
+              <span className="kbd"> &beta;</span> is its learned write strength &mdash; is a Householder-like
               rank-one map of the state. Over a chunk, the product of these transitions is compacted with compact-WY
               algebra, the factors constructed by the small causal triangular system shown above &mdash; the UT step
               &mdash; and every expensive operation becomes a matrix multiply. It is the Bischof/Van Loan move with
@@ -570,12 +608,14 @@
           <Section id="boundary" kicker="Where it ends" title="The affinity boundary">
             <p>
               Every incarnation above rests on one property: each elementary step is <strong>affine in the thing being
-              transformed</strong>. Affine maps compose into affine maps; the departure from identity stays low-rank;
+              transformed</strong> &mdash; a linear map plus a constant shift, with nothing state-dependent in the
+              coefficients. Affine maps compose into affine maps; the departure from identity stays low-rank;
               the interactions stay collectable into a triangle. Remove the property and the construction is gone.
               That is not hypothetical: memory architectures whose write rule is <em>nonlinear</em> in the state
               (Trellis is the case we measured) have no fixed finite WY/UT factorization &mdash; they train
               chunk-parallel anyway by freezing the state at each chunk&rsquo;s start, which linearizes the
-              within-chunk recurrence for a parallel scan. The parallelism survives; the exactness does not.
+              within-chunk recurrence so a parallel scan &mdash; the standard logarithmic-depth way to compute running
+              products of linear maps &mdash; can evaluate it. The parallelism survives; the exactness does not.
             </p>
             <p>
               What that boundary costs in practice &mdash; and how the forward linearization interacts with a second,
