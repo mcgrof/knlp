@@ -116,11 +116,14 @@
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="qr">
       <div class="eyebrow">2. Batch branch</div>
       <h2 class="text-2xl font-bold mt-2">Householder QR turns least squares into a triangular solve</h2>
-      <p>A <a href="https://en.wikipedia.org/wiki/QR_decomposition">QR factorization</a> rewrites a matrix as</p>
-      <div class="formula">A = QR</div>
-      <p>For the usual thin factorization, <span class="kbd">Q</span> has orthonormal columns and <span class="kbd">R</span> is upper triangular. Because orthogonal transformations preserve Euclidean length,</p>
-      <div class="formula">||Ax − b|| = ||QᵀAx − Qᵀb||</div>
-      <p>and the least-squares problem reduces to solving a triangular system involving <span class="kbd">R</span>. Businger and Golub's 1965 paper states this setup directly and uses Householder transformations to construct the triangular form.</p>
+      <p>For <span class="kbd">A &isin; R<sup>m&times;n</sup></span> with <span class="kbd">m &ge; n</span>, a full orthogonal QR reduction chooses a square orthogonal matrix <span class="kbd">Q &isin; R<sup>m&times;m</sup></span> so that</p>
+      <div class="formula">QᵀA = [ R ]<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[ 0 ]</div>
+      <p>where <span class="kbd">R &isin; R<sup>n&times;n</sup></span> is upper triangular. Because <span class="kbd">Q</span> is orthogonal, multiplying the complete residual by <span class="kbd">Qᵀ</span> preserves its Euclidean norm:</p>
+      <div class="formula">||Ax − b|| = ||Qᵀ(Ax − b)||</div>
+      <p>Write <span class="kbd">Qᵀb = [c₁; c₂]</span>, with <span class="kbd">c₁ &isin; R<sup>n</sup></span>. Then</p>
+      <div class="formula">||Ax − b||² = ||Rx − c₁||² + ||c₂||²</div>
+      <p>The second term does not depend on <span class="kbd">x</span>. The least-squares minimizer therefore comes from the triangular system <span class="kbd">Rx = c₁</span>. The equivalent thin notation is the familiar <a href="https://en.wikipedia.org/wiki/QR_decomposition"><span class="kbd">A = Q₁R</span></a>, where <span class="kbd">Q₁</span> contains the first <span class="kbd">n</span> columns of the full orthogonal matrix.</p>
+      <p>Businger and Golub's 1965 paper states this reduction directly and uses Householder transformations to construct the triangular form.</p>
 
       <h3 class="text-xl font-semibold mt-7">Why Householder reflections?</h3>
       <div class="formula">H = I − 2vvᵀ/(vᵀv)</div>
