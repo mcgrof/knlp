@@ -4,52 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WY / UT — Why Householder Blocking Keeps Reappearing</title>
-  <meta name="description" content="A first-principles guide to Householder reflectors, QR, EISPACK, LINPACK, BLAS, LAPACK, the WY and compact-WY representations, the UT transform, and their return in chunked DeltaNet and linear attention.">
-  <meta name="keywords" content="WY representation, compact WY, UT transform, Householder reflector, blocked QR, EISPACK, LINPACK, BLAS, LAPACK, DeltaNet, linear attention, Level 3 BLAS, GEMM">
+  <meta name="description" content="A first-principles guide to rank-one updates, Householder reflectors, QR factorization, EISPACK, LINPACK, BLAS, LAPACK, the WY and compact-WY representations, the UT transform, and their return in chunked DeltaNet and linear attention.">
+  <meta name="keywords" content="WY representation, compact WY, UT transform, Householder reflector, QR factorization, blocked QR, EISPACK, LINPACK, BLAS, LAPACK, DeltaNet, linear attention, Level 3 BLAS, GEMM">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    :root {
-      --bg: #0f172a;
-      --panel: #111827;
-      --panel2: #172033;
-      --line: #334155;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --dim: #64748b;
-      --blue: #60a5fa;
-      --green: #34d399;
-      --amber: #fbbf24;
-      --violet: #a78bfa;
-      --rose: #fb7185;
-      --cyan: #22d3ee;
-    }
-    html { scroll-behavior: smooth; }
-    body { background: var(--bg); color: var(--text); }
-    .card { background: linear-gradient(145deg, rgba(30,41,59,.95), rgba(17,24,39,.95)); border: 1px solid var(--line); }
-    .formula { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#09111f; border:1px solid #263449; border-radius:.5rem; padding:.75rem 1rem; overflow-x:auto; color:#dbeafe; }
-    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#09111f; border:1px solid #334155; border-radius:.35rem; padding:.08rem .35rem; color:#cbd5e1; white-space:nowrap; }
-    .proseish p { margin: .8rem 0; line-height: 1.72; color: var(--muted); }
-    .proseish strong { color: var(--text); }
-    .proseish a { color: var(--blue); text-decoration: underline; text-decoration-color:#315b88; text-underline-offset:3px; }
-    .proseish a:hover { color:#bfdbfe; }
-    .anchor { scroll-margin-top: 5rem; }
-    .eyebrow { color:var(--violet); letter-spacing:.12em; text-transform:uppercase; font-size:.72rem; font-weight:700; }
+    :root { --bg:#0f172a; --panel:#111827; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
+      --blue:#60a5fa; --green:#34d399; --amber:#fbbf24; --violet:#a78bfa; --rose:#fb7185; --cyan:#22d3ee; }
+    html { scroll-behavior:smooth; } body { background:var(--bg); color:var(--text); }
+    .card { background:linear-gradient(145deg,rgba(30,41,59,.95),rgba(17,24,39,.95)); border:1px solid var(--line); }
+    .formula { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#09111f; border:1px solid #263449; border-radius:.5rem; padding:.75rem 1rem; overflow-x:auto; color:#dbeafe; }
+    .kbd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#09111f; border:1px solid #334155; border-radius:.35rem; padding:.08rem .35rem; color:#cbd5e1; white-space:nowrap; }
+    .proseish p { margin:.8rem 0; line-height:1.72; color:var(--muted); } .proseish strong { color:var(--text); }
+    .proseish a { color:var(--blue); text-decoration:underline; text-decoration-color:#315b88; text-underline-offset:3px; }
+    .anchor { scroll-margin-top:5rem; } .eyebrow { color:var(--violet); letter-spacing:.12em; text-transform:uppercase; font-size:.72rem; font-weight:700; }
     .callout { border-left:4px solid var(--blue); background:#09111f; border-radius:.5rem; padding:1rem; }
-    .timeline { border-left:2px solid #293548; margin-left:.45rem; padding-left:1.5rem; }
-    .tick { position:relative; margin-bottom:1.3rem; }
+    .timeline { border-left:2px solid #293548; margin-left:.45rem; padding-left:1.5rem; } .tick { position:relative; margin-bottom:1.3rem; }
     .tick:before { content:""; width:.7rem; height:.7rem; border-radius:999px; background:var(--violet); position:absolute; left:-1.88rem; top:.35rem; border:2px solid var(--bg); }
-    table { border-collapse:collapse; }
-    th { color:#cbd5e1; font-weight:600; }
-    td, th { border-bottom:1px solid #263449; vertical-align:top; }
-    .mini { color:var(--dim); font-size:.8rem; }
-    svg { max-width:100%; height:auto; }
+    table { border-collapse:collapse; } th { color:#cbd5e1; font-weight:600; } td,th { border-bottom:1px solid #263449; vertical-align:top; }
+    .mini { color:var(--dim); font-size:.8rem; } svg { max-width:100%; height:auto; }
   </style>
 </head>
 <body class="min-h-screen">
   <nav class="bg-gray-950/95 border-b border-gray-800 sticky top-0 z-50 backdrop-blur">
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-300">&larr; Home</a>
-      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm text-gray-300">Linear Attn</a>
+      <a href="linear_attention.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm text-gray-300">Linear Attn</a>
       <a href="wy_ut.html" class="px-3 py-1.5 bg-indigo-600 rounded text-sm text-white">WY/UT</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm text-gray-300">FP8 Atlas</a>
       <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm text-gray-300">KVSplice</a>
@@ -62,311 +41,202 @@
       <div class="eyebrow mb-3">Numerical linear algebra → GPU kernels</div>
       <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">WY / UT without the 1970s prerequisite course</h1>
       <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed">
-        Why does a modern linear-attention paper suddenly talk about Householder matrices, WY representations, triangular solves, and blocked kernels? Because the same systems problem has been solved repeatedly for seventy years: <strong class="text-slate-200">take many tiny dependent matrix updates and reorganize them into work the hardware can execute efficiently.</strong>
+        Why does a modern linear-attention paper suddenly talk about Householder matrices, triangular solves, and blocked kernels?
+        Because the same systems problem keeps returning: <strong class="text-slate-200">many small dependent matrix updates are mathematically convenient, but hardware prefers fewer large matrix operations.</strong>
+        WY and UT are ways to bridge that gap.
       </p>
-      <div class="grid md:grid-cols-3 gap-3 mt-7">
-        <div class="card rounded-xl p-4"><div class="text-xs text-slate-500 uppercase">Math problem</div><div class="font-semibold mt-1">Many rank-one transforms</div><div class="mini mt-1">Products create cross-terms.</div></div>
-        <div class="card rounded-xl p-4"><div class="text-xs text-slate-500 uppercase">Systems problem</div><div class="font-semibold mt-1">Tiny kernels waste hardware</div><div class="mini mt-1">Block them into GEMMs.</div></div>
-        <div class="card rounded-xl p-4"><div class="text-xs text-slate-500 uppercase">Modern reuse</div><div class="font-semibold mt-1">Chunk recurrent state updates</div><div class="mini mt-1">Same shape, new workload.</div></div>
-      </div>
     </header>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="map">
       <div class="eyebrow">The map first</div>
-      <h2 class="text-2xl font-bold mt-2">The lineage in one screen</h2>
+      <h2 class="text-2xl font-bold mt-2">The lineage, without unexplained acronyms</h2>
       <div class="grid md:grid-cols-5 gap-3 mt-5 text-sm">
-        <div class="rounded-lg border border-emerald-900/60 bg-emerald-950/20 p-4"><div class="text-emerald-300 font-semibold">1958</div><div class="mt-1 text-slate-300">Householder QR</div><div class="mini mt-2">Stable orthogonal transformations.</div></div>
-        <div class="rounded-lg border border-slate-700 bg-slate-950/30 p-4"><div class="text-slate-400 font-semibold">1970s–90s</div><div class="mt-1 text-slate-300">EISPACK → LINPACK → BLAS → LAPACK</div><div class="mini mt-2">Numerical software adapts to memory hierarchies.</div></div>
-        <div class="rounded-lg border border-blue-900/60 bg-blue-950/20 p-4"><div class="text-blue-300 font-semibold">1987–89</div><div class="mt-1 text-slate-300">WY / compact WY</div><div class="mini mt-2">Accumulate reflectors into block form.</div></div>
-        <div class="rounded-lg border border-amber-900/60 bg-amber-950/20 p-4"><div class="text-amber-300 font-semibold">1988 / 2006</div><div class="mt-1 text-slate-300">UT transform</div><div class="mini mt-2">Same utility, triangular-solve form.</div></div>
-        <div class="rounded-lg border border-violet-900/60 bg-violet-950/20 p-4"><div class="text-violet-300 font-semibold">2021–24+</div><div class="mt-1 text-slate-300">DeltaNet / linear attention</div><div class="mini mt-2">Chunk token recurrences into GPU-friendly work.</div></div>
+        <div class="rounded-lg border border-emerald-900/60 bg-emerald-950/20 p-4"><div class="text-emerald-300 font-semibold">1958</div><div class="mt-1 text-slate-300">Householder reflection</div><div class="mini mt-2">A stable way to zero selected matrix entries.</div></div>
+        <div class="rounded-lg border border-slate-700 bg-slate-950/30 p-4"><div class="text-slate-400 font-semibold">next</div><div class="mt-1 text-slate-300">Triangular factorization</div><div class="mini mt-2">Repeated reflections turn A into an upper triangle.</div></div>
+        <div class="rounded-lg border border-blue-900/60 bg-blue-950/20 p-4"><div class="text-blue-300 font-semibold">1987–89</div><div class="mt-1 text-slate-300">WY / compact WY</div><div class="mini mt-2">Represent many reflectors as one block operation.</div></div>
+        <div class="rounded-lg border border-amber-900/60 bg-amber-950/20 p-4"><div class="text-amber-300 font-semibold">1988 / 2006</div><div class="mt-1 text-slate-300">UT transform</div><div class="mini mt-2">Closely related bookkeeping using a triangular solve.</div></div>
+        <div class="rounded-lg border border-violet-900/60 bg-violet-950/20 p-4"><div class="text-violet-300 font-semibold">2020s</div><div class="mt-1 text-slate-300">Linear attention</div><div class="mini mt-2">The same block-the-small-updates move, now over tokens.</div></div>
       </div>
-      <p>The rest of the page explains each arrow. No unexplained LINPACK séance required.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="rank-one">
       <div class="eyebrow">1. The primitive</div>
       <h2 class="text-2xl font-bold mt-2">Start smaller than Householder: a rank-one update</h2>
-      <p>Take a column vector <span class="kbd">u</span> and a row vector <span class="kbd">vᵀ</span>. Their outer product <span class="kbd">uvᵀ</span> is a matrix, but a severely constrained one. It reads the input along one direction and writes along one direction. Its rank is one.</p>
+      <p>Take a column vector <span class="kbd">u</span> and a row vector <span class="kbd">vᵀ</span>. Their outer product <span class="kbd">uvᵀ</span> is a matrix, but a very constrained one: it reads one direction and writes one direction. Its rank is one.</p>
       <div class="formula">A = I − uvᵀ</div>
-      <p><span class="kbd">I</span> means “do nothing.” Subtracting <span class="kbd">uvᵀ</span> means “do nothing except for this one directional correction.” That is why identity-minus-rank-one matrices appear everywhere: they are cheap structured changes to a state.</p>
-      <p>The interesting part begins when you multiply several of them. With two factors:</p>
+      <p><span class="kbd">I</span> is the identity matrix, so it means “leave the input alone.” The term <span class="kbd">uvᵀ</span> adds one structured correction. The interesting part starts when you multiply many such factors.</p>
       <div class="formula">(I − u₁v₁ᵀ)(I − u₂v₂ᵀ)<br>= I − u₁v₁ᵀ − u₂v₂ᵀ + u₁(v₁ᵀu₂)v₂ᵀ</div>
-      <p>The last term is the nuisance and the opportunity. Factor 1 interacts with factor 2 through the scalar <span class="kbd">v₁ᵀu₂</span>. With many factors you get many ordered cross-interactions. WY and UT are ways of <strong>collecting those interactions instead of replaying every factor against the big matrix one by one.</strong></p>
-
-      <div class="mt-5 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-        <svg viewBox="0 0 760 240" role="img" aria-label="Four rank-one transformations collapse into two skinny matrices and a triangular interaction matrix">
-          <text x="20" y="28" fill="#94a3b8" font-size="13">many ordered rank-one transformations</text>
-          <g fill="#172033" stroke="#475569">
-            <rect x="20" y="52" width="95" height="42" rx="7"/><rect x="130" y="52" width="95" height="42" rx="7"/>
-            <rect x="240" y="52" width="95" height="42" rx="7"/><rect x="350" y="52" width="95" height="42" rx="7"/>
-          </g>
-          <g fill="#cbd5e1" font-size="13" text-anchor="middle"><text x="67" y="78">I − u₁v₁ᵀ</text><text x="177" y="78">I − u₂v₂ᵀ</text><text x="287" y="78">I − u₃v₃ᵀ</text><text x="397" y="78">I − u₄v₄ᵀ</text></g>
-          <path d="M460 73 H525" stroke="#a78bfa" stroke-width="2"/><path d="M525 73 l-10 -6 v12 z" fill="#a78bfa"/>
-          <text x="550" y="58" fill="#94a3b8" font-size="12">collect</text>
-          <text x="20" y="145" fill="#cbd5e1" font-size="18">I −</text>
-          <rect x="65" y="120" width="78" height="92" rx="6" fill="#172554" stroke="#60a5fa"/><text x="104" y="170" text-anchor="middle" fill="#93c5fd" font-size="16">U</text>
-          <rect x="165" y="130" width="92" height="72" rx="6" fill="#211a0a" stroke="#fbbf24"/>
-          <path d="M165 130 H257 V202 Z" fill="rgba(251,191,36,.18)"/><text x="211" y="170" text-anchor="middle" fill="#fbbf24" font-size="16">T</text>
-          <rect x="280" y="135" width="120" height="62" rx="6" fill="#052e2b" stroke="#34d399"/><text x="340" y="170" text-anchor="middle" fill="#6ee7b7" font-size="16">Vᵀ</text>
-          <text x="430" y="166" fill="#94a3b8" font-size="14">skinny × small triangle × skinny</text>
-          <text x="430" y="188" fill="#64748b" font-size="13">T remembers ordered cross-interactions</text>
-        </svg>
-      </div>
+      <p>The last term is the interaction between the two updates. With a long sequence there are many ordered interactions. WY and UT are ways to collect them in a compact object instead of replaying every small update against a large matrix.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="reflector">
       <div class="eyebrow">2. The classical special case</div>
       <h2 class="text-2xl font-bold mt-2">A Householder reflector is an actual mirror</h2>
       <div class="formula">H = I − 2vvᵀ / (vᵀv)</div>
-      <p>Pick a vector <span class="kbd">v</span>. The matrix <span class="kbd">H</span> flips the component parallel to <span class="kbd">v</span> and leaves every perpendicular component unchanged. Geometrically, it reflects across the hyperplane perpendicular to <span class="kbd">v</span>.</p>
-      <p>The key property is orthogonality: <span class="kbd">HᵀH = I</span>. Lengths do not get stretched. That makes long sequences of Householder transformations numerically attractive.</p>
-      <div class="grid md:grid-cols-2 gap-5 mt-5">
-        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-          <svg viewBox="0 0 420 245" role="img" aria-label="Geometric Householder reflection">
-            <line x1="35" y1="205" x2="385" y2="55" stroke="#64748b" stroke-width="2"/>
-            <text x="250" y="43" fill="#64748b" font-size="12">mirror hyperplane</text>
-            <circle cx="210" cy="130" r="4" fill="#cbd5e1"/>
-            <line x1="210" y1="130" x2="330" y2="105" stroke="#e2e8f0" stroke-width="3"/>
-            <path d="M330 105 l-12 -5 5 12 z" fill="#e2e8f0"/><text x="340" y="108" fill="#e2e8f0">x</text>
-            <line x1="210" y1="130" x2="275" y2="216" stroke="#34d399" stroke-width="3"/>
-            <path d="M275 216 l-11 -7 2 13 z" fill="#34d399"/><text x="283" y="226" fill="#34d399">Hx</text>
-            <line x1="210" y1="130" x2="255" y2="186" stroke="#a78bfa" stroke-width="2" stroke-dasharray="5 4"/>
-            <text x="260" y="188" fill="#a78bfa">v</text>
-          </svg>
-        </div>
-        <div>
-          <p><strong>Why QR cares:</strong> choose the reflector so one column is rotated onto a coordinate axis. Every entry below the diagonal in that column becomes zero in one shot.</p>
-          <div class="formula">A = QR</div>
-          <p><span class="kbd">Q</span> is the product of the orthogonal reflectors. <span class="kbd">R</span> is upper triangular. Once the problem is triangular, solving it is cheap by substitution.</p>
-          <p>This is not abstract decorative algebra. It became a workhorse for least squares, linear solves, and the transformations used inside eigenvalue algorithms.</p>
-        </div>
-      </div>
+      <p>Pick a vector <span class="kbd">v</span>. The matrix <span class="kbd">H</span> flips the component parallel to <span class="kbd">v</span> and leaves every perpendicular component unchanged. Geometrically, it is a reflection across the hyperplane perpendicular to <span class="kbd">v</span>.</p>
+      <p>It is also an <strong>orthogonal matrix</strong>: <span class="kbd">HᵀH = I</span>. That means it preserves lengths instead of stretching some directions while shrinking others.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Now define QR, because the acronym is otherwise useless</h3>
+      <p><strong>QR factorization</strong> is a way to rewrite a matrix <span class="kbd">A</span> as</p>
+      <div class="formula">A = QR</div>
+      <p><span class="kbd">Q</span> is orthogonal. <span class="kbd">R</span> is upper triangular, meaning everything below its main diagonal is zero. Why bother? Because triangular systems are easy to solve by substitution.</p>
+      <p>Householder reflections give a practical way to build this factorization. Choose the first reflector so the first column of <span class="kbd">A</span> is mapped onto the first coordinate axis. That zeros every entry below the first diagonal element. Then do the same to the second column, then the third, and so on. After the sweep, the transformed matrix is <span class="kbd">R</span>; the accumulated reflections make <span class="kbd">Q</span>.</p>
+
       <div class="callout mt-5" style="border-left-color:var(--green)">
-        <strong>Do not collapse these terms:</strong> a rank-one update is the broad category. <span class="kbd">I − βkkᵀ</span> is Householder-shaped. It is a true reflector only for the special coefficient that makes the map orthogonal. DeltaNet lives in the broader Householder-like category, not generally in the exact-reflection category.
+        <strong>Keep the categories straight.</strong> A rank-one update is the broad shape. <span class="kbd">I − βkkᵀ</span> is Householder-shaped. It is a true Householder reflector only when the coefficient makes the matrix orthogonal. DeltaNet uses the broader shape, not generally an exact reflection.
       </div>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="householder-history">
-      <div class="eyebrow">3. What problem was Householder solving?</div>
-      <h2 class="text-2xl font-bold mt-2">Oak Ridge needed reliable matrix computation, not a pretty reflection</h2>
-      <p>Alston Householder joined Oak Ridge in 1946 and moved into numerical analysis there, working on differential equations and matrix problems. He also pushed Oak Ridge toward electronic computing. The ORACLE computer was completed in 1953; the first program used to test it was a Givens eigenvalue program. That detail is useful because it shows the environment: <strong>matrix eigenproblems were machine workloads, not textbook ornaments.</strong></p>
-      <p>Householder&rsquo;s 1958 paper gave an orthogonal route for triangularizing a nonsymmetric matrix. The practical value was stability on finite-precision computers. You could transform the problem aggressively without also magnifying numerical error by arbitrary scale factors.</p>
-      <p>By 1965, Businger and Golub published Householder-based least-squares software. Least squares is what you use when observations outnumber unknown parameters: orbit fitting, survey adjustment, calibration, experimental regression, and countless other “infer parameters from noisy measurements” jobs. This is how a reflector becomes infrastructure: the application never asks for a mirror; it asks for the fitted parameters.</p>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="history">
+      <div class="eyebrow">3. Why this became infrastructure</div>
+      <h2 class="text-2xl font-bold mt-2">The user wanted a solved problem; the reflector was plumbing</h2>
+      <p>Householder worked at Oak Ridge during the transition from hand and electromechanical computation to electronic machines. Matrix problems were real machine workloads. His 1958 work gave a stable orthogonal route to triangularizing a nonsymmetric matrix.</p>
+      <p>By 1965, Businger and Golub had published Householder-based least-squares software. Least squares appears whenever measurements outnumber unknown parameters: fit the model parameters that best explain noisy data. The application asks for the fitted orbit, calibration, survey, or regression coefficients. It does not care that a chain of reflections produced them.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="software-history">
       <div class="eyebrow">4. The missing middle</div>
-      <h2 class="text-2xl font-bold mt-2">EISPACK, LINPACK, BLAS, and LAPACK were not four versions of one thing</h2>
-      <p>This is where most modern explanations become hostile to anyone who was not already doing scientific computing in 1983. The names refer to different layers of a numerical-software ecosystem.</p>
-
+      <h2 class="text-2xl font-bold mt-2">EISPACK, LINPACK, BLAS, and LAPACK are different layers, not sequel numbers</h2>
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[760px]">
-          <thead><tr><th class="text-left py-3 pr-5">Thing</th><th class="text-left py-3 pr-5">What it actually was</th><th class="text-left py-3 pr-5">Main job</th><th class="text-left py-3">Why it matters to WY/UT</th></tr></thead>
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-5">Thing</th><th class="text-left py-3 pr-5">What it was</th><th class="text-left py-3 pr-5">Main job</th><th class="text-left py-3">Why it matters here</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5"><strong>EISPACK</strong><div class="mini">released 1972</div></td><td class="py-4 pr-5">Portable Fortran routines based mainly on Wilkinson–Reinsch eigensystem algorithms.</td><td class="py-4 pr-5">Eigenvalues and eigenvectors.</td><td class="py-4">Represents the older model: carefully engineered algorithms, but not organized around later cache/blocking concerns.</td></tr>
-            <tr><td class="py-4 pr-5"><strong>LINPACK</strong><div class="mini">Users&rsquo; Guide 1979</div></td><td class="py-4 pr-5">Fortran package by Dongarra, Bunch, Moler, and Stewart.</td><td class="py-4 pr-5">Linear systems, least squares, and dense factorizations.</td><td class="py-4">Built around relatively fine-grained vector kernels appropriate to its era.</td></tr>
-            <tr><td class="py-4 pr-5"><strong>BLAS</strong><div class="mini">L1 1979 · L2 1988 · L3 1990</div></td><td class="py-4 pr-5">Published interfaces for reusable low-level linear-algebra operations, with reference and machine-tuned implementations.</td><td class="py-4 pr-5">Vector, matrix-vector, then matrix-matrix kernels.</td><td class="py-4">Creates the performance boundary: high-level algorithms can call one standard GEMM while hardware vendors optimize GEMM.</td></tr>
-            <tr><td class="py-4 pr-5"><strong>LAPACK</strong><div class="mini">project began 1987 · guide 1992</div></td><td class="py-4 pr-5">Successor that unified and superseded much of LINPACK and EISPACK.</td><td class="py-4 pr-5">Dense linear systems, least squares, eigenproblems, SVD.</td><td class="py-4">Explicitly restructures algorithms into blocks so most expensive work runs through Level-3 BLAS.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>EISPACK</strong><div class="mini">1972</div></td><td class="py-4 pr-5">Portable Fortran routines built from the Wilkinson–Reinsch eigensystem tradition.</td><td class="py-4 pr-5">Eigenvalues and eigenvectors.</td><td class="py-4">Shows the pre-blocking style of carefully engineered numerical software.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>LINPACK</strong><div class="mini">Users' Guide 1979</div></td><td class="py-4 pr-5">A Fortran package by Dongarra, Bunch, Moler, and Stewart.</td><td class="py-4 pr-5">Linear systems, least squares, dense factorizations.</td><td class="py-4">Built around relatively fine-grained vector operations appropriate to its machines.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>BLAS</strong><div class="mini">Level 1 → 2 → 3</div></td><td class="py-4 pr-5">Standard interfaces for common linear-algebra kernels, with reference and tuned implementations.</td><td class="py-4 pr-5">Vector, matrix-vector, then matrix-matrix work.</td><td class="py-4">Lets numerical algorithms hand hot kernels to machine-specific implementations.</td></tr>
+            <tr><td class="py-4 pr-5"><strong>LAPACK</strong><div class="mini">project began 1987</div></td><td class="py-4 pr-5">The successor that reorganized and extended LINPACK/EISPACK functionality.</td><td class="py-4 pr-5">Dense solves, least squares, eigenproblems, SVD.</td><td class="py-4">Designed around block algorithms so expensive work becomes Level-3 BLAS.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <h3 class="text-xl font-semibold mt-7">BLAS is an interface contract, not “that library from Intel”</h3>
-      <p>BLAS means <strong>Basic Linear Algebra Subprograms</strong>. The official interfaces were defined through published papers. Netlib provides reference implementations. Hardware and software vendors provide tuned implementations. That separation is the whole point: LAPACK can say “multiply these matrices” without knowing whether the machine underneath is a Cray vector processor, an x86 CPU, or something else.</p>
+      <h3 class="text-xl font-semibold mt-7">BLAS is the contract between algorithms and hardware</h3>
       <div class="grid md:grid-cols-3 gap-3 mt-5">
-        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4"><div class="text-cyan-300 font-semibold">Level 1</div><div class="text-slate-300 mt-1">vector ↔ vector</div><div class="mini mt-2">dot products, scaling, axpy</div></div>
-        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4"><div class="text-blue-300 font-semibold">Level 2</div><div class="text-slate-300 mt-1">matrix ↔ vector</div><div class="mini mt-2">limited reuse of the matrix</div></div>
-        <div class="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4"><div class="text-amber-300 font-semibold">Level 3</div><div class="text-slate-300 mt-1">matrix ↔ matrix</div><div class="mini mt-2">high reuse; GEMM territory</div></div>
+        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4"><div class="text-cyan-300 font-semibold">Level 1</div><div class="text-slate-300 mt-1">vector × vector</div><div class="mini mt-2">dot, scale, AXPY</div></div>
+        <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4"><div class="text-blue-300 font-semibold">Level 2</div><div class="text-slate-300 mt-1">matrix × vector</div><div class="mini mt-2">limited data reuse</div></div>
+        <div class="rounded-xl border border-amber-900/60 bg-amber-950/20 p-4"><div class="text-amber-300 font-semibold">Level 3</div><div class="text-slate-300 mt-1">matrix × matrix</div><div class="mini mt-2">high reuse; GEMM territory</div></div>
       </div>
-      <p>The jump from Level 2 to Level 3 is not just “a bigger operation.” Matrix-matrix multiplication lets the implementation reuse tiles of data many times after loading them. That raises arithmetic intensity. On machines where moving data is expensive relative to multiplying it, this is the difference between feeding the arithmetic units and starving them.</p>
-
-      <h3 class="text-xl font-semibold mt-7">Why LAPACK had to exist</h3>
-      <p>The LAPACK documentation says the older LINPACK/EISPACK memory-access patterns did not exploit newer multi-level memory hierarchies well. The fix was to reorganize algorithms so block matrix operations sit in the inner loops. In other words: <strong>keep the numerical method, change its granularity.</strong></p>
+      <p>Matrix-matrix multiplication can reuse loaded tiles many times. That is why the move from Level 2 to Level 3 matters: it changes how much arithmetic the machine can do per byte moved.</p>
       <div class="callout mt-5" style="border-left-color:var(--amber)">
-        That is exactly where WY enters QR. Householder QR naturally hands you one reflector at a time. LAPACK wants a block update that can become Level-3 BLAS. WY/compact-WY is the representation that bridges those two facts.
+        <strong>This creates the WY problem.</strong> Householder QR naturally generates one reflector at a time. LAPACK wants the expensive update of the large trailing matrix to happen as a block matrix operation. WY is the representation that lets both things be true.
       </div>
-
-      <h3 class="text-xl font-semibold mt-7">And the LINPACK benchmark?</h3>
-      <p>Separate the package from the benchmark. Dongarra describes the benchmark as essentially an accident: the 1979 LINPACK Users&rsquo; Guide included timings for a standard linear solve so users could estimate runtimes. The timing table grew into a machine-comparison tradition and, much later, the TOP500 lineage. LINPACK the solver package and LINPACK the benchmark are related historical objects, not synonyms.</p>
+      <p><strong>And the LINPACK benchmark?</strong> Separate the package from the benchmark. The benchmark grew from timing a standard solve in the LINPACK Users' Guide. It later became a machine-comparison tradition. Same name, different object.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="wy">
-      <div class="eyebrow">5. The 1987 complaint</div>
-      <h2 class="text-2xl font-bold mt-2">Bischof and Van Loan wanted Householder algorithms to contain more matrix-matrix multiplication</h2>
-      <p>The abstract of the 1987 WY paper is unusually direct. The authors wanted a representation of products of Householder matrices that made Householder algorithms “rich in matrix-matrix multiplication,” because matrix-matrix multiplication was becoming the operation of choice on high-performance machines. They tested QR with the representation on the <strong>FPS-164/MAX</strong>.</p>
-      <p>Here is the systems problem. Suppose a panel produced <span class="kbd">b</span> reflectors and they all need to update a much larger trailing matrix <span class="kbd">C</span>.</p>
+      <div class="eyebrow">5. The 1987 systems complaint</div>
+      <h2 class="text-2xl font-bold mt-2">Stop applying reflectors one at a time to the big matrix</h2>
+      <p>Suppose a narrow group of columns has produced <span class="kbd">b</span> Householder reflectors, and all of them must update a much larger matrix <span class="kbd">C</span>.</p>
       <div class="grid md:grid-cols-2 gap-4 mt-5">
         <div class="rounded-xl border border-rose-900/60 bg-rose-950/20 p-5">
-          <div class="text-rose-300 font-semibold">Naive application</div>
+          <div class="text-rose-300 font-semibold">One at a time</div>
           <div class="formula mt-3">C ← H₁C<br>C ← H₂C<br>⋮<br>C ← H_bC</div>
-          <p class="text-sm text-slate-400 mt-3">Walk over the large matrix again for every reflector. Lots of small rank-one work.</p>
+          <p class="text-sm text-slate-400 mt-3">Touch the large target over and over for rank-one work.</p>
         </div>
         <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
-          <div class="text-emerald-300 font-semibold">Block application</div>
+          <div class="text-emerald-300 font-semibold">Accumulate, then apply</div>
           <div class="formula mt-3">Q = H₁H₂…H_b = I + WYᵀ<br><br>QC = C + W(YᵀC)</div>
-          <p class="text-sm text-slate-400 mt-3">Represent the product once, then use matrix-matrix operations on the large target.</p>
+          <p class="text-sm text-slate-400 mt-3">Represent the product once, then do matrix-matrix work.</p>
         </div>
       </div>
-      <p><strong>W and Y are just names.</strong> They are not acronyms. This is one of those historical naming choices that later generations must simply endure.</p>
+      <p>Bischof and Van Loan's 1987 WY representation was motivated by exactly this change in granularity. <strong>W and Y are just matrix names, not acronyms.</strong></p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="wy-ut-family">
-      <div class="eyebrow">6. The family tree</div>
-      <h2 class="text-2xl font-bold mt-2">WY, compact WY, and UT solve the same accumulation problem with different bookkeeping</h2>
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="family">
+      <div class="eyebrow">6. Same accumulation problem, different bookkeeping</div>
+      <h2 class="text-2xl font-bold mt-2">WY, compact WY, and UT</h2>
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[760px]">
-          <thead><tr><th class="text-left py-3 pr-5">Form</th><th class="text-left py-3 pr-5">Name</th><th class="text-left py-3 pr-5">What is stored</th><th class="text-left py-3">Point</th></tr></thead>
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-5">Form</th><th class="text-left py-3 pr-5">Name</th><th class="text-left py-3 pr-5">Stored objects</th><th class="text-left py-3">Point</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5"><span class="kbd">Q = I + WYᵀ</span></td><td class="py-4 pr-5"><strong>WY</strong><div class="mini">Bischof &amp; Van Loan, 1987</div></td><td class="py-4 pr-5">Two skinny matrices W and Y.</td><td class="py-4">Turn a product of reflectors into block matrix operations.</td></tr>
-            <tr><td class="py-4 pr-5"><span class="kbd">Q = I + YTYᵀ</span></td><td class="py-4 pr-5"><strong>compact WY</strong><div class="mini">Schreiber &amp; Van Loan, 1989</div></td><td class="py-4 pr-5">Householder vectors in Y + a small upper-triangular T.</td><td class="py-4">Same block idea with less storage.</td></tr>
-            <tr><td class="py-4 pr-5"><span class="kbd">Q = I − VTVᵀ</span></td><td class="py-4 pr-5"><strong>LAPACK-style compact reflector</strong></td><td class="py-4 pr-5">V + small triangular T.</td><td class="py-4">Sign/scaling conventions differ; this is the form many programmers meet in practice.</td></tr>
-            <tr><td class="py-4 pr-5"><span class="kbd">Q = I − UT⁻¹Uᵀ</span></td><td class="py-4 pr-5"><strong>UT</strong><div class="mini">Walker, 1988; revisited/named by Joffrain et al., 2006</div></td><td class="py-4 pr-5">Householder-vector matrix U + triangular T.</td><td class="py-4">Apply via matrix products and a small triangular solve; do not form T⁻¹ explicitly.</td></tr>
+            <tr><td class="py-4 pr-5"><span class="kbd">Q = I + WYᵀ</span></td><td class="py-4 pr-5"><strong>WY</strong><div class="mini">Bischof &amp; Van Loan, 1987</div></td><td class="py-4 pr-5">Two skinny matrices.</td><td class="py-4">Turn a product of reflectors into block matrix operations.</td></tr>
+            <tr><td class="py-4 pr-5"><span class="kbd">Q = I + YTYᵀ</span></td><td class="py-4 pr-5"><strong>compact WY</strong><div class="mini">Schreiber &amp; Van Loan, 1989</div></td><td class="py-4 pr-5">The reflector vectors plus a small triangular matrix <span class="kbd">T</span>.</td><td class="py-4">Same idea with less extra storage.</td></tr>
+            <tr><td class="py-4 pr-5"><span class="kbd">Q = I − VTVᵀ</span></td><td class="py-4 pr-5"><strong>LAPACK-style compact form</strong></td><td class="py-4 pr-5"><span class="kbd">V</span> plus triangular <span class="kbd">T</span>.</td><td class="py-4">The form many programmers encounter inside block-reflector routines.</td></tr>
+            <tr><td class="py-4 pr-5"><span class="kbd">Q = I − UT⁻¹Uᵀ</span></td><td class="py-4 pr-5"><strong>UT</strong><div class="mini">Walker, 1988; revisited 2006</div></td><td class="py-4 pr-5"><span class="kbd">U</span> plus triangular <span class="kbd">T</span>.</td><td class="py-4">Apply through matrix products and a small triangular solve; do not form the inverse explicitly.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The signs and exact definitions of <span class="kbd">T</span> vary across papers and libraries. Do not let that hide the invariant structure: <strong>a large product is represented by skinny factors plus a small triangular interaction object.</strong></p>
-
-      <h3 class="text-xl font-semibold mt-7">Why a triangle?</h3>
-      <p>Order. Reflector 1 can affect what reflector 2 sees; reflector 2 cannot travel backward in time and affect how reflector 1 was defined. The interaction graph is one-way. One-way dependence is triangular algebra wearing a different hat.</p>
-      <div class="rounded-xl border border-slate-700 bg-slate-950/40 p-4 mt-4">
-        <svg viewBox="0 0 620 250" role="img" aria-label="Triangular dependency matrix for four ordered transformations">
-          <text x="20" y="28" fill="#94a3b8" font-size="13">ordered interaction matrix</text>
-          <g transform="translate(65,55)">
-            <g stroke="#334155">
-              <rect x="0" y="0" width="44" height="44" fill="#062c27"/><rect x="44" y="0" width="44" height="44" fill="#3a2a08"/><rect x="88" y="0" width="44" height="44" fill="#3a2a08"/><rect x="132" y="0" width="44" height="44" fill="#3a2a08"/>
-              <rect x="0" y="44" width="44" height="44" fill="#09111f"/><rect x="44" y="44" width="44" height="44" fill="#062c27"/><rect x="88" y="44" width="44" height="44" fill="#3a2a08"/><rect x="132" y="44" width="44" height="44" fill="#3a2a08"/>
-              <rect x="0" y="88" width="44" height="44" fill="#09111f"/><rect x="44" y="88" width="44" height="44" fill="#09111f"/><rect x="88" y="88" width="44" height="44" fill="#062c27"/><rect x="132" y="88" width="44" height="44" fill="#3a2a08"/>
-              <rect x="0" y="132" width="44" height="44" fill="#09111f"/><rect x="44" y="132" width="44" height="44" fill="#09111f"/><rect x="88" y="132" width="44" height="44" fill="#09111f"/><rect x="132" y="132" width="44" height="44" fill="#062c27"/>
-            </g>
-            <g text-anchor="middle" font-size="13"><text x="22" y="27" fill="#34d399">1</text><text x="66" y="27" fill="#fbbf24">1→2</text><text x="110" y="27" fill="#fbbf24">1→3</text><text x="154" y="27" fill="#fbbf24">1→4</text><text x="66" y="71" fill="#34d399">1</text><text x="110" y="71" fill="#fbbf24">2→3</text><text x="154" y="71" fill="#fbbf24">2→4</text><text x="110" y="115" fill="#34d399">1</text><text x="154" y="115" fill="#fbbf24">3→4</text><text x="154" y="159" fill="#34d399">1</text></g>
-          </g>
-          <text x="285" y="85" fill="#fbbf24" font-size="14">above diagonal: earlier → later interactions</text>
-          <text x="285" y="118" fill="#64748b" font-size="14">below diagonal: impossible backward influence</text>
-          <text x="285" y="151" fill="#34d399" font-size="14">diagonal: each transformation itself</text>
-        </svg>
-      </div>
+      <p>The signs and exact definitions vary between papers and libraries. The common shape is the part worth remembering: <strong>skinny factors plus a small triangular object summarize a long ordered product.</strong></p>
+      <p>Why triangular? Because dependence has an order. An earlier transform can affect what a later transform sees; a later one cannot go backward and change how the earlier one was formed.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="blocked-qr">
       <div class="eyebrow">7. What blocked QR actually does</div>
-      <h2 class="text-2xl font-bold mt-2">WY does not make the entire QR factorization parallel</h2>
-      <p>This distinction is easy to miss and matters directly when comparing classical QR with ML chunking.</p>
+      <h2 class="text-2xl font-bold mt-2">WY accelerates the expensive application; it does not erase every dependency</h2>
+      <p>A blocked QR implementation works in three stages:</p>
       <ol class="list-decimal pl-6 text-slate-400 space-y-2">
-        <li><strong>Factor a narrow panel.</strong> Householder vectors are generated one after another. There is still sequential dependence inside the panel.</li>
-        <li><strong>Accumulate those reflectors.</strong> Build the compact representation, including its small triangular factor.</li>
-        <li><strong>Apply the block to the trailing matrix.</strong> This is the large expensive part, now expressed through Level-3 BLAS.</li>
+        <li><strong>Factor a narrow panel.</strong> Generate its Householder reflectors. This part is still partly sequential because each new reflector sees the panel after the previous ones.</li>
+        <li><strong>Accumulate the panel's reflectors.</strong> Build the compact block representation, including the small triangular factor.</li>
+        <li><strong>Apply the block to the trailing matrix.</strong> This is the large update, now expressed as Level-3 BLAS instead of a pile of rank-one passes.</li>
       </ol>
-      <div class="mt-5 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-        <svg viewBox="0 0 760 250" role="img" aria-label="Blocked QR panel and trailing matrix">
-          <text x="20" y="28" fill="#94a3b8" font-size="13">one QR block step</text>
-          <rect x="30" y="55" width="95" height="135" rx="6" fill="#3b1422" stroke="#fb7185"/><text x="77" y="120" text-anchor="middle" fill="#fda4af">panel</text>
-          <rect x="140" y="55" width="300" height="135" rx="6" fill="#172033" stroke="#475569"/><text x="290" y="120" text-anchor="middle" fill="#cbd5e1">trailing matrix</text>
-          <text x="30" y="220" fill="#fb7185" font-size="13">sequential reflector generation</text>
-          <path d="M455 120 H520" stroke="#a78bfa" stroke-width="2"/><path d="M520 120 l-10 -6 v12 z" fill="#a78bfa"/>
-          <rect x="540" y="65" width="85" height="45" rx="6" fill="#172554" stroke="#60a5fa"/><text x="582" y="92" text-anchor="middle" fill="#93c5fd">V</text>
-          <rect x="540" y="125" width="85" height="45" rx="6" fill="#3a2a08" stroke="#fbbf24"/><text x="582" y="152" text-anchor="middle" fill="#fbbf24">T</text>
-          <text x="645" y="104" fill="#34d399" font-size="13">then block update</text><text x="645" y="124" fill="#64748b" font-size="12">GEMM-heavy</text>
-        </svg>
-      </div>
-      <p>In LAPACK, routines such as <span class="kbd">xLARFT</span> form the triangular factor for a block reflector and <span class="kbd">xLARFB</span> applies it. <span class="kbd">xGEQRT</span> is one blocked QR route. This is why most people have used WY-style machinery without ever seeing the name “WY.” It was absorbed into plumbing.</p>
+      <p><strong>Panel</strong> just means the narrow block of columns being factored now. <strong>Trailing matrix</strong> means the big part to its right that still needs updating. These are ordinary words once someone bothers to define them.</p>
+      <p>In LAPACK, routines such as <span class="kbd">xLARFT</span> form the triangular factor and <span class="kbd">xLARFB</span> apply the block reflector. This is why WY became invisible: it turned into library plumbing.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="ml">
-      <div class="eyebrow">8. Why ML rediscovered the problem</div>
-      <h2 class="text-2xl font-bold mt-2">DeltaNet turns tokens into a sequence of Householder-like state maps</h2>
-      <p>DeltaNet updates a matrix-valued memory using a delta-rule correction. One common orientation is:</p>
+      <div class="eyebrow">8. The modern recurrence</div>
+      <h2 class="text-2xl font-bold mt-2">DeltaNet has the same identity-minus-rank-one shape</h2>
+      <p>DeltaNet keeps a fixed-size matrix state <span class="kbd">S</span>. For token <span class="kbd">t</span>, let <span class="kbd">kₜ</span> be the key direction, <span class="kbd">vₜ</span> the value to write, and <span class="kbd">βₜ</span> the learned write strength. One orientation of the update is:</p>
       <div class="formula">Sₜ = Sₜ₋₁ (I − βₜ kₜkₜᵀ) + βₜ vₜkₜᵀ</div>
-      <p>The important factor is <span class="kbd">I − βₜkₜkₜᵀ</span>. It has the same identity-minus-rank-one shape as the classical reflector machinery, but <span class="kbd">βₜ</span> is learned, so this is generally not an orthogonal reflection.</p>
-      <p>The 2024 DeltaNet parallelization paper explicitly exploits the WY representation to represent products of these structured state transitions without materializing a full matrix-sized product for every token. It groups tokens into chunks so much of the state update and output computation can be done as matrix multiplications.</p>
-
+      <p>The factor <span class="kbd">I − βₜkₜkₜᵀ</span> is Householder-shaped, but it is generally not an orthogonal reflection because <span class="kbd">βₜ</span> is learned rather than fixed to the reflector coefficient.</p>
+      <p>The 2024 DeltaNet parallelization work groups consecutive tokens into chunks and compacts their ordered state transitions. The expensive operations become matrix multiplies instead of a strictly token-by-token state update.</p>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[760px]">
-          <thead><tr><th class="text-left py-3 pr-5">Classical QR</th><th class="text-left py-3 pr-5">DeltaNet / linear attention</th><th class="text-left py-3">Common systems idea</th></tr></thead>
+          <thead><tr><th class="text-left py-3 pr-5">Classical blocked QR</th><th class="text-left py-3 pr-5">Chunked DeltaNet</th><th class="text-left py-3">Same systems idea</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-4 pr-5">Householder vector</td><td class="py-4 pr-5">token key + learned write strength</td><td class="py-4">parameterizes a structured rank-one state transition</td></tr>
+            <tr><td class="py-4 pr-5">Householder vector</td><td class="py-4 pr-5">token key + write strength</td><td class="py-4">parameterize a structured rank-one transition</td></tr>
             <tr><td class="py-4 pr-5">panel</td><td class="py-4 pr-5">token chunk</td><td class="py-4">small group whose internal interactions are summarized</td></tr>
-            <tr><td class="py-4 pr-5">block reflector</td><td class="py-4 pr-5">chunk transition / transformed updates</td><td class="py-4">avoid replaying every fine-grained update against the large state</td></tr>
-            <tr><td class="py-4 pr-5">Level-3 BLAS</td><td class="py-4 pr-5">GPU GEMMs / tiled kernels</td><td class="py-4">trade tiny sequential operations for high-throughput matrix work</td></tr>
+            <tr><td class="py-4 pr-5">block reflector</td><td class="py-4 pr-5">chunk transition</td><td class="py-4">avoid replaying every fine-grained update against the large state</td></tr>
+            <tr><td class="py-4 pr-5">Level-3 BLAS</td><td class="py-4 pr-5">GPU GEMMs / tiled kernels</td><td class="py-4">turn small dependent work into high-throughput matrix work</td></tr>
           </tbody>
         </table>
       </div>
-
-      <h3 class="text-xl font-semibold mt-7">So why do people now say “WY/UT”?</h3>
-      <p>The 2024 paper foregrounds the <strong>WY representation</strong>. In later implementation and explanation of DeltaNet, Songlin Yang describes the <strong>UT transform</strong> as the triangular reorganization used to parallelize the recursive construction of the transformed update vectors. Modern implementations therefore often discuss both names around the same chunkwise kernel family.</p>
-      <p>That distinction is worth keeping: WY is the broad compact-product representation used in the paper&rsquo;s derivation; UT is a closely related triangular-solve representation that is especially convenient for implementing the dependent transformed factors efficiently. “WY/UT kernel” is systems shorthand for this family, not evidence that two unrelated algorithms were duct-taped together.</p>
+      <p>Modern code often says “WY/UT” because both descriptions are useful around this chunked kernel family: WY describes the compact product; UT emphasizes the triangular reorganization used to construct or apply the dependent factors.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="boundary">
-      <div class="eyebrow">9. The real boundary</div>
-      <h2 class="text-2xl font-bold mt-2">The trick works because the recurrence is affine in the state</h2>
-      <p>Each DeltaNet step is affine in <span class="kbd">S</span>: multiply the old state by a matrix, then add a term. Products and compositions of affine maps remain affine. That closure is what lets a chunk be summarized by fixed factors computed from the token parameters.</p>
-      <div class="formula">S' = S A + B &nbsp;&nbsp;&nbsp;→&nbsp;&nbsp;&nbsp; affine in S</div>
-      <p>If the write rule becomes genuinely nonlinear in the current state, the coefficients of the next transformation depend on the very state you are trying to summarize. There is no fixed finite WY/UT factorization of the same kind waiting to be discovered.</p>
-      <p>This is the precise reason the Trellis case on the <a href="linear_attention.html#strategies">linear-attention study</a> is different. It can still obtain chunk parallelism by freezing/linearizing the state at a chunk boundary, but that is an approximation to the nonlinear recurrence, not the exact classical WY closure.</p>
+      <div class="eyebrow">9. Where the trick stops</div>
+      <h2 class="text-2xl font-bold mt-2">Exact chunking depends on the state update staying affine</h2>
+      <p>An update is <strong>affine in the state</strong> when it has the form</p>
+      <div class="formula">S' = SA + B</div>
+      <p>where <span class="kbd">A</span> and <span class="kbd">B</span> are determined without depending on the current value of <span class="kbd">S</span>. Affine maps compose into affine maps, so a whole chunk can still be represented by fixed factors.</p>
+      <p>If the coefficients themselves depend nonlinearly on the current state, that closure disappears. The specific WY/UT factorization above no longer gives the exact recurrence. A model can still choose an approximation, for example by linearizing around the state at the start of a chunk, but that is a different computation.</p>
+      <p>This is the exact connection to the <a href="linear_attention.html#strategies">Trellis training discussion</a>: its chunk-parallel forward freezes the nonlinear state at the chunk boundary to recover a locally linear problem.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="timeline">
-      <div class="eyebrow">10. History without teleportation</div>
-      <h2 class="text-2xl font-bold mt-2">The chronological thread</h2>
+      <div class="eyebrow">10. The chronology</div>
+      <h2 class="text-2xl font-bold mt-2">The thread without historical teleportation</h2>
       <div class="timeline mt-5 text-sm text-slate-400">
-        <div class="tick"><strong class="text-emerald-300">1958 · Householder</strong><br>Orthogonal triangularization with reflectors. Stable QR machinery.</div>
-        <div class="tick"><strong class="text-emerald-300">1965 · Businger &amp; Golub</strong><br>Householder least-squares software makes QR a practical fitting engine.</div>
-        <div class="tick"><strong class="text-slate-300">1972 · EISPACK</strong><br>Portable eigensystem routines based on the Wilkinson–Reinsch algorithmic tradition.</div>
-        <div class="tick"><strong class="text-slate-300">1979 · LINPACK + Level-1 BLAS paper</strong><br>Dense factorization/solve software and standardized vector kernels.</div>
-        <div class="tick"><strong class="text-blue-300">1987 · Bischof &amp; Van Loan</strong><br>WY representation: make Householder algorithms rich in matrix-matrix multiplication; QR tested on FPS-164/MAX.</div>
-        <div class="tick"><strong class="text-slate-300">1987 · LAPACK project starts</strong><br>Rebuild dense numerical software around block algorithms and higher-level BLAS.</div>
-        <div class="tick"><strong class="text-amber-300">1988 · Walker</strong><br>Householder GMRES uses the representation later discussed as UT.</div>
-        <div class="tick"><strong class="text-slate-300">1988 · Level-2 BLAS</strong><br>Standard matrix-vector kernels.</div>
-        <div class="tick"><strong class="text-blue-300">1989 · Schreiber &amp; Van Loan</strong><br>Compact WY: reuse the Householder vectors and add only a small triangular factor.</div>
-        <div class="tick"><strong class="text-slate-300">1990 · Level-3 BLAS</strong><br>Standard matrix-matrix and multiple-right-hand-side triangular kernels.</div>
-        <div class="tick"><strong class="text-slate-300">1992 · LAPACK Users&rsquo; Guide</strong><br>LINPACK/EISPACK successor reaches users with block algorithms at its core.</div>
-        <div class="tick"><strong class="text-amber-300">2006 · Joffrain et al.</strong><br>Revisits accumulated Householder transformations and surfaces the neglected UT alternative.</div>
-        <div class="tick"><strong class="text-violet-300">2021 · DeltaNet</strong><br>Delta-rule fast-weight memory uses identity-minus-rank-one state transitions.</div>
-        <div class="tick"><strong class="text-violet-300">2024 · Yang et al.</strong><br>WY-based chunking makes DeltaNet train efficiently across sequence length.</div>
+        <div class="tick"><strong class="text-emerald-300">1958 · Householder</strong><br>Orthogonal triangularization using reflections.</div>
+        <div class="tick"><strong class="text-emerald-300">1965 · Businger &amp; Golub</strong><br>Householder least-squares software makes the method a practical fitting engine.</div>
+        <div class="tick"><strong class="text-slate-300">1972 · EISPACK</strong><br>Portable eigensystem routines.</div>
+        <div class="tick"><strong class="text-slate-300">1979 · LINPACK + Level-1 BLAS era</strong><br>Dense solve/factorization software built around standardized vector kernels.</div>
+        <div class="tick"><strong class="text-blue-300">1987 · Bischof &amp; Van Loan</strong><br>WY: accumulate Householder products so the expensive application becomes matrix-matrix work.</div>
+        <div class="tick"><strong class="text-slate-300">1987 · LAPACK project begins</strong><br>Rebuild dense numerical software around block algorithms and higher-level BLAS.</div>
+        <div class="tick"><strong class="text-amber-300">1988 · Walker</strong><br>A Householder accumulation form later discussed as UT appears in GMRES work.</div>
+        <div class="tick"><strong class="text-blue-300">1989 · Schreiber &amp; Van Loan</strong><br>Compact WY reduces storage by reusing the reflector vectors.</div>
+        <div class="tick"><strong class="text-amber-300">2006 · Joffrain et al.</strong><br>Revisit the accumulation history and put the UT description back in view.</div>
+        <div class="tick"><strong class="text-violet-300">2021–2024 · fast weights → DeltaNet</strong><br>The same algebraic shape reappears in fixed-state sequence models and chunked GPU kernels.</div>
       </div>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="dictionary">
-      <div class="eyebrow">11. Translation dictionary</div>
-      <h2 class="text-2xl font-bold mt-2">Terms that otherwise make papers unnecessarily miserable</h2>
-      <dl class="grid md:grid-cols-[180px_1fr] gap-x-5 gap-y-4 mt-5 text-sm">
-        <dt class="text-slate-200 font-semibold">reflector</dt><dd class="text-slate-400">An orthogonal matrix that mirrors vectors across a hyperplane.</dd>
-        <dt class="text-slate-200 font-semibold">Householder-like</dt><dd class="text-slate-400">Has the identity-minus-rank-one shape but need not have the coefficient that makes it an exact reflection.</dd>
-        <dt class="text-slate-200 font-semibold">panel</dt><dd class="text-slate-400">The narrow block of columns currently being factored in blocked QR.</dd>
-        <dt class="text-slate-200 font-semibold">trailing matrix</dt><dd class="text-slate-400">The large remainder to the right of the panel that must be updated.</dd>
-        <dt class="text-slate-200 font-semibold">blocking</dt><dd class="text-slate-400">Reorganizing an algorithm to do larger coarse-grained operations, especially matrix-matrix work.</dd>
-        <dt class="text-slate-200 font-semibold">GEMM</dt><dd class="text-slate-400">General matrix-matrix multiplication, the canonical Level-3 BLAS operation.</dd>
-        <dt class="text-slate-200 font-semibold">compact WY</dt><dd class="text-slate-400">A block-reflector representation that stores the Householder vectors plus a small triangular factor.</dd>
-        <dt class="text-slate-200 font-semibold">triangular solve</dt><dd class="text-slate-400">Solving TX=B when T is triangular, cheaply by substitution; libraries provide highly optimized versions for many right-hand sides.</dd>
-        <dt class="text-slate-200 font-semibold">UT transform</dt><dd class="text-slate-400">An accumulated-Householder representation written with a triangular solve; closely related in purpose to compact WY.</dd>
-      </dl>
-    </section>
-
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="refs">
-      <div class="eyebrow">Primary and first-party sources</div>
+      <div class="eyebrow">Primary trail</div>
       <h2 class="text-2xl font-bold mt-2">References</h2>
-      <ul class="list-disc pl-6 space-y-3 text-sm text-slate-400 mt-5">
-        <li>A. S. Householder, <a href="https://dl.acm.org/doi/10.1145/320941.320947">Unitary Triangularization of a Nonsymmetric Matrix</a>, JACM, 1958.</li>
-        <li>SIAM History of Numerical Analysis, <a href="https://history.siam.org/householder.htm">Alston Scott Householder oral-history summary</a>.</li>
+      <ul class="list-disc pl-6 text-slate-400 space-y-2 text-sm mt-4">
+        <li>A. S. Householder, <a href="https://dl.acm.org/doi/10.1145/320941.320947">Unitary Triangularization of a Nonsymmetric Matrix</a>, 1958.</li>
         <li>P. Businger and G. H. Golub, <a href="https://pages.stat.wisc.edu/~bwu62/771/businger1965.pdf">Linear Least Squares Solutions by Householder Transformations</a>, 1965.</li>
-        <li>Netlib, <a href="https://netlib.org/utk/papers/etemplates/node4.html">EISPACK history and scope</a>.</li>
-        <li>J. Dongarra et al., <a href="https://www.netlib.org/utk/people/JackDongarra/PAPERS/Chapter2-LINPACK.pdf">LINPACK historical chapter</a>; and Dongarra&rsquo;s <a href="https://www.netlib.org/utk/people/JackDongarra/faq-linpack.html">LINPACK Benchmark FAQ</a>.</li>
-        <li>Netlib, <a href="https://www.netlib.org/blas/faq.html">BLAS FAQ and canonical Level 1/2/3 references</a>.</li>
-        <li>Netlib, <a href="https://www.netlib.org/lapack/faq.html">LAPACK FAQ</a>, especially the explanation of block algorithms, memory hierarchy, and Level-3 BLAS.</li>
         <li>C. Bischof and C. Van Loan, <a href="https://epubs.siam.org/doi/10.1137/0908009">The WY Representation for Products of Householder Matrices</a>, 1987.</li>
         <li>R. Schreiber and C. Van Loan, <a href="https://epubs.siam.org/doi/10.1137/0910005">A Storage-Efficient WY Representation for Products of Householder Transformations</a>, 1989.</li>
-        <li>T. Joffrain, T. M. Low, E. S. Quintana-Ortí, R. van de Geijn, F. Van Zee, <a href="https://www.cs.utexas.edu/~flame/pubs/p169-joffrain.pdf">Accumulating Householder Transformations, Revisited</a>, ACM TOMS, 2006.</li>
-        <li>FLAME/ALAFF, <a href="https://www.cs.utexas.edu/~flame/laff/alaff/chapter03-blocked.html">blocked Householder QR and the UT representation</a>.</li>
-        <li>I. Schlag, K. Irie, J. Schmidhuber, <a href="https://arxiv.org/abs/2102.11174">Linear Transformers Are Secretly Fast Weight Programmers</a>, 2021.</li>
-        <li>S. Yang, B. Wang, Y. Zhang, Y. Shen, Y. Kim, <a href="https://arxiv.org/abs/2406.06484">Parallelizing Linear Transformers with the Delta Rule over Sequence Length</a>, 2024.</li>
-        <li>Songlin Yang, <a href="https://sustcsonglin.github.io/blog/2024/deltanet-2/">DeltaNet Explained, Part II: UT transform</a>.</li>
+        <li>T. Joffrain et al., <a href="https://www.cs.utexas.edu/~flame/pubs/p169-joffrain.pdf">Accumulating Householder Transformations, Revisited</a>, 2006.</li>
+        <li><a href="https://www.netlib.org/lapack/faq.html">LAPACK FAQ</a> and <a href="https://www.netlib.org/blas/">Netlib BLAS</a>.</li>
+        <li>S. Yang et al., <a href="https://arxiv.org/abs/2406.06484">Parallelizing Linear Transformers with the Delta Rule over Sequence Length</a>, 2024.</li>
       </ul>
     </section>
 
-    <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-10">
-      <p><a class="hover:text-slate-400" href="linear_attention.html">Linear-attention study</a> · <a class="hover:text-slate-400" href="https://github.com/mcgrof/knlp">knlp</a> · <a class="hover:text-slate-400" href="index.html">Home</a></p>
-      <p class="mt-2">The recurring idea: summarize fine-grained ordered updates, then spend the machine on coarse-grained matrix work.</p>
+    <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-4">
+      <p><a href="linear_attention.html" class="hover:text-slate-400">Linear-attention study</a> · <a href="https://github.com/mcgrof/knlp" class="hover:text-slate-400">knlp</a> · <a href="index.html" class="hover:text-slate-400">Home</a></p>
+      <p class="mt-2">Many small ordered updates → compact block representation → large matrix operations. That is the reusable idea.</p>
     </footer>
   </main>
 </body>
