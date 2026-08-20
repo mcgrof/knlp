@@ -243,3 +243,47 @@ def test_random_arm_prunes_worse_than_magnitude_smoke(tiny_ckpt):
     kept_min = w.abs()[mask].min()
     pruned_max = w.abs()[~mask].max()
     assert kept_min >= pruned_max
+
+
+def test_train_optimizer_soap_smoke(tmp_path):
+    from fim.fisher_pruning import train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 3)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 4)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": {
+            "optimizer": "soap",
+            "batch_size": 2,
+            "max_steps": 3,
+            "lr": 3e-3,
+            "min_lr": 3e-4,
+            "warmup_steps": 1,
+            "weight_decay": 0.1,
+            "betas": [0.95, 0.95],
+            "precondition_frequency": 2,
+            "clip": 1.0,
+            "eval_interval": 2,
+            "eval_batches": 1,
+            "ckpt_interval": 2,
+            "log_interval": 1,
+        },
+        "out_dir": str(tmp_path / "soap_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    out = Path(cfg["out_dir"])
+    assert (out / "ckpt_latest.pt").exists()
+    ckpt = torch.load(out / "ckpt_latest.pt", map_location="cpu", weights_only=False)
+    assert ckpt["optimizer_state"] is not None
+    # SOAP state must carry the Shampoo factors for later harvesting.
+    states = ckpt["optimizer_state"]["state"]
+    assert any("GG" in s or "Q" in s for s in states.values())
+    events = [
+        json.loads(line) for line in (out / "train.jsonl").read_text().splitlines()
+    ]
+    assert events[0]["optimizer"] == "SOAP"
+    assert any(e.get("event") == "done" for e in events)
