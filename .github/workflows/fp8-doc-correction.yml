@@ -1,0 +1,206 @@
+name: Apply FP8 documentation corrections
+
+on:
+  push:
+    branches:
+      - tmp/fp8-doc-correction
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Patch paper and failure atlas
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+          paper_path = Path("docs/paper_memory_decode.html")
+          paper = paper_path.read_text()
+
+          replacements = [
+              (
+                  "hero mechanism claim",
+                  '''    prefill/decode kernels. At the standalone-kernel level on the headline Qwen2.5-7B lane, K16/V8 matches FP16
+    within measurement noise and is 33% faster than symmetric FP8 by avoiding the serial K-dequant path.
+    Behind the practical result: throughput scaling is governed primarily by memory traffic, while quantization
+''',
+                  '''    prefill/decode kernels. At the standalone-kernel level on the headline Qwen2.5-7B lane, K16/V8 matches FP16
+    within measurement noise and is 33% faster than the measured symmetric FP8 path. A per-tile K-preparation
+    hypothesis may explain that gap, but the controlled transform and profiler ablations are still pending.
+    Behind the practical result: throughput scaling is governed primarily by memory traffic, while quantization
+''',
+              ),
+              (
+                  "K16/V8 opening explanation",
+                  '''    Storing keys at native 16-bit precision and only quantizing values to FP8 keeps <em>K</em> dequantization off
+    the softmax serial critical path (it never happens) while <em>V</em> dequantization overlaps with the reduction
+    pipeline. At the standalone FlashInfer kernel level on the headline Qwen2.5-7B lane, asymmetric K16/V8 matches
+    FP16 within measurement noise and is 33% faster than symmetric FP8 by avoiding the serial K-dequant path.
+''',
+                  '''    Storing keys at native 16-bit precision and only quantizing values to FP8 removes FP8 K operand preparation
+    before each tile's QK operation. V remains FP8 and still requires work before PV, although a good kernel can
+    overlap much of that work. At the standalone FlashInfer kernel level on the headline Qwen2.5-7B lane,
+    asymmetric K16/V8 matches FP16 within measurement noise and is 33% faster than the measured symmetric path.
+''',
+              ),
+              (
+                  "symmetric pipeline description",
+                  '''      <span class="pipe-desc">FP8 K + FP8 V · K dequant on softmax critical path · 3–8% throughput penalty on H100.
+        On fragile-key models (Qwen) collapses: ppl 8.4 → 151 at 32K, NIAH retrieval 0.84 → 0.00.</span>
+''',
+                  '''      <span class="pipe-desc">FP8 K + FP8 V · smaller HBM footprint, plus an on-chip K preparation path before QK.
+        The measured H100 path trails K16/V8 at these shapes; ordinary post-bias K8 also collapses on fragile Qwen models.</span>
+''',
+              ),
+              (
+                  "mechanism box",
+                  '''    On NVIDIA Hopper, Tensor Core FP8 MMA requires matching operand dtypes, so symmetric FP8 must dequantize K to
+    FP16 before the <em>q · k</em> dot product that feeds softmax. Softmax cannot emit any attention weight until all
+    scores are in — so K dequant serialises ahead of softmax and every cycle spent converting K adds directly to
+    per-token decode latency. Asymmetric K16/V8 keeps K at native precision so no K dequant is needed; V dequant feeds
+    an associative reduction and overlaps with the accumulation pipeline. The hardware-level equivalent on AMD CDNA 3
+    is WMMA FP8 matmul with scales absorbed into the accumulator — same bottleneck, solved in silicon rather than in
+    software. See the <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
+      style="color:var(--cyan);">hardware notes</a>.
+''',
+                  '''    Hopper has no native BF16-query by plain-FP8-key QK instruction with a K scale operand. A fused symmetric
+    kernel therefore prepares each K tile on chip before QK; it does not need to materialize a BF16 K cache in HBM.
+    Online softmax advances tile by tile, so the relevant dependency is local: K preparation must finish before that
+    tile's QK and softmax update. K16/V8 removes that stage but reads one extra K byte per element. V preparation is
+    still real work and may or may not be hidden by the PV pipeline. CDNA 3 provides FP8-by-FP8 MFMA, but its MFMA
+    instruction has no scale operands; current AITER applies scale outside the MFMA. See the
+    <a href="fp8-attention-tile-path.html" style="color:var(--cyan);">tile-path hypothesis and microtests</a>
+    and the <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
+      style="color:var(--cyan);">hardware notes</a>.
+''',
+              ),
+              (
+                  "per-model explanation",
+                  '''    Symmetric FP8 falls below asymmetric on every model because K dequantization under symmetric FP8 lies
+    on the softmax serial critical path, whereas asymmetric keeps K at native precision and only pipelines
+    V dequant.
+''',
+                  '''    Symmetric FP8 falls below asymmetric on every model in this fixed-batch comparison. The working hypothesis is
+    that the selected BF16-Q/FP8-K path pays an unhidden per-tile K preparation cost that outweighs the extra K16
+    byte traffic at these shapes. The transform-mode and profiler ablations needed to establish that cause are open.
+''',
+              ),
+              (
+                  "structural proof claim",
+                  '''    <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. This gap is structural, not noise:
+    asymmetric eliminates K dequantization entirely whereas symmetric serializes it ahead of softmax.
+''',
+                  '''    <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. The ordering is measured; its cause is a
+    falsifiable tile-path hypothesis, not yet a structural proof. K16/V8 removes FP8 K preparation, while K8/V8
+    saves one HBM byte per K element. Which term wins depends on overlap, occupancy, cache state, and shape.
+''',
+              ),
+              (
+                  "hybrid model K-dequant claim",
+                  '''    The K-dequant throughput penalty appears across batch and context too: at T=16,384, sym FP8 is 0.78×–0.80×
+    of FP16 throughput across B ∈ [4, 32].  Even on a model where 75% of layers do not use the standard KV cache
+''',
+                  '''    The measured symmetric path remains slower across batch and context too: at T=16,384, sym FP8 is 0.78×–0.80×
+    of FP16 throughput across B ∈ [4, 32]. The tile-preparation explanation still requires a controlled kernel ablation.
+    Even on a model where 75% of layers do not use the standard KV cache
+''',
+              ),
+              (
+                  "CDNA cross-GPU claim",
+                  '''    remains well below peak on both architectures.  On the AMD side, MI300X's CDNA 3 WMMA FP8 path eliminates the K-dequant
+    serial penalty that Hopper's Tensor Core ISA imposes, so symmetric FP8 carries a much smaller throughput cost on MI300X
+    (1.7–2.5%) than on H100 (3–8%) — the asymmetric-vs-symmetric ordering is different across vendors for structural reasons.
+''',
+                  '''    remains well below peak on both architectures. CDNA 3 has native FP8-by-FP8 MFMA, but that instruction does not
+    consume scale operands and does not by itself explain the MI300X/H100 difference. The measured symmetric-FP8 cost is
+    smaller on the tested MI300X path (1.7–2.5%) than on H100 (3–8%); the responsible kernel, scale placement, layout,
+    and scheduling differences still need a matched profiler study.
+''',
+              ),
+              (
+                  "Blackwell future card",
+                  '''        requirement.  Blackwell preserves that requirement for the legacy FP8 path but introduces block-scaled
+        MXFP8 with hardware scale absorption during matmul — the same architectural pattern AMD WMMA FP8 already
+        implements on CDNA 3.  A production-quality MXFP8 paged-attention kernel would close the Hopper bottleneck
+        on Blackwell at hardware level.  No such kernel exists in the open-source inference stack at time of writing.
+''',
+                  '''        requirement. Blackwell also introduces block-scaled MXFP8, where hardware consumes per-block scales for
+        narrow Q and K operands. This is not the same as CDNA 3 MFMA, which has no scale operands. FlashInfer now contains
+        an SM100 block-scaled fused-attention implementation; the open deployment question is whether the paged-cache
+        layout, model shapes, numerical policy, and serving dispatch make it the best decode path for this workload.
+''',
+              ),
+              (
+                  "practical recipe symmetric wording",
+                  '''    For maximum capacity, symmetric FP8 doubles KV storage at a 3–8% throughput cost on H100 (1.7–2.5% on
+    MI300X), and stays quality-safe on tolerant models. The custom fused INT4 Triton kernel
+''',
+                  '''    For maximum capacity, ordinary symmetric FP8 doubles KV storage and showed a 3–8% cost on the measured H100
+    path and 1.7–2.5% on the measured MI300X path. Those are kernel results, not architecture constants. Bias-aware
+    pre-bias K8/V8 also makes symmetric FP8 quality-admissible on Qwen2.5-7B in the current precision tests. The custom fused INT4 Triton kernel
+''',
+              ),
+          ]
+
+          for label, old, new in replacements:
+              paper = replace_once(paper, old, new, label)
+          paper_path.write_text(paper)
+
+          atlas_path = Path("docs/fp8-kv-failure-atlas.html")
+          atlas = atlas_path.read_text()
+          anchor = '''            <p className="text-xs text-gray-500">
+              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and
+              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.
+            </p>
+'''
+          addition = anchor + '''            <div className="bg-[#07130f] border border-emerald-900/60 rounded-lg p-4 text-sm text-gray-400 mt-4">
+              <strong className="text-emerald-300">The precision repair reopens the kernel question.</strong>
+              Pre-bias K8/V8 can now be tested as a quality-admissible symmetric path, but its smaller cache still has
+              to beat per-tile K operand preparation, bias reconstruction, and any RoPE work moved into decode. The
+              <a href="fp8-attention-tile-path.html" className="text-cyan-300 hover:underline"> FP8 attention tile-path plan</a>
+              defines the K8/V8 versus K16/V8 microtests. It deliberately does not claim that softmax waits for a
+              sequence-wide K dequantization pass or that V conversion is free.
+            </div>
+'''
+          atlas = replace_once(atlas, anchor, addition, "atlas tile-path callout")
+          atlas_path.write_text(atlas)
+          PY
+
+          git diff --check
+
+      - name: Commit corrected pages
+        shell: bash
+        run: |
+          git config user.name "Luis Chamberlain"
+          git config user.email "mcgrof@do-not-panic.com"
+          git add docs/paper_memory_decode.html docs/fp8-kv-failure-atlas.html
+          cat > /tmp/commit-message <<'EOF'
+          docs/paper: align FP8 claims with the tile model
+
+          Replace the sequence-wide K-dequantization explanation with a
+          per-tile operand-preparation hypothesis. Correct the CDNA 3 and
+          Blackwell descriptions, distinguish measured ordering from causal
+          interpretation, and connect the pre-bias precision repair to the
+          remaining serving-kernel tests.
+
+          Generated-by: ChatGPT GPT-5.6 Pro
+          Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+          EOF
+          sed -i 's/^          //' /tmp/commit-message
+          git commit -F /tmp/commit-message
+          git push origin HEAD:${GITHUB_REF_NAME}
