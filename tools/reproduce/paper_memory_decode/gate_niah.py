@@ -97,6 +97,21 @@ def main() -> int:
         print(f"ERROR: tokenizer load failed: {e}", flush=True)
         return 1
 
+    # Cap the context window at the model's own limit; vLLM refuses a
+    # max_model_len above max_position_embeddings.
+    try:
+        from transformers import AutoConfig
+
+        model_max = int(
+            getattr(
+                AutoConfig.from_pretrained(MODEL_ID),
+                "max_position_embeddings",
+                max(CTX_LENGTHS) + 256,
+            )
+        )
+    except Exception:
+        model_max = max(CTX_LENGTHS) + 256
+
     configs = [
         ("fp16", "auto"),
         ("fp8_sym", "fp8_e4m3"),
@@ -113,7 +128,7 @@ def main() -> int:
                 dtype="bfloat16",
                 kv_cache_dtype=kv_dtype,
                 enforce_eager=True,
-                max_model_len=max(CTX_LENGTHS) + 256,
+                max_model_len=min(max(CTX_LENGTHS) + 256, model_max),
                 gpu_memory_utilization=0.90,
                 attention_config={"backend": "FLASHINFER"},
             )
@@ -124,8 +139,10 @@ def main() -> int:
             continue
 
         for ctx_len in CTX_LENGTHS:
-            print(f"  ctx={ctx_len//1024}K ...", flush=True)
-            acc = _run_niah(llm, tokenizer, ctx_len, kv_dtype)
+            # leave room for the question and answer inside the window
+            eff_ctx = min(ctx_len, model_max - 512)
+            print(f"  ctx={ctx_len//1024}K (haystack {eff_ctx}) ...", flush=True)
+            acc = _run_niah(llm, tokenizer, eff_ctx, kv_dtype)
             results[f"{cfg_name}_{ctx_len}"] = acc
             print(f"  {cfg_name} {ctx_len//1024}K: acc={acc:.2f}", flush=True)
 

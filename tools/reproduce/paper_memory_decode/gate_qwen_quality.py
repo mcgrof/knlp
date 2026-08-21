@@ -154,10 +154,12 @@ def _ppl_hf(model_id: str, max_tokens: int = 2048):
         enc = tok(text, return_tensors="pt")
         input_ids = enc.input_ids[:, :max_tokens]
         with torch.no_grad():
+            # plain .to("cuda") so the gate does not require accelerate
             model = AutoModelForCausalLM.from_pretrained(
-                model_id, torch_dtype=torch.bfloat16, device_map="auto"
-            )
-            out = model(input_ids, labels=input_ids)
+                model_id, dtype=torch.bfloat16
+            ).to("cuda")
+            ids = input_ids.to("cuda")
+            out = model(ids, labels=ids)
             ppl = float(torch.exp(out.loss))
         del model
         torch.cuda.empty_cache()
