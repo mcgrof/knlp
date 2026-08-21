@@ -336,3 +336,55 @@ def test_soap_native_scores_shapes_and_positivity(tmp_path):
     # being non-degenerate (not all equal).
     s = scores["soap_rot_v"][names[0]]
     assert s.std() > 0
+
+
+def test_train_optimizer_muon_smoke_and_native_scores(tmp_path):
+    from fim.fisher_pruning import phase_b, train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 7)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 8)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": {
+            "optimizer": "muon",
+            "batch_size": 2,
+            "max_steps": 3,
+            "lr": 6e-4,
+            "min_lr": 6e-5,
+            "warmup_steps": 1,
+            "muon_lr": 0.02,
+            "muon_momentum": 0.95,
+            "muon_weight_decay": 0.01,
+            "weight_decay": 0.1,
+            "betas": [0.9, 0.95],
+            "clip": 1.0,
+            "eval_interval": 10,
+            "eval_batches": 1,
+            "ckpt_interval": 10,
+            "log_interval": 10,
+        },
+        "out_dir": str(tmp_path / "muon_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    ckpt_path = Path(cfg["out_dir"]) / "ckpt_latest.pt"
+    ckpt, model = phase_a._load_ckpt({"ckpt": str(ckpt_path)})
+    # the muon/aux-adam split: matmul weights carry momentum buffers,
+    # embeddings carry Adam state
+    scores = phase_b.muon_native_scores(ckpt, model)
+    names = default_target_names(TINY_MODEL["n_layer"])
+    assert sorted(scores["muon_momentum"]) == sorted(names)
+    params = dict(model.named_parameters())
+    for n in names:
+        s = scores["muon_momentum"][n]
+        assert s.shape == params[n + ".weight"].shape
+        assert torch.isfinite(s).all() and s.std() > 0
+    # dispatch picks the right native arm
+    assert set(phase_b.native_scores(ckpt, model)) == {"muon_momentum"}
+    # per-group relative LR schedule preserved the muon/adam ratio
+    opt = train_optimizer.build_optimizer(model, ckpt["train_config"]["train"])
+    base = [g["base_lr"] for g in opt.param_groups]
+    assert base[0] == 0.02 and base[1] == 6e-4
