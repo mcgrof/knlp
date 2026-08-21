@@ -298,10 +298,16 @@ def build_scores(
     factors: Dict[str, Dict[str, torch.Tensor]],
     obs_kappa: float = 1e-2,
     random_seed: int = 1234,
+    stale_v: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """arm -> {module name -> score tensor [out, in]} (cpu fp32).
 
-    Arm definitions are in the module docstring.
+    Arm definitions are in the module docstring. stale_v, when
+    given, is the model's TRUE historical Adam second moment per
+    target weight (e.g. reassembled from the published Pythia
+    GPT-NeoX optimizer shards) and adds the stale_q025/stale_q050
+    arms — the external-model version of reusing end-of-training
+    optimizer state.
     """
     rng = torch.Generator().manual_seed(random_seed)
     arm_names = (
@@ -314,6 +320,8 @@ def build_scores(
         "kfac_obs",
         "wanda",
     )
+    if stale_v is not None:
+        arm_names = arm_names + ("stale_q025", "stale_q050")
     scores: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names}
     for n, w in weights.items():
         f = factors[n]
@@ -333,6 +341,12 @@ def build_scores(
         scores["kfac_obs"][n] = w.pow(2) / denom
         col_norm = torch.clamp(diag_a, min=0.0).sqrt()
         scores["wanda"][n] = w.abs() * col_norm.unsqueeze(0)
+        if stale_v is not None:
+            v = stale_v[n].float()
+            if v.shape != w.shape:
+                raise ValueError(f"stale state shape mismatch for {n}")
+            scores["stale_q025"][n] = w.abs() * (v + EPS) ** 0.25
+            scores["stale_q050"][n] = w.abs() * (v + EPS) ** 0.5
     return scores
 
 
@@ -434,11 +448,22 @@ def cmd_prune_eval(
     t0 = time.time()
     factors, n_calib_tokens = calibrate(model, targets, calib_batches)
     weights = {n: m.weight.detach().float().cpu() for n, m in targets.items()}
+    stale_v = None
+    if cfg.get("stale_state_path"):
+        payload = torch.load(
+            cfg["stale_state_path"], map_location="cpu", weights_only=False
+        )
+        mapped = payload["exp_avg_sq"]
+        stale_v = {n: mapped.get(n + ".weight", mapped.get(n)) for n in weights}
+        missing = [n for n, v in stale_v.items() if v is None]
+        if missing:
+            raise KeyError(f"stale state missing targets: {missing[:3]}")
     scores = build_scores(
         weights,
         factors,
         obs_kappa=cfg.get("obs_kappa", 1e-2),
         random_seed=cfg.get("random_arm_seed", 1234),
+        stale_v=stale_v,
     )
     sparsities = cfg.get("sparsities", [0.3, 0.5, 0.7])
     _jsonl(

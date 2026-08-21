@@ -224,3 +224,33 @@ def test_prune_eval_smoke(model, tmp_path):
     after = discover_target_linears(model)
     for n, w in before.items():
         assert torch.equal(after[n].weight.detach(), w), n
+
+
+def test_stale_state_arms(tmp_path):
+    import collections
+
+    from fim.fisher_pruning.program_o import build_scores
+
+    weights = {"blk.fc": torch.randn(4, 3).abs() + 0.1}
+    factors = {
+        "blk.fc": {
+            "D": torch.rand(4, 3),
+            "G": torch.eye(4),
+            "A": torch.eye(3),
+        }
+    }
+    stale = {"blk.fc": torch.rand(4, 3)}
+    scores = build_scores(weights, factors, stale_v=stale)
+    assert "stale_q025" in scores and "stale_q050" in scores
+    w = weights["blk.fc"]
+    expected = w.abs() * (stale["blk.fc"].float() + 1e-8) ** 0.25
+    torch.testing.assert_close(scores["stale_q025"]["blk.fc"], expected)
+    # without stale state the arms are absent
+    assert "stale_q025" not in build_scores(weights, factors)
+    # shape mismatch is rejected
+    bad = {"blk.fc": torch.rand(3, 3)}
+    try:
+        build_scores(weights, factors, stale_v=bad)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
