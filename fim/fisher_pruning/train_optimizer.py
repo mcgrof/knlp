@@ -21,6 +21,26 @@ Checkpoints keep the optimizer state so optimizer-native factors
 (SOAP's GG/Q, Muon's momentum buffer) can be harvested later as
 pruning signals.
 
+In-training unstructured pruning (the bitter7 idea generalized —
+score with the state the optimizer already maintains, adding no
+new variables) is enabled by a "prune" config block:
+
+  "prune": {"target_sparsity": 0.5, "start_step": 2000,
+            "end_step": 16000, "interval": 500,
+            "signal": "state"}          # or "magnitude"
+
+Sparsity follows the cubic schedule of Zhu & Gupta (2017) between
+start and end; masks are per-layer over the transformer matmul
+weights, recomputed every `interval` steps from the LIVE optimizer
+state ("state" maps to: AdamW -> |w|*(exp_avg_sq)^0.25 (= bitter7),
+SOAP -> |w|*(rotated exp_avg_sq projected back)^0.25, Muon ->
+|w|*|momentum|^0.5), and re-applied after every optimizer step, so
+pruned weights stay zero and pruning is monotone. An optional
+"final_eval" block runs the lane's fixed-batch eval at the end.
+
+Run configs are archived in
+knlp-key-results/fisher-factored-pruning-20260820/configs/.
+
   python3 fim/fisher_pruning/train_optimizer.py --config CFG
 """
 
@@ -127,6 +147,59 @@ def build_optimizer(model: nn.Module, cfg: dict):
     return optimizer
 
 
+def cubic_sparsity(step: int, pcfg: dict) -> float:
+    """Zhu & Gupta (2017) gradual schedule: 0 before start_step,
+    target after end_step, cubic ramp between."""
+    s0, s1 = pcfg["start_step"], pcfg["end_step"]
+    target = pcfg["target_sparsity"]
+    if step < s0:
+        return 0.0
+    if step >= s1:
+        return target
+    frac = (step - s0) / (s1 - s0)
+    return target * (1 - (1 - frac) ** 3)
+
+
+def live_state_scores(optimizer, opt_name: str, targets: dict, signal: str) -> dict:
+    """Pruning scores from the optimizer's CURRENT state — the
+    free variables it already maintains, nothing extra. Falls back
+    to |w| for signal="magnitude" (the control)."""
+    from fim.fisher_pruning.phase_a import EPS
+
+    out = {}
+    for name, p in targets.items():
+        w = p.detach()
+        if signal == "magnitude":
+            out[name] = w.abs()
+            continue
+        state = optimizer.state.get(p)
+        if not state:
+            raise RuntimeError(f"no optimizer state yet for {name}")
+        if opt_name == "adamw":
+            v = state["exp_avg_sq"]
+            out[name] = w.abs() * (v + EPS) ** 0.25  # bitter7
+        elif opt_name == "soap":
+            v_rot = state["exp_avg_sq"]
+            q = state["Q"]
+            ql2 = q[0].to(w.dtype).pow(2)
+            qr2 = q[1].to(w.dtype).pow(2)
+            v_ws = (ql2 @ v_rot.to(w.dtype) @ qr2.T).clamp(min=0)
+            out[name] = w.abs() * (v_ws + EPS) ** 0.25
+        elif opt_name == "muon":
+            mom = state["momentum_buffer"]
+            out[name] = w.abs() * (mom.abs() + EPS) ** 0.5
+        else:
+            raise ValueError(f"no state signal for optimizer {opt_name!r}")
+    return out
+
+
+def _prune_targets(model: nn.Module, n_layer: int) -> dict:
+    from fim.fisher_pruning.kfac_capture import default_target_names
+
+    params = dict(model.named_parameters())
+    return {n: params[n + ".weight"] for n in default_target_names(n_layer)}
+
+
 def cmd_train(cfg: dict, device: str) -> None:
     out_dir = Path(cfg["out_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -140,6 +213,13 @@ def cmd_train(cfg: dict, device: str) -> None:
     val_gen_seed = cfg["seed"] + 1000
     tcfg = cfg["train"]
     optimizer = build_optimizer(model, tcfg)
+    pcfg = cfg.get("prune")
+    masks = {}
+    prune_targets = {}
+    if pcfg:
+        from fim.fisher_pruning.kfac_capture import per_layer_mask
+
+        prune_targets = _prune_targets(model, cfg["model"]["n_layer"])
     batch_counter = 0
     t0 = time.time()
     tokens_per_step = tcfg["batch_size"] * cfg["model"]["block_size"]
@@ -163,6 +243,38 @@ def cmd_train(cfg: dict, device: str) -> None:
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.get("clip", 1.0))
         optimizer.step()
+        if pcfg:
+            if (
+                pcfg["start_step"] <= step
+                and step % pcfg["interval"] == 0
+                and cubic_sparsity(step, pcfg) > 0
+            ):
+                sparsity = cubic_sparsity(step, pcfg)
+                scores = live_state_scores(
+                    optimizer,
+                    tcfg.get("optimizer", "adamw"),
+                    prune_targets,
+                    pcfg.get("signal", "state"),
+                )
+                masks = {
+                    n: per_layer_mask(s.float().cpu(), sparsity).to(s.device)
+                    for n, s in scores.items()
+                }
+                kept = sum(m.sum().item() for m in masks.values())
+                total = sum(m.numel() for m in masks.values())
+                _jsonl(
+                    log,
+                    {
+                        "event": "prune",
+                        "step": step,
+                        "target_sparsity": sparsity,
+                        "actual_sparsity": 1 - kept / total,
+                    },
+                )
+            if masks:
+                with torch.no_grad():
+                    for n, m in masks.items():
+                        prune_targets[n].mul_(m.to(prune_targets[n].dtype))
         if step % tcfg.get("log_interval", 50) == 0:
             elapsed = time.time() - t0
             _jsonl(
@@ -208,6 +320,33 @@ def cmd_train(cfg: dict, device: str) -> None:
             save_checkpoint(
                 out_dir / "ckpt_latest.pt", model, optimizer, step, batch_counter, cfg
             )
+    fcfg = cfg.get("final_eval")
+    if fcfg:
+        for seed in fcfg["seeds"]:
+            val_loss = evaluate(
+                model,
+                val_data,
+                fcfg["n_batches"],
+                tcfg["batch_size"],
+                device,
+                seed=seed,
+            )
+            _jsonl(
+                log,
+                {
+                    "event": "final_eval",
+                    "eval_seed": seed,
+                    "val_loss": val_loss,
+                    "val_ppl": math.exp(val_loss),
+                },
+            )
+    if pcfg and masks:
+        kept = sum(m.sum().item() for m in masks.values())
+        total = sum(m.numel() for m in masks.values())
+        _jsonl(
+            log,
+            {"event": "final_sparsity", "actual_sparsity": 1 - kept / total},
+        )
     _jsonl(log, {"event": "done", "elapsed_s": time.time() - t0})
 
 
