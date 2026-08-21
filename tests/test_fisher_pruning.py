@@ -287,3 +287,52 @@ def test_train_optimizer_soap_smoke(tmp_path):
     ]
     assert events[0]["optimizer"] == "SOAP"
     assert any(e.get("event") == "done" for e in events)
+
+
+def test_soap_native_scores_shapes_and_positivity(tmp_path):
+    from fim.fisher_pruning import phase_b, train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 5)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 6)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": {
+            "optimizer": "soap",
+            "batch_size": 2,
+            "max_steps": 4,
+            "lr": 3e-3,
+            "min_lr": 3e-4,
+            "warmup_steps": 1,
+            "weight_decay": 0.1,
+            "betas": [0.95, 0.95],
+            "precondition_frequency": 2,
+            "clip": 1.0,
+            "eval_interval": 10,
+            "eval_batches": 1,
+            "ckpt_interval": 10,
+            "log_interval": 10,
+        },
+        "out_dir": str(tmp_path / "soap_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    ckpt_path = Path(cfg["out_dir"]) / "ckpt_latest.pt"
+    ckpt, model = phase_a._load_ckpt({"ckpt": str(ckpt_path)})
+    scores = phase_b.soap_native_scores(ckpt, model)
+    names = default_target_names(TINY_MODEL["n_layer"])
+    params = dict(model.named_parameters())
+    for arm in ("soap_kron", "soap_rot_v"):
+        assert sorted(scores[arm]) == sorted(names)
+        for n in names:
+            s = scores[arm][n]
+            assert s.shape == params[n + ".weight"].shape
+            assert (s >= 0).all() and torch.isfinite(s).all()
+    # rotated-v projection preserves total second-moment mass:
+    # sum(v_ws) = sum((QL^2) v' (QR^2)^T) = sum(v') since QL, QR are
+    # orthogonal (columns have unit norm). Spot-check via the score
+    # being non-degenerate (not all equal).
+    s = scores["soap_rot_v"][names[0]]
+    assert s.std() > 0

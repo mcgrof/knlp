@@ -161,24 +161,30 @@ def _bitter7_exp_avg_sq(ckpt, model) -> Dict[str, torch.Tensor]:
 
 
 def build_scores(
-    cfg: Dict, ckpt, model, factors: Dict
+    cfg: Dict, ckpt, model, factors: Dict, include_bitter7: bool = True
 ) -> Dict[str, Dict[str, torch.Tensor]]:
-    """arm -> {module name -> score tensor [out, in]} (cpu fp32)."""
+    """arm -> {module name -> score tensor [out, in]} (cpu fp32).
+
+    include_bitter7=False for checkpoints whose optimizer state is
+    not plain AdamW (e.g. SOAP keeps exp_avg_sq in a rotated basis,
+    so the raw fetch would be meaningless).
+    """
     n_layer = ckpt["train_config"]["model"]["n_layer"]
     names = default_target_names(n_layer)
     weights = {
         n: dict(model.named_parameters())[n + ".weight"].detach().float().cpu()
         for n in names
     }
-    v_adam = _bitter7_exp_avg_sq(ckpt, model)
+    v_adam = _bitter7_exp_avg_sq(ckpt, model) if include_bitter7 else None
     rng = torch.Generator().manual_seed(cfg.get("random_arm_seed", 1234))
     scores: Dict[str, Dict[str, torch.Tensor]] = {
         "random": {},
         "magnitude": {},
-        "bitter7": {},
         "calib_diag": {},
         "kron_diag": {},
     }
+    if include_bitter7:
+        scores["bitter7"] = {}
     kappas = cfg.get("obs_kappas", [1e-2, 1e-3])
     for kappa in kappas:
         scores[f"kfac_obs_k{kappa:g}"] = {}
@@ -189,7 +195,8 @@ def build_scores(
         diag_a = torch.diagonal(f["A"]).float()
         scores["random"][n] = torch.rand(w.shape, generator=rng)
         scores["magnitude"][n] = w.abs()
-        scores["bitter7"][n] = w.abs() * (v_adam[n] + EPS) ** 0.25
+        if include_bitter7:
+            scores["bitter7"][n] = w.abs() * (v_adam[n] + EPS) ** 0.25
         scores["calib_diag"][n] = w.abs() * (f["D"].float() + EPS) ** 0.25
         scores["kron_diag"][n] = w.abs() * (torch.outer(diag_g, diag_a) + EPS) ** 0.25
         for kappa in kappas:
