@@ -135,6 +135,27 @@ def build_optimizer(model: nn.Module, cfg: dict):
             betas=tuple(cfg.get("betas", (0.95, 0.95))),
             precondition_frequency=cfg.get("precondition_frequency", 10),
         )
+    elif name == "kfac":
+        # K-FAC-preconditioned AdamW: gpauloski/kfac-pytorch hooks
+        # every nn.Linear, accumulates Kronecker factors during
+        # forward/backward, and preconditioner.step() rewrites
+        # p.grad in place before AdamW consumes it. The
+        # preconditioner rides on the optimizer object so the train
+        # loop and checkpointing can reach it.
+        from kfac.preconditioner import KFACPreconditioner
+
+        optimizer = make_optimizer(model, cfg)
+        optimizer.kfac_preconditioner = KFACPreconditioner(
+            model,
+            factor_update_steps=cfg.get("kfac_factor_update_steps", 10),
+            inv_update_steps=cfg.get("kfac_inv_update_steps", 100),
+            damping=cfg.get("kfac_damping", 0.003),
+            factor_decay=cfg.get("kfac_factor_decay", 0.95),
+            kl_clip=cfg.get("kfac_kl_clip", 0.001),
+            lr=lambda x: optimizer.param_groups[0]["lr"],
+            update_factors_in_hook=False,
+            grad_scaler=None,
+        )
     if optimizer is None:
         raise ValueError(f"unknown optimizer {name!r}")
     # Base LR per group: the schedule is applied as a relative cosine
@@ -182,16 +203,47 @@ def live_state_scores(
     momentum buffer (muon_mode="momentum") or the actual
     Newton-Schulz-orthogonalized update recomputed from that buffer
     (muon_mode="update" — deterministic from state, no gradient
-    needed, transient only).
+    needed, transient only); the K-FAC-preconditioned arm uses the
+    live Kronecker factor diagonals, F = diag(G)_i * diag(A)_j
+    (bias coordinate stripped from A). signal="obs" (K-FAC only)
+    instead ranks by the Optimal-Brain-Surgeon deletion cost
+    w^2 / [(G+dI)^-1_ii (A+dI)^-1_jj] from the damped factor
+    inverses.
     """
     from fim.fisher_pruning.muon import zeropower_via_newtonschulz5
     from fim.fisher_pruning.phase_a import EPS
+
+    kfac_factors = {}
+    if opt_name == "kfac" and signal in ("state", "obs"):
+        pre = optimizer.kfac_preconditioner
+        for module, (mod_name, layer) in pre._layers.items():
+            if layer.a_factor is None or layer.g_factor is None:
+                raise RuntimeError(f"no K-FAC factors yet for {mod_name}")
+            kfac_factors[mod_name] = (layer.a_factor, layer.g_factor)
 
     out = {}
     for name, p in targets.items():
         w = p.detach()
         if signal == "magnitude":
             out[name] = w.abs()
+            continue
+        if opt_name == "kfac":
+            a_fac, g_fac = kfac_factors[name]
+            in_d = p.shape[1]
+            if signal == "obs":
+                from fim.fisher_pruning.kfac_capture import damped_inverse_diag
+
+                inv_a = damped_inverse_diag(a_fac[:in_d, :in_d].float().cpu(), 1e-2)
+                inv_g = damped_inverse_diag(g_fac.float().cpu(), 1e-2)
+                denom = torch.clamp(
+                    torch.outer(inv_g.float(), inv_a.float()), min=1e-30
+                )
+                out[name] = (w.detach().float().cpu().pow(2) / denom).to(w.device)
+                continue
+            a_diag = torch.diagonal(a_fac)[:in_d].to(w.dtype)
+            g_diag = torch.diagonal(g_fac).to(w.dtype)
+            f_stat = torch.outer(g_diag, a_diag).clamp(min=0)
+            out[name] = w.abs() * (f_stat + EPS) ** q
             continue
         state = optimizer.state.get(p)
         if not state:
@@ -376,6 +428,8 @@ def cmd_train(cfg: dict, device: str, resume: bool = False) -> None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.get("clip", 1.0))
         _sync(device)
         t_opt = time.perf_counter()
+        if hasattr(optimizer, "kfac_preconditioner"):
+            optimizer.kfac_preconditioner.step()
         optimizer.step()
         _sync(device)
         opt_ms.append((time.perf_counter() - t_opt) * 1e3)
