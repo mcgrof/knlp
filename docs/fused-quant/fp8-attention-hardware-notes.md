@@ -1,170 +1,137 @@
 # FP8 KV attention: hardware paths and tile preparation
 
-This note separates four things that are easy to blur together:
+Track four layers of the implementation separately:
 
-1. the format stored in HBM;
-2. the on-chip work needed to make a tile usable by the matrix unit;
-3. the matrix instruction itself; and
+1. the cache format stored in HBM;
+2. the on-chip work that prepares a tile for the matrix unit;
+3. the matrix instruction that consumes the operands; and
 4. the online-softmax and value-accumulation schedule around it.
 
-The distinction matters because an FP8 cache can save HBM traffic and still
-lose latency inside the tile loop. It also matters because "dequantization"
-can mean anything from a register conversion to materializing a second cache
-in global memory. Those operations have different traffic and scheduling costs, so the term
-needs to be qualified whenever it is used.
+Use this separation when comparing K8/V8 with K16/V8. FP8 storage cuts HBM
+traffic. Operand preparation can still lengthen the tile interval through
+conversion instructions, shared-memory traffic, register pressure,
+synchronization, or reduced occupancy.
 
-## The short version
+## Operating model
 
-- A fused FP8 attention kernel should keep the cache in FP8 in HBM. It does
-  **not** need to write a BF16 or FP16 copy of the cache back to HBM.
-- Fused decode uses online softmax. It consumes K/V tiles incrementally; it
-  does not dequantize the full sequence and then wait at one global softmax
-  barrier.
-- The important dependency is local to each tile: K must be in a form the QK
-  matrix instruction accepts before that tile can produce scores and update
-  online softmax.
-- V conversion is not free. It must finish before the corresponding PV work,
-  although a good schedule may overlap it with other loads and arithmetic.
-- Hopper has separate BF16/FP16 and FP8 matrix-instruction families. There is
-  no native BF16-query by plain-FP8-key QK instruction with a K scale operand.
-- CDNA 3 has native FP8 by FP8 MFMA into FP32, but the inspected instruction
-  has no scale operands. Current AITER source applies the scale outside MFMA.
-- Blackwell adds block-scaled MXFP8/NVFP4 instructions that consume scale
-  factors in hardware. That path uses narrow/block-scaled operands on both
-  sides; it is not a plain BF16-Q by E4M3-K instruction.
+Apply these rules when reading a fused FP8 attention kernel:
 
-The current performance question is therefore empirical:
+- Keep the compressed cache in HBM. Reconstruct only the tile consumed by the
+  active attention block.
+- Advance online softmax tile by tile.
+- Complete K operand preparation before QK for that tile.
+- Complete V operand preparation before PV for that tile.
+- Measure overlap instead of assuming it.
+- Record the exact kernel, cubin, transform mode, cache layout, and scale
+  layout selected at runtime.
 
-> Does symmetric K8/V8 save more HBM time than it adds in unhidden K-tile
-> preparation and pipeline pressure, compared with K16/V8?
-
-The target microtests are in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html).
-
-## The correct tile-level picture
-
-A fused decode kernel is closer to this:
-
-```text
-for each K/V tile:
-    load K tile from HBM
-    prepare K operand on chip, if needed
-    QK matrix multiply
-    update online-softmax state
-
-    load or consume V tile
-    prepare V operand on chip, if needed
-    update the output accumulator with P @ V
-```
-
-The implementation may interleave these steps across producer and consumer
-warps. The logical dependencies remain:
+Use the following dependency graph:
 
 ```text
 K load -> K operand preparation -> QK -> online-softmax update
-V load -> V operand preparation -> PV accumulator update
+V load -> V operand preparation -> PV -> output accumulation
 ```
 
-This is not the same as:
+Producer and consumer warps can interleave these stages across adjacent tiles.
+Measure the steady-state initiation interval to capture the resulting overlap.
+
+## Measure the K8/V8 break-even
+
+Hold V at FP8 and compare the K path:
 
 ```text
-convert every K token -> compute every score -> one softmax barrier
+K8/V8   = 1 byte K + 1 byte V = 2 bytes per element pair
+K16/V8  = 2 byte K + 1 byte V = 3 bytes per element pair
 ```
 
-That second picture describes a naive materialized implementation, not a
-modern fused attention kernel.
-
-## A useful break-even model
-
-Compare symmetric K8/V8 with asymmetric K16/V8. V is held constant, so the
-main trade is one extra byte per K element against the K8 preparation path.
-A deliberately simple model is:
+Model the latency delta as:
 
 ```text
-T_sym - T_asym
-  ~= unhidden(K8 preparation)
+T(K8/V8) - T(K16/V8)
+  ~= unhidden K8 preparation
    + K8 pipeline and occupancy penalty
-   - time saved by reading K8 instead of K16
+   - extra K16 HBM time
 ```
 
-K16/V8 wins when the first two terms exceed the last one. The terms do not
-simply add in a well-pipelined kernel, so the quantity to measure is the
-steady-state tile initiation interval, not just conversion instruction count.
-
-One way to write that is:
+Use the stage model:
 
 ```text
-II_sym  ~= max(load K8, prepare K8 + QK, softmax update, PV)
-II_asym ~= max(load K16,            QK, softmax update, PV)
+II_K8  ~= max(load K8,  prepare K8 + QK, softmax update, PV)
+II_K16 ~= max(load K16,              QK, softmax update, PV)
 ```
 
-The exact stage boundaries depend on the kernel. This is a hypothesis model,
-not a substitute for Nsight traces.
+Identify the limiting stage with transform-mode, dtype, cache-state, and
+profiler ablations. The public matrix is in
+[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html).
 
 ## NVIDIA Hopper
 
-Hopper's warp-group matrix operations expose BF16/FP16 and FP8 operand
-families. They do not expose the particular operation wanted by an ordinary
-LLM decode path with BF16 Q and a plain E4M3 K cache:
+Hopper exposes separate BF16/FP16 and FP8 matrix-operation families. Ordinary
+LLM decode presents BF16 or FP16 Q and a scaled E4M3 K cache. Hopper does not
+provide this exact operation:
 
 ```text
 BF16 Q x scaled E4M3 K -> FP32 scores
 ```
 
-A kernel therefore needs another plan. Common choices are:
+Choose one of three implementation paths:
 
-1. load K as FP8, convert or transform the tile on chip, then use the BF16 or
-   FP16 QK path;
-2. quantize Q and use an FP8 QK path, accepting the extra quantization work
-   and its numerical consequences; or
-3. keep K in BF16/FP16 and quantize only V.
+1. load K as FP8, prepare the tile on chip, and use a BF16 or FP16 QK path;
+2. quantize Q and use FP8 QK; or
+3. keep K in BF16 or FP16 and quantize only V.
 
-The first choice preserves FP8 K storage and its HBM savings. Its cost is
-on-chip operand preparation, not a mandatory BF16 cache written to HBM. That
-preparation can still increase latency through conversion instructions,
-shared-memory traffic, register pressure, synchronization, or reduced
-occupancy.
+Path 1 preserves the K8 HBM saving and pays on-chip preparation. Account for:
 
-K16/V8 removes the K-side preparation path entirely. It reads twice as many K
-bytes as K8/V8, so whether it is faster depends on the break-even above.
+- FP8 conversion or transform instructions;
+- shared-memory or register repacking;
+- scale broadcast and application;
+- warp or warp-group synchronization;
+- register pressure; and
+- occupancy loss.
+
+Path 2 removes the mixed-operand problem and adds Q quantization cost plus a
+new numerical gate. Measure Q conversion once per decode step and compare it
+against the repeated K-tile preparation avoided across the context.
+
+Path 3 produces K16/V8. It removes K8 preparation and reads one extra K byte
+per element. Use it as the no-K-transform control.
 
 ## AMD CDNA 3
 
-CDNA 3 (`gfx942`) has native FP8 by FP8 MFMA instructions such as:
+CDNA 3 (`gfx942`) exposes native FP8-by-FP8 MFMA into FP32, including:
 
 ```text
 v_mfma_f32_16x16x32_fp8_fp8 dst, src_a, src_b, acc
 ```
 
-The instruction has FP8 A and B operands and an FP32 accumulator. It does not
-have scale operands. That is different from Blackwell block-scaled MMA.
+The instruction accepts FP8 A and B operands plus an FP32 accumulator. It has
+no scale operands.
 
-A scale can sometimes be moved outside the dot product algebraically. For a
-scale that is constant across the reduction dimension:
+Move a scale outside the dot product when its granularity permits:
 
 ```text
 Q @ (sK * Kq)^T = sK * (Q @ Kq^T)
 ```
 
-Current AITER FP8 source uses the FP8 MFMA and applies a K scale after the
-MFMA result. That can avoid element-by-element reconstruction, but it is a
-software schedule choice, not scale absorption by the MFMA instruction.
+Current AITER FP8 source executes FP8 MFMA and applies the K scale after the
+MFMA result. Treat that as software scale placement around the matrix
+instruction. Profile the selected AITER kernel and record whether Q is FP8,
+how scales are grouped, and where score scaling occurs.
 
-The native FP8 by FP8 path is useful when Q is also FP8. It does not by itself
-solve a BF16-query by plain-FP8-key operand mismatch. Cross-vendor performance
-must therefore be measured from the actual kernel path, not inferred from the
-existence of an FP8 matrix instruction.
+Use native FP8-by-FP8 MFMA when Q is FP8. Handle BF16-Q/plain-FP8-K with an
+explicit conversion, Q quantization, or alternate matrix path. Compare actual
+kernel schedules across vendors instead of comparing the presence of an FP8
+instruction.
 
 ## NVIDIA Blackwell
 
-Blackwell adds `tcgen05.mma` and tensor memory. There are two relevant paths.
+Blackwell adds `tcgen05.mma`, tensor memory, narrow operand formats, and
+block-scaled matrix operations.
 
-### Plain narrow types
+### Measure the BF16-Q/FP8-KV transform path
 
-Blackwell supports narrow FP8/FP6/FP4 matrix operations, but this still does
-not create an ordinary BF16-Q by E4M3-K operation with a K scale argument.
-Current FlashInfer/TensorRT-LLM generation code contains explicit transform
-modes for BF16 Q with FP8 KV:
+FlashInfer and TensorRT-LLM generation code expose BF16-Q/FP8-KV transform
+modes:
 
 ```text
 Full
@@ -172,166 +139,155 @@ KOnly
 SeparateKv
 ```
 
-That is direct evidence that operand transformation is a real kernel design
-choice on the BF16-Q/FP8-KV path. The transformation remains on chip; it does
-not imply a BF16 KV cache materialized in HBM.
+Use these modes as a controlled scheduling ablation. For every mode, record:
 
-### Block-scaled narrow types
+- selected kernel and cubin;
+- K and V staging locations;
+- conversion instruction counts;
+- tensor-memory and shared-memory traffic;
+- registers per thread;
+- achieved occupancy; and
+- steady-state tile interval.
 
-Blackwell's block-scaled MMA path consumes narrow operands and per-block
-scale factors in hardware. For MXFP8, the conceptual operation is:
+Keep the FP8 cache in HBM and transform only active tiles on chip.
+
+### Measure block-scaled QK
+
+Blackwell block-scaled MMA consumes narrow operands and per-block scale
+factors in hardware. For MXFP8, use the conceptual operation:
 
 ```text
 D = C + (SFA * A) @ (SFB * B)
 ```
 
-with a scale shared over a small K block. This is a real hardware route around
-an external scale-application step. It requires a block-scaled layout for the
-operands and scale tensors, and it normally means quantizing Q as well as K.
+Prepare Q and K in the required block-scaled layouts. Store scale tensors in
+the exact layout consumed by the matrix instruction. Compare this path against
+plain E4M3 K transformation and K16/V8.
 
-FlashInfer now contains an SM100 fused block-scaled FMHA implementation for
-MXFP8/NVFP4-style QK. That establishes open-source kernel work in this area.
-The remaining deployment question is narrower: whether the required paged
-KV-cache decode layouts, model shapes, numerical policy, and serving dispatch
-are complete and faster for the target workload.
+FlashInfer contains an SM100 fused block-scaled FMHA implementation for
+MXFP8/NVFP4-style QK. Validate the paged-cache layout, supported head shapes,
+scale policy, numerical behavior, and serving dispatch for the target model.
 
-## Why K16/V8 can be faster than K8/V8
+## Account for V preparation
 
-K8/V8 reads fewer bytes:
+V preparation consumes instructions and storage bandwidth before PV. Hide it
+with scheduling when the kernel permits:
 
-```text
-K8/V8   = 1 byte K + 1 byte V = 2 bytes per element pair
-K16/V8  = 2 byte K + 1 byte V = 3 bytes per element pair
-```
+- prepare V next to its PV consumer;
+- let producer warps prepare tile `n+1` while consumer warps accumulate tile
+  `n`;
+- fold compatible scales into PV arithmetic; and
+- keep reconstructed V in registers, shared memory, or tensor memory only for
+  its active tile.
 
-K16/V8 can still win when removing K operand preparation shortens the limiting
-pipeline stage. The likely contributors are:
+Measure V independently with K16/V16 versus K16/V8. Compare the V-only delta
+against the full K8/V8 delta. Report the hidden fraction for each shape.
 
-- conversion or transform instructions before QK;
-- an extra shared-memory or tensor-memory movement;
-- register pressure and occupancy loss;
-- producer/consumer synchronization;
-- a less favorable MMA layout or dispatch path; and
-- poor overlap between K preparation and the next tile load.
+## Treat numerical safety and kernel speed as separate gates
 
-The measured K16/V8 advantage is consistent with this hypothesis. It does not
-prove which contributor is responsible. The controlled transform-mode,
-dtype, cache-state, and profiler ablations on the companion page are intended
-to do that.
+The [FP8 KV-cache failure atlas](../fp8-kv-failure-atlas.html) identifies a
+Qwen failure mechanism: a large key-projection bias captures the scale and
+crushes the token-varying residual. Quantize the pre-bias residual and keep the
+fixed bias exact to make symmetric K8/V8 quality-admissible for the tested
+Qwen2.5-7B configurations.
 
-## V conversion is not free
+Benchmark the resulting cache representation as a separate kernel path.
+Include:
 
-V conversion sits on a different dependency chain from K preparation, but it
-still consumes instructions and storage bandwidth before PV can consume that
-tile. It may be cheaper or easier to hide because:
+- pre-bias residual quantization;
+- exact bias storage;
+- bias reconstruction or score-space correction;
+- pre-RoPE and post-RoPE residual layouts;
+- scale storage and broadcast; and
+- long-context autoregressive quality.
 
-- it can be scheduled near the PV consumer;
-- producer warps can prepare a later V tile while consumer warps accumulate an
-  earlier tile;
-- the output update is a running accumulation; and
-- some layouts allow scale application to be folded into the PV math.
+Keep K16/V8 as the fallback for partial-RoPE and other key distributions that
+fail the symmetric quality gate.
 
-Those are opportunities, not guarantees. "V dequant is free" should not be
-used as a factual claim unless a profile shows it is fully hidden for the
-specific kernel and shape.
+## Improve symmetric FP8
 
-## Quality and schedule are separate problems
+### Pipeline the existing transform
 
-The [FP8 KV-cache failure atlas](../fp8-kv-failure-atlas.html) identifies why
-ordinary symmetric FP8 K fails on Qwen-family models: a large key-projection
-bias can capture the scale and crush the token-varying residual. Quantizing the
-pre-bias residual and keeping the fixed bias exact makes symmetric FP8 K8/V8
-near-lossless in the tested fake-quant and static-scale experiments.
-
-That result removes a major numerical objection to symmetric K8/V8. It does
-not remove the kernel question. A deployable bias-aware symmetric path still
-needs to show that its smaller K cache offsets:
-
-- K operand preparation;
-- bias reconstruction or score correction;
-- any RoPE work moved into the read path; and
-- the block-scaled or FP8-Q conversion machinery chosen by the kernel.
-
-This is why the next experiment should compare ordinary K8/V8, pre-bias
-K8/V8, K16/V8, and the available Blackwell transform/block-scaled paths under
-one profiler matrix.
-
-## Candidate fixes for symmetric FP8
-
-The useful fixes fall into four groups.
-
-### Schedule the existing transform better
-
-- Compare `Full`, `KOnly`, and `SeparateKv` transform modes.
-- Keep V preparation adjacent to the PV consumer rather than expanding it
-  early.
-- Double-buffer K tiles so producer warps prepare tile `n+1` while consumer
-  warps run QK/softmax/PV for tile `n`.
-- Avoid an extra shared-memory round trip when register or tensor-memory
-  layouts allow it.
-- Reduce register and shared-memory footprint enough to recover occupancy.
+- Compare `Full`, `KOnly`, and `SeparateKv`.
+- Double-buffer K tiles.
+- Specialize producer and consumer warps.
+- Place V preparation next to PV.
+- Remove redundant shared-memory or tensor-memory movements.
+- Reduce registers and shared memory until occupancy recovers.
 
 ### Use a native narrow QK path
 
-- Quantize Q for QK and use FP8 by FP8 MMA where quality and conversion cost
-  permit it.
-- Apply a scale in score space when the scale granularity is algebraically
-  compatible with the reduction.
-- On Blackwell, test MXFP8 QK with hardware block scaling against the plain
-  E4M3 transform path.
+- Quantize Q once per decode step.
+- Use FP8-by-FP8 MMA where the quality gate passes.
+- Apply score-space scales when their granularity matches the reduction.
+- Test Blackwell MXFP8 against plain E4M3 transformation.
 
-### Make symmetric FP8 numerically admissible
+### Store the preferred cache layout once
 
-- Quantize the pre-bias key residual and keep the fixed bias exact.
-- Test both pre-RoPE reconstruction and post-RoPE residual plus analytical
-  bias correction.
-- Keep a fallback to K16/V8 for partial-RoPE or otherwise hostile key
-  distributions that pre-bias does not repair.
-
-### Change the cache layout once, not every read
-
-- Write the cache directly in the matrix unit's preferred block-scaled and
+- Write K, V, and scales directly in the matrix unit's block-scaled and
   swizzled layout.
-- Store scale factors in the exact hardware layout expected by the MMA path.
-- Avoid a decode-time transcode whose cost is paid on every generated token.
+- Align pages and scale blocks with the decode tile shape.
+- Avoid per-token decode transcoding.
 
-## What to measure
+### Dispatch by operating point
 
-At minimum:
+Choose among ordinary K8/V8, pre-bias K8/V8, block-scaled K8/V8, and K16/V8
+using:
+
+- model quality;
+- batch size;
+- context length;
+- cache residency;
+- head dimension and GQA ratio;
+- kernel latency; and
+- admitted serving concurrency.
+
+## Collect the profiler evidence
+
+Record at minimum:
 
 - kernel latency and steady-state tile interval;
 - DRAM bytes and effective bandwidth;
 - L2 hit rate and warm/cold-cache behavior;
-- conversion and tensor-core instruction counts;
+- conversion and matrix instruction counts;
 - long-scoreboard, barrier, and dependency stalls;
-- shared-memory traffic and bank conflicts;
-- registers per thread, shared memory per block, and achieved occupancy;
-- exact kernel/cubin and transform mode selected; and
-- end-to-end ITL, throughput, and quality for ordinary and pre-bias K8/V8.
+- shared-memory and tensor-memory traffic;
+- bank conflicts;
+- registers per thread;
+- shared memory per block;
+- achieved occupancy;
+- exact JIT URI, kernel, cubin, and transform mode; and
+- end-to-end ITL, throughput, cache capacity, and quality.
 
-The complete public hypothesis, test matrix, and result fields are in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html).
+Use the four dtype controls:
+
+```text
+K16/V16
+K8/V16
+K16/V8
+K8/V8
+```
+
+Run L2-warm and HBM-cold variants. Sweep batch, context, head dimension, GQA
+ratio, and page size. Preserve raw Nsight Compute, Nsight Systems, rocprof, and
+benchmark outputs.
 
 ## Source anchors
 
-These notes were checked against the following sources on 2026-08-20:
+Use these source anchors for instruction and kernel verification:
 
-- NVIDIA PTX ISA, `wgmma.mma_async` and `tcgen05.mma` sections:
+- NVIDIA PTX ISA, `wgmma.mma_async` and `tcgen05.mma`:
   <https://docs.nvidia.com/cuda/parallel-thread-execution/>
 - NVIDIA CUTLASS Blackwell block-scaled GEMM documentation:
   <https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_functionality.html>
 - NVIDIA CUTLASS `tcgen05` programming guide:
   <https://docs.nvidia.com/cutlass/latest/media/docs/pythonDSL/mma_docs/tcgen05_programming.html>
-- LLVM AMDGPU instruction definitions and tests for
+- LLVM AMDGPU instruction tests for
   `v_mfma_f32_16x16x32_fp8_fp8`:
   <https://github.com/llvm/llvm-project/blob/ca75521459d26bbad33a754c50d50a9a1d709816/llvm/test/MC/AMDGPU/mai-gfx942.s>
-- FlashInfer source at
-  `76704c45003cabaa832d59896080f91dca23f74b`, including
+- FlashInfer commit `76704c45003cabaa832d59896080f91dca23f74b`, including
   `Bf16QFp8KvTransformMode` and SM100 block-scaled FMHA.
-- AITER source at
-  `4fa508ef2935110ff99adf2743ea93807dbd9c67`, including the gfx942
-  FP8 MFMA path and post-MFMA scale application.
+- AITER commit `4fa508ef2935110ff99adf2743ea93807dbd9c67`, including the
+  gfx942 FP8 MFMA path and post-MFMA scale application.
 
-Claims about a specific released wheel or opaque cubin still require a run on
-the target hardware. Source support and runtime dispatch must be verified
-separately.
+Verify the released wheel, JIT output, and runtime dispatch on the target GPU.

@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FP8 KV attention: tile-path hypothesis</title>
+<title>FP8 KV attention: measure the tile path</title>
+<meta name="description" content="A focused measurement plan for the K8/V8 versus K16/V8 attention-kernel trade-off, including tile dependencies, microtests, profiler targets, decision rules, and symmetric-FP8 kernel options.">
 <style>
 :root {
   --bg:#080c0a; --bg2:#0d1310; --card:#111914; --line:#203027;
@@ -15,16 +16,16 @@
 *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 var(--sans)}
 a{color:var(--cyan);text-decoration:none} a:hover{text-decoration:underline}
 header{border-bottom:1px solid var(--line);background:rgba(13,19,16,.96);position:sticky;top:0;z-index:4}
-nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
 .logo{font:700 14px var(--mono);letter-spacing:.08em;color:var(--green)}
 nav .spacer{flex:1} nav a{font:12px var(--mono);color:var(--muted)}
 main{max-width:1180px;margin:auto;padding:56px 24px 80px}
 .eyebrow{font:700 11px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--green)}
 h1{font-size:clamp(34px,6vw,72px);line-height:1.04;letter-spacing:-.04em;margin:14px 0 20px;max-width:1000px}
-.lead{max-width:850px;color:var(--muted);font-size:18px}.lead strong{color:var(--text)}
+.lead{max-width:880px;color:var(--muted);font-size:18px}.lead strong{color:var(--text)}
 .badge{display:inline-block;margin-top:18px;border:1px solid rgba(241,181,91,.5);color:var(--amber);padding:5px 9px;border-radius:4px;font:700 11px var(--mono);letter-spacing:.06em}
 section{padding:52px 0;border-top:1px solid var(--line)}
-h2{font-size:25px;margin:0 0 12px} .sub{color:var(--muted);max-width:820px;margin:0 0 26px}
+h2{font-size:25px;margin:0 0 12px}.sub{color:var(--muted);max-width:850px;margin:0 0 26px}
 .pipeline-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .pipeline{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;overflow:hidden}
 .pipeline h3{font:700 15px var(--mono);margin:0 0 4px}.pipeline .bytes{color:var(--dim);font:12px var(--mono)}
@@ -36,7 +37,7 @@ h2{font-size:25px;margin:0 0 12px} .sub{color:var(--muted);max-width:820px;margi
 .stage.math{border-color:rgba(173,140,255,.44);color:#c8b4ff}
 .stage.update{border-color:rgba(38,230,161,.45);color:var(--green)}
 .stage.none{border-style:dashed;color:var(--dim)}
-.arrow-note{margin-top:18px;padding:12px 14px;border-left:3px solid var(--amber);background:rgba(241,181,91,.06);font:13px/1.55 var(--mono);color:var(--muted)}
+.callout{margin-top:18px;padding:12px 14px;border-left:3px solid var(--amber);background:rgba(241,181,91,.06);font:13px/1.55 var(--mono);color:var(--muted)}
 .equation{background:#070a08;border:1px solid var(--line);border-radius:9px;padding:21px;margin-top:18px;font:clamp(13px,2vw,18px)/1.7 var(--mono);color:var(--cyan);overflow:auto}
 .equation strong{color:var(--green)}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:18px}
@@ -45,25 +46,25 @@ h2{font-size:25px;margin:0 0 12px} .sub{color:var(--muted);max-width:820px;margi
 .card code{font:12px var(--mono);color:var(--cyan)}
 table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line)}
 th,td{text-align:left;padding:12px 13px;border-bottom:1px solid var(--line);vertical-align:top}th{font:700 10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}td{font-size:13px;color:var(--muted)}td:first-child{font:700 12px var(--mono);color:var(--text)}
-.verdicts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.verdict{border-radius:9px;padding:18px;border:1px solid var(--line);background:var(--card)}
-.verdict strong{display:block;font:700 12px var(--mono);margin-bottom:7px}.verdict p{margin:0;font-size:13px;color:var(--muted)}
-.v-green strong{color:var(--green)}.v-amber strong{color:var(--amber)}.v-red strong{color:var(--red)}
+.decisions{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.decision{border-radius:9px;padding:18px;border:1px solid var(--line);background:var(--card)}
+.decision strong{display:block;font:700 12px var(--mono);margin-bottom:7px}.decision p{margin:0;font-size:13px;color:var(--muted)}
+.d-green strong{color:var(--green)}.d-amber strong{color:var(--amber)}.d-red strong{color:var(--red)}
 .smallprint{font:12px/1.65 var(--mono);color:var(--dim)}
 footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:11px var(--mono)}
-@media(max-width:850px){.pipeline-grid,.grid,.verdicts{grid-template-columns:1fr}.lane{grid-template-columns:75px repeat(4,minmax(75px,1fr));overflow-x:auto}.stage{min-width:75px}nav .spacer{display:none}nav{flex-wrap:wrap}}
+@media(max-width:850px){.pipeline-grid,.grid,.decisions{grid-template-columns:1fr}.lane{grid-template-columns:75px repeat(4,minmax(75px,1fr));overflow-x:auto}.stage{min-width:75px}nav .spacer{display:none}}
 </style>
 </head>
 <body>
 <header><nav><a class="logo" href="./">KNLP</a><span class="spacer"></span><a href="fused-quant/fp8-attention-hardware-notes.md">hardware notes</a><a href="fp8-kv-failure-atlas.html">failure atlas</a><a href="paper_memory_decode.html">decode paper</a></nav></header>
 <main>
-<div class="eyebrow">FP8 KV attention · kernel hypothesis</div>
-<h1>The K8 tile may lose before it saves bytes.</h1>
-<p class="lead"><strong>K8/V8 reads less HBM than K16/V8.</strong> It can still be slower if BF16-Q/FP8-K operand preparation becomes the limiting stage of the fused tile loop. The claim is testable. The old "all scores wait for K dequant" picture is not.</p>
-<span class="badge">HYPOTHESIS, NOT VERDICT</span>
+<div class="eyebrow">FP8 KV attention · measurement plan</div>
+<h1>Measure the K8 tile against the byte savings.</h1>
+<p class="lead"><strong>K8/V8 reads one fewer K byte per element than K16/V8.</strong> Measure whether BF16-Q/FP8-K operand preparation lengthens the steady-state tile interval enough to erase that HBM saving.</p>
+<span class="badge">MEASURE THE BREAK-EVEN</span>
 
 <section>
-<h2>Competing tile paths</h2>
-<p class="sub">Online softmax advances tile by tile. The red box is a local dependency before QK, not a sequence-wide dequantization barrier. V work remains real and is held constant in the comparison.</p>
+<h2>Track the tile dependencies</h2>
+<p class="sub">Advance online softmax tile by tile. Complete K preparation before QK. Complete V preparation before PV. Keep V identical across the K8/V8 and K16/V8 comparison.</p>
 <div class="pipeline-grid">
   <div class="pipeline">
     <h3>Symmetric K8/V8</h3><div class="bytes">2 bytes per K/V element pair</div>
@@ -72,36 +73,73 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
   </div>
   <div class="pipeline">
     <h3>Asymmetric K16/V8</h3><div class="bytes">3 bytes per K/V element pair</div>
-    <div class="lane"><span class="lane-label">K tile n</span><span class="stage load">HBM load<br>K16</span><span class="stage none">no K8<br>prepare</span><span class="stage math">QK</span><span class="stage update">online softmax<br>update</span></div>
+    <div class="lane"><span class="lane-label">K tile n</span><span class="stage load">HBM load<br>K16</span><span class="stage none">direct native<br>K operand</span><span class="stage math">QK</span><span class="stage update">online softmax<br>update</span></div>
     <div class="lane"><span class="lane-label">V tile n</span><span class="stage load">HBM load<br>V8</span><span class="stage prepare">on-chip V<br>prepare</span><span class="stage math">P @ V</span><span class="stage update">output<br>accumulate</span></div>
   </div>
 </div>
-<div class="arrow-note">Question: does removing the red K stage save more time than the extra K16 byte costs?</div>
+<div class="callout">Compare the unhidden K8 preparation and pipeline pressure against the extra K16 HBM time.</div>
 <div class="equation"><strong>T(K8/V8) - T(K16/V8)</strong> ≈ unhidden K8 preparation + pipeline/occupancy penalty − extra K16 HBM time</div>
 </section>
 
 <section>
-<h2>Microtests that decide it</h2>
-<p class="sub">Use one pinned FlashInfer build, record the selected kernel and cubin, and vary one thing at a time. Otherwise the benchmark merely proves that dispatch tables exist.</p>
+<h2>Run the deciding microtests</h2>
+<p class="sub">Pin one FlashInfer commit, record the selected kernel and cubin, and vary one factor at a time.</p>
 <div class="grid">
-  <div class="card"><div class="id">M0 · CONTROL</div><h3>Four dtype cells</h3><p><code>K16/V16</code>, <code>K8/V16</code>, <code>K16/V8</code>, <code>K8/V8</code>. K-only and V-only deltas separate the two sides.</p></div>
-  <div class="card"><div class="id">M1 · TRANSFORM</div><h3>Blackwell modes</h3><p>Compare BF16-Q/FP8-KV <code>Full</code>, <code>KOnly</code>, and <code>SeparateKv</code>. Log the exact selected kernel.</p></div>
-  <div class="card"><div class="id">M2 · CACHE STATE</div><h3>Warm and cold</h3><p>Run L2-warm and HBM-cold variants. A byte-driven delta should grow when HBM dominates.</p></div>
-  <div class="card"><div class="id">M3 · TILE TAX</div><h3>Preparation-only probe</h3><p>Same K8 load and layout, with and without the transform. Include a K16-load control. Measure steady-state tile interval.</p></div>
-  <div class="card"><div class="id">M4 · SHAPE SWEEP</div><h3>Find the crossover</h3><p>Sequence 128–64K; batch 1–64; head dimensions 64/128/256; GQA ratios from 1:1 through 8:1.</p></div>
-  <div class="card"><div class="id">M5 · PROFILER</div><h3>Count the hidden cost</h3><p>DRAM/L2, conversions, tensor pipe, long scoreboard, barriers, shared memory, registers, occupancy and TMA overlap.</p></div>
-  <div class="card"><div class="id">M6 · NATIVE NARROW</div><h3>Try the escape routes</h3><p>FP8-Q × FP8-K and Blackwell MXFP8 block-scaled QK versus the plain E4M3 transform path.</p></div>
-  <div class="card"><div class="id">M7 · QUALITY</div><h3>Make K8 admissible</h3><p>Ordinary K8/V8, pre-bias K8/V8, K16/V8. PPL, KL, top-1, NIAH and long autoregressive decode.</p></div>
-  <div class="card"><div class="id">M8 · SERVING</div><h3>Close the loop</h3><p>Kernel latency, ITL, throughput, memory capacity and admitted concurrency. A microkernel win alone is not deployment.</p></div>
+  <div class="card"><div class="id">M0 · DTYPE CONTROL</div><h3>Run four storage cells</h3><p>Measure <code>K16/V16</code>, <code>K8/V16</code>, <code>K16/V8</code>, and <code>K8/V8</code>. Use K-only and V-only deltas to separate the two sides.</p></div>
+  <div class="card"><div class="id">M1 · TRANSFORM</div><h3>Sweep Blackwell modes</h3><p>Compare BF16-Q/FP8-KV <code>Full</code>, <code>KOnly</code>, and <code>SeparateKv</code>. Log the exact selected kernel.</p></div>
+  <div class="card"><div class="id">M2 · CACHE STATE</div><h3>Measure warm and cold</h3><p>Run L2-warm and HBM-cold variants. Track how the K8/V8 delta changes as HBM pressure rises.</p></div>
+  <div class="card"><div class="id">M3 · TILE COST</div><h3>Isolate preparation</h3><p>Hold K8 loads and layout constant. Toggle the transform. Add a K16-load control. Measure the steady-state tile interval.</p></div>
+  <div class="card"><div class="id">M4 · SHAPE SWEEP</div><h3>Find the crossover</h3><p>Sweep sequence 128–64K, batch 1–64, head dimensions 64/128/256, and GQA ratios 1:1 through 8:1.</p></div>
+  <div class="card"><div class="id">M5 · PROFILER</div><h3>Count the limiting resources</h3><p>Collect DRAM/L2, conversion, tensor-pipe, scoreboard, barrier, shared-memory, register, occupancy, and TMA metrics.</p></div>
+  <div class="card"><div class="id">M6 · NATIVE NARROW</div><h3>Test native QK paths</h3><p>Compare FP8-Q × FP8-K and Blackwell MXFP8 block-scaled QK against the plain E4M3 transform path.</p></div>
+  <div class="card"><div class="id">M7 · QUALITY</div><h3>Gate each cache format</h3><p>Run ordinary K8/V8, pre-bias K8/V8, and K16/V8 through PPL, KL, top-1, NIAH, and long autoregressive decode.</p></div>
+  <div class="card"><div class="id">M8 · SERVING</div><h3>Validate the full stack</h3><p>Measure kernel latency, ITL, throughput, cache capacity, admitted concurrency, and output quality.</p></div>
 </div>
 </section>
 
 <section>
-<h2>Profiler matrix</h2>
+<h2>Record the profiler matrix</h2>
 <table>
-<thead><tr><th>Axis</th><th>Values</th><th>What it distinguishes</th></tr></thead>
+<thead><tr><th>Axis</th><th>Values</th><th>Purpose</th></tr></thead>
 <tbody>
-<tr><td>Storage</td><td>K16/V16 · K8/V16 · K16/V8 · K8/V8</td><td>K-side tax, V-side tax, and byte savings</td></tr>
-<tr><td>Transform</td><td>Full · KOnly · SeparateKv · native narrow</td><td>Operand preparation and scheduling choices</td></tr>
-<tr><td>Cache state</td><td>L2 warm · HBM cold</td><td>On-chip work versus memory time</td></tr>
-<tr><td>Shape</td><td>B={1,8,32,64}; T={128,512,2K,8K
+<tr><td>Storage</td><td>K16/V16 · K8/V16 · K16/V8 · K8/V8</td><td>Separate K preparation, V preparation, and byte savings</td></tr>
+<tr><td>Transform</td><td>Full · KOnly · SeparateKv · native narrow</td><td>Expose operand-preparation and scheduling choices</td></tr>
+<tr><td>Cache state</td><td>L2 warm · HBM cold</td><td>Separate on-chip work from memory time</td></tr>
+<tr><td>Shape</td><td>B={1,8,32,64}; T={128,512,2K,8K,32K,64K}</td><td>Locate the operating-point crossover</td></tr>
+<tr><td>Topology</td><td>head_dim={64,128,256}; GQA={1,2,4,8}</td><td>Expose vectorization, reuse, and occupancy effects</td></tr>
+<tr><td>GPU</td><td>H100 · B200 · MI300X</td><td>Compare selected kernels rather than architecture labels</td></tr>
+<tr><td>Quality</td><td>ordinary K8 · pre-bias K8 · K16</td><td>Keep performance comparisons inside the admissible region</td></tr>
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>Apply explicit decision rules</h2>
+<div class="decisions">
+  <div class="decision d-green"><strong>ATTRIBUTE THE GAP TO K PREPARATION</strong><p>Require the K-only dtype delta, transform-mode delta, and profiler stalls to move together while V remains fixed.</p></div>
+  <div class="decision d-red"><strong>REJECT THE K-PREPARATION EXPLANATION</strong><p>Reject it when K8/V16 matches K16/V16, transform modes converge, or the latency delta follows DRAM bytes without an on-chip stall signal.</p></div>
+  <div class="decision d-amber"><strong>DISPATCH BY OPERATING POINT</strong><p>Use dual dispatch when K8/V8 wins in HBM-dominated regimes and K16/V8 wins in preparation- or occupancy-dominated regimes.</p></div>
+</div>
+</section>
+
+<section>
+<h2>Improve symmetric FP8</h2>
+<div class="grid">
+  <div class="card"><div class="id">SCHEDULE</div><h3>Pipeline the transform</h3><p>Double-buffer K tiles, specialize producer and consumer warps, place V preparation next to PV, and remove extra shared-memory round trips.</p></div>
+  <div class="card"><div class="id">INSTRUCTION PATH</div><h3>Use native narrow QK</h3><p>Quantize Q for QK where quality permits. Test FP8 MMA and Blackwell block-scaled MXFP8 with hardware scale consumption.</p></div>
+  <div class="card"><div class="id">CACHE LAYOUT</div><h3>Write the preferred layout once</h3><p>Store K, V, and scales in the matrix unit's block-scaled and swizzled layout. Avoid per-token decode transcoding.</p></div>
+  <div class="card"><div class="id">NUMERICS</div><h3>Store the pre-bias residual</h3><p>Keep the fixed K bias exact. Quantize the token-varying residual. Compare pre-RoPE reconstruction with post-RoPE residual plus score correction.</p></div>
+  <div class="card"><div class="id">FALLBACK</div><h3>Retain K16/V8</h3><p>Dispatch to native K for partial-RoPE and other key distributions that fail the symmetric quality gate.</p></div>
+  <div class="card"><div class="id">SERVING POLICY</div><h3>Optimize served goodput</h3><p>Choose the format from quality, kernel time, cache capacity, and admitted concurrency rather than kernel latency alone.</p></div>
+</div>
+</section>
+
+<section>
+<h2>Preserve run provenance</h2>
+<p class="sub">Record the GPU SKU, clocks, driver, CUDA or ROCm version, FlashInfer commit, JIT URI, cubin hash, transform mode, page layout, warmup policy, timing method, and raw profiler reports for every row.</p>
+<p class="smallprint">Detailed ISA and kernel notes: <a href="fused-quant/fp8-attention-hardware-notes.md">FP8 attention hardware paths and tile preparation</a>. Numerical gate: <a href="fp8-kv-failure-atlas.html">FP8 KV-cache failure atlas</a>.</p>
+</section>
+</main>
+<footer>KNLP · FP8 KV attention measurement plan</footer>
+</body>
+</html>

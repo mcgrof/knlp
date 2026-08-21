@@ -1,48 +1,46 @@
-# Fused KV Quantization
+# Fused KV quantization index
 
-> **This page has moved.** The canonical entry point is now
-> [`docs/fused-quant/README.md`](fused-quant/README.md).
+Use this page to navigate the fused KV-cache quantization work.
 
-## Current entry points
+## Code
 
-**Code, custom Triton line**
+### Custom Triton kernels
 
 - [`fused-quant/fused_int4.v0.0.1.py`](../fused-quant/fused_int4.v0.0.1.py)
 - [`fused-quant/fused_int4.v0.0.2.py`](../fused-quant/fused_int4.v0.0.2.py)
 - [`fused-quant/fused_int4.v0.1.0.py`](../fused-quant/fused_int4.v0.1.0.py)
 
-**Code, FlashInfer K/V dtype split**
+### FlashInfer and vLLM K/V dtype split
 
 - <https://github.com/mcgrof/flashinfer>
 - <https://github.com/mcgrof/vllm/tree/20260702-k16fp8>
 
-**Documentation**
+## Documentation
 
-- [`docs/fused-quant/README.md`](fused-quant/README.md) — current overview
-- [`docs/fused-quant/latency.md`](fused-quant/latency.md) — H100 INT4 latency
+- [`docs/fused-quant/README.md`](fused-quant/README.md) — implementation
+  overview and measurement rules
+- [`docs/fused-quant/latency.md`](fused-quant/latency.md) — H100 INT4
+  latency decomposition
 - [`docs/fused-quant/fp8-attention-hardware-notes.md`](fused-quant/fp8-attention-hardware-notes.md)
-  — corrected Hopper, Blackwell, and CDNA 3 hardware notes
-- [`docs/fp8-attention-tile-path.html`](fp8-attention-tile-path.html) — the
-  K8/V8 versus K16/V8 performance hypothesis and target microtests
-- [`docs/fp8-kv-failure-atlas.html`](fp8-kv-failure-atlas.html) — the numerical
-  failure mechanisms and the pre-bias symmetric-FP8 repair
-- [`docs/fused-quant/lineage/`](fused-quant/lineage/) — dated provenance notes
+  — Hopper, Blackwell, and CDNA 3 instruction and tile paths
+- [`docs/fp8-attention-tile-path.html`](fp8-attention-tile-path.html) — K8/V8
+  versus K16/V8 microtests, profiler matrix, and decision rules
+- [`docs/fp8-kv-failure-atlas.html`](fp8-kv-failure-atlas.html) — numerical
+  failure mechanisms and bias-aware symmetric FP8
+- [`docs/fused-quant/lineage/`](fused-quant/lineage/) — dated provenance
 
-**Paper**
+## Paper
 
 - [`knlp.io/decode`](https://knlp.io/decode) — *Memory-Traffic Saturation in
   Autoregressive Transformer Decode*
 
-## Why the old page was retired
+## Keep the three gates separate
 
-The previous version mixed the custom INT4 experiment, serving-stack status,
-paper claims, and hardware interpretation into one long document. The split
-above keeps three different questions separate:
+1. **Fusion gate:** verify that the kernel avoids a global-memory
+   reconstruction round trip.
+2. **Quality gate:** verify that the K/V representation preserves model
+   behavior.
+3. **Schedule gate:** verify that tile preparation and occupancy cost less than
+   the HBM traffic saved.
 
-1. Does fusion avoid a global-memory round trip?
-2. Is a K/V representation numerically safe?
-3. Does the selected tile schedule beat the bytes it saves?
-
-Those questions interact, but they are not interchangeable. Keeping them
-separate prevents one measurement from being attributed to the wrong
-mechanism.
+Require all three gates before selecting a serving format.

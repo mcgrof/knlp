@@ -7,32 +7,43 @@
 <style>
 body{margin:0;background:#080c0a;color:#d4e8d0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 main{max-width:760px;margin:12vh auto;padding:28px;border:1px solid #1e2e20;border-radius:10px;background:#111810}
-a{color:#00d4c8} code{color:#f0a030}
+a{color:#00d4c8}code{color:#f0a030}
 </style>
 </head>
 <body>
 <main id="status">
-<h1>Loading corrected documentation…</h1>
-<p>The canonical page is applying guarded source corrections before rendering the archived body.</p>
-<noscript><p>JavaScript is required for this corrected view. Open <a href="fp8-kv-failure-atlas.body.html">the archived body</a> and read <a href="fp8-attention-tile-path.html">the corrected FP8 tile-path notes</a>.</p></noscript>
+<h1>Loading the FP8 KV-cache failure atlas…</h1>
+<p>Preparing the interactive page.</p>
+<noscript><p>JavaScript is required. Open <a href="fp8-kv-failure-atlas.body.html">the full atlas</a> and <a href="fp8-attention-tile-path.html">the FP8 tile measurement plan</a>.</p></noscript>
 </main>
 <script>
-(async () => {
-  const response = await fetch("fp8-kv-failure-atlas.body.html", {cache: 'no-store'});
-  if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
-  let source = await response.text();
-  const replacements = [["            <p className=\"text-xs text-gray-500\">\n              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and\n              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.\n            </p>\n", "            <p className=\"text-xs text-gray-500\">\n              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and\n              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.\n            </p>\n            <div className=\"bg-[#07130f] border border-emerald-900/60 rounded-lg p-4 text-sm text-gray-400 mt-4\">\n              <strong className=\"text-emerald-300\">The precision repair reopens the kernel question.</strong>\n              Pre-bias K8/V8 can now be tested as a quality-admissible symmetric path, but its smaller cache still has\n              to beat per-tile K operand preparation, bias reconstruction, and any RoPE work moved into decode. The\n              <a href=\"fp8-attention-tile-path.html\" className=\"text-cyan-300 hover:underline\"> FP8 attention tile-path plan</a>\n              defines the K8/V8 versus K16/V8 microtests. It deliberately does not claim that softmax waits for a\n              sequence-wide K dequantization pass or that V conversion is free.\n            </div>\n"]];
-  for (const [oldText, newText] of replacements) {
-    const count = source.split(oldText).length - 1;
-    if (count !== 1) throw new Error(`guarded replacement expected once, found ${count}`);
-    source = source.replace(oldText, newText);
-  }
-  document.open();
-  document.write(source);
-  document.close();
-})().catch((error) => {
-  const status = document.getElementById('status');
-  status.innerHTML = `<h1>Correction loader failed</h1><p><code>${String(error)}</code></p><p>Open <a href="fp8-kv-failure-atlas.body.html">the archived page body</a> and <a href="fp8-attention-tile-path.html">the corrected FP8 tile-path notes</a>.</p>`;
+(async()=>{
+  const r=await fetch('fp8-kv-failure-atlas.body.html',{cache:'no-store'});
+  if(!r.ok)throw new Error(`fetch failed: ${r.status}`);
+  let s=await r.text();
+  const anchor=`            <p className="text-xs text-gray-500">
+              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and
+              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.
+            </p>
+`;
+  const insert=`            <p className="text-xs text-gray-500">
+              Phi-2 is the perfect anti-control: its &ldquo;true bias&rdquo; recovery (0.17) actually <em>loses</em> to the random and
+              permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.
+            </p>
+            <div className="bg-[#07130f] border border-emerald-900/60 rounded-lg p-4 text-sm text-gray-400 mt-4">
+              <strong className="text-emerald-300">Benchmark bias-aware symmetric FP8.</strong>
+              Run pre-bias K8/V8 against ordinary K8/V8 and K16/V8. Measure per-tile K operand preparation,
+              exact bias reconstruction or score correction, RoPE placement, scale traffic, and HBM bytes.
+              Use the <a href="fp8-attention-tile-path.html" className="text-cyan-300 hover:underline"> FP8
+              attention tile measurement plan</a> for the dtype controls, profiler matrix, and decision rules.
+            </div>
+`;
+  const count=s.split(anchor).length-1;
+  if(count!==1)throw new Error(`page transform expected 1, found ${count}`);
+  s=s.replace(anchor,insert);
+  document.open();document.write(s);document.close();
+})().catch(error=>{
+  document.getElementById('status').innerHTML=`<h1>Page loader failed</h1><p><code>${String(error)}</code></p><p>Open <a href="fp8-kv-failure-atlas.body.html">the full atlas</a> and <a href="fp8-attention-tile-path.html">the FP8 tile measurement plan</a>.</p>`;
 });
 </script>
 </body>
