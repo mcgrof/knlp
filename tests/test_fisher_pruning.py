@@ -457,3 +457,162 @@ def test_cubic_sparsity_schedule():
     assert 0 < cubic_sparsity(150, p) < 0.8
     assert cubic_sparsity(200, p) == 0.8
     assert cubic_sparsity(999, p) == 0.8
+
+
+# ---------------------------------------------------------------------
+# Menu A correctness gate (CLOUD_WAVE_PLAN): score algebra, mask
+# semantics, reproducibility. No paid run until these pass.
+# ---------------------------------------------------------------------
+
+
+def test_soap_variance_projection_is_exact_under_decorrelation():
+    # If per-token gradients are g = QL g' QR^T with g' having
+    # independent zero-mean entries of variance V'[a,b], then
+    # E[g_ij^2] = sum_ab QL[i,a]^2 V'[a,b] QR[j,b]^2 exactly.
+    # The projection (QL^2) V' (QR^2)^T must match a Monte Carlo
+    # estimate of E[g^2].
+    torch.manual_seed(3)
+    out_d, in_d = 6, 4
+    ql = torch.linalg.qr(torch.randn(out_d, out_d)).Q
+    qr = torch.linalg.qr(torch.randn(in_d, in_d)).Q
+    v_rot = torch.rand(out_d, in_d) + 0.1
+    n = 200_000
+    gp = torch.randn(n, out_d, in_d) * v_rot.sqrt()
+    g = torch.einsum("ia,nab,jb->nij", ql, gp, qr)
+    mc = g.pow(2).mean(0)
+    projected = ql.pow(2) @ v_rot @ qr.pow(2).T
+    torch.testing.assert_close(projected, mc, rtol=0.05, atol=1e-3)
+
+
+def test_muon_update_signal_matches_direct_newton_schulz(tmp_path):
+    from fim.fisher_pruning import train_optimizer
+    from fim.fisher_pruning.muon import zeropower_via_newtonschulz5
+    from fim.fisher_pruning.phase_a import EPS
+
+    torch.manual_seed(0)
+    model = build_model(TINY_MODEL, selection={})
+    tr = dict(
+        TINY_TRAIN,
+        optimizer="muon",
+        muon_lr=0.02,
+        muon_momentum=0.95,
+        muon_weight_decay=0.01,
+    )
+    opt = train_optimizer.build_optimizer(model, tr)
+    x = torch.randint(0, 64, (2, 8))
+    y = torch.randint(0, 64, (2, 8))
+    _, loss = model(x, y)
+    loss.backward()
+    opt.step()
+    targets = train_optimizer._prune_targets(model, TINY_MODEL["n_layer"])
+    scores = train_optimizer.live_state_scores(
+        opt, "muon", targets, "state", q=0.25, muon_mode="update"
+    )
+    name = next(iter(targets))
+    p = targets[name]
+    mom = opt.state[p]["momentum_buffer"]
+    upd = zeropower_via_newtonschulz5(mom.float(), steps=5)
+    upd = upd * max(1, mom.size(-2) / mom.size(-1)) ** 0.5
+    # mirror the implementation's precision path exactly: the NS
+    # output is bf16; the score casts to the weight dtype BEFORE
+    # squaring.
+    f_stat = upd.to(p.dtype).pow(2)
+    expected = p.detach().abs() * (f_stat + EPS) ** 0.25
+    torch.testing.assert_close(scores[name], expected, rtol=1e-4, atol=1e-7)
+
+
+def test_q_050_ranks_like_squared_deletion_cost():
+    from fim.fisher_pruning import train_optimizer
+
+    torch.manual_seed(1)
+    model = build_model(TINY_MODEL, selection={})
+    opt = make_optimizer(model, TINY_TRAIN)
+    x = torch.randint(0, 64, (2, 8))
+    y = torch.randint(0, 64, (2, 8))
+    _, loss = model(x, y)
+    loss.backward()
+    opt.step()
+    targets = train_optimizer._prune_targets(model, TINY_MODEL["n_layer"])
+    scores = train_optimizer.live_state_scores(opt, "adamw", targets, "state", q=0.5)
+    from fim.fisher_pruning.phase_a import EPS
+
+    name = next(iter(targets))
+    p = targets[name]
+    v = opt.state[p]["exp_avg_sq"]
+    # same eps so the comparison is the pure monotone transform
+    deletion = p.detach().pow(2) * (v + EPS)
+    s = scores[name].reshape(-1)
+    d = deletion.reshape(-1)
+    ranks_s = s.argsort().argsort().float()
+    ranks_d = d.argsort().argsort().float()
+    spearman = torch.corrcoef(torch.stack([ranks_s, ranks_d]))[0, 1].item()
+    assert spearman > 0.9999
+
+
+def test_masks_grow_monotonically_and_survive_resume(tmp_path):
+    from fim.fisher_pruning import train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 11)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 12)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": dict(
+            TINY_TRAIN,
+            max_steps=12,
+            eval_interval=50,
+            ckpt_interval=6,
+            log_interval=50,
+        ),
+        "prune": {
+            "target_sparsity": 0.5,
+            "start_step": 2,
+            "end_step": 10,
+            "interval": 2,
+            "signal": "state",
+            "q": 0.25,
+        },
+        "out_dir": str(tmp_path / "resume_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    out = Path(cfg["out_dir"])
+    events = [
+        json.loads(line) for line in (out / "train.jsonl").read_text().splitlines()
+    ]
+    prunes = [e for e in events if e.get("event") == "prune"]
+    assert all(e["mask_monotone"] for e in prunes)
+    spars = [e["actual_sparsity"] for e in prunes]
+    assert spars == sorted(spars)
+    assert all("mask_hash" in e and "jaccard_vs_magnitude" in e for e in prunes)
+    assert any("accounting" in e for e in prunes)
+    full = [e for e in events if e.get("event") == "final_sparsity"][0]
+    assert abs(full["actual_sparsity"] - 0.5) < 0.01
+    assert full["accounting"]["pruning_persistent_bytes"] > 0
+
+    # resume path: same full config halted after the step-6
+    # checkpoint (halt_after_step keeps the LR schedule identical —
+    # a shortened max_steps would change the cosine), then resumed
+    # to completion; must match the uninterrupted run exactly.
+    cfg2 = dict(cfg, out_dir=str(tmp_path / "resume_run2"))
+    cfg2["train"] = dict(cfg["train"], halt_after_step=6)
+    train_optimizer.cmd_train(cfg2, "cpu")
+    cfg2b = dict(cfg2)
+    cfg2b["train"] = dict(cfg["train"])
+    train_optimizer.cmd_train(cfg2b, "cpu", resume=True)
+    ck_a = torch.load(out / "ckpt_latest.pt", map_location="cpu", weights_only=False)
+    ck_b = torch.load(
+        Path(cfg2b["out_dir"]) / "ckpt_latest.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert ck_b["step"] == ck_a["step"] == 11
+    for n, m in ck_a["prune_masks"].items():
+        torch.testing.assert_close(
+            m.float(), ck_b["prune_masks"][n].float(), rtol=0, atol=0
+        )
+    wa = ck_a["model_state"]["transformer.h.0.attn.c_attn.weight"]
+    wb = ck_b["model_state"]["transformer.h.0.attn.c_attn.weight"]
+    torch.testing.assert_close(wa, wb, rtol=1e-5, atol=1e-7)
