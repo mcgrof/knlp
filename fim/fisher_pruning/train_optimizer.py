@@ -614,7 +614,11 @@ def cmd_train(cfg: dict, device: str, resume: bool = False) -> None:
                 "accounting": state_byte_accounting(model, optimizer, masks),
             },
         )
-    _jsonl(log, {"event": "done", "elapsed_s": time.time() - t0})
+    done = {"event": "done", "elapsed_s": time.time() - t0}
+    if torch.cuda.is_available():
+        done["peak_allocated_bytes"] = torch.cuda.max_memory_allocated()
+        done["peak_reserved_bytes"] = torch.cuda.max_memory_reserved()
+    _jsonl(log, done)
 
 
 def main() -> int:
