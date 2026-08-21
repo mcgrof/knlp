@@ -42,6 +42,13 @@ Score arms (per-weight importance, higher = keep):
               sqrt(A_jj) = ||x_j||_2 / sqrt(n_tokens) differs
               only by a per-run constant, so the score is exact
               from A's diagonal — no separate capture needed.
+  replay_bN   |w| * (v_N + eps)^0.25 with v_N the synthetic Adam
+              second moment after an N-batch frozen replay of the
+              calibration batches (state_synthesis). Configured
+              via cfg["replay"] = {"checkpoints": [16, 50, 200]}.
+  trajectory  |w * (w - w_prev)| against the target weights of an
+              earlier checkpoint revision. Configured via
+              cfg["trajectory"] = {"prev_revision": ...}.
 
 Masks are per-layer uniform sparsity (per_layer_mask). Evaluation
 is mean token-level cross-entropy + perplexity on fixed held-out
@@ -75,6 +82,11 @@ from fim.fisher_pruning.kfac_capture import (  # noqa: E402
     FactorAccumulator,
     damped_inverse_diag,
     per_layer_mask,
+)
+from fim.fisher_pruning.state_synthesis import (  # noqa: E402
+    frozen_adam_replay,
+    load_hf_target_weights,
+    trajectory_scores,
 )
 
 EPS = 1e-8
@@ -299,6 +311,8 @@ def build_scores(
     obs_kappa: float = 1e-2,
     random_seed: int = 1234,
     stale_v: Optional[Dict[str, torch.Tensor]] = None,
+    replay_v: Optional[Dict[int, Dict[str, torch.Tensor]]] = None,
+    w_prev: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """arm -> {module name -> score tensor [out, in]} (cpu fp32).
 
@@ -307,7 +321,11 @@ def build_scores(
     target weight (e.g. reassembled from the published Pythia
     GPT-NeoX optimizer shards) and adds the stale_q025/stale_q050
     arms — the external-model version of reusing end-of-training
-    optimizer state.
+    optimizer state. replay_v maps a calibration batch count to
+    the frozen-Adam-replay synthetic second moment per target
+    (state_synthesis.frozen_adam_replay) and adds one replay_bN
+    arm per count. w_prev holds the target weights of an earlier
+    checkpoint revision and adds the trajectory arm.
     """
     rng = torch.Generator().manual_seed(random_seed)
     arm_names = (
@@ -322,6 +340,10 @@ def build_scores(
     )
     if stale_v is not None:
         arm_names = arm_names + ("stale_q025", "stale_q050")
+    if replay_v is not None:
+        arm_names = arm_names + tuple(f"replay_b{c}" for c in sorted(replay_v))
+    if w_prev is not None:
+        arm_names = arm_names + ("trajectory",)
     scores: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names}
     for n, w in weights.items():
         f = factors[n]
@@ -347,6 +369,14 @@ def build_scores(
                 raise ValueError(f"stale state shape mismatch for {n}")
             scores["stale_q025"][n] = w.abs() * (v + EPS) ** 0.25
             scores["stale_q050"][n] = w.abs() * (v + EPS) ** 0.5
+        if replay_v is not None:
+            for c, snap in replay_v.items():
+                rv = snap[n].float()
+                if rv.shape != w.shape:
+                    raise ValueError(f"replay state shape mismatch for {n}")
+                scores[f"replay_b{c}"][n] = w.abs() * (rv + EPS) ** 0.25
+    if w_prev is not None:
+        scores["trajectory"] = trajectory_scores(weights, w_prev)
     return scores
 
 
@@ -458,12 +488,28 @@ def cmd_prune_eval(
         missing = [n for n, v in stale_v.items() if v is None]
         if missing:
             raise KeyError(f"stale state missing targets: {missing[:3]}")
+    replay_v = None
+    rcfg = cfg.get("replay")
+    if rcfg:
+        replay_v = frozen_adam_replay(
+            model,
+            targets,
+            calib_batches,
+            betas=tuple(rcfg.get("betas", (0.9, 0.999))),
+            checkpoints=tuple(rcfg.get("checkpoints", (16, 50, 200))),
+        )
+    w_prev = None
+    tcfg = cfg.get("trajectory")
+    if tcfg:
+        w_prev = load_hf_target_weights(cfg["model_id"], tcfg["prev_revision"])
     scores = build_scores(
         weights,
         factors,
         obs_kappa=cfg.get("obs_kappa", 1e-2),
         random_seed=cfg.get("random_arm_seed", 1234),
         stale_v=stale_v,
+        replay_v=replay_v,
+        w_prev=w_prev,
     )
     sparsities = cfg.get("sparsities", [0.3, 0.5, 0.7])
     _jsonl(
