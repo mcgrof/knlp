@@ -1,7 +1,8 @@
 # KV-House experiment plan
 
 This document defines the KV-House research program and its first
-milestone gate. KV-House asks one question the existing KV-cache
+milestone gate. The milestone has since run; the measured outcome
+and the NO_GO decision are in [results-summary.md](results-summary.md). KV-House asks one question the existing KV-cache
 compression literature leaves open (see
 [prior-art.md](prior-art.md)): do fixed blocks of B consecutive KV
 tokens carry enough cross-token (temporal) redundancy that an

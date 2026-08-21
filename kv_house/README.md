@@ -3,7 +3,11 @@
 Prefix-stable sequence-axis transform coding of sealed KV-cache
 blocks. The research motivation, prior art, lanes, hypotheses, and
 milestone gates are in [docs/kv-house/](../docs/kv-house/); this
-file is the operational map.
+file is the operational map. Milestone 1 ran and returned NO_GO —
+the measured reasons are in
+[docs/kv-house/results-summary.md](../docs/kv-house/results-summary.md);
+the package remains useful for its sealed-block codec, PIA
+adapter, and temporal-structure measurement tooling.
 
 ## Layout
 
