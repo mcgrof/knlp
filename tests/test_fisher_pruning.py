@@ -388,3 +388,72 @@ def test_train_optimizer_muon_smoke_and_native_scores(tmp_path):
     opt = train_optimizer.build_optimizer(model, ckpt["train_config"]["train"])
     base = [g["base_lr"] for g in opt.param_groups]
     assert base[0] == 0.02 and base[1] == 6e-4
+
+
+@pytest.mark.parametrize("opt_name", ["adamw", "soap", "muon"])
+def test_in_training_state_pruning(tmp_path, opt_name):
+    from fim.fisher_pruning import train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 9)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 10)
+    tr = {
+        "optimizer": opt_name,
+        "batch_size": 2,
+        "max_steps": 8,
+        "lr": 1e-3,
+        "min_lr": 1e-4,
+        "warmup_steps": 1,
+        "weight_decay": 0.1,
+        "betas": [0.9, 0.95],
+        "clip": 1.0,
+        "eval_interval": 20,
+        "eval_batches": 1,
+        "ckpt_interval": 20,
+        "log_interval": 20,
+    }
+    if opt_name == "soap":
+        tr.update(betas=[0.95, 0.95], precondition_frequency=2)
+    if opt_name == "muon":
+        tr.update(muon_lr=0.02, muon_momentum=0.95, muon_weight_decay=0.01)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": tr,
+        "prune": {
+            "target_sparsity": 0.5,
+            "start_step": 2,
+            "end_step": 6,
+            "interval": 2,
+            "signal": "state",
+        },
+        "final_eval": {"seeds": [11], "n_batches": 1},
+        "out_dir": str(tmp_path / f"{opt_name}_prune_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    out = Path(cfg["out_dir"])
+    events = [
+        json.loads(line) for line in (out / "train.jsonl").read_text().splitlines()
+    ]
+    prunes = [e for e in events if e.get("event") == "prune"]
+    assert prunes and prunes[-1]["target_sparsity"] == 0.5
+    final = [e for e in events if e.get("event") == "final_sparsity"]
+    assert final and abs(final[0]["actual_sparsity"] - 0.5) < 0.01
+    assert any(e.get("event") == "final_eval" for e in events)
+    # weights on disk actually carry the zeros
+    ckpt = torch.load(out / "ckpt_latest.pt", map_location="cpu", weights_only=False)
+    w = ckpt["model_state"]["transformer.h.0.attn.c_attn.weight"]
+    assert (w == 0).float().mean().item() >= 0.49
+
+
+def test_cubic_sparsity_schedule():
+    from fim.fisher_pruning.train_optimizer import cubic_sparsity
+
+    p = {"start_step": 100, "end_step": 200, "target_sparsity": 0.8}
+    assert cubic_sparsity(0, p) == 0.0
+    assert cubic_sparsity(100, p) == 0.0
+    assert 0 < cubic_sparsity(150, p) < 0.8
+    assert cubic_sparsity(200, p) == 0.8
+    assert cubic_sparsity(999, p) == 0.8
