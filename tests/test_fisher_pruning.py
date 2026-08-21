@@ -616,3 +616,59 @@ def test_masks_grow_monotonically_and_survive_resume(tmp_path):
     wa = ck_a["model_state"]["transformer.h.0.attn.c_attn.weight"]
     wb = ck_b["model_state"]["transformer.h.0.attn.c_attn.weight"]
     torch.testing.assert_close(wa, wb, rtol=1e-5, atol=1e-7)
+
+
+def test_kfac_arm_trains_and_scores(tmp_path):
+    pytest.importorskip("kfac")
+    from fim.fisher_pruning import train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 13)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 14)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": dict(
+            TINY_TRAIN,
+            optimizer="kfac",
+            max_steps=8,
+            kfac_factor_update_steps=1,
+            kfac_inv_update_steps=2,
+            eval_interval=20,
+            ckpt_interval=20,
+            log_interval=20,
+        ),
+        "prune": {
+            "target_sparsity": 0.5,
+            "start_step": 3,
+            "end_step": 7,
+            "interval": 2,
+            "signal": "state",
+            "q": 0.25,
+        },
+        "out_dir": str(tmp_path / "kfac_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    out = Path(cfg["out_dir"])
+    events = [
+        json.loads(line) for line in (out / "train.jsonl").read_text().splitlines()
+    ]
+    final = [e for e in events if e.get("event") == "final_sparsity"]
+    assert final and abs(final[0]["actual_sparsity"] - 0.5) < 0.01
+    assert any(e.get("event") == "done" for e in events)
+    # obs signal path also produces valid masks on the live factors
+    model = build_model(TINY_MODEL, selection={})
+    opt = train_optimizer.build_optimizer(model, cfg["train"])
+    x = torch.randint(0, 64, (2, 8))
+    y = torch.randint(0, 64, (2, 8))
+    _, loss = model(x, y)
+    loss.backward()
+    opt.kfac_preconditioner.step()
+    opt.step()
+    targets = train_optimizer._prune_targets(model, TINY_MODEL["n_layer"])
+    scores = train_optimizer.live_state_scores(opt, "kfac", targets, "obs")
+    for n, p in targets.items():
+        assert scores[n].shape == p.shape
+        assert torch.isfinite(scores[n]).all() and (scores[n] >= 0).all()
