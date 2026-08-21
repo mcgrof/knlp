@@ -2,220 +2,167 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FP8 KV attention: H100 phase 1</title>
-<meta name="description" content="H100 measurements showing how the selected attention kernel path changes the FP8 result, plus the decisive B200 and same-schedule K16/V8 versus K8/V8 plan.">
+<meta name="description" content="H100 measurements for CUDA-core and SM90 Tensor Core FP8 KV attention, the preparation probe, bounded conclusions, and the decisive phase-2 plan.">
 <style>
-:root {
-  --bg:#080c0a; --bg2:#0d1310; --card:#111914; --line:#203027;
-  --text:#dce8df; --muted:#8ca095; --dim:#53645a; --green:#26e6a1;
-  --cyan:#54d8e1; --amber:#f1b55b; --red:#f06a6a; --violet:#ad8cff;
-  --blue:#6ca8ff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+:root{
+  --bg:#080c0a;--bg2:#0d1310;--card:#111914;--line:#203027;
+  --text:#dce8df;--muted:#8ca095;--dim:#53645a;--green:#26e6a1;
+  --cyan:#54d8e1;--amber:#f1b55b;--red:#f06a6a;--violet:#ad8cff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
 }
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.65 var(--sans)}
 a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
-header{border-bottom:1px solid var(--line);background:rgba(13,19,16,.97);position:sticky;top:0;z-index:4}
-nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+header{position:sticky;top:0;z-index:10;background:rgba(13,19,16,.97);border-bottom:1px solid var(--line)}
+nav{max-width:1160px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
 .logo{font:700 14px var(--mono);letter-spacing:.08em;color:var(--green)}
-nav .spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
-main{max-width:1180px;margin:auto;padding:56px 24px 84px}
+.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1160px;margin:auto;padding:58px 24px 84px}
 .eyebrow{font:700 11px var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--green)}
-h1{font-size:clamp(36px,6vw,72px);line-height:1.04;letter-spacing:-.04em;margin:14px 0 20px;max-width:1050px}
-.lead{max-width:930px;color:var(--muted);font-size:18px}.lead strong{color:var(--text)}
-.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{border:1px solid var(--line);padding:5px 9px;border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.good{color:var(--green);border-color:rgba(38,230,161,.45)}.warn{color:var(--amber);border-color:rgba(241,181,91,.45)}.info{color:var(--cyan);border-color:rgba(84,216,225,.45)}
+h1{font-size:clamp(36px,6vw,70px);line-height:1.04;letter-spacing:-.04em;max-width:1050px;margin:14px 0 20px}
+.lead{max-width:940px;color:var(--muted);font-size:18px}.lead strong{color:var(--text)}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(38,230,161,.45)}.cyan{color:var(--cyan);border-color:rgba(84,216,225,.45)}.amber{color:var(--amber);border-color:rgba(241,181,91,.45)}
 section{padding:52px 0;border-top:1px solid var(--line)}
 h2{font-size:26px;margin:0 0 12px}.sub{color:var(--muted);max-width:900px;margin:0 0 26px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;overflow:hidden}.card h3{margin:0 0 8px;font-size:17px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--green);margin-bottom:8px}
-.metric{font:700 clamp(24px,4vw,42px)/1.1 var(--mono);margin:8px 0}.metric.red{color:var(--red)}.metric.green{color:var(--green)}.metric.amber{color:var(--amber)}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{text-align:right;padding:11px 12px;border-bottom:1px solid var(--line);white-space:nowrap}th{font:700 10px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}td{font:12px var(--mono);color:var(--muted)}th:first-child,td:first-child{text-align:left;color:var(--text)}tr:last-child td{border-bottom:0}.bad{color:var(--red)!important}.win{color:var(--green)!important}.neutral{color:var(--amber)!important}
-.scroll{overflow-x:auto;border-radius:8px}.note{margin-top:18px;padding:14px 16px;border-left:3px solid var(--amber);background:rgba(241,181,91,.06);color:var(--muted)}.note strong{color:var(--text)}
-.pipeline{display:grid;grid-template-columns:100px repeat(4,1fr);gap:8px;align-items:center;margin-top:14px}.lane{font:700 11px var(--mono);color:var(--muted)}.stage{min-height:58px;border:1px solid var(--line);border-radius:7px;padding:9px;display:flex;align-items:center;justify-content:center;text-align:center;font:11px/1.35 var(--mono);background:#0b100d}.load{color:var(--cyan);border-color:rgba(84,216,225,.4)}.prepare{color:#ff9b9b;border-color:rgba(240,106,106,.5);background:rgba(240,106,106,.05)}.math{color:#c8b4ff;border-color:rgba(173,140,255,.45)}.update{color:var(--green);border-color:rgba(38,230,161,.45)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px}.card h3{margin:0 0 8px;font-size:17px}.card p{color:var(--muted);margin:8px 0}
+.kicker{font:700 10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(24px,4vw,40px)/1.1 var(--mono);margin:10px 0}.metric.red{color:var(--red)}.metric.good{color:var(--green)}.metric.warn{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:8px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}
+th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{font:700 10px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}td{font:12px var(--mono);color:var(--muted)}th:first-child,td:first-child{text-align:left;color:var(--text)}tr:last-child td{border-bottom:0}.bad{color:var(--red)!important}.win{color:var(--green)!important}.mid{color:var(--amber)!important}
+.note{margin-top:18px;padding:14px 16px;border-left:3px solid var(--amber);background:rgba(241,181,91,.06);color:var(--muted)}.note strong{color:var(--text)}
+.rule{border-left:3px solid var(--line)}.rule.lock{border-left-color:var(--green)}.rule.reject{border-left-color:var(--red)}.rule.open{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.05em;margin-bottom:7px}.rule.lock strong{color:var(--green)}.rule.reject strong{color:var(--red)}.rule.open strong{color:var(--amber)}
+.pipeline{display:grid;grid-template-columns:95px repeat(4,1fr);gap:8px;align-items:center;margin-top:14px}.lane{font:700 11px var(--mono);color:var(--muted)}.stage{min-height:58px;border:1px solid var(--line);border-radius:7px;padding:9px;display:flex;align-items:center;justify-content:center;text-align:center;font:11px/1.35 var(--mono);background:#0b100d}.load{color:var(--cyan);border-color:rgba(84,216,225,.4)}.prep{color:#ff9b9b;border-color:rgba(240,106,106,.5);background:rgba(240,106,106,.05)}.math{color:#c8b4ff;border-color:rgba(173,140,255,.45)}.acc{color:var(--green);border-color:rgba(38,230,161,.45)}
 .eq{background:#070a08;border:1px solid var(--line);border-radius:9px;padding:19px;margin-top:18px;font:clamp(12px,2vw,17px)/1.7 var(--mono);color:var(--cyan);overflow:auto}.eq strong{color:var(--green)}
-.bar-row{display:grid;grid-template-columns:150px 1fr 110px;gap:12px;align-items:center;margin:14px 0}.bar-label{font:700 11px var(--mono);color:var(--muted)}.bar-track{height:16px;background:#09100c;border:1px solid var(--line);border-radius:3px;overflow:hidden}.bar{height:100%;background:var(--amber)}.bar.green{background:var(--green)}.bar.red{background:var(--red)}.bar-val{font:700 12px var(--mono);text-align:right}
-.rule{border-left:3px solid var(--line)}.rule.lock{border-left-color:var(--green)}.rule.reject{border-left-color:var(--red)}.rule.open{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:7px}.rule.lock strong{color:var(--green)}.rule.reject strong{color:var(--red)}.rule.open strong{color:var(--amber)}
 .steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
-.provenance{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.prov{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:14px}.prov b{display:block;font:700 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.07em}.prov span{display:block;margin-top:6px;font:600 12px var(--mono);color:var(--text)}
+.prov{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.prov div{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:14px}.prov b{display:block;font:700 10px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.07em}.prov span{display:block;margin-top:6px;font:600 12px var(--mono);color:var(--text);overflow-wrap:anywhere}
 footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:11px var(--mono)}
-@media(max-width:900px){.grid2,.grid3,.provenance{grid-template-columns:1fr}.pipeline{grid-template-columns:80px repeat(4,minmax(88px,1fr));overflow-x:auto}.stage{min-width:88px}.bar-row{grid-template-columns:110px 1fr 90px}nav .spacer{display:none}}
+@media(max-width:900px){.grid2,.grid3,.prov{grid-template-columns:1fr}.pipeline{grid-template-columns:78px repeat(4,minmax(88px,1fr));overflow-x:auto}.stage{min-width:88px}.spacer{display:none}}
 </style>
 </head>
 <body>
-<header>
-<nav>
-  <a class="logo" href="./">KNLP</a>
-  <span class="spacer"></span>
-  <a href="#results">results</a>
-  <a href="#conclusions">conclusions</a>
-  <a href="#phase2">phase 2</a>
-  <a href="fused-quant/fp8-attention-hardware-notes.md">hardware notes</a>
-  <a href="fp8-kv-failure-atlas.html">failure atlas</a>
-  <a href="paper_memory_decode.html">decode report</a>
-</nav>
-</header>
+<header><nav>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#measurements">measurements</a><a href="#conclusions">conclusions</a><a href="#phase2">phase 2</a>
+<a href="fused-quant/fp8-attention-hardware-notes.md">hardware notes</a>
+<a href="fp8-kv-failure-atlas.html">failure atlas</a><a href="paper_memory_decode.html">decode report</a>
+</nav></header>
 <main>
 <div class="eyebrow">FP8 KV attention · H100 phase 1</div>
-<h1>The kernel path decides whether FP8 earns its bytes.</h1>
-<p class="lead"><strong>The CUDA-core FP32 path makes every FP8 cell slower than BF16. The SM90 Tensor Core family makes symmetric K8/V8 1.49× faster at B=32,T=32K and slower at batch 1.</strong> Treat storage format, conversion, batch, occupancy, scale work, and cache layout as one coupled execution path.</p>
-<div class="badges">
-  <span class="badge good">PHASE 1 COMPLETE</span>
-  <span class="badge info">935,038 TIMINGS</span>
-  <span class="badge info">COSINE ≥ 0.999993</span>
-  <span class="badge warn">SAME-SCHEDULE K16/V8 CELL OPEN</span>
-</div>
+<h1>The selected kernel family changes the FP8 ordering.</h1>
+<p class="lead"><strong>The diagnostic CUDA-core path makes every tested FP8 cell slower than BF16. The SM90 Tensor Core path makes symmetric K8/V8 slower at B=1,T=32K, 1.09× faster at B=32,T=2K, and about 1.5× faster at B=32,T=32K.</strong> Isolate transform schedule, K storage, batch, occupancy, scales, and cache layout before assigning the cause.</p>
+<div class="badges"><span class="badge green">PHASE 1 COMPLETE</span><span class="badge cyan">DISPATCH AUDITS PASSED</span><span class="badge cyan">COSINE ≥ 0.99999</span><span class="badge amber">SAME-FAMILY K16/V8 CELL OPEN</span></div>
 
-<section id="results">
-<h2>Read the H100 result</h2>
-<p class="sub">Use the CUDA-core matrix to identify exposed conversion and interaction costs. Use the Tensor Core pair to locate the execution-path crossover. Keep the two kernel families separate.</p>
+<section id="measurements">
+<h2>Use the exact H100 measurements</h2>
+<p class="sub">Keep the CUDA-core decomposition and the Tensor Core pair as separate experiments. They use different kernel families and therefore do not isolate scheduling by themselves.</p>
 
 <div class="grid2">
-  <div class="card">
-    <div class="kicker">CUDA-core FP32 online softmax</div>
-    <h3>Every FP8 cell loses at B=32,T=32K</h3>
-    <div class="metric red">K8/V8: 1,841 µs</div>
-    <p>BF16 completes in 1,337 µs. K-only and V-only taxes are similar, and the combined cell adds a large interaction penalty.</p>
-    <div class="scroll">
-    <table>
-      <thead><tr><th>cell</th><th>median µs</th><th>delta</th></tr></thead>
-      <tbody>
-        <tr><td>BF16 K/V</td><td>1,337.02</td><td>control</td></tr>
-        <tr><td>FP8 K / BF16 V</td><td>1,468.97</td><td class="bad">+131.95</td></tr>
-        <tr><td>BF16 K / FP8 V</td><td>1,446.96</td><td class="bad">+109.94</td></tr>
-        <tr><td>FP8 K/V</td><td>1,840.84</td><td class="bad">+503.82</td></tr>
-        <tr><td>interaction</td><td colspan="2" class="bad">+261.92 µs</td></tr>
-      </tbody>
-    </table>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="kicker">SM90 Tensor Core paged FA2 family</div>
-    <h3>Batch flips the symmetric result</h3>
-    <div class="metric green">1.49× at B=32,T=32K</div>
-    <p>The same symmetric K8/V8 format loses at batch 1. Batch and occupancy dominate the tested crossover more strongly than context alone.</p>
-    <div class="scroll">
-    <table>
-      <thead><tr><th>shape</th><th>BF16 µs</th><th>K8/V8 µs</th><th>BF16 ÷ FP8</th></tr></thead>
-      <tbody>
-        <tr><td>B=1, T=2K</td><td>31.85</td><td>40.12</td><td class="bad">0.79×</td></tr>
-        <tr><td>B=1, T=32K</td><td>50.02</td><td>59.51</td><td class="bad">0.84×</td></tr>
-        <tr><td>B=32, T=2K</td><td>54.16</td><td>50.41</td><td class="win">1.07×</td></tr>
-        <tr><td>B=32, T=32K</td><td>713.14</td><td>478.57</td><td class="win">1.49×</td></tr>
-      </tbody>
-    </table>
-    </div>
-  </div>
+<div class="card">
+<div class="kicker">CUDA-core FP32 online softmax</div>
+<h3>FP8 loses on every tested cell</h3>
+<div class="metric red">K8/V8: 1,840.8 µs</div>
+<p>At B=32,T=32K cold, BF16 completes in 1,337.2 µs. K and V taxes are comparable, and quantizing both creates a +262.2 µs interaction.</p>
+</div>
+<div class="card">
+<div class="kicker">SM90 Tensor Core paged FA2 family</div>
+<h3>The measured ordering crosses with batch</h3>
+<div class="metric good">1.49–1.51× at B=32,T=32K</div>
+<p>The same K8/V8 storage loses at B=1,T=32K and wins at B=32,T=2K. Run the complete B-by-T cross before ranking batch, occupancy, and amortization.</p>
+</div>
 </div>
 
-<div class="note"><strong>Prioritize the batch sweep.</strong> K8/V8 loses at B=1,T=32K and wins at B=32,T=2K. Do not label this crossover as a simple “large cache wins” effect.</div>
-
-<h3 style="margin-top:32px">Inspect the complete CUDA-core cold-cache matrix</h3>
-<div class="scroll">
-<table>
+<h3 style="margin-top:32px">CUDA-core four-cell matrix</h3>
+<div class="scroll"><table>
 <thead><tr><th>shape</th><th>F16</th><th>K8</th><th>V8 / K16V8</th><th>K8V8</th><th>K tax</th><th>V tax</th><th>interaction</th></tr></thead>
 <tbody>
-<tr><td>B=1,T=2K</td><td>23.59</td><td>66.28</td><td>48.31</td><td>82.92</td><td class="bad">+42.68</td><td class="bad">+24.71</td><td class="bad">+16.02</td></tr>
-<tr><td>B=1,T=32K</td><td>97.01</td><td>147.51</td><td>128.63</td><td>185.34</td><td class="bad">+50.51</td><td class="bad">+31.62</td><td class="bad">+5.19</td></tr>
-<tr><td>B=32,T=2K</td><td>98.76</td><td>111.74</td><td>110.85</td><td>148.89</td><td class="bad">+12.99</td><td class="bad">+12.10</td><td class="bad">+24.81</td></tr>
-<tr><td>B=32,T=32K</td><td>1,337.02</td><td>1,468.97</td><td>1,446.96</td><td>1,840.84</td><td class="bad">+131.95</td><td class="bad">+109.94</td><td class="bad">+261.92</td></tr>
-</tbody>
-</table>
-</div>
-<p class="sub" style="margin-top:14px">Warm and cold measurements remain nearly identical on this diagnostic path. Treat it as conversion- and schedule-bound for these cells; do not generalize that result to the Tensor Core path.</p>
+<tr><td>B=1 T=32768 warm</td><td>56.8</td><td>65.3</td><td>67.3</td><td>75.8</td><td class="bad">+8.5</td><td class="bad">+10.5</td><td>-0.0</td></tr>
+<tr><td>B=32 T=2048 warm</td><td>99.1</td><td>107.1</td><td>108.1</td><td>141.9</td><td class="bad">+8.0</td><td class="bad">+9.0</td><td class="bad">+25.7</td></tr>
+<tr><td>B=32 T=32768 warm</td><td>1332.3</td><td>1461.0</td><td>1438.9</td><td>1826.4</td><td class="bad">+128.7</td><td class="bad">+106.6</td><td class="bad">+258.8</td></tr>
+<tr><td>B=32 T=32768 cold</td><td>1337.2</td><td>1469.1</td><td>1446.7</td><td>1840.8</td><td class="bad">+131.9</td><td class="bad">+109.5</td><td class="bad">+262.2</td></tr>
+</tbody></table></div>
+<p class="sub" style="margin-top:14px">Medians in microseconds. Treat this implementation as conversion- and schedule-bound at these points. Warm and cold B=32,T=32K results remain effectively identical.</p>
+
+<h3 style="margin-top:32px">SM90 Tensor Core symmetric pair</h3>
+<div class="scroll"><table>
+<thead><tr><th>shape</th><th>F16 µs</th><th>K8V8 µs</th><th>F16 / K8V8</th></tr></thead>
+<tbody>
+<tr><td>B=1 T=32768 cold</td><td>43.1</td><td>53.9</td><td class="bad">0.80×</td></tr>
+<tr><td>B=32 T=2048 cold</td><td>59.7</td><td>55.0</td><td class="win">1.09×</td></tr>
+<tr><td>B=32 T=32768 warm</td><td>712.8</td><td>471.1</td><td class="win">1.51×</td></tr>
+<tr><td>B=32 T=32768 cold</td><td>712.6</td><td>478.6</td><td class="win">1.49×</td></tr>
+</tbody></table></div>
+<div class="note"><strong>Run batch before telling a bandwidth story.</strong> K8/V8 loses at B=1,T=32K and wins at B=32,T=2K. Context size alone does not explain the tested sign.</div>
 </section>
 
 <section id="preparation">
-<h2>Measure how much preparation remains exposed</h2>
-<p class="sub">The isolated load probe exposes FP8 conversion. A minimal QK consumer hides almost all of it. Use the full Tensor Core mainloop to measure the remaining layout, scale, synchronization, and occupancy costs.</p>
+<h2>Bound the exposed preparation cost</h2>
+<p class="sub">Use the pure transform probe as an upper bound on exposed conversion. Use the QK-consuming probe to measure how readily a consumer overlaps it.</p>
 <div class="grid2">
-  <div class="card">
-    <div class="kicker">pure load and transform</div>
-    <div class="metric amber">+0.4 to +3.0 ns/tile</div>
-    <p>Warm BF16 loads can beat the FP8 transform despite reading twice the bytes.</p>
-    <div class="bar-row"><span class="bar-label">exposed tax</span><div class="bar-track"><div class="bar red" style="width:88%"></div></div><span class="bar-val bad">up to 3.04 ns</span></div>
-  </div>
-  <div class="card">
-    <div class="kicker">load, prepare, and QK</div>
-    <div class="metric green">−0.8 to +0.1 ns/tile</div>
-    <p>Even a simple QK consumer overlaps most of the isolated conversion cost.</p>
-    <div class="bar-row"><span class="bar-label">residual tax</span><div class="bar-track"><div class="bar green" style="width:24%"></div></div><span class="bar-val win">mostly hidden</span></div>
-  </div>
+<div class="card"><div class="kicker">pure load and FP8 transform</div><div class="metric warn">+0.4 to +3.0 ns/tile</div><p>Warm BF16 loads can beat the FP8 transform despite reading twice the bytes. Cold traffic eventually exposes the FP8 byte advantage at the tested large tile.</p></div>
+<div class="card"><div class="kicker">load, prepare, and QK</div><div class="metric good">about −0.8 to +0.8 ns/tile</div><p>A minimal QK consumer hides most of the isolated transform tax. Measure the complete Tensor Core mainloop before making K preparation the dominant explanation.</p></div>
 </div>
 </section>
 
 <section id="conclusions">
 <h2>Apply bounded conclusions</h2>
 <div class="grid3">
-  <div class="card rule lock"><strong>LOCK: KERNEL PATH CHANGES THE SIGN</strong><p>Record the selected kernel family, JIT URI, cubin, layout, and launch policy for every result.</p></div>
-  <div class="card rule reject"><strong>REJECT: K-ONLY EXPLANATION ON CUDA CORES</strong><p>K and V taxes are comparable, and the combined interaction is large.</p></div>
-  <div class="card rule lock"><strong>LOCK: BATCH CONTROLS THE TESTED CROSSOVER</strong><p>FP8 loses at batch 1 through 32K and wins at batch 32 from 2K onward.</p></div>
-  <div class="card rule reject"><strong>REJECT: PURE CONVERSION AS THE WHOLE STORY</strong><p>A QK consumer hides most of the isolated transform tax.</p></div>
-  <div class="card rule open"><strong>OPEN: K16/V8 VERSUS K8/V8</strong><p>The SM90 Tensor Core templates still assume one K/V dtype in the required variants.</p></div>
-  <div class="card rule open"><strong>OPEN: REAL SCALE AND PAGED MXFP8 COST</strong><p>Measure non-unit scales, final cache layout, page tables, and end-to-end serving.</p></div>
+<div class="card rule lock"><strong>LOCK: KERNEL FAMILY CHANGES THE OBSERVED ORDERING</strong><p>Record the exact kernel, JIT URI, cubin, layout, transform mode, and launch policy for every result.</p></div>
+<div class="card rule reject"><strong>REJECT: K-ONLY EXPLANATION ON CUDA CORES</strong><p>K-only and V-only taxes are comparable. The K8V8 interaction becomes large at batch 32.</p></div>
+<div class="card rule lock"><strong>LOCK: QK HIDES MOST ISOLATED CONVERSION</strong><p>Keep conversion in the model, but measure the unhidden full-mainloop term.</p></div>
+<div class="card rule open"><strong>OPEN: TRANSFORM SCHEDULE AT FIXED BYTES</strong><p>Compare Full, KOnly, and SeparateKv with identical K8/V8 storage and one Tensor Core family.</p></div>
+<div class="card rule open"><strong>OPEN: K16/V8 VERSUS K8/V8 IN ONE FAMILY</strong><p>Hold V, scales, pages, mask, output type, and launch policy fixed.</p></div>
+<div class="card rule open"><strong>OPEN: BATCH, OCCUPANCY, AND AMORTIZATION</strong><p>Run the full B-by-T cross before attributing the crossover.</p></div>
 </div>
 </section>
 
 <section id="model">
-<h2>Keep the tile dependency model</h2>
-<p class="sub">Advance online softmax one tile at a time. Complete K preparation before that tile's QK. Complete V preparation before PV. Measure overlap instead of assigning either stage a free or globally serial label.</p>
+<h2>Measure the tile dependencies</h2>
+<p class="sub">Advance online softmax tile by tile. Complete K preparation before that tile's QK. Complete V preparation before PV. Measure overlap for the selected kernel.</p>
 <div class="card">
-  <div class="pipeline"><span class="lane">K tile n</span><span class="stage load">HBM load K</span><span class="stage prepare">prepare K operand</span><span class="stage math">QK</span><span class="stage update">online-softmax update</span></div>
-  <div class="pipeline"><span class="lane">V tile n</span><span class="stage load">HBM load V</span><span class="stage prepare">prepare V operand</span><span class="stage math">P @ V</span><span class="stage update">output accumulation</span></div>
+<div class="pipeline"><span class="lane">K tile n</span><span class="stage load">load K</span><span class="stage prep">prepare K</span><span class="stage math">QK</span><span class="stage acc">online-softmax update</span></div>
+<div class="pipeline"><span class="lane">V tile n</span><span class="stage load">load V</span><span class="stage prep">prepare V</span><span class="stage math">P @ V</span><span class="stage acc">output accumulation</span></div>
 </div>
 <div class="eq"><strong>T(K8/V8) − T(K16/V8)</strong> ≈ unhidden K8 preparation + layout/scale/occupancy pressure − saved K-byte time</div>
-<p class="sub" style="margin-top:14px">Phase 1 shows that a simple QK consumer can hide the isolated preparation term. Phase 2 must measure the complete Tensor Core schedule and hold V fixed.</p>
 </section>
 
 <section id="phase2">
 <h2>Run the decisive phase 2 campaign</h2>
-<p class="sub">Use B200 first, but spend only after proving that the required cells compile and dispatch. Preserve the H100 split-dtype patch as the fallback route.</p>
+<p class="sub">Use a cheap B200 capability gate. Pivot to the H100 split-dtype template patch immediately when B200 cannot provide the same-family asymmetric and symmetric cells.</p>
 <div class="steps">
-  <div class="step"><strong>Archive the exact SM90 Tensor Core runner.</strong><span>Commit the source that produced the four Tensor Core rows, resolve the full runner revision, and verify checksums before another paid launch.</span></div>
-  <div class="step"><strong>Run a $5 B200 capability gate.</strong><span>Verify Full, KOnly, SeparateKv, exact kernel selection, output parity, and whether K16/V8 enters the same Tensor Core family as K8/V8. Terminate immediately when it cannot.</span></div>
-  <div class="step"><strong>Hold bytes fixed and sweep transform modes.</strong><span>Use identical K8/V8 tensors, scales, pages, output type, and shapes. Attribute a scheduling effect only when latency moves by at least 3% across independent process launches.</span></div>
-  <div class="step"><strong>Hold the Tensor Core family fixed and compare K16/V8 with K8/V8.</strong><span>Keep V, scales, page layout, mask, output type, and launch policy identical. This is the missing asymmetric-versus-symmetric cell.</span></div>
-  <div class="step"><strong>Test direct-layout MXFP8.</strong><span>Write Q, K, and scale factors in the tcgen05 layout once. Separate contiguous FMHA mechanism tests from paged-cache serving tests.</span></div>
-  <div class="step"><strong>Collect counters on bare metal.</strong><span>Profile only the reproduced winning and losing cells. Record DRAM/L2, scale traffic, tensor pipe, conversion, stalls, tensor/shared memory, registers, and occupancy.</span></div>
-  <div class="step"><strong>Integrate pre-bias K8/V8 after selecting the kernel path.</strong><span>Run ordinary K8/V8, bias-aware K8/V8, and K16/V8 through long-context quality, decode, ITL, throughput, capacity, and goodput gates.</span></div>
+<div class="step"><strong>Recover and commit the exact SM90 Tensor Core runner.</strong><span>Record its FlashInfer API, layouts, scales, pages, workspace, JIT URI, generated source, cubin, and checksums. Mark the source unrecoverable when it cannot be reconstructed exactly.</span></div>
+<div class="step"><strong>Audit B200 support from source.</strong><span>Pin FlashInfer at 4927c0e15cb63a2abb6df09019c39a172222f0eb. Separate paged generation attention from contiguous block-scaled FMHA.</span></div>
+<div class="step"><strong>Run a $5 B200 capability gate.</strong><span>Compile BF16, Full/KOnly/SeparateKv K8/V8, and same-family K16/V8. Print exact dispatch and terminate before timing when any decisive cell falls back or fails.</span></div>
+<div class="step"><strong>Hold bytes fixed and compare transform modes.</strong><span>Attribute a schedule effect only when one Tensor Core family, bytes, layouts, and scales remain fixed and a ≥3% paired delta reproduces across three processes.</span></div>
+<div class="step"><strong>Hold the Tensor Core family fixed and compare K16/V8 with K8/V8.</strong><span>Keep V and every non-K axis fixed. This closes the asymmetric-versus-symmetric question.</span></div>
+<div class="step"><strong>Run the complete B-by-T cross.</strong><span>Sweep B={1,2,4,8,16,32,64} and T={2K,8K,16K,32K,64K}; then add MHA and a second GQA topology.</span></div>
+<div class="step"><strong>Add captured scales and direct-layout MXFP8.</strong><span>Include scale traffic, Q quantization, final cache layout, paged support, output error, ITL, capacity, and goodput.</span></div>
+<div class="step"><strong>Collect counters on bare metal.</strong><span>Profile only reproduced winning and losing cells plus matched K16/V8 controls.</span></div>
+<div class="step"><strong>Integrate pre-bias K8/V8 after selecting the kernel path.</strong><span>Compare ordinary K8/V8, two bias-aware layouts, and K16/V8 across long-context quality and serving gates.</span></div>
 </div>
-<div class="note"><strong>Budget:</strong> cap the capability gate at $5, stop for review at $40, and never exceed $60 without a new committed authorization. Sync results, terminate every pod, and verify zero running instances.</div>
+<div class="note"><strong>Budget:</strong> stop the B200 capability gate at $5, stop for owner review at $40, and never exceed $60 without a new committed authorization. Sync artifacts, terminate every pod, and verify zero running instances.</div>
 <p style="margin-top:22px"><a href="https://github.com/mcgrof/knlp-key-results/blob/main/fp8-kv-tile-path-20260820/PHASE2_PLAN.md">Open the executable phase 2 plan →</a></p>
 </section>
 
-<section id="rules">
-<h2>Use explicit attribution rules</h2>
-<div class="scroll">
-<table>
-<thead><tr><th>claim</th><th>required evidence</th></tr></thead>
-<tbody>
-<tr><td>transform schedule controls latency</td><td>fixed bytes and layout; one Tensor Core family; Full/KOnly/SeparateKv moves ≥3%; CI excludes zero; three process launches</td></tr>
-<tr><td>K preparation controls asym vs sym</td><td>V fixed; same Tensor Core family; K-only dtype or transform delta; matching preparation-resource movement</td></tr>
-<tr><td>HBM bytes control the crossover</td><td>same schedule; warm/cold or measured bandwidth moves the K8/K16 delta in the predicted direction</td></tr>
-<tr><td>MXFP8 is a serving win</td><td>direct final layout; paged path; scale bytes included; quality passes; ITL, throughput, capacity, and goodput beat alternatives</td></tr>
-<tr><td>dispatch by operating point</td><td>stable crossover across batch, context, model geometry, residency, or GPU</td></tr>
-</tbody>
-</table>
-</div>
-</section>
-
 <section id="provenance">
-<h2>Preserve the run provenance</h2>
-<div class="provenance">
-  <div class="prov"><b>GPU</b><span>H100 80GB · 114 SMs</span></div>
-  <div class="prov"><b>software</b><span>CUDA 13.0 · PyTorch 2.9.1 · FlashInfer 0.6.4</span></div>
-  <div class="prov"><b>samples</b><span>935,038 timing observations</span></div>
-  <div class="prov"><b>correctness</b><span>cosine ≥ 0.999993</span></div>
-  <div class="prov"><b>phase 1 pin</b><span>FlashInfer 76704c45</span></div>
-  <div class="prov"><b>backend</b><span>CUDA-core diagnostic + SM90 paged FA2</span></div>
-  <div class="prov"><b>cost</b><span>≈$2 · ≈0.6 GPU-hours</span></div>
-  <div class="prov"><b>lifecycle</b><span>two pods terminated · zero left</span></div>
+<h2>Preserve the phase 1 provenance</h2>
+<div class="prov">
+<div><b>GPU</b><span>H100 80GB HBM3 · sm_90 · 132 SMs</span></div>
+<div><b>driver / CUDA</b><span>580.126.09 / 13.0</span></div>
+<div><b>PyTorch</b><span>2.13.0+cu130</span></div>
+<div><b>FlashInfer</b><span>0.6.7 · fork 2b532f7b9236d89e45d571bc3bbf63d1e40d1f7d</span></div>
+<div><b>fork branch</b><span>paper-memory-decode-v0.18</span></div>
+<div><b>correctness</b><span>cos ≥ 0.99999 · rel L2 ≤ 0.0035 · LSE exact</span></div>
+<div><b>profiler</b><span>NCU blocked by ERR_NVGPUCTRPERM</span></div>
+<div><b>cost / lifecycle</b><span>two pods · ~0.6 GPU-hours · ~$2 · zero pods left</span></div>
 </div>
-<p style="margin-top:22px"><a href="https://github.com/mcgrof/knlp-key-results/blob/main/fp8-kv-tile-path-20260820/raw/h100-runpod/tile-h100cu13-runpod-20260821/FINDINGS.md">Read the archived H100 findings →</a><br><a href="https://github.com/mcgrof/knlp-key-results/commit/f75960a66cc3a5b5dd4d5096197c2921bcbaf253">Inspect the phase 1 result commit →</a></p>
+<p style="margin-top:22px"><a href="https://github.com/mcgrof/knlp-key-results/blob/f75960a66cc3a5b5dd4d5096197c2921bcbaf253/fp8-kv-tile-path-20260820/raw/h100-runpod/tile-h100cu13-runpod-20260821/FINDINGS.md">Read the archived H100 findings →</a><br><a href="https://github.com/mcgrof/knlp-key-results/commit/f75960a66cc3a5b5dd4d5096197c2921bcbaf253">Inspect the phase 1 result commit →</a></p>
 </section>
 </main>
-<footer>KNLP · FP8 KV attention tile-path campaign · updated 2026-08-21</footer>
+<footer>KNLP · FP8 KV attention tile-path campaign · H100 phase 1 · 2026-08-21</footer>
 </body>
 </html>
