@@ -54,8 +54,8 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
 <main>
 <div class="eyebrow">FP8 KV attention · H100 phase 1</div>
 <h1>The selected kernel family changes the FP8 ordering.</h1>
-<p class="lead"><strong>The diagnostic CUDA-core path makes every tested FP8 cell slower than BF16. The SM90 Tensor Core path makes symmetric K8/V8 slower at B=1,T=32K, 1.09× faster at B=32,T=2K, and about 1.5× faster at B=32,T=32K.</strong> Isolate transform schedule, K storage, batch, occupancy, scales, and cache layout before assigning the cause.</p>
-<div class="badges"><span class="badge green">PHASE 1 COMPLETE</span><span class="badge cyan">DISPATCH AUDITS PASSED</span><span class="badge cyan">COSINE ≥ 0.99999</span><span class="badge amber">SAME-FAMILY K16/V8 CELL OPEN</span></div>
+<p class="lead"><strong>The diagnostic CUDA-core path makes every tested FP8 cell slower than BF16. The SM90 Tensor Core path makes symmetric K8/V8 slower at B=1,T=32K, 1.09× faster at B=32,T=2K, and about 1.5× faster at B=32,T=32K.</strong> The same-family comparison is now closed: with split-dtype Tensor Core kernels compiled and audited at cosine 1.00000, symmetric K8/V8 beats K16/V8 by 16–19% at every bandwidth-bound shape (K8/V8 reaches 1.40–1.51× over BF16; K16/V8 reaches 1.19–1.28×), the K tax is negative at scale, and FP8 loses only at batch 1. On Blackwell's TensorRT-LLM generation kernels the transform modes converge and plain-E4M3 FP8 saturates at 1.05× over BF16, limited by its own pipeline rather than DRAM. The kernel family, not the storage format, decides the sign.</p>
+<div class="badges"><span class="badge green">PHASE 1 COMPLETE</span><span class="badge green">SAME-FAMILY VERDICT: K8/V8 WINS</span><span class="badge cyan">DISPATCH AUDITS PASSED</span><span class="badge cyan">COSINE ≥ 0.99999</span></div>
 
 <section id="measurements">
 <h2>Use the exact H100 measurements</h2>

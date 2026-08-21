@@ -864,19 +864,30 @@ on GitHub:
 
 **CRITICAL — which branch serves asym end-to-end.** For any asym K16/V8
 reproduction or end-to-end serve, use the **`paper-memory-decode-v0.18`**
-branches (FlashInfer tip `2b532f7`, vLLM tip `2315e62e2`). These are the ONLY
-pair validated to serve asym e2e (Table 4 rel-err 0.0255, TP-invariant). The
-`asymmetric-kv-plumbing` (vLLM) and `asym-prefill-refactor-stage` (FlashInfer)
-dev-tip branches are **post-paper R&D and do NOT serve e2e**: cross-repo dtype
-drift (FI-5 `829e1b49` drifted from the dtype-split series) makes them fail on
-`v_cache bf16 != fp8`. The dev tips are fine for decode-path unit correctness and
-the vLLM selector-routing work (the selector auto-route-to-FlashInfer fix landed
-there, vllm-asym `467e84c68`), but never for a full serve.
+branches (FlashInfer tip `2b532f7`, vLLM tip `2315e62e2`). This pair is
+e2e-validated (Table 4 rel-err 0.0255, TP-invariant; re-confirmed serving
+GSM8K 2026-08-21). Know its era, though: v0.18 routes asym decode to the
+CUDA-core kernel (a `decode.py` dispatch guard bars asym from Tensor
+Cores), and its Tensor Core prefill path does not compile mixed K/V
+dtypes. The 2026-07-06 guard-lift branches (FlashInfer
+`20260706-asym-k16v8-full`, vLLM `20260706-k16fp8-asym-prefill`) route
+asym decode onto Tensor Cores: kernel ~1.28x over bf16, e2e parity at
+1.333x KV capacity. The `asymmetric-kv-plumbing` (vLLM) and
+`asym-prefill-refactor-stage` (FlashInfer) dev tips still do NOT serve
+e2e **as a pair** (cross-repo dtype drift fails on
+`v_cache bf16 != fp8`), but the FlashInfer dev tip's mixed-dtype Tensor
+Core prefill kernels compile and pass fp32-reference audits at cosine
+1.00000 (GPU-validated 2026-08-21). Same-kernel speed verdict from that
+validation: symmetric K8/V8 beats K16/V8 by 16-19% on the Tensor Core
+kernel; K16/V8 wins on the CUDA-core kernel; name the kernel in any
+speed claim. The dev tips remain fine for decode-path unit correctness
+and the vLLM selector-routing work (vllm-asym `467e84c68`), but never
+for a full serve.
 
 | Repo | GitHub | Branch (reproduction / e2e) | What it contains |
 |---|---|---|---|
 | vllm-asym | `github.com/mcgrof/vllm` | **`paper-memory-decode-v0.18`** (`2315e62e2`) | vLLM v1, tuple K/V cache, asym plumbing — the e2e-validated state. Dev tip `asymmetric-kv-plumbing` (`d960d6c37`) is post-paper R&D, not e2e-serving. |
-| flashinfer-asym | `github.com/mcgrof/flashinfer` | **`paper-memory-decode-v0.18`** (`2b532f7`) | FlashInfer dtype-split (DTypeK/DTypeV), decode-path asym — the e2e-validated state. Dev tip `asym-prefill-refactor-stage` (`829e1b49`) is incomplete (unified DTypeKV in prefill). |
+| flashinfer-asym | `github.com/mcgrof/flashinfer` | **`paper-memory-decode-v0.18`** (`2b532f7`) | FlashInfer dtype-split (DTypeK/DTypeV), decode-path asym — the e2e-validated state. Dev tip `asym-prefill-refactor-stage` (`829e1b49`) has the full prefill DTypeK/DTypeV split: mixed-dtype Tensor Core kernels compile and pass correctness audits (2026-08-21), but the pair with the vLLM dev tip still fails e2e. |
 | lmcache | `github.com/mcgrof/LMCache` | `asymmetric-kv-codec` | LMCache with K16/V8 codec, split-tier placement, serde, 74 CPU unit tests |
 | paper | `github.com/mcgrof/paper-memory-decode` | `main` | LaTeX source, figures, data, generate scripts |
 
