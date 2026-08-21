@@ -34,8 +34,8 @@ a{color:#00d4c8}code{color:#f0a030}
      '<strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. Treat the ordering as the measured result. Identify its cause with the tile-path matrix: K16/V8 removes FP8 K preparation, while K8/V8 saves one HBM byte per K element. Measure overlap, occupancy, cache state, and shape.',1],
     [/The K-dequant throughput penalty appears across batch and context too:[\s\S]*?standard KV cache/g,
      'The measured symmetric path remains slower across batch and context: at T=16,384, symmetric FP8 reaches 0.78×–0.80× of FP16 throughput across B ∈ [4, 32]. Run the controlled tile-path ablation at these shapes. Even on a model where 75% of layers do not use the standard KV cache',1],
-    [/remains well below peak on both architectures\.  On the AMD side,[\s\S]*?for structural reasons\n./g,
-     'remains well below peak on both architectures. CDENA 3 has native FP8-by-FP8 MFMA with no scale operands. Measure the smaller symmetric-FP8 cost on the tested MI300X path (1.7–2.5%) against H100 (3–8%) with matched kernel, scale-placement, layout, and scheduling profiles.',1],
+    [/remains well below peak on both architectures\.  On the AMD side,[\s\S]*?for structural reasons\./g,
+     'remains well below peak on both architectures. CDNA 3 has native FP8-by-FP8 MFMA with no scale operands. Measure the smaller symmetric-FP8 cost on the tested MI300X path (1.7–2.5%) against H100 (3–8%) with matched kernel, scale-placement, layout, and scheduling profiles.',1],
     [/requirement\.  Blackwell preserves that requirement for the legacy FP8 path[\s\S]*?time of writing\./g,
      'requirement. Blackwell adds block-scaled MXFP8 with hardware consumption of per-block scales for narrow Q and K. FlashInfer contains an SM100 block-scaled fused-attention implementation. Validate its paged-cache layout, model shapes, numerical policy, and serving dispatch against plain E4M3 transformation and K16/V8.',1],
     [/For maximum capacity, symmetric FP8 doubles KV storage at a 3–8% throughput cost on H100[\s\S]*?The custom fused INT4 Triton kernel/g,
@@ -43,13 +43,13 @@ a{color:#00d4c8}code{color:#f0a030}
   ];
   for(const [repl,newText,expected] of rules){
     const matches=s.match(repl);
-    count=matches?matches.length:0;
+    const count=matches?matches.length:0;
     if(count!==expected)throw new Error(`page transform expected ${expected}, found ${count}`);
     s=s.replace(repl,newText);
   }
   document.open();document.write(s);document.close();
 })().catch(error=>{
-  document.getElementById('status').innerHTML=`<hs1>Page loader failed</h1><p><code>${String(error)}</code></p><p>Open <a href="paper_memory_decode.body.html">the full report</a> and <a href="fp8-attention-tile-path.html">the FP8 tile measurement plan</a>.</p>`;
+  document.getElementById('status').innerHTML=`<h1>Page loader failed</h1><p><code>${String(error)}</code></p><p>Open <a href="paper_memory_decode.body.html">the full report</a> and <a href="fp8-attention-tile-path.html">the FP8 tile measurement plan</a>.</p>`;
 });
 </script>
 </body>
