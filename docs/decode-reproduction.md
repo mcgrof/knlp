@@ -1,9 +1,19 @@
 # Decode paper: build, paper, and reproducibility
 
 **Use the `paper-memory-decode-v0.18` branches** (FlashInfer `2b532f7`, vLLM
-`2315e62e2`) — the ONLY pair that serves asym e2e. The dev-tip branches
-(`asym-prefill-refactor-stage` / `asymmetric-kv-plumbing`) do NOT: they fail on
-`v_cache bf16 != fp8` (cross-repo dtype drift). Requires torch 2.10.0+cu128 and
+`2315e62e2`) for an end-to-end serve. This pair is e2e-validated
+(re-confirmed serving GSM8K 2026-08-21). Two caveats about its era. First,
+it routes asym decode to the CUDA-core kernel: a dispatch guard in
+FlashInfer's `decode.py` bars asymmetric caches from Tensor Cores, so its
+asym decode runs slower than bf16. The 2026-07-06 guard-lift branches
+(FlashInfer `20260706-asym-k16v8-full`, vLLM
+`20260706-k16fp8-asym-prefill`) remove that guard; with it removed the
+asym decode kernel beats bf16 by ~28% and serves at bf16 parity with
+1.333x KV capacity. Second, its Tensor Core prefill path does not compile
+mixed K/V dtypes; the FlashInfer dev tip (`asym-prefill-refactor-stage`)
+does, with kernels validated correct on GPU (2026-08-21), but the dev-tip
+pair (`asym-prefill-refactor-stage` / `asymmetric-kv-plumbing`) still
+fails a full e2e serve on `v_cache bf16 != fp8` (cross-repo dtype drift). Requires torch 2.10.0+cu128 and
 setuptools_scm/build deps preinstalled (`--no-build-isolation` skips them). The
 tested recipe (H100 SECURE pod, RunPod; mirrors the build script in the private
 results archive):

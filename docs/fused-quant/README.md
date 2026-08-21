@@ -71,9 +71,16 @@ Apply these facts:
 - use Blackwell block-scaled MMA with the narrow Q/K and scale layouts required
   by the hardware.
 
-Use [`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) to run the
-K8/V8 versus K16/V8 measurement plan. Compare unhidden K8 preparation and
-pipeline pressure against the extra K16 HBM time.
+The K8/V8 versus K16/V8 measurement plan in
+[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) has been
+run. The answer depends entirely on the kernel family. On the CUDA-core
+decode kernel, conversion cost dominates: every FP8 cell is slower than
+BF16 there, and K16/V8 beats K8/V8. On the SM90 Tensor Core kernel with
+the split-dtype prefill kernels, bytes dominate: symmetric K8/V8 wins by
+16-19% over K16/V8 at bandwidth-bound shapes, and both beat BF16
+(K8/V8 by 1.4-1.5x, K16/V8 by 1.19-1.28x). FP8 loses only at batch 1.
+Any speed claim about these formats must name the kernel it was measured
+on.
 
 ## FlashInfer K16/V8
 
@@ -82,11 +89,21 @@ V in FP8 E4M3. This produces 1.33x KV-cache capacity relative to 16-bit K/V.
 
 Use K16/V8 as:
 
-- the no-K-transform control;
-- the quality-safe fallback for hostile key distributions;
-- the baseline for measuring symmetric K8/V8 tile preparation; and
-- a production operating point when kernel time and admitted concurrency beat
-  symmetric formats.
+- the quality-safe fallback for hostile key distributions (measured in
+  serving: symmetric FP8 collapses Qwen2.5-7B GSM8K from 0.43 to 0.04
+  while K16/V8 restores 0.44);
+- the no-K-transform control; and
+- a production operating point on kernels where it wins, such as the
+  CUDA-core decode path.
+
+On the Tensor Core kernel K16/V8 is not the fast FP8 option: symmetric
+K8/V8 beats it by 16-19% at bandwidth-bound shapes. Its remaining role
+there is quality, and it still beats BF16 while carrying that safety.
+Historical note: early serving numbers showed asymmetric decode slower
+than BF16 because a dispatch guard barred asymmetric caches from the
+Tensor Core kernel; the guard lift routed asymmetric decode onto Tensor
+Cores and the kernel then beat BF16 by about 28%, serving at BF16
+parity with 1.33x cache capacity.
 
 Public source lives at <https://github.com/mcgrof/flashinfer>. The
 upstream-oriented decode branch is
@@ -108,8 +125,13 @@ Implement symmetric K8/V8 for this class by:
 4. validating long-context autoregressive quality.
 
 The tested dynamic and static scale layouts make this representation
-quality-admissible on Qwen2.5-7B. Measure its serving cost against ordinary
-K8/V8, K16/V8, and Blackwell block-scaled paths.
+quality-admissible on Qwen2.5-7B. The serving stakes are now measured on
+both sides: symmetric K8/V8 is the fastest cache on the Tensor Core
+kernel, and ordinary post-bias symmetric FP8 destroys Qwen2.5 reasoning
+in serving while a biasless model shows no damage at all. The pre-bias
+representation is what would let biased-K models use the fastest cache.
+Measure its serving cost against ordinary K8/V8, K16/V8, and Blackwell
+block-scaled paths.
 
 Account for:
 
