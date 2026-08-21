@@ -7,9 +7,19 @@ optimizer state) but builds the optimizer by name:
   adamw  torch.optim.AdamW via the harness make_optimizer
   soap   vendored SOAP (fim/fisher_pruning/soap.py, MIT, from
          github.com/nikhilvyas/SOAP) — Adam in Shampoo's eigenbasis
+  muon   vendored Muon (fim/fisher_pruning/muon.py, MIT, from
+         github.com/KellerJordan/Muon) — nesterov momentum
+         orthogonalized by a 5-step Newton-Schulz iteration every
+         step, applied to the transformer matmul weights only;
+         embeddings and 1-D params get the bundled aux Adam.
 
-Checkpoints keep the optimizer state so Shampoo-family factors
-(GG/Q per parameter) can be harvested later as pruning signals.
+The learning-rate schedule is applied as a relative cosine
+multiplier per parameter group, so optimizers with different base
+learning rates per group (Muon vs its aux Adam) keep their ratios.
+
+Checkpoints keep the optimizer state so optimizer-native factors
+(SOAP's GG/Q, Muon's momentum buffer) can be harvested later as
+pruning signals.
 
   python3 fim/fisher_pruning/train_optimizer.py --config CFG
 """
@@ -27,6 +37,7 @@ import torch.nn as nn
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from fim.fisher_pruning.muon import SingleDeviceMuonWithAuxAdam  # noqa: E402
 from fim.fisher_pruning.soap import SOAP  # noqa: E402
 from fim.reciprocal_attention.gpt2_spectral_ra import (  # noqa: E402
     BinData,
@@ -43,15 +54,57 @@ from fim.fisher_pruning.phase_a import _manifest  # noqa: E402
 
 def build_optimizer(model: nn.Module, cfg: dict):
     name = cfg.get("optimizer", "adamw")
+    optimizer = None
     if name == "adamw":
-        return make_optimizer(model, cfg)
-    if name == "soap":
+        optimizer = make_optimizer(model, cfg)
+    elif name == "muon":
+        # Muon: the transformer matmul weights. Aux Adam: embeddings
+        # (2-D, weight-decayed) and 1-D params (no decay). The tied
+        # lm_head shares wte's parameter.
+        muon_p, adam_decay, adam_nodecay = [], [], []
+        for pname, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if pname.startswith("transformer.h.") and p.dim() >= 2:
+                muon_p.append(p)
+            elif p.dim() >= 2:
+                adam_decay.append(p)
+            else:
+                adam_nodecay.append(p)
+        optimizer = SingleDeviceMuonWithAuxAdam(
+            [
+                {
+                    "params": muon_p,
+                    "use_muon": True,
+                    "lr": cfg.get("muon_lr", 0.02),
+                    "momentum": cfg.get("muon_momentum", 0.95),
+                    "weight_decay": cfg.get("muon_weight_decay", 0.01),
+                },
+                {
+                    "params": adam_decay,
+                    "use_muon": False,
+                    "lr": cfg["lr"],
+                    "betas": tuple(cfg.get("betas", (0.9, 0.95))),
+                    "eps": 1e-8,
+                    "weight_decay": cfg.get("weight_decay", 0.1),
+                },
+                {
+                    "params": adam_nodecay,
+                    "use_muon": False,
+                    "lr": cfg["lr"],
+                    "betas": tuple(cfg.get("betas", (0.9, 0.95))),
+                    "eps": 1e-8,
+                    "weight_decay": 0.0,
+                },
+            ]
+        )
+    elif name == "soap":
         decay, no_decay = [], []
         for _, p in model.named_parameters():
             if not p.requires_grad:
                 continue
             (decay if p.dim() >= 2 else no_decay).append(p)
-        return SOAP(
+        optimizer = SOAP(
             [
                 {
                     "params": decay,
@@ -63,7 +116,15 @@ def build_optimizer(model: nn.Module, cfg: dict):
             betas=tuple(cfg.get("betas", (0.95, 0.95))),
             precondition_frequency=cfg.get("precondition_frequency", 10),
         )
-    raise ValueError(f"unknown optimizer {name!r}")
+    if optimizer is None:
+        raise ValueError(f"unknown optimizer {name!r}")
+    # Base LR per group: the schedule is applied as a relative cosine
+    # multiplier so groups with different base LRs (Muon vs aux Adam)
+    # keep their ratio. For single-LR optimizers this reduces to the
+    # old absolute schedule.
+    for group in optimizer.param_groups:
+        group["base_lr"] = group.get("lr", cfg["lr"])
+    return optimizer
 
 
 def cmd_train(cfg: dict, device: str) -> None:
@@ -91,8 +152,9 @@ def cmd_train(cfg: dict, device: str) -> None:
     )
     for step in range(tcfg["max_steps"]):
         lr = cosine_lr(step, tcfg)
+        lr_mult = lr / tcfg["lr"]
         for group in optimizer.param_groups:
-            group["lr"] = lr
+            group["lr"] = group["base_lr"] * lr_mult
         x, y = train_data.batch(tcfg["batch_size"], gen, device)
         batch_counter += 1
         with _amp_ctx(device):

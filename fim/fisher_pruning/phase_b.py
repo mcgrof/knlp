@@ -91,6 +91,41 @@ def soap_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
     return out
 
 
+def muon_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
+    """muon_momentum: |w| * |momentum_buffer|^0.5 — the free-state
+    signal a Muon checkpoint offers. Muon keeps no second moment, so
+    this is the closest analogue of the Adam-state score: the EMA'd
+    gradient magnitude in place of the EMA'd squared gradient."""
+    if ckpt.get("optimizer_state") is None:
+        raise RuntimeError("checkpoint has no optimizer state")
+    tcfg = ckpt["train_config"]["train"]
+    if tcfg.get("optimizer") != "muon":
+        raise RuntimeError("checkpoint was not trained with Muon")
+    optimizer = build_optimizer(model, tcfg)
+    optimizer.load_state_dict(ckpt["optimizer_state"])
+    params = dict(model.named_parameters())
+    n_layer = ckpt["train_config"]["model"]["n_layer"]
+    out: Dict[str, Dict[str, torch.Tensor]] = {"muon_momentum": {}}
+    for name in default_target_names(n_layer):
+        p = params[name + ".weight"]
+        state = optimizer.state.get(p)
+        if not state or "momentum_buffer" not in state:
+            raise RuntimeError(f"no momentum buffer for {name}")
+        w = p.detach().float().cpu()
+        mom = state["momentum_buffer"].detach().float().cpu()
+        out["muon_momentum"][name] = w.abs() * (mom.abs() + EPS) ** 0.5
+    return out
+
+
+def native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
+    opt_name = ckpt["train_config"]["train"].get("optimizer")
+    if opt_name == "soap":
+        return soap_native_scores(ckpt, model)
+    if opt_name == "muon":
+        return muon_native_scores(ckpt, model)
+    raise RuntimeError(f"no native score arms for optimizer {opt_name!r}")
+
+
 def cmd_prune_eval(cfg: Dict, device: str, out_dir: Path) -> None:
     results_dir = out_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +137,7 @@ def cmd_prune_eval(cfg: Dict, device: str, out_dir: Path) -> None:
     scores = phase_a.build_scores(
         cfg, ckpt, model, calib["factors"], include_bitter7=False
     )
-    scores.update(soap_native_scores(ckpt, model))
+    scores.update(native_scores(ckpt, model))
     pristine = {k: v.clone() for k, v in ckpt["model_state"].items()}
     model.to(device)
     model.eval()
