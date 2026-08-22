@@ -135,6 +135,32 @@ def build_optimizer(model: nn.Module, cfg: dict):
             betas=tuple(cfg.get("betas", (0.95, 0.95))),
             precondition_frequency=cfg.get("precondition_frequency", 10),
         )
+    elif name == "heavyball_soap":
+        # Batched, compiled SOAP from the HeavyBall library. Two
+        # settings decide what algorithm this actually is:
+        # max_precond_dim below a weight's larger dimension makes the
+        # preconditioning ONE-SIDED for that weight, and
+        # precise_zeroth_power_mode="newtonschulz" replaces the QR
+        # refresh. Both are faster and neither is the reference
+        # algorithm, so quality has to be measured, not assumed.
+        import heavyball
+        import heavyball.utils as hbu
+
+        if cfg.get("heavyball_newtonschulz", True):
+            hbu.precise_zeroth_power_mode = "newtonschulz"
+        if cfg.get("heavyball_compile_mode_none", True):
+            # ROCm: whole-step compilation measured far slower.
+            hbu.compile_mode = None
+        optimizer = heavyball.SOAP(
+            model.parameters(),
+            lr=cfg["lr"],
+            betas=tuple(cfg.get("betas", (0.9, 0.95))),
+            weight_decay=cfg.get("weight_decay", 0.1),
+            precondition_frequency=cfg.get("precondition_frequency", 10),
+            max_precond_dim=cfg.get("max_precond_dim", 2048),
+            merge_dims=cfg.get("merge_dims", True),
+            storage_dtype=cfg.get("storage_dtype", "float32"),
+        )
     elif name == "kfac":
         # K-FAC-preconditioned AdamW: gpauloski/kfac-pytorch hooks
         # every nn.Linear, accumulates Kronecker factors during
