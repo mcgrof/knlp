@@ -58,8 +58,30 @@ from fim.reciprocal_attention.gpt2_spectral_ra import (  # noqa: E402
 EPS = phase_a.EPS
 
 
-def soap_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
-    """soap_kron and soap_rot_v from a SOAP checkpoint's state."""
+def soap_native_scores(
+    ckpt, model, full_ablation: bool = False
+) -> Dict[str, Dict[str, torch.Tensor]]:
+    """SOAP-state pruning scores from a SOAP checkpoint.
+
+    Default arms (the original pair): soap_kron (Shampoo L/R factor
+    diagonals, fourth root) and soap_rot_v (rotated second moment
+    projected back through the squared eigenbases, fourth root).
+
+    full_ablation=True adds the sweep the Adam family received:
+      soap_kron_q050 / soap_rot_v_q050  both statistics at the
+                                        half-power exponent (stale
+                                        statistics preferred it on
+                                        Pythia, and stored SOAP
+                                        state is stale);
+      soap_obs       deletion cost through the damped L/R factor
+                     inverses, w^2 / [(L+dI)^-1_ii (R+dI)^-1_jj] —
+                     the Optimal-Brain-Surgeon construction in
+                     Shampoo's gradient-gram geometry, the only
+                     SOAP arm using off-diagonal information;
+      soap_rot_m     the rotated FIRST moment projected back,
+                     |w| * (m_ws^2 + eps)^0.25 — the analogue of
+                     Muon's momentum-magnitude signal.
+    """
     if ckpt.get("optimizer_state") is None:
         raise RuntimeError("checkpoint has no optimizer state")
     tcfg = ckpt["train_config"]["train"]
@@ -69,7 +91,15 @@ def soap_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
     optimizer.load_state_dict(ckpt["optimizer_state"])
     params = dict(model.named_parameters())
     n_layer = ckpt["train_config"]["model"]["n_layer"]
-    out: Dict[str, Dict[str, torch.Tensor]] = {"soap_kron": {}, "soap_rot_v": {}}
+    arm_names = ["soap_kron", "soap_rot_v"]
+    if full_ablation:
+        arm_names += [
+            "soap_kron_q050",
+            "soap_rot_v_q050",
+            "soap_obs",
+            "soap_rot_m",
+        ]
+    out: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names}
     for name in default_target_names(n_layer):
         p = params[name + ".weight"]
         state = optimizer.state.get(p)
@@ -82,12 +112,30 @@ def soap_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
         w = p.detach().float().cpu()
         diag_l = torch.diagonal(gg[0]).float().cpu()
         diag_r = torch.diagonal(gg[1]).float().cpu()
-        out["soap_kron"][name] = w.abs() * (torch.outer(diag_l, diag_r) + EPS) ** 0.25
+        kron = torch.outer(diag_l, diag_r).clamp(min=0)
+        out["soap_kron"][name] = w.abs() * (kron + EPS) ** 0.25
         v_rot = state["exp_avg_sq"].detach().float().cpu()
-        ql2 = q[0].float().cpu().pow(2)
-        qr2 = q[1].float().cpu().pow(2)
-        v_ws = ql2 @ v_rot @ qr2.T
-        out["soap_rot_v"][name] = w.abs() * (v_ws.clamp(min=0) + EPS) ** 0.25
+        ql = q[0].float().cpu()
+        qr = q[1].float().cpu()
+        ql2 = ql.pow(2)
+        qr2 = qr.pow(2)
+        v_ws = (ql2 @ v_rot @ qr2.T).clamp(min=0)
+        out["soap_rot_v"][name] = w.abs() * (v_ws + EPS) ** 0.25
+        if full_ablation:
+            from fim.fisher_pruning.kfac_capture import damped_inverse_diag
+
+            out["soap_kron_q050"][name] = w.abs() * (kron + EPS) ** 0.5
+            out["soap_rot_v_q050"][name] = w.abs() * (v_ws + EPS) ** 0.5
+            inv_l = damped_inverse_diag(gg[0].float().cpu(), 1e-2).float()
+            inv_r = damped_inverse_diag(gg[1].float().cpu(), 1e-2).float()
+            denom = torch.clamp(torch.outer(inv_l, inv_r), min=1e-30)
+            out["soap_obs"][name] = w.pow(2) / denom
+            # exp_avg lives in the rotated basis like exp_avg_sq;
+            # E[m_ij] = (QL m' QR^T)_ij is exact (linear, no
+            # decorrelation assumption needed for the mean).
+            m_rot = state["exp_avg"].detach().float().cpu()
+            m_ws = ql @ m_rot @ qr.T
+            out["soap_rot_m"][name] = w.abs() * (m_ws.pow(2) + EPS) ** 0.25
     return out
 
 
@@ -117,10 +165,12 @@ def muon_native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
     return out
 
 
-def native_scores(ckpt, model) -> Dict[str, Dict[str, torch.Tensor]]:
+def native_scores(
+    ckpt, model, full_ablation: bool = False
+) -> Dict[str, Dict[str, torch.Tensor]]:
     opt_name = ckpt["train_config"]["train"].get("optimizer")
     if opt_name == "soap":
-        return soap_native_scores(ckpt, model)
+        return soap_native_scores(ckpt, model, full_ablation=full_ablation)
     if opt_name == "muon":
         return muon_native_scores(ckpt, model)
     raise RuntimeError(f"no native score arms for optimizer {opt_name!r}")
@@ -137,7 +187,9 @@ def cmd_prune_eval(cfg: Dict, device: str, out_dir: Path) -> None:
     scores = phase_a.build_scores(
         cfg, ckpt, model, calib["factors"], include_bitter7=False
     )
-    scores.update(native_scores(ckpt, model))
+    scores.update(
+        native_scores(ckpt, model, full_ablation=bool(cfg.get("native_full_ablation")))
+    )
     pristine = {k: v.clone() for k, v in ckpt["model_state"].items()}
     model.to(device)
     model.eval()

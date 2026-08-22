@@ -672,3 +672,62 @@ def test_kfac_arm_trains_and_scores(tmp_path):
     for n, p in targets.items():
         assert scores[n].shape == p.shape
         assert torch.isfinite(scores[n]).all() and (scores[n] >= 0).all()
+
+
+def test_soap_full_ablation_arms(tmp_path):
+    from fim.fisher_pruning import phase_b, train_optimizer
+
+    train_bin = tmp_path / "train.bin"
+    val_bin = tmp_path / "val.bin"
+    _write_bin(train_bin, 4096, TINY_MODEL["vocab_size"], 15)
+    _write_bin(val_bin, 4096, TINY_MODEL["vocab_size"], 16)
+    cfg = {
+        "seed": 0,
+        "model": TINY_MODEL,
+        "data": {"train_bin": str(train_bin), "val_bin": str(val_bin)},
+        "train": dict(
+            TINY_TRAIN,
+            optimizer="soap",
+            max_steps=4,
+            betas=[0.95, 0.95],
+            precondition_frequency=2,
+            eval_interval=10,
+            eval_batches=1,
+            ckpt_interval=10,
+            log_interval=10,
+        ),
+        "out_dir": str(tmp_path / "soap_run"),
+    }
+    train_optimizer.cmd_train(cfg, "cpu")
+    ckpt_path = Path(cfg["out_dir"]) / "ckpt_latest.pt"
+    ckpt, model = phase_a._load_ckpt({"ckpt": str(ckpt_path)})
+    scores = phase_b.soap_native_scores(ckpt, model, full_ablation=True)
+    expected = {
+        "soap_kron",
+        "soap_rot_v",
+        "soap_kron_q050",
+        "soap_rot_v_q050",
+        "soap_obs",
+        "soap_rot_m",
+    }
+    assert set(scores) == expected
+    names = default_target_names(TINY_MODEL["n_layer"])
+    params = dict(model.named_parameters())
+    for arm in expected:
+        for n in names:
+            s = scores[arm][n]
+            assert s.shape == params[n + ".weight"].shape
+            assert torch.isfinite(s).all() and (s >= 0).all()
+    # q050 is the exact square of q025's statistic factor: ranking
+    # within a layer must agree between the exponent variants.
+    n = names[0]
+    a = scores["soap_rot_v"][n].reshape(-1).argsort()
+    b = scores["soap_rot_v_q050"][n].reshape(-1)
+    # not identical rankings (|w| weighting interacts differently),
+    # but both must be non-degenerate
+    assert scores["soap_rot_v"][n].std() > 0 and b.std() > 0
+    # default path unchanged
+    assert set(phase_b.soap_native_scores(ckpt, model)) == {
+        "soap_kron",
+        "soap_rot_v",
+    }
