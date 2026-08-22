@@ -122,3 +122,33 @@ attention punishes — cuts against the entire family, with the
 per-block-basis metadata cost as a second independent blocker.
 Raw measurements: `small/big_structure.csv`, `small/big_ablation.jsonl`,
 and both verdict JSONs ship with the run artifacts.
+
+## Follow-up: the RoPE amplification, explained and exploited
+
+The milestone's one surprise — post-RoPE K carrying 2.3-3.2x the
+temporal locality of pre-RoPE K — was probed separately
+(`experiments/kv_house/rope_trajectory_probe.py`, WikiText,
+ctx 2048, B=16, rotation math self-checked against each model's
+k_proj output at 3e-3). The mechanism is the shared K component
+being rotated: every head's keys contain a large common vector
+(the k_proj bias where one exists, plus the data mean), which RoPE
+turns into a smooth position-local trajectory. Subtracting the
+per-head mean in the de-rotated frame collapses the amplification
+everywhere: 3.29x to 1.31x on Qwen2.5-0.5B, 1.64x to 1.15x on
+Qwen3-0.6B, 2.64x to 1.20x on Llama-3.2-3B. It is not a
+Qwen-only effect — Llama-3.2 has no K bias and still shows 2.64x
+from its data mean alone — but bias-carrying Qwen2.5 has the
+largest shared component and the strongest effect, while Qwen3's
+QK-norm shrinks it.
+
+The exploit is a drop-in refinement of CacheGen-style anchor-delta
+coding for K: de-rotate the block with the known position angles,
+take deltas against the anchor, re-rotate on decode. Same bytes,
+zero metadata, noise stays token-local. At a 16-bit anchor with
+4-bit residuals it reduces K-side attention-output error at
+identical bytes by 30% on Qwen2.5-0.5B (0.0228 to 0.0160), 11% on
+Llama-3.2-3B, and 5% on Qwen3-0.6B, tracking the size of the
+shared component. At 2-bit residuals the gain narrows to 2-3%,
+and on Qwen3 plain per-token quantization beats both delta coders
+at that rate. Verdict: worth folding into any CacheGen-style K
+codec, not worth a program of its own.
