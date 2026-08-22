@@ -171,9 +171,13 @@ def _ppl_hf(model_id: str, max_tokens: int = 2048):
 # ── Main ─────────────────────────────────────────────────────────
 
 CONFIGS = [
-    ("fp16", "auto"),
-    ("fp8_sym", "fp8_e4m3"),
-    ("asym_k16_v8", ("auto", "fp8_e4m3")),
+    # (name, kv_cache_dtype, extra env for the engine process)
+    ("fp16", "auto", {}),
+    ("fp8_sym", "fp8_e4m3", {}),
+    ("asym_k16_v8", ("auto", "fp8_e4m3"), {}),
+    # symmetric FP8 storing the pre-bias rotary residual; the
+    # FlashInfer kernel restores the rotated key bias at read time
+    ("fp8_prebias", "fp8_e4m3", {"VLLM_PREBIAS_K": "1"}),
 ]
 
 GSM8K_PASS_THRESHOLD = 0.01  # sym FP8 must be below fp16 - this
@@ -191,8 +195,10 @@ def main():
     print(f"Loaded {len(items)} GSM8K problems from dataset")
 
     results = {}
-    for name, dtype in CONFIGS:
+    for name, dtype, extra_env in CONFIGS:
         print(f"\n=== {name}  kv_cache_dtype={dtype!r} ===", flush=True)
+        for k_env, v_env in extra_env.items():
+            os.environ[k_env] = v_env
         try:
             llm = LLM(
                 model=MODEL,
@@ -215,6 +221,8 @@ def main():
         )
         results[name] = {"gsm8k": gsm}
         del llm
+        for k_env in extra_env:
+            os.environ.pop(k_env, None)
         import gc, torch
 
         gc.collect()

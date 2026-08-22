@@ -113,15 +113,18 @@ def main() -> int:
         model_max = max(CTX_LENGTHS) + 256
 
     configs = [
-        ("fp16", "auto"),
-        ("fp8_sym", "fp8_e4m3"),
-        ("asym_k16v8", ("auto", "fp8_e4m3")),
+        ("fp16", "auto", {}),
+        ("fp8_sym", "fp8_e4m3", {}),
+        ("asym_k16v8", ("auto", "fp8_e4m3"), {}),
+        ("fp8_prebias", "fp8_e4m3", {"VLLM_PREBIAS_K": "1"}),
     ]
 
     results: dict = {}
 
-    for cfg_name, kv_dtype in configs:
+    for cfg_name, kv_dtype, extra_env in configs:
         print(f"\n=== {cfg_name} kv_cache_dtype={kv_dtype!r} ===", flush=True)
+        for k_env, v_env in extra_env.items():
+            os.environ[k_env] = v_env
         try:
             llm = LLM(
                 model=MODEL_ID,
@@ -147,6 +150,8 @@ def main() -> int:
             print(f"  {cfg_name} {ctx_len//1024}K: acc={acc:.2f}", flush=True)
 
         del llm
+        for k_env in extra_env:
+            os.environ.pop(k_env, None)
 
     # Print metrics.
     for ctx_len in CTX_LENGTHS:
