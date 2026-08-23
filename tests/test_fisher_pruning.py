@@ -386,7 +386,7 @@ def test_train_optimizer_muon_smoke_and_native_scores(tmp_path):
     assert set(phase_b.native_scores(ckpt, model)) == {"muon_momentum"}
     # per-group relative LR schedule preserved the muon/adam ratio
     opt = train_optimizer.build_optimizer(model, ckpt["train_config"]["train"])
-    base = [g["base_lr"] for g in opt.param_groups]
+    base = train_optimizer.base_learning_rates(opt, ckpt["train_config"]["train"]["lr"])
     assert base[0] == 0.02 and base[1] == 6e-4
 
 
@@ -731,3 +731,59 @@ def test_soap_full_ablation_arms(tmp_path):
         "soap_kron",
         "soap_rot_v",
     }
+
+
+def test_lr_schedule_survives_optimizer_owned_base_lr_key():
+    """An optimizer that keeps its own "base_lr" and resyncs it from
+    "lr" (HeavyBall does) must not make the schedule compound."""
+    from fim.fisher_pruning.train_optimizer import (
+        apply_lr_multiplier,
+        base_learning_rates,
+    )
+
+    class ResyncingGroups:
+        # mimics heavyball/chainable.py: base_lr follows lr whenever
+        # an external schedule changes it
+        def __init__(self, lr):
+            self.groups = [{"lr": lr, "base_lr": lr}]
+
+        def step(self):
+            for g in self.groups:
+                if g["base_lr"] != g["lr"]:
+                    g["base_lr"] = g["lr"]
+
+    class FakeOpt:
+        def __init__(self, lr):
+            self._g = ResyncingGroups(lr)
+
+        @property
+        def param_groups(self):
+            return self._g.groups
+
+        def step(self):
+            self._g.step()
+
+    opt = FakeOpt(3e-3)
+    base_lrs = base_learning_rates(opt, 3e-3)
+    seen = []
+    for _ in range(20):
+        apply_lr_multiplier(opt, base_lrs, 0.5)
+        seen.append(opt.param_groups[0]["lr"])
+        opt.step()
+    assert all(abs(v - 1.5e-3) < 1e-12 for v in seen), seen[:5]
+
+
+def test_lr_multiplier_preserves_per_group_ratio():
+    from fim.fisher_pruning.train_optimizer import (
+        apply_lr_multiplier,
+        base_learning_rates,
+    )
+
+    class Opt:
+        param_groups = [{"lr": 0.02}, {"lr": 6e-4}]
+
+    opt = Opt()
+    base_lrs = base_learning_rates(opt, 6e-4)
+    apply_lr_multiplier(opt, base_lrs, 0.25)
+    assert opt.param_groups[0]["lr"] == 0.005
+    assert opt.param_groups[1]["lr"] == 1.5e-4
