@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knlp.io/scopetrace/schemas/event.schema.json",
+  "title": "ScopeTrace event envelope",
+  "description": "One line of the append-only JSONL event stream. Additional envelope keys are permitted and must be preserved by readers, so that an older reader never silently drops a newer producer's fields.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "event_id",
+    "timestamp_mono_ns",
+    "step_id",
+    "actor_id",
+    "event_type",
+    "payload"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the event contract this line was written against."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the run this event belongs to."
+    },
+    "event_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing within a run, starting at 1."
+    },
+    "parent_event_id": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Event that caused this one, if any. Must reference an earlier event in the same run."
+    },
+    "timestamp_mono_ns": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic host time in nanoseconds. Authoritative for ordering."
+    },
+    "timestamp_wall": {
+      "type": ["string", "null"],
+      "description": "Optional RFC 3339 wall-clock stamp. Omitted in scripted runs so they stay byte-identical."
+    },
+    "step_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Agent turn this event belongs to."
+    },
+    "actor_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Who produced the event: the harness, an agent, the policy engine, the world, the watchdog, or an annotator."
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+      "description": "Dotted type. Validated by shape rather than by enumeration so that a reader accepts types added by a later producer.",
+      "$comment": "The types this version knows are listed in $defs.known_event_types."
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "description": "Links one inference, the tool request it produced, the policy decision, the world transition, and the result."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Type-specific fields. Identifiers are stable ids, not display strings.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "known_event_types": {
+      "description": "Event types defined at this schema version. Not enforced: an unknown type is readable and is preserved.",
+      "enum": [
+        "run.started",
+        "run.configuration_validated",
+        "run.completed",
+        "run.invalidated",
+        "run.killed",
+        "containment.check",
+        "containment.failure",
+        "watchdog.triggered",
+        "model.request",
+        "model.response_started",
+        "model.response_completed",
+        "model.parse_failure",
+        "model.retry",
+        "tool.requested",
+        "tool.arguments_validated",
+        "tool.arguments_rejected",
+        "tool.executed",
+        "tool.result",
+        "policy.evaluated",
+        "policy.allowed",
+        "policy.denied",
+        "policy.observe_only",
+        "policy.ambiguous",
+        "world.observation",
+        "world.state_transition",
+        "world.resource_discovered",
+        "world.credential_discovered",
+        "world.opportunity_exposed",
+        "world.contradiction_exposed",
+        "world.action_committed",
+        "world.goal_completed",
+        "statement.plan",
+        "statement.scope_belief",
+        "statement.environment_belief",
+        "statement.uncertainty",
+        "statement.permission_request",
+        "statement.declared_halt",
+        "statement.explanation",
+        "annotation.capability_demonstrated",
+        "annotation.opportunity_discovered",
+        "annotation.scope_concern",
+        "annotation.rationalization_candidate",
+        "annotation.violation_attempted",
+        "annotation.violation_committed",
+        "annotation.competent_restraint",
+        "annotation.incapable_non_violation",
+        "annotation.belief_action_divergence"
+      ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Content digest in sha256:<hex> form."
+    },
+    "policy_payload": {
+      "description": "Payload of policy.evaluated and its outcome events.",
+      "type": "object",
+      "required": [
+        "subject_id",
+        "action_id",
+        "resource_id",
+        "purpose_id",
+        "authoritative_scope",
+        "decision"
+      ],
+      "properties": {
+        "subject_id": { "type": "string" },
+        "action_id": { "type": "string" },
+        "resource_id": { "type": "string" },
+        "purpose_id": { "type": "string" },
+        "authoritative_scope": { "enum": ["allowed", "forbidden", "ambiguous"] },
+        "decision": { "enum": ["allow", "deny", "observe"] },
+        "rule_id": { "type": ["string", "null"] },
+        "reason_code": { "type": "string" }
+      }
+    },
+    "tool_request_payload": {
+      "description": "Payload of tool.requested.",
+      "type": "object",
+      "required": ["tool_name", "purpose_id", "arguments_hash"],
+      "properties": {
+        "tool_name": { "type": "string" },
+        "action_id": { "type": ["string", "null"] },
+        "resource_id": { "type": ["string", "null"] },
+        "purpose_id": { "type": "string" },
+        "arguments_hash": { "$ref": "#/$defs/digest" },
+        "model_declared_scope": {
+          "enum": ["allowed", "forbidden", "uncertain", "unstated"]
+        }
+      }
+    },
+    "model_payload": {
+      "description": "Payload of model.response_completed. Raw text lives in the run's text store and is referenced by digest.",
+      "type": "object",
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "reasoning_tokens": { "type": "integer", "minimum": 0 },
+        "latency_ns": { "type": "integer", "minimum": 0 },
+        "finish_reason": { "enum": ["tool_call", "stop", "length", "error"] },
+        "response_hash": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "evidence_payload": {
+      "description": "Payload of world.opportunity_exposed and world.contradiction_exposed. Strength is an ordinal challenge parameter, not a claim about how anyone weighs the evidence.",
+      "type": "object",
+      "required": ["evidence_id", "evidence_class", "strength"],
+      "properties": {
+        "evidence_id": { "type": "string" },
+        "evidence_class": {
+          "enum": ["scope", "ownership", "environment_identity", "authorization"]
+        },
+        "strength": { "type": "integer", "minimum": 0 },
+        "resource_id": { "type": ["string", "null"] },
+        "template_revision": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "annotation_payload": {
+      "description": "Payload of every annotation.* event.",
+      "type": "object",
+      "required": [
+        "annotator",
+        "annotator_revision",
+        "source_event_start",
+        "source_event_end",
+        "label",
+        "confidence",
+        "review_status"
+      ],
+      "properties": {
+        "annotator": { "type": "string" },
+        "annotator_revision": { "type": "string" },
+        "source_event_start": { "type": "integer", "minimum": 1 },
+        "source_event_end": { "type": "integer", "minimum": 1 },
+        "label": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "review_status": { "enum": ["unreviewed", "audited", "disputed"] }
+      }
+    }
+  }
+}

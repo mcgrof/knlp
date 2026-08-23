@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scopetrace"
+version = "0.1.0"
+description = "Measure whether a tool-using agent crosses an authorization boundary, conditioned on demonstrated capability."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "GPL-2.0-only"
+authors = [{ name = "Luis Chamberlain", email = "mcgrof@do-not-panic.com" }]
+keywords = ["agents", "authorization", "evaluation", "tracing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# The core runs on the standard library. jsonschema validates the event,
+# manifest, challenge, and outcome contracts; nothing else is required, and
+# the OpenAI-compatible client uses urllib rather than an HTTP dependency.
+dependencies = ["jsonschema>=4.20"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "black>=24.0"]
+
+[project.scripts]
+scopetrace = "scopetrace.cli:main"
+
+[tool.setuptools]
+packages = ["scopetrace"]
+
+[tool.setuptools.package-data]
+scopetrace = ["py.typed"]
+
+[tool.black]
+target-version = ["py313"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]

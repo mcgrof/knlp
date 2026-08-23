@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knlp.io/scopetrace/schemas/manifest.schema.json",
+  "title": "ScopeTrace run manifest",
+  "description": "Immutable description of one trajectory, written before its first inference call. Manifests are public artifacts: the host field is an opaque label and no credential, provider secret, or real host name belongs here.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "experiment_id",
+    "challenge_id",
+    "challenge_revision",
+    "variant",
+    "policy_revision",
+    "policy_mode",
+    "model_id",
+    "model_revision",
+    "tokenizer_revision",
+    "backend",
+    "backend_revision",
+    "precision",
+    "agent_id",
+    "agent_revision",
+    "reasoning_condition",
+    "sampling",
+    "hardware",
+    "software_manifest",
+    "started_at",
+    "public_eligible"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "run_id": { "type": "string", "minLength": 1 },
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Campaign this run belongs to."
+    },
+    "challenge_id": { "type": "string", "minLength": 1 },
+    "challenge_revision": { "$ref": "#/$defs/digest" },
+    "variant": {
+      "enum": ["control", "treatment"],
+      "description": "Arm of the matched pair. The arms differ only in the policy rule set."
+    },
+    "policy_revision": { "$ref": "#/$defs/digest" },
+    "policy_mode": {
+      "enum": ["observe", "enforce"],
+      "description": "Whether a denying rule blocked execution or only recorded the decision. Observe mode is how a committed synthetic violation is produced on purpose."
+    },
+    "model_id": { "type": "string", "minLength": 1 },
+    "model_revision": {
+      "type": "string",
+      "description": "Immutable revision of the weights, as reported by the source."
+    },
+    "tokenizer_revision": { "type": "string" },
+    "backend": {
+      "type": "string",
+      "description": "Inference backend, or the offline scripted backend."
+    },
+    "backend_revision": { "type": "string" },
+    "precision": { "type": "string" },
+    "agent_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which scaffold drove the loop."
+    },
+    "agent_revision": { "type": "string" },
+    "reasoning_condition": {
+      "enum": ["thinking", "non-thinking", "low", "medium", "high", "fixed"],
+      "description": "Test-time reasoning setting. 'fixed' means the model exposes no control and ran as it defaults."
+    },
+    "sampling": { "$ref": "#/$defs/sampling" },
+    "hardware": { "$ref": "#/$defs/hardware" },
+    "software_manifest": { "$ref": "#/$defs/digest" },
+    "started_at": {
+      "type": "string",
+      "description": "RFC 3339 start time."
+    },
+    "public_eligible": {
+      "type": "boolean",
+      "description": "Whether this run has passed the review that permits promoting it to a public artifact. Defaults to false and is never set by the harness."
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sampling": {
+      "type": "object",
+      "required": [
+        "temperature",
+        "top_p",
+        "seed",
+        "max_output_tokens",
+        "max_turns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0 },
+        "top_p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "seed": { "type": "integer" },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "max_turns": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "required": ["gpu", "host"],
+      "additionalProperties": false,
+      "properties": {
+        "gpu": { "type": "string" },
+        "host": {
+          "type": "string",
+          "description": "Opaque stable label chosen by the caller, defaulting to 'local'."
+        }
+      }
+    },
+    "software": {
+      "description": "Expanded software record written beside the manifest. Only its digest appears in the manifest itself.",
+      "type": "object",
+      "required": ["python_version", "platform", "packages"],
+      "additionalProperties": false,
+      "properties": {
+        "python_version": { "type": "string" },
+        "platform": { "type": "string" },
+        "packages": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}
