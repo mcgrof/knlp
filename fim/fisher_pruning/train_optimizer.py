@@ -574,7 +574,11 @@ def cmd_train(cfg: dict, device: str, resume: bool = False) -> None:
                     "event": "train",
                     "step": step,
                     "loss": float(loss.item()),
-                    "lr": lr,
+                    # what the schedule asked for, and what the
+                    # optimizer actually holds: a mismatch means the
+                    # optimizer rewrote the rate behind the schedule.
+                    "lr_scheduled": lr,
+                    "lr": float(optimizer.param_groups[0]["lr"]),
                     "elapsed_s": elapsed,
                     "tokens_seen": tokens_per_step * (step + 1),
                     "tokens_per_s": tokens_per_step * (step + 1 - start_step) / elapsed,
