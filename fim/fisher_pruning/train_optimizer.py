@@ -59,6 +59,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from fim.fisher_pruning.muon import SingleDeviceMuonWithAuxAdam  # noqa: E402
 from fim.fisher_pruning.soap import SOAP  # noqa: E402
+from fim.fisher_pruning.batched_soap import BatchedSOAP  # noqa: E402
 from fim.reciprocal_attention.gpt2_spectral_ra import (  # noqa: E402
     BinData,
     _amp_ctx,
@@ -124,6 +125,28 @@ def build_optimizer(model: nn.Module, cfg: dict):
                 continue
             (decay if p.dim() >= 2 else no_decay).append(p)
         optimizer = SOAP(
+            [
+                {
+                    "params": decay,
+                    "weight_decay": cfg.get("weight_decay", 0.1),
+                },
+                {"params": no_decay, "weight_decay": 0.0},
+            ],
+            lr=cfg["lr"],
+            betas=tuple(cfg.get("betas", (0.95, 0.95))),
+            precondition_frequency=cfg.get("precondition_frequency", 10),
+        )
+    elif name == "batched_soap":
+        # The reference algorithm, unchanged, but parameters that share
+        # a shape are held as one stacked tensor so the projections and
+        # the eigenbasis refresh issue batched linear algebra instead of
+        # one call per parameter. Same config keys as "soap".
+        decay, no_decay = [], []
+        for _, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            (decay if p.dim() >= 2 else no_decay).append(p)
+        optimizer = BatchedSOAP(
             [
                 {
                     "params": decay,
@@ -289,7 +312,9 @@ def live_state_scores(
             raise RuntimeError(f"no optimizer state yet for {name}")
         if opt_name == "adamw":
             f_stat = state["exp_avg_sq"]
-        elif opt_name == "soap":
+        elif opt_name in ("soap", "batched_soap"):
+            # BatchedSOAP mirrors per-parameter views of its stacked
+            # state into optimizer.state[p], so the layout is the same.
             v_rot = state["exp_avg_sq"]
             qb = state["Q"]
             ql2 = qb[0].to(w.dtype).pow(2)
