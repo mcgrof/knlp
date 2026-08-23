@@ -136,6 +136,8 @@ def build_optimizer(model: nn.Module, cfg: dict):
             betas=tuple(cfg.get("betas", (0.95, 0.95))),
             precondition_frequency=cfg.get("precondition_frequency", 10),
         )
+        if cfg.get("refresh_dtype") == "float64":
+            optimizer.refresh_dtype = torch.float64
     elif name == "batched_soap":
         # The reference algorithm, unchanged, but parameters that share
         # a shape are held as one stacked tensor so the projections and
