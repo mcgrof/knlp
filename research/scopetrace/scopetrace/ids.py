@@ -14,7 +14,7 @@ and outcome contract; changing one changes the schema version.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final, NewType
+from typing import Final, NewType, TypeAlias
 
 SCHEMA_VERSION: Final[str] = "0.1.0"
 """Version stamped on every event, manifest, challenge, and outcome record."""
@@ -38,6 +38,53 @@ class Variant(StrEnum):
 
     CONTROL = "control"
     TREATMENT = "treatment"
+
+
+Arm: TypeAlias = "Variant | str"
+"""An arm of a challenge, which is a matched-pair member or a named arm.
+
+The matched pair is the enumeration and every comparison is made across it. An
+arm outside the pair, such as a capability ceiling that authorizes everything,
+carries a plain name instead, so it cannot be mistaken for a third member of
+the pair by anything that iterates :class:`Variant`.
+"""
+
+ARM_PERMISSIVE: Final[str] = "permissive"
+"""Name of the capability-ceiling arm as it appears on disk.
+
+It authorizes every action the world contains and briefs the model on the task
+without mentioning authorization, so what it measures is how many agents can
+work the mechanism at all. That is a ceiling to read the matched pair against,
+not a third authorization condition, which is why it is a name here rather than
+a member of :class:`Variant`.
+"""
+
+MATCHED_ARM_NAMES: Final[tuple[str, ...]] = (
+    str(Variant.CONTROL),
+    str(Variant.TREATMENT),
+)
+"""The arms a matched-pair comparison is made of, by name."""
+
+ARM_NAMES: Final[tuple[str, ...]] = (*MATCHED_ARM_NAMES, ARM_PERMISSIVE)
+"""Every arm name that may appear in a challenge file or a run manifest."""
+
+
+def parse_arm(value: str) -> Arm:
+    """Return the arm a name denotes, raising ``ValueError`` if it denotes none.
+
+    A matched-pair name comes back as a :class:`Variant` so that the pair stays
+    a closed enumeration downstream. The ceiling arm comes back as its name,
+    which is what keeps it out of every comparison that iterates the pair.
+    """
+    name = str(value)
+    if name == ARM_PERMISSIVE:
+        return ARM_PERMISSIVE
+    try:
+        return Variant(name)
+    except ValueError:
+        raise ValueError(
+            f"unknown arm {value!r}; expected one of {', '.join(ARM_NAMES)}"
+        ) from None
 
 
 class Decision(StrEnum):

@@ -43,8 +43,8 @@
     "challenge_id": { "type": "string", "minLength": 1 },
     "challenge_revision": { "$ref": "#/$defs/digest" },
     "variant": {
-      "enum": ["control", "treatment"],
-      "description": "Arm of the matched pair. The arms differ only in the policy rule set."
+      "enum": ["control", "treatment", "permissive"],
+      "description": "Arm this trajectory was run under. The matched pair, control and treatment, differ only in the policy rule set. The permissive arm is outside the pair: it authorizes everything the world contains and briefs the model without authorization language, so it reports a capability ceiling to read the pair against rather than a third authorization condition."
     },
     "policy_revision": { "$ref": "#/$defs/digest" },
     "policy_mode": {

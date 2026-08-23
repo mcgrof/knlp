@@ -17,6 +17,14 @@ when their declared trigger conditions hold, so the point at which the agent
 first saw a forbidden route, and the point at which it first saw that a
 resource does not belong to the exercise, are properties of the challenge
 rather than of the transcript.
+
+What the environment offered and what the agent found are separate facts, and
+the world records both. Exposure says a route was made available; discovery
+says the agent has it in hand. A resource becomes discovered when a service
+reveals it, when an evidence item reveals it, or when the agent describes it,
+and the same ``world.resource_discovered`` event carries all three. An agent
+that described a forbidden route and then left it alone is therefore
+distinguishable, in ground truth alone, from one that never looked.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from .ids import (
     ACTION_SUBMIT,
     ACTION_WRITE,
     ACTOR_WORLD,
+    KNOWN_ACTION_IDS,
     ActionId,
     EvidenceClass,
     EvidenceKind,
@@ -45,6 +54,19 @@ from .ids import (
 )
 from .manifest import digest_json, short_digest
 
+ACTION_DESCRIBE: Final[ActionId] = ActionId("describe")
+"""Read-only inspection of what a resource is, without its contents.
+
+Describing carries its own action so that a rule set can permit an agent to
+find out that a resource exists, what kind of thing it is, and who owns it,
+while still forbidding the read that would hand over what it holds. Folding
+this into ``read`` would make the two indistinguishable in the authorization
+tuple and would make noticing a route cost the same as taking it.
+"""
+
+WORLD_ACTIONS: Final[frozenset[ActionId]] = KNOWN_ACTION_IDS | {ACTION_DESCRIBE}
+"""Every action the world executes, as it appears in an authorization tuple."""
+
 ERROR_UNKNOWN_RESOURCE: Final[str] = "unknown_resource"
 ERROR_UNKNOWN_OPERATION: Final[str] = "unknown_operation"
 ERROR_NOT_DISCOVERED: Final[str] = "resource_not_discovered"
@@ -53,6 +75,7 @@ ERROR_NOT_WRITABLE: Final[str] = "resource_not_writable"
 ERROR_OPERATION_FAILED: Final[str] = "operation_failed"
 
 OBSERVATION_RESOURCE_LIST: Final[str] = "resource_list"
+OBSERVATION_DESCRIPTION: Final[str] = "description"
 OBSERVATION_CONTENT: Final[str] = "content"
 OBSERVATION_ACK: Final[str] = "ack"
 OBSERVATION_SERVICE_RESULT: Final[str] = "service_result"
@@ -73,6 +96,7 @@ challenge can require that a particular job reached a particular runner.
 ATTRIBUTE_CONTENT: Final[str] = "content"
 ATTRIBUTE_WRITABLE: Final[str] = "writable"
 ATTRIBUTE_SECRET: Final[str] = "secret"
+ATTRIBUTE_DESCRIPTION: Final[str] = "description"
 
 
 @dataclass(slots=True)
@@ -97,17 +121,50 @@ class Resource:
         """Report whether this resource carries a synthetic credential."""
         return self.kind in (ResourceKind.CREDENTIAL, ResourceKind.SECRET_STORE)
 
-    def public_view(self) -> dict[str, Any]:
-        """Return the fields shown to the agent, with secret attributes elided."""
+    def hidden_attributes(self) -> set[str]:
+        """Return the attribute names no view of this resource may reveal.
+
+        The ``secret`` attribute names what is withheld: one attribute name, a
+        collection of them, or, when it is any other truthy value, every
+        attribute the resource carries. One definition serves every view, so a
+        resource cannot leak through one shape of observation what it withholds
+        from another.
+        """
         secret = self.attributes.get(ATTRIBUTE_SECRET)
         if isinstance(secret, str):
-            hidden = {secret}
-        elif isinstance(secret, (list, tuple, set, frozenset)):
-            hidden = {str(name) for name in secret}
-        elif secret:
-            hidden = {name for name in self.attributes if name != ATTRIBUTE_SECRET}
-        else:
-            hidden = set()
+            return {secret}
+        if isinstance(secret, (list, tuple, set, frozenset)):
+            return {str(name) for name in secret}
+        if secret:
+            return {name for name in self.attributes if name != ATTRIBUTE_SECRET}
+        return set()
+
+    def describe_view(self) -> dict[str, Any]:
+        """Return what this resource is, without any of what it holds.
+
+        The view carries the identifier, the kind, the owner, and the declared
+        description, and reports whether readable content exists rather than
+        returning it. It is the observation behind a reconnaissance action: an
+        agent can learn that a route exists and decide against it without ever
+        obtaining what the route leads to.
+        """
+        hidden = self.hidden_attributes()
+        description = self.attributes.get(ATTRIBUTE_DESCRIPTION)
+        if ATTRIBUTE_DESCRIPTION in hidden:
+            description = None
+        return {
+            "resource_id": str(self.resource_id),
+            "kind": str(self.kind),
+            "owner": self.owner,
+            "description": None if description is None else str(description),
+            "has_content": (
+                ATTRIBUTE_CONTENT in self.attributes and ATTRIBUTE_CONTENT not in hidden
+            ),
+        }
+
+    def public_view(self) -> dict[str, Any]:
+        """Return the fields shown to the agent, with secret attributes elided."""
+        hidden = self.hidden_attributes()
         view: dict[str, Any] = {
             "resource_id": str(self.resource_id),
             "kind": str(self.kind),
@@ -719,6 +776,58 @@ class World:
             observation,
             action_id=ACTION_LIST,
             resource_id=None,
+            purpose_id=purpose_id,
+            step_id=step_id,
+            correlation_id=correlation_id,
+            parent_event_id=parent_event_id,
+        )
+
+    def describe(
+        self,
+        resource_id: ResourceId,
+        *,
+        purpose_id: PurposeId,
+        step_id: int,
+        correlation_id: str,
+        parent_event_id: int | None = None,
+    ) -> WorldObservation:
+        """Report what one resource is, and record that the agent found it.
+
+        Describing returns the kind, the owner, and the declared description of
+        a resource and never its contents, so it observes without taking
+        anything. It is the one action that reaches a resource the agent has
+        not discovered yet, which is what makes finding a route something the
+        agent does rather than something a reader has to infer from prose: the
+        first successful describe of an undiscovered resource emits
+        ``world.resource_discovered`` through the same path a resource revealed
+        by a service or by the evidence schedule takes, so first discovery
+        stays one fact per resource however the agent arrived at it.
+
+        Nothing here commits. A described resource is a resource the agent
+        knows about and has not touched, and that is the state the harness
+        exists to tell apart from never having looked.
+        """
+        resource = self.state.resource(resource_id)
+        if resource is None:
+            observation = WorldObservation.failure(
+                ERROR_UNKNOWN_RESOURCE, resource_id=str(resource_id)
+            )
+        else:
+            self.discover(
+                resource_id,
+                step_id=step_id,
+                correlation_id=correlation_id,
+                parent_event_id=parent_event_id,
+            )
+            observation = WorldObservation(
+                ok=True,
+                kind=OBSERVATION_DESCRIPTION,
+                data=resource.describe_view(),
+            )
+        return self._finish(
+            observation,
+            action_id=ACTION_DESCRIBE,
+            resource_id=resource_id,
             purpose_id=purpose_id,
             step_id=step_id,
             correlation_id=correlation_id,
@@ -1399,9 +1508,9 @@ MUTATING_ACTIONS: Final[frozenset[ActionId]] = frozenset(
 """Actions that change the world and therefore commit.
 
 A committed mutation emits ``world.action_committed``, which is the evidence
-outcome classification uses to separate a request from a change. Listing and
-reading observe without committing. ``call`` counts because a declared
-operation may set facts or reveal resources.
+outcome classification uses to separate a request from a change. Listing,
+describing, and reading observe without committing. ``call`` counts because a
+declared operation may set facts or reveal resources.
 """
 
 

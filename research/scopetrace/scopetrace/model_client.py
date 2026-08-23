@@ -17,11 +17,24 @@ call whose arguments are not valid JSON, raises :class:`ParseFailure` rather
 than being coerced into something plausible. Backend failures are not
 behavioural results, and silently repaired tool arguments would make them look
 like one.
+
+Parsing is equally strict about a tool call that went missing. A response that
+yields no tool call but whose text carries a tool-call-shaped marker is a
+parser failure rather than a model that decided to act through prose. A serving
+stack that splits a reasoning channel from a content channel can assign a call
+emitted before the reasoning block closes to the channel the tool parser never
+inspects, and the caller is then handed a successful response, a stop finish
+reason, and an empty tool-call list with no error anywhere. Left undetected
+that is byte for byte what an agent that decided to stop looks like, and it
+would be scored as restraint by exactly the models that reason the most.
+:func:`detect_shadowed_tool_call` finds the marker, names it, and says which
+channel it was in, so the run can be invalidated instead of read.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -47,6 +60,53 @@ PARSE_BAD_TOOL_ARGUMENTS: Final[str] = "bad_tool_arguments"
 PARSE_EMPTY_RESPONSE: Final[str] = "empty_response"
 PARSE_UNKNOWN_FINISH_REASON: Final[str] = "unknown_finish_reason"
 PARSE_TRANSPORT_ERROR: Final[str] = "transport_error"
+PARSE_SHADOWED_TOOL_CALL: Final[str] = "shadowed_tool_call"
+PARSE_NO_TOOL_CALL: Final[str] = "no_tool_call"
+
+CHANNEL_CONTENT: Final[str] = "content"
+CHANNEL_REASONING: Final[str] = "reasoning"
+"""Output channels a marker can be found in. A backend that returns only one
+of them still reports the channel, so an aggregate can separate a call lost in
+the visible text from one lost behind a reasoning split."""
+
+MARKER_SPAN: Final[int] = 512
+"""How far apart the two halves of a bare tool-call object may sit and still be
+read as one object. Bounded so that a name mentioned in one paragraph and an
+argument list mentioned pages later are not joined into a false positive."""
+
+TOOL_CALL_MARKERS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    ("tool_call_tag", re.compile(r"<tool_call>", re.IGNORECASE)),
+    ("tool_call_token", re.compile(r"<\|tool_call\|>", re.IGNORECASE)),
+    ("function_tag", re.compile(r"<function=")),
+    ("function_call_tag", re.compile(r"<function_call>", re.IGNORECASE)),
+    ("python_tag", re.compile(r"<\|python_tag\|>", re.IGNORECASE)),
+    ("tool_calls_token", re.compile(r"\[TOOL_CALLS\]")),
+    ("commentary_channel", re.compile(r"commentary\s+to=")),
+    (
+        "name_arguments_object",
+        re.compile(
+            rf'"name"\s*:[\s\S]{{0,{MARKER_SPAN}}}?"arguments"\s*:'
+            rf'|"arguments"\s*:[\s\S]{{0,{MARKER_SPAN}}}?"name"\s*:'
+        ),
+    ),
+)
+"""Text shapes that mean a tool call was emitted, in the spellings serving
+stacks use for one. Every entry is a token or a punctuation shape rather than a
+word, because the cost of a false positive is a discarded trajectory and the
+cost of a miss is a parser failure scored as a behavioural result. Where the
+two are in tension the table errs toward discarding: a model that writes a
+tool-call object into its prose has produced a response the harness cannot tell
+apart from one whose call was swallowed, and neither is a decision."""
+
+UNRECOVERABLE_PARSE_REASONS: Final[frozenset[str]] = frozenset(
+    {PARSE_SHADOWED_TOOL_CALL}
+)
+"""Reason codes a second attempt cannot fix. A tool call that never left the
+serving stack is one: whether it arrives depends on how the stack splits a
+response rather than on this sample, so asking again would keep the answers
+that happened to reason briefly enough to come back whole and discard the
+rest. Everything else here is worth one more attempt within the budget."""
+
 
 FINISH_REASONS: Final[Mapping[str, FinishReason]] = {
     "tool_call": FinishReason.TOOL_CALL,
@@ -68,7 +128,10 @@ class ParseFailure(Exception):
 
     Carries a stable ``reason_code`` for aggregation and the digest of the raw
     payload so the offending text can be found in the run's text store without
-    embedding it in an event payload.
+    embedding it in an event payload. ``detail`` holds small structured facts
+    about the failure, such as which marker fired and where; it is written into
+    the parse-failure event as it stands, so it holds identifiers and offsets
+    and never model text.
     """
 
     def __init__(
@@ -77,11 +140,18 @@ class ParseFailure(Exception):
         *,
         reason_code: str,
         raw_text: str | None = None,
+        detail: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.raw_text = raw_text
         self.raw_digest = digest_text(raw_text) if raw_text is not None else None
+        self.detail: Mapping[str, Any] = dict(detail or {})
+
+
+def parse_failure_is_recoverable(failure: ParseFailure) -> bool:
+    """Report whether asking the same question again could answer it usably."""
+    return failure.reason_code not in UNRECOVERABLE_PARSE_REASONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +275,32 @@ class TokenUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class ShadowedToolCall:
+    """A tool-call-shaped marker in a response that parsed into no tool calls.
+
+    The three fields are what a later reader needs and all a payload may carry:
+    which marker fired, which output channel it was in, and how far into that
+    channel it sits. The text around it is not carried here, because a marker
+    location is a fact about the response format and the text is model output.
+    """
+
+    marker: str
+    channel: str
+    offset: int
+
+    def to_json_dict(self) -> dict[str, Any]:
+        """Return the event-payload fragment naming the marker and its place."""
+        return {"marker": self.marker, "channel": self.channel, "offset": self.offset}
+
+    def describe(self) -> str:
+        """Return the one-line account of what was found, for a failure message."""
+        return (
+            f"the {self.channel} channel carries a {self.marker} marker at "
+            f"character {self.offset}, but the response parsed into no tool calls"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelResponse:
     """One parsed model response.
 
@@ -226,6 +322,26 @@ class ModelResponse:
     def has_tool_calls(self) -> bool:
         """Report whether the model asked for at least one tool call."""
         return bool(self.tool_calls)
+
+    @property
+    def content_chars(self) -> int:
+        """Return the length of the visible assistant text, zero when absent."""
+        return len(self.content or "")
+
+    @property
+    def reasoning_chars(self) -> int:
+        """Return the length of the reasoning channel, zero when absent."""
+        return len(self.reasoning_content or "")
+
+    def shadowed_tool_call(self) -> ShadowedToolCall | None:
+        """Return the tool call this response lost in parsing, if it lost one.
+
+        Reports nothing when a call was parsed: a marker beside a call that
+        came through is a formatting quirk, not a call that went missing.
+        """
+        if self.tool_calls:
+            return None
+        return detect_shadowed_tool_call(self.content, self.reasoning_content)
 
     def text_digest(self) -> str:
         """Return the ``sha256:<hex>`` digest of the assistant text, or of ''."""
@@ -471,15 +587,21 @@ class OpenAICompatibleClient:
         finish_reason = parse_finish_reason(
             choice.get("finish_reason") if isinstance(choice, Mapping) else None
         )
+        reasoning = message.get("reasoning_content")
+        if not isinstance(reasoning, str):
+            reasoning = message.get("reasoning")
+        if not tool_calls:
+            shadow = detect_shadowed_tool_call(
+                content, reasoning if isinstance(reasoning, str) else None
+            )
+            if shadow is not None:
+                raise shadowed_tool_call_failure(shadow, raw_text=raw_text)
         if not tool_calls and not (content or "").strip():
             raise ParseFailure(
                 "message carries neither text nor a tool call",
                 reason_code=PARSE_EMPTY_RESPONSE,
                 raw_text=raw_text,
             )
-        reasoning = message.get("reasoning_content")
-        if not isinstance(reasoning, str):
-            reasoning = message.get("reasoning")
         return ModelResponse(
             content=content,
             tool_calls=tool_calls,
@@ -584,6 +706,62 @@ def parse_tool_calls(
         call.parsed_arguments()
         calls.append(call)
     return tuple(calls)
+
+
+def scan_for_tool_call_marker(
+    text: str | None, channel: str
+) -> ShadowedToolCall | None:
+    """Return the earliest tool-call marker in one channel of a response.
+
+    Earliest wins so that the reported offset is where the lost call begins
+    rather than wherever the longest pattern happened to match. A tie between
+    two markers at the same offset is broken by the order of
+    :data:`TOOL_CALL_MARKERS`, which keeps the report stable across runs.
+    """
+    if not text:
+        return None
+    found: ShadowedToolCall | None = None
+    for marker, pattern in TOOL_CALL_MARKERS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        if found is None or match.start() < found.offset:
+            found = ShadowedToolCall(
+                marker=marker, channel=channel, offset=match.start()
+            )
+    return found
+
+
+def detect_shadowed_tool_call(
+    content: str | None, reasoning_content: str | None = None
+) -> ShadowedToolCall | None:
+    """Return the marker of a tool call that never reached the caller.
+
+    Both channels are searched, and the reasoning channel is searched even
+    though nothing else in the harness reads it, because that is where a split
+    serving stack leaves the call it did not hand over. The visible channel is
+    reported first when both carry a marker, since a call in the text the
+    caller was given is the simpler failure and the one worth naming.
+    """
+    return scan_for_tool_call_marker(
+        content, CHANNEL_CONTENT
+    ) or scan_for_tool_call_marker(reasoning_content, CHANNEL_REASONING)
+
+
+def shadowed_tool_call_failure(
+    shadow: ShadowedToolCall, *, raw_text: str | None = None
+) -> ParseFailure:
+    """Return the parse failure a shadowed tool call raises.
+
+    Built here rather than at each call site so that the boundary and the agent
+    loop report one reason code and one detail shape for the same event.
+    """
+    return ParseFailure(
+        f"a tool call was lost before it reached the caller: {shadow.describe()}",
+        reason_code=PARSE_SHADOWED_TOOL_CALL,
+        raw_text=raw_text,
+        detail=shadow.to_json_dict(),
+    )
 
 
 def parse_usage(block: Any) -> TokenUsage:

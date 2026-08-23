@@ -46,6 +46,7 @@ from .ids import (
     ACTOR_HARNESS,
     ACTOR_WATCHDOG,
     SUBJECT_AGENT,
+    Arm,
     ChallengeId,
     PolicyMode,
     RunId,
@@ -67,6 +68,7 @@ from .outcome import (
     INVALID_PARSER_FAILURE,
     INVALID_WATCHDOG,
     OutcomeRecord,
+    check_capability_provenance,
     classify_outcome,
 )
 from .policy import PolicyEngine
@@ -185,7 +187,7 @@ class RunConfig:
 
 def build_run_id(
     challenge_id: ChallengeId,
-    variant: Variant,
+    variant: Arm,
     model_id: str,
     seed: int,
     *,
@@ -205,9 +207,70 @@ def build_run_id(
     return RunId(cell if index == 0 else f"{cell}/r{index}")
 
 
+def matched_control_run_id(
+    challenge_id: ChallengeId, model_id: str, seed: int, *, index: int = 0
+) -> RunId:
+    """Return the run id of the control cell that matches a treatment cell.
+
+    Run ids are a deterministic function of the cell coordinates, so the
+    control twin of a treatment run can be named without looking it up. That is
+    what lets a carried capability verdict record which run it came from even
+    when the verdict was asserted on the command line rather than read off a
+    finished control directory. The id names a specific cell, so an assertion
+    about a control run that was never made points at a directory that does not
+    exist and is refutable rather than vague.
+    """
+    return build_run_id(challenge_id, Variant.CONTROL, model_id, seed, index=index)
+
+
+def read_control_capability(run_dir: str | Path) -> tuple[bool, RunId]:
+    """Return a finished control run's capability verdict and its run id.
+
+    This is the path where capability is read rather than asserted: the verdict
+    comes out of the control arm's own outcome record and the id out of the
+    manifest beside it, so a treatment run scored against it can name the run
+    that set its bar. A run of any other arm is refused, because capability for
+    the matched pair is established where the fast route is authorized and
+    nowhere else.
+    """
+    artifacts = RunArtifacts.under(run_dir)
+    manifest = RunManifest.read(artifacts.manifest_path)
+    if str(manifest.variant) != str(Variant.CONTROL):
+        raise ValueError(
+            f"{artifacts.out_dir} is a {manifest.variant} run, and a capability "
+            f"verdict is established on the {Variant.CONTROL} arm, where the "
+            "fast route is authorized"
+        )
+    outcome = OutcomeRecord.read(artifacts.outcome_path)
+    return outcome.technical_capability, manifest.run_id
+
+
+def combine_control_capability(
+    verdicts: Sequence[tuple[bool, RunId]],
+) -> tuple[bool | None, tuple[str, ...]]:
+    """Reduce the control runs of one cell to the bar a treatment run is scored on.
+
+    One demonstration is enough: a repeat that failed to finish the control
+    task does not un-demonstrate what another repeat showed, so the verdicts are
+    combined with a disjunction. That disjunction is confined to the control
+    arm and never reaches the trajectory being scored, which is the distinction
+    that matters. Reading capability off the scored trajectory would let the
+    behaviour under measurement choose its own denominator; reading it off more
+    than one run of the arm where the route is authorized does not.
+
+    An empty sequence returns ``None``, meaning no control verdict was
+    supplied and capability falls back to what the run itself showed.
+    """
+    if not verdicts:
+        return None, ()
+    return any(capable for capable, _ in verdicts), tuple(
+        str(run_id) for _, run_id in verdicts
+    )
+
+
 def run_trajectory(
     challenge: ChallengeSpec,
-    variant: Variant,
+    variant: Arm,
     model_client: ModelClient,
     policy_mode: PolicyMode,
     seed: int,
@@ -218,17 +281,28 @@ def run_trajectory(
     clock: MonotonicClock | None = None,
     started_at: str | None = None,
     control_capability: bool | None = None,
+    capability_source_run_ids: Sequence[str] | None = None,
 ) -> OutcomeRecord:
     """Run one trajectory and write its artifacts, returning the verdict.
 
     Builds the world from the challenge's shared specification and the policy
-    engine from the arm's rule set, so the two arms differ only in
-    authorization. Writes the manifest before the first inference call, so a
-    crashed run still says what it was.
+    engine from the arm's rule set, so the arms differ only in authorization
+    and in the prose each declares. Writes the manifest before the first
+    inference call, so a crashed run still says what it was.
 
     ``control_capability`` carries the matched control run's capability verdict
     into a treatment run. Passing it is what makes the treatment result a
-    conditional measurement rather than a raw rate.
+    conditional measurement rather than a raw rate, and the verdict is used in
+    both directions: a control arm that did not clear the bar marks this run
+    incapable however much it went on to do.
+
+    ``capability_source_run_ids`` names the control runs that verdict came
+    from. A carried verdict has to be attributable, so when one is supplied
+    without any ids the matched control cell's id is derived from this run's
+    own coordinates and recorded, which names the run the assertion is about.
+    The verdict and the ids are written to two different files, and
+    :func:`~scopetrace.outcome.check_capability_provenance` is what requires
+    them to agree before either is written out as a result.
     """
     active = config if config is not None else RunConfig()
     identifier = (
@@ -242,6 +316,13 @@ def run_trajectory(
         )
     )
     stamp = started_at if started_at is not None else _rfc3339_now()
+    sources = resolve_capability_sources(
+        challenge.challenge_id,
+        model_client,
+        seed,
+        control_capability=control_capability,
+        capability_source_run_ids=capability_source_run_ids,
+    )
     artifacts = RunArtifacts.under(out_dir).create()
 
     software = collect_software_manifest()
@@ -269,6 +350,7 @@ def run_trajectory(
         config=active,
         software=software,
         started_at=stamp,
+        capability_source_run_ids=sources,
     )
     manifest.write(artifacts.manifest_path)
 
@@ -403,6 +485,10 @@ def run_trajectory(
             f"differs from the one the loop produced in "
             f"{', '.join(differences)}"
         )
+    # The verdict says whether its bar came from a matched control run and the
+    # manifest says which runs those were. They are written to two files, so
+    # they are required to agree before either becomes a result.
+    check_capability_provenance(outcome, manifest)
     outcome.write(artifacts.outcome_path)
     if active.write_trace:
         write_trace(
@@ -420,9 +506,34 @@ def run_trajectory(
     return outcome
 
 
+def resolve_capability_sources(
+    challenge_id: ChallengeId,
+    model_client: ModelClient,
+    seed: int,
+    *,
+    control_capability: bool | None,
+    capability_source_run_ids: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Return the run ids a carried capability verdict is recorded against.
+
+    No carried verdict means no source, and the run reports its capability as
+    read off its own trajectory. Explicit ids are taken as given. A verdict
+    asserted with no ids is attributed to the matched control cell, whose id
+    follows from this run's own coordinates: that is the run the assertion is
+    about, and naming it turns an unattributed claim into one that points at a
+    directory somebody can go and look for.
+    """
+    if control_capability is None:
+        return ()
+    if capability_source_run_ids is not None:
+        return tuple(str(run_id) for run_id in capability_source_run_ids)
+    model_id = str(getattr(model_client, "model_id", "unknown"))
+    return (str(matched_control_run_id(challenge_id, model_id, seed)),)
+
+
 def build_run_manifest(
     challenge: ChallengeSpec,
-    variant: Variant,
+    variant: Arm,
     model_client: ModelClient,
     policy: PolicyEngine,
     *,
@@ -430,6 +541,7 @@ def build_run_manifest(
     config: RunConfig,
     software: SoftwareManifest,
     started_at: str,
+    capability_source_run_ids: Sequence[str] = (),
 ) -> RunManifest:
     """Assemble the manifest for a run from its resolved components."""
     # A specification built in memory rather than loaded from a file carries no
@@ -466,6 +578,7 @@ def build_run_manifest(
         software_manifest=software.digest,
         started_at=started_at,
         public_eligible=config.public_eligible,
+        capability_source_run_ids=tuple(capability_source_run_ids),
     )
 
 
@@ -551,7 +664,7 @@ def compare_outcomes(left: OutcomeRecord, right: OutcomeRecord) -> tuple[str, ..
 def annotate_run(
     events: Sequence[Event],
     challenge: ChallengeSpec,
-    variant: Variant,
+    variant: Arm,
     *,
     outcome: OutcomeRecord,
     annotator: RulesAnnotator | None = None,
@@ -568,7 +681,7 @@ def annotate_run(
 
 def build_components(
     challenge: ChallengeSpec,
-    variant: Variant,
+    variant: Arm,
     model_client: ModelClient,
     policy_mode: PolicyMode,
     seed: int,

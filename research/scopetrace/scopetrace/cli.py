@@ -35,7 +35,16 @@ from .challenge import (
     validate_challenge_document,
 )
 from .events import EventType, load_events
-from .ids import PolicyMode, RunId, StopReason, TerminalSignal, Variant
+from .ids import (
+    ARM_PERMISSIVE,
+    Arm,
+    PolicyMode,
+    RunId,
+    StopReason,
+    TerminalSignal,
+    Variant,
+    parse_arm,
+)
 from .manifest import (
     REASONING_CONDITIONS,
     HardwareInfo,
@@ -59,7 +68,9 @@ from .runner import (
     RunArtifacts,
     RunConfig,
     _trace_metadata,
+    combine_control_capability,
     compare_outcomes,
+    read_control_capability,
     reclassify_run,
     run_trajectory,
     summarize_run,
@@ -109,7 +120,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--variant",
         type=parse_variant,
         default=Variant.CONTROL,
-        help="arm of the matched pair: control or treatment (default control)",
+        help=(
+            "arm to run: control or treatment for the matched pair, or "
+            f"{ARM_PERMISSIVE} for the capability ceiling (default control)"
+        ),
     )
     run.add_argument(
         "--policy-mode",
@@ -187,6 +201,18 @@ def build_parser() -> argparse.ArgumentParser:
         dest="control_capability",
         action="store_false",
         help="the matched control run did not demonstrate capability",
+    )
+    run.add_argument(
+        "--control-run",
+        dest="control_runs",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help=(
+            "read the capability verdict out of a finished control run "
+            "instead of asserting it, and record that run as the source of "
+            "this run's bar; repeatable for repeats of the control cell"
+        ),
     )
     run.add_argument(
         "--public-eligible",
@@ -326,6 +352,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         write_trace=not bool(getattr(args, "no_trace", False)),
     )
     declared_run_id = getattr(args, "run_id", None)
+    capability, sources = resolve_control_capability(args)
     outcome = run_trajectory(
         challenge,
         args.variant,
@@ -338,7 +365,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         # A scripted run takes the deterministic clock so that two runs of one
         # cell are byte-identical; a live run records the time it really took.
         clock=None if backend == BACKEND_REPLAY else time.monotonic_ns,
-        control_capability=getattr(args, "control_capability", None),
+        control_capability=capability,
+        capability_source_run_ids=sources,
     )
     artifacts = RunArtifacts.under(Path(args.out_dir))
     manifest = RunManifest.read(artifacts.manifest_path)
@@ -364,6 +392,25 @@ def cmd_run(args: argparse.Namespace) -> int:
         if path.exists():
             print(f"{label:<16} {path}")
     return EXIT_OK
+
+
+def resolve_control_capability(
+    args: argparse.Namespace,
+) -> tuple[bool | None, tuple[str, ...] | None]:
+    """Return the capability verdict to carry in, and the runs it came from.
+
+    ``--control-run`` reads the verdict out of a finished control directory,
+    which is the path where capability is measured rather than asserted, and it
+    wins over the flag: a directory that says the control arm did not clear the
+    bar is a result, and a flag saying otherwise is a claim about the same
+    thing with nothing behind it. With no directory given, the flag stands
+    alone and the runner attributes it to the matched control cell.
+    """
+    directories = [str(entry) for entry in getattr(args, "control_runs", []) or ()]
+    if not directories:
+        return getattr(args, "control_capability", None), None
+    verdicts = [read_control_capability(Path(entry)) for entry in directories]
+    return combine_control_capability(verdicts)
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -617,15 +664,18 @@ def load_replay_script(path: str | Path) -> tuple[ModelResponse | ParseFailure, 
     return tuple(scripted)
 
 
-def parse_variant(value: str) -> Variant:
-    """Parse a variant name, raising ``argparse.ArgumentTypeError`` if unknown."""
+def parse_variant(value: str) -> Arm:
+    """Parse an arm name, raising ``argparse.ArgumentTypeError`` if unknown.
+
+    The matched pair and the capability ceiling are all reachable here. Which
+    of them a challenge actually declares is the challenge's business, and
+    asking for an arm a challenge does not declare is refused when the rule set
+    is looked up rather than when the name is parsed.
+    """
     try:
-        return Variant(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"unknown variant {value!r}; expected one of "
-            + ", ".join(str(member) for member in Variant)
-        ) from None
+        return parse_arm(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 def parse_policy_mode(value: str) -> PolicyMode:
