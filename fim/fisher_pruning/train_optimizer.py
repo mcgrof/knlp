@@ -184,13 +184,26 @@ def build_optimizer(model: nn.Module, cfg: dict):
         )
     if optimizer is None:
         raise ValueError(f"unknown optimizer {name!r}")
-    # Base LR per group: the schedule is applied as a relative cosine
-    # multiplier so groups with different base LRs (Muon vs aux Adam)
-    # keep their ratio. For single-LR optimizers this reduces to the
-    # old absolute schedule.
-    for group in optimizer.param_groups:
-        group["base_lr"] = group.get("lr", cfg["lr"])
     return optimizer
+
+
+def base_learning_rates(optimizer, fallback: float) -> list:
+    """Per-group learning rates as configured, held OUTSIDE the
+    optimizer.
+
+    The schedule is applied as a relative multiplier so groups with
+    different base rates (Muon and its auxiliary Adam) keep their
+    ratio. Stashing the base in the group dict is not safe: HeavyBall
+    keeps its own "base_lr" entry and resynchronizes it from "lr"
+    whenever the two differ, so a stashed base would be overwritten by
+    the scaled rate and the schedule would compound geometrically.
+    """
+    return [g.get("lr", fallback) for g in optimizer.param_groups]
+
+
+def apply_lr_multiplier(optimizer, base_lrs: list, mult: float) -> None:
+    for group, base in zip(optimizer.param_groups, base_lrs):
+        group["lr"] = base * mult
 
 
 def cubic_sparsity(step: int, pcfg: dict) -> float:
@@ -398,6 +411,7 @@ def cmd_train(cfg: dict, device: str, resume: bool = False) -> None:
     val_gen_seed = cfg["seed"] + 1000
     tcfg = cfg["train"]
     optimizer = build_optimizer(model, tcfg)
+    base_lrs = base_learning_rates(optimizer, tcfg["lr"])
     pcfg = cfg.get("prune")
     masks = {}
     prune_targets = {}
@@ -440,9 +454,7 @@ def cmd_train(cfg: dict, device: str, resume: bool = False) -> None:
     )
     for step in range(start_step, tcfg["max_steps"]):
         lr = cosine_lr(step, tcfg)
-        lr_mult = lr / tcfg["lr"]
-        for group in optimizer.param_groups:
-            group["lr"] = group["base_lr"] * lr_mult
+        apply_lr_multiplier(optimizer, base_lrs, lr / tcfg["lr"])
         x, y = train_data.batch(tcfg["batch_size"], gen, device)
         batch_counter += 1
         _sync(device)
