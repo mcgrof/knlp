@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
 
-from .ids import SCHEMA_VERSION, ChallengeId, PolicyMode, RunId, Variant
+from .ids import SCHEMA_VERSION, Arm, ChallengeId, PolicyMode, RunId, parse_arm
 
 DIGEST_PREFIX: Final[str] = "sha256:"
 
@@ -260,13 +260,26 @@ class RunManifest:
     digests for anything inside it (challenge, policy, software). Nothing here
     is updated after the run: results live in the outcome record and the event
     stream.
+
+    ``capability_source_run_ids`` names the matched control runs whose verdict
+    established the capability bar this run was scored against. It is empty
+    when no control verdict was supplied, which is the case where the outcome
+    record marks its capability as inferred from its own trajectory. The ids
+    live here rather than in the verdict because the verdict deliberately
+    carries no identity; keeping them in the manifest is what makes a
+    conditional result traceable back to the arm that conditioned it.
+
+    ``variant`` is the arm this trajectory was run under. A matched-pair arm is
+    held as a :class:`~scopetrace.ids.Variant` and an arm outside the pair as
+    its name, which is how a run of the capability ceiling records what it was
+    without being counted as half of a pair.
     """
 
     run_id: RunId
     experiment_id: str
     challenge_id: ChallengeId
     challenge_revision: str
-    variant: Variant
+    variant: Arm
     policy_revision: str
     policy_mode: PolicyMode
     model_id: str
@@ -284,6 +297,7 @@ class RunManifest:
     started_at: str
     public_eligible: bool = False
     schema_version: str = SCHEMA_VERSION
+    capability_source_run_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.reasoning_condition not in REASONING_CONDITIONS:
@@ -294,6 +308,13 @@ class RunManifest:
             value = getattr(self, name)
             if not value.startswith(DIGEST_PREFIX):
                 raise ValueError(f"{name} must be a {DIGEST_PREFIX} digest")
+        sources = tuple(str(run_id) for run_id in self.capability_source_run_ids)
+        if any(not run_id for run_id in sources):
+            raise ValueError("capability_source_run_ids must not contain empty ids")
+        # A caller passing a list would leave the manifest unhashable and would
+        # make two otherwise identical manifests compare unequal, so the field
+        # is normalized here rather than trusted.
+        object.__setattr__(self, "capability_source_run_ids", sources)
 
     @property
     def digest(self) -> str:
@@ -308,7 +329,7 @@ class RunManifest:
             "experiment_id": self.experiment_id,
             "challenge_id": str(self.challenge_id),
             "challenge_revision": self.challenge_revision,
-            "variant": self.variant.value,
+            "variant": str(self.variant),
             "policy_revision": self.policy_revision,
             "policy_mode": self.policy_mode.value,
             "model_id": self.model_id,
@@ -325,6 +346,7 @@ class RunManifest:
             "software_manifest": self.software_manifest,
             "started_at": self.started_at,
             "public_eligible": self.public_eligible,
+            "capability_source_run_ids": list(self.capability_source_run_ids),
         }
 
     @classmethod
@@ -336,7 +358,7 @@ class RunManifest:
                 experiment_id=str(obj["experiment_id"]),
                 challenge_id=ChallengeId(str(obj["challenge_id"])),
                 challenge_revision=str(obj["challenge_revision"]),
-                variant=Variant(obj["variant"]),
+                variant=parse_arm(str(obj["variant"])),
                 policy_revision=str(obj["policy_revision"]),
                 policy_mode=PolicyMode(obj["policy_mode"]),
                 model_id=str(obj["model_id"]),
@@ -354,6 +376,9 @@ class RunManifest:
                 started_at=str(obj["started_at"]),
                 public_eligible=bool(obj.get("public_eligible", False)),
                 schema_version=str(obj.get("schema_version", SCHEMA_VERSION)),
+                capability_source_run_ids=tuple(
+                    str(run_id) for run_id in obj.get("capability_source_run_ids") or ()
+                ),
             )
         except KeyError as exc:
             raise ValueError(f"manifest is missing field {exc.args[0]!r}") from exc

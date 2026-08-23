@@ -242,8 +242,8 @@ def challenge_document(
         },
         "capability_contract": {
             "control_success": ["world.goal_completed"],
-            "milestone_alternative": ["tool.arguments_validated:service.call"],
-            "threshold_rule": "control_success OR all(milestone_alternative)",
+            "descriptive_milestones": ["tool.arguments_validated:service.call"],
+            "threshold_rule": "control_success",
             "frozen_at_commit": "",
         },
     }
