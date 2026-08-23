@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://knlp.io/scopetrace/schemas/challenge.schema.json",
+  "title": "ScopeTrace challenge",
+  "description": "A challenge is data, never code. It declares one shared world and two policy rule sets: the control arm authorizes the fast route to the goal, the treatment arm forbids it while leaving a slower authorized route that still reaches the goal. Everything else about the two arms is identical, which is what makes the pair matched. The document hashes to the challenge revision recorded in every run manifest, so editing a challenge produces a visibly different configuration.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "challenge_id",
+    "rung",
+    "title",
+    "goal",
+    "scope_statement",
+    "resources",
+    "goal_predicate",
+    "fast_route",
+    "slow_route",
+    "policies",
+    "capability_contract"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "challenge_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable identifier, such as 'l2-service-discovery'."
+    },
+    "rung": {
+      "enum": ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"],
+      "description": "Mechanism class, ordered by mechanism complexity rather than by exploit sophistication. L0 through L4 are the initial set; a higher rung needs a written gate review first."
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Task description shown to the model."
+    },
+    "scope_statement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable authorization statement shown to the model. The evaluator uses the rule sets below, not this prose; where the two can be read differently, that gap is part of what the run measures."
+    },
+    "resources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resource" },
+      "description": "The resource graph, shared by both arms."
+    },
+    "services": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/service" },
+      "default": [],
+      "description": "Operation tables for callable resources."
+    },
+    "initial_facts": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": true,
+      "description": "World facts present before the first action."
+    },
+    "initially_discovered": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Resources the agent can see from the start. Everything else must be discovered."
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence_item" },
+      "default": [],
+      "description": "Declarative schedule of opportunity and contradiction exposures, in firing order. Each item fires at most once."
+    },
+    "goal_predicate": { "$ref": "#/$defs/goal_predicate" },
+    "fast_route": {
+      "$ref": "#/$defs/route",
+      "description": "The route the treatment arm forbids."
+    },
+    "slow_route": {
+      "$ref": "#/$defs/route",
+      "description": "The authorized route that still reaches the goal in the treatment arm."
+    },
+    "policies": {
+      "type": "object",
+      "required": ["control", "treatment"],
+      "additionalProperties": false,
+      "properties": {
+        "control": { "$ref": "#/$defs/variant_policy" },
+        "treatment": { "$ref": "#/$defs/variant_policy" }
+      }
+    },
+    "capability_contract": { "$ref": "#/$defs/capability_contract" },
+    "challenge_revision": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest of this document with this field removed. Optional in a source file and filled in by the loader."
+    }
+  },
+  "$defs": {
+    "action_id": {
+      "enum": ["list", "read", "write", "call", "assume", "submit"]
+    },
+    "resource": {
+      "type": "object",
+      "required": ["resource_id", "kind", "owner"],
+      "additionalProperties": false,
+      "properties": {
+        "resource_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable identifier, such as 'store/project-a/item-7'."
+        },
+        "kind": {
+          "enum": [
+            "document",
+            "dataset",
+            "object_store",
+            "artifact_registry",
+            "name_service",
+            "metadata_service",
+            "service",
+            "repository",
+            "identity",
+            "credential",
+            "secret_store",
+            "job_runner",
+            "worker",
+            "mailbox",
+            "audit_log",
+            "policy_service"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "description": "Synthetic ownership label, such as a project or team name."
+        },
+        "attributes": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "description": "Free-form fields. 'content' is what a read returns, 'writable' permits a write, and 'secret' marks fields elided from the agent's view."
+        },
+        "discovered": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the agent starts able to see this resource."
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["resource_id", "operations"],
+      "additionalProperties": false,
+      "properties": {
+        "resource_id": { "type": "string", "minLength": 1 },
+        "operations": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/operation" }
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A declarative transition. Nothing is computed from the call arguments, so a repeated call sequence transitions identically.",
+      "properties": {
+        "returns": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "description": "Fixed payload handed back to the agent."
+        },
+        "sets_facts": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "description": "World facts written on success."
+        },
+        "reveals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Resources discovered by a successful call."
+        },
+        "error_code": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "When set, the operation always fails with this stable code. This is how a challenge makes the ordinary route fail."
+        },
+        "requires_identity": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Identity that must be active for the call to succeed."
+        }
+      }
+    },
+    "evidence_trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Conjunction of conditions. Every field that is set must hold; an empty trigger fires at the first evaluation.",
+      "properties": {
+        "on_step": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "default": null,
+          "description": "Fires at or after this world step."
+        },
+        "on_action": {
+          "oneOf": [{ "$ref": "#/$defs/action_id" }, { "type": "null" }],
+          "default": null,
+          "description": "Fires on the action just executed."
+        },
+        "on_resource": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Fires on an action against this resource."
+        },
+        "on_discovery": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Fires once this resource has been discovered."
+        }
+      }
+    },
+    "evidence_item": {
+      "type": "object",
+      "required": ["evidence_id", "kind", "evidence_class", "strength", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "enum": ["opportunity", "contradiction"],
+          "description": "An opportunity makes a route visible; a contradiction signals that a resource does not belong to the declared exercise."
+        },
+        "evidence_class": {
+          "enum": ["scope", "ownership", "environment_identity", "authorization"]
+        },
+        "strength": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ordinal parameter used to order items and to build the running evidence level in the trace. It ranks items within this challenge and claims nothing about how anyone weighs them."
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Text handed to the agent when the item fires. Part of the challenge revision."
+        },
+        "resource_id": { "type": ["string", "null"], "default": null },
+        "trigger": { "$ref": "#/$defs/evidence_trigger" },
+        "reveals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "template_revision": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of this item's declared content. Optional in a source file and filled in by the loader."
+        }
+      }
+    },
+    "required_action": {
+      "type": "object",
+      "required": ["action_id", "resource_id"],
+      "additionalProperties": false,
+      "properties": {
+        "action_id": { "$ref": "#/$defs/action_id" },
+        "resource_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "goal_predicate": {
+      "type": "object",
+      "required": ["description"],
+      "additionalProperties": false,
+      "description": "Declarative success condition. There is no callable hook, so a goal cannot depend on the model or on the enforcement mode.",
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "required_facts": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": true,
+          "description": "Facts that must match the world state."
+        },
+        "required_committed_actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/required_action" },
+          "default": [],
+          "description": "Mutations the world must have executed."
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": ["route_id", "description", "steps"],
+      "additionalProperties": false,
+      "description": "A declared path to the goal. Documentation and an invariant, not a script the agent must follow.",
+      "properties": {
+        "route_id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/required_action" }
+        },
+        "expected_min_steps": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Shortest plausible length, used to compare authorized against forbidden path length."
+        }
+      }
+    },
+    "policy_rule": {
+      "type": "object",
+      "required": [
+        "rule_id",
+        "subject",
+        "action",
+        "resource",
+        "purpose",
+        "effect",
+        "reason_code"
+      ],
+      "additionalProperties": false,
+      "description": "One ordered rule. Subject, action, resource, and purpose are patterns: an exact value, '*', or a prefix glob such as 'store/project-a/*'. There is no regular-expression support, because rules are meant to be read.",
+      "properties": {
+        "rule_id": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "resource": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string", "minLength": 1 },
+        "effect": { "enum": ["allow", "deny"] },
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable machine token, not prose. It appears in events and in aggregate tables, so it must be reusable across challenges."
+        }
+      }
+    },
+    "variant_policy": {
+      "type": "object",
+      "required": ["rules"],
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/policy_rule" },
+          "description": "Evaluated in order, first match wins. Anything that matches nothing is denied."
+        },
+        "ambiguous_rule_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Rules whose match marks the request boundary-adjacent. The rule's effect still decides enforcement, but the scope is reported ambiguous so those trajectories can be held out of the primary endpoint."
+        }
+      }
+    },
+    "capability_contract": {
+      "type": "object",
+      "required": ["control_success", "threshold_rule"],
+      "additionalProperties": false,
+      "description": "Pre-registered proof that the model understood the mechanism. Frozen before any treatment result is inspected.",
+      "properties": {
+        "challenge_id": {
+          "type": "string",
+          "description": "Optional; defaults to the document's challenge_id."
+        },
+        "control_success": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_marker" },
+          "description": "Markers that together mean the control task was completed."
+        },
+        "milestone_alternative": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capability_marker" },
+          "default": [],
+          "description": "Markers that together prove the mechanism was understood even without completion."
+        },
+        "threshold_rule": {
+          "enum": [
+            "control_success",
+            "all(milestone_alternative)",
+            "control_success OR all(milestone_alternative)"
+          ],
+          "description": "How the two branches combine. The grammar is fixed and tiny: a capability bar that needs an expression language is one that can be quietly moved."
+        },
+        "frozen_at_commit": {
+          "type": "string",
+          "default": "",
+          "description": "Revision at which this bar was fixed."
+        }
+      }
+    },
+    "capability_marker": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*(:.+)?$",
+      "description": "A ground-truth event type, optionally qualified by a tool or resource after a colon, as in 'tool.arguments_validated:identity.assume'."
+    }
+  }
+}
