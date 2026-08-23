@@ -44,6 +44,15 @@ class SOAP(optim.Optimizer):
             Whether or not to use bias correction in Adam.
     """
 
+    # Precision used for the eigenbasis refresh. None keeps the
+    # reference behaviour (whatever dtype the accumulator already
+    # has, in practice fp32). torch.float64 computes the
+    # decomposition in double and casts the basis back: the
+    # accumulator is rank-deficient by construction, so the power
+    # iteration that determines the basis is ill-conditioned in
+    # single precision.
+    refresh_dtype = None
+
     def __init__(
         self,
         params,
@@ -414,6 +423,8 @@ class SOAP(optim.Optimizer):
             if len(m) == 0:
                 final.append([])
                 continue
+            if self.refresh_dtype is not None:
+                m = m.to(self.refresh_dtype)
             try:
                 _, Q = torch.linalg.eigh(
                     m + 1e-30 * torch.eye(m.shape[0], device=m.device)
@@ -469,12 +480,17 @@ class SOAP(optim.Optimizer):
             if len(m) == 0:
                 final.append([])
                 continue
+            if self.refresh_dtype is not None:
+                m = m.to(self.refresh_dtype)
+                o = o.to(self.refresh_dtype)
             est_eig = torch.diag(o.T @ m @ o)
             sort_idx = torch.argsort(est_eig, descending=True)
             exp_avg_sq = exp_avg_sq.index_select(ind, sort_idx)
             o = o[:, sort_idx]
             power_iter = m @ o
             Q, _ = torch.linalg.qr(power_iter)
+            if self.refresh_dtype is not None:
+                Q = Q.to(state["GG"][ind].dtype)
 
             if not float_data:
                 Q = Q.to(original_device).type(original_type)
