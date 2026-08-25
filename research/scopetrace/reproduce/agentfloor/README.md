@@ -143,6 +143,46 @@ the order of ten hours on a single workstation card rather than the "O(days)"
 the upstream README reports for its own host. Renting equivalent hardware is
 therefore unnecessary unless the goal is wall-clock parallelism.
 
+## The matched re-run reproduces in part, and the gap is informative
+
+Running pass two locally at the paper's own sampling — five prompt variants,
+five runs per combination, 3,000 runs across four models spanning the published
+spread — gives 21 of 28 tier intervals overlapping the published ones, and 18 of
+28 local point estimates inside the published interval. The full table is in
+[tcr_matrix_local_pass2.txt](tcr_matrix_local_pass2.txt).
+
+Two models land cleanly. `ministral-3:8b` overlaps on all seven cells and its
+overall rate is 54% against a published 55%. `qwen3:0.6b` overlaps on six of
+seven and its overall is 32% against 29%.
+
+Two do not. `qwen3.5:2b` comes out at 60% and 20% on the two-tool and branching
+tiers against a published 80% and 40%, and its overall is 35% against 44%, which
+is outside the interval. `qwen3:14b` comes out at 68% on two-tool chaining
+against a published 84%, though its overall of 46% against 48% still overlaps.
+
+The likeliest explanation is that the weights are not the same. The sweep configs
+name ollama tags with no digest, and the run records store only the tag, so a
+corpus carries no way to check which build produced it. Those tags are mutable:
+a model can be republished under the same name at any time, and four months
+separate the published sweep from this one. The hypothesis is therefore
+consistent with the evidence and untestable from the artifacts, which is itself
+the finding.
+
+That is worth stating carefully, because open weights are often described as the
+reproducible substrate, and they only are if the digest is pinned. A benchmark
+that names `qwen3.5:2b` and records nothing else has the same reproducibility
+property as one that names a hosted API endpoint: it reproduces until the name
+starts pointing somewhere else, and it cannot tell you when that happened. The
+digests this run used are recorded in
+[model_digests_local.txt](model_digests_local.txt) so at least this side is
+checkable.
+
+Other explanations are open and not excluded: a different ollama version with
+different quantization defaults or chat-template handling, a different serving
+backend, or numerics that differ enough at temperature zero to move a
+borderline task. Ruling between them needs the authors' digests, which is the
+first thing to ask them for.
+
 ## Watching a model actually call a tool
 
 [walkthrough.py](walkthrough.py) reads a run record out loud. It exists because
