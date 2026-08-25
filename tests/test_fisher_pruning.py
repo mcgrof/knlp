@@ -787,3 +787,21 @@ def test_lr_multiplier_preserves_per_group_ratio():
     apply_lr_multiplier(opt, base_lrs, 0.25)
     assert opt.param_groups[0]["lr"] == 0.005
     assert opt.param_groups[1]["lr"] == 1.5e-4
+
+
+def test_fp64_refresh_returns_basis_in_parameter_dtype():
+    """A double-precision refresh must hand the basis back in the
+    accumulator's dtype; otherwise the next projection mixes dtypes."""
+    from fim.fisher_pruning.soap import SOAP
+
+    torch.manual_seed(0)
+    p = torch.nn.Parameter(torch.randn(24, 16))
+    opt = SOAP([p], lr=1e-3, betas=(0.95, 0.95), precondition_frequency=2)
+    opt.refresh_dtype = torch.float64
+    for _ in range(6):
+        p.grad = torch.randn(24, 16)
+        opt.step()  # would raise on a dtype mismatch
+    st = opt.state[p]
+    for q in st["Q"]:
+        assert q.dtype == torch.float32, q.dtype
+    assert torch.isfinite(p).all()
