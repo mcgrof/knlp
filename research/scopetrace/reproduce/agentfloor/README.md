@@ -49,7 +49,16 @@ runs, filters to 12,330 in the `paper_baseline` subset, and returns per-tier pas
 rates matching the paper for every open-weight model in the corpus. The full
 output is in [tcr_matrix_reproduced.txt](tcr_matrix_reproduced.txt).
 
-## The released metrics code cannot score its own corpus
+## Three defects block the released code
+
+Scoring the corpus and running even a three-task sweep each hit a separate
+defect. All three are one-liners, all three are carried here as patches, and all
+three should go upstream. Taken together they mean the released tree cannot
+reproduce the paper and cannot run its own primary sweep, which is worth stating
+plainly: the published reproduction path had not been exercised end to end
+before release.
+
+### 1. Scoring crashes on undefined diagnostics
 
 `runs/run_metrics.py results/ --subset paper_baseline`, the command the upstream
 README gives for reproducing the paper's tables, fails as released:
@@ -68,13 +77,43 @@ Both ends of the ladder reach it. A model good enough never to emit a malformed
 call leaves the error-recovery ratio undefined; a model too weak to emit any call
 leaves the malformed-call and hallucination ratios undefined.
 
-[metrics-none-ci.patch](metrics-none-ci.patch) is a one-line fix that skips
-undefined values alongside infinite ones, which is what the surrounding code
-already intends. It should go upstream.
+Fix: [metrics-none-ci.patch](metrics-none-ci.patch).
 
-That this is reachable on the first documented command, against the authors' own
-data, is worth stating plainly: it means the published reproduction path had not
-been exercised end to end before release.
+### 2. The sweep looks for tasks in the wrong directory
+
+`runs/run_sweep.py --eval` resolves the task set as `_HERE / "tasks"`, where
+`_HERE` is the `runs/` directory, so it looks for `runs/tasks`, which does not
+exist. Every scored file fails with `could not find task YAML`. The file already
+defines `_REPO_ROOT = _HERE.parent` on the line after `_HERE` and uses it
+elsewhere, so the correct constant was to hand.
+
+Fix: [sweep-taskdir.patch](sweep-taskdir.patch).
+
+### 3. The runner crashes for every provider except Gemini
+
+`harness/runner.py` calls `provider.reset_run_state()` unconditionally at the
+start of every run. That method is declared on `Provider`, which is a
+`typing.Protocol` — so it supplies no implementation to the provider classes,
+none of which inherit from it. Only `GeminiProvider` defines it, to reset a
+synthetic tool-call id counter.
+
+So every run through the OpenAI-compatible provider, which is what the ollama
+and vLLM backends use, dies with
+
+```
+AttributeError: 'OpenAICompatibleProvider' object has no attribute 'reset_run_state'
+```
+
+The primary sweep of the paper is `ollama_full.yaml`, which runs through exactly
+that provider. The protocol's own docstring says "Default is a no-op; providers
+that hold per-run state override this", so the faithful fix is to give the
+providers that hold no per-run state the documented no-op.
+
+Fix: [provider-reset-run-state.patch](provider-reset-run-state.patch).
+
+This one implies the released code has diverged from whatever produced the
+corpus, since the corpus contains 12,330 runs through this provider that the
+released tree cannot generate.
 
 ## Provenance
 
