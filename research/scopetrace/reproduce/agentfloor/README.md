@@ -143,6 +143,14 @@ the order of ten hours on a single workstation card rather than the "O(days)"
 the upstream README reports for its own host. Renting equivalent hardware is
 therefore unnecessary unless the goal is wall-clock parallelism.
 
+## Where the fixes go
+
+The three patches here exist so that `reproduce.sh` works against the released
+upstream tree. This directory is not a fork of that project and is not where the
+fixes get submitted. They belong upstream, and a branch carrying them as three
+separate commits against that project's own history is prepared outside this
+repository.
+
 ## Provenance
 
 - Upstream commit: `rkarmaka/AgentFloor` default branch, cloned 2026-08-24.
