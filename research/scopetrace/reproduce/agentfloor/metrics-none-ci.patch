@@ -1,0 +1,31 @@
+Bootstrap CI loop must skip undefined diagnostics, not only infinite ones
+
+_diagnostics_from_ingredients returns None whenever a ratio's denominator
+is undefined: sdr and thi when a resample made no tool calls at all, err
+when it produced no malformed calls to recover from, and every metric when
+the resample is empty. Its docstring is explicit that None is returned
+"instead of a zero or 1.0 that would visually flatter the model", so those
+cells are meant to be excluded from the statistic rather than counted.
+
+add_cis_to_diagnostics filters float("inf") but not None, so a None reaches
+samples[m] and the subsequent vals.sort() raises
+
+    TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'
+
+This fires on the shipped corpus with the documented reproduction command,
+so `run_metrics.py results/ --subset paper_baseline` cannot complete as
+released. It is reachable from both ends of the capability ladder: a model
+good enough never to emit a malformed call leaves err undefined, and a model
+too weak to emit any call leaves sdr and thi undefined.
+
+--- a/harness/metrics.py
++++ b/harness/metrics.py
+@@ -284,7 +284,7 @@
+             d = _diagnostics_from_ingredients(sample)
+             for m in _DIAG_METRICS:
+                 v = d[m]
+-                if v == float("inf"):
++                if v is None or v == float("inf"):
+                     continue
+                 samples[m].append(v)
+         for m in _DIAG_METRICS:
