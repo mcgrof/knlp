@@ -423,6 +423,7 @@ class SOAP(optim.Optimizer):
             if len(m) == 0:
                 final.append([])
                 continue
+            orig_dtype = m.dtype
             if self.refresh_dtype is not None:
                 m = m.to(self.refresh_dtype)
             try:
@@ -434,6 +435,9 @@ class SOAP(optim.Optimizer):
                     m.to(torch.float64) + 1e-30 * torch.eye(m.shape[0], device=m.device)
                 )
                 Q = Q.to(m.dtype)
+            # The basis must return in the accumulator's dtype, or the
+            # next projection mixes precisions and fails.
+            Q = Q.to(orig_dtype)
             Q = torch.flip(Q, [1])
 
             if not float_data:
