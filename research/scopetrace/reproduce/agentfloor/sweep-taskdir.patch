@@ -1,0 +1,13 @@
+diff --git a/runs/run_sweep.py b/runs/run_sweep.py
+index 26137a5..855ddaa 100644
+--- a/runs/run_sweep.py
++++ b/runs/run_sweep.py
+@@ -814,7 +814,7 @@ def run_evaluation(config: SweepConfig) -> None:
+     print("=" * 60)
+     print("EVALUATING RESULTS")
+     print("=" * 60)
+-    tasks_dir = _HERE / "tasks"
++    tasks_dir = _REPO_ROOT / "tasks"
+     # Collect the unique provider dirs this sweep writes to. In a
+     # single-backend sweep this is typically one; in mixed-backend
+     # sweeps (api_frontier.yaml) it may be several.
