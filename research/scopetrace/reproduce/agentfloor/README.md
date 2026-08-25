@@ -115,6 +115,34 @@ This one implies the released code has diverged from whatever produced the
 corpus, since the corpus contains 12,330 runs through this provider that the
 released tree cannot generate.
 
+## Running it locally
+
+The upstream sweep ships in two passes and this matters for any comparison.
+`ollama_full.yaml` is pass one: a single prompt variant at one run per
+combination, 480 runs across the full model set. `ollama_full_pass2.yaml` is
+pass two: five variants at five runs, 12,000 runs, and it is pass two that the
+paper's numbers come from. A pass-one run therefore yields five observations per
+tier against the paper's hundred and twenty five, which is a smoke test and not
+a reproduction.
+
+[compare_tcr.py](compare_tcr.py) compares two `run_metrics.py` outputs. It
+reports interval overlap first, because that is the defensible check when the
+two sides carry different sampling, and the stricter point-in-interval result
+alongside it.
+
+A pass-one smoke run of four models spanning the published spread, on one 48 GB
+card, gives overall rates of 33%, 37%, 60% and 53% against published 29%, 44%,
+55% and 48%, with 20 of 28 tier intervals overlapping. Most of the
+non-overlapping cells are degenerate: five of five passes collapses a bootstrap
+interval to [100,100], which cannot overlap anything below it. The full output
+is in [tcr_matrix_local_1run.txt](tcr_matrix_local_1run.txt).
+
+Throughput is the useful number from that run. Tasks complete in roughly one to
+thirty seconds depending on model size, so the 12,000-run pass-two sweep is on
+the order of ten hours on a single workstation card rather than the "O(days)"
+the upstream README reports for its own host. Renting equivalent hardware is
+therefore unnecessary unless the goal is wall-clock parallelism.
+
 ## Provenance
 
 - Upstream commit: `rkarmaka/AgentFloor` default branch, cloned 2026-08-24.
