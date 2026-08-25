@@ -1,0 +1,25 @@
+Model digests and serving stack for the local reproduction, 2026-08-24.
+
+The upstream sweep configs name ollama tags with no digest, and the run records
+store only the tag, so a corpus cannot be checked against the weights that
+produced it. These are recorded so this run can be, even though the run it is
+compared against cannot.
+
+ollama 0.32.15, ROCm build, AMD Radeon Pro W7900 (gfx1100), 45.0 GiB.
+
+functiongemma:270m       7c19b650567a
+qwen3:0.6b               7df6b6e09427
+qwen3:1.7b               8f68893c685c
+qwen3.5:2b               324d162be6ca
+granite4:3b              89962fcc7523
+ministral-3:3b           f04aa1c738f6
+nemotron-3-nano:4b       6cc467f05439
+gemma4:e4b               c6eb396dbd59
+qwen3:8b                 500a1f067a9f
+ministral-3:8b           1922accd5827
+qwen3:14b                bdbd181c33f2
+ministral-3:14b          4760c35aeb9d
+gpt-oss:20b              17052f91a42e
+mistral-small3.2:24b     5a408ab55df5
+gemma4:26b               08ae7ec1744b
+qwen3:32b                030ee887880f
