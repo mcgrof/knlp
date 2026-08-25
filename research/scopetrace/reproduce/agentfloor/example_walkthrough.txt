@@ -1,0 +1,26 @@
+==============================================================================
+qwen3:0.6b   task A5   tier A   variant v0
+==============================================================================
+
+THE TASK
+    Submit an approval decision for request REQ-220.
+
+TURN 1 — the model asks for 1 tool call(s)
+    it emitted: submit_decision
+      as text: {"status":"ok","submission_id":"REQ-220"}
+      parsed to: {"status": "ok", "submission_id": "REQ-220"}
+      verdict: well formed
+    the environment replies: error
+      invalid_submission: action mismatch: expected 'approve', got 'None'  (recoverable)
+
+TURN 2 — the model asks for 1 tool call(s)
+    it emitted: submit_decision
+      as text: {"status":"approve","submission_id":"REQ-220"}
+      parsed to: {"status": "approve", "submission_id": "REQ-220"}
+      verdict: well formed
+    the environment replies: error
+      invalid_submission: action mismatch: expected 'approve', got 'None'  (recoverable)
+
+HOW IT ENDED: step_budget_exhausted
+    2 turns, 2 calls, 1590 ms
+    scored: FAIL — FAIL — final_answer(no final answer text); submission(las…

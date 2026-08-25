@@ -1,0 +1,12 @@
+model                   runs                  calls          invented_tool         malformed_args     env_returned_error runs_with_no_call_at_all
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ministral-3:8b            30                     85               0 (  0%)               0 (  0%)               3 (  4%)               5 ( 17%)
+qwen3.5:2b                30                    117               4 (  3%)              15 ( 13%)              34 ( 29%)               6 ( 20%)
+qwen3:0.6b                30                     32               0 (  0%)               1 (  3%)               7 ( 22%)              13 ( 43%)
+qwen3:14b                 30                     40               0 (  0%)               0 (  0%)               2 (  5%)              10 ( 33%)
+
+invented_tool and malformed_args are counted against calls emitted, and
+both are decided before the call is dispatched, so they are failures of
+protocol rather than of the task. runs_with_no_call_at_all is counted
+against runs: a model that answers in prose when a tool was required
+never entered the protocol in the first place.
