@@ -1,0 +1,4 @@
+# The repository root ignores *.patch, which is right for stray build patches
+# but wrong here: the patches in this tree are tracked artifacts, carried so a
+# reproduction can be replayed and so the fix can go upstream.
+!*.patch
