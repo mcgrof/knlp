@@ -588,6 +588,33 @@ def cmd_prune_eval(
                 }
             )
 
+        # Hybrid arms: this lane's scoring rule choosing the mask,
+        # SparseGPT still reconstructing the survivors. Isolates the
+        # mask from the weight update.
+        for mask_arm in cfg.get("sparsegpt_mask_arms", []):
+            if mask_arm not in scores:
+                raise KeyError(f"mask arm {mask_arm} not among {sorted(scores)}")
+            for sparsity in sparsities:
+                _apply_masks(model, targets, pristine, {})
+                achieved = sparsegpt_prune(
+                    model,
+                    calib_batches,
+                    sparsity,
+                    blocksize=cfg.get("sparsegpt_blocksize", 128),
+                    percdamp=cfg.get("sparsegpt_percdamp", 0.01),
+                    device=device,
+                    mask_scores=scores[mask_arm],
+                )
+                eval_cell(
+                    {
+                        "arm": f"sparsegpt_{mask_arm}",
+                        "sparsity": sparsity,
+                        "actual_sparsity": sum(achieved.values())
+                        / max(len(achieved), 1),
+                        "layers_pruned": len(achieved),
+                    }
+                )
+
     _apply_masks(model, targets, pristine, {})  # leave the model dense
     _jsonl(log, {"event": "done", "elapsed_s": time.time() - t0})
     print("done", flush=True)

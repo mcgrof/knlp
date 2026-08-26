@@ -98,3 +98,46 @@ def test_zero_sparsity_is_a_near_noop():
     h = 2.0 / 256 * (x.T @ x)
     _prune_linear(lin, h, sparsity=0.0)
     torch.testing.assert_close(lin.weight.data, before, rtol=1e-3, atol=1e-4)
+
+
+def test_replay_drops_cache_bearing_kwargs():
+    """A cache passed through the block replay grows on every call and
+    breaks the second pass with a doubled sequence length."""
+    from fim.fisher_pruning.sparsegpt import _Catcher
+
+    store = {"hidden": []}
+    catcher = _Catcher(nn.Identity(), store)
+    try:
+        catcher(
+            torch.zeros(2, 4, 8),
+            attention_mask=torch.ones(2, 4),
+            past_key_values=object(),
+            cache_position=torch.arange(4),
+            use_cache=True,
+        )
+    except _Catcher.Stop:
+        pass
+    k = store["kwargs"]
+    assert "past_key_values" not in k and "cache_position" not in k
+    assert k["use_cache"] is False
+    assert "attention_mask" in k, "real kwargs must survive"
+    assert store["hidden"][0].device.type == "cpu"
+
+
+def test_external_importance_selects_the_mask():
+    """A supplied importance map must decide which weights die, while
+    the reconstruction still runs (survivors move)."""
+    torch.manual_seed(0)
+    lin = nn.Linear(32, 16, bias=False)
+    before = lin.weight.data.clone()
+    x = torch.randn(512, 32)
+    h = 2.0 / 512 * (x.T @ x)
+    # force the first half of every row to be the prune candidates
+    imp = torch.ones_like(before)
+    imp[:, :16] = 0.0
+    _prune_linear(lin, h, sparsity=0.5, importance=imp)
+    after = lin.weight.data
+    assert (after[:, :16] == 0).all(), "low-importance half should be pruned"
+    assert (after[:, 16:] != 0).any(), "high-importance half should survive"
+    moved = (after[:, 16:] - before[:, 16:]).abs().max()
+    assert moved > 1e-6, "reconstruction must still update survivors"
