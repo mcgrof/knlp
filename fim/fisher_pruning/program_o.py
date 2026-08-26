@@ -374,43 +374,63 @@ def build_scores(
         arm_names = arm_names + ("trajectory",)
     if names_only:
         return {a: {} for a in arm_names}
-    scores: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names}
+    # `only` short-circuits per layer. Computing every arm and
+    # discarding all but one costs the full ten-model-sized set on
+    # every access, which is what the host out-of-memory killer
+    # reacted to on a 1B model.
+    want = lambda a: only is None or a == only
+    scores: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names if want(a)}
+    if only is not None and only not in scores:
+        raise KeyError(f"unknown arm {only!r}; have {sorted(arm_names)}")
     for n, w in weights.items():
         f = factors[n]
-        d = f["D"].float()
-        diag_g = torch.diagonal(f["G"]).float()
-        diag_a = torch.diagonal(f["A"]).float()
-        kron = torch.outer(diag_g, diag_a)
-        scores["random"][n] = torch.rand(w.shape, generator=rng)
-        scores["magnitude"][n] = w.abs()
-        scores["fresh_q025"][n] = w.abs() * (d + EPS) ** 0.25
-        scores["fresh_q050"][n] = w.abs() * (d + EPS) ** 0.5
-        scores["kron_q025"][n] = w.abs() * (kron + EPS) ** 0.25
-        scores["kron_q050"][n] = w.abs() * (kron + EPS) ** 0.5
-        inv_g = damped_inverse_diag(f["G"], obs_kappa).float()
-        inv_a = damped_inverse_diag(f["A"], obs_kappa).float()
-        denom = torch.clamp(torch.outer(inv_g, inv_a), min=1e-30)
-        scores["kfac_obs"][n] = w.pow(2) / denom
-        col_norm = torch.clamp(diag_a, min=0.0).sqrt()
-        scores["wanda"][n] = w.abs() * col_norm.unsqueeze(0)
-        if stale_v is not None:
+        if want("random"):
+            scores["random"][n] = torch.rand(w.shape, generator=rng)
+        if want("magnitude"):
+            scores["magnitude"][n] = w.abs()
+        if want("fresh_q025") or want("fresh_q050"):
+            d = f["D"].float()
+            if want("fresh_q025"):
+                scores["fresh_q025"][n] = w.abs() * (d + EPS) ** 0.25
+            if want("fresh_q050"):
+                scores["fresh_q050"][n] = w.abs() * (d + EPS) ** 0.5
+            del d
+        if want("kron_q025") or want("kron_q050"):
+            kron = torch.outer(
+                torch.diagonal(f["G"]).float(), torch.diagonal(f["A"]).float()
+            )
+            if want("kron_q025"):
+                scores["kron_q025"][n] = w.abs() * (kron + EPS) ** 0.25
+            if want("kron_q050"):
+                scores["kron_q050"][n] = w.abs() * (kron + EPS) ** 0.5
+            del kron
+        if want("kfac_obs"):
+            inv_g = damped_inverse_diag(f["G"], obs_kappa).float()
+            inv_a = damped_inverse_diag(f["A"], obs_kappa).float()
+            denom = torch.clamp(torch.outer(inv_g, inv_a), min=1e-30)
+            scores["kfac_obs"][n] = w.pow(2) / denom
+            del inv_g, inv_a, denom
+        if want("wanda"):
+            col_norm = torch.clamp(torch.diagonal(f["A"]).float(), min=0.0).sqrt()
+            scores["wanda"][n] = w.abs() * col_norm.unsqueeze(0)
+        if stale_v is not None and (want("stale_q025") or want("stale_q050")):
             v = stale_v[n].float()
             if v.shape != w.shape:
                 raise ValueError(f"stale state shape mismatch for {n}")
-            scores["stale_q025"][n] = w.abs() * (v + EPS) ** 0.25
-            scores["stale_q050"][n] = w.abs() * (v + EPS) ** 0.5
+            if want("stale_q025"):
+                scores["stale_q025"][n] = w.abs() * (v + EPS) ** 0.25
+            if want("stale_q050"):
+                scores["stale_q050"][n] = w.abs() * (v + EPS) ** 0.5
         if replay_v is not None:
             for c, snap in replay_v.items():
+                if not want(f"replay_b{c}"):
+                    continue
                 rv = snap[n].float()
                 if rv.shape != w.shape:
                     raise ValueError(f"replay state shape mismatch for {n}")
                 scores[f"replay_b{c}"][n] = w.abs() * (rv + EPS) ** 0.25
-    if w_prev is not None:
+    if w_prev is not None and want("trajectory"):
         scores["trajectory"] = trajectory_scores(weights, w_prev)
-    if only is not None:
-        if only not in scores:
-            raise KeyError(f"unknown arm {only!r}; have {sorted(scores)}")
-        return {only: scores[only]}
     return scores
 
 
