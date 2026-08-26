@@ -36,26 +36,35 @@ class _Catcher(nn.Module):
     class Stop(Exception):
         pass
 
+    _DROP = ("past_key_value", "past_key_values", "layer_past", "cache_position")
+
     def __init__(self, module, store):
         super().__init__()
         self.module = module
         self.store = store
 
     def forward(self, hidden_states, **kwargs):
-        self.store["hidden"].append(hidden_states.detach())
-        # kwargs (masks, position embeddings) are identical per batch
-        # shape here, so one captured copy drives every block replay.
-        self.store["kwargs"] = kwargs
+        # host-resident: the whole calibration set of hidden
+        # states does not fit beside the model and the Hessians
+        self.store["hidden"].append(hidden_states.detach().cpu())
+        # Anything carrying generation state must not be replayed: a
+        # cache grows on every block call, so the second replay sees
+        # twice the sequence length it was built for. Masks and
+        # position embeddings are identical across same-shape batches,
+        # so one captured copy drives every replay.
+        kept = {k: v for k, v in kwargs.items() if k not in self._DROP}
+        kept["use_cache"] = False
+        self.store["kwargs"] = kept
         raise _Catcher.Stop
 
 
-def _block_list(model) -> List[nn.Module]:
-    """The transformer block stack, whatever the architecture calls it."""
-    for mod in model.modules():
+def _block_list(model):
+    """The transformer block stack and its dotted name prefix."""
+    for name, mod in model.named_modules():
         if isinstance(mod, nn.ModuleList) and len(mod) > 1:
             first = mod[0]
             if any(isinstance(m, nn.Linear) for m in first.modules()):
-                return list(mod)
+                return list(mod), name
     raise RuntimeError("no transformer block stack found")
 
 
@@ -85,8 +94,16 @@ def _prune_linear(
     sparsity: float,
     blocksize: int = 128,
     percdamp: float = 0.01,
+    importance: Optional[torch.Tensor] = None,
 ) -> None:
-    """Prune one linear in place, reconstructing survivors."""
+    """Prune one linear in place, reconstructing survivors.
+
+    importance, when given, replaces the diagonal Optimal-Brain-Surgeon
+    criterion for CHOOSING the mask (higher means keep); the
+    reconstruction is unchanged. That isolates the mask from the weight
+    update, which is the only way to tell whether a better scoring rule
+    still buys anything once survivors are reconstructed.
+    """
     w = linear.weight.data.clone().float()
     h = hess.clone()
     dead = torch.diagonal(h) == 0
@@ -111,7 +128,11 @@ def _prune_linear(
 
         # Mask chosen per block from the deletion cost, exactly as
         # published: the diagonal of the inverse Hessian, squared.
-        tmp = w1**2 / (torch.diagonal(hinv1).reshape(1, -1)) ** 2
+        if importance is None:
+            tmp = w1**2 / (torch.diagonal(hinv1).reshape(1, -1)) ** 2
+        else:
+            # externally scored: same orientation, low means prune
+            tmp = importance[:, i1:i2].to(w1.device).float()
         k = int(tmp.numel() * sparsity)
         if k <= 0:
             mask1 = torch.zeros_like(tmp, dtype=torch.bool)
@@ -146,13 +167,14 @@ def sparsegpt_prune(
     blocksize: int = 128,
     percdamp: float = 0.01,
     device: str = "cuda",
+    mask_scores: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Dict[str, float]:
     """Prune the model in place. Returns per-layer achieved sparsity.
 
     batches is a list of [B, T] token tensors; they are pushed through
     the block stack once, then replayed block by block.
     """
-    blocks = _block_list(model)
+    blocks, prefix = _block_list(model)
     store = {"hidden": [], "kwargs": {}}
     blocks_parent = None
     for mod in model.modules():
@@ -179,26 +201,32 @@ def sparsegpt_prune(
             if isinstance(m, nn.Linear)
             and (target_names is None or f"blocks.{bi}.{n}" in target_names or True)
         }
-        accs = {n: _HessianAccumulator(m) for n, m in linears.items()}
-        handles = []
+        # One linear at a time: a block's Hessians together are
+        # several gigabytes at 1B scale (an 8192-wide layer alone is
+        # 268 MB in fp32), which is what exhausted a 45 GiB card.
         for n, m in linears.items():
-            handles.append(
-                m.register_forward_pre_hook(lambda mod, inp, n=n: accs[n].add(inp[0]))
-            )
-        for h in hiddens:
-            block(h, **kwargs)
-        for handle in handles:
+            acc = _HessianAccumulator(m)
+            handle = m.register_forward_pre_hook(lambda mod, inp, a=acc: a.add(inp[0]))
+            for h in hiddens:
+                block(h.to(device), **kwargs)
             handle.remove()
-
-        for n, m in linears.items():
-            _prune_linear(m, accs[n].h, sparsity, blocksize, percdamp)
+            imp = None
+            if mask_scores is not None:
+                full = f"{prefix}.{bi}.{n}" if prefix else f"{bi}.{n}"
+                imp = mask_scores.get(full)
+                if imp is None:
+                    raise KeyError(f"no mask score supplied for {full}")
+            _prune_linear(m, acc.h, sparsity, blocksize, percdamp, imp)
             achieved[f"block{bi}.{n}"] = float((m.weight == 0).float().mean())
-            del accs[n]
+            del acc
+            if device.startswith("cuda"):
+                torch.cuda.empty_cache()
         torch.cuda.empty_cache() if device.startswith("cuda") else None
 
         # propagate through the now-pruned block for the next one
         for i in range(len(hiddens)):
-            out = block(hiddens[i], **kwargs)
-            hiddens[i] = out[0] if isinstance(out, tuple) else out
+            out = block(hiddens[i].to(device), **kwargs)
+            out = out[0] if isinstance(out, tuple) else out
+            hiddens[i] = out.detach().cpu()
 
     return achieved
