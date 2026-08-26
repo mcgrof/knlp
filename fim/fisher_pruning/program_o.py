@@ -340,6 +340,7 @@ def build_scores(
     replay_v: Optional[Dict[int, Dict[str, torch.Tensor]]] = None,
     w_prev: Optional[Dict[str, torch.Tensor]] = None,
     only: Optional[str] = None,
+    names_only: bool = False,
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """arm -> {module name -> score tensor [out, in]} (cpu fp32).
 
@@ -371,6 +372,8 @@ def build_scores(
         arm_names = arm_names + tuple(f"replay_b{c}" for c in sorted(replay_v))
     if w_prev is not None:
         arm_names = arm_names + ("trajectory",)
+    if names_only:
+        return {a: {} for a in arm_names}
     scores: Dict[str, Dict[str, torch.Tensor]] = {a: {} for a in arm_names}
     for n, w in weights.items():
         f = factors[n]
@@ -547,12 +550,7 @@ def cmd_prune_eval(
     )
 
     def _arm_names() -> List[str]:
-        probe = {n: weights[n][:1, :1] for n in list(weights)[:1]}
-        probe_f = {
-            n: {k: v[:1, :1] if v.dim() == 2 else v[:1] for k, v in factors[n].items()}
-            for n in probe
-        }
-        return sorted(build_scores(probe, probe_f, **_score_kw))
+        return sorted(build_scores(weights, factors, names_only=True, **_score_kw))
 
     def _one_arm(arm: str) -> Dict[str, torch.Tensor]:
         return build_scores(weights, factors, only=arm, **_score_kw)[arm]

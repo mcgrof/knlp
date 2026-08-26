@@ -285,3 +285,20 @@ def test_build_scores_only_filter():
     one = build_scores(weights, factors, only="magnitude")
     assert set(one) == {"magnitude"}
     torch.testing.assert_close(one["magnitude"]["l"], weights["l"].abs())
+
+
+def test_build_scores_names_only_builds_nothing():
+    """Naming the arms must not touch the tensors: the probe that did
+    sliced weights but not the replay state and raised on shape."""
+    import torch
+
+    from fim.fisher_pruning.program_o import build_scores
+
+    weights = {"l": torch.randn(4, 3)}
+    factors = {"l": {"D": torch.rand(4, 3), "G": torch.eye(4), "A": torch.eye(3)}}
+    replay = {16: {"l": torch.rand(4, 3)}}
+    names = build_scores(weights, factors, replay_v=replay, names_only=True)
+    assert "replay_b16" in names and "magnitude" in names
+    assert all(v == {} for v in names.values()), "names_only must build no tensors"
+    full = build_scores(weights, factors, replay_v=replay)
+    assert sorted(full) == sorted(names), "name list must match the real build"
