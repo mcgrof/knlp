@@ -63,6 +63,10 @@ LR = float(os.environ.get("LR", "2e-2"))
 ROLLOUT_TOKENS = int(os.environ.get("ROLLOUT_TOKENS", "96"))
 ROLLOUT_TEMP = float(os.environ.get("ROLLOUT_TEMP", "0.7"))
 REFRESH = int(os.environ.get("OPCART_REFRESH", "1"))
+TERMINAL_WEIGHT = float(os.environ.get("TERMINAL_WEIGHT", "1.0"))
+SAVE_OPT = os.environ.get("SAVE_OPT", "0") == "1"
+LOAD_OPT = os.environ.get("LOAD_OPT", "")
+CHECKPOINT_AT = [int(x) for x in os.environ.get("CHECKPOINT_AT", "").split(",") if x]
 EVAL_EVERY = [int(x) for x in os.environ.get("EVAL_AT", "0,10,50,100").split(",")]
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 SEED = int(os.environ.get("SEED", "0"))
@@ -156,16 +160,30 @@ print(f"[opcart] dataset elements: {len(dataset.elements)}")
 
 
 def split_element(el):
-    """An element packs [prompt tokens | answer tokens]; the stored sparse
-    targets index answer positions.  The first target index marks the
-    answer start (library convention: topk_token_idxs are 1-based next-token
-    positions)."""
+    """An element packs [prompt tokens | answer tokens].  Stored sparse
+    target row p (0-based logit position) predicts element token p+1, so
+    the first predicted answer token is at min(row)+1 and everything at or
+    before min(row) — including the assistant-header newline — is prompt
+    (review finding 10; the earlier split put that newline in the answer)."""
     idxs = el.topk_token_idxs
-    ans_start = int(idxs.min().item()) - 1
-    assert ans_start > 0, "cannot locate answer start in element"
+    ans_start = int(idxs.min().item())
+    assert ans_start > 1, "cannot locate answer start in element"
     prompt_ids = el.input_ids[:ans_start]
     answer_ids = el.input_ids[ans_start:]
     return prompt_ids, answer_ids, ans_start
+
+
+_el0 = dataset.elements[0]
+_p0, _a0, _s0 = split_element(_el0)
+print(
+    "[opcart] split check: prompt_tail=%r answer_head=%r first_target_row=%d"
+    % (
+        tok.decode(_p0[-12:].tolist()),
+        tok.decode(_a0[:12].tolist()),
+        int(_el0.topk_token_idxs.min()),
+    ),
+    flush=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +199,9 @@ def teacher_logits_on(prefix_prompt_ids, answer_ids):
     out = teacher(input_ids=ids)
     n_ans = answer_ids.shape[0]
     start = ids.shape[1] - n_ans - 1
-    return out.logits[0, start : start + n_ans].float()
+    # n_ans positions predicting the answer tokens, plus the terminal
+    # position predicting what follows the complete prefix (EOS behavior)
+    return out.logits[0, start : start + n_ans + 1].float()
 
 
 def student_logits_on(prompt_ids, answer_ids, with_grad):
@@ -202,7 +222,7 @@ def student_logits_on(prompt_ids, answer_ids, with_grad):
         )
     n_ans = answer_ids.shape[0]
     start = ids.shape[0] - n_ans - 1
-    return out.logits[0, start : start + n_ans].float()
+    return out.logits[0, start : start + n_ans + 1].float()
 
 
 @torch.no_grad()
@@ -226,11 +246,26 @@ def rollout(prompt_ids):
 
 
 def divergence_loss(t_logits, s_logits):
+    """Positions 0..n-1 are answer-token predictors; the final position is
+    the terminal predictor, weighted by TERMINAL_WEIGHT.  Returns
+    (loss, segments) with per-segment means for logging."""
     lp_t = t_logits.log_softmax(-1)
     lp_s = s_logits.log_softmax(-1)
     if DIVERGENCE == "fkl":
-        return (lp_t.exp() * (lp_t - lp_s)).sum(-1).mean()
-    return (lp_s.exp() * (lp_s - lp_t)).sum(-1).mean()
+        per_pos = (lp_t.exp() * (lp_t - lp_s)).sum(-1)
+    else:
+        per_pos = (lp_s.exp() * (lp_s - lp_t)).sum(-1)
+    n = per_pos.shape[0] - 1
+    token_part = per_pos[:n]
+    terminal = per_pos[n]
+    loss = (token_part.sum() + TERMINAL_WEIGHT * terminal) / (n + TERMINAL_WEIGHT)
+    segments = dict(
+        first=float(per_pos[0].detach()),
+        first4=float(token_part[: min(4, n)].detach().mean()),
+        tail=float(token_part[min(4, n) :].detach().mean()) if n > 4 else 0.0,
+        terminal=float(terminal.detach()),
+    )
+    return loss, segments
 
 
 def stored_topk_loss(el):
@@ -361,6 +396,33 @@ def free_gen_eval():
 # ---------------------------------------------------------------------------
 
 
+def save_cart(path):
+    """Save in library format, preserving the frozen sink so the eval
+    loader reconstructs the same geometry as the baseline."""
+    tk = [p.detach() for p in cache.trainable_keys]
+    tv = [p.detach() for p in cache.trainable_values]
+    fk = fv = None
+    if NUM_FROZEN:
+        raw_fk = getattr(cache, "frozen_keys", None) or getattr(
+            cache, "_frozen_keys", None
+        )
+        raw_fv = getattr(cache, "frozen_values", None) or getattr(
+            cache, "_frozen_values", None
+        )
+        assert raw_fk is not None, "cannot locate frozen keys on TrainableCache"
+        fk = [torch.as_tensor(t).detach().contiguous().cpu() for t in raw_fk]
+        fv = [torch.as_tensor(t).detach().contiguous().cpu() for t in raw_fv]
+    torch.save(
+        {
+            "trainable_keys": [t.contiguous().cpu() for t in tk],
+            "trainable_values": [t.contiguous().cpu() for t in tv],
+            "frozen_keys": fk,
+            "frozen_values": fv,
+        },
+        path,
+    )
+
+
 def main():
     reference_test()
     out_dir = Path(OUT_DIR) / ARM
@@ -368,6 +430,9 @@ def main():
     opt = torch.optim.AdamW(
         cache.parameters(), lr=LR, betas=(0.9, 0.95), weight_decay=0.0
     )
+    if LOAD_OPT:
+        opt.load_state_dict(torch.load(LOAD_OPT, weights_only=False))
+        print(f"[opcart] restored optimizer state from {LOAD_OPT}")
     run = dict(
         arm=ARM,
         prefix_source=PREFIX_SOURCE,
@@ -416,6 +481,7 @@ def main():
             rollout_bank = []
         accum_loss = 0.0
         n_used = 0
+        seg_accum = {}
         for a in range(ACCUM):
             el = dataset.elements[rng.randrange(len(dataset.elements))]
             if ARM == "tp_fkl_stored":
@@ -464,13 +530,15 @@ def main():
                 run["cost"]["train_tokens"] += int(
                     prompt_ids.shape[0] + answer_ids.shape[0]
                 )
-                loss = divergence_loss(t_logits, s_logits)
+                loss, segs = divergence_loss(t_logits, s_logits)
+                for k, v in segs.items():
+                    seg_accum[k] = seg_accum.get(k, 0.0) + v / ACCUM
             (loss / ACCUM).backward()
             accum_loss += float(loss.detach()) / ACCUM
             n_used += 1
         assert_no_model_grads([model, teacher])
         t0 = time.time()
-        torch.nn.utils.clip_grad_norm_(cache.parameters(), 1.0)
+        grad_norm = float(torch.nn.utils.clip_grad_norm_(cache.parameters(), 1.0))
         opt.step()
         run["cost"]["update_s"] += time.time() - t0
         if step % 5 == 0 or step == 1:
@@ -479,7 +547,12 @@ def main():
                 f"wall={time.time() - t_start:.0f}s",
                 flush=True,
             )
-        run["history"].append(dict(step=step, loss=accum_loss, used=n_used))
+        if step in CHECKPOINT_AT:
+            save_cart(out_dir / f"{PATIENT}_step{step}.pt")
+        entry = dict(step=step, loss=accum_loss, used=n_used, grad_norm=grad_norm)
+        if seg_accum:
+            entry["kl_segments"] = {k: round(v, 5) for k, v in seg_accum.items()}
+        run["history"].append(entry)
         maybe_eval(step)
 
     run["cost"]["total_wall_s"] = time.time() - t_start
@@ -508,6 +581,8 @@ def main():
         },
         out_dir / f"{PATIENT}.pt",
     )
+    if SAVE_OPT:
+        torch.save(opt.state_dict(), out_dir / "opt_state.pt")
     with open(out_dir / "run.json", "w") as f:
         json.dump(run, f, indent=1)
     print(f"OPCART_DONE arm={ARM} out={out_dir}")
