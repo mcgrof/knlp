@@ -254,3 +254,34 @@ def test_stale_state_arms(tmp_path):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_arm_view_builds_one_arm_at_a_time():
+    """Score maps are model-sized; holding every arm at once is what
+    the host out-of-memory killer reacted to on a 1B model."""
+    from fim.fisher_pruning.program_o import _ArmView
+
+    built = []
+    view = _ArmView(["a", "b"], lambda n: (built.append(n), {"w": n})[1])
+    assert len(view) == 2 and "a" in view and "z" not in view
+    assert built == [], "listing names must not build anything"
+    assert view["a"] == {"w": "a"} and built == ["a"]
+    names = [n for n, _ in view.items()]
+    assert names == ["a", "b"]
+    try:
+        view["zzz"]
+        assert False, "unknown arm must raise"
+    except KeyError:
+        pass
+
+
+def test_build_scores_only_filter():
+    import torch
+
+    from fim.fisher_pruning.program_o import build_scores
+
+    weights = {"l": torch.randn(4, 3)}
+    factors = {"l": {"D": torch.rand(4, 3), "G": torch.eye(4), "A": torch.eye(3)}}
+    one = build_scores(weights, factors, only="magnitude")
+    assert set(one) == {"magnitude"}
+    torch.testing.assert_close(one["magnitude"]["l"], weights["l"].abs())
