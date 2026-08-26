@@ -568,11 +568,17 @@ def cmd_prune_eval(
         # and its own sequential pass over the blocks.
         from fim.fisher_pruning.sparsegpt import sparsegpt_prune
 
+        # The published method calibrates on 128 sequences. The full
+        # scoring calibration set is larger, and every extra sequence
+        # is replayed through every block for every sparsity.
+        n_sg = cfg.get("sparsegpt_nsamples", 128)
+        sg_batches = calib_batches[:n_sg]
+
         for sparsity in sparsities:
             _apply_masks(model, targets, pristine, {})  # restore dense
             achieved = sparsegpt_prune(
                 model,
-                calib_batches,
+                sg_batches,
                 sparsity,
                 blocksize=cfg.get("sparsegpt_blocksize", 128),
                 percdamp=cfg.get("sparsegpt_percdamp", 0.01),

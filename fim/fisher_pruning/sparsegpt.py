@@ -201,15 +201,24 @@ def sparsegpt_prune(
             if isinstance(m, nn.Linear)
             and (target_names is None or f"blocks.{bi}.{n}" in target_names or True)
         }
-        # One linear at a time: a block's Hessians together are
-        # several gigabytes at 1B scale (an 8192-wide layer alone is
-        # 268 MB in fp32), which is what exhausted a 45 GiB card.
-        for n, m in linears.items():
-            acc = _HessianAccumulator(m)
-            handle = m.register_forward_pre_hook(lambda mod, inp, a=acc: a.add(inp[0]))
-            for h in hiddens:
-                block(h.to(device), **kwargs)
+        # All of a block's Hessians in ONE replay. Doing them one at a
+        # time replays the calibration set once per linear, which is
+        # seven times the work on a SwiGLU block and was the reason a
+        # 1B run never finished. A block's Hessians together are a few
+        # hundred megabytes (the widest, 8192-square in fp32, is 268),
+        # which fits beside the model.
+        accs = {n: _HessianAccumulator(m) for n, m in linears.items()}
+        handles = [
+            m.register_forward_pre_hook(lambda mod, inp, a=accs[n]: a.add(inp[0]))
+            for n, m in linears.items()
+        ]
+        for h in hiddens:
+            block(h.to(device), **kwargs)
+        for handle in handles:
             handle.remove()
+
+        for n, m in linears.items():
+            acc = accs.pop(n)
             imp = None
             if mask_scores is not None:
                 full = f"{prefix}.{bi}.{n}" if prefix else f"{bi}.{n}"
