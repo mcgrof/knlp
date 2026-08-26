@@ -302,3 +302,32 @@ def test_build_scores_names_only_builds_nothing():
     assert all(v == {} for v in names.values()), "names_only must build no tensors"
     full = build_scores(weights, factors, replay_v=replay)
     assert sorted(full) == sorted(names), "name list must match the real build"
+
+
+def test_only_builds_just_that_arm():
+    """`only` must short-circuit per layer, not build everything and
+    filter: the discard-all-but-one version cost the full arm set on
+    every access and got a 1B run killed."""
+    import torch
+
+    from fim.fisher_pruning.program_o import build_scores
+
+    calls = {"n": 0}
+    real_rand = torch.rand
+
+    def counting_rand(*a, **k):
+        calls["n"] += 1
+        return real_rand(*a, **k)
+
+    weights = {"l": torch.randn(4, 3), "m": torch.randn(4, 3)}
+    factors = {
+        n: {"D": torch.rand(4, 3), "G": torch.eye(4), "A": torch.eye(3)}
+        for n in weights
+    }
+    torch.rand = counting_rand
+    try:
+        got = build_scores(weights, factors, only="magnitude")
+    finally:
+        torch.rand = real_rand
+    assert set(got) == {"magnitude"}
+    assert calls["n"] == 0, "the random arm must not be built when only=magnitude"
