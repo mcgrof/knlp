@@ -305,6 +305,32 @@ def calibrate(
     return acc.finalize(), acc.n_tokens
 
 
+class _ArmView:
+    """Names now, tensors on demand — one arm resident at a time."""
+
+    def __init__(self, names, builder):
+        self._names = list(names)
+        self._builder = builder
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __contains__(self, k):
+        return k in self._names
+
+    def __len__(self):
+        return len(self._names)
+
+    def __getitem__(self, k):
+        if k not in self._names:
+            raise KeyError(k)
+        return self._builder(k)
+
+    def items(self):
+        for n in self._names:
+            yield n, self._builder(n)
+
+
 def build_scores(
     weights: Dict[str, torch.Tensor],
     factors: Dict[str, Dict[str, torch.Tensor]],
@@ -313,6 +339,7 @@ def build_scores(
     stale_v: Optional[Dict[str, torch.Tensor]] = None,
     replay_v: Optional[Dict[int, Dict[str, torch.Tensor]]] = None,
     w_prev: Optional[Dict[str, torch.Tensor]] = None,
+    only: Optional[str] = None,
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """arm -> {module name -> score tensor [out, in]} (cpu fp32).
 
@@ -377,6 +404,10 @@ def build_scores(
                 scores[f"replay_b{c}"][n] = w.abs() * (rv + EPS) ** 0.25
     if w_prev is not None:
         scores["trajectory"] = trajectory_scores(weights, w_prev)
+    if only is not None:
+        if only not in scores:
+            raise KeyError(f"unknown arm {only!r}; have {sorted(scores)}")
+        return {only: scores[only]}
     return scores
 
 
@@ -502,15 +533,31 @@ def cmd_prune_eval(
     tcfg = cfg.get("trajectory")
     if tcfg:
         w_prev = load_hf_target_weights(cfg["model_id"], tcfg["prev_revision"])
-    scores = build_scores(
-        weights,
-        factors,
+    # Every arm's score map is the size of the model in single
+    # precision, so holding them all at once costs roughly ten times
+    # the model. That is affordable at 410M and gets a 1B run killed
+    # by the host out-of-memory killer, so arms are built one at a
+    # time and freed after use.
+    _score_kw = dict(
         obs_kappa=cfg.get("obs_kappa", 1e-2),
         random_seed=cfg.get("random_arm_seed", 1234),
         stale_v=stale_v,
         replay_v=replay_v,
         w_prev=w_prev,
     )
+
+    def _arm_names() -> List[str]:
+        probe = {n: weights[n][:1, :1] for n in list(weights)[:1]}
+        probe_f = {
+            n: {k: v[:1, :1] if v.dim() == 2 else v[:1] for k, v in factors[n].items()}
+            for n in probe
+        }
+        return sorted(build_scores(probe, probe_f, **_score_kw))
+
+    def _one_arm(arm: str) -> Dict[str, torch.Tensor]:
+        return build_scores(weights, factors, only=arm, **_score_kw)[arm]
+
+    scores = _ArmView(_arm_names(), _one_arm)
     sparsities = cfg.get("sparsities", [0.3, 0.5, 0.7])
     _jsonl(
         log,
