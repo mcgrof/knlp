@@ -562,6 +562,32 @@ def cmd_prune_eval(
                     "actual_sparsity": _actual_sparsity(masks),
                 }
             )
+    if cfg.get("sparsegpt"):
+        # SparseGPT does not fit the mask loop above: it REWRITES the
+        # surviving weights, so each sparsity needs a fresh dense model
+        # and its own sequential pass over the blocks.
+        from fim.fisher_pruning.sparsegpt import sparsegpt_prune
+
+        for sparsity in sparsities:
+            _apply_masks(model, targets, pristine, {})  # restore dense
+            achieved = sparsegpt_prune(
+                model,
+                calib_batches,
+                sparsity,
+                blocksize=cfg.get("sparsegpt_blocksize", 128),
+                percdamp=cfg.get("sparsegpt_percdamp", 0.01),
+                device=device,
+            )
+            mean_sp = sum(achieved.values()) / max(len(achieved), 1)
+            eval_cell(
+                {
+                    "arm": "sparsegpt",
+                    "sparsity": sparsity,
+                    "actual_sparsity": mean_sp,
+                    "layers_pruned": len(achieved),
+                }
+            )
+
     _apply_masks(model, targets, pristine, {})  # leave the model dense
     _jsonl(log, {"event": "done", "elapsed_s": time.time() - t0})
     print("done", flush=True)
