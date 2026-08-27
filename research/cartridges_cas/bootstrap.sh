@@ -42,6 +42,8 @@ CART_ROOT="$CART_ROOT" "$PYTHON" "$HERE/scripts/apply_pod_patches.py" --cart-roo
 
 echo "[bootstrap] placing CAS scripts"
 cp -f "$HERE"/scripts/cas_*.py "$CART_ROOT/"
+cp -f "$HERE"/scripts/opcart_*.py "$CART_ROOT/"
+cp -f "$HERE"/scripts/cart_opt_*.py "$CART_ROOT/"
 cp -f "$HERE"/scripts/synth_pod.py "$CART_ROOT/"
 cp -f "$HERE"/scripts/cas_joint.py "$CART_ROOT/cartridges/initialization/"
 

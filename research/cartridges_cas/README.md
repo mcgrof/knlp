@@ -37,6 +37,18 @@ mixed-visibility joint training and the rescue eval. Results land as
   end to end on one H100 to validate the recipe.
 - `cas-paper` — full patient panel, isolated collapse plus mixed-visibility
   rescue.
+- `cartridge-opt-ablation` — AdamW vs SOAP on stored-target cartridge training,
+  matched arms (shared truncation init, same data order, steps, learning rate).
+  Cartridge training backprops through a large frozen model to update a small
+  KV prefix, so the optimizer step is a small share of total step cost — the
+  regime where a second-order optimizer's per-step gains are nearly free. The
+  run reports loss at matched steps, a CUDA-synchronized wall-clock split with
+  the optimizer-step share, and strict letter accuracy per checkpoint
+  (`opt_ablation_report.md`). Needs a stored self-study parquet (`DATA_PARQUET`
+  env, or enable the synth phase). SOAP's eigenbasis refresh needs a
+  deterministic backward: run on NVIDIA, not on ROCm/W7900. Offline hosts can
+  stage records into `RECORDS_DIR` and point `LONGHEALTH_JSON` at a local copy
+  of the LongHealth benchmark JSON.
 
 The scale knobs (`CONFIG_CARTRIDGES_CAS_*`) are documented in the Kconfig help.
 The dominant quality lever is convos-per-patient: 400 leaves a cartridge below
