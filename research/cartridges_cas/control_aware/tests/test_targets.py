@@ -32,10 +32,10 @@ def flat(rows):
     return idxs, ids, lps
 
 
-def greedy_row(ri, chosen, lp_chosen, others):
+def greedy_row(ri, chosen, lp_chosen, others=None):
     """[sampled] + [top-k] layout with the sampled token duplicated as
     top-1 (the greedy-synthesis case)."""
-    return (ri, [(chosen, lp_chosen), (chosen, lp_chosen)] + others)
+    return (ri, [(chosen, lp_chosen), (chosen, lp_chosen)] + (others or []))
 
 
 def loss_from(tset, logprob_table, denom):
@@ -127,6 +127,47 @@ def test_no_eot_when_capped():
     rows = [greedy_row(3, 7, -0.2, []), greedy_row(9, 12, -0.4, [])]
     et = parse_element(*flat(rows), eot_token_id=EOT)
     assert et.eot_row_idx is None
+
+
+def test_content_calibration_weights_by_denominator():
+    """Two elements of very different size: matching raw probability
+    sums would leave the content arm carrying a different anchor
+    coefficient than the control arm it is declared matched to, because
+    the objective divides each element by its own denominator."""
+    small = parse_element(
+        *flat(
+            [
+                greedy_row(3, 7, float(torch.log(torch.tensor(0.9)))),
+                greedy_row(4, 11, float(torch.log(torch.tensor(0.3)))),
+            ]
+        ),
+        eot_token_id=EOT,
+    )
+    big = parse_element(
+        *flat(
+            [
+                greedy_row(3, 7, float(torch.log(torch.tensor(0.5)))),
+                greedy_row(4, 11, float(torch.log(torch.tensor(0.9)))),
+            ]
+        ),
+        eot_token_id=EOT,
+    )
+    ets = [small, big]
+    denoms = [12, 1200]
+    rows, cscale, _ = calibrate_content_anchors(ets, denoms=denoms)
+    ctrl = sum(
+        build_target_set(et, "control_anchor", denom=d).coefficient_mass()
+        - build_target_set(et, "dedup_legacy_support", denom=d).coefficient_mass()
+        for et, d in zip(ets, denoms)
+    )
+    cont = sum(
+        build_target_set(
+            et, "content_anchor_matched", content_rows=r, content_scale=cscale, denom=d
+        ).coefficient_mass()
+        - build_target_set(et, "dedup_legacy_support", denom=d).coefficient_mass()
+        for et, r, d in zip(ets, rows, denoms)
+    )
+    assert abs(ctrl - cont) < 1e-9, (ctrl, cont, cscale)
 
 
 def test_scale_and_content_calibration():

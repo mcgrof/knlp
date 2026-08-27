@@ -57,8 +57,31 @@ elif "flex_attention_train = flex_attention" in s:
     ap.write_text(s)
     status["attention"] = "patched"
 elif "torch.compile(flex_attention" in s:
-    # pinned upstream form: already compiled, nothing to restore
-    status["attention"] = "upstream_already_compiled"
+    # Pinned upstream form: already compiled, but unconditionally and
+    # with max-autotune on the training path.  Upstream's own comment
+    # credits max-autotune with ~2x on an A100 backward, but the mode
+    # needs autotune GEMM backends the runtime may not offer, and it
+    # raises NoValidChoicesError at the first compile.  Put the same
+    # env guard on it and make the autotune mode itself opt-in, so a
+    # run can fall back without editing installed sources.
+    s = s.replace(
+        'flex_attention_train = torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")',
+        "import os as _os\n"
+        "_CR_COMPILE = (_os.environ.get('CARTRIDGES_COMPILE_FLEX', '1') == '1'\n"
+        "               and torch.cuda.is_available()\n"
+        "               and torch.cuda.get_device_capability()[0] >= 8)\n"
+        "_CR_AUTOTUNE = _os.environ.get('CARTRIDGES_FLEX_AUTOTUNE', '0') == '1'\n"
+        "_CR_KW = {'mode': 'max-autotune-no-cudagraphs'} if _CR_AUTOTUNE else {}\n"
+        "flex_attention_train = (torch.compile(flex_attention, dynamic=False, **_CR_KW)\n"
+        "                        if _CR_COMPILE else flex_attention)",
+    )
+    s = s.replace(
+        "flex_attention_generate = torch.compile(flex_attention, dynamic=True)",
+        "flex_attention_generate = (torch.compile(flex_attention, dynamic=True)\n"
+        "                           if _CR_COMPILE else flex_attention)",
+    )
+    ap.write_text(s)
+    status["attention"] = "patched_upstream_compiled_form"
 else:
     status["attention"] = "unrecognized_shape"
 

@@ -66,7 +66,6 @@ LONGHEALTH_JSON = os.environ.get("LONGHEALTH_JSON", "")
 OUT_JSON = os.environ.get("OUT_JSON", "/tmp/ca_eval/eval.json")
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 PROBE_N = int(os.environ.get("PROBE_N", "16"))
-SINK_MAX = 4
 DEVICE = "cuda"
 
 STANDALONE = re.compile(r"^[\s\*\_\#\-]*\(?([A-Ea-e])\)?[\.\:\)\s\*\_]*$")
@@ -129,25 +128,30 @@ for L in LETTERS:
 
 
 def load_cart(path):
+    """Rebuild a checkpoint exactly as the trainer did.
+
+    The frozen prefix is always concatenated, never dropped on a size
+    heuristic: dropping it whenever it exceeded a few tokens would
+    evaluate a different cache than the one that trained, silently and
+    only for some checkpoints."""
     ck = torch.load(path, map_location="cpu", weights_only=False)
 
     def t(p):
         return torch.as_tensor(p.data if hasattr(p, "data") else p).to(torch.bfloat16)
 
     fk = ck.get("frozen_keys") or []
-    nfrozen = t(fk[0]).shape[2] if fk else 0
-    use_frozen = 0 < nfrozen <= SINK_MAX
-
-    def cat(fro, tra):
-        tt = [t(p) for p in tra]
-        if fro and use_frozen:
-            ff = [t(p) for p in fro]
-            return [torch.cat([ff[i], tt[i]], dim=2) for i in range(len(tt))]
-        return tt
-
-    ik = cat(ck.get("frozen_keys"), ck["trainable_keys"])
-    iv = cat(ck.get("frozen_values"), ck["trainable_values"])
-    return TrainableCache(config=ac, init_keys=ik, init_values=iv).to(DEVICE)
+    fv = ck.get("frozen_values") or []
+    tk = [t(p) for p in ck["trainable_keys"]]
+    tv = [t(p) for p in ck["trainable_values"]]
+    if fk:
+        ik = [torch.cat([t(fk[i]), tk[i]], dim=2) for i in range(len(tk))]
+        iv = [torch.cat([t(fv[i]), tv[i]], dim=2) for i in range(len(tv))]
+        nfrozen = t(fk[0]).shape[2]
+    else:
+        ik, iv, nfrozen = tk, tv, 0
+    return TrainableCache(
+        config=ac, init_keys=ik, init_values=iv, num_frozen_tokens=nfrozen
+    ).to(DEVICE)
 
 
 def question_prompt(q):
