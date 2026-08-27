@@ -16,6 +16,11 @@ KEYS = {
     "CONFIG_MATCHED_MICRO_PROBE_BATCHES": ("probe_batches", str),
     "CONFIG_MATCHED_MICRO_PROBE_STEPS": ("probe_steps", int),
     "CONFIG_MATCHED_MICRO_DATA_TOKENS": ("data_tokens", int),
+    "CONFIG_MATCHED_MICRO_PHASE_CAMPAIGN": ("phase_campaign", bool),
+    "CONFIG_MATCHED_MICRO_CAMPAIGN_SEEDS": ("campaign_seeds", str),
+    "CONFIG_MATCHED_MICRO_CAMPAIGN_BATCH": ("campaign_batch", int),
+    "CONFIG_MATCHED_MICRO_CAMPAIGN_TOKEN_BUDGET": ("campaign_token_budget", int),
+    "CONFIG_MATCHED_MICRO_CAMPAIGN_EVAL_EVERY": ("campaign_eval_every", int),
 }
 
 
@@ -54,6 +59,11 @@ def main():
     cfg.setdefault("probe_batches", "8 32 64 128")
     cfg.setdefault("probe_steps", 10)
     cfg.setdefault("data_tokens", 40_000_000)
+    cfg.setdefault("phase_campaign", False)
+    cfg.setdefault("campaign_seeds", "1234 2027 31337")
+    cfg.setdefault("campaign_batch", 128)
+    cfg.setdefault("campaign_token_budget", 40_000_000)
+    cfg.setdefault("campaign_eval_every", 150)
     json.dump(cfg, open(a.out, "w"), indent=2)
     print(f"wrote {a.out}:")
     print(json.dumps(cfg, indent=2))

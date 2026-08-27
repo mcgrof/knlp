@@ -10,6 +10,9 @@
 #        RESULTS_DIR (summaries, default $OUT_DIR/results),
 #        NESTED_LEARNING_SRC (nested_learning src/ dir, hope arm),
 #        TITANS_PYTORCH_DIR (titans-pytorch checkout, titans arm),
+#        ARMS_FILTER / SEEDS_FILTER (optional SUBSET of the configured
+#          lists, for partitioning work across GPUs; an item not in
+#          the configured list is an error — policy stays in Kconfig),
 #        DRY_RUN=1 prints the planned commands without running them.
 set -eu -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -39,6 +42,26 @@ BATCHES=$(jq_get probe_batches)
 STEPS=$(jq_get probe_steps)
 TOKENS=$(jq_get data_tokens)
 run() { if [ "${DRY_RUN:-0}" = "1" ]; then echo "DRY: $*"; else "$@"; fi; }
+
+# intersect a configured list with an optional filter; a filter item
+# absent from the configured list is a hard error, so the environment
+# can only partition configured work, never add to it
+subset() {
+  full="$1" filt="$2"
+  [ -z "$filt" ] && { echo "$full"; return; }
+  out=""
+  for x in $filt; do
+    case " $full " in
+    *" $x "*) out="$out $x" ;;
+    *)
+      echo "filter item '$x' not in configured list '$full'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  echo "$out"
+}
+ARMS=$(subset "$ARMS" "${ARMS_FILTER:-}")
 mkdir -p "$OUT_DIR" "$RESULTS_DIR"
 
 if [ ! -f "$DATA_DIR/tokens_gpt2.npy" ]; then
@@ -59,6 +82,26 @@ if [ "$(jq_get phase_batch_probe)" = "True" ]; then
   done
   run "$PYTHON" "$HERE/probe_summary.py" --out-dir "$OUT_DIR" \
     --results-dir "$RESULTS_DIR" --arms "$ARMS" --batches "$BATCHES"
+fi
+
+if [ "$(jq_get phase_campaign)" = "True" ]; then
+  CB=$(jq_get campaign_batch)
+  CT=$(jq_get campaign_token_budget)
+  CE=$(jq_get campaign_eval_every)
+  CSEEDS=$(subset "$(jq_get campaign_seeds)" "${SEEDS_FILTER:-}")
+  echo "== CAMPAIGN (arms: $ARMS; seeds: $CSEEDS; batch $CB; budget $CT) =="
+  for SEED in $CSEEDS; do
+    for ARM in $ARMS; do
+      echo "-- campaign $ARM seed $SEED"
+      run "$PYTHON" "$KNLP/scripts/matched_micro_train.py" train \
+        --arm "$ARM" --data-dir "$DATA_DIR" --batch "$CB" \
+        --token-budget "$CT" --seed "$SEED" --eval-every "$CE" \
+        --save-checkpoint \
+        --out-dir "$OUT_DIR/campaign-b$CB-seed$SEED-$ARM" --device cuda
+    done
+  done
+  run "$PYTHON" "$HERE/campaign_summary.py" --out-dir "$OUT_DIR" \
+    --results-dir "$RESULTS_DIR"
 fi
 
 echo MICRO_RUN_DONE
