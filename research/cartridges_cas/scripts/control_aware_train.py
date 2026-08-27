@@ -77,6 +77,7 @@ SEED = int(os.environ.get("SEED", "0"))
 CHECKPOINT_AT = [
     int(x) for x in os.environ.get("CHECKPOINT_AT", "0,1,2,5,10").split(",")
 ]
+CLIP = float(os.environ.get("CLIP", "1.0"))
 DEVICE = "cuda"
 
 ARM_TO_MODE = dict(
@@ -215,27 +216,55 @@ for i in sched_ids:
     )
 
 parsed_list = [parsed[i] for i in sched_ids]
-A2_SCALE = calibrate_scale(parsed_list)
+
+# The objective divides each element by the count of LEGACY entries that
+# survive the position/vocabulary validity mask, then averages elements
+# equally, so an element's anchor coefficient is weighted by 1/denom.
+# Calibration must use the same weights, which means computing the real
+# denominators up front — they need only the packed length and the
+# vocabulary size, no forward pass.
+VOCAB = int(model.config.vocab_size)
+
+
+def legacy_valid_count(i):
+    et = parsed[i]
+    seq_len = int(dataset.elements[i].input_ids.shape[0])
+    ts = build_target_set(et, "legacy_raw")
+    gi, tids, _ = ts.tensors()
+    gi = gi - 1
+    valid = (gi >= 0) & (gi < seq_len) & (tids >= 0) & (tids < VOCAB)
+    return int(valid.sum())
+
+
+DENOM = {i: legacy_valid_count(i) for i in sched_ids}
+denom_list = [DENOM[i] for i in sched_ids]
+A2_SCALE = calibrate_scale(parsed_list, denoms=denom_list)
 content_rows_list, CONTENT_SCALE, content_report = calibrate_content_anchors(
-    parsed_list
+    parsed_list, denoms=denom_list
 )
 content_rows = {i: rows for i, rows in zip(sched_ids, content_rows_list)}
 print(
     f"[ctrl-screen] calibration: scale={A2_SCALE:.6f} "
     f"content_scale={CONTENT_SCALE:.6f} "
-    f"control_anchors={content_report['control_count']}"
+    f"control_anchors={content_report['control_count']} "
+    f"denom_min={min(denom_list)} denom_max={max(denom_list)}"
 )
 
 
 def target_set_for(i, mode):
     et = parsed[i]
+    d = DENOM[i]
     if mode == "dedup_scale_matched":
-        return build_target_set(et, mode, scale=A2_SCALE)
+        return build_target_set(et, mode, scale=A2_SCALE, denom=d)
     if mode == "content_anchor_matched":
         return build_target_set(
-            et, mode, content_rows=content_rows[i], content_scale=CONTENT_SCALE
+            et,
+            mode,
+            content_rows=content_rows[i],
+            content_scale=CONTENT_SCALE,
+            denom=d,
         )
-    return build_target_set(et, mode)
+    return build_target_set(et, mode, denom=d)
 
 
 # ---------------------------------------------------------------------------
@@ -259,19 +288,12 @@ def element_forward(el):
     return out.logits, ids.shape[0]
 
 
-def valid_legacy_count(i, seq_len, vocab):
-    ts = target_set_for(i, "legacy_raw")
-    gi, tids, _ = ts.tensors()
-    gi = gi - 1
-    valid = (gi >= 0) & (gi < seq_len) & (tids >= 0) & (tids < vocab)
-    return int(valid.sum())
-
-
 def arm_loss(i, mode):
     el = dataset.elements[i]
     logits, seq_len = element_forward(el)
     vocab = logits.shape[-1]
-    denom = valid_legacy_count(i, seq_len, vocab)
+    assert vocab == VOCAB, f"vocab drift: {vocab} vs {VOCAB}"
+    denom = DENOM[i]
     if denom == 0:
         return None
     ts = target_set_for(i, mode)
@@ -372,7 +394,32 @@ def main():
     if OPT_INIT:
         if Path(OPT_INIT).is_file():
             opt.load_state_dict(torch.load(OPT_INIT, weights_only=False))
-            print(f"[ctrl-screen] restored optimizer state {OPT_INIT}")
+            # A saved state_dict carries param_groups, so a stale file
+            # would silently reinstate the learning rate it was written
+            # with while the manifest still recorded the configured one.
+            # The shared state exists to equalize MOMENTS across arms,
+            # not hyperparameters: reassert those from config and fail
+            # loudly if the file disagrees.
+            stale = [
+                (g.get("lr"), g.get("betas"), g.get("weight_decay"))
+                for g in opt.param_groups
+                if g.get("lr") != LR
+                or tuple(g.get("betas", ())) != (0.9, 0.95)
+                or g.get("weight_decay") != 0.0
+            ]
+            for g in opt.param_groups:
+                g["lr"] = LR
+                g["betas"] = (0.9, 0.95)
+                g["weight_decay"] = 0.0
+            print(
+                f"[ctrl-screen] restored optimizer state {OPT_INIT}"
+                + (f" (overrode stale hyperparameters {stale})" if stale else "")
+            )
+            assert not stale, (
+                "optimizer-state file was written under different "
+                f"hyperparameters {stale}; delete it and refreeze so every "
+                "arm starts from one declared state"
+            )
         else:
             Path(OPT_INIT).parent.mkdir(parents=True, exist_ok=True)
             torch.save(opt.state_dict(), OPT_INIT)
@@ -423,10 +470,19 @@ def main():
             (loss / ACCUM).backward()
             accum_loss += float(loss.detach()) / ACCUM
             n_used += 1
-        grad_norm = float(torch.nn.utils.clip_grad_norm_(cache.parameters(), 1.0))
+        grad_norm = float(torch.nn.utils.clip_grad_norm_(cache.parameters(), CLIP))
         opt.step()
         run["history"].append(
-            dict(step=step, loss=accum_loss, used=n_used, grad_norm=grad_norm)
+            dict(
+                step=step,
+                loss=accum_loss,
+                used=n_used,
+                grad_norm=grad_norm,
+                # clipping equalizes gradient magnitude across arms; a
+                # step where one arm clips and another does not is the
+                # only place a pure loss-scale difference can survive
+                clipped=grad_norm > CLIP,
+            )
         )
         print(
             f"[ctrl-screen] {ARM} step {step:2d} loss={accum_loss:.4f} "

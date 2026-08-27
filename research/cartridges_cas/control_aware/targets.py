@@ -34,6 +34,21 @@ Transforms (TARGET_SCHEMA_VERSION guards the semantics):
                              one calibrated scalar matching the legacy
                              schedule-wide coefficient mass
 
+A note on what dedup_scale_matched can and cannot show.  It multiplies
+the loss by one global scalar, and AdamW's update is invariant to that:
+the scalar cancels between the first and second moments, leaving only
+the epsilon term, and gradient clipping to a fixed norm removes what
+little remains.  So it cannot behave differently from dedup_legacy_
+support except inside the narrow band where one arm clips and the other
+does not.  That is not a flaw to fix by rescaling harder — it is the
+answer: under this optimizer the "the legacy arm merely had a larger
+loss scale" hypothesis is refuted analytically, not empirically.  The
+arm is kept as a null control: it should track dedup_legacy_support,
+and any material divergence points at the clipping band or a pipeline
+defect rather than at a scale effect.  The legacy-versus-unique
+comparison stays meaningful because the anchor changes the gradient
+direction per coordinate, not just its magnitude.
+
 Anchors always use each row's own stored probability, never a corpus
 mean.  A row that is both first-answer-token and end-of-turn receives
 its anchor once.
@@ -235,12 +250,18 @@ def build_target_set(
     scale: float = 1.0,
     content_rows: Optional[Sequence[int]] = None,
     content_scale: float = 1.0,
+    denom: Optional[int] = None,
 ) -> TargetSet:
     """Build the entry list for one arm.  `scale` applies only to
     dedup_scale_matched; `content_rows`/`content_scale` apply only to
-    content_anchor_matched and come from calibrate_content_anchors."""
+    content_anchor_matched and come from calibrate_content_anchors.
+    `denom` overrides the serialized entry count with the trainer's
+    real denominator (the legacy entry count surviving the position
+    and vocabulary validity mask), so calibration weights every
+    element exactly as the objective does."""
     assert mode in MODES, mode
-    denom = et.n_serialized
+    if denom is None:
+        denom = et.n_serialized
     if mode == "legacy_raw":
         row_idxs, token_ids, probs = [], [], []
         for r in et.rows:
@@ -272,35 +293,60 @@ def build_target_set(
     return TargetSet(row_idxs, token_ids, probs, denom)
 
 
-def calibrate_scale(parsed_elements: Sequence[ElementTargets]) -> float:
+def _denoms_for(parsed_elements, denoms):
+    if denoms is None:
+        return [et.n_serialized for et in parsed_elements]
+    assert len(denoms) == len(parsed_elements)
+    return list(denoms)
+
+
+def calibrate_scale(
+    parsed_elements: Sequence[ElementTargets],
+    denoms: Optional[Sequence[int]] = None,
+) -> float:
     """dedup_scale_matched scalar: legacy schedule-wide coefficient mass
     over unique schedule-wide coefficient mass."""
+    ds = _denoms_for(parsed_elements, denoms)
     legacy = sum(
-        build_target_set(et, "legacy_raw").coefficient_mass() for et in parsed_elements
+        build_target_set(et, "legacy_raw", denom=d).coefficient_mass()
+        for et, d in zip(parsed_elements, ds)
     )
     unique = sum(
-        build_target_set(et, "dedup_legacy_support").coefficient_mass()
-        for et in parsed_elements
+        build_target_set(et, "dedup_legacy_support", denom=d).coefficient_mass()
+        for et, d in zip(parsed_elements, ds)
     )
     return legacy / unique
 
 
-def calibrate_content_anchors(parsed_elements: Sequence[ElementTargets]):
+def calibrate_content_anchors(
+    parsed_elements: Sequence[ElementTargets],
+    denoms: Optional[Sequence[int]] = None,
+):
     """Deterministic content-anchor selection matched to the control
     arm, schedule-wide: per element, select non-control duplicated rows
     in descending stored-probability order (ties by row index) up to
     the element's control-anchor count; then one global scale matches
-    the total control-anchor coefficient mass.  Returns
-    (per_element_rows, content_scale, report)."""
+    the total control-anchor coefficient mass.
+
+    Anchor mass is weighted by 1/denominator, because that is how the
+    objective consumes it: each element contributes sum(p*nll)/denom
+    and elements are averaged equally, so an element with ten times
+    the entries contributes a tenth of the coefficient per anchor.
+    Matching raw probability sums instead would leave the two arms
+    carrying different anchor mass whenever element sizes differ,
+    reintroducing the magnitude confound this arm exists to remove.
+
+    Returns (per_element_rows, content_scale, report)."""
+    ds = _denoms_for(parsed_elements, denoms)
     per_element_rows = []
     control_count = 0
     control_mass = 0.0
     selected_mass = 0.0
     selected_count = 0
-    for et in parsed_elements:
+    for et, d in zip(parsed_elements, ds):
         ctrl = _anchors(et, only_rows=et.control_rows())
         control_count += len(ctrl)
-        control_mass += sum(p for _, _, p in ctrl)
+        control_mass += sum(p for _, _, p in ctrl) / d
         ctrl_rows = set(et.control_rows())
         candidates = [
             (r.idx, r.anchor())
@@ -311,7 +357,7 @@ def calibrate_content_anchors(parsed_elements: Sequence[ElementTargets]):
         take = [ri for ri, _ in candidates[: len(ctrl)]]
         sel = _anchors(et, only_rows=take)
         selected_count += len(sel)
-        selected_mass += sum(p for _, _, p in sel)
+        selected_mass += sum(p for _, _, p in sel) / d
         per_element_rows.append(take)
     content_scale = (control_mass / selected_mass) if selected_mass > 0 else 1.0
     report = dict(

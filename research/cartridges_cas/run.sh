@@ -23,7 +23,12 @@ STEPS=$(jq_get steps); EPOCHS=$(jq_get epochs); COMPILE=$(jq_get compile_flex)
 PATIENTS=""; for i in $(seq -w 1 "$NP"); do PATIENTS="$PATIENTS patient_$i"; done
 export CARTRIDGES_DIR="$CART_ROOT" CARTRIDGES_OUTPUT_DIR="$OUT_DIR" OUT_DIR="$OUT_DIR"
 export RECORDS_DIR WANDB_DISABLED=true WANDB_MODE=disabled
-export CARTRIDGES_COMPILE_FLEX=$([ "$COMPILE" = "True" ] && echo 1 || echo 0)
+# config expresses intent; an explicit env wins, because compiled
+# FlexAttention is a property of the installed torch build rather than
+# of the experiment (torch 2.13/CUDA 13 raises NoValidChoicesError
+# lowering the flex kernel, and an eager fallback must not require
+# editing the defconfig)
+export CARTRIDGES_COMPILE_FLEX=${CARTRIDGES_COMPILE_FLEX:-$([ "$COMPILE" = "True" ] && echo 1 || echo 0)}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 mkdir -p "$OUT_DIR" "$RESULTS_DIR"; cd "$CART_ROOT"
 
@@ -126,7 +131,9 @@ if [ "$(jq_get phase_opt_ablation)" = "True" ]; then
   KNLP_ROOT="$(cd "$HERE/../.." && pwd)"
   OP=$(jq_get opt_patient)
   # a staged parquet (DATA_PARQUET env) wins over synth-phase output
-  OPARQ="${DATA_PARQUET:-$(ls -t "$OUT_DIR"/*/synth_*_${OP/patient_/p}_n*/artifact/dataset.parquet 2>/dev/null | head -1)}"
+  # `|| true`: under set -e a failed discovery would abort here, before
+  # the guard below could explain what is missing
+  OPARQ="${DATA_PARQUET:-$(ls -t "$OUT_DIR"/*/synth_*_${OP/patient_/p}_n*/artifact/dataset.parquet 2>/dev/null | head -1 || true)}"
   [ -n "$OPARQ" ] || { echo "no parquet for $OP; set DATA_PARQUET"; exit 1; }
   ABL_OUT="$OUT_DIR/opt_ablation"; mkdir -p "$ABL_OUT"
   for OPT_ARM in $(jq_get opt_arms); do
