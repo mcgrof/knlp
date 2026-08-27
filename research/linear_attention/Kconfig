@@ -1,0 +1,71 @@
+# Matched micro-scale training driver for the linear-attention program.
+# Sourced from the top-level knlp Kconfig. The experimental knobs live here so
+# nothing is buried in Python constants; the driver reads a JSON generated from
+# .config (gen_config_json.py) and never hard-codes experiment policy.
+#
+# The harness itself is scripts/matched_micro_train.py: five arms (a
+# full-attention control, two Gated DeltaNet hybrids, Titans, and Hope)
+# trained under one matched contract — one tokenizer, one materialized
+# TinyStories token stream consumed in the same order, one optimizer and
+# schedule, parameter counts within tolerance. See that script's docstring.
+
+menu "Matched micro-scale training (Titans/Hope vs hybrids)"
+
+config MATCHED_MICRO
+	bool "Enable the matched micro-scale training driver"
+	default n
+	help
+	  Master switch for research/linear_attention/run.sh, the driver
+	  around scripts/matched_micro_train.py. Off by default so it never
+	  perturbs existing knlp defconfigs or `make check`. When on, the
+	  driver materializes the shared token stream if missing and runs
+	  the phases selected below on one GPU.
+
+config MATCHED_MICRO_ARMS
+	string "Arms to run"
+	depends on MATCHED_MICRO
+	default "hope"
+	help
+	  Space-separated subset of: attn gdn3 gdn7 titans hope. The hope
+	  arm needs the pinned nested_learning package (the driver prepends
+	  NESTED_LEARNING_SRC to PYTHONPATH); titans needs titans-pytorch
+	  (TITANS_PYTORCH_DIR); the gdn arms need flash-linear-attention.
+
+config MATCHED_MICRO_PHASE_BATCH_PROBE
+	bool "Batch-throughput probe"
+	depends on MATCHED_MICRO
+	default n
+	help
+	  Short fixed-step training runs of the selected arms across a
+	  ladder of batch sizes, recording tokens/second at each point.
+	  Built for the Hope arm, whose per-token cost is dominated by
+	  batch-invariant host-side work in its sequential self-modifying
+	  chunk loop, so throughput saturates at a host-dependent batch
+	  size instead of scaling with it. The saturation point sets the
+	  arm's training schedule on the host at hand. Emits one run JSON
+	  per point plus a summary table (probe_summary.md/.json).
+
+config MATCHED_MICRO_PROBE_BATCHES
+	string "Batch sizes for the probe ladder"
+	depends on MATCHED_MICRO_PHASE_BATCH_PROBE
+	default "8 32 64 128"
+
+config MATCHED_MICRO_PROBE_STEPS
+	int "Training steps per probe point"
+	depends on MATCHED_MICRO_PHASE_BATCH_PROBE
+	default 10
+	help
+	  Throughput stabilizes within a few steps; ten is enough for a
+	  clean tokens/second reading while keeping the ladder cheap.
+
+config MATCHED_MICRO_DATA_TOKENS
+	int "Tokens to materialize for the shared stream"
+	depends on MATCHED_MICRO
+	default 40000000
+	help
+	  Target size for prepare-data (GPT-2 tokenized TinyStories,
+	  ~80MB at the default). The driver materializes the stream only
+	  when the token file is missing from DATA_DIR, so a pre-staged
+	  cache is reused as-is and no network is needed.
+
+endmenu

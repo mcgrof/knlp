@@ -233,6 +233,7 @@ source "Kconfig.kri_tierkv"
 source "research/code_reason/Kconfig"
 source "research/cartridges_cas/Kconfig"
 source "research/still_compactor/Kconfig"
+source "research/linear_attention/Kconfig"
 
 menu "Advanced Options"
 
