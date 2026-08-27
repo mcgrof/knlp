@@ -131,7 +131,13 @@ class SOAP(optim.Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
+                # Keep optimizer state and preconditioner math in fp32
+                # even for low-precision (e.g. bf16) parameters; the
+                # update casts back at the parameter write. No-op for
+                # fp32 training.
                 grad = p.grad
+                if grad.dtype != torch.float32:
+                    grad = grad.float()
 
                 state = self.state[p]
 
@@ -215,7 +221,7 @@ class SOAP(optim.Optimizer):
                 if group["normalize_grads"]:
                     norm_grad = norm_grad / (1e-30 + torch.mean(norm_grad**2) ** 0.5)
 
-                p.add_(norm_grad, alpha=-step_size)
+                p.add_(norm_grad.to(p.dtype), alpha=-step_size)
 
                 # From AdamW code: Just adding the square of the weights to the loss function is *not*
                 # the correct way of using L2 regularization/weight decay with Adam,
