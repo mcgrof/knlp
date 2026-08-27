@@ -66,6 +66,7 @@ LONGHEALTH_JSON = os.environ.get("LONGHEALTH_JSON", "")
 OUT_JSON = os.environ.get("OUT_JSON", "/tmp/ca_eval/eval.json")
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 PROBE_N = int(os.environ.get("PROBE_N", "16"))
+RESUME = os.environ.get("RESUME", "1") == "1"
 DEVICE = "cuda"
 
 STANDALONE = re.compile(r"^[\s\*\_\#\-]*\(?([A-Ea-e])\)?[\.\:\)\s\*\_]*$")
@@ -245,10 +246,6 @@ def generation_eval(cache, thinking, cap):
 
 @torch.no_grad()
 def cached_forward_logits(ids, cache):
-    if cache is None:
-        # FlexQwen3 forward expects a cache object; an empty
-        # TrainableCache reduces the mask to plain causal attention.
-        cache = TrainableCache(config=ac).to(DEVICE)
     cache.clear()
     with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
         out = model(
@@ -263,6 +260,12 @@ def cached_forward_logits(ids, cache):
 
 @torch.no_grad()
 def forced_choice_eval(cache):
+    """Teacher-forced scoring needs a real cache: the flex model
+    dereferences the cartridge tensors, and an empty TrainableCache
+    carries None where they belong.  The no-cartridge floor is a
+    generation reference only, so it has no forced-choice row."""
+    if cache is None:
+        return None
     rows = []
     for q in questions():
         ids = chat_ids(question_prompt(q), thinking=False)
@@ -541,7 +544,23 @@ def main():
         with open(OUT_JSON.replace(".json", "_raw.json"), "w") as f:
             json.dump(raws, f, indent=1)
 
+    # Resume: a condition costs tens of minutes, so re-scoring one that
+    # a previous attempt already wrote is pure waste.  Reuse whatever is
+    # on disk for this OUT_JSON and score only what is missing.
+    if RESUME and Path(OUT_JSON).is_file():
+        prev = json.loads(Path(OUT_JSON).read_text())
+        if prev.get("evaluator") == EVALUATOR_VERSION:
+            report["results"].update(prev.get("results", {}))
+            praw = Path(OUT_JSON.replace(".json", "_raw.json"))
+            if praw.is_file():
+                raws.update(json.loads(praw.read_text()))
+            done = list(report["results"])
+            if done:
+                print(f"[ctrl-eval] resuming, already scored: {done}", flush=True)
+
     for name, path in conditions:
+        if name in report["results"]:
+            continue
         cache = load_cart(path) if path else None
         primary, rows_p = generation_eval(cache, thinking=False, cap=32)
         stress, rows_s = generation_eval(cache, thinking=True, cap=256)
@@ -551,11 +570,13 @@ def main():
             primary=primary, stress=stress, forced_choice=fc, probe=probe
         )
         raws[name] = dict(primary=rows_p, stress=rows_s)
+        fc_part = (
+            f"fc={fc['fc_acc']:.3f} margin={fc['margin_mean']:.3f}" if fc else "fc=n/a"
+        )
         print(
             f"[ctrl-eval] {name}: strict={primary['strict_acc']:.3f} "
             f"invalid={primary['parser_invalid']:.2f} len={primary['mean_len']:.1f} "
-            f"| fc={fc['fc_acc']:.3f} margin={fc['margin_mean']:.3f} "
-            f"| stress={stress['strict_acc']:.3f}",
+            f"| {fc_part} | stress={stress['strict_acc']:.3f}",
             flush=True,
         )
         persist()
