@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Translate the knlp .config into the JSON the matched-micro driver consumes,
+so no experiment policy lives in shell or Python constants. Reads
+CONFIG_MATCHED_MICRO_* keys from .config (path via --config, default
+../../.config) and writes config.json."""
+
+import argparse
+import json
+import os
+import re
+
+KEYS = {
+    "CONFIG_MATCHED_MICRO": ("enabled", bool),
+    "CONFIG_MATCHED_MICRO_ARMS": ("arms", str),
+    "CONFIG_MATCHED_MICRO_PHASE_BATCH_PROBE": ("phase_batch_probe", bool),
+    "CONFIG_MATCHED_MICRO_PROBE_BATCHES": ("probe_batches", str),
+    "CONFIG_MATCHED_MICRO_PROBE_STEPS": ("probe_steps", int),
+    "CONFIG_MATCHED_MICRO_DATA_TOKENS": ("data_tokens", int),
+}
+
+
+def parse(path):
+    cfg = {}
+    line_re = re.compile(r"^(CONFIG_[A-Z0-9_]+)=(.*)$")
+    for line in open(path):
+        m = line_re.match(line.strip())
+        if not m:
+            continue
+        k, v = m.group(1), m.group(2)
+        if k not in KEYS:
+            continue
+        name, typ = KEYS[k]
+        v = v.strip()
+        if typ is str:
+            cfg[name] = v.strip('"')
+        elif typ is int:
+            cfg[name] = int(v)
+        elif typ is bool:
+            cfg[name] = v == "y"
+    return cfg
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    here = os.path.dirname(os.path.abspath(__file__))
+    ap.add_argument("--config", default=os.path.join(here, "..", "..", ".config"))
+    ap.add_argument("--out", default=os.path.join(here, "config.json"))
+    a = ap.parse_args()
+    cfg = parse(a.config)
+    # defaults so the driver runs even from a partial .config
+    cfg.setdefault("enabled", False)
+    cfg.setdefault("arms", "hope")
+    cfg.setdefault("phase_batch_probe", False)
+    cfg.setdefault("probe_batches", "8 32 64 128")
+    cfg.setdefault("probe_steps", 10)
+    cfg.setdefault("data_tokens", 40_000_000)
+    json.dump(cfg, open(a.out, "w"), indent=2)
+    print(f"wrote {a.out}:")
+    print(json.dumps(cfg, indent=2))
+
+
+if __name__ == "__main__":
+    main()

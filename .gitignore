@@ -260,3 +260,4 @@ checkpoints/
 .pytest_cache/
 **/.pytest_cache/
 gpt2/output/
+research/linear_attention/config.json

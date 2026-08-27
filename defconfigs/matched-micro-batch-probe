@@ -1,0 +1,19 @@
+# Hope batch-throughput probe for the matched micro-scale harness.
+# Ten-step training runs of the hope arm at batch 8/32/64/128 on one
+# GPU, recording tokens/second at each point. Hope's per-token cost
+# is dominated by batch-invariant host-side work in its sequential
+# self-modifying chunk loop, so throughput saturates at a
+# host-dependent batch size instead of scaling with it; the probe
+# measures that saturation point, which sets the arm's training
+# schedule. On an AMD Radeon Pro W7900 this ladder measured
+# 501/871/952/934 tok/s — saturation by batch 64.
+# Run via research/linear_attention/run.sh. Needs a CUDA or ROCm
+# torch, the pinned nested_learning package (driver prepends
+# NESTED_LEARNING_SRC to PYTHONPATH), and either network access for
+# prepare-data or a pre-staged token stream in DATA_DIR.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="hope"
+CONFIG_MATCHED_MICRO_PHASE_BATCH_PROBE=y
+CONFIG_MATCHED_MICRO_PROBE_BATCHES="8 32 64 128"
+CONFIG_MATCHED_MICRO_PROBE_STEPS=10
+CONFIG_MATCHED_MICRO_DATA_TOKENS=40000000
