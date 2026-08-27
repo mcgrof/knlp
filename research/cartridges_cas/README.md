@@ -37,6 +37,21 @@ mixed-visibility joint training and the rescue eval. Results land as
   end to end on one H100 to validate the recipe.
 - `cas-paper` — full patient panel, isolated collapse plus mixed-visibility
   rescue.
+- `cartridge-control-screen` — the control-aware fixed-trajectory objective
+  screen. The stored synthesis path serializes each target row as
+  [sampled token] + [top-k], so under greedy synthesis nearly half the rows
+  carry the sampled token twice and the legacy loss consumes both copies — an
+  accidental confidence-weighted chosen-token anchor concentrated on
+  first-answer-token and end-of-turn rows. This screen decomposes that
+  objective one variable at a time: an exact legacy reproduction control,
+  dedup-only, dedup scale-matched, per-row anchors on control positions, and
+  count/mass-matched anchors on non-control positions — all from one starting
+  cartridge, one saved zero-moment optimizer state, and one frozen example
+  schedule, gated by a no-training parity arm proving
+  legacy == unique + anchors in loss and cartridge gradients. Requires
+  `DATA_PARQUET` and `CTRL_CART_INIT` env; evaluation reports strict
+  thinking-off generation, thinking-on stress, forced-choice letter scoring,
+  and control-state probe diagnostics (`control_screen_eval.json`).
 - `cartridge-opt-ablation` — AdamW vs SOAP on stored-target cartridge training,
   matched arms (shared truncation init, same data order, steps, learning rate).
   Cartridge training backprops through a large frozen model to update a small

@@ -1,0 +1,38 @@
+# Control-aware fixed-trajectory objective screen (Gate 0 of the
+# control-aware cartridge lane): decompose the legacy stored-target
+# objective (unique support + duplicated chosen-token anchors) into
+# matched short arms from one starting cartridge, one saved optimizer
+# state, and one frozen example schedule. A no-training parity arm
+# (legacy == unique + anchors, loss and gradients) gates the matrix.
+# Requires env: DATA_PARQUET (stored self-study parquet) and
+# CTRL_CART_INIT (starting cartridge .pt, the reproducible 300-step
+# pre-format baseline). Optional LONGHEALTH_JSON for offline eval.
+# One CUDA GPU holding the Qwen3-8B student (A100-40GB fits).
+CONFIG_CARTRIDGES_CAS=y
+CONFIG_CARTRIDGES_CAS_SMOKE=y
+CONFIG_CARTRIDGES_CAS_MODEL="Qwen/Qwen3-8B"
+CONFIG_CARTRIDGES_CAS_NUM_PATIENTS=2
+CONFIG_CARTRIDGES_CAS_CONVOS_PER_PATIENT=8000
+CONFIG_CARTRIDGES_CAS_MIN_PROB_MASS="0.998"
+CONFIG_CARTRIDGES_CAS_KV_TOKENS=512
+CONFIG_CARTRIDGES_CAS_LR="1e-3"
+CONFIG_CARTRIDGES_CAS_GLOBAL_BATCH=4
+CONFIG_CARTRIDGES_CAS_STEPS=2000
+CONFIG_CARTRIDGES_CAS_EPOCHS=4
+CONFIG_CARTRIDGES_CAS_COMPILE_FLEX=y
+CONFIG_CARTRIDGES_CAS_PHASE_SYNTH=n
+CONFIG_CARTRIDGES_CAS_PHASE_TRAIN_ISOLATED=n
+CONFIG_CARTRIDGES_CAS_PHASE_COLLAPSE=n
+CONFIG_CARTRIDGES_CAS_PHASE_TRAIN_JOINT=n
+CONFIG_CARTRIDGES_CAS_PHASE_RESCUE=n
+CONFIG_CARTRIDGES_CAS_PHASE_CONTROL_SCREEN=y
+CONFIG_CARTRIDGES_CAS_CTRL_ARMS="legacy_raw dedup_only dedup_scale_matched control_anchor content_anchor_matched"
+CONFIG_CARTRIDGES_CAS_CTRL_PATIENT="patient_02"
+CONFIG_CARTRIDGES_CAS_CTRL_STEPS=10
+CONFIG_CARTRIDGES_CAS_CTRL_ACCUM=8
+CONFIG_CARTRIDGES_CAS_CTRL_LR="2e-2"
+CONFIG_CARTRIDGES_CAS_CTRL_SEED=0
+CONFIG_CARTRIDGES_CAS_CTRL_CHECKPOINT_AT="0,1,2,5,10"
+CONFIG_CARTRIDGES_CAS_CTRL_MAX_Q=20
+CONFIG_CARTRIDGES_CAS_CTRL_PROBE_N=16
+CONFIG_CARTRIDGES_CAS_PHASE_OPT_ABLATION=n
