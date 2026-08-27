@@ -141,6 +141,25 @@ config CARTRIDGES_CAS_PHASE_RESCUE
 	default y if CARTRIDGES_CAS_PAPER
 	default n if CARTRIDGES_CAS_SMOKE
 
+config CARTRIDGES_CAS_PHASE_CONTROL_SCREEN
+	bool "Control-aware fixed-trajectory objective screen"
+	default n
+	help
+	  Gate 0 of the control-aware cartridge lane: decompose the legacy
+	  stored-target objective into unique support plus explicit
+	  chosen-token anchors and train one short matched arm per
+	  construction (exact legacy reproduction control, dedup-only,
+	  dedup scale-matched, control-position anchors, matched content
+	  anchors) from one starting cartridge, one saved zero-moment
+	  optimizer state, and one frozen example schedule. A no-training
+	  parity arm proving legacy == unique + anchors in loss and
+	  cartridge gradients runs first and gates the matrix. Requires a
+	  stored self-study parquet (DATA_PARQUET), a starting cartridge
+	  (CTRL_CART_INIT env), and one CUDA GPU able to hold the student
+	  model; evaluation covers strict thinking-off generation,
+	  thinking-on stress, forced-choice letter scoring, and
+	  control-state probe diagnostics.
+
 config CARTRIDGES_CAS_PHASE_OPT_ABLATION
 	bool "Optimizer ablation (AdamW vs SOAP, matched arms)"
 	default n
@@ -156,6 +175,47 @@ config CARTRIDGES_CAS_PHASE_OPT_ABLATION
 	  (DATA_PARQUET env or a prior synth phase). The SOAP eigenbasis
 	  refresh needs a deterministic backward: run this on NVIDIA, not
 	  on ROCm/W7900.
+
+endmenu
+
+menu "Control-aware screen"
+	depends on CARTRIDGES_CAS_PHASE_CONTROL_SCREEN
+
+config CARTRIDGES_CAS_CTRL_ARMS
+	string "Training arms (space-separated)"
+	default "legacy_raw dedup_only dedup_scale_matched control_anchor content_anchor_matched"
+
+config CARTRIDGES_CAS_CTRL_PATIENT
+	string "LongHealth patient"
+	default "patient_02"
+
+config CARTRIDGES_CAS_CTRL_STEPS
+	int "Optimizer steps per arm"
+	default 10
+
+config CARTRIDGES_CAS_CTRL_ACCUM
+	int "Gradient-accumulation samples per step"
+	default 8
+
+config CARTRIDGES_CAS_CTRL_LR
+	string "Learning rate (the legacy continuation trainer's value)"
+	default "2e-2"
+
+config CARTRIDGES_CAS_CTRL_SEED
+	int "Seed (frozen schedule is generated from this seed)"
+	default 0
+
+config CARTRIDGES_CAS_CTRL_CHECKPOINT_AT
+	string "Checkpoint steps (step 0 saves the starting state)"
+	default "0,1,2,5,10"
+
+config CARTRIDGES_CAS_CTRL_MAX_Q
+	int "Held-out questions per generation eval"
+	default 20
+
+config CARTRIDGES_CAS_CTRL_PROBE_N
+	int "Held-out elements in the control-state probe"
+	default 16
 
 endmenu
 

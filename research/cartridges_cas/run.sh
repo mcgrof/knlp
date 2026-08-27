@@ -78,6 +78,49 @@ if [ "$(jq_get phase_rescue)" = "True" ]; then
     OUT_JSON="$RESULTS_DIR/rescue.json" MODES="oracle collapse" "$PYTHON" cas_combine_eval.py
 fi
 
+if [ "$(jq_get phase_control_screen)" = "True" ]; then
+  echo "== CONTROL-AWARE SCREEN (fixed-trajectory objective decomposition) =="
+  CP=$(jq_get ctrl_patient)
+  CPARQ="${DATA_PARQUET:?control screen needs DATA_PARQUET}"
+  : "${CTRL_CART_INIT:?control screen needs CTRL_CART_INIT (starting cartridge .pt)}"
+  CS_OUT="$OUT_DIR/control_screen"; mkdir -p "$CS_OUT"
+  run_ctrl() {
+    MODEL="$MODEL" ARM="$1" PATIENT="$CP" DATA_PARQUET="$CPARQ" \
+      CART_INIT="$CTRL_CART_INIT" OPT_INIT="$CS_OUT/opt_init.pt" \
+      SCHEDULE_JSON="$CS_OUT/schedule.json" STEPS=$(jq_get ctrl_steps) \
+      ACCUM=$(jq_get ctrl_accum) LR=$(jq_get ctrl_lr) SEED=$(jq_get ctrl_seed) \
+      CHECKPOINT_AT=$(jq_get ctrl_checkpoint_at) OUT_DIR="$CS_OUT" \
+      "$PYTHON" control_aware_train.py 2>&1 | tee "$CS_OUT/train_$1.log"
+  }
+  # parity gates the matrix: legacy_raw must equal unique + anchors
+  run_ctrl parity
+  for CARM in $(jq_get ctrl_arms); do
+    echo "  arm $CARM"
+    run_ctrl "$CARM"
+  done
+  echo "  strict + forced-choice + probe eval of every checkpoint"
+  # every arm's step0 is the identical starting cartridge: eval it once
+  CCARTS=""
+  CFIRST=1
+  for CARM in $(jq_get ctrl_arms); do
+    for f in "$CS_OUT/$CARM/${CP}"_step*.pt; do
+      [ -f "$f" ] || continue
+      s=$(basename "$f" .pt); s=${s##*_}
+      if [ "$s" = "step0" ]; then
+        [ "$CFIRST" = "1" ] && CCARTS="${CCARTS:+$CCARTS,}start_step0=$f"
+        continue
+      fi
+      CCARTS="${CCARTS:+$CCARTS,}${CARM}_${s}=$f"
+    done
+    CFIRST=0
+  done
+  MODEL="$MODEL" CARTS="$CCARTS" PATIENT="$CP" DATA_PARQUET="$CPARQ" \
+    SCHEDULE_JSON="$CS_OUT/schedule.json" LONGHEALTH_JSON="${LONGHEALTH_JSON:-}" \
+    MAX_Q=$(jq_get ctrl_max_q) PROBE_N=$(jq_get ctrl_probe_n) \
+    OUT_JSON="$RESULTS_DIR/control_screen_eval.json" \
+    "$PYTHON" control_aware_eval.py 2>&1 | tee "$CS_OUT/eval.log"
+fi
+
 if [ "$(jq_get phase_opt_ablation)" = "True" ]; then
   echo "== OPTIMIZER ABLATION (stored-objective cartridge, matched arms) =="
   KNLP_ROOT="$(cd "$HERE/../.." && pwd)"
