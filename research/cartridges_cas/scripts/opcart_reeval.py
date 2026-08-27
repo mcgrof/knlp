@@ -41,8 +41,28 @@ PATIENT = os.environ["PATIENT"]
 OUT_JSON = os.environ.get("OUT_JSON", "/root/reeval_out/reeval.json")
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 CAPS = [int(c) for c in os.environ.get("CAPS", "32,256").split(",")]
+LONGHEALTH_JSON = os.environ.get("LONGHEALTH_JSON", "")
 SINK_MAX = 4
 DEVICE = "cuda"
+
+
+def load_patients(patient_ids):
+    """LongHealth patients from a local benchmark JSON when provided
+    (offline hosts), else the library's network loader."""
+    if not LONGHEALTH_JSON:
+        return load_longhealth_dataset(patient_ids)
+    from cartridges.data.longhealth.utils import LongHealthPatient
+
+    data = json.loads(Path(LONGHEALTH_JSON).read_text())
+    for pid, row in data.items():
+        for q in row["questions"]:
+            q["question_id"] = pid + "_" + str(q["No"])
+    return [
+        LongHealthPatient(patient_id=pid, **row)
+        for pid, row in data.items()
+        if pid in patient_ids
+    ]
+
 
 tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
 model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
@@ -106,7 +126,7 @@ def normalize(s):
 @torch.no_grad()
 def evaluate(name, cache, cap, prefix_text=None):
     rows = []
-    for patient in load_longhealth_dataset([PATIENT]):
+    for patient in load_patients([PATIENT]):
         for q in patient.questions[:MAX_Q]:
             prompt = (
                 f"Question: {q.question}\nA) {q.answer_a}\nB) {q.answer_b}\n"
