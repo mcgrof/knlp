@@ -32,7 +32,8 @@ ARM_MEANING = {
     "legacy_raw": "exact historical objective (reproduction control)",
     "dedup_only": "unique support, anchor term removed",
     "dedup_scale_matched": "unique support at legacy coefficient mass "
-    "(null control: AdamW is invariant to a global loss scalar)",
+    "(weak control: AdamW absorbs most of a global loss scalar, leaving "
+    "a few percent as extra step size)",
     "control_anchor": "unique + anchors on first-answer and end-of-turn rows",
     "content_anchor_matched": "unique + matched anchors on non-control rows",
 }

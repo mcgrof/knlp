@@ -35,19 +35,28 @@ Transforms (TARGET_SCHEMA_VERSION guards the semantics):
                              schedule-wide coefficient mass
 
 A note on what dedup_scale_matched can and cannot show.  It multiplies
-the loss by one global scalar, and AdamW's update is invariant to that:
-the scalar cancels between the first and second moments, leaving only
-the epsilon term, and gradient clipping to a fixed norm removes what
-little remains.  So it cannot behave differently from dedup_legacy_
-support except inside the narrow band where one arm clips and the other
-does not.  That is not a flaw to fix by rescaling harder — it is the
-answer: under this optimizer the "the legacy arm merely had a larger
-loss scale" hypothesis is refuted analytically, not empirically.  The
-arm is kept as a null control: it should track dedup_legacy_support,
-and any material divergence points at the clipping band or a pipeline
-defect rather than at a scale effect.  The legacy-versus-unique
-comparison stays meaningful because the anchor changes the gradient
-direction per coordinate, not just its magnitude.
+the loss by one global scalar, which AdamW mostly — but, measured, not
+entirely — absorbs.  The scalar cancels between the first and second
+moments wherever the gradient is large against the optimizer's epsilon,
+leaving the update unchanged there; on coordinates whose gradient falls
+near epsilon the update is instead close to linear in the scale, and a
+trainable KV cache has many such coordinates because a short answer
+leaves most cache positions barely involved.
+
+Measured on this screen (scale 1.308, no step clipped): the arm's
+displacement from the shared start stays nearly parallel to the
+deduplicated arm's — cosine 0.994 at one step, 0.955 at ten — while
+running about 3% longer, so the two diverge by 16% of their own
+displacement at one step and 31% by ten.  So roughly a tenth of the
+loss scale survives the optimizer, as an effective step-size
+difference rather than as a different objective.
+
+Read the arm accordingly.  It is a weak control: it can show whether a
+few percent of extra step size matters, not whether the full 31% loss
+scale does, because the optimizer absorbs most of that before it
+reaches the weights.  The legacy-versus-unique comparison is unaffected
+either way, because the anchor changes the gradient direction per
+coordinate rather than only its magnitude.
 
 Anchors always use each row's own stored probability, never a corpus
 mean.  A row that is both first-answer-token and end-of-turn receives
