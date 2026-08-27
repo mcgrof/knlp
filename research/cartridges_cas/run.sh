@@ -112,7 +112,11 @@ if [ "$(jq_get phase_control_screen)" = "True" ]; then
       [ -f "$f" ] || continue
       s=$(basename "$f" .pt); s=${s##*_}
       if [ "$s" = "step0" ]; then
-        [ "$CFIRST" = "1" ] && CCARTS="${CCARTS:+$CCARTS,}start_step0=$f"
+        # plain `[ ... ] && assign` would abort the script under set -e
+        # the first time the test is false (every arm after the first)
+        if [ "$CFIRST" = "1" ]; then
+          CCARTS="${CCARTS:+$CCARTS,}start_step0=$f"
+        fi
         continue
       fi
       CCARTS="${CCARTS:+$CCARTS,}${CARM}_${s}=$f"
