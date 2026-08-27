@@ -141,6 +141,63 @@ config CARTRIDGES_CAS_PHASE_RESCUE
 	default y if CARTRIDGES_CAS_PAPER
 	default n if CARTRIDGES_CAS_SMOKE
 
+config CARTRIDGES_CAS_PHASE_OPT_ABLATION
+	bool "Optimizer ablation (AdamW vs SOAP, matched arms)"
+	default n
+	help
+	  Train one isolated cartridge from a shared truncation init with
+	  the stored sparse top-k objective, once per optimizer arm, with
+	  everything but the optimizer matched (init, data order, steps,
+	  accumulation, learning rate, clipping). Reports loss at matched
+	  steps and a CUDA-synchronized wall-clock split; the optimizer-step
+	  share of total step time is the number that decides whether a
+	  second-order optimizer is affordable in the small-trainable-set,
+	  large-frozen-forward regime. Needs a stored self-study parquet
+	  (DATA_PARQUET env or a prior synth phase). The SOAP eigenbasis
+	  refresh needs a deterministic backward: run this on NVIDIA, not
+	  on ROCm/W7900.
+
+endmenu
+
+menu "Optimizer ablation"
+	depends on CARTRIDGES_CAS_PHASE_OPT_ABLATION
+
+config CARTRIDGES_CAS_OPT_ARMS
+	string "Optimizer arms (space-separated)"
+	default "adamw soap"
+
+config CARTRIDGES_CAS_OPT_PATIENT
+	string "LongHealth patient the cartridge trains on"
+	default "patient_02"
+
+config CARTRIDGES_CAS_OPT_STEPS
+	int "Optimizer steps per arm (matched)"
+	default 300
+
+config CARTRIDGES_CAS_OPT_ACCUM
+	int "Gradient-accumulation samples per step"
+	default 8
+
+config CARTRIDGES_CAS_OPT_LR
+	string "Learning rate (matched across arms)"
+	default "2e-2"
+
+config CARTRIDGES_CAS_OPT_SEED
+	int "Seed (data order is matched via this seed)"
+	default 0
+
+config CARTRIDGES_CAS_OPT_CHECKPOINT_AT
+	string "Steps at which to save checkpoints for the strict eval"
+	default "10,50,100,200,300"
+
+config CARTRIDGES_CAS_OPT_SOAP_PRECOND_FREQ
+	int "SOAP eigenbasis refresh period (optimizer steps)"
+	default 10
+	help
+	  How many optimizer steps reuse one eigenbasis before the factor
+	  eigendecompositions rerun. Larger amortizes the decomposition
+	  cost further at the price of a staler basis.
+
 endmenu
 
 endmenu

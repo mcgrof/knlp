@@ -2,6 +2,7 @@
 """Translate the knlp .config into a JSON the CAS driver consumes, so no experiment
 policy lives in shell or Python constants. Reads CONFIG_CARTRIDGES_CAS_* keys from
 .config (path via --config, default ../../.config) and writes config.json."""
+
 import argparse, json, os, re
 
 KEYS = {
@@ -20,12 +21,21 @@ KEYS = {
     "CONFIG_CARTRIDGES_CAS_PHASE_COLLAPSE": ("phase_collapse", bool),
     "CONFIG_CARTRIDGES_CAS_PHASE_TRAIN_JOINT": ("phase_train_joint", bool),
     "CONFIG_CARTRIDGES_CAS_PHASE_RESCUE": ("phase_rescue", bool),
+    "CONFIG_CARTRIDGES_CAS_PHASE_OPT_ABLATION": ("phase_opt_ablation", bool),
+    "CONFIG_CARTRIDGES_CAS_OPT_ARMS": ("opt_arms", str),
+    "CONFIG_CARTRIDGES_CAS_OPT_PATIENT": ("opt_patient", str),
+    "CONFIG_CARTRIDGES_CAS_OPT_STEPS": ("opt_steps", int),
+    "CONFIG_CARTRIDGES_CAS_OPT_ACCUM": ("opt_accum", int),
+    "CONFIG_CARTRIDGES_CAS_OPT_LR": ("opt_lr", str),
+    "CONFIG_CARTRIDGES_CAS_OPT_SEED": ("opt_seed", int),
+    "CONFIG_CARTRIDGES_CAS_OPT_CHECKPOINT_AT": ("opt_checkpoint_at", str),
+    "CONFIG_CARTRIDGES_CAS_OPT_SOAP_PRECOND_FREQ": ("opt_soap_precond_freq", int),
 }
 
 
 def parse(path):
     cfg = {}
-    line_re = re.compile(r'^(CONFIG_[A-Z0-9_]+)=(.*)$')
+    line_re = re.compile(r"^(CONFIG_[A-Z0-9_]+)=(.*)$")
     for line in open(path):
         m = line_re.match(line.strip())
         if not m:
@@ -42,7 +52,7 @@ def parse(path):
         elif typ is int:
             cfg[name] = int(v)
         elif typ is bool:
-            cfg[name] = (v == "y")
+            cfg[name] = v == "y"
     return cfg
 
 

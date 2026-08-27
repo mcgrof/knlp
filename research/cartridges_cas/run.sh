@@ -5,7 +5,7 @@
 #
 #   Env: CART_ROOT (default /root/cartridges), PYTHON (CUDA torch),
 #        VLLM (path to a vllm binary, for synthesis), OUT_DIR, RESULTS_DIR.
-set -eu
+set -eu -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="${PYTHON:-python}"
 CART_ROOT="${CART_ROOT:-/root/cartridges}"
@@ -42,7 +42,9 @@ if [ "$(jq_get phase_synth)" = "True" ]; then
   free_gpu
 fi
 
-"$PYTHON" cas_dump_records.py > "$OUT_DIR/records.log" 2>&1
+# records already staged (offline host) -> skip the network dump
+ls "$RECORDS_DIR"/*.txt >/dev/null 2>&1 || \
+  "$PYTHON" cas_dump_records.py > "$OUT_DIR/records.log" 2>&1
 
 if [ "$(jq_get phase_train_isolated)" = "True" ]; then
   echo "== TRAIN ISOLATED =="
@@ -74,5 +76,40 @@ if [ "$(jq_get phase_rescue)" = "True" ]; then
   echo "== RESCUE EVAL =="
   CART_DIR="$OUT_DIR/carts_joint" PATIENTS="$PATIENTS" MAX_Q=15 MAX_NEW=48 \
     OUT_JSON="$RESULTS_DIR/rescue.json" MODES="oracle collapse" "$PYTHON" cas_combine_eval.py
+fi
+
+if [ "$(jq_get phase_opt_ablation)" = "True" ]; then
+  echo "== OPTIMIZER ABLATION (stored-objective cartridge, matched arms) =="
+  KNLP_ROOT="$(cd "$HERE/../.." && pwd)"
+  OP=$(jq_get opt_patient)
+  # a staged parquet (DATA_PARQUET env) wins over synth-phase output
+  OPARQ="${DATA_PARQUET:-$(ls -t "$OUT_DIR"/*/synth_*_${OP/patient_/p}_n*/artifact/dataset.parquet 2>/dev/null | head -1)}"
+  [ -n "$OPARQ" ] || { echo "no parquet for $OP; set DATA_PARQUET"; exit 1; }
+  ABL_OUT="$OUT_DIR/opt_ablation"; mkdir -p "$ABL_OUT"
+  for OPT_ARM in $(jq_get opt_arms); do
+    echo "  arm $OPT_ARM ($OPARQ)"
+    MODEL="$MODEL" OPTIMIZER="$OPT_ARM" PATIENT="$OP" DATA_PARQUET="$OPARQ" \
+      RECORDS_DIR="$RECORDS_DIR" KV_TOKENS=$KVT INIT_CART="$ABL_OUT/init_cart.pt" \
+      STEPS=$(jq_get opt_steps) ACCUM=$(jq_get opt_accum) LR=$(jq_get opt_lr) \
+      SEED=$(jq_get opt_seed) CHECKPOINT_AT=$(jq_get opt_checkpoint_at) \
+      SOAP_PRECOND_FREQ=$(jq_get opt_soap_precond_freq) KNLP_ROOT="$KNLP_ROOT" \
+      OUT_DIR="$ABL_OUT" "$PYTHON" cart_opt_ablation.py 2>&1 | tee "$ABL_OUT/train_$OPT_ARM.log"
+  done
+  echo "  strict re-eval of saved checkpoints"
+  OCARTS="init=$ABL_OUT/init_cart.pt"
+  for OPT_ARM in $(jq_get opt_arms); do
+    for f in "$ABL_OUT/$OPT_ARM/${OP}"_step*.pt; do
+      [ -f "$f" ] || continue
+      s=$(basename "$f" .pt); s=${s##*_}
+      OCARTS="$OCARTS,${OPT_ARM}_${s}=$f"
+    done
+  done
+  CARTS="$OCARTS" RECORD="$RECORDS_DIR/$OP.txt" PATIENT="$OP" MODEL="$MODEL" \
+    LONGHEALTH_JSON="${LONGHEALTH_JSON:-}" \
+    OUT_JSON="$RESULTS_DIR/opt_ablation_reeval.json" "$PYTHON" opcart_reeval.py \
+    2>&1 | tee "$ABL_OUT/reeval.log"
+  "$PYTHON" cart_opt_report.py --ablation-dir "$ABL_OUT" \
+    --reeval "$RESULTS_DIR/opt_ablation_reeval.json" \
+    --out "$RESULTS_DIR/opt_ablation_report.md"
 fi
 echo "CAS_RUN_DONE results in $RESULTS_DIR"
