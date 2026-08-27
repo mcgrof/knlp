@@ -1,0 +1,30 @@
+# Matched training campaign for the micro-scale harness: every arm
+# (full-attention control, both Gated DeltaNet hybrids, Titans, Hope)
+# trained to the same 40M-token budget at the same batch size, three
+# seeds each, with periodic validation loss, per-run JSON records,
+# and final weight checkpoints.
+# One shared batch keeps the comparison matched-schedule: same update
+# count at matched tokens, same warmup fraction, same cosine decay.
+# The default batch of 128 comes from the Hope batch probe (Hope is
+# host-bound and needs a large batch to amortize its sequential
+# self-modifying chunk loop; on an A100 it reads 1282 tok/s at 128).
+# The probe phase is enabled as a pre-flight: ten-step runs of every
+# arm at the campaign batch catch an out-of-memory arm in minutes
+# before any long training starts. If an arm cannot fit the default
+# batch, lower the campaign (and probe) batch and record the
+# deviation with the results.
+# Requires: CUDA or ROCm torch; nested_learning on PYTHONPATH for
+# hope (driver prepends NESTED_LEARNING_SRC); titans-pytorch for
+# titans (TITANS_PYTORCH_DIR); flash-linear-attention for the gdn
+# arms; network or a pre-staged token stream in DATA_DIR.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="attn gdn3 gdn7 titans hope"
+CONFIG_MATCHED_MICRO_PHASE_BATCH_PROBE=y
+CONFIG_MATCHED_MICRO_PROBE_BATCHES="128"
+CONFIG_MATCHED_MICRO_PROBE_STEPS=10
+CONFIG_MATCHED_MICRO_DATA_TOKENS=40000000
+CONFIG_MATCHED_MICRO_PHASE_CAMPAIGN=y
+CONFIG_MATCHED_MICRO_CAMPAIGN_SEEDS="1234 2027 31337"
+CONFIG_MATCHED_MICRO_CAMPAIGN_BATCH=128
+CONFIG_MATCHED_MICRO_CAMPAIGN_TOKEN_BUDGET=40000000
+CONFIG_MATCHED_MICRO_CAMPAIGN_EVAL_EVERY=150

@@ -68,4 +68,50 @@ config MATCHED_MICRO_DATA_TOKENS
 	  when the token file is missing from DATA_DIR, so a pre-staged
 	  cache is reused as-is and no network is needed.
 
+config MATCHED_MICRO_PHASE_CAMPAIGN
+	bool "Matched training campaign"
+	depends on MATCHED_MICRO
+	default n
+	help
+	  Full-token-budget training of every selected arm at every
+	  selected seed, all at one shared batch size so the optimizer
+	  schedule (updates at matched tokens, warmup fraction, cosine
+	  decay) stays identical across arms. Each run writes its JSON
+	  record and a final weight checkpoint, with validation loss
+	  evaluated periodically. Enable the batch probe alongside as a
+	  cheap pre-flight: a ten-step run of every arm at the campaign
+	  batch catches an out-of-memory arm in minutes instead of hours.
+
+config MATCHED_MICRO_CAMPAIGN_SEEDS
+	string "Seeds"
+	depends on MATCHED_MICRO_PHASE_CAMPAIGN
+	default "1234 2027 31337"
+	help
+	  Space-separated contract-seed overrides, one full campaign pass
+	  each. The seed controls model init; the token stream order is
+	  fixed by design.
+
+config MATCHED_MICRO_CAMPAIGN_BATCH
+	int "Shared batch size for every arm"
+	depends on MATCHED_MICRO_PHASE_CAMPAIGN
+	default 128
+	help
+	  One batch for all arms keeps the comparison matched-schedule,
+	  not just matched-token. Changing it changes update count at a
+	  fixed token budget — record any deviation from the default with
+	  the results.
+
+config MATCHED_MICRO_CAMPAIGN_TOKEN_BUDGET
+	int "Training-token budget per arm per seed"
+	depends on MATCHED_MICRO_PHASE_CAMPAIGN
+	default 40000000
+
+config MATCHED_MICRO_CAMPAIGN_EVAL_EVERY
+	int "Validation eval interval (steps)"
+	depends on MATCHED_MICRO_PHASE_CAMPAIGN
+	default 150
+	help
+	  Validation uses a capped batch set, so this mainly trades
+	  curve resolution against wall-clock on the slowest arm.
+
 endmenu

@@ -535,7 +535,16 @@ def environment_manifest():
     return manifest
 
 
-def train(arm, data_dir, steps, out_dir, device_str, log_every=10, eval_every=0):
+def train(
+    arm,
+    data_dir,
+    steps,
+    out_dir,
+    device_str,
+    log_every=10,
+    eval_every=0,
+    save_checkpoint=False,
+):
     device = torch.device(device_str)
     cfg = ARMS[arm]
     stream = TokenStream(data_dir, CONTRACT["seq_len"], CONTRACT["batch_size"])
@@ -637,6 +646,20 @@ def train(arm, data_dir, steps, out_dir, device_str, log_every=10, eval_every=0)
     with open(out_path, "w") as f:
         json.dump(run, f, indent=1)
     print(f"  -> {out_path}", flush=True)
+    if save_checkpoint:
+        # titans double-registers memory-MLP views; load back with
+        # load_state_dict(..., assign=True)
+        ckpt_path = os.path.join(out_dir, f"{arm}.pt")
+        torch.save(
+            dict(
+                arm=arm,
+                config=dict(cfg),
+                contract=dict(CONTRACT),
+                model=model.state_dict(),
+            ),
+            ckpt_path,
+        )
+        print(f"  -> {ckpt_path}", flush=True)
     return run
 
 
@@ -669,6 +692,25 @@ def main():
     )
     t.add_argument(
         "--seq-len", type=int, default=None, help="override the contract (dry runs)"
+    )
+    t.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="override the contract seed (the sanctioned per-run knob for "
+        "multi-seed campaigns; recorded in the run JSON)",
+    )
+    t.add_argument(
+        "--token-budget",
+        type=int,
+        default=None,
+        help="derive --steps from a training-token budget at the effective "
+        "batch and sequence length",
+    )
+    t.add_argument(
+        "--save-checkpoint",
+        action="store_true",
+        help="save final weights as <out-dir>/<arm>.pt next to the run JSON",
     )
 
     args = ap.parse_args()
@@ -704,6 +746,17 @@ def main():
         if args.seq_len:
             CONTRACT["seq_len"] = args.seq_len
             CONTRACT["contract_overridden"] = True
+        if args.seed is not None:
+            CONTRACT["seed"] = args.seed
+        if args.token_budget:
+            per_step = CONTRACT["batch_size"] * (CONTRACT["seq_len"] - 1)
+            args.steps = max(1, args.token_budget // per_step)
+            print(
+                f"token budget {args.token_budget} at batch "
+                f"{CONTRACT['batch_size']} seq {CONTRACT['seq_len']} "
+                f"-> {args.steps} steps",
+                flush=True,
+            )
         train(
             args.arm,
             args.data_dir,
@@ -712,6 +765,7 @@ def main():
             args.device,
             log_every=args.log_every,
             eval_every=args.eval_every,
+            save_checkpoint=args.save_checkpoint,
         )
         return 0
 
