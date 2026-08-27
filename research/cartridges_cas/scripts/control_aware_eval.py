@@ -498,12 +498,29 @@ def probe_eval(cache):
     return report
 
 
+def condition_priority(name):
+    """Decisive conditions first.  Each condition costs minutes of
+    generation, so a run that is interrupted -- or simply read while it
+    is still going -- should already carry the comparison the screen
+    exists to make: the shared start, the no-cartridge floor, and every
+    arm at its final step, before the intermediate trajectory."""
+    if name == "start_step0":
+        return (0, name)
+    if name == "no_cartridge":
+        return (1, name)
+    if "_step" in name:
+        step = int(name.rsplit("_step", 1)[1])
+        return (2, -step, name)
+    return (3, name)
+
+
 def main():
     Path(os.path.dirname(OUT_JSON)).mkdir(parents=True, exist_ok=True)
     conditions = [("no_cartridge", None)]
     for spec in CARTS.split(","):
         name, path = spec.split("=", 1)
         conditions.append((name, path))
+    conditions.sort(key=lambda c: condition_priority(c[0]))
 
     report = dict(
         evaluator=EVALUATOR_VERSION,
@@ -511,9 +528,19 @@ def main():
         patient=PATIENT,
         max_q=MAX_Q,
         probe_ids=PROBE_IDS,
+        condition_order=[c[0] for c in conditions],
         results={},
     )
     raws = {}
+
+    def persist():
+        """Write after every condition: these runs are hours long and a
+        result that only exists in memory is a result that can be lost."""
+        with open(OUT_JSON, "w") as f:
+            json.dump(report, f, indent=1)
+        with open(OUT_JSON.replace(".json", "_raw.json"), "w") as f:
+            json.dump(raws, f, indent=1)
+
     for name, path in conditions:
         cache = load_cart(path) if path else None
         primary, rows_p = generation_eval(cache, thinking=False, cap=32)
@@ -531,14 +558,12 @@ def main():
             f"| stress={stress['strict_acc']:.3f}",
             flush=True,
         )
+        persist()
         if cache is not None:
             del cache
             torch.cuda.empty_cache()
 
-    with open(OUT_JSON, "w") as f:
-        json.dump(report, f, indent=1)
-    with open(OUT_JSON.replace(".json", "_raw.json"), "w") as f:
-        json.dump(raws, f, indent=1)
+    persist()
     print(f"CTRL_EVAL_DONE {OUT_JSON}")
 
 
