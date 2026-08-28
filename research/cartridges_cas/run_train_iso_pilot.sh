@@ -6,12 +6,12 @@
 # that dominated iso5's low oracle). Runs on the free GPUs (0-3 untouched; the
 # serves hold 5/6). Two GPUs (4,7) x sequential patients. Link-independent (tmux).
 set -u
-CASV=/home/mcgrof/cas_venv/bin/python
-CART=/home/mcgrof/cartridges
-S=/home/mcgrof/cas_out/synth_decoupled
-OUT=/home/mcgrof/cas_out/iso5_decoupled
-REC=/home/mcgrof/cas_out/records
-LOGS=/home/mcgrof/cas_out/logs
+CASV=$HOME/cas_venv/bin/python
+CART=$HOME/cartridges
+S=$HOME/cas_out/synth_decoupled
+OUT=$HOME/cas_out/iso5_decoupled
+REC=$HOME/cas_out/records
+LOGS=$HOME/cas_out/logs
 mkdir -p "$OUT" "$LOGS"
 
 # training hyperparameters (env-overridable)

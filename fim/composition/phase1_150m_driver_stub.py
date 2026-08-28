@@ -8,10 +8,12 @@ launch.
 
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from pathlib import Path
 
-CANONICAL_ROOT = Path("/home/mcgrof/devel/results-archive/paper-fim/150m")
+CANONICAL_ROOT = Path(os.path.expanduser("~/devel/results-archive/paper-fim/150m"))
 
 
 @dataclass(frozen=True)

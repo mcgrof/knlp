@@ -25,8 +25,8 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 
 from openai import OpenAI
 from cartridges.data.longhealth.utils import load_longhealth_dataset
@@ -39,7 +39,9 @@ PATIENTS = os.environ.get(
 TARGET_PER_ROUND = int(os.environ.get("TARGET_PER_ROUND", "500"))
 N_PER_CALL = int(os.environ.get("N_PER_CALL", "20"))
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "16"))
-OUT_JSON = os.environ.get("OUT_JSON", "/home/mcgrof/cas_out/qgen/qgen_pilot.json")
+OUT_JSON = os.environ.get(
+    "OUT_JSON", os.path.expanduser("~/cas_out/qgen/qgen_pilot.json")
+)
 SEED = int(os.environ.get("SEED", "0"))
 
 # One clinical note in the question model's system prompt (Appendix H/I: the

@@ -32,6 +32,7 @@ co-load ALL patients' carts in one prefix and answer every patient's questions
 against it -- the interference measurement), CONCURRENCY (baselines, default
 32), OUT_JSON, DEVICE (cart mode), SINK_MAX (cart reconstruction).
 """
+
 import os
 import json
 import re
@@ -41,19 +42,23 @@ import difflib
 import statistics
 from concurrent.futures import ThreadPoolExecutor
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 
 MODE = os.environ.get("MODE", "nocontext")
-PATIENTS = os.environ.get("PATIENTS", " ".join(f"patient_{i:02d}" for i in range(1, 21))).split()
+PATIENTS = os.environ.get(
+    "PATIENTS", " ".join(f"patient_{i:02d}" for i in range(1, 21))
+).split()
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 RUNS = int(os.environ.get("RUNS", "3"))
 VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8005/v1")
 CART_DIR = os.environ.get("CART_DIR", "")
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "32"))
-OUT_JSON = os.environ.get("OUT_JSON", f"/home/mcgrof/cas_out/eval_t15_{MODE}.json")
+OUT_JSON = os.environ.get(
+    "OUT_JSON", fos.path.expanduser("~/cas_out/eval_t15_{MODE}.json")
+)
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
@@ -112,7 +117,9 @@ def score_response(text, q):
     options = [q.answer_a, q.answer_b, q.answer_c, q.answer_d, q.answer_e]
 
     def sim(a, b):
-        return difflib.SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
+        return difflib.SequenceMatcher(
+            None, a.lower().strip(), b.lower().strip()
+        ).ratio()
 
     if not pred:
         return 0, tag_found
@@ -130,8 +137,9 @@ def aggregate(per_run):
         "acc_mean": round(statistics.mean(accs), 4),
         "acc_std": round(statistics.stdev(accs), 4) if len(accs) > 1 else 0.0,
         "per_run_acc": [round(a, 4) for a in accs],
-        "per_run_counts": [{"correct": c, "total": t, "answer_tag_missing": m}
-                           for c, t, m in per_run],
+        "per_run_counts": [
+            {"correct": c, "total": t, "answer_tag_missing": m} for c, t, m in per_run
+        ],
     }
 
 
@@ -143,8 +151,7 @@ def run_vllm_mode(patients_data):
     jobs = []  # (run, patient, q, doc_text_or_None)
     for run in range(RUNS):
         for patient in patients_data:
-            doc = ("\n\n".join(patient.texts.values())
-                   if MODE == "fulldoc" else None)
+            doc = "\n\n".join(patient.texts.values()) if MODE == "fulldoc" else None
             for q in patient.questions[:MAX_Q]:
                 jobs.append((run, patient.patient_id, q, doc))
 
@@ -163,7 +170,8 @@ def run_vllm_mode(patients_data):
                     ],
                     temperature=TEMPERATURE,
                     max_completion_tokens=MAX_COMPLETION,
-                    seed=run * 100003 + zlib.crc32(q.question_id.encode()) % 100003
+                    seed=run * 100003
+                    + zlib.crc32(q.question_id.encode()) % 100003
                     + attempt,
                     extra_body={"chat_template_kwargs": {"enable_thinking": True}},
                 )
@@ -185,29 +193,32 @@ def run_vllm_mode(patients_data):
         for i, r in enumerate(ex.map(one, jobs)):
             results.append(r)
             if (i + 1) % 100 == 0:
-                print(f"  [{MODE}] {i + 1}/{len(jobs)} t={time.time() - t0:.0f}s",
-                      flush=True)
+                print(
+                    f"  [{MODE}] {i + 1}/{len(jobs)} t={time.time() - t0:.0f}s",
+                    flush=True,
+                )
     errors = [r[4] for r in results if r[4]]
     # A biased summary is worse than no summary: refuse to report when more
     # than 2% of requests failed even after a retry (e.g. server died mid-run).
     if len(errors) > 0.02 * len(jobs):
         raise SystemExit(
             f"[{MODE}] {len(errors)}/{len(jobs)} requests errored (>2%); "
-            f"refusing to write a biased summary. First: {errors[0]}")
+            f"refusing to write a biased summary. First: {errors[0]}"
+        )
     ok = [r for r in results if not r[4]]
     assert ok, "no successful requests"
     per_run = []
     for run in range(RUNS):
         rr = [r for r in ok if r[0] == run]
-        per_run.append((sum(r[2] for r in rr), len(rr),
-                        sum(1 for r in rr if not r[3])))
+        per_run.append((sum(r[2] for r in rr), len(rr), sum(1 for r in rr if not r[3])))
     per_patient = {}
     for pid in {r[1] for r in ok}:
         pr = [r for r in ok if r[1] == pid]
         per_patient[pid] = round(sum(r[2] for r in pr) / max(len(pr), 1), 4)
     if errors:
-        print(f"  [{MODE}] WARNING: {len(errors)} errored requests excluded",
-              flush=True)
+        print(
+            f"  [{MODE}] WARNING: {len(errors)} errored requests excluded", flush=True
+        )
     return per_run, per_patient, errors[:10]
 
 
@@ -226,8 +237,11 @@ def run_cart_mode(patients_data):
     ac = AttnConfig(
         n_layers=model.config.num_hidden_layers,
         n_heads=model.config.num_key_value_heads,
-        head_dim=getattr(model.config, "head_dim",
-                         model.config.hidden_size // model.config.num_attention_heads),
+        head_dim=getattr(
+            model.config,
+            "head_dim",
+            model.config.hidden_size // model.config.num_attention_heads,
+        ),
     )
 
     def load_cart_kv(path):
@@ -237,7 +251,9 @@ def run_cart_mode(patients_data):
         ck = torch.load(path, map_location="cpu", weights_only=False)
 
         def t(p):
-            return torch.as_tensor(p.data if hasattr(p, "data") else p).to(torch.bfloat16)
+            return torch.as_tensor(p.data if hasattr(p, "data") else p).to(
+                torch.bfloat16
+            )
 
         fk = ck.get("frozen_keys") or []
         nfrozen = t(fk[0]).shape[2] if fk else 0
@@ -250,18 +266,24 @@ def run_cart_mode(patients_data):
                 return [torch.cat([ff[i], tt[i]], dim=2) for i in range(len(tt))]
             return tt
 
-        return (cat(ck.get("frozen_keys"), ck["trainable_keys"]),
-                cat(ck.get("frozen_values"), ck["trainable_values"]))
+        return (
+            cat(ck.get("frozen_keys"), ck["trainable_keys"]),
+            cat(ck.get("frozen_values"), ck["trainable_values"]),
+        )
 
     def make_cache(paths):
         """One TrainableCache holding the given carts concatenated in order —
         a single cart for oracle mode, all carts for collapse mode."""
         per = [load_cart_kv(p) for p in paths]
         nl = ac.n_layers
-        ik = [torch.cat([per[c][0][li] for c in range(len(per))], dim=2)
-              for li in range(nl)]
-        iv = [torch.cat([per[c][1][li] for c in range(len(per))], dim=2)
-              for li in range(nl)]
+        ik = [
+            torch.cat([per[c][0][li] for c in range(len(per))], dim=2)
+            for li in range(nl)
+        ]
+        iv = [
+            torch.cat([per[c][1][li] for c in range(len(per))], dim=2)
+            for li in range(nl)
+        ]
         return TrainableCache(config=ac, init_keys=ik, init_values=iv).to(DEVICE)
 
     # EOS set from the model's generation config (Qwen3 has two EOS ids); the
@@ -283,8 +305,14 @@ def run_cart_mode(patients_data):
         sids = torch.zeros(ids.shape[0], dtype=torch.long, device=DEVICE)
         out = []
         for _ in range(MAX_COMPLETION):
-            o = model(input_ids=cur_ids, seq_ids=sids, position_ids=pos,
-                      past_key_values=cache, use_cache=True, mode="generate")
+            o = model(
+                input_ids=cur_ids,
+                seq_ids=sids,
+                position_ids=pos,
+                past_key_values=cache,
+                use_cache=True,
+                mode="generate",
+            )
             logits = o.logits[0, -1].float() / TEMPERATURE
             nxt = int(torch.multinomial(torch.softmax(logits, dim=-1), 1))
             if nxt in stop_ids:
@@ -298,11 +326,19 @@ def run_cart_mode(patients_data):
 
     per_run = []
     per_patient_hits = {}
-    skipped = sorted({p.patient_id for p in patients_data
-                      if not os.path.exists(os.path.join(CART_DIR, f"{p.patient_id}.pt"))})
+    skipped = sorted(
+        {
+            p.patient_id
+            for p in patients_data
+            if not os.path.exists(os.path.join(CART_DIR, f"{p.patient_id}.pt"))
+        }
+    )
     if skipped:
-        print(f"  [cart] WARNING: no cartridge for {skipped}; aggregate covers "
-              f"{len(patients_data) - len(skipped)} patients", flush=True)
+        print(
+            f"  [cart] WARNING: no cartridge for {skipped}; aggregate covers "
+            f"{len(patients_data) - len(skipped)} patients",
+            flush=True,
+        )
     collapse = os.environ.get("COLLAPSE", "0") == "1"
     present = [p for p in patients_data if p.patient_id not in skipped]
     shared_cache = None
@@ -310,9 +346,13 @@ def run_cart_mode(patients_data):
         # All carts co-loaded in one prefix (concatenated in patient order);
         # every patient's questions are answered against the combined cache.
         shared_cache = make_cache(
-            [os.path.join(CART_DIR, f"{p.patient_id}.pt") for p in present])
-        print(f"  [cart] COLLAPSE mode: {len(present)} carts co-loaded, "
-              f"{shared_cache.num_cartridge_tokens()} prefix tokens", flush=True)
+            [os.path.join(CART_DIR, f"{p.patient_id}.pt") for p in present]
+        )
+        print(
+            f"  [cart] COLLAPSE mode: {len(present)} carts co-loaded, "
+            f"{shared_cache.num_cartridge_tokens()} prefix tokens",
+            flush=True,
+        )
     t0 = time.time()
     for run in range(RUNS):
         c = t = miss = 0
@@ -322,12 +362,20 @@ def run_cart_mode(patients_data):
                 continue
             cache = shared_cache if collapse else make_cache([cart])
             for q in patient.questions[:MAX_Q]:
-                ids = tok.apply_chat_template(
-                    [{"role": "system", "content": SYSTEM_PROMPT},
-                     {"role": "user", "content": user_prompt(q)}],
-                    tokenize=True, add_generation_prompt=True,
-                    return_tensors="pt", enable_thinking=True,
-                ).to(DEVICE).flatten()
+                ids = (
+                    tok.apply_chat_template(
+                        [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt(q)},
+                        ],
+                        tokenize=True,
+                        add_generation_prompt=True,
+                        return_tensors="pt",
+                        enable_thinking=True,
+                    )
+                    .to(DEVICE)
+                    .flatten()
+                )
                 text = generate(cache, ids, seed=run * 7919 + t)
                 corr, tag = score_response(text, q)
                 c += corr
@@ -340,11 +388,15 @@ def run_cart_mode(patients_data):
             if not collapse:
                 del cache
                 torch.cuda.empty_cache()
-            print(f"  [cart] run{run} {patient.patient_id} done "
-                  f"t={time.time() - t0:.0f}s", flush=True)
+            print(
+                f"  [cart] run{run} {patient.patient_id} done "
+                f"t={time.time() - t0:.0f}s",
+                flush=True,
+            )
         per_run.append((c, t, miss))
-    assert any(t > 0 for _, t, _ in per_run), \
-        f"no cartridges evaluated (CART_DIR={CART_DIR}, skipped={skipped})"
+    assert any(
+        t > 0 for _, t, _ in per_run
+    ), f"no cartridges evaluated (CART_DIR={CART_DIR}, skipped={skipped})"
     per_patient = {}
     for (pid, _run), (hc, ht) in per_patient_hits.items():
         a, b = per_patient.get(pid, (0, 0))
@@ -357,8 +409,11 @@ def main():
     from cartridges.data.longhealth.utils import load_longhealth_dataset
 
     patients_data = load_longhealth_dataset(PATIENTS)
-    print(f"[eval-t15] mode={MODE} patients={len(patients_data)} max_q={MAX_Q} "
-          f"runs={RUNS}", flush=True)
+    print(
+        f"[eval-t15] mode={MODE} patients={len(patients_data)} max_q={MAX_Q} "
+        f"runs={RUNS}",
+        flush=True,
+    )
     if MODE in ("nocontext", "fulldoc"):
         per_run, per_patient, errors = run_vllm_mode(patients_data)
     elif MODE == "cart":
@@ -369,10 +424,10 @@ def main():
 
     res = {
         "protocol": "CAS Table 15 (system+user verbatim), temp 0.6, thinking "
-                    "on, max 2048, fuzzy option match (difflib), "
-                    f"runs={RUNS}; top-p/k: vLLM=model generation_config "
-                    "defaults, flex=plain temperature sampling (paper leaves "
-                    "them unspecified)",
+        "on, max 2048, fuzzy option match (difflib), "
+        f"runs={RUNS}; top-p/k: vLLM=model generation_config "
+        "defaults, flex=plain temperature sampling (paper leaves "
+        "them unspecified)",
         "mode": MODE,
         "model": MODEL,
         "patients": [p.patient_id for p in patients_data],
@@ -382,14 +437,20 @@ def main():
         "summary": aggregate(per_run),
         "per_patient_acc": dict(sorted(per_patient.items())),
         "errors_sample": errors,
-        "paper_reference": {"nocontext": 37.5, "fulldoc_oracle_1doc": 87.4,
-                            "isolated_cart_aggregate": 73.6},
+        "paper_reference": {
+            "nocontext": 37.5,
+            "fulldoc_oracle_1doc": 87.4,
+            "isolated_cart_aggregate": 73.6,
+        },
     }
     os.makedirs(os.path.dirname(OUT_JSON) or ".", exist_ok=True)
     json.dump(res, open(OUT_JSON, "w"), indent=2)
     print(json.dumps(res["summary"], indent=2))
-    print(f"CAS_EVAL_T15_DONE mode={MODE} acc={res['summary']['acc_mean']} "
-          f"+/-{res['summary']['acc_std']} -> {OUT_JSON}", flush=True)
+    print(
+        f"CAS_EVAL_T15_DONE mode={MODE} acc={res['summary']['acc_mean']} "
+        f"+/-{res['summary']['acc_std']} -> {OUT_JSON}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

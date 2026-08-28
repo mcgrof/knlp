@@ -26,7 +26,7 @@ import glob
 import json
 import statistics
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
 
 import pandas as pd
@@ -35,9 +35,11 @@ from cartridges.data.longhealth.utils import load_longhealth_dataset
 PATIENTS = os.environ.get(
     "PATIENTS", "patient_01 patient_02 patient_03 patient_05 patient_06"
 ).split()
-SELF_STUDY_DIR = os.environ.get("SELF_STUDY_DIR", "/home/mcgrof/cas_out/synth_faithful")
+SELF_STUDY_DIR = os.environ.get(
+    "SELF_STUDY_DIR", os.path.expanduser("~/cas_out/synth_faithful")
+)
 EVAL_JSON = os.environ.get(
-    "EVAL_JSON", "/home/mcgrof/cas_out/eval_matched_faithful.json"
+    "EVAL_JSON", os.path.expanduser("~/cas_out/eval_matched_faithful.json")
 )
 
 STOP = set(

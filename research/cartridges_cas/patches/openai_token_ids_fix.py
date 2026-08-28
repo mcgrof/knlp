@@ -29,10 +29,30 @@ readable through the explicit legacy transform in control_aware/targets.py --
 but nothing generated from here on carries the duplicate.
 """
 
+import os
+import pathlib
 import sys
 
-P = "/home/mcgrof/cartridges/cartridges/clients/openai.py"
+# Resolve the checkout the same way every other patch here does, via
+# CART_ROOT or --cart-root.  This used to be a hardcoded absolute path
+# under one developer's home directory, which meant the patch silently
+# did nothing on any machine whose checkout lived elsewhere -- and
+# whether it ran or not decides whether that run's targets carry the
+# duplicate.  A path that only works on one machine is not a patch, it
+# is a coin flip about which objective you trained.
+_root = os.environ.get("CART_ROOT", os.path.expanduser("~/cartridges"))
+if "--cart-root" in sys.argv:
+    _root = sys.argv[sys.argv.index("--cart-root") + 1]
+P = str(pathlib.Path(_root) / "cartridges" / "clients" / "openai.py")
+if not os.path.isfile(P):
+    sys.exit(f"openai.py not found at {P}; set CART_ROOT or pass --cart-root")
 src = open(P).read()
+
+# Idempotent: bootstrap runs this every time, and re-running must not
+# fail the build or double-apply.
+if "return_tokens_as_token_ids" in src:
+    print(f"PATCH_SKIP: already applied ({P})")
+    sys.exit(0)
 
 # 1. request token-ids-as-tokens from vLLM (non-openai endpoints only)
 old1 = (

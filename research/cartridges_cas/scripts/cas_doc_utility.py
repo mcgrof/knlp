@@ -23,8 +23,8 @@ import glob
 import random
 import statistics
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
 
 import torch
@@ -35,7 +35,7 @@ from cartridges.data.longhealth.utils import load_longhealth_dataset
 PATIENTS = os.environ.get(
     "PATIENTS", "patient_01 patient_02 patient_03 patient_05 patient_06"
 ).split()
-SYNTH_DIR = os.environ.get("SYNTH_DIR", "/home/mcgrof/cas_out/synth_diverse")
+SYNTH_DIR = os.environ.get("SYNTH_DIR", os.path.expanduser("~/cas_out/synth_diverse"))
 N = int(os.environ.get("N", "80"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")

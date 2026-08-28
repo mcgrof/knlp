@@ -28,8 +28,8 @@ import os
 import sys
 import tempfile
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
@@ -45,7 +45,7 @@ from cartridges.data.longhealth.utils import load_longhealth_dataset
 PATIENTS = os.environ.get(
     "PATIENTS", "patient_01 patient_02 patient_03 patient_05 patient_06"
 ).split()
-OUT = os.environ.get("OUT", "/home/mcgrof/cas_out/fulldoc_carts")
+OUT = os.environ.get("OUT", os.path.expanduser("~/cas_out/fulldoc_carts"))
 MAXTOK = int(os.environ.get("MAXTOK", "16384"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 MODEL = "Qwen/Qwen3-8B"

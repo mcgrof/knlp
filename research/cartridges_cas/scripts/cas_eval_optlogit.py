@@ -24,8 +24,8 @@ import sys
 import json
 import statistics
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
@@ -46,7 +46,9 @@ MAX_Q = int(os.environ.get("MAX_Q", "20"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 MODEL = E.MODEL
-OUT_JSON = os.environ.get("OUT_JSON", "/home/mcgrof/cas_out/eval_optlogit.json")
+OUT_JSON = os.environ.get(
+    "OUT_JSON", os.path.expanduser("~/cas_out/eval_optlogit.json")
+)
 
 
 def load_cart_kv(path):

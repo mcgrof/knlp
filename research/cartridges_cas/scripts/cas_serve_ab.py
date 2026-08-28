@@ -25,10 +25,13 @@ flex_generate), so quality here is comparable to the combine-eval numbers.
 Env: CART_DIR, PATIENTS, MAX_Q, OUT_JSON, DEVICE, ANSWER_TOKENS, WARMUP.
 Run on the same hardware named in the record (H100) so TTFT is representative.
 """
+
 import os, json, time, statistics, torch
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.environ.get("OUT_DIR", "/home/mcgrof/cas_out"))
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault(
+    "CARTRIDGES_OUTPUT_DIR", os.environ.get("OUT_DIR", os.path.expanduser("~/cas_out"))
+)
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 
@@ -42,7 +45,7 @@ MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 CART_DIR = os.environ["CART_DIR"]
 PATIENTS = os.environ["PATIENTS"].split()
 MAX_Q = int(os.environ.get("MAX_Q", "10"))
-OUT_JSON = os.environ.get("OUT_JSON", "/home/mcgrof/cas_out/serve_ab.json")
+OUT_JSON = os.environ.get("OUT_JSON", os.path.expanduser("~/cas_out/serve_ab.json"))
 DEVICE = os.environ.get("DEVICE", "cuda")
 ANSWER_TOKENS = int(os.environ.get("ANSWER_TOKENS", "32"))
 WARMUP = int(os.environ.get("WARMUP", "2"))
@@ -53,9 +56,11 @@ torch.cuda.set_device(di)
 tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
 model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
 model.eval()
-ac = AttnConfig(n_layers=model.config.num_hidden_layers,
-                n_heads=model.config.num_key_value_heads,
-                head_dim=model.config.hidden_size // model.config.num_attention_heads)
+ac = AttnConfig(
+    n_layers=model.config.num_hidden_layers,
+    n_heads=model.config.num_key_value_heads,
+    head_dim=model.config.hidden_size // model.config.num_attention_heads,
+)
 
 
 def load_cart(path):
@@ -75,29 +80,44 @@ def load_cart(path):
             return [torch.cat([ff[i], tt[i]], dim=2) for i in range(len(tt))]
         return tt
 
-    return (cat(ck.get("frozen_keys"), ck["trainable_keys"]),
-            cat(ck.get("frozen_values"), ck["trainable_values"]))
+    return (
+        cat(ck.get("frozen_keys"), ck["trainable_keys"]),
+        cat(ck.get("frozen_values"), ck["trainable_values"]),
+    )
 
 
 def make_cache(paths):
     per = [load_cart(p) for p in paths]
     nl = ac.n_layers
-    ik = [torch.cat([per[c][0][li] for c in range(len(per))], dim=2) for li in range(nl)]
-    iv = [torch.cat([per[c][1][li] for c in range(len(per))], dim=2) for li in range(nl)]
+    ik = [
+        torch.cat([per[c][0][li] for c in range(len(per))], dim=2) for li in range(nl)
+    ]
+    iv = [
+        torch.cat([per[c][1][li] for c in range(len(per))], dim=2) for li in range(nl)
+    ]
     return TrainableCache(config=ac, init_keys=ik, init_values=iv).to(DEVICE)
 
 
 def letter_prompt(q):
-    return (f"Question: {q.question}\nA) {q.answer_a}\nB) {q.answer_b}\nC) {q.answer_c}\n"
-            f"D) {q.answer_d}\nE) {q.answer_e}\n\nAnswer with ONLY the letter "
-            f"(A, B, C, D, or E). Do not explain.")
+    return (
+        f"Question: {q.question}\nA) {q.answer_a}\nB) {q.answer_b}\nC) {q.answer_c}\n"
+        f"D) {q.answer_d}\nE) {q.answer_e}\n\nAnswer with ONLY the letter "
+        f"(A, B, C, D, or E). Do not explain."
+    )
 
 
 def encode(user_content):
-    return tok.apply_chat_template(
-        [{"role": "user", "content": user_content}], tokenize=True,
-        add_generation_prompt=True, return_tensors="pt", enable_thinking=True
-    ).to(DEVICE).flatten()
+    return (
+        tok.apply_chat_template(
+            [{"role": "user", "content": user_content}],
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt",
+            enable_thinking=True,
+        )
+        .to(DEVICE)
+        .flatten()
+    )
 
 
 @torch.no_grad()
@@ -105,10 +125,15 @@ def gen(ids, cache, max_new_tokens):
     if cache is not None:
         cache.clear()
     return flex_generate(
-        model, tok, ids,
+        model,
+        tok,
+        ids,
         seq_ids=torch.zeros(ids.shape[0], dtype=torch.long, device=DEVICE),
         position_ids=torch.arange(ids.shape[0], device=DEVICE),
-        max_new_tokens=max_new_tokens, cache=cache, temperature=0.0)
+        max_new_tokens=max_new_tokens,
+        cache=cache,
+        temperature=0.0,
+    )
 
 
 def score(out, q):
@@ -116,7 +141,13 @@ def score(out, q):
     if "</think>" in resp:
         resp = resp.split("</think>")[-1].strip()
     letter = next((ch.upper() for ch in resp if ch.upper() in "ABCDE"), "")
-    amap = {"A": q.answer_a, "B": q.answer_b, "C": q.answer_c, "D": q.answer_d, "E": q.answer_e}
+    amap = {
+        "A": q.answer_a,
+        "B": q.answer_b,
+        "C": q.answer_c,
+        "D": q.answer_d,
+        "E": q.answer_e,
+    }
     return int(amap.get(letter, "\0") == q.correct)
 
 
@@ -140,10 +171,12 @@ def pctl(xs, p):
 def main():
     os.makedirs(os.path.dirname(OUT_JSON) or ".", exist_ok=True)
     for p in PATIENTS:
-        assert os.path.exists(os.path.join(CART_DIR, f"{p}.pt")), f"missing cartridge {p}.pt"
+        assert os.path.exists(
+            os.path.join(CART_DIR, f"{p}.pt")
+        ), f"missing cartridge {p}.pt"
 
     ttft_base, ttft_cart = [], []
-    dec_base, dec_cart = [], []            # decode tok/s per query
+    dec_base, dec_cart = [], []  # decode tok/s per query
     base_prefill_toks, cart_prefill_toks = [], []
     correct_base = correct_cart = total = 0
     warmed = False
@@ -187,15 +220,26 @@ def main():
 
     med_base = statistics.median(ttft_base) if ttft_base else None
     med_cart = statistics.median(ttft_cart) if ttft_cart else None
-    prefill_ms_saved = round(med_base - med_cart, 1) if (med_base and med_cart) else None
+    prefill_ms_saved = (
+        round(med_base - med_cart, 1) if (med_base and med_cart) else None
+    )
     res = {
-        "model": MODEL, "cart_dir": CART_DIR, "patients": PATIENTS,
-        "n_queries": total, "answer_tokens": ANSWER_TOKENS,
-        "avg_baseline_prefill_tokens": round(statistics.mean(base_prefill_toks), 0) if base_prefill_toks else None,
-        "avg_cartridge_prefill_tokens": round(statistics.mean(cart_prefill_toks), 0) if cart_prefill_toks else None,
+        "model": MODEL,
+        "cart_dir": CART_DIR,
+        "patients": PATIENTS,
+        "n_queries": total,
+        "answer_tokens": ANSWER_TOKENS,
+        "avg_baseline_prefill_tokens": (
+            round(statistics.mean(base_prefill_toks), 0) if base_prefill_toks else None
+        ),
+        "avg_cartridge_prefill_tokens": (
+            round(statistics.mean(cart_prefill_toks), 0) if cart_prefill_toks else None
+        ),
         "ttftMs": {
-            "baselineP50": pctl(ttft_base, 50), "baselineP95": pctl(ttft_base, 95),
-            "cartridgeP50": pctl(ttft_cart, 50), "cartridgeP95": pctl(ttft_cart, 95),
+            "baselineP50": pctl(ttft_base, 50),
+            "baselineP95": pctl(ttft_base, 95),
+            "cartridgeP50": pctl(ttft_cart, 50),
+            "cartridgeP95": pctl(ttft_cart, 95),
         },
         "prefillMsSavedMedian": prefill_ms_saved,
         "decodeTokPerSec": {

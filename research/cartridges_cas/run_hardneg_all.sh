@@ -4,13 +4,13 @@
 # the Korea team; GPU 3 holds an unrelated straggler. After synth we stop ONLY our
 # own serve PIDs (never a pattern-kill on the shared box) to free 0/1 for training.
 set -u
-CASV=/home/mcgrof/cas_venv/bin/python
-CART=/home/mcgrof/cartridges
-LOGS=/home/mcgrof/cas_out/logs
-SYNTH=/home/mcgrof/cas_out/synth_hardneg
-ISO=/home/mcgrof/cas_out/iso_hardneg
-REC=/home/mcgrof/cas_out/records
-EVAL_JSON=/home/mcgrof/cas_out/eval_hardneg.json
+CASV=$HOME/cas_venv/bin/python
+CART=$HOME/cartridges
+LOGS=$HOME/cas_out/logs
+SYNTH=$HOME/cas_out/synth_hardneg
+ISO=$HOME/cas_out/iso_hardneg
+REC=$HOME/cas_out/records
+EVAL_JSON=$HOME/cas_out/eval_hardneg.json
 PATIENTS=(patient_01 patient_02 patient_03 patient_05 patient_06)
 NCONV=${NCONV:-1500}
 mkdir -p "$SYNTH" "$ISO" "$LOGS"
@@ -26,7 +26,7 @@ start_serve(){ # gpu port name model log
   if serve_up "$port"; then say "serve :$port already UP"; return; fi
   say "start serve $name gpu$g :$port"
   VLLM_GPU=$g VLLM_PORT=$port VLLM_NAME=$name VLLM_MODEL=$model HF_HUB_OFFLINE=1 \
-    setsid nohup /home/mcgrof/run_vllm_serve.sh >"$log" 2>&1 &
+    setsid nohup $HOME/run_vllm_serve.sh >"$log" 2>&1 &
   echo "$!" >> "$LOGS/hardneg_serve.pids"
 }
 start_serve 0 8105 qwen3-14b-qgen Qwen/Qwen3-14B "$LOGS/serve_qgen.log"
