@@ -50,6 +50,9 @@ from transformers import AutoTokenizer
 
 from cartridges.cache import AttnConfig, TrainableCache
 from cartridges.datasets import TrainDataset, DataSource
+from cartridges.initialization.tokenization_utils import (
+    MODEL_TO_SYSTEM_PROMPT_TOKENIZER,
+)
 from cartridges.models.qwen.modeling_qwen3 import FlexQwen3ForCausalLM
 
 for _d in (Path(__file__).resolve().parent, Path(__file__).resolve().parents[1]):
@@ -78,6 +81,8 @@ CHECKPOINT_AT = [
     int(x) for x in os.environ.get("CHECKPOINT_AT", "0,1,2,5,10").split(",")
 ]
 CLIP = float(os.environ.get("CLIP", "1.0"))
+RECORDS_DIR = os.environ.get("RECORDS_DIR", "/root/cart_records")
+KV_TOKENS = int(os.environ.get("KV_TOKENS", "512"))
 DEVICE = "cuda"
 
 ARM_TO_MODE = dict(
@@ -116,6 +121,50 @@ def flatten_mode():
     return "edge_fixed" if "EDGE FIX" in src else "legacy_early_stop"
 
 
+@torch.no_grad()
+def build_init_cart(path, model, tok, attn_config):
+    """Truncation init from the patient record, so a run can start from
+    an untrained cartridge instead of only continuing someone else's.
+
+    Answering whether cartridge training overshoots needs the whole
+    curve from step zero, and the checkpoints of the original run no
+    longer exist.  Forward the first KV_TOKENS system-prompt tokens of
+    the record through the frozen model and keep the resulting cache;
+    the first token becomes a frozen attention sink, matching the
+    geometry every evaluator here expects."""
+    record = (Path(RECORDS_DIR) / f"{PATIENT}.txt").read_text()
+    tok_fn = MODEL_TO_SYSTEM_PROMPT_TOKENIZER[tok.name_or_path.lower()]
+    ids = tok_fn(tokenizer=tok, content=record, max_tokens=KV_TOKENS).squeeze(0)
+    assert ids.shape[0] >= KV_TOKENS, (
+        f"{PATIENT}: record gives only {ids.shape[0]} tokens "
+        f"(< KV_TOKENS={KV_TOKENS}); lower KV_TOKENS"
+    )
+    ids = ids[:KV_TOKENS].to(DEVICE)
+    tmp = TrainableCache(config=attn_config)
+    with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+        model(
+            input_ids=ids,
+            seq_ids=torch.zeros_like(ids, dtype=torch.long),
+            position_ids=torch.arange(ids.shape[-1], dtype=torch.long, device=DEVICE),
+            use_cache=True,
+            past_key_values=tmp,
+            mode="generate",
+        )
+    keys = [t.detach().to(torch.bfloat16).cpu() for t in tmp._keys]
+    values = [t.detach().to(torch.bfloat16).cpu() for t in tmp._values]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "trainable_keys": [k[:, :, 1:].contiguous() for k in keys],
+            "trainable_values": [v[:, :, 1:].contiguous() for v in values],
+            "frozen_keys": [k[:, :, :1].contiguous() for k in keys],
+            "frozen_values": [v[:, :, :1].contiguous() for v in values],
+        },
+        path,
+    )
+    print(f"[ctrl-screen] built truncation-init cartridge: {path}")
+
+
 def load_cart_as_trainable(path, attn_config):
     """Same loader contract as the legacy continuation trainer:
     preserve the frozen/trainable split of the checkpoint."""
@@ -151,6 +200,8 @@ attn_config = AttnConfig(
     n_heads=model.config.num_key_value_heads,
     head_dim=model.config.head_dim,
 )
+if not Path(CART_INIT).is_file():
+    build_init_cart(CART_INIT, model, tok, attn_config)
 cache, NUM_FROZEN = load_cart_as_trainable(CART_INIT, attn_config)
 for p in model.parameters():
     assert not p.requires_grad
