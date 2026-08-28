@@ -10,6 +10,6 @@ export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER=0
 export CUDA_VISIBLE_DEVICES=${VLLM_GPU:-6}
-exec /home/mcgrof/kvio/venv/bin/vllm serve Qwen/Qwen3-8B \
+exec $HOME/kvio/venv/bin/vllm serve Qwen/Qwen3-8B \
   --port ${VLLM_PORT:-8006} --max-model-len 16384 \
   --gpu-memory-utilization 0.85

@@ -34,8 +34,8 @@ import time
 import difflib
 import statistics
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 
@@ -65,7 +65,7 @@ DEVICE = os.environ.get("DEVICE", "cuda:0")
 SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 MODEL = E.MODEL
 TEMPERATURE = E.TEMPERATURE
-OUT_JSON = os.environ.get("OUT_JSON", "/home/mcgrof/cas_out/eval_matched.json")
+OUT_JSON = os.environ.get("OUT_JSON", os.path.expanduser("~/cas_out/eval_matched.json"))
 
 
 # --- multi-scorer ------------------------------------------------------------

@@ -39,6 +39,12 @@ echo "[bootstrap] installing deps (torch left untouched)"
 
 echo "[bootstrap] applying knlp patches"
 CART_ROOT="$CART_ROOT" "$PYTHON" "$HERE/scripts/apply_pod_patches.py" --cart-root "$CART_ROOT" || true
+# The teacher-target patch must run here, not by hand. It used to carry a
+# hardcoded home-directory path and be applied manually, so whether a given
+# machine's synthesis produced usable token ids -- and whether its target
+# rows double-counted the sampled token -- depended on who remembered to run
+# it. It is idempotent, so running it on every bootstrap is free.
+CART_ROOT="$CART_ROOT" "$PYTHON" "$HERE/patches/openai_token_ids_fix.py" --cart-root "$CART_ROOT"
 
 echo "[bootstrap] placing CAS scripts"
 cp -f "$HERE"/scripts/cas_*.py "$CART_ROOT/"

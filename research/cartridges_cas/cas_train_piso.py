@@ -41,13 +41,19 @@ Env:
 Compare the resulting carts_piso/*.pt against isolated and fixed-distractor
 joint carts with the existing combine-eval to see whether faithful P_iso rescues.
 """
+
 import os, glob, random, time
 from pathlib import Path
 
-os.environ.setdefault("CARTRIDGES_DIR", os.environ.get("CARTRIDGES_DIR", "/home/mcgrof/cartridges"))
+os.environ.setdefault(
+    "CARTRIDGES_DIR",
+    os.environ.get("CARTRIDGES_DIR", os.path.expanduser("~/cartridges")),
+)
 # cartridges.__init__ requires CARTRIDGES_OUTPUT_DIR before import; mirror OUT_DIR.
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR",
-                      os.environ.get("OUT_DIR", "/home/mcgrof/cas_out/cart_out"))
+os.environ.setdefault(
+    "CARTRIDGES_OUTPUT_DIR",
+    os.environ.get("OUT_DIR", os.path.expanduser("~/cas_out/cart_out")),
+)
 # eager flex-attention: the reveal pattern changes every sample, so a compiled
 # flex would recompile per pattern. Correctness over speed for this validation.
 os.environ["CARTRIDGES_COMPILE_FLEX"] = "0"
@@ -62,20 +68,22 @@ from transformers import AutoTokenizer
 from cartridges.cache import AttnConfig, TrainableCache
 from cartridges.datasets import TrainDataset, DataSource
 from cartridges.models.qwen.modeling_qwen3 import FlexQwen3ForCausalLM
-from cartridges.initialization.tokenization_utils import MODEL_TO_SYSTEM_PROMPT_TOKENIZER
+from cartridges.initialization.tokenization_utils import (
+    MODEL_TO_SYSTEM_PROMPT_TOKENIZER,
+)
 import cartridges.models.qwen.modeling_qwen3 as mq
 from torch.nn.attention.flex_attention import create_block_mask
 
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 PATIENTS = os.environ.get("PATIENTS", "patient_01 patient_02 patient_03").split()
-RECORDS_DIR = os.environ.get("RECORDS_DIR", "/home/mcgrof/cas_out/records")
-DATA_DIR = os.environ.get("DATA_DIR", "/home/mcgrof/cas_out/synth")
+RECORDS_DIR = os.environ.get("RECORDS_DIR", os.path.expanduser("~/cas_out/records"))
+DATA_DIR = os.environ.get("DATA_DIR", os.path.expanduser("~/cas_out/synth"))
 P_ISO = float(os.environ.get("P_ISO", "0.75"))
 KV_TOKENS = int(os.environ.get("KV_TOKENS", "1024"))
 STEPS = int(os.environ.get("STEPS", "600"))
 ACCUM = int(os.environ.get("ACCUM", "16"))
 LR = float(os.environ.get("LR", "2e-2"))
-OUT_DIR = os.environ.get("OUT_DIR", "/home/mcgrof/cas_out/cart_out")
+OUT_DIR = os.environ.get("OUT_DIR", os.path.expanduser("~/cas_out/cart_out"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 SEED = int(os.environ.get("SEED", "42"))
 
@@ -98,7 +106,7 @@ def piso_block_mask(cache, seq_ids, device):
     for kv_seq_ids -- so no data-dependent index arithmetic runs inside the mask."""
     cache_len = cache.num_cartridge_tokens()  # N*KV_TOKENS (train mode: no append)
     R = seq_ids.shape[0]
-    reveal = _STATE["reveal"].to(device)                       # (N,) float {0,1}
+    reveal = _STATE["reveal"].to(device)  # (N,) float {0,1}
     # per-kv cartridge visibility over the whole [carts | request] axis
     kv_vis = torch.zeros(cache_len + R, dtype=torch.bool, device=device)
     kv_vis[:cache_len] = reveal.repeat_interleave(KV_TOKENS).bool()
@@ -110,15 +118,18 @@ def piso_block_mask(cache, seq_ids, device):
         req_ok = (q_idx + cl) >= kv_idx  # library causal form (request region)
         return torch.where(is_cart, cart_ok, req_ok)
 
-    return create_block_mask(mask_func, B=1, H=1, Q_LEN=R,
-                             KV_LEN=R + cl, device=device)
+    return create_block_mask(mask_func, B=1, H=1, Q_LEN=R, KV_LEN=R + cl, device=device)
 
 
 def find_parquet(patient):
     pstr = patient.replace("patient_", "p")
-    hits = glob.glob(f"{DATA_DIR}/**/synth_qwen3_8b_lh_{pstr}_n*/artifact/dataset.parquet",
-                     recursive=True)
-    hits = hits or glob.glob(f"{DATA_DIR}/**/*{pstr}*/**/dataset.parquet", recursive=True)
+    hits = glob.glob(
+        f"{DATA_DIR}/**/synth_qwen3_8b_lh_{pstr}_n*/artifact/dataset.parquet",
+        recursive=True,
+    )
+    hits = hits or glob.glob(
+        f"{DATA_DIR}/**/*{pstr}*/**/dataset.parquet", recursive=True
+    )
     assert hits, f"no synth parquet for {patient} under {DATA_DIR}"
     return sorted(hits)[-1]
 
@@ -132,14 +143,21 @@ def init_cart(model, tokenizer, record_path, theta_dev):
     ids = tok_fn(tokenizer=tokenizer, content=content, max_tokens=KV_TOKENS).squeeze(0)
     assert ids.shape[0] >= KV_TOKENS, (
         f"{record_path}: only {ids.shape[0]} tokens (< KV_TOKENS={KV_TOKENS}); "
-        "use a smaller KV_TOKENS so every cart is exactly KV_TOKENS")
+        "use a smaller KV_TOKENS so every cart is exactly KV_TOKENS"
+    )
     ids = ids[:KV_TOKENS].to(theta_dev)
     tmp = TrainableCache(config=model_attn_config)
     seq_ids = torch.full_like(ids, 0, dtype=torch.long)
     pos = torch.arange(ids.shape[-1], dtype=torch.long, device=theta_dev)
     with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-        model(input_ids=ids, seq_ids=seq_ids, position_ids=pos,
-              use_cache=True, past_key_values=tmp, mode="generate")
+        model(
+            input_ids=ids,
+            seq_ids=seq_ids,
+            position_ids=pos,
+            use_cache=True,
+            past_key_values=tmp,
+            mode="generate",
+        )
     k = [t.detach().float().cpu() for t in tmp._keys]
     v = [t.detach().float().cpu() for t in tmp._values]
     return k, v
@@ -147,8 +165,10 @@ def init_cart(model, tokenizer, record_path, theta_dev):
 
 def main():
     global model_attn_config
-    print(f"P_iso trainer: N={N} patients {PATIENTS} P_iso={P_ISO} "
-          f"KV_TOKENS={KV_TOKENS} STEPS={STEPS} ACCUM={ACCUM} LR={LR}")
+    print(
+        f"P_iso trainer: N={N} patients {PATIENTS} P_iso={P_ISO} "
+        f"KV_TOKENS={KV_TOKENS} STEPS={STEPS} ACCUM={ACCUM} LR={LR}"
+    )
     tokenizer = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)
     model = FlexQwen3ForCausalLM.from_pretrained(MODEL).to(DEVICE).to(torch.bfloat16)
     model.eval()
@@ -163,15 +183,26 @@ def main():
     # 1. build N cartridges (truncation init), concatenate [cart_0|...|cart_{N-1}]
     per_k, per_v = [], []
     for p in PATIENTS:
-        k, v = init_cart(model, tokenizer, os.path.join(RECORDS_DIR, f"{p}.txt"), DEVICE)
-        per_k.append(k); per_v.append(v)
+        k, v = init_cart(
+            model, tokenizer, os.path.join(RECORDS_DIR, f"{p}.txt"), DEVICE
+        )
+        per_k.append(k)
+        per_v.append(v)
         print(f"  init cart {p}: {k[0].shape}")
     init_keys, init_values = [], []
     for li in range(cfg.num_hidden_layers):
-        init_keys.append(torch.cat([per_k[j][li] for j in range(N)], dim=2).to(torch.bfloat16))
-        init_values.append(torch.cat([per_v[j][li] for j in range(N)], dim=2).to(torch.bfloat16))
-    cache = TrainableCache(config=model_attn_config, init_keys=init_keys,
-                           init_values=init_values, num_frozen_tokens=0).to(DEVICE)
+        init_keys.append(
+            torch.cat([per_k[j][li] for j in range(N)], dim=2).to(torch.bfloat16)
+        )
+        init_values.append(
+            torch.cat([per_v[j][li] for j in range(N)], dim=2).to(torch.bfloat16)
+        )
+    cache = TrainableCache(
+        config=model_attn_config,
+        init_keys=init_keys,
+        init_values=init_values,
+        num_frozen_tokens=0,
+    ).to(DEVICE)
     assert cache.num_cartridge_tokens() == N * KV_TOKENS
 
     # 2. monkeypatch the mask builder used inside the model forward
@@ -183,12 +214,16 @@ def main():
         pq = find_parquet(p)
         ds = TrainDataset.Config(
             data_sources=[DataSource(path=pq, type="local")],
-            top_k_logits=20, packed_seq_length=2048, packing_mode="truncate",
+            top_k_logits=20,
+            packed_seq_length=2048,
+            packing_mode="truncate",
         ).instantiate(tokenizer=tokenizer, seed=SEED)
         datasets.append(ds)
         print(f"  dataset {p}: {len(ds.elements)} elements  ({pq.split('/')[-3]})")
 
-    opt = torch.optim.AdamW(cache.parameters(), lr=LR, betas=(0.9, 0.95), weight_decay=0.0)
+    opt = torch.optim.AdamW(
+        cache.parameters(), lr=LR, betas=(0.9, 0.95), weight_decay=0.0
+    )
     reveal_base = torch.zeros(N, device=DEVICE)
 
     # 4. training: one sample per forward, ACCUM samples per optimizer step
@@ -197,7 +232,7 @@ def main():
         opt.zero_grad()
         accum_loss = 0.0
         for _ in range(ACCUM):
-            j = rng.randrange(N)                      # target cartridge
+            j = rng.randrange(N)  # target cartridge
             ds = datasets[j]
             el = ds.elements[rng.randrange(len(ds.elements))]
             # CAS section 2.1 mixed visibility: w.p. P_iso the gold cartridge
@@ -214,7 +249,7 @@ def main():
 
             ids = el.input_ids.to(DEVICE)
             R = ids.shape[0]
-            sids = torch.zeros(R, dtype=torch.long, device=DEVICE)   # single sample
+            sids = torch.zeros(R, dtype=torch.long, device=DEVICE)  # single sample
             # Per-sample positions must reflect the VISIBLE prefix, not the
             # physical one: the model forward adds num_cartridge_tokens()
             # (= N*KV_TOKENS, all resident carts) to position_ids, but a
@@ -225,14 +260,22 @@ def main():
             # 0.22 vs co-load 0.45). Offset by (visible - total) so the
             # forward's +total nets to +visible.
             visible_tokens = int(reveal.sum().item()) * KV_TOKENS
-            pos = (torch.arange(R, dtype=torch.long, device=DEVICE)
-                   + visible_tokens - N * KV_TOKENS)
+            pos = (
+                torch.arange(R, dtype=torch.long, device=DEVICE)
+                + visible_tokens
+                - N * KV_TOKENS
+            )
             idxs = el.topk_token_idxs.to(DEVICE)
             tids = el.topk_token_ids.to(DEVICE)
             tlp = el.topk_logprobs.to(DEVICE)
             with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
-                out = model(input_ids=ids, seq_ids=sids, position_ids=pos,
-                            use_cache=True, past_key_values=cache)
+                out = model(
+                    input_ids=ids,
+                    seq_ids=sids,
+                    position_ids=pos,
+                    use_cache=True,
+                    past_key_values=cache,
+                )
                 V = out.logits.shape[-1]
                 gi = idxs - 1
                 # drop sparse target entries that fall outside the sequence or
@@ -242,9 +285,12 @@ def main():
                 nv = int(valid.sum())
                 if not _STATE.get("diag") and nv < valid.numel():
                     _STATE["diag"] = True
-                    print(f"  [diag] R={R} idx_max={int(idxs.max())} tid[min="
-                          f"{int(tids.min())},max={int(tids.max())}] V={V} "
-                          f"dropped={valid.numel() - nv}/{valid.numel()}", flush=True)
+                    print(
+                        f"  [diag] R={R} idx_max={int(idxs.max())} tid[min="
+                        f"{int(tids.min())},max={int(tids.max())}] V={V} "
+                        f"dropped={valid.numel() - nv}/{valid.numel()}",
+                        flush=True,
+                    )
                 if nv == 0:
                     continue
                 lp = F.log_softmax(out.logits, dim=-1)[0, gi[valid], tids[valid]]
@@ -254,23 +300,33 @@ def main():
         torch.nn.utils.clip_grad_norm_(cache.parameters(), 1.0)
         opt.step()
         if step % 25 == 0 or step == STEPS - 1:
-            print(f"  step {step:>4} loss={accum_loss:.4f} "
-                  f"ppl={np.exp(accum_loss):.2f} t={time.time()-t0:.0f}s", flush=True)
+            print(
+                f"  step {step:>4} loss={accum_loss:.4f} "
+                f"ppl={np.exp(accum_loss):.2f} t={time.time()-t0:.0f}s",
+                flush=True,
+            )
 
     # 5. save each cartridge separately (slice its KV_TOKENS block), library format
-    out = Path(OUT_DIR) / "carts_piso"; out.mkdir(parents=True, exist_ok=True)
+    out = Path(OUT_DIR) / "carts_piso"
+    out.mkdir(parents=True, exist_ok=True)
     tk = [p.detach() for p in cache.trainable_keys]
     tv = [p.detach() for p in cache.trainable_values]
     for j, p in enumerate(PATIENTS):
         s, e = j * KV_TOKENS, (j + 1) * KV_TOKENS
-        torch.save({
-            "trainable_keys": [t[:, :, s:e].contiguous().cpu() for t in tk],
-            "trainable_values": [t[:, :, s:e].contiguous().cpu() for t in tv],
-            "frozen_keys": None, "frozen_values": None,
-        }, out / f"{p}.pt")
+        torch.save(
+            {
+                "trainable_keys": [t[:, :, s:e].contiguous().cpu() for t in tk],
+                "trainable_values": [t[:, :, s:e].contiguous().cpu() for t in tv],
+                "frozen_keys": None,
+                "frozen_values": None,
+            },
+            out / f"{p}.pt",
+        )
         print(f"CAS_PISO_SAVED {p} -> {out / f'{p}.pt'}")
-    print(f"CAS_PISO_DONE N={N} P_iso={P_ISO} steps={STEPS} "
-          f"wall={time.time()-t0:.0f}s out={out}")
+    print(
+        f"CAS_PISO_DONE N={N} P_iso={P_ISO} steps={STEPS} "
+        f"wall={time.time()-t0:.0f}s out={out}"
+    )
 
 
 if __name__ == "__main__":

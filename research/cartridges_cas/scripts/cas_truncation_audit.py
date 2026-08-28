@@ -23,7 +23,7 @@ import os
 import sys
 import glob
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
 
 import numpy as np
@@ -35,7 +35,9 @@ PATIENTS = os.environ.get(
 ).split()
 SYNTH_DIRS = os.environ.get(
     "SYNTH_DIRS",
-    "/home/mcgrof/cas_out/synth_diverse,/home/mcgrof/cas_out/synth_faithful",
+    os.path.expanduser("~/cas_out/synth_diverse")
+    + ","
+    + os.path.expanduser("~/cas_out/synth_faithful"),
 ).split(",")
 BOUND = int(os.environ.get("BOUND", "2048"))
 MODEL = "Qwen/Qwen3-8B"

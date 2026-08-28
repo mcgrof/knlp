@@ -6,10 +6,10 @@
 # patients sequentially. Idempotent: a patient whose parquet already
 # exists is skipped. Fully link-independent (launched inside tmux).
 set -u
-CASV=/home/mcgrof/cas_venv/bin/python
-CART=/home/mcgrof/cartridges
-OUT=/home/mcgrof/cas_out/synth
-LOGS=/home/mcgrof/cas_out/logs
+CASV=$HOME/cas_venv/bin/python
+CART=$HOME/cartridges
+OUT=$HOME/cas_out/synth
+LOGS=$HOME/cas_out/logs
 NCONV=${NCONV:-20000}
 GPUS=(5 6 7)
 PATIENTS=(patient_01 patient_02 patient_03 patient_04 patient_05 patient_06)
@@ -26,7 +26,7 @@ for i in 0 1 2; do
     echo "[orch] vLLM GPU $g port $port already up $(date)" >> "$LOGS/orch.log"; continue
   fi
   echo "[orch] start vLLM GPU $g port $port $(date)" >> "$LOGS/orch.log"
-  VLLM_GPU=$g VLLM_PORT=$port bash /home/mcgrof/run_vllm_graph.sh \
+  VLLM_GPU=$g VLLM_PORT=$port bash $HOME/run_vllm_graph.sh \
     >> "$LOGS/vllm_g$g.log" 2>&1 &
   # wait for THIS server before launching the next (serializes port allocation)
   for t in $(seq 1 90); do

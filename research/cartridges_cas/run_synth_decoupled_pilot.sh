@@ -6,10 +6,10 @@
 # gets both serves' full batch parallelism. Link-independent (run in tmux).
 # Idempotent: a patient whose parquet already exists is skipped.
 set -u
-CASV=/home/mcgrof/cas_venv/bin/python
-CART=/home/mcgrof/cartridges
-OUT=/home/mcgrof/cas_out/synth_decoupled
-LOGS=/home/mcgrof/cas_out/logs
+CASV=$HOME/cas_venv/bin/python
+CART=$HOME/cartridges
+OUT=$HOME/cas_out/synth_decoupled
+LOGS=$HOME/cas_out/logs
 NCONV=${NCONV:-8000}
 PATIENTS=(patient_01 patient_02 patient_03 patient_05 patient_06)
 A_URL=http://localhost:8105/v1

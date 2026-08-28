@@ -7,11 +7,11 @@
 # Flex GPU path (loads Qwen3-8B on DEVICE, reconstructs carts) -- independent of
 # the serves. Prints a verdict vs the gate, the iso5 baseline, and the paper.
 set -u
-CASV=/home/mcgrof/cas_venv/bin/python
-CART=/home/mcgrof/cartridges
-CARTS=/home/mcgrof/cas_out/iso5_decoupled/carts
-OUTD=/home/mcgrof/cas_out
-LOGS=/home/mcgrof/cas_out/logs
+CASV=$HOME/cas_venv/bin/python
+CART=$HOME/cartridges
+CARTS=$HOME/cas_out/iso5_decoupled/carts
+OUTD=$HOME/cas_out
+LOGS=$HOME/cas_out/logs
 PATIENTS="patient_01 patient_02 patient_03 patient_05 patient_06"
 DEV=${DEV:-cuda:0} GPU=${GPU:-4} RUNS=${RUNS:-3} MAX_Q=${MAX_Q:-20}
 mkdir -p "$LOGS"

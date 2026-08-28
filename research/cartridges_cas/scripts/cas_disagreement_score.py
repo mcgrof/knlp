@@ -29,8 +29,8 @@ import sys
 import glob
 import random
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
@@ -49,10 +49,12 @@ K = int(os.environ.get("K", "500"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 MODEL = E.MODEL
-SYNTH_DIR = os.environ.get("SYNTH_DIR", "/home/mcgrof/cas_out/synth_diverse")
-CART_DIR = os.environ.get("CART_DIR", "/home/mcgrof/cas_out/iso_diverse/carts")
-OUT_HI = os.environ.get("OUT_HI", "/home/mcgrof/cas_out/synth_disagree_hi")
-OUT_RAND = os.environ.get("OUT_RAND", "/home/mcgrof/cas_out/synth_disagree_rand")
+SYNTH_DIR = os.environ.get("SYNTH_DIR", os.path.expanduser("~/cas_out/synth_diverse"))
+CART_DIR = os.environ.get("CART_DIR", os.path.expanduser("~/cas_out/iso_diverse/carts"))
+OUT_HI = os.environ.get("OUT_HI", os.path.expanduser("~/cas_out/synth_disagree_hi"))
+OUT_RAND = os.environ.get(
+    "OUT_RAND", os.path.expanduser("~/cas_out/synth_disagree_rand")
+)
 SEED = int(os.environ.get("SEED", "0"))
 MAX_TGT = int(os.environ.get("MAX_TGT", "900"))
 

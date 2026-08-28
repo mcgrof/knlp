@@ -30,8 +30,8 @@ import sys
 import json
 import time
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
-os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/home/mcgrof/cas_out")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", os.path.expanduser("~/cas_out"))
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 
@@ -59,7 +59,7 @@ SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 MODEL = E.MODEL
 TEMPERATURE = E.TEMPERATURE
 OUT_JSON = os.environ.get(
-    "OUT_JSON", f"/home/mcgrof/cas_out/eval_diag_{MAX_COMPLETION}.json"
+    "OUT_JSON", fos.path.expanduser("~/cas_out/eval_diag_{MAX_COMPLETION}.json")
 )
 
 

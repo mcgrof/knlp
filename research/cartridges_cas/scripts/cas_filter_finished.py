@@ -20,7 +20,7 @@ import os
 import sys
 import glob
 
-os.environ.setdefault("CARTRIDGES_DIR", "/home/mcgrof/cartridges")
+os.environ.setdefault("CARTRIDGES_DIR", os.path.expanduser("~/cartridges"))
 sys.path.insert(0, os.environ["CARTRIDGES_DIR"])
 
 import pandas as pd
@@ -29,8 +29,8 @@ from transformers import AutoTokenizer
 PATIENTS = os.environ.get(
     "PATIENTS", "patient_01 patient_02 patient_03 patient_05 patient_06"
 ).split()
-SRC = os.environ.get("SRC", "/home/mcgrof/cas_out/synth_diverse")
-OUT = os.environ.get("OUT", "/home/mcgrof/cas_out/synth_diverse_finished")
+SRC = os.environ.get("SRC", os.path.expanduser("~/cas_out/synth_diverse"))
+OUT = os.environ.get("OUT", os.path.expanduser("~/cas_out/synth_diverse_finished"))
 CAP_GUARD = int(os.environ.get("CAP_GUARD", "2000"))
 MODEL = "Qwen/Qwen3-8B"
 

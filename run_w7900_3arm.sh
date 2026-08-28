@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Three-arm RA ablation on W7900: baseline, arm_a (FIM trace), arm_c (V2 JSD).
 # Each arm capped at 3600s wall (max_time in config), runs sequentially on cuda:0.
-source /home/mcgrof/envs/w7900-ml/bin/activate
+source $HOME/envs/w7900-ml/bin/activate
 set -u
 cd /data/knlp
 export CUDA_VISIBLE_DEVICES=0
