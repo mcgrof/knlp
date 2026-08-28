@@ -81,6 +81,14 @@ CHECKPOINT_AT = [
     int(x) for x in os.environ.get("CHECKPOINT_AT", "0,1,2,5,10").split(",")
 ]
 CLIP = float(os.environ.get("CLIP", "1.0"))
+# Position selection: keep only the rows the document is most
+# responsible for.  The objective otherwise spends its budget almost
+# independently of document relevance (measured correlation 0.09), so
+# this asks whether training a few percent of positions on purpose
+# beats training all of them by default.
+RELEVANCE_MAP = os.environ.get("RELEVANCE_MAP", "")
+KEEP_FRAC = float(os.environ.get("KEEP_FRAC", "1.0"))
+SELECT_INVERT = os.environ.get("SELECT_INVERT", "0") == "1"
 RECORDS_DIR = os.environ.get("RECORDS_DIR", "/root/cart_records")
 KV_TOKENS = int(os.environ.get("KV_TOKENS", "512"))
 DEVICE = "cuda"
@@ -250,6 +258,9 @@ def load_or_create_schedule():
         model=MODEL,
         target_schema=TARGET_SCHEMA_VERSION,
         flatten_mode=flatten_mode(),
+        relevance_map=RELEVANCE_MAP or None,
+        keep_frac=KEEP_FRAC,
+        select_invert=SELECT_INVERT,
     )
     Path(SCHEDULE_JSON).parent.mkdir(parents=True, exist_ok=True)
     Path(SCHEDULE_JSON).write_text(json.dumps(sched, indent=1))
@@ -288,6 +299,31 @@ def legacy_valid_count(i):
 
 
 DENOM = {i: legacy_valid_count(i) for i in sched_ids}
+
+# Build the keep-set once: a global threshold over every scheduled row,
+# so the budget is spent where the document actually acted rather than
+# per element.  SELECT_INVERT keeps the LEAST relevant rows instead, as
+# the control that separates "selection helps" from "training less
+# helps".
+KEEP_ROWS = None
+if RELEVANCE_MAP and KEEP_FRAC < 1.0:
+    _rm = json.loads(Path(RELEVANCE_MAP).read_text())["map"]
+    _scored = [
+        (float(v), int(ei), int(ri))
+        for ei, rows in _rm.items()
+        if int(ei) in DENOM
+        for ri, v in rows.items()
+    ]
+    _scored.sort(reverse=not SELECT_INVERT)
+    _k = max(1, int(len(_scored) * KEEP_FRAC))
+    KEEP_ROWS = {}
+    for _v, _ei, _ri in _scored[:_k]:
+        KEEP_ROWS.setdefault(_ei, set()).add(_ri)
+    print(
+        f"[ctrl-screen] selection: keeping {_k}/{len(_scored)} rows "
+        f"({100 * KEEP_FRAC:.1f}%, {'LEAST' if SELECT_INVERT else 'most'} "
+        f"document-relevant) across {len(KEEP_ROWS)} elements"
+    )
 denom_list = [DENOM[i] for i in sched_ids]
 A2_SCALE = calibrate_scale(parsed_list, denoms=denom_list)
 content_rows_list, CONTENT_SCALE, content_report = calibrate_content_anchors(
@@ -348,6 +384,17 @@ def arm_loss(i, mode):
     if denom == 0:
         return None
     ts = target_set_for(i, mode)
+    if KEEP_ROWS is not None:
+        keep = KEEP_ROWS.get(i, set())
+        sel = [j for j, r in enumerate(ts.row_idxs) if r in keep]
+        if not sel:
+            return None
+        ts = type(ts)(
+            [ts.row_idxs[j] for j in sel],
+            [ts.token_ids[j] for j in sel],
+            [ts.probs[j] for j in sel],
+            ts.denom,
+        )
     gi, tids, probs = ts.tensors(device=DEVICE)
     gi = gi - 1
     valid = (gi >= 0) & (gi < seq_len) & (tids >= 0) & (tids < vocab)
@@ -493,6 +540,9 @@ def main():
         schedule_sha256=sha256_file(SCHEDULE_JSON),
         target_schema=TARGET_SCHEMA_VERSION,
         flatten_mode=flatten_mode(),
+        relevance_map=RELEVANCE_MAP or None,
+        keep_frac=KEEP_FRAC,
+        select_invert=SELECT_INVERT,
         transform_hash=transform_hash(
             mode, scale=A2_SCALE, content_scale=CONTENT_SCALE
         ),
