@@ -81,6 +81,11 @@ CHECKPOINT_AT = [
     int(x) for x in os.environ.get("CHECKPOINT_AT", "0,1,2,5,10").split(",")
 ]
 CLIP = float(os.environ.get("CLIP", "1.0"))
+# CAS learning-rate schedule (paper Table 5 / Appendix B). Defaults keep
+# the historical fixed-LR behaviour so old runs stay reproducible.
+WARMUP = int(os.environ.get("WARMUP", "0"))
+WARMUP_MIN_LR = float(os.environ.get("WARMUP_MIN_LR", "0.0"))
+ALPHA_F = float(os.environ.get("ALPHA_F", "1.0"))
 # Position selection: keep only the rows the document is most
 # responsible for.  The objective otherwise spends its budget almost
 # independently of document relevance (measured correlation 0.09), so
@@ -552,6 +557,9 @@ def main():
         steps=STEPS,
         accum=ACCUM,
         lr=LR,
+        warmup=WARMUP,
+        warmup_min_lr=WARMUP_MIN_LR,
+        alpha_f=ALPHA_F,
         seed=SEED,
         history=[],
         cost=dict(train_s=0.0, train_tokens=0),
@@ -561,6 +569,19 @@ def main():
         save_cart(out_dir / f"{PATIENT}_step0.pt")
     t0 = time.time()
     for step in range(1, STEPS + 1):
+        # CAS uses linear warmup then linear decay to alpha_f * peak
+        # (paper Table 5: LongHealth peak 0.1, warmup 200, alpha_f 0.02).
+        # Every trainer in this tree ran a fixed rate, so this axis had
+        # never been tested; WARMUP=0 reproduces the old behaviour
+        # exactly and is the default.
+        if WARMUP > 0 or ALPHA_F < 1.0:
+            if step <= WARMUP:
+                lr_now = WARMUP_MIN_LR + (LR - WARMUP_MIN_LR) * step / max(1, WARMUP)
+            else:
+                frac = (step - WARMUP) / max(1, STEPS - WARMUP)
+                lr_now = LR * (1.0 - (1.0 - ALPHA_F) * min(1.0, frac))
+            for g in opt.param_groups:
+                g["lr"] = lr_now
         opt.zero_grad()
         accum_loss, n_used = 0.0, 0
         for i in schedule["schedule"][step - 1]:
