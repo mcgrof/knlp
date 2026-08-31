@@ -20,9 +20,20 @@ plainly if it appears: worse fidelity here with equal document
 specificity would say the defect really did cost teacher fidelity, and
 that teacher fidelity is not what document specificity is made of.
 
+**Read the default score for what it is.** 89.5% of clean target mass
+sits on the top-1 token, so grading the full row is mostly a test of
+agreement with the teacher's argmax, and it duly ranks the damaged arm
+-- which trains almost only on the argmax, at roughly 1.8x weight --
+above the clean one.  That is close to circular and must not be
+reported as the defect improving teacher fidelity.  Set TAIL_ONLY=1 to
+drop each row's argmax and grade only the remaining tenth, which is
+where the teacher's uncertainty actually lives and which no arm was
+directly optimized for.
+
 Env: MODEL, CARTS (comma list name=path), DATA_PARQUET (the CLEAN one),
      SCHEDULE_JSON (to exclude trained elements), OUT_JSON,
-     N_HELDOUT (default 200), SEED (default 0, must match training).
+     N_HELDOUT (default 200), SEED (default 0, must match training),
+     TAIL_ONLY=1 to grade only the non-argmax mass.
 """
 
 import json
@@ -57,6 +68,7 @@ DATA_PARQUET = os.environ["DATA_PARQUET"]
 SCHEDULE_JSON = os.environ["SCHEDULE_JSON"]
 OUT_JSON = os.environ["OUT_JSON"]
 N_HELDOUT = int(os.environ.get("N_HELDOUT", "200"))
+TAIL_ONLY = os.environ.get("TAIL_ONLY", "0") == "1"
 SEED = int(os.environ.get("SEED", "0"))
 DEVICE = "cuda"
 
@@ -109,6 +121,29 @@ def load_cart(path):
     ).to(DEVICE)
 
 
+def drop_argmax(ts):
+    """Same target set with each row's most likely token removed.
+
+    89.5% of clean target mass sits on the top-1 token, so grading
+    against the full row mostly measures agreement with the teacher's
+    argmax and rewards whichever objective over-weighted it -- which is
+    the objective the defect produced.  The teacher's actual uncertainty
+    lives in the remaining tenth.  This keeps only that, so the score
+    asks about the distribution rather than the choice.
+    """
+    best = {}
+    for j, (r, p) in enumerate(zip(ts.row_idxs, ts.probs)):
+        if r not in best or p > ts.probs[best[r]]:
+            best[r] = j
+    keep = [j for j in range(len(ts.row_idxs)) if best.get(ts.row_idxs[j]) != j]
+    return type(ts)(
+        [ts.row_idxs[j] for j in keep],
+        [ts.token_ids[j] for j in keep],
+        [ts.probs[j] for j in keep],
+        ts.denom,
+    )
+
+
 # targets are built once: every cartridge is graded against the same
 # clean rows, so any difference is the cartridge and not the grading
 EOT = tok.convert_tokens_to_ids("<|im_end|>")
@@ -116,7 +151,11 @@ TARGETS = {}
 for i in held:
     el = dataset.elements[i]
     et = parse_element(el.topk_token_idxs, el.topk_token_ids, el.topk_logprobs, EOT)
-    TARGETS[i] = build_target_set(et, "dedup_legacy_support")
+    ts = build_target_set(et, "dedup_legacy_support")
+    TARGETS[i] = drop_argmax(ts) if TAIL_ONLY else ts
+if TAIL_ONLY:
+    kept = sum(len(t.row_idxs) for t in TARGETS.values())
+    print(f"[heldout] TAIL_ONLY: grading {kept} non-argmax entries", flush=True)
 
 
 @torch.no_grad()
