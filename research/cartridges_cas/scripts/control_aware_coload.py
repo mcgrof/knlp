@@ -37,6 +37,9 @@ import statistics
 from pathlib import Path
 
 os.environ.setdefault("CARTRIDGES_DIR", "/data/mcgrof/cartridges")
+# the library refuses to import without this even though nothing here
+# writes to it -- this evaluator only reads cartridges
+os.environ.setdefault("CARTRIDGES_OUTPUT_DIR", "/tmp/coload")
 os.environ["WANDB_DISABLED"] = "true"
 os.environ["WANDB_MODE"] = "disabled"
 
