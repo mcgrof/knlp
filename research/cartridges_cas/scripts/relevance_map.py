@@ -33,7 +33,7 @@ os.environ["WANDB_MODE"] = "disabled"
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 from cartridges.datasets import TrainDataset, DataSource
 
@@ -67,8 +67,33 @@ elements = sorted({i for step in schedule["schedule"] for i in step})
 print(f"[relmap] {len(elements)} scheduled elements", flush=True)
 
 
+RECORD_LEN = int(record_ids.shape[0])
+_RECORD_CACHE = None
+
+
+def record_cache():
+    """The record's KV, computed once and reused.
+
+    The record prefix is identical for every element, so recomputing
+    attention over its ~12.6k tokens per element is the whole cost of
+    this probe.  The cache is cropped back to the record after each use,
+    which keeps it reusable without copying ~2 GB per element.
+    """
+    global _RECORD_CACHE
+    if _RECORD_CACHE is None:
+        c = DynamicCache()
+        model(
+            input_ids=record_ids.unsqueeze(0).to(DEVICE),
+            past_key_values=c,
+            use_cache=True,
+        )
+        _RECORD_CACHE = c
+    _RECORD_CACHE.crop(RECORD_LEN)
+    return _RECORD_CACHE
+
+
 @torch.no_grad()
-def shift_for(el):
+def shift_for(el, verify=False):
     """Per answer-token document-induced shift, aligned to target rows."""
     idxs = el.topk_token_idxs
     if idxs.numel() == 0:
@@ -77,18 +102,40 @@ def shift_for(el):
     prompt_ids, answer_ids = el.input_ids[:first], el.input_ids[first:]
     if answer_ids.shape[0] == 0:
         return {}
+    n = answer_ids.shape[0]
+    ans = answer_ids.to(DEVICE)
 
-    def lp(with_record):
+    def gather(logits, start):
+        l = F.log_softmax(logits[0, start : start + n].float(), dim=-1)
+        return l.gather(1, ans.unsqueeze(1)).squeeze(1).cpu()
+
+    def lp_nocache(with_record):
         parts = [record_ids.to(DEVICE)] if with_record else []
-        parts += [prompt_ids.to(DEVICE), answer_ids.to(DEVICE)]
+        parts += [prompt_ids.to(DEVICE), ans]
         ids = torch.cat(parts).unsqueeze(0)
         out = model(input_ids=ids)
-        n = answer_ids.shape[0]
-        start = ids.shape[1] - n - 1
-        l = F.log_softmax(out.logits[0, start : start + n].float(), dim=-1)
-        return l.gather(1, answer_ids.to(DEVICE).unsqueeze(1)).squeeze(1).cpu()
+        return gather(out.logits, ids.shape[1] - n - 1)
 
-    delta = (lp(True) - lp(False)).tolist()
+    def lp_cached():
+        ids = torch.cat([prompt_ids.to(DEVICE), ans]).unsqueeze(0)
+        out = model(input_ids=ids, past_key_values=record_cache(), use_cache=True)
+        # logits cover only the new tokens, so the absolute predictor
+        # position RECORD_LEN + len(prompt) - 1 lands here at len(prompt) - 1
+        r = gather(out.logits, prompt_ids.shape[0] - 1)
+        _RECORD_CACHE.crop(RECORD_LEN)  # drop this element, keep the record
+        return r
+
+    with_rec = lp_cached()
+    if verify:
+        # the offset arithmetic above is exactly the kind of thing that
+        # fails silently, so the first element proves it against the
+        # uncached path before the run trusts the fast one
+        ref = lp_nocache(True)
+        err = float((with_rec - ref).abs().max())
+        assert err < 5e-2, f"cached prefix disagrees with full forward by {err}"
+        print(f"[relmap] cache check OK (max deviation {err:.2e})", flush=True)
+
+    delta = (with_rec - lp_nocache(False)).tolist()
     # row r predicts element token r+1, and the first answer token is at
     # `first`, so row `first + j` corresponds to answer position j
     return {first + j: float(d) for j, d in enumerate(delta)}
@@ -97,7 +144,8 @@ def shift_for(el):
 def main():
     out = {}
     for n, i in enumerate(elements):
-        out[str(i)] = {str(k): v for k, v in shift_for(dataset.elements[i]).items()}
+        sh = shift_for(dataset.elements[i], verify=(n == 0))
+        out[str(i)] = {str(k): v for k, v in sh.items()}
         if (n + 1) % 20 == 0:
             print(f"[relmap] {n + 1}/{len(elements)}", flush=True)
     Path(os.path.dirname(OUT_JSON)).mkdir(parents=True, exist_ok=True)
