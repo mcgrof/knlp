@@ -3,10 +3,16 @@
 JSON and dump per-patient record text files.
 
 Produces exactly what the harness consumes on a host with no outbound
-network: RECORDS_DIR/<patient>.txt for truncation init (same record
+network: per-patient record text for truncation init (same record
 template as cas_dump_records.py -- keep the two in sync), plus the raw
 benchmark JSON for the strict evaluator's LONGHEALTH_JSON option.
 Standalone on purpose: no cartridges package, no torch.
+
+`--out-dir` is a staging ROOT, not the records directory. It writes
+`<out-dir>/records/<patient>.txt` and `<out-dir>/benchmark_v5.json`,
+and prints both paths on exit -- use those, because passing --out-dir
+itself as RECORDS_DIR finds no records and fails only later, at the
+first training step.
 
 Usage:
   stage_longhealth.py --out-dir DIR [--json PATH] [--patients p1,p2]
@@ -65,7 +71,13 @@ def main():
         )
         (records / f"{pid}.txt").write_text(txt)
         print(f"{pid}: {len(txt)} chars, {len(row['texts'])} notes")
+    # --out-dir is a staging ROOT, not the records directory: the per-patient
+    # files go one level down.  Pointing a harness at --out-dir instead finds
+    # no records and fails only later, at the first training step, so print
+    # the two paths a caller actually needs rather than the one it passed in.
     print(f"STAGED {out}")
+    print(f"RECORDS_DIR={records}")
+    print(f"LONGHEALTH_JSON={out / 'benchmark_v5.json'}")
 
 
 if __name__ == "__main__":
