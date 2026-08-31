@@ -261,10 +261,13 @@ def main():
         coload=col,
         drop=orc - col,
         advantage=adv,
-        # undefined when the cartridges never got above the floor, and a
-        # ratio against a near-zero denominator would be noise wearing a
-        # number's clothes
-        retained=((col - fl) / adv) if adv is not None and abs(adv) > 0.02 else None,
+        # A retained FRACTION only means something when there was an
+        # advantage to retain.  Demand a positive one, comfortably above
+        # the 0.05 that a single question is worth: an absolute value
+        # admits a negative denominator (a cartridge that hurts its own
+        # document), and a 0.02 threshold is a boundary the data can land
+        # on exactly -- both happened on the first real run.
+        retained=((col - fl) / adv) if adv is not None and adv > 0.05 else None,
     )
     persist()
     r = report["aggregate"]["retained"]
