@@ -164,8 +164,14 @@ def main():
         cache = load_cart(path)
         L = heldout_loss(cache)
         per_element[name] = L
+        # per-element losses are kept so any pair of arms can be compared
+        # after the fact; with more than two arms the built-in pairing
+        # below stays silent and this is the only way back to a difference
         report["conditions"][name] = dict(
-            n=len(L), mean=statistics.fmean(L), median=statistics.median(L)
+            n=len(L),
+            mean=statistics.fmean(L),
+            median=statistics.median(L),
+            per_element=L,
         )
         print(
             f"[heldout] {name}: mean clean-target CE {statistics.fmean(L):.4f} "
