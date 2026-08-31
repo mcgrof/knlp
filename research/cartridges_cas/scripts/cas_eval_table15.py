@@ -30,7 +30,12 @@ Env: MODE, PATIENTS (space-sep; default all 20), MAX_Q (default 20), RUNS
 (default 3), VLLM_URL (baselines), CART_DIR (cart mode), COLLAPSE=1 (cart mode:
 co-load ALL patients' carts in one prefix and answer every patient's questions
 against it -- the interference measurement), CONCURRENCY (baselines, default
-32), OUT_JSON, DEVICE (cart mode), SINK_MAX (cart reconstruction).
+32), OUT_JSON, DEVICE (cart mode), SINK_MAX (cart reconstruction),
+SAVE_RAW=1 (cart mode: dump every generation plus a tagged-vs-untagged
+accuracy breakdown to OUT_JSON.raw.json -- needed because a missing
+answer tag is NOT scored as wrong, it falls back to the last 300 chars,
+so the aggregate counts cannot tell format failure from knowledge
+failure).
 """
 
 import os
@@ -57,10 +62,17 @@ VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8005/v1")
 CART_DIR = os.environ.get("CART_DIR", "")
 CONCURRENCY = int(os.environ.get("CONCURRENCY", "32"))
 OUT_JSON = os.environ.get(
-    "OUT_JSON", fos.path.expanduser("~/cas_out/eval_t15_{MODE}.json")
+    "OUT_JSON", os.path.expanduser(f"~/cas_out/eval_t15_{MODE}.json")
 )
 DEVICE = os.environ.get("DEVICE", "cuda:0")
 SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
+# Per-question outcomes and raw generations. Off by default (they are
+# large), but without them a tag-missing rate is undiagnosable: the
+# scorer FALLS BACK to the last 300 chars when the tag is absent, so a
+# missing tag is not the same as a wrong answer and the aggregate
+# counts cannot separate the two.
+SAVE_RAW = os.environ.get("SAVE_RAW", "0") == "1"
+RAW_ROWS = []
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 MAX_COMPLETION = 2048
 TEMPERATURE = 0.6
@@ -378,6 +390,19 @@ def run_cart_mode(patients_data):
                 )
                 text = generate(cache, ids, seed=run * 7919 + t)
                 corr, tag = score_response(text, q)
+                if SAVE_RAW:
+                    RAW_ROWS.append(
+                        dict(
+                            run=run,
+                            patient=patient.patient_id,
+                            qid=q.question_id,
+                            correct=int(corr),
+                            tag_found=bool(tag),
+                            n_chars=len(text),
+                            truncated="</think>" not in text,
+                            text=text,
+                        )
+                    )
                 c += corr
                 t += 1
                 miss += 0 if tag else 1
@@ -444,6 +469,29 @@ def main():
         },
     }
     os.makedirs(os.path.dirname(OUT_JSON) or ".", exist_ok=True)
+    if SAVE_RAW and RAW_ROWS:
+        # separate file: the raws are large and the summary should stay
+        # cheap to read
+        raw_path = OUT_JSON.replace(".json", ".raw.json")
+        json.dump(RAW_ROWS, open(raw_path, "w"), indent=1)
+        res["raw_path"] = raw_path
+        tagged = [r for r in RAW_ROWS if r["tag_found"]]
+        untagged = [r for r in RAW_ROWS if not r["tag_found"]]
+        res["tag_breakdown"] = dict(
+            tagged_n=len(tagged),
+            tagged_acc=(
+                round(sum(r["correct"] for r in tagged) / len(tagged), 4)
+                if tagged
+                else None
+            ),
+            untagged_n=len(untagged),
+            untagged_acc=(
+                round(sum(r["correct"] for r in untagged) / len(untagged), 4)
+                if untagged
+                else None
+            ),
+            untagged_truncated=sum(1 for r in untagged if r["truncated"]),
+        )
     json.dump(res, open(OUT_JSON, "w"), indent=2)
     print(json.dumps(res["summary"], indent=2))
     print(
