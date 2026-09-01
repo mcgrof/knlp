@@ -71,9 +71,9 @@ Apply these facts:
 - use Blackwell block-scaled MMA with the narrow Q/K and scale layouts required
   by the hardware.
 
-The K8/V8 versus K16/V8 measurement plan in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) has been
-run. The answer depends entirely on the kernel family. On the CUDA-core
+The K8/V8 versus K16/V8 measurement plan summarized in the
+[`bias-aware KV deployment policy`](../bias-aware-kv-quantization.html) has
+been run. The answer depends on the kernel family. On the CUDA-core
 decode kernel, conversion cost dominates: every FP8 cell is slower than
 BF16 there, and K16/V8 beats K8/V8. On the SM90 Tensor Core kernel with
 the split-dtype prefill kernels, bytes dominate: symmetric K8/V8 wins by
@@ -187,8 +187,10 @@ Choose the serving format from quality, kernel time, capacity, and goodput.
 
 ## Paper and source pointers
 
-- [`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) — public
-  hypothesis, microtests, profiler matrix, and decision rules.
+- [`bias-aware-kv-quantization.html`](../bias-aware-kv-quantization.html) —
+  deployment policy, pre-bias conclusion, and kernel-family boundary.
+- [`kv-compression-frontier.html`](../kv-compression-frontier.html) — measured
+  quality, capacity, and serving comparison across KV formats.
 - [`fp8-attention-hardware-notes.md`](fp8-attention-hardware-notes.md) — ISA
   and kernel-path details.
 - [`latency.md`](latency.md) — custom INT4 latency decomposition.
