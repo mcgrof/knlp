@@ -61,8 +61,8 @@ II_K16 ~= max(load K16,              QK, softmax update, PV)
 ```
 
 Identify the limiting stage with transform-mode, dtype, cache-state, and
-profiler ablations. The public matrix is in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html).
+profiler ablations. The public decision matrix is in the
+[`bias-aware KV deployment policy`](../bias-aware-kv-quantization.html).
 
 ## NVIDIA Hopper
 

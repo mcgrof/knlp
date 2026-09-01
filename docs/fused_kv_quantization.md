@@ -23,8 +23,10 @@ Use this page to navigate the fused KV-cache quantization work.
   latency decomposition
 - [`docs/fused-quant/fp8-attention-hardware-notes.md`](fused-quant/fp8-attention-hardware-notes.md)
   — Hopper, Blackwell, and CDNA 3 instruction and tile paths
-- [`docs/fp8-attention-tile-path.html`](fp8-attention-tile-path.html) — K8/V8
-  versus K16/V8 microtests, profiler matrix, and decision rules
+- [`docs/bias-aware-kv-quantization.html`](bias-aware-kv-quantization.html) —
+  deployment policy, pre-bias conclusion, and kernel-family boundary
+- [`docs/kv-compression-frontier.html`](kv-compression-frontier.html) —
+  quality, capacity, and serving comparison across KV formats
 - [`docs/fp8-kv-failure-atlas.html`](fp8-kv-failure-atlas.html) — numerical
   failure mechanisms and bias-aware symmetric FP8
 - [`docs/fused-quant/lineage/`](fused-quant/lineage/) — dated provenance
