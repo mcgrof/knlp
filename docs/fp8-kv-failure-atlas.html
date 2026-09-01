@@ -287,6 +287,11 @@
           {/* Header */}
           <header className="text-center mb-10">
             <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
+            <div className="flex flex-wrap justify-center gap-2 mb-5">
+              <a href="bias-aware-kv-quantization.html" className="px-3 py-1.5 bg-emerald-900 hover:bg-emerald-800 rounded text-xs font-medium text-emerald-200">Deployment policy</a>
+              <a href="kv-compression-frontier.html" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs font-medium text-gray-300">Compression frontier</a>
+              <a href="paper_memory_decode.html" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs font-medium text-gray-300">Decode study</a>
+            </div>
             <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
               The <span className="gradient-text">FP8 KV-Cache Failure Atlas</span>
             </h1>
@@ -297,7 +302,9 @@
               lineage) and architecture-defined <strong className="text-gray-200">subspace distribution mismatch</strong>
               (partial-RoPE models like Phi-2). The same eight bits in INT8 rescue the bias case, the damage is
               overwhelmingly on the key side (with one genuine value-side exception, Phi-2), and a cheap scanner flags a
-              fragile model before you ship it.
+              fragile model before deployment. This atlas owns the diagnosis; the
+              <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline"> bias-aware KV deployment policy</a>
+              turns it into a serving decision.
             </p>
           </header>
 
@@ -313,7 +320,7 @@
 
           {/* TLDR */}
           <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.amber}}>
-            <h3 className="font-semibold text-amber-400 mb-2">The result in one breath</h3>
+            <h3 className="font-semibold text-amber-400 mb-2">The central result</h3>
             <p className="text-gray-300 text-[15px] leading-relaxed">
               Quantizing the KV cache to FP8 silently destroys some models and not others. The split is not random
               and not the <span className="kbd">attention_bias</span> flag: a few models (the Qwen lineage) learn a
@@ -321,14 +328,14 @@
               per-tensor FP8 that bias hijacks the quantization scale and crushes the real, token-discriminating part of
               each key into a handful of mantissa codes. The result is a key cache that can no longer tell tokens apart —
               perplexity explodes up to <strong className="text-white">12.4×</strong> and next-token agreement falls to
-              <strong className="text-white"> 0.30</strong> on Qwen2.5-7B. The fix is almost free: keep the keys in bf16
-              and quantize only the values (<strong className="text-white">K16/V8</strong>), or — at the very same 8 bits —
+              <strong className="text-white"> 0.30</strong> on Qwen2.5-7B. The practical deployment response is to keep the keys in bf16
+              and quantize only the values (<strong className="text-white">K16/V8</strong>), or — at the same 8 bits —
               switch the key format from FP8 to uniform <strong className="text-white">INT8</strong>, which survives the bias.
               That is the cleanest case. A second class — partial-RoPE models such as Phi-2 — fails through a
               <strong className="text-white"> different route</strong>: a hostile distribution in the un-rotated key
-              subspace, not a removable bias (subtracting the bias recovers only ~13%). So the honest headline is
+              subspace, not a removable bias (subtracting the bias recovers only ~13%). The result is therefore
               <strong className="text-white"> two mechanisms, not one</strong>, and the right repair depends on which one
-              you have; K16/V8 is the conservative fallback when you don&rsquo;t know.
+              is present. K16/V8 is the conservative fallback until the model has been qualified.
             </p>
           </div>
 
@@ -705,11 +712,10 @@
               permuted controls, and its α-curve is flat. Phi fails for a different reason — which is the next section.
             </p>
             <div className="bg-[#07130f] border border-emerald-900/60 rounded-lg p-4 text-sm text-gray-400 mt-4">
-              <strong className="text-emerald-300">Benchmark bias-aware symmetric FP8.</strong>
-              Run pre-bias K8/V8 against ordinary K8/V8 and K16/V8. Measure per-tile K operand preparation,
-              exact bias reconstruction or score correction, RoPE placement, scale traffic, and HBM bytes.
-              Use the <a href="fp8-attention-tile-path.html" className="text-cyan-300 hover:underline"> FP8
-              attention tile measurement plan</a> for the dtype controls, profiler matrix, and decision rules.
+              <strong className="text-emerald-300">The bias-aware FP8 experiment is complete.</strong>
+              Pre-bias K8/V8 repairs retrieval and passes the served mutation suite, but fails the equal-memory serving gate
+              against K16/V8. See the <a href="bias-aware-kv-quantization.html" className="text-cyan-300 hover:underline">bias-aware
+              KV deployment policy</a> for the measured conclusion and the conditions that would justify reopening the line.
             </div>
           </Section>
 
@@ -1046,33 +1052,36 @@
             </ChartFrame>
           </Section>
 
-          {/* the deployment frontier moved to its own page */}
-          <Section id="deployment-frontier" kicker="The fix and its cost" title="The deployment frontier lives on its own page">
+          {/* diagnosis hands off to the deployment policy and compression frontier */}
+          <Section id="deployment-frontier" kicker="From mechanism to policy" title="Use the diagnosis to choose a deployment tier">
             <p>
-              The atlas answers <em>why</em> symmetric FP8 keys fail. The deployment half &mdash; the full quality-vs-bytes
-              Pareto (recovery cost, the cross-model frontier, the 8K hardening pass with confidence intervals, retrieval and
-              generation probes, tensor-parallel composition), the served-throughput trade-off, and a deploy recipe by byte
-              budget and measured fragility &mdash; now lives on a dedicated page.
+              This atlas answers <em>why</em> symmetric FP8 keys fail and how to detect the risk. The
+              <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline"> deployment policy</a>
+              combines that diagnosis with the completed pre-bias serving gate: symmetric FP8 is a qualified robust-key tier,
+              K16/V8 is the fragile-key default, and the current pre-bias kernel is a closed research result rather than the
+              serving default. The <a href="kv-compression-frontier.html" className="text-amber-300 hover:underline">compression frontier</a>
+              compares the broader quality-versus-bytes trade.
             </p>
-            <p className="my-3">
-              <a href="kv-compression-frontier.html" className="inline-block px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-medium transition-colors">The KV-Cache Compression Frontier &rarr;</a>
+            <p className="my-3 flex flex-wrap gap-2">
+              <a href="bias-aware-kv-quantization.html" className="inline-block px-4 py-2 bg-emerald-700 hover:bg-emerald-600 rounded text-white font-medium transition-colors">Apply the deployment policy &rarr;</a>
+              <a href="kv-compression-frontier.html" className="inline-block px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded text-white font-medium transition-colors">Compare the compression frontier &rarr;</a>
             </p>
             <p className="text-sm text-gray-500">
-              The short version: <strong className="text-gray-300">K16/V8</strong> is the lossless knee; key precision is the
-              dominant lever; any sub-16-bit key collapses (worst on fragile keys); value granularity is second-order.
+              In brief: <strong className="text-gray-300">K16/V8</strong> is the measured quality-preserving knee; key precision
+              is the dominant quality lever, while value precision offers the safer path to additional savings.
             </p>
           </Section>
 
           {/* 11. Serving */}
           <Section id="serving" kicker="Does it survive real serving?" title="It is a real production failure, not a fake-quant artifact">
             <p>
-              Everything above is fake-quant (quantize/dequantize inside a teacher-forced forward). The honest worry is that a
-              simulated rescue might not transfer to a real kernel. So the directional claim is confirmed end-to-end in a real
+              Everything above is fake-quant (quantize/dequantize inside a teacher-forced forward). The remaining question is whether a
+              simulated recovery transfers to a real kernel. The directional claim is therefore confirmed end-to-end in a real
               <strong> vLLM + FlashInfer</strong> stack on an H100. The same Qwen2.5-7B the atlas flags collapses just as hard in
               production — symmetric FP8 K8/V8 sends WikiText perplexity to <strong>214</strong> and the model emits garbage
               (&ldquo;<em>This limits turn limits limits limits…</em>&rdquo;) — while asymmetric <strong>K16/V8</strong> is
               <strong> character-for-character identical to FP16</strong>. The serving stack is even harsher than the fake-quant
-              probe (×30 vs ×12), but it points the same way, and the asymmetric cache is the real fix.
+              probe (×30 vs ×12), but it points the same way, and the asymmetric cache is the serving-safe path.
             </p>
             <ChartFrame title="Real serving (vLLM + FlashInfer, H100) — WikiText perplexity"
               sub="Qwen2.5-7B-Instruct. Symmetric FP8 garbles; asymmetric K16/V8 is identical to FP16." height={260}>
@@ -1087,9 +1096,9 @@
               </BarChart>
             </ChartFrame>
             <p className="text-xs text-gray-500">
-              The full measurement ladder agrees in direction: fake-quant teacher-forced (×12.8) → incremental HF cache (the key
+              Each measurement layer agrees in direction: fake-quant teacher-forced (×12.8) → incremental HF cache (the key
               cache corrupts generation on the <em>first</em> token, with an overturned logit margin of 8.17) → full serving (×30).
-              The fragility is real at every level, and so is the fix.
+              The fragility appears at every level, and K16/V8 recovers the serving result.
             </p>
           </Section>
 
@@ -1130,10 +1139,10 @@
           </Section>
 
           {/* 13. Claim ledger */}
-          <Section id="ledger" kicker="The receipts" title="Claim ledger (frozen before the results were read)">
+          <Section id="ledger" kicker="Evidence status" title="Claim ledger (specified before the results were read)">
             <p>
-              The seven claims were written down <em>before</em> the paper-tier results, so the goalposts cannot move, and a claim is
-              only &ldquo;supported&rdquo; once its negative control has also run and behaved. Here is where each stands.
+              The seven claims and their decision rules were written down before the paper-tier results to avoid post hoc
+              thresholds. A claim is marked &ldquo;supported&rdquo; only after its negative control also behaves as predicted.
             </p>
             <div className="grid md:grid-cols-2 gap-3 mt-3">
               {LEDGER.map((c,i)=>{
@@ -1153,7 +1162,7 @@
           </Section>
 
           {/* 14. Reproduce */}
-          <Section id="reproduce" kicker="Run it yourself" title="Reproduce the atlas — free, offline, in a minute">
+          <Section id="reproduce" kicker="Reproduction" title="Validate the harness locally; rerun the atlas on GPUs">
             <p>
               The whole science ran on the free local W7900 plus about <strong>$2</strong> of cheap-pod time (an A6000 for the fleet,
               an A100 for the controls, two H100s for the 72B slice). The fake-quant <em>harness</em> is locked into the build
@@ -1170,7 +1179,7 @@ make            <span className="text-gray-500"># doctor → 10 runner self-test
               from the <a href="paper_memory_decode.html" className="text-amber-400 hover:underline">decode paper</a>.
             </p>
             <div className="bg-[#0b1220] border border-gray-800 rounded-lg p-4 text-sm text-gray-400 mt-3">
-              <strong className="text-gray-200">Honest open edges.</strong> The biasless-but-fragile failures (Phi-4, Qwen3-4B) are
+              <strong className="text-gray-200">Remaining limitations.</strong> The biasless-but-fragile failures (Phi-4, Qwen3-4B) are
               contained but not yet mechanistically named. All quality numbers are fake-quant or single-model serving, not a broad
               production sweep; INT8-K&rsquo;s rescue is a mechanism-matched finding that still wants a wider in-kernel confirmation
               before it displaces the already-validated K16/V8. These are flagged throughout, not buried.
@@ -1189,13 +1198,17 @@ make            <span className="text-gray-500"># doctor → 10 runner self-test
             </div>
             <div className="card rounded-xl p-5">
               <h4 className="font-semibold text-red-400 mb-2">If you publish a model</h4>
-              <p className="text-gray-400 text-sm">Run the preflight. A large, concentrated key bias is a deployment foot-gun under symmetric FP8 — say so in the model card, and recommend K16/V8 or INT8-K.</p>
+              <p className="text-gray-400 text-sm">Run the preflight. A large, concentrated key bias is unsafe under symmetric FP8. Record that constraint in the model card and recommend K16/V8 or INT8-K.</p>
             </div>
           </div>
 
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
             <p className="mb-2">
               <a href="index.html" className="hover:text-gray-400">Home</a>
+              <span className="mx-2">&middot;</span>
+              <a href="bias-aware-kv-quantization.html" className="hover:text-gray-400">Deployment policy</a>
+              <span className="mx-2">&middot;</span>
+              <a href="kv-compression-frontier.html" className="hover:text-gray-400">Compression frontier</a>
               <span className="mx-2">&middot;</span>
               <a href="paper_memory_decode.html" className="hover:text-gray-400">Decode paper</a>
               <span className="mx-2">&middot;</span>
