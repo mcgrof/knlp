@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bias-aware KV quantization: deployment policy and findings</title>
+<meta name="description" content="A deployment policy for KV-cache quantization: use symmetric FP8 only when keys tolerate it, use K16/V8 for fragile-key models, and keep pre-bias as a closed research result rather than the serving default.">
+<link rel="canonical" href="https://knlp.io/bias-aware-kv-quantization.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.tool{display:flex;flex-direction:column}.tool .link{margin-top:auto;padding-top:12px;font:700 12px var(--mono)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#policy">deployment policy</a><a href="#prebias">pre-bias conclusion</a><a href="#tools">planning tools</a><a href="#remaining">remaining work</a>
+<a href="fp8-kv-failure-atlas.html">failure atlas</a><a href="kv-compression-frontier.html">compression frontier</a><a href="paper_memory_decode.html">decode study</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">Bias-aware KV quantization · R&amp;D conclusion · September 2026</div>
+<h1>Protect the keys.<br>Quantize the values.</h1>
+<p class="lead"><strong>Do not choose one KV-cache dtype for every model.</strong> Symmetric FP8 is a useful capacity tier when the model's keys tolerate it. It can fail catastrophically on models with fragile, biased key geometry. For those models, keep keys in BF16 and store values in FP8: asymmetric <strong>K16/V8</strong> preserves measured quality while reducing KV bytes by 25%.</p>
+<p class="lead">Pre-bias confirmed the diagnosis: removing the key bias restores long-context retrieval while keeping K8/V8 storage. It did not become the serving fix. The final equal-memory gate showed a decisive throughput and latency regression, so the pre-bias kernel line is closed and K16/V8 remains the default for fragile-key models.</p>
+<div class="decision"><b>Deployment decision</b><span>Classify key fragility first. Use K8/V8 for quality-admissible models, K16/V8 for fragile-key models, and BF16 when neither compressed tier has been qualified.</span></div>
+<div class="badges"><span class="badge green">DIAGNOSIS CONFIRMED</span><span class="badge amber">PRE-BIAS KERNEL CLOSED</span><span class="badge cyan">K16/V8 FRAGILE-KEY DEFAULT</span><span class="badge green">MODEL-AWARE TIERS</span></div>
+</div>
+
+<section id="policy">
+<h2>Deploy a policy, not a universal dtype</h2>
+<p class="sub">Capacity is free only after quality and execution support pass. The storage ratios below are exact for conventional caches with equally sized K and V tensors; compressed-latent attention needs its own accounting.</p>
+<div class="scroll"><table>
+<thead><tr><th>KV tier</th><th>bytes per K/V element pair</th><th>capacity vs BF16</th><th>quality rule</th><th>deployment status</th></tr></thead>
+<tbody>
+<tr><td>BF16 K / BF16 V</td><td>4</td><td>1.00×</td><td>reference</td><td class="yes">fallback</td></tr>
+<tr><td>BF16 K / FP8 V (K16/V8)</td><td>3</td><td>1.333×</td><td>measured quality-preserving knee</td><td class="yes">fragile-key default</td></tr>
+<tr><td>FP8 K / FP8 V (K8/V8)</td><td>2</td><td>2.00×</td><td>requires model qualification</td><td class="conditional">robust-key tier</td></tr>
+<tr><td>pre-biased FP8 K / FP8 V</td><td>2</td><td>2.00×</td><td>retrieval repaired</td><td class="no">not the serving default</td></tr>
+<tr><td>sub-8-bit frontier</td><td>varies</td><td>&gt;2.00× possible</td><td>keys dominate error; values are safer</td><td class="conditional">research tiers</td></tr>
+</tbody></table></div>
+<div class="grid3" style="margin-top:20px">
+<div class="card rule good"><strong>ROBUST KEYS: QUANTIZE BOTH</strong><p>Use symmetric FP8 only after long-context retrieval and generation probes show that key quantization is admissible for the model and serving stack.</p></div>
+<div class="card rule good"><strong>FRAGILE KEYS: KEEP K IN BF16</strong><p>Use K16/V8 to retain the value-side savings without exposing the model to destructive key quantization.</p></div>
+<div class="card rule warn"><strong>UNKNOWN MODEL: QUALIFY FIRST</strong><p>Do not infer safety from weight precision, model family labels, perplexity alone, or a kernel benchmark. Run the model-level gate.</p></div>
+</div>
+</section>
+
+<section id="picture">
+<h2>The R&amp;D chain is now coherent</h2>
+<p class="sub">Each page answers a different question. Read them in this order instead of treating the results as independent threads.</p>
+<div class="flow">
+<div><b>1 · Diagnose</b><span>Why symmetric FP8 keys fail, which geometries are fragile, and which probes reveal the failure.</span></div>
+<div><b>2 · Choose</b><span>This page turns the diagnosis and pre-bias result into a deployment policy.</span></div>
+<div><b>3 · Compare</b><span>The compression frontier measures the byte-versus-quality trade across more aggressive K/V formats.</span></div>
+<div><b>4 · Operate</b><span>Capacity accounting and result provenance carry the chosen K/V representation into planning and measurement.</span></div>
+</div>
+<div class="map" style="margin-top:18px">
+<a href="fp8-kv-failure-atlas.html"><b>FP8 KV-cache failure atlas</b><span>Model geometry, failure mechanism, prediction, and qualification probes.</span></a>
+<a href="kv-compression-frontier.html"><b>KV-cache compression frontier</b><span>Quality and capacity across K16/V8, symmetric FP8, pre-bias, and sub-8-bit research tiers.</span></a>
+<a href="paper_memory_decode.html"><b>Asymmetric KV decode study</b><span>End-to-end serving results, kernel integration, and the systems case for value-side compression.</span></a>
+<a href="fused-quant/fp8-attention-hardware-notes.md"><b>FP8 attention hardware notes</b><span>Kernel-family, Tensor Core, conversion, layout, and scheduling constraints behind the measurements.</span></a>
+</div>
+</section>
+
+<section id="prebias">
+<h2>Keep the pre-bias finding; stop the kernel line</h2>
+<p class="sub">Pre-bias answered the scientific question and failed the engineering decision. Those are compatible conclusions.</p>
+<div class="grid3">
+<div class="card"><div class="kicker">Numerical diagnosis</div><h3>Retrieval is repaired</h3><div class="metric good">1.00</div><p>Pre-bias restores needle retrieval at 8K, 16K, and 30,720 tokens where ordinary symmetric K8/V8 scores 0.00 on the tested fragile-key model.</p></div>
+<div class="card"><div class="kicker">Correctness gate</div><h3>Served geometry passes</h3><div class="metric good">PASS</div><p>The clean kernel passes all eight mutation cases at the served geometry. Injected live defects fail as intended.</p></div>
+<div class="card"><div class="kicker">Equal-memory serving gate</div><h3>Performance fails</h3><div class="metric bad">0.654×</div><p>Pre-bias at concurrency 48 delivers 0.654× the completed-request rate of K16/V8 at concurrency 32, with 2.056× p95 request latency.</p></div>
+</div>
+<div class="scroll" style="margin-top:22px"><table>
+<thead><tr><th>decision metric</th><th>required</th><th>measured</th><th>verdict</th></tr></thead>
+<tbody>
+<tr><td>completed requests per second</td><td>at least 1.20× K16/V8</td><td>0.654×</td><td class="no">fail</td></tr>
+<tr><td>p95 request latency</td><td>at most 1.25× K16/V8</td><td>2.056×</td><td class="no">fail</td></tr>
+<tr><td>served mutation suite</td><td>all clean cases pass; defects fail</td><td>meets gate</td><td class="yes">pass</td></tr>
+<tr><td>long-context retrieval</td><td>repair ordinary K8/V8 collapse</td><td>0.00 → 1.00</td><td class="yes">pass</td></tr>
+</tbody></table></div>
+<div class="note"><strong>Scope the claim correctly.</strong> The serving record contains two agreeing ABAB blocks rather than the five repetitions in the original performance-certification plan. That is enough for the negative engineering decision because both throughput and latency miss their frozen bounds by wide margins. It is not a five-repetition performance certification.</div>
+<div class="grid2" style="margin-top:20px">
+<div class="card rule good"><strong>RETAIN</strong><p>Pre-bias is evidence that key bias causes the failure and that a bias-aware representation can recover quality at symmetric-FP8 capacity.</p></div>
+<div class="card rule bad"><strong>DO NOT RETRY</strong><p>Do not spend another tuning cycle on this kernel. Reopen only for new hardware, a different kernel family, or a materially different representation.</p></div>
+</div>
+</section>
+
+<section id="speed">
+<h2>Separate storage, quality, and kernel speed</h2>
+<p class="sub">A dtype does not have one universal speed. Kernel family, batch, layout, transforms, and launch policy decide whether reduced bytes become useful throughput.</p>
+<div class="grid3">
+<div class="card"><div class="kicker">SM90 Tensor Core family</div><div class="metric good">16–19%</div><p>Ordinary K8/V8 is faster than K16/V8 at the measured bandwidth-bound shapes within the same audited kernel family.</p></div>
+<div class="card"><div class="kicker">Batch-one crossing</div><div class="metric warn">K8/V8 loses</div><p>The same K8/V8 path loses at batch 1. Context length alone does not predict the sign of the result.</p></div>
+<div class="card"><div class="kicker">Pre-bias path</div><div class="metric bad">closed</div><p>Numerical repair does not erase transformation and scheduling cost. The full serving gate, not a microbenchmark, sets the default.</p></div>
+</div>
+<p class="fine" style="margin-top:16px">Preserve exact kernel, build, layout, scale, transform, and launch provenance with every performance result. Do not compare storage formats across unrelated kernel families as if dtype were the only variable.</p>
+</section>
+
+<section id="tools">
+<h2>Carry the policy into capacity planning</h2>
+<p class="sub">No additional public results page is needed for the two planning tools. They are operational consequences of this policy and belong here, next to the decision they implement.</p>
+<div class="grid2">
+<div class="card tool"><div class="kicker">Capacity model</div><h3>aiconfigurator: K16/V8 byte accounting v2</h3><p>Represents key and value widths separately, computes the exact 3-byte K/V pair for conventional attention, and exposes K16/V8 as a capacity-only mode. It rejects compressed-latent caches and refuses to invent latency without measured mixed-dtype kernel rows.</p><a class="link" href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2">Review the v2 branch →</a></div>
+<div class="card tool"><div class="kicker">Measurement provenance</div><h3>InferenceX: requested/effective dtype provenance v2</h3><p>Records requested key and value dtypes separately, identifies symmetric and asymmetric representations, and keeps effective dtype unknown unless the engine attests it. It stores an argv fingerprint, never the raw server command line.</p><a class="link" href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2">Review the v2 branch →</a></div>
+</div>
+<div class="note"><strong>Planner boundary.</strong> The 4:3:2 byte ratio is exact for a conventional, equally sized K/V cache. Real deployment capacity must also include block fragmentation, allocator reservations, scale metadata, prefix sharing, offload buffers, sliding windows, and model-specific state. MLA and other compressed-latent layouts are separate representations, not K16/V8 with a different multiplier.</div>
+</section>
+
+<section id="history">
+<h2>What the research established</h2>
+<div class="steps">
+<div class="step"><strong>Decode is often a memory-traffic problem.</strong><span>KV compression can improve residency and throughput, but only when the serving path converts fewer bytes into useful work.</span></div>
+<div class="step"><strong>Symmetric FP8 is not universally quality-safe.</strong><span>Fragile, biased keys can turn an apparently small quantization choice into catastrophic long-context retrieval failure.</span></div>
+<div class="step"><strong>Keys and values deserve different precision.</strong><span>K16/V8 preserves key geometry while capturing value-side savings, producing the measured quality-preserving knee.</span></div>
+<div class="step"><strong>Pre-bias validates the mechanism.</strong><span>Removing bias before key quantization recovers retrieval, so the failure is predictable and correctable rather than random.</span></div>
+<div class="step"><strong>A correct representation can still be a poor serving default.</strong><span>The pre-bias implementation passes correctness and fails the equal-memory serving gate.</span></div>
+<div class="step"><strong>The compression frontier continues below FP8.</strong><span>Further value compression is promising; reducing key precision remains the dominant quality risk.</span></div>
+<div class="step"><strong>Planning needs representation-aware bytes and evidence.</strong><span>Capacity estimates must distinguish K from V, and results must distinguish requested dtype from the dtype the engine actually used.</span></div>
+</div>
+</section>
+
+<section id="remaining">
+<h2>The assessment is closed; production R&amp;D is not</h2>
+<p class="sub">The pre-bias decision and the high-level quantization policy are complete. The remaining work is integration, broader validation, and operational proof.</p>
+<div class="grid2">
+<div class="card rule good"><strong>UPSTREAM THE ASYMMETRIC PATH</strong><p>Land K16/V8 cache allocation, writers, decode kernels, serialization, and API plumbing in the serving projects that own them.</p></div>
+<div class="card rule good"><strong>ATTEST THE EFFECTIVE DTYPE</strong><p>Have each engine emit the resolved key/value representation after configuration, checkpoint defaults, and backend selection. Requested flags are not proof of runtime state.</p></div>
+<div class="card rule warn"><strong>VALIDATE REAL CAPACITY</strong><p>Compare planner estimates with allocator telemetry across block sizes, prefix caching, sliding windows, offload, speculative decoding, tensor parallelism, and disaggregated serving.</p></div>
+<div class="card rule warn"><strong>BROADEN THE QUALIFICATION MATRIX</strong><p>Extend model, context, workload, hardware, and kernel-family coverage. Treat new accelerators and compressed-latent attention as new measurement domains.</p></div>
+<div class="card rule warn"><strong>HARDEN CACHE LIFECYCLES</strong><p>Test save/restore, transfer, eviction, swapping, prefix reuse, LMCache codecs, and mixed-version compatibility with asymmetric K/V dtypes.</p></div>
+<div class="card rule warn"><strong>AUTOMATE THE POLICY GATE</strong><p>Turn key-fragility probes, long-context retrieval, generation quality, capacity, and serving performance into a repeatable admission test for each model and release.</p></div>
+</div>
+</section>
+</main>
+<footer>KNLP · bias-aware KV quantization · public conclusions and operational links only</footer>
+</body>
+</html>
