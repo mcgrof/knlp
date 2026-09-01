@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FP8 KV attention: H100 phase 1</title>
-<meta name="description" content="H100 measurements for CUDA-core and SM90 Tensor Core FP8 KV attention, the preparation probe, bounded conclusions, and the decisive phase-2 plan.">
+<title>FP8 KV attention: tile path and pre-bias closure</title>
+<meta name="description" content="H100 FP8 KV attention tile-path measurements, the bias-aware symmetric FP8 final gate, and the countersigned decision to keep K16/V8 as the serving default.">
 <style>
 :root{
   --bg:#080c0a;--bg2:#0d1310;--card:#111914;--line:#203027;
@@ -47,15 +47,67 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
 <body>
 <header><nav>
 <a class="logo" href="./">KNLP</a><span class="spacer"></span>
-<a href="#measurements">measurements</a><a href="#conclusions">conclusions</a><a href="#phase2">phase 2</a>
+<a href="#closure">final closure</a><a href="#measurements">measurements</a><a href="#conclusions">conclusions</a><a href="#campaign">campaign record</a>
 <a href="fused-quant/fp8-attention-hardware-notes.md">hardware notes</a>
 <a href="fp8-kv-failure-atlas.html">failure atlas</a><a href="paper_memory_decode.html">decode report</a>
 </nav></header>
 <main>
-<div class="eyebrow">FP8 KV attention · H100 phase 1</div>
-<h1>The selected kernel family changes the FP8 ordering.</h1>
-<p class="lead"><strong>The diagnostic CUDA-core path makes every tested FP8 cell slower than BF16. The SM90 Tensor Core path makes symmetric K8/V8 slower at B=1,T=32K, 1.09× faster at B=32,T=2K, and about 1.5× faster at B=32,T=32K.</strong> The same-family comparison is now closed: with split-dtype Tensor Core kernels compiled and audited at cosine 1.00000, symmetric K8/V8 beats K16/V8 by 16–19% at every bandwidth-bound shape (K8/V8 reaches 1.40–1.51× over BF16; K16/V8 reaches 1.19–1.28×), the K tax is negative at scale, and FP8 loses only at batch 1. On Blackwell's TensorRT-LLM generation kernels the transform modes converge and plain-E4M3 FP8 saturates at 1.05× over BF16, limited by its own pipeline rather than DRAM. The kernel family, not the storage format, decides the sign.</p>
-<div class="badges"><span class="badge green">PHASE 1 COMPLETE</span><span class="badge green">SAME-FAMILY VERDICT: K8/V8 WINS</span><span class="badge cyan">DISPATCH AUDITS PASSED</span><span class="badge cyan">COSINE ≥ 0.99999</span></div>
+<div class="eyebrow">FP8 KV attention · H100 tile path and pre-bias closure</div>
+<h1>The kernel family decides the speed. The final serving gate decides the default.</h1>
+<p class="lead"><strong>The earlier tile-path result stands: on one audited SM90 Tensor Core family, symmetric K8/V8 beats K16/V8 by 16–19% at bandwidth-bound shapes, while both lose at batch 1.</strong> That speed result does not make ordinary symmetric FP8 deployable for biased-key Qwen models, where key quantization destroys retrieval quality.</p>
+<p class="lead"><strong>Bias-aware symmetric FP8 repairs that numerical failure and passes the served-geometry mutation suite, but it fails the frozen equal-memory serving gate.</strong> Pre-bias at concurrency 48 delivers 0.654× the completed-request rate of K16/V8 at concurrency 32 and 2.056× its p95 request latency. The pre-bias optimization line is closed; K16/V8 remains the serving default, and pre-bias remains only a documented capacity option.</p>
+<div class="badges"><span class="badge green">TILE PATH COMPLETE</span><span class="badge amber">PRE-BIAS LINE CLOSED</span><span class="badge cyan">K16/V8 SERVING DEFAULT</span><span class="badge green">CAPACITY OPTION PRESERVED</span></div>
+
+<section id="closure">
+<h2>Final pre-bias closure</h2>
+<p class="sub">The final campaign used the thresholds frozen before the serving run. Correctness and reproducibility passed. The equal-memory serving decision failed by a large margin and was countersigned on 2026-09-01.</p>
+
+<div class="grid3">
+<div class="card">
+<div class="kicker">Gate A · served geometry</div>
+<h3>Mutation suite passes</h3>
+<div class="metric good">PASS</div>
+<p>The clean level-9 kernel passes all eight cases at 28 query heads, 4 KV heads, and RoPE theta 1e6. Every level-9-live defect is rejected; the offset-restoration mutation is absent at level 9 and caught at level 8.</p>
+</div>
+<div class="card">
+<div class="kicker">Gate B · five-process Latin square</div>
+<h3>The kernel cost reproduces</h3>
+<div class="metric warn">1.69× / 1.11×</div>
+<p>Pre-bias divided by K16 latency at 4K / 32K for the served geometry. Five fresh processes per point and the 32/4, theta-1e4 control reproduce the pattern. Level 8 wins nowhere.</p>
+</div>
+<div class="card">
+<div class="kicker">Gate C · equal memory</div>
+<h3>Both frozen bounds fail</h3>
+<div class="metric red">0.654× req/s</div>
+<p>Pre-bias@48 versus K16/V8@32 on Qwen2.5-7B with 30,720 input and 128 output tokens. Mean p95 latency is 2.056× baseline. The pass bounds were at least 1.20× throughput and at most 1.25× latency.</p>
+</div>
+</div>
+
+<h3 style="margin-top:32px">Capacity-point serving records</h3>
+<div class="scroll"><table>
+<thead><tr><th>block</th><th>K16/V8@32 req/s</th><th>pre-bias@48 req/s</th><th>throughput ratio</th><th>p95 latency ratio</th></tr></thead>
+<tbody>
+<tr><td>ABAB block 1</td><td>0.657397</td><td>0.428839</td><td class="bad">0.6523×</td><td class="bad">2.061×</td></tr>
+<tr><td>ABAB block 2</td><td>0.654936</td><td>0.429004</td><td class="bad">0.6550×</td><td class="bad">2.051×</td></tr>
+<tr><td>mean-based decision</td><td>0.656167</td><td>0.428922</td><td class="bad">0.6537×</td><td class="bad">2.056×</td></tr>
+</tbody></table></div>
+<p class="sub" style="margin-top:14px">The committed findings rounded the throughput ratio to 0.656×. Applying the committed verdict script's ratio-of-means rule to the raw values gives 0.6537×, or 0.654×. The correction strengthens the failure and does not change the decision.</p>
+
+<div class="grid2" style="margin-top:26px">
+<div class="card rule lock">
+<strong>KEEP THE BOUNDED RESULT</strong>
+<p>Bias-aware symmetric FP8 restores needle retrieval to 1.00 at 8K, 16K, and 30,720 tokens where ordinary K8/V8 reads 0.00, and it provides 1.5× the measured capacity of K16/V8. The 200-item GSM8K screen did not resolve a difference; it does not establish equivalence.</p>
+</div>
+<div class="card rule reject">
+<strong>STOP THE KERNEL LINE</strong>
+<p>K16/V8 stays the default for biased-key models. Do not spend another optimization pass on this pre-bias kernel. Reopen only for materially new hardware, a different kernel family, or a new representation hypothesis.</p>
+</div>
+</div>
+
+<div class="note"><strong>Protocol note.</strong> The frozen review requested five interleaved serving repetitions; the final record contains two ABAB blocks. The countersign explicitly waives the remaining three for this negative engineering decision because the blocks agree, throughput is about 46% below the pass boundary, latency independently fails, and the common-concurrency sweep points the same way. This is not a five-repetition performance certification.</div>
+
+<p class="sub" style="margin-top:22px">Decision record: final-gate result commit <code>85fa7b2d</code>, countersigned 2026-09-01 at commit <code>c82c5db9</code>. The complete gate protocol, per-server attribution records, and raw sweep exports are archived with the measurement ledger at those commits.</p>
+</section>
 
 <section id="measurements">
 <h2>Use the exact H100 measurements</h2>
@@ -109,14 +161,14 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
 </section>
 
 <section id="conclusions">
-<h2>Apply bounded conclusions</h2>
+<h2>Apply the closed conclusions</h2>
 <div class="grid3">
-<div class="card rule lock"><strong>LOCK: KERNEL FAMILY CHANGES THE OBSERVED ORDERING</strong><p>Record the exact kernel, JIT URI, cubin, layout, transform mode, and launch policy for every result.</p></div>
-<div class="card rule reject"><strong>REJECT: K-ONLY EXPLANATION ON CUDA CORES</strong><p>K-only and V-only taxes are comparable. The K8V8 interaction becomes large at batch 32.</p></div>
-<div class="card rule lock"><strong>LOCK: QK HIDES MOST ISOLATED CONVERSION</strong><p>Keep conversion in the model, but measure the unhidden full-mainloop term.</p></div>
-<div class="card rule open"><strong>OPEN: TRANSFORM SCHEDULE AT FIXED BYTES</strong><p>Compare Full, KOnly, and SeparateKv with identical K8/V8 storage and one Tensor Core family.</p></div>
-<div class="card rule open"><strong>OPEN: K16/V8 VERSUS K8/V8 IN ONE FAMILY</strong><p>Hold V, scales, pages, mask, output type, and launch policy fixed.</p></div>
-<div class="card rule open"><strong>OPEN: BATCH, OCCUPANCY, AND AMORTIZATION</strong><p>Run the full B-by-T cross before attributing the crossover.</p></div>
+<div class="card rule lock"><strong>LOCK: KERNEL FAMILY CHANGES THE SPEED ORDERING</strong><p>Keep the exact kernel, JIT URI, cubin, layout, transform mode, and launch policy attached to every result. Storage dtype alone does not predict speed.</p></div>
+<div class="card rule lock"><strong>LOCK: SAME-FAMILY K8/V8 SPEED WIN</strong><p>On the audited SM90 Tensor Core family, ordinary K8/V8 is 16–19% faster than K16/V8 at the bandwidth-bound shapes and loses at batch 1.</p></div>
+<div class="card rule reject"><strong>REJECT: ORDINARY K8/V8 FOR BIASED-KEY QWEN</strong><p>The speed win is unusable where key bias makes symmetric quantization numerically destructive. Retrieval, not kernel timing, rejects this default.</p></div>
+<div class="card rule lock"><strong>LOCK: PRE-BIAS CORRECTNESS AND CAPACITY</strong><p>The shipping level-9 correction passes the served mutation gate, restores long-context retrieval, and measures 1.5× K16/V8 capacity.</p></div>
+<div class="card rule lock"><strong>LOCK: K16/V8 IS THE SERVING DEFAULT</strong><p>It preserves the quality rescue without the pre-bias kernel's decisive serving penalty.</p></div>
+<div class="card rule reject"><strong>REJECT: ANOTHER PRE-BIAS TUNING PASS</strong><p>The frozen equal-memory gate fails at 0.654× throughput and 2.056× p95 latency. The optimization line is closed.</p></div>
 </div>
 </section>
 
@@ -130,26 +182,26 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
 <div class="eq"><strong>T(K8/V8) − T(K16/V8)</strong> ≈ unhidden K8 preparation + layout/scale/occupancy pressure − saved K-byte time</div>
 </section>
 
-<section id="phase2">
-<h2>Run the decisive phase 2 campaign</h2>
-<p class="sub">Use a cheap B200 capability gate. Pivot to the H100 split-dtype template patch immediately when B200 cannot provide the same-family asymmetric and symmetric cells.</p>
+<section id="campaign">
+<h2>Campaign record and disposition</h2>
+<p class="sub">The follow-on campaign is no longer a plan. The same-family speed question, the biased-key quality failure, the corrective representation, and the final serving decision have all been measured.</p>
 <div class="steps">
-<div class="step"><strong>Recover and commit the exact SM90 Tensor Core runner.</strong><span>Record its FlashInfer API, layouts, scales, pages, workspace, JIT URI, generated source, cubin, and checksums. Mark the source unrecoverable when it cannot be reconstructed exactly.</span></div>
-<div class="step"><strong>Audit B200 support from source.</strong><span>Pin FlashInfer at 4927c0e15cb63a2abb6df09019c39a172222f0eb. Separate paged generation attention from contiguous block-scaled FMHA.</span></div>
-<div class="step"><strong>Run a $5 B200 capability gate.</strong><span>Compile BF16, Full/KOnly/SeparateKv K8/V8, and same-family K16/V8. Print exact dispatch and terminate before timing when any decisive cell falls back or fails.</span></div>
-<div class="step"><strong>Hold bytes fixed and compare transform modes.</strong><span>Attribute a schedule effect only when one Tensor Core family, bytes, layouts, and scales remain fixed and a ≥3% paired delta reproduces across three processes.</span></div>
-<div class="step"><strong>Hold the Tensor Core family fixed and compare K16/V8 with K8/V8.</strong><span>Keep V and every non-K axis fixed. This closes the asymmetric-versus-symmetric question.</span></div>
-<div class="step"><strong>Run the complete B-by-T cross.</strong><span>Sweep B={1,2,4,8,16,32,64} and T={2K,8K,16K,32K,64K}; then add MHA and a second GQA topology.</span></div>
-<div class="step"><strong>Add captured scales and direct-layout MXFP8.</strong><span>Include scale traffic, Q quantization, final cache layout, paged support, output error, ITL, capacity, and goodput.</span></div>
-<div class="step"><strong>Collect counters on bare metal.</strong><span>Profile only reproduced winning and losing cells plus matched K16/V8 controls.</span></div>
-<div class="step"><strong>Integrate pre-bias K8/V8 after selecting the kernel path.</strong><span>Compare ordinary K8/V8, two bias-aware layouts, and K16/V8 across long-context quality and serving gates.</span></div>
+<div class="step"><strong>Selected and audited the SM90 Tensor Core family.</strong><span>Exact dispatch, generated modules, resource use, correctness, and same-family dtype controls were retained with the artifacts.</span></div>
+<div class="step"><strong>Closed K8/V8 versus K16/V8 at the kernel level.</strong><span>Symmetric K8/V8 wins the bandwidth-bound same-family cells, demonstrating that the earlier CUDA-core conversion loss was not a storage-format law.</span></div>
+<div class="step"><strong>Separated speed from quality.</strong><span>Ordinary K8/V8 fails catastrophically on biased-key Qwen even when its kernel is fast. K16/V8 preserves quality by leaving keys unquantized.</span></div>
+<div class="step"><strong>Implemented bias-aware symmetric FP8.</strong><span>Pre-bias preserves the compact K8/V8 representation while correcting the key-bias failure and restoring long-context retrieval.</span></div>
+<div class="step"><strong>Passed the served mutation suite.</strong><span>Clean level 9 passes; injected live defects fail; the level-8-only offset defect is caught where expected.</span></div>
+<div class="step"><strong>Reproduced the kernel penalty.</strong><span>Five-process Latin-square runs at two geometries and two contexts confirm that pre-bias remains slower than K16 and that level 8 does not help.</span></div>
+<div class="step"><strong>Failed the equal-memory serving gate.</strong><span>At the measured capacity points, pre-bias@48 produces 0.654× K16/V8@32 completed requests per second and 2.056× its p95 latency.</span></div>
+<div class="step"><strong>Closed the line.</strong><span>Preserve the representation and artifacts as a capacity option; deploy K16/V8 by default; do not authorize another tuning pass.</span></div>
 </div>
-<div class="note"><strong>Budget:</strong> stop the B200 capability gate at $5, stop for owner review at $40, and never exceed $60 without a new committed authorization. Sync artifacts, terminate every pod, and verify zero running instances.</div>
-<p style="margin-top:22px"><a href="https://github.com/mcgrof/knlp-key-results/blob/main/fp8-kv-tile-path-20260820/PHASE2_PLAN.md">Open the executable phase 2 plan →</a></p>
+<div class="note"><strong>No further campaign spend is authorized for this kernel line.</strong> A materially different hardware target, kernel family, or representation is new research and must begin with a new hypothesis and frozen gate.</div>
+<p class="sub" style="margin-top:22px">The original runnable campaign protocol and the final-gate findings are archived with the measurement ledger; the deciding numbers and every conclusion they support appear in full above.</p>
 </section>
 
 <section id="provenance">
-<h2>Preserve the phase 1 provenance</h2>
+<h2>Preserve both provenance records</h2>
+<h3>Tile-path measurement campaign · 2026-08-21</h3>
 <div class="prov">
 <div><b>GPU</b><span>H100 80GB HBM3 · sm_90 · 132 SMs</span></div>
 <div><b>driver / CUDA</b><span>580.126.09 / 13.0</span></div>
@@ -160,9 +212,22 @@ footer{border-top:1px solid var(--line);padding:26px 24px;color:var(--dim);font:
 <div><b>profiler</b><span>NCU blocked by ERR_NVGPUCTRPERM</span></div>
 <div><b>cost / lifecycle</b><span>two pods · ~0.6 GPU-hours · ~$2 · zero pods left</span></div>
 </div>
-<p style="margin-top:22px"><a href="https://github.com/mcgrof/knlp-key-results/blob/f75960a66cc3a5b5dd4d5096197c2921bcbaf253/fp8-kv-tile-path-20260820/raw/h100-runpod/tile-h100cu13-runpod-20260821/FINDINGS.md">Read the archived H100 findings →</a><br><a href="https://github.com/mcgrof/knlp-key-results/commit/f75960a66cc3a5b5dd4d5096197c2921bcbaf253">Inspect the phase 1 result commit →</a></p>
+
+<h3 style="margin-top:30px">Final pre-bias gate</h3>
+<div class="prov">
+<div><b>GPU</b><span>NVIDIA H100 80GB HBM3</span></div>
+<div><b>model</b><span>Qwen/Qwen2.5-7B-Instruct</span></div>
+<div><b>serving workload</b><span>30,720 input · 128 output · completions</span></div>
+<div><b>capacity points</b><span>K16/V8@32 · pre-bias@48</span></div>
+<div><b>vLLM</b><span>8a1714108c</span></div>
+<div><b>FlashInfer</b><span>6dfdc83359</span></div>
+<div><b>decision metrics</b><span>0.6537× req/s · 2.056× p95</span></div>
+<div><b>result commit</b><span>85fa7b2db3b3cfa46394f4909fde8b41bc0e04a8</span></div>
+</div>
+
+<p class="sub" style="margin-top:22px">Archived measurement records: tile-path result commit <code>f75960a6</code> · final-gate result commit <code>85fa7b2d</code>. The tables above reproduce the archived medians in full.</p>
 </section>
 </main>
-<footer>KNLP · FP8 KV attention tile-path campaign · H100 phase 1 · 2026-08-21</footer>
+<footer>KNLP · FP8 KV attention tile-path and pre-bias campaign · closed 2026-09-01</footer>
 </body>
 </html>
