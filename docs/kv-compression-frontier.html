@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>The KV-Cache Compression Frontier — which recipe to deploy, and what it costs</title>
-  <meta name="description" content="The deployable KV-cache byte-vs-quality Pareto across model families and bit budgets. Asymmetric K16/V8 is the lossless knee; key precision is the dominant lever (any sub-16-bit key collapses, worst on fragile keys); value granularity is second-order; a pre-RoPE prebias rescues symmetric 8-bit keys. Validated to 8K with confidence intervals, retrieval and generation probes, and under tensor parallelism. Served-throughput and a deploy recipe by byte budget and measured key fragility.">
+  <title>The KV-Cache Compression Frontier — compare quality, capacity, and serving cost</title>
+  <meta name="description" content="A measured comparison of KV-cache formats across model families, byte budgets, long context, tensor parallelism, and served throughput. Use the bias-aware KV policy to choose a deployment tier, then use this frontier to inspect its evidence and tradeoffs.">
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -37,10 +37,10 @@
   <nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm font-medium text-gray-300 transition-colors">&larr; Home</a>
+      <a href="bias-aware-kv-quantization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-emerald-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KV Policy</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">FP8 Atlas</a>
       <a href="kv-compression-frontier.html" class="px-3 py-1.5 bg-amber-600 rounded text-sm font-medium text-white">KV Frontier</a>
-      <a href="kvsplice_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-orange-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">KVSplice</a>
-      <a href="linear_attention_visualization.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Linear Attn</a>
+      <a href="paper_memory_decode.html" class="px-3 py-1.5 bg-gray-800 hover:bg-sky-600 rounded text-sm font-medium text-gray-300 hover:text-white transition-colors">Asymmetric Decode</a>
     </div>
   </nav>
 
@@ -167,24 +167,23 @@
       return (
         <div className="max-w-5xl mx-auto px-5 py-12">
           <header className="text-center mb-10">
-            <a href="fp8-kv-failure-atlas.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; From the FP8 failure atlas</a>
+            <a href="bias-aware-kv-quantization.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; From the bias-aware KV policy</a>
             <h1 className="text-4xl md:text-5xl font-bold mb-4 leading-tight">
               The <span className="gradient-text">KV-Cache Compression Frontier</span>
             </h1>
             <p className="text-gray-400 max-w-3xl mx-auto text-lg">
-              The <a href="fp8-kv-failure-atlas.html" className="text-amber-300 hover:underline">failure atlas</a> answers
-              <em> why</em> symmetric FP8 keys break. This page answers the deployment question: across model families and
-              bit budgets, <strong className="text-gray-200">which KV-cache compression recipe should you ship, and what
-              does it cost?</strong> One thesis runs through all of it &mdash; <strong className="text-gray-200">key
-              precision is the dominant lever</strong>. Asymmetric <span className="kbd">K16/V8</span> is the lossless knee;
-              any sub-16-bit key collapses (worst on fragile keys); value granularity is second-order; a pre-RoPE prebias
-              rescues symmetric 8-bit keys. Validated to 8K with confidence intervals, retrieval and generation probes,
-              and under tensor parallelism &mdash; then a deploy recipe by byte budget and measured fragility.
+              The <a href="fp8-kv-failure-atlas.html" className="text-amber-300 hover:underline">failure atlas</a> explains
+              why symmetric FP8 keys fail on some model families. The
+              <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline"> deployment policy</a>
+              turns that diagnosis into a serving decision. This page compares the evidence behind those choices across
+              model families, byte budgets, long context, tensor parallelism, and served throughput. The central finding is
+              simple: <strong className="text-gray-200">keys carry most of the quality risk; values provide the safest
+              capacity savings.</strong>
             </p>
           </header>
 
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
-            <StatCard label="Lossless knee" value="K16/V8" sub="~2× vs K16, TP-invariant" color={C.green}/>
+            <StatCard label="Fragile-key tier" value="K16/V8" sub="1.333× BF16 capacity" color={C.green}/>
             <StatCard label="Key vs value" value="~7×" sub="2-bit K costs 7× a 2-bit V" color={C.amber}/>
             <StatCard label="2-bit-K worst" value="+0.48" sub="ΔNLL on fragile Qwen2.5" color={C.red}/>
             <StatCard label="Validated to" value="8K" sub="CIs · retrieval · generation" />
@@ -192,14 +191,15 @@
           </div>
 
           <div className="card rounded-xl p-6 mb-8 border-l-4" style={{borderLeftColor:C.amber}}>
-            <h3 className="font-semibold text-amber-400 mb-2">The frontier in one breath</h3>
+            <h3 className="font-semibold text-amber-400 mb-2">The measured comparison</h3>
             <p className="text-gray-300 text-[15px] leading-relaxed">
               KV-cache byte reduction is a two-axis choice &mdash; keys and values &mdash; and the axes are not symmetric.
-              Dropping <em>values</em> to 8-bit is essentially free as long as keys stay at 16-bit: that is
-              <strong className="text-white"> K16/V8</strong>, the lossless knee at ~2× compression. Dropping <em>keys</em>
-              below 16-bit is where quality dies, and it dies hardest on the models the atlas flags as fragile (large
-              pre-RoPE key structure). On the same model at the same bit budget, 2-bit values cost ~+0.07 nats while 2-bit
-              keys cost ~+0.48. So the deployment rule is short: protect the keys, quantize the values, and
+              Dropping <em>values</em> to 8-bit while keeping keys at 16-bit gives
+              <strong className="text-white"> K16/V8</strong>: three bytes per K/V element pair instead of four, or
+              1.333&times; BF16 KV capacity. Reducing key precision can save more, but its quality cost is strongly
+              model-dependent and is largest on the fragile-key families identified by the atlas. On the same model at the
+              same bit budget, 2-bit values cost ~+0.07 nats while 2-bit keys cost ~+0.48. The deployment rule is therefore:
+              protect the keys, quantize the values, and
               <strong className="text-white"> pick the key precision by each model's measured fragility</strong> &mdash;
               symmetric FP8 keys where they are quality-admissible (robust-key Llama/Mistral/Qwen3), asymmetric K16/V8 where
               they are not (Qwen2/2.5).
@@ -207,17 +207,16 @@
           </div>
 
           {/* 1. recovery pareto */}
-          <Section id="byte-frontier" kicker="The fix and its cost" title="Recovery vs bytes: the cheapest repair that works">
+          <Section id="byte-frontier" kicker="Representation quality" title="Recovery vs bytes: which repairs restore the signal">
             <p>
               Quality is only half the deployment decision; the other half is bytes and side-metadata. This Pareto is for
               the Qwen key-center (DC-offset) mechanism, recovery measured on Qwen2.5-7B. Putting recovery against key-cache
-              cost collapses the choice to a clean front. The two &ldquo;principled&rdquo; repairs a reader reaches for first
-              &mdash; per-channel FP8 scaling and the QK-gauge &mdash; both <strong>recover nothing</strong> (recovery 0),
+              cost narrows the choices. Per-channel FP8 scaling and the QK-gauge both
+              <strong> recover nothing</strong> (recovery 0),
               because neither re-centers an additive bias. The two that work at 8 bits are <strong>INT8-K</strong> (recovery
               0.95, same 512 bytes, zero metadata &mdash; a drop-in format swap) and <strong>FP8 pre-bias</strong> (0.97, but
               it must store the per-channel bias). Above 8 bits, <strong>K16/V8</strong> is the zero-metadata fallback at 1024
-              bytes. For a Qwen-style biased model: INT8-K if you must hold 8-bit keys, K16/V8 for the conservative default
-              &mdash; and don&rsquo;t reach for the elegant linear-algebra fixes, which do nothing for <em>this</em> mechanism.
+              bytes. These measurements compare representation quality; the serving gate is separate.
             </p>
             <ChartFrame title="Recovery vs key-cache bytes per token (Qwen anchor)"
               sub="Up and to the left is better. Red = recovers nothing; amber/green = the working 8-bit repairs; blue = the bf16-key fallback." height={340}>
@@ -252,15 +251,21 @@
                 </tbody>
               </table>
             </div>
+            <div className="card rounded-xl p-4 mt-4 border-l-4" style={{borderLeftColor:C.red}}>
+              <p className="text-sm text-gray-300"><strong className="text-red-400">Prebias closes the mechanism, not the
+              deployment case.</strong> It restored retrieval quality and passed mutation checks, but the current kernel
+              failed the equal-memory serving gate: 0.654&times; request throughput and 2.056&times; p95 latency relative to
+              the accepted comparison. Keep prebias as the reference repair and optimization target; do not ship that
+              kernel as the fragile-key default. The operational default remains K16/V8.</p>
+            </div>
           </Section>
 
           {/* 2. cross-model frontier */}
-          <Section id="cross-model" kicker="The corrected map" title="The cross-model frontier: a well-designed low-bit key avoids collapse">
+          <Section id="cross-model" kicker="Cross-model evidence" title="Low-bit key formats have model-dependent costs">
             <p>
-              The single-model story generalizes. Across four model families with <em>faithful</em> implementations, every
-              arm reproduces its method&rsquo;s real behavior (two earlier &ldquo;collapses&rdquo; were implementation
-              artifacts a self-audit caught: a mislabeled post-RoPE symmetric FP8-K, and a 3-level no-residual KIVI
-              strawman). The corrected table below is teacher-forced ΔNLL vs the lossless K16/V16 baseline at 2048 tokens.
+              Across four model families, the same bit count produces different results depending on the key format and the
+              model&rsquo;s key geometry. The table uses faithful implementations of each method and reports teacher-forced
+              ΔNLL against the native K16/V16 baseline at 2048 tokens.
             </p>
             <div className="overflow-x-auto my-4">
               <table className="text-sm w-full">
@@ -285,11 +290,11 @@
               </table>
             </div>
             <p>
-              <strong className="text-gray-200">Faithful KIVI never collapses &mdash; its 2-bit-key cost just scales with
-              key fragility.</strong> The 4-level affine per-channel KIVI (over token-groups, with a residual window) is
-              viable on all four families; the cost rises monotonically with the model&rsquo;s key-bias geometry.
+              <strong className="text-gray-200">Faithful KIVI remains usable in this matrix, but its 2-bit-key cost scales
+              with key fragility.</strong> The 4-level affine per-channel KIVI (over token-groups, with a residual window)
+              has a measurable cost on all four families, rising with the model&rsquo;s key-bias geometry.
             </p>
-            <ChartFrame title="Faithful KIVI (2-bit K) cost scales with key fragility — no collapse anywhere"
+            <ChartFrame title="Faithful KIVI (2-bit K) cost scales with key fragility"
               sub="ΔNLL vs K16/V16; the 2-bit-key cost rising with the model's K-bias geometry, Mistral → Qwen." height={240}>
               <BarChart data={KIVI_FRAG} margin={{top:8,right:16,left:0,bottom:4}}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937"/>
@@ -301,17 +306,18 @@
             </ChartFrame>
             <div className="card rounded-xl p-4 my-4 border-l-4" style={{borderLeftColor:C.green}}>
               <p className="text-sm text-gray-300"><strong className="text-green-400">The tiers (4 families).</strong>
-              {' '}<strong>K16/V8</strong> the lossless knee (~2× vs K16, TP-invariant); <strong>pre-RoPE prebias-K8</strong>
-              near-lossless at ~8-bit (the bias amortizes to &lt;0.07 bits/token); <strong>K16/V2</strong> a high-capacity
+              {' '}<strong>K16/V8</strong> is the measured quality-preserving fragile-key tier (1.333&times; BF16 KV capacity,
+              TP-invariant); <strong>pre-RoPE prebias-K8</strong> restores representation quality at 8-bit keys, but its
+              current kernel failed the serving gate; <strong>K16/V2</strong> is a high-capacity
               tier; <strong>faithful KIVI</strong> a viable 2-bit-K option whose cost is predictable from the model&rsquo;s
               bias geometry. K-quant failure is geometry- and placement-controlled, not bit-width alone.</p>
             </div>
           </Section>
 
           {/* 3. 8K hardening */}
-          <Section id="hardening-8k" kicker="Hardening the frontier" title="At 8K: intervals, retrieval, and generation">
+          <Section id="hardening-8k" kicker="Long-context evidence" title="At 8K: intervals, retrieval, and generation">
             <p>
-              The 2048-token frontier is a single teacher-forced step. This pass closes three extensions across the four
+              The 2048-token frontier is a single teacher-forced step. We tested three additional behaviors across four
               long-context families on <strong>24 independent WikiText-103 documents at 8192 tokens</strong>: a
               <strong> block-bootstrap CI</strong> over documents on every ΔNLL, a <strong>passkey / needle</strong>
               retrieval probe, and <strong>autoregressive divergence</strong> through a real incremental cache (the
@@ -399,8 +405,7 @@
               <strong className="text-gray-200">The V side, measured in decode.</strong> Prefill NLL is K-precision-sensitive;
               FP8-V only surfaces when <em>decode</em> reads the fp8 V cache. In autoregressive decode, K16/V8 reaches
               decode-NLL identical to BF16 with <strong className="text-gray-200">100% token agreement</strong> at TP=1 and
-              TP=2 &mdash; FP8-V is lossless in decode and composes under TP too. Both halves of the recipe are rigorous, not
-              just the keys.
+              TP=2. In this path, FP8-V adds no measured decode loss and composes under tensor parallelism.
             </p>
             <p>
               <strong className="text-gray-200">Fragility is head-dominated, so head-sharding can&rsquo;t fix it.</strong>
@@ -425,11 +430,11 @@
           </Section>
 
           {/* 5. served fragility */}
-          <Section id="served-fragility" kicker="What actually ships" title="Served throughput: symmetric FP8 wins where it is admissible, asym wins where it is not">
+          <Section id="served-fragility" kicker="Serving" title="Symmetric FP8 wins only after it passes the quality gate">
             <p>
-              The quality frontier above says K16/V8 is lossless and symmetric FP8-K garbles fragile Qwen. Serving adds a
-              second lens &mdash; throughput under concurrency &mdash; and the two lenses look like they disagree until you
-              qualify the regime. Under a residency-goodput concurrency sweep on <strong>robust-key</strong> models, the more
+              The quality frontier shows near-native K16/V8 results on the measured fragile-key models and large symmetric
+              FP8-K losses on Qwen2/2.5. Serving adds throughput under concurrency. Under a residency-goodput concurrency
+              sweep on <strong>robust-key</strong> models, the more
               aggressive symmetric FP8 (2× capacity) <em>Pareto-dominates</em> asymmetric K16/V8 (1.33× capacity): more output
               tokens/sec at every concurrency point, with zero preemptions.
             </p>
@@ -450,10 +455,13 @@
               <p className="text-sm text-gray-300"><strong className="text-amber-400">Why this is not a contradiction.</strong>
               {' '}Symmetric FP8 only wins throughput where it is <em>quality-admissible</em>. On the fragile Qwen2.5 family it
               is inadmissible &mdash; symmetric FP8-K collapses GSM8K to <strong>0.01</strong> &mdash; so the admissible Pareto
-              there is bf16 vs K16/V8, and K16/V8 wins it. So the two results compose into one rule:
+              there is bf16 vs K16/V8, and K16/V8 wins it. The results therefore give one rule:
               <strong className="text-gray-200"> pick key precision by measured fragility.</strong> Robust keys
               (Llama-3.x, Mistral, Phi-4, Qwen3) &rarr; symmetric FP8 for the 2× throughput. Fragile keys (Qwen2/2.5)
-              &rarr; asymmetric K16/V8, the only lossless option.</p>
+              &rarr; asymmetric K16/V8 as the measured quality-preserving option. Phi-2 is the important exception: its
+              value-side residual requires native-V qualification. The
+              <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline"> deployment policy</a>
+              states the gate and fallbacks.</p>
             </div>
             <p className="text-xs text-gray-500">
               H100 80GB, ISL/OSL 2048, output tok/s at the noted concurrency (Llama conc 120, Mistral conc 125); K16/V8
@@ -463,7 +471,7 @@
           </Section>
 
           {/* 6. kvtuner */}
-          <Section id="kvtuner" kicker="Don't over-engineer it" title="It's the format, not the bit budget — and one layer, not a per-layer map">
+          <Section id="kvtuner" kicker="Format before allocation" title="Test the number format before building a per-layer map">
             <p>
               A tempting way to push below K16 is a <em>per-layer</em> bit-allocation map: spend more bits where the model is
               sensitive. On Qwen2.5-7B that instinct is wrong twice over. First, the sensitivity is not spread across layers
@@ -498,11 +506,11 @@
           </Section>
 
           {/* 7. decode tier (HELD) */}
-          <Section id="decode-tier" kicker="A parked build-decision" title="Beyond storage: routing the decode read (held, not shipped)">
+          <Section id="decode-tier" kicker="Held research" title="Beyond storage: routing the decode read (not shipped)">
             <p>
               Everything above is about <em>storage</em> bytes. There is a second, distinct axis &mdash; the decode-time
-              <em> read</em> traffic &mdash; and a parked result on it worth stating honestly. On top of the asymmetric K16/V8
-              cache, a per-token <strong>INT8 key-index page router</strong> can route decode attention to only the pages that
+              <em> read</em> traffic. We evaluated a separate, held result on top of the asymmetric K16/V8
+              cache: a per-token <strong>INT8 key-index page router</strong> that routes decode attention to only the pages that
               matter: near-lossless on robust models down to <strong>~2&ndash;4% of pages</strong> (Llama KL 0.001&ndash;0.03,
               greedy agreement 1.0; routed 8K NIAH exactly equals dense). The index must be INT8 &mdash; INT4/FP8 fail on
               fragile keys, the same fragility the rest of this page is about.
@@ -523,15 +531,14 @@
               <p className="text-sm text-gray-300"><strong className="text-amber-400">Why it is HELD, not shipped.</strong>
               {' '}The 24.6× is the <em>attention kernel</em> only. A naive PyTorch index-scan selection costs 1.8&ndash;13.8 ms
               and makes the total decode step a net loss (0.17&ndash;0.29×); the ~3× end-to-end figure is a projection that
-              assumes a fused index-scan kernel nobody has built yet. There is also an open caveat &mdash; the candidate-key
+              assumes a fused index-scan kernel that has not been implemented. The candidate-key
               fetch doesn&rsquo;t amortize to a small hot cache, so this is more a decode-traffic play than a KV-capacity win.
-              Odds of an end-to-end win are ~50&ndash;60%, gated on that kernel. Listed here for completeness, not as a
-              deployable recipe.</p>
+              An end-to-end win therefore remains uncertain and depends on that kernel. This is not a deployable recipe.</p>
             </div>
           </Section>
 
           {/* 8. recipe */}
-          <Section id="recipe" kicker="What to deploy" title="The recipe: by byte budget, after per-model fragility triage">
+          <Section id="recipe" kicker="Deployment comparison" title="Choose the byte tier after per-model fragility triage">
             <p>
               Put it together as a deployment ladder. First triage each model for key fragility (measure max|K-bias| or run a
               tiny fake-quant check &mdash; fragile is the Qwen2/2.5 family; tolerant is Llama-3.x, Mistral, Phi-4, Qwen3).
@@ -546,12 +553,12 @@
                   <tr className="border-b border-gray-800">
                     <td className="py-2 px-3 font-mono text-green-400">24 bit&nbsp;·&nbsp;1.33×</td>
                     <td className="py-2 px-3"><strong className="text-gray-100">K16/V8</strong></td>
-                    <td className="py-2 px-3">BF16 keys + FP8 values. Lossless on every family, TP-invariant, zero-metadata. The zero-thought safe default (vLLM <span className="kbd">auto,fp8_e4m3</span> / FlashInfer asym).</td>
+                    <td className="py-2 px-3">BF16 keys + FP8 values. The measured quality-preserving default for fragile-key models, TP-invariant in the tested Qwen path, with no repair metadata. Qualify native V separately for Phi-2 and other value-sensitive models.</td>
                   </tr>
                   <tr className="border-b border-gray-800">
                     <td className="py-2 px-3 font-mono text-green-400">16 bit&nbsp;·&nbsp;2×</td>
-                    <td className="py-2 px-3"><strong className="text-gray-100">FP8/INT8-KV, key-repaired if fragile</strong></td>
-                    <td className="py-2 px-3">The recommended lossless 2× tier. Tolerant keys: plain FP8-KV. Fragile keys: a key-specific repair (Smooth/prebias-K + FP8, or INT8-per-channel-K + FP8) &mdash; naive symmetric FP8 keys collapse on Qwen2.5.</td>
+                    <td className="py-2 px-3"><strong className="text-gray-100">Symmetric FP8-KV, robust-key models only</strong></td>
+                    <td className="py-2 px-3">The maximum-capacity production tier after a model passes the quality gate. Fragile-key repairs remain research: prebias restores quality but its current kernel failed the serving gate, and INT8-K needs broader fused-kernel validation.</td>
                   </tr>
                   <tr className="border-b border-gray-800">
                     <td className="py-2 px-3 font-mono text-amber-400">~8 bit&nbsp;·&nbsp;4×</td>
@@ -568,13 +575,36 @@
             </div>
             <p>
               The through-line: <strong className="text-gray-200">keys carry the risk, values carry the savings.</strong>
-              Every safe tier keeps keys at high precision (16-bit, or an INT8/repaired 8-bit) and spends the compression on
-              values; every collapse is a key dropped below what its geometry tolerates. Triage first, then pick the tier.
+              The conservative tier keeps keys at high precision and spends the first compression byte on values. Lower-key
+              tiers are valid only after their model, kernel, and cache lifecycle pass the quality and serving gates. Triage
+              first, then pick the tier. The
+              <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline"> bias-aware KV policy</a>
+              is the canonical deployment decision; this table is its comparison data.
             </p>
           </Section>
 
-          {/* 9. reproduce */}
-          <Section id="reproduce" kicker="The receipts" title="Provenance and how to reproduce">
+          {/* 9. operations */}
+          <Section id="operations" kicker="Capacity planning" title="Carry the policy into planning and runtime evidence">
+            <p>
+              A deployment choice is incomplete until the planner and the serving record agree on what was requested and
+              what actually ran. The
+              <a href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2" className="text-cyan-300 hover:underline"> aiconfigurator byte-accounting v2 branch</a>
+              models K16/V8 as a three-byte K/V pair, reports the physical key and value widths, and rejects compressed
+              latent layouts where that split has no meaning. It uses the exact 1.333&times; BF16 capacity factor and does not
+              claim a latency improvement without measured kernel data.
+            </p>
+            <p>
+              The
+              <a href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2" className="text-cyan-300 hover:underline"> InferenceX dtype-provenance v2 branch</a>
+              records allowlisted key/value dtype requests and a fingerprint without storing raw command lines. It keeps
+              the requested and effective dtypes separate; an omitted flag stays unspecified, and the effective dtype stays
+              unattested unless the engine supplies a strict sidecar. Together, these branches cover planning intent and
+              runtime evidence without pretending that one proves the other.
+            </p>
+          </Section>
+
+          {/* 10. reproduce */}
+          <Section id="reproduce" kicker="Evidence" title="Provenance and reproduction boundaries">
             <p>
               The <strong>quality frontier</strong> (recovery Pareto, cross-model ΔNLL, the 8K hardening pass with CIs /
               retrieval / generation) is faithful fake-quant, teacher-forced, on the published harness &mdash; the 2048 arms
@@ -589,13 +619,18 @@
               For <em>why</em> symmetric FP8 keys fail in the first place &mdash; the causal mechanism, the bias-magnitude
               predictor, the failure taxonomy, and the release-time preflight &mdash; see the
               <a href="fp8-kv-failure-atlas.html" className="text-amber-300 hover:underline"> FP8 KV-cache failure atlas</a>.
-              This page is the deployment half; the atlas is the diagnosis half.
+              The <a href="bias-aware-kv-quantization.html" className="text-emerald-300 hover:underline">bias-aware KV
+              policy</a> owns the deployment decision; this frontier owns the comparison.
             </p>
           </Section>
 
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-4">
             <p className="mb-2">
               <a href="fp8-kv-failure-atlas.html" className="hover:text-gray-400">FP8 failure atlas</a>
+              <span className="mx-2">&middot;</span>
+              <a href="bias-aware-kv-quantization.html" className="hover:text-gray-400">Bias-aware KV policy</a>
+              <span className="mx-2">&middot;</span>
+              <a href="paper_memory_decode.html" className="hover:text-gray-400">Asymmetric decode</a>
               <span className="mx-2">&middot;</span>
               <a href="index.html" className="hover:text-gray-400">knlp</a>
             </p>
