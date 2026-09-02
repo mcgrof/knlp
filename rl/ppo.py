@@ -260,7 +260,7 @@ def main(argv=None) -> int:
             f"[ppo] resumed {args.run_name} at update {state['update']} step {state['global_step']}"
         )
     elif args.resume:
-        print(f"[ppo] no checkpoint at {ckpt_path}; starting fresh")
+        print(f"[ppo] no checkpoint at {ckpt_path}; starting fresh", flush=True)
 
     log = RunLog(run_dir)
     print(
@@ -302,7 +302,7 @@ def main(argv=None) -> int:
     try:
         while update < args.num_updates:
             if yield_req and yield_req.check():
-                print(f"[ppo] yielding: {yield_req.reason}")
+                print(f"[ppo] yielding: {yield_req.reason}", flush=True)
                 checkpoint()
                 exit_code = EXIT_YIELD
                 break
@@ -310,7 +310,7 @@ def main(argv=None) -> int:
                 args.max_hours is not None
                 and (wall_before + time.time() - session_start) > args.max_hours * 3600
             ):
-                print("[ppo] wall-clock budget reached; checkpointing")
+                print("[ppo] wall-clock budget reached; checkpointing", flush=True)
                 checkpoint()
                 exit_code = EXIT_YIELD
                 break
