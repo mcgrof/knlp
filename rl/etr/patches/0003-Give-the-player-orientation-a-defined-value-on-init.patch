@@ -1,0 +1,49 @@
+From b85797ed232e207934e332ab816d050c1b020362 Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Wed, 2 Sep 2026 16:00:10 -0700
+Subject: [PATCH] Give the player orientation a defined value on init
+
+CControl::Init() left corientation untouched, so the first physics
+step of a race read whatever the previous race left there: the
+orientation is only recomputed by AdjustOrientation at the end of the
+step, and an airborne paddle force during that step is rotated by it.
+The racer starts a hair above the surface and therefore counts as
+airborne on the first step, so a paddle held at the start produced a
+different force depending on the race that ran before. Compute the
+initial orientation from the course normal and the initial velocity,
+the same construction AdjustOrientation uses on the ground, so a race
+no longer depends on the process history.
+
+Found with the headless bridge: replaying a recorded action trace in a
+fresh process and after another race diverged from the first tick.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ src/physics.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/physics.cpp b/src/physics.cpp
+index a7dd143..aa41611 100644
+--- a/src/physics.cpp
++++ b/src/physics.cpp
+@@ -92,6 +92,17 @@ void CControl::Init() {
+ 	collisions = 0;
+ 	colliding = false;
+ 
++	// Give the orientation a defined value. The first physics step can
++	// read it (an airborne paddle is rotated by it) before
++	// AdjustOrientation runs, and it otherwise carries the previous
++	// race's final orientation into the new one.
++	TVector3d init_z = -nml;
++	TVector3d init_y = ProjectToPlane(nml, init_vel);
++	init_y.Norm();
++	TVector3d init_x = CrossProduct(init_y, init_z);
++	TMatrix<4, 4> cob_mat(init_x, init_y, init_z);
++	corientation = MakeQuaternionFromMatrix(cob_mat);
++
+ 	// tricks
+ 	front_flip = false;
+ 	back_flip = false;
+-- 
+2.53.0
+

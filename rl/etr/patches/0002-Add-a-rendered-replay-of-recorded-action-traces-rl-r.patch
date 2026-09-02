@@ -1,0 +1,456 @@
+From b0ae1c8d2cd85582e2e72bcb2054a409689fd981 Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Wed, 2 Sep 2026 15:51:34 -0700
+Subject: [PATCH] Add a rendered replay of recorded action traces (--rl-replay)
+
+Play a trace recorded from the headless bridge through the normal
+rendered game so a learned policy can be watched. "etr --rl-replay
+TRACE [LOG]" reads a header (course, group, seed, dt, wind, light,
+mirror, autoquit) and one action per physics tick, skips the menus by
+selecting the traced course for the first player, and advances every
+state by exactly dt instead of the measured frame time so the physics
+is the same computation the headless run performed. The racing loop
+takes its steering flip-flops from the trace and logs position,
+velocity, items and collisions per tick to LOG, which a client can
+diff against the headless trajectory of the same trace. With
+autoquit=1 the game exits a few seconds after the finish.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ .gitignore            |   5 ++
+ src/Makefile.am       |   2 +
+ src/game_over.cpp     |   8 ++
+ src/main.cpp          |   5 ++
+ src/racing.cpp        |  15 ++++
+ src/rl_replay.cpp     | 195 ++++++++++++++++++++++++++++++++++++++++++
+ src/rl_replay.h       |  43 ++++++++++
+ src/splash_screen.cpp |   7 +-
+ src/states.cpp        |   6 +-
+ 9 files changed, 284 insertions(+), 2 deletions(-)
+ create mode 100644 src/rl_replay.cpp
+ create mode 100644 src/rl_replay.h
+
+diff --git a/.gitignore b/.gitignore
+index 609c63b..5c1ce3d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -32,3 +32,8 @@
+ /libtool
+ /m4/libtool.m4
+ /m4/lt*.m4
++# ignore every autotools product
++Makefile
++Makefile.in
++configure~
++*.orig
+diff --git a/src/Makefile.am b/src/Makefile.am
+index cfd1bdc..0d872b1 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -36,6 +36,7 @@ etr_SOURCES =		\
+ 	regist.cpp	\
+ 	reset.cpp	\
+ 	rl_bridge.cpp	\
++	rl_replay.cpp	\
+ 	score.cpp	\
+ 	splash_screen.cpp \
+ 	spx.cpp		\
+@@ -88,6 +89,7 @@ noinst_HEADERS =	\
+ 	regist.h	\
+ 	reset.h		\
+ 	rl_bridge.h	\
++	rl_replay.h	\
+ 	score.h		\
+ 	splash_screen.h	\
+ 	spx.h		\
+diff --git a/src/game_over.cpp b/src/game_over.cpp
+index e5cb744..b3b76e0 100644
+--- a/src/game_over.cpp
++++ b/src/game_over.cpp
+@@ -20,6 +20,7 @@ GNU General Public License for more details.
+ #endif
+ 
+ #include "game_over.h"
++#include "rl_replay.h"
+ #include "audio.h"
+ #include "ogl.h"
+ #include "view.h"
+@@ -191,6 +192,13 @@ void CGameOver::Loop(float time_step) {
+ 
+ 	if (final_frame != nullptr) final_frame->Update(time_step);
+ 
++	if (RlReplay::Active() && RlReplay::AutoQuit()) {
++		static float shown = 0.f;
++		shown += time_step;
++		if (shown > 3.f && (final_frame == nullptr || !final_frame->active))
++			State::manager.RequestQuit();
++	}
++
+ 	SetupViewFrustum(ctrl);
+ 	Env.DrawSkybox(ctrl->viewpos);
+ 	Env.DrawFog();
+diff --git a/src/main.cpp b/src/main.cpp
+index 8854389..b0a584f 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -29,6 +29,7 @@ GNU General Public License for more details.
+ #include "ogl_test.h"
+ #include "winsys.h"
+ #include "rl_bridge.h"
++#include "rl_replay.h"
+ #include <iostream>
+ #include <ctime>
+ #include <cstring>
+@@ -42,6 +43,10 @@ void InitGame(int argc, char **argv) {
+ 	if (argc >= 2 && std::strcmp(argv[1], "--rl") == 0) {
+ 		g_game.headless = true;
+ 		g_game.argument = 100;
++	} else if (argc >= 3 && std::strcmp(argv[1], "--rl-replay") == 0) {
++		// --rl-replay TRACE [LOG]: rendered playback of a recorded trace
++		if (!RlReplay::Load(argv[2], argc >= 4 ? argv[3] : ""))
++			std::exit(2);
+ 	} else if (argc == 4) {
+ 		if (std::strcmp("--char", argv[1]) == 0)
+ 			g_game.argument = 4;
+diff --git a/src/racing.cpp b/src/racing.cpp
+index 58d4cca..9ff939e 100644
+--- a/src/racing.cpp
++++ b/src/racing.cpp
+@@ -37,6 +37,7 @@ GNU General Public License for more details.
+ #include "winsys.h"
+ #include "physics.h"
+ #include "tux.h"
++#include "rl_replay.h"
+ #include <algorithm>
+ 
+ #define MAX_JUMP_AMT 1.0
+@@ -377,6 +378,16 @@ void CRacing::Loop(float time_step) {
+ 	Env.SetupFog();
+ 	CalcTrickControls(ctrl, time_step, airborne);
+ 
++	if (RlReplay::Active() && !g_game.finish) {
++		left_turn = right_turn = false;
++		if (!RlReplay::Apply(stick_turn, stick_turnfact, key_paddling, key_braking, key_charging)) {
++			RlReplay::Close();
++			g_game.raceaborted = true;
++			g_game.race_result = -1;
++			State::manager.RequestEnterState(GameOver);
++			return;
++		}
++	}
+ 	if (!g_game.finish) CalcSteeringControls(ctrl, time_step);
+ 	else CalcFinishControls(ctrl, time_step, airborne);
+ 	PlayTerrainSound(ctrl, airborne);
+@@ -384,6 +395,10 @@ void CRacing::Loop(float time_step) {
+ //  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+ 	ctrl->UpdatePlayerPos(time_step);
+ //  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
++	if (RlReplay::Active()) {
++		RlReplay::LogTick(ctrl);
++		if (g_game.finish) RlReplay::Close();
++	}
+ 
+ 	if (g_game.finish) IncCameraDistance(time_step);
+ 	update_view(ctrl, time_step);
+diff --git a/src/rl_replay.cpp b/src/rl_replay.cpp
+new file mode 100644
+index 0000000..fee3fb6
+--- /dev/null
++++ b/src/rl_replay.cpp
+@@ -0,0 +1,195 @@
++/* --------------------------------------------------------------------
++EXTREME TUXRACER
++
++Rendered replay of a recorded action trace (--rl-replay).
++
++Trace format (one action per physics tick):
++
++  # etr rl trace v1
++  course=bunny_hill group=default seed=7 dt=0.0166667 wind=0 light=0
++      mirror=0 autoquit=0
++  <turn> <brake> <paddle> <jump>
++  ...
++
++The game runs its normal rendered states but every loop iteration
++advances the physics by exactly dt, so the replayed race is the same
++computation the headless bridge performed for the same trace.
++
++This program is free software; you can redistribute it and/or
++modify it under the terms of the GNU General Public License
++as published by the Free Software Foundation; either version 2
++of the License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++---------------------------------------------------------------------*/
++
++#ifdef HAVE_CONFIG_H
++#include <etr_config.h>
++#endif
++
++#include "rl_replay.h"
++#include "bh.h"
++#include "course.h"
++#include "game_ctrl.h"
++#include "physics.h"
++#include "tux.h"
++#include <cstdlib>
++#include <fstream>
++#include <iomanip>
++#include <iostream>
++#include <sstream>
++#include <vector>
++
++namespace {
++
++struct Action {
++	float turn;
++	bool brake, paddle, jump;
++};
++
++bool active = false;
++bool autoquit = false;
++float dt = 1.0f / 60.0f;
++unsigned seed = 0;
++int wind = 0, light = 0, mirror = 0;
++std::string course = "bunny_hill";
++std::string group = "default";
++std::vector<Action> actions;
++std::size_t next = 0;
++long tick = 0;
++std::ofstream logfile;
++
++void Header(const std::string& line) {
++	std::istringstream is(line);
++	std::string tok;
++	while (is >> tok) {
++		std::string::size_type eq = tok.find('=');
++		if (eq == std::string::npos) continue;
++		std::string k = tok.substr(0, eq), v = tok.substr(eq + 1);
++		if (k == "course") course = v;
++		else if (k == "group") group = v;
++		else if (k == "seed") seed = (unsigned)std::atol(v.c_str());
++		else if (k == "dt") dt = (float)std::atof(v.c_str());
++		else if (k == "wind") wind = std::atoi(v.c_str());
++		else if (k == "light") light = std::atoi(v.c_str());
++		else if (k == "mirror") mirror = std::atoi(v.c_str());
++		else if (k == "autoquit") autoquit = std::atoi(v.c_str()) != 0;
++	}
++}
++
++} // namespace
++
++namespace RlReplay {
++
++bool Load(const std::string& trace_path, const std::string& log_path) {
++	std::ifstream in(trace_path);
++	if (!in) {
++		std::cerr << "rl-replay: cannot open " << trace_path << '\n';
++		return false;
++	}
++	std::string line;
++	bool header_seen = false;
++	while (std::getline(in, line)) {
++		if (line.empty() || line[0] == '#') continue;
++		if (!header_seen) {
++			Header(line);
++			header_seen = true;
++			continue;
++		}
++		std::istringstream is(line);
++		Action a;
++		int b = 0, p = 0, j = 0;
++		if (!(is >> a.turn >> b >> p >> j)) continue;
++		a.brake = b != 0;
++		a.paddle = p != 0;
++		a.jump = j != 0;
++		actions.push_back(a);
++	}
++	if (!header_seen || actions.empty()) {
++		std::cerr << "rl-replay: no header or no actions in " << trace_path << '\n';
++		return false;
++	}
++	if (!log_path.empty()) {
++		logfile.open(log_path);
++		logfile << std::setprecision(12);
++	}
++	active = true;
++	std::cerr << "rl-replay: " << actions.size() << " ticks on " << group << '/' << course
++	          << " seed " << seed << " dt " << dt << '\n';
++	return true;
++}
++
++bool Active() { return active; }
++float Dt() { return dt; }
++bool AutoQuit() { return autoquit; }
++
++bool SetupRace() {
++	std::unordered_map<std::string, CCourseList>::iterator g = Course.CourseLists.find(group);
++	if (g == Course.CourseLists.end()) {
++		std::cerr << "rl-replay: unknown course group " << group << '\n';
++		return false;
++	}
++	TCourse* c = nullptr;
++	for (std::size_t i = 0; i < g->second.size(); i++)
++		if (g->second[i].dir == course) c = &g->second[i];
++	if (c == nullptr) {
++		std::cerr << "rl-replay: unknown course " << course << '\n';
++		return false;
++	}
++	Players.AllocControl(0);
++	g_game.player = Players.GetPlayer(0);
++	g_game.character = nullptr;
++	for (std::size_t i = 0; i < Char.CharList.size(); i++)
++		if (Char.CharList[i].shape != nullptr) {
++			g_game.character = &Char.CharList[i];
++			break;
++		}
++	if (g_game.character == nullptr) return false;
++	Course.currentCourseList = &g->second;
++	g_game.course = c;
++	g_game.cup = nullptr;
++	g_game.race = nullptr;
++	g_game.game_type = PRACTICING;
++	g_game.mirrorred = mirror != 0;
++	g_game.light_id = (std::size_t)light;
++	g_game.snow_id = 0;
++	g_game.wind_id = wind;
++	g_game.theme_id = c->music_theme;
++	g_game.force_treemap = false;
++	std::srand(seed);
++	return true;
++}
++
++bool Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge) {
++	if (next >= actions.size()) return false;
++	const Action& a = actions[next++];
++	stick_turn = a.turn != 0.0f;
++	stick_turnfact = clamp(-1.0f, a.turn, 1.0f);
++	paddle = a.paddle;
++	brake = a.brake;
++	charge = a.jump;
++	return true;
++}
++
++void LogTick(const CControl* ctrl) {
++	tick++;
++	if (!logfile.is_open()) return;
++	logfile << "{\"tick\":" << tick << ",\"time\":" << g_game.time
++	    << ",\"pos\":[" << ctrl->cpos.x << ',' << ctrl->cpos.y << ',' << ctrl->cpos.z << ']'
++	    << ",\"vel\":[" << ctrl->cvel.x << ',' << ctrl->cvel.y << ',' << ctrl->cvel.z << ']'
++	    << ",\"herring\":" << g_game.herring << ",\"collisions\":" << ctrl->collisions
++	    << ",\"finish\":" << (g_game.finish ? "true" : "false") << "}\n";
++}
++
++void Close() {
++	if (logfile.is_open()) {
++		logfile.flush();
++		logfile.close();
++	}
++	std::cerr << "rl-replay: finished after " << tick << " ticks, race time " << g_game.time << '\n';
++}
++
++} // namespace RlReplay
+diff --git a/src/rl_replay.h b/src/rl_replay.h
+new file mode 100644
+index 0000000..5748d0d
+--- /dev/null
++++ b/src/rl_replay.h
+@@ -0,0 +1,43 @@
++/* --------------------------------------------------------------------
++EXTREME TUXRACER
++
++Rendered replay of a recorded action trace (--rl-replay).
++
++This program is free software; you can redistribute it and/or
++modify it under the terms of the GNU General Public License
++as published by the Free Software Foundation; either version 2
++of the License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++---------------------------------------------------------------------*/
++
++#ifndef RL_REPLAY_H
++#define RL_REPLAY_H
++
++#include <string>
++
++class CControl;
++
++// Plays a trace written by the headless bridge's client through the
++// normal rendered game: fixed physics step, actions taken from the
++// trace instead of the keyboard, and the trajectory logged per tick so
++// it can be compared with the headless run of the same trace.
++namespace RlReplay {
++bool Load(const std::string& trace_path, const std::string& log_path);
++bool Active();
++float Dt();
++bool AutoQuit();
++// Called by the splash screen once data is loaded: selects the
++// player, character and course named in the trace header.
++bool SetupRace();
++// Called by the racing loop before the steering controls are computed.
++// Returns false when the trace is exhausted.
++bool Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge);
++void LogTick(const CControl* ctrl);
++void Close();
++}
++
++#endif
+diff --git a/src/splash_screen.cpp b/src/splash_screen.cpp
+index a23255d..2a25a71 100644
+--- a/src/splash_screen.cpp
++++ b/src/splash_screen.cpp
+@@ -20,6 +20,8 @@ GNU General Public License for more details.
+ #endif
+ 
+ #include "splash_screen.h"
++#include "rl_replay.h"
++#include "loading.h"
+ #include "ogl.h"
+ #include "textures.h"
+ #include "audio.h"
+@@ -94,7 +96,10 @@ void CSplashScreen::Loop(float time_step) {
+ 		} else
+ 			reason += Trans.Text(94) + "\n";
+ 
+-		if (reason.isEmpty())
++		if (reason.isEmpty() && RlReplay::Active()) {
++			if (RlReplay::SetupRace()) State::manager.RequestEnterState(Loading);
++			else State::manager.RequestQuit();
++		} else if (reason.isEmpty())
+ 			State::manager.RequestEnterState(Regist);
+ 		else { // Failure
+ 			FT.AutoSizeN(6);
+diff --git a/src/states.cpp b/src/states.cpp
+index 6a671ba..76e4f2c 100644
+--- a/src/states.cpp
++++ b/src/states.cpp
+@@ -22,6 +22,7 @@ GNU General Public License for more details.
+ #include "states.h"
+ #include "ogl.h"
+ #include "winsys.h"
++#include "rl_replay.h"
+ 
+ State::Manager State::manager(Winsys);
+ 
+@@ -93,7 +94,10 @@ void State::Manager::PollEvent() {
+ void State::Manager::CallLoopFunction() {
+ 	check_gl_error();
+ 
+-	g_game.time_step = std::max(0.0001f, timer.getElapsedTime().asSeconds());
++	if (RlReplay::Active())
++		g_game.time_step = RlReplay::Dt();	// fixed step: same physics as the headless run
++	else
++		g_game.time_step = std::max(0.0001f, timer.getElapsedTime().asSeconds());
+ 	timer.restart();
+ 	current->Loop(g_game.time_step);
+ }
+-- 
+2.53.0
+
