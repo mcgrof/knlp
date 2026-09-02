@@ -98,3 +98,20 @@ def test_controls_finish_bunny_hill():
     )
     assert stats[0]["finish"] == 1.0, stats
     assert stats[0]["progress"] >= 470.0
+
+
+def test_episode_does_not_depend_on_process_history():
+    """A reset must erase the previous race: same seed and actions, same
+    trajectory, whatever ran before in the process."""
+
+    def episode(bridge, n=150):
+        out = [bridge.reset(seed=1001, course="bunny_hill")]
+        for i in range(n):
+            out.append(bridge.step(turn=[-1, 0, 1][i % 3], paddle=True, ticks=4))
+        return [(o["pos"], o["vel"]) for o in out]
+
+    with EtrBridge(BINARY) as fresh, EtrBridge(BINARY) as primed:
+        primed.reset(seed=1000, course="bunny_hill")
+        for _ in range(300):
+            primed.step(turn=-1, paddle=True, ticks=4)
+        assert episode(fresh) == episode(primed)
