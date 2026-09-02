@@ -22,6 +22,10 @@ include Makefile.decode
 # When CONFIG_KNLP_REPRODUCE_CARTRIDGES=y this overrides .DEFAULT_GOAL.
 include Makefile.cartridges
 
+# Include the Cartridges-at-Scale research harness. When
+# CONFIG_CARTRIDGES_CAS=y this makes the selected CAS phase the default goal.
+include Makefile.cas
+
 # Include kvio storage-IO capture/replay targets (kvio-doctor, kvio-fetch,
 # kvio-build, kvio-replay, kvio-report).  When CONFIG_KNLP_REPRODUCE_KVIO=y
 # this overrides .DEFAULT_GOAL.

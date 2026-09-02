@@ -23,6 +23,7 @@ STEPS=$(jq_get steps); EPOCHS=$(jq_get epochs); COMPILE=$(jq_get compile_flex)
 PATIENTS=""; for i in $(seq -w 1 "$NP"); do PATIENTS="$PATIENTS patient_$i"; done
 export CARTRIDGES_DIR="$CART_ROOT" CARTRIDGES_OUTPUT_DIR="$OUT_DIR" OUT_DIR="$OUT_DIR"
 export RECORDS_DIR WANDB_DISABLED=true WANDB_MODE=disabled
+export PYTHONPATH="$CART_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 # config expresses intent; an explicit env wins, because compiled
 # FlexAttention is a property of the installed torch build rather than
 # of the experiment (torch 2.13/CUDA 13 raises NoValidChoicesError
@@ -165,5 +166,132 @@ if [ "$(jq_get phase_opt_ablation)" = "True" ]; then
   "$PYTHON" cart_opt_report.py --ablation-dir "$ABL_OUT" \
     --reeval "$RESULTS_DIR/opt_ablation_reeval.json" \
     --out "$RESULTS_DIR/opt_ablation_report.md"
+fi
+
+if [ "$(jq_get phase_paper_regime)" = "True" ]; then
+  echo "== PAPER-REGIME ISOLATED CONFIRMATION =="
+  : "${PAPER_DATA_DIR:?paper-regime phase needs PAPER_DATA_DIR}"
+  PAPER_OUT="$OUT_DIR/paper_regime"
+  PAPER_PATIENTS=$(jq_get paper_patients)
+  PAPER_KV_DIVISOR=$(jq_get paper_kv_divisor)
+  PAPER_EVAL_RUNS=$(jq_get paper_eval_runs)
+  mkdir -p "$PAPER_OUT"
+
+  [ "$GB" = "128" ] || { echo "paper regime requires global batch 128, got $GB"; exit 1; }
+  [ "$LR" = "0.1" ] || { echo "paper regime requires LR 0.1, got $LR"; exit 1; }
+  [ "$EPOCHS" = "80" ] || { echo "paper regime requires 80 epochs, got $EPOCHS"; exit 1; }
+  [ "$STEPS" = "5000" ] || { echo "paper regime requires a 5000-step schedule, got $STEPS"; exit 1; }
+
+  {
+    echo "started=$(date -Is)"
+    echo "knlp_commit=$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "patients=$PAPER_PATIENTS"
+    echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-all}"
+  } > "$PAPER_OUT/campaign.env"
+  cp "$CFG" "$PAPER_OUT/config.json"
+  nvidia-smi -q > "$PAPER_OUT/nvidia-smi-q.txt"
+
+  PAPER_ACTIVE=""
+  paper_record_failure() {
+    rc=$?
+    trap - EXIT
+    if [ "$rc" -ne 0 ] && [ -n "$PAPER_ACTIVE" ]; then
+      date -Is > "$PAPER_ACTIVE/FAILED"
+    fi
+    exit "$rc"
+  }
+  trap paper_record_failure EXIT
+
+  for P in $PAPER_PATIENTS; do
+    PARQ="$PAPER_DATA_DIR/$P.parquet"
+    RECORD="$RECORDS_DIR/$P.txt"
+    PD="$PAPER_OUT/$P"
+    [ -s "$PARQ" ] || { echo "missing parquet: $PARQ"; exit 1; }
+    [ -s "$RECORD" ] || { echo "missing record: $RECORD"; exit 1; }
+    mkdir -p "$PD"
+    PAPER_ACTIVE="$PD"
+    rm -f "$PD/FAILED"
+    if [ -f "$PD/DONE" ]; then
+      echo "  skip $P: $PD/DONE exists"
+      PAPER_ACTIVE=""
+      continue
+    fi
+
+    sha256sum "$PARQ" "$RECORD" > "$PD/inputs.new.sha256"
+    {
+      echo "patient=$P"
+      echo "model=$MODEL"
+      echo "kv_tokens=auto"
+      echo "kv_divisor=$PAPER_KV_DIVISOR"
+      echo "lr=$LR"
+      echo "global_batch=$GB"
+      echo "epochs=$EPOCHS"
+      echo "schedule_steps=$STEPS"
+      echo "schedule=linear"
+      echo "warmup_steps=200"
+      echo "warmup_min_lr=2e-3"
+      echo "alpha_f=0.02"
+      echo "eval_runs=$PAPER_EVAL_RUNS"
+    } > "$PD/recipe.new.env"
+
+    if [ -f "$PD/TRAIN_DONE" ]; then
+      cmp -s "$PD/inputs.sha256" "$PD/inputs.new.sha256" || {
+        echo "refusing to resume $P: input hashes changed"
+        exit 1
+      }
+      cmp -s "$PD/recipe.env" "$PD/recipe.new.env" || {
+        echo "refusing to resume $P: recipe changed"
+        exit 1
+      }
+    fi
+    mv "$PD/inputs.new.sha256" "$PD/inputs.sha256"
+    mv "$PD/recipe.new.env" "$PD/recipe.env"
+
+    TRAIN_OUT="$PD/train"
+    CART="$TRAIN_OUT/carts/$P.pt"
+    if [ ! -f "$PD/TRAIN_DONE" ]; then
+      echo "  train $P"
+      CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} \
+        PATIENT="$P" DATA_PARQUET="$PARQ" RECORDS_DIR="$RECORDS_DIR" \
+        KV_TOKENS=auto KV_DIVISOR="$PAPER_KV_DIVISOR" LR="$LR" \
+        GLOBAL_BS="$GB" EPOCHS="$EPOCHS" STEPS="$STEPS" \
+        SCHED_STEPS="$STEPS" SCHEDULE=linear WARMUP_STEPS=200 \
+        WARMUP_MIN_LR=2e-3 ALPHA_F=0.02 OUT_DIR="$TRAIN_OUT" \
+        "$PYTHON" "$HERE/scripts/cas_train_isolated.py" 2>&1 | tee "$PD/train.log"
+      [ -s "$CART" ] || { echo "training produced no cartridge: $CART"; exit 1; }
+      grep -q "CAS_ISO_DONE $P" "$PD/train.log" || { echo "training did not complete for $P"; exit 1; }
+      date -Is > "$PD/TRAIN_DONE"
+    else
+      echo "  skip $P training: $PD/TRAIN_DONE exists"
+    fi
+    [ -s "$CART" ] || { echo "training produced no cartridge: $CART"; exit 1; }
+
+    EVAL_CARTS="$PD/eval_carts"
+    if [ ! -f "$PD/EVAL_DONE" ]; then
+      echo "  evaluate $P ($PAPER_EVAL_RUNS runs)"
+      mkdir -p "$EVAL_CARTS"
+      cp "$CART" "$EVAL_CARTS/$P.pt"
+      CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} MODE=cart \
+        CART_DIR="$EVAL_CARTS" PATIENTS="$P" MAX_Q=20 RUNS="$PAPER_EVAL_RUNS" \
+        DEVICE=cuda MODEL="$MODEL" SAVE_RAW=1 \
+        OUT_JSON="$PD/table15_runs${PAPER_EVAL_RUNS}.json" \
+        "$PYTHON" "$HERE/scripts/cas_eval_table15.py" 2>&1 | tee "$PD/eval.log"
+      grep -q "CAS_EVAL_T15_DONE mode=cart" "$PD/eval.log" || {
+        echo "evaluation did not complete for $P"
+        exit 1
+      }
+      date -Is > "$PD/EVAL_DONE"
+    else
+      echo "  skip $P evaluation: $PD/EVAL_DONE exists"
+    fi
+
+    find "$PD" -type f ! -name SHA256SUMS ! -name DONE ! -name FAILED -print0 | \
+      sort -z | xargs -0 sha256sum > "$PD/SHA256SUMS"
+    date -Is > "$PD/DONE"
+    PAPER_ACTIVE=""
+  done
+  trap - EXIT
+  date -Is > "$PAPER_OUT/DONE"
+  echo "PAPER_REGIME_DONE $PAPER_OUT"
 fi
 echo "CAS_RUN_DONE results in $RESULTS_DIR"
