@@ -1,0 +1,16 @@
+# Make targets for the Cartridges-at-Scale research harness.
+
+CAS_DIR := research/cartridges_cas
+CAS_CONFIG := $(CAS_DIR)/config.json
+
+.PHONY: cas cas-config
+
+ifeq ($(CONFIG_CARTRIDGES_CAS),y)
+.DEFAULT_GOAL := cas
+endif
+
+cas-config: .config
+	$(PYTHON) $(CAS_DIR)/gen_config_json.py --config .config --out $(CAS_CONFIG)
+
+cas: cas-config
+	PYTHON="$(PYTHON)" $(CAS_DIR)/run.sh

@@ -176,6 +176,35 @@ config CARTRIDGES_CAS_PHASE_OPT_ABLATION
 	  refresh needs a deterministic backward: run this on NVIDIA, not
 	  on ROCm/W7900.
 
+config CARTRIDGES_CAS_PHASE_PAPER_REGIME
+	bool "Paper-regime isolated-cartridge confirmation"
+	default n
+	help
+	  Train and evaluate a named patient list with the isolated recipe used
+	  by the paper-quality baseline: document/20 KV tokens, 80 epochs, global
+	  batch 128, peak LR 0.1, and a 5000-step linear schedule. The phase
+	  consumes already-synthesized per-patient parquets from PAPER_DATA_DIR
+	  and fails instead of silently changing the recipe if a GPU cannot hold
+	  it. It records the source commit, config, hardware, input hashes,
+	  logs, raw evaluation rows, and output hashes for audit and resumption.
+
+endmenu
+
+menu "Paper-regime confirmation"
+	depends on CARTRIDGES_CAS_PHASE_PAPER_REGIME
+
+config CARTRIDGES_CAS_PAPER_PATIENTS
+	string "Patients to train (space-separated)"
+	default "patient_02"
+
+config CARTRIDGES_CAS_PAPER_KV_DIVISOR
+	int "Document tokens per cartridge token"
+	default 20
+
+config CARTRIDGES_CAS_PAPER_EVAL_RUNS
+	int "Independent Table-15 evaluation runs"
+	default 3
+
 endmenu
 
 menu "Control-aware screen"
