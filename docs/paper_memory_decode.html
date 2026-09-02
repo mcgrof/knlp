@@ -758,13 +758,16 @@
 <body>
 
 <header class="site-header">
-  <a class="site-logo" href="https://mcgrof.github.io/knlp/">knlp</a>
+  <a class="site-logo" href="index.html">knlp</a>
   <nav class="site-nav">
+    <a href="bias-aware-kv-quantization.html">KV Policy</a>
+    <a href="fp8-kv-failure-atlas.html">FP8 Atlas</a>
+    <a href="kv-compression-frontier.html">KV Frontier</a>
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
-    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">FlashInfer</a>
-    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">vLLM</a>
+    <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">FlashInfer</a>
+    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">vLLM</a>
     <a href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">LMCache</a>
     <a href="#related-papers">Related</a>
     <a href="#reproduce">Reproduce</a>
@@ -781,27 +784,25 @@
   </div>
   <h1>Memory-Traffic Saturation in<br>Autoregressive Transformer Decode</h1>
   <p class="hero-sub">
-    <strong>Asymmetric K16/V8 KV cache quantization via modified vLLM + FlashInfer matches FP16 perplexity on
-    Qwen2.5-7B at both 2K and 8K context</strong> and recovers GSM8K to within 0.5 pp (90.0% vs 90.5% FP16, n=200,
-    8-shot), while symmetric FP8 collapses (PPL 214→1058, GSM8K 2.0%). The asymmetric path runs end-to-end through
-    the modified serving stack: prefill-time V quantization, paged-cache writes, and asymmetric FlashInfer
-    prefill/decode kernels. At the standalone-kernel level on the headline Qwen2.5-7B lane, K16/V8 matches FP16
-    within measurement noise and is 33% faster than the measured symmetric FP8 path. Measure this delta as the
-    balance between one fewer K byte per element and BF16-Q/FP8-K tile preparation.
-    Behind the practical result: throughput scaling is governed primarily by memory traffic, while quantization
-    safety remains model-family dependent. K16/V8 means native-16-bit keys (FP16 or BF16 depending on model dtype)
-    plus FP8 e4m3 values; the Qwen2.5-7B vLLM runs use BF16 K + FP8 V.
+    <strong>Quantize values before keys.</strong> Asymmetric K16/V8 through modified vLLM + FlashInfer matches FP16
+    perplexity on Qwen2.5-7B at 2K and 8K context, and the 200-problem GSM8K screen did not resolve a difference
+    from FP16 (90.0% vs 90.5%, n=200, 8-shot) — a screen of this size can detect collapse (symmetric FP8: 2.0%,
+    PPL 214→1058) but cannot establish equivalence. The full path includes prefill-time V quantization on cache
+    write, paged-cache writes, and an asymmetric FlashInfer decode kernel; prefill computes fresh full-precision K/V.
+    K16/V8 means native 16-bit keys plus FP8 E4M3 values; the Qwen2.5-7B serving runs use BF16 K + FP8 V.
+    This page establishes the systems and serving result. Use the FP8 failure atlas to qualify a model, the
+    bias-aware KV page for the deployment policy, and the compression frontier for more aggressive tiers.
   </p>
   <div>
-    <a class="repo-link" href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing">
+    <a class="repo-link" href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">
       <span class="rl-icon">⎇</span>
       <span class="rl-repo">mcgrof/vllm</span>
-      <span class="rl-branch">asymmetric-kv-plumbing</span>
+      <span class="rl-branch">20260702-k16fp8 · 8a1714108</span>
     </a>
-    <a class="repo-link" href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage">
+    <a class="repo-link" href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">
       <span class="rl-icon">⎇</span>
       <span class="rl-repo">mcgrof/flashinfer</span>
-      <span class="rl-branch">asym-prefill-refactor-stage</span>
+      <span class="rl-branch">20260702-asym-k16v8-decode-upstream · 6dfdc833</span>
     </a>
     <a class="repo-link" href="https://github.com/mcgrof/LMCache/tree/asymmetric-kv-codec">
       <span class="rl-icon">⎇</span>
@@ -810,6 +811,8 @@
     </a>
   </div>
   <div style="margin-top:10px;">
+    <a class="paper-link" href="bias-aware-kv-quantization.html">Deployment policy ↗</a>
+    <a class="paper-link" href="kv-compression-frontier.html">Compression frontier ↗</a>
     <a class="paper-link" href="#reproduce">Reproduce ↗</a>
     <a class="paper-link" href="https://github.com/mcgrof/knlp/tree/main/docs/fused-quant">fused-quant docs ↗</a>
     <a class="paper-link" href="#related-papers">Related papers ↗</a>
@@ -848,17 +851,21 @@
 </section>
 
 <!-- HEADLINE: FULL-STACK Qwen2.5-7B QUALITY VALIDATION -->
-<section class="panel-section">
+<section class="panel-section" id="full-stack">
   <div class="panel-header">
     <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">★</span>
     <span class="panel-title">Full-Stack vLLM + FlashInfer Validation — Qwen2.5-7B-Instruct on H100</span>
   </div>
   <p class="panel-body">
-    The asymmetric K16/V8 result now runs end-to-end through the modified vLLM + FlashInfer serving stack with
-    explicit FlashInfer backend selection. The asymmetric path exercises prefill-time V quantization, paged-cache
-    writes, and asymmetric FlashInfer prefill/decode kernels. The table reports controlled FP16 / FP8-sym / K16/V8
-    measurements on the same H100 path: K16/V8 matches FP16 perplexity to reported precision at both 2K and 8K
-    context and recovers GSM8K to within 0.5 percentage points, while symmetric FP8 collapses on Qwen.
+    The asymmetric K16/V8 result now runs end-to-end through the modified vLLM + FlashInfer serving stack
+    (vLLM branch <code>20260702-k16fp8</code>, fork commit 8a1714108; FlashInfer branch
+    <code>20260702-asym-k16v8-decode-upstream</code>, fork commit 6dfdc833) with explicit FlashInfer backend
+    selection. The asymmetric path exercises prefill-time V quantization on cache write, paged-cache writes,
+    and an asymmetric FlashInfer decode kernel; prefill computes fresh full-precision K/V. The table reports
+    controlled FP16 / FP8-sym / K16/V8 measurements on the same H100 path: K16/V8 matches FP16 perplexity to
+    reported precision at both 2K and 8K context, and the 200-problem GSM8K screen did not resolve a difference
+    between K16/V8 (90.0%) and FP16 (90.5%) — a screen of this size can detect collapse (symmetric FP8: 2.0%)
+    but cannot establish equivalence.
   </p>
 
   <div class="kr-table" style="margin:24px 0;">
@@ -900,7 +907,7 @@
 
   <p class="panel-body" style="margin-top:16px;">
     Symmetric FP8 PPL gets <em>5× worse</em> from 2K to 8K (214→1058) — the K-fragility phenomenon strengthens
-    at longer context. Asymmetric K16/V8 stays bit-identical to FP16 PPL across both context lengths.
+    at longer context. Asymmetric K16/V8 matches FP16 perplexity to the reported precision at both context lengths.
     This is the final serving-stack validation; the earlier HuggingFace <code>DynamicCache</code> simulation in
     Section V is retained only as a precision-asymmetry cross-check.
   </p>
@@ -966,19 +973,21 @@ llm = LLM(
   </p>
 </section>
 
-<!-- P0: HEADLINE — ASYMMETRIC K16/V8 -->
-<section class="panel-section">
+<!-- HEADLINE — ASYMMETRIC K16/V8 -->
+<section class="panel-section" id="asym-k16v8">
   <div class="panel-header">
-    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">P0</span>
+    <span class="panel-id" style="background:rgba(0,232,124,0.15);color:var(--green);border-color:var(--green2);">HEADLINE</span>
     <span class="panel-title">Asymmetric K16/V8 — The Production Decode Operating Point</span>
   </div>
   <p class="panel-body">
     Storing keys at native 16-bit precision and only quantizing values to FP8 removes FP8 K operand preparation
     before each tile's QK operation. Account for FP8 V preparation before PV and measure how much the kernel
-    overlaps it. At the standalone FlashInfer kernel level on the headline Qwen2.5-7B lane, asymmetric K16/V8
-    matches FP16 within measurement noise and is 33% faster than the measured symmetric path.
-    Across the three-model vLLM batch-32 throughput comparison (Qwen2.5-7B, Llama-3.1-8B, Marin-8B), asymmetric
-    is 4.8–9.6% faster than symmetric FP8 while providing 1.33× KV cache capacity.
+    overlaps it. On the standalone CUDA-core FlashInfer decode kernel on the headline Qwen2.5-7B lane, asymmetric
+    K16/V8 matches FP16 within measurement noise and is 33% faster than the measured symmetric FP8 path; on the
+    SM90 Tensor Core kernel family the sign reverses — symmetric K8/V8 runs 16–19% faster than K16/V8 at
+    bandwidth-bound shapes (tile-path result f75960a6).
+    Across the eight-model vLLM batch-32 comparison below, asymmetric is up to 4.2% faster than symmetric FP8
+    on the models where it leads, while providing 1.33× KV cache capacity.
     Implementation requires modified vLLM/FlashInfer kernels but no model changes, retraining, or calibration.
   </p>
 
@@ -991,24 +1000,28 @@ llm = LLM(
     <div class="pipeline-row loser">
       <span class="pipe-id">Symmetric FP8</span>
       <span class="pipe-desc">FP8 K + FP8 V · one fewer K byte per element, plus on-chip K preparation before QK.
-        Measure the H100 tile interval against K16/V8. Ordinary post-bias K8 also collapses on fragile Qwen models.</span>
+        Ratio measured on the CUDA-core decode kernel of this stack; on the SM90 Tensor Core kernel symmetric
+        K8/V8 instead leads K16/V8 by 16–19% at bandwidth-bound shapes (f75960a6).
+        Ordinary post-bias K8 also collapses on fragile Qwen models.</span>
       <span class="pipe-result bad">0.92–0.97× <span style="color:var(--red);">·&nbsp;Qwen collapses</span></span>
     </div>
     <div class="pipeline-row winner">
       <span class="pipe-id">Asymmetric K16/V8</span>
       <span class="pipe-desc">FP16 K + FP8 V via modified FlashInfer · prefill-time V quantization · 1.33× capacity.
-        Rescues fragile-key models to FP16 quality (Qwen NIAH 0.89 at 32K, <em>above</em> FP16 baseline).</span>
-      <span class="pipe-result good">1.00–1.38× <span style="color:var(--green);">·&nbsp;universal</span></span>
+        Rescues fragile-key models to FP16 quality (Qwen NIAH 0.89 at 32K, <em>above</em> FP16 baseline).
+        CUDA-core decode kernel of this stack; the top of the range reflects capacity relief on a
+        cache-limited FP16 baseline, not kernel speed.</span>
+      <span class="pipe-result good">1.00–1.38× <span style="color:var(--green);">·&nbsp;fragile-key default</span></span>
     </div>
   </div>
 
   <div class="key-result">
-    <div class="kr-label">Mechanism — why asymmetric is a throughput win, not a compromise</div>
+    <div class="kr-label">Mechanism — why bytes alone do not predict throughput</div>
     Hopper has no native BF16-query by plain-FP8-key QK instruction with a K scale operand. Prepare each active K
     tile on chip before QK and advance online softmax tile by tile. Compare the unhidden preparation and occupancy
     cost against the extra K16 HBM byte. Account for V preparation before PV. CDNA 3 provides FP8-by-FP8 MFMA with
-    no scale operands; place the scale in software around MFMA. Run the
-    <a href="fp8-attention-tile-path.html" style="color:var(--cyan);">tile-path microtests</a> and use the
+    no scale operands; place the scale in software around MFMA. Use the completed
+    <a href="bias-aware-kv-quantization.html" style="color:var(--cyan);">bias-aware KV findings</a> and the
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md"
       style="color:var(--cyan);">hardware notes</a>.
   </div>
@@ -1023,8 +1036,8 @@ llm = LLM(
     </div>
     Qwen2.5-7B under symmetric FP8 suffers total retrieval failure — not graceful degradation, complete collapse.
     Asymmetric K16/V8 matches FP16 within measurement noise and slightly exceeds it on the Qwen2.5-7B 32K row
-    (0.89 vs 0.84). Tolerant models are unaffected in either direction. So <strong>if you need a single
-    KV-cache scheme that covers every model — including fragile-key ones — asymmetric K16/V8 is the safe
+    (0.89 vs 0.84). Tolerant models are unaffected in either direction. <strong>When one
+    KV-cache scheme must cover both robust- and fragile-key models, asymmetric K16/V8 is the safe
     default</strong> among the evaluated fused FP8 paths: it is the only one here that holds quality on the
     fragile models while matching the tolerant ones. That safety is now <em>explained</em>, not merely
     observed: symmetric FP8-K collapse tracks K-projection <strong>bias magnitude</strong> (with a distinct
@@ -1032,25 +1045,30 @@ llm = LLM(
     being denser, can be the better choice. See the
     <a href="fp8-kv-failure-atlas.html" style="color:var(--cyan);">FP8 KV-cache failure atlas</a> for the
     root cause and the per-model fragility map. A fuller comparison of K16/V8 against the broader
-    KV-quantization field — symmetric FP8, TurboQuant, and others, across quality, kernel tax, and served
-    goodput — is in progress and will be linked here when complete.
+    KV-quantization field — symmetric FP8, pre-bias, sub-8-bit values, and other approaches across quality,
+    capacity, kernel cost, and served goodput — is now available in the
+    <a href="kv-compression-frontier.html" style="color:var(--cyan);">KV-cache compression frontier</a>.
   </div>
 
   <div class="citation-block">
     Code: <a href="https://github.com/mcgrof/flashinfer">github.com/mcgrof/flashinfer</a> ·
-    branch <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>
-    (K16/V8 production path with FI-1..FI-5 CUDA template refactor for independent K/V dtypes in
-    prefill+decode). vLLM-side plumbing on
-    <a href="https://github.com/mcgrof/vllm/tree/asymmetric-kv-plumbing"><code>asymmetric-kv-plumbing</code></a>.
+    serving branch <a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream"><code>20260702-asym-k16v8-decode-upstream</code></a>
+    (fork commit 6dfdc833; curated decode-only K16/FP8 dtype-split series). vLLM-side plumbing on
+    <a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8"><code>20260702-k16fp8</code></a>
+    (fork commit 8a1714108). The
+    <a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>
+    dev tip carries a five-commit CUDA template refactor giving independent K and V dtypes in prefill and
+    decode; its mixed-dtype prefill kernels compile and pass fp32-reference audits, but it is not part of
+    the validated serving pair.
     Integrates with vLLM via <code>LLM(kv_cache_dtype=("auto", "fp8_e4m3"),
     attention_config={"backend": "FLASHINFER"})</code>.
   </div>
 </section>
 
-<!-- P1: SATURATION MODEL -->
-<section class="panel-section">
+<!-- SATURATION MODEL -->
+<section class="panel-section" id="saturation">
   <div class="panel-header">
-    <span class="panel-id">P1</span>
+    <span class="panel-id">SATURATION</span>
     <span class="panel-title">Batch-Driven Saturation — One Number Governs Decode</span>
   </div>
   <p class="panel-body">
@@ -1066,8 +1084,8 @@ llm = LLM(
     models before the FlashInfer production path existed. The physics claim (decode is governed by
     batch-driven memory-traffic saturation) carries through to FlashInfer FP8; the specific
     <em>S<sub>max</sub></em> depends on compression ratio and kernel overhead. See
-    <a href="#" onclick="return false;" style="color:var(--cyan);">P2</a> for per-model FlashInfer
-    throughput.
+    <a href="#per-model-throughput" style="color:var(--cyan);">the per-model FlashInfer throughput
+    section</a>.
   </p>
   <div class="math-block">S(B) = S<sub>max</sub> · B<sup>γ</sup> / (B<sub>½</sub><sup>γ</sup> + B<sup>γ</sup>) &nbsp;&nbsp;→&nbsp;&nbsp; S<sub>max</sub>=3.75 · B<sub>½</sub>=5.1 · γ=1.32 · R²=0.80</div>
   <div class="key-result">
@@ -1100,21 +1118,24 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P2: FLASHINFER PER-MODEL PRODUCTION THROUGHPUT -->
-<section class="panel-section">
+<!-- FLASHINFER PER-MODEL PRODUCTION THROUGHPUT -->
+<section class="panel-section" id="per-model-throughput">
   <div class="panel-header">
-    <span class="panel-id">P2</span>
+    <span class="panel-id">THROUGHPUT</span>
     <span class="panel-title">Per-Model FlashInfer Throughput — Asymmetric K16/V8 vs Symmetric FP8 on H100</span>
   </div>
   <p class="panel-body">
     vLLM 0.19 + FlashInfer decode throughput measured at batch 32 on H100 SXM5 across eight open-weight
     models spanning three architectures. The comparison is three-way: FP16 baseline, symmetric FP8, and
-    our asymmetric K16/V8 branch. Asymmetric reaches <strong>1.38× FP16 on Qwen2.5-7B</strong> — the
-    largest end-to-end win — and is within a few percent of FP16 on the remaining models, with some small
+    our asymmetric K16/V8 branch. Asymmetric reaches <strong>1.38× FP16 on Qwen2.5-7B</strong>; on that
+    model the FP16 baseline at batch 32 is cache-capacity-limited, and both FP8 configurations clear that
+    limit, so the 1.34–1.38× reflects capacity relief, not kernel speed. Asymmetric is within a few percent
+    of FP16 on the remaining models, with some small
     or integration-sensitive cases trailing FP16 (Qwen3-8B at 0.94×, DS-R1-7B at 0.96×, Phi-4-14B at 0.99×).
-    Small-model throughput (0.5–1.5B) sits slightly under FP16 because at that scale per-step bandwidth is
-    dominated by model weights, not KV cache — KV compression contributes less of the total savings.
-    Symmetric FP8 falls below asymmetric on every model in this fixed-batch comparison. Measure the cause with
+    Small-model throughput (0.5–1.5B) sits under FP16 — by up to 13% at 0.5B — because at that scale per-step
+    bandwidth is dominated by model weights, not KV cache — KV compression contributes less of the total savings.
+    Symmetric FP8 trails asymmetric on five of the eight models in this fixed-batch comparison and leads on
+    the other three. Measure the cause with
     K-only and V-only dtype controls, Blackwell transform modes, warm and cold cache states, and profiler traces.
     Attribute the gap only when the K-preparation signal moves with the latency delta.
   </p>
@@ -1123,14 +1144,16 @@ llm = LLM(
   <div class="speedup-bar-wrap" id="flashinferBars"></div>
 
   <div class="key-result">
-    <div class="kr-label">Asymmetric leads symmetric FP8 on throughput at fixed batch 32 — on every tested model</div>
-    Per-model asymmetric-vs-symmetric ratio ranges from <strong>+1.0% (Llama-3.1-8B)</strong> to
+    <div class="kr-label">Asymmetric leads symmetric FP8 on five of the eight tested models at fixed batch 32</div>
+    Where asymmetric leads, the per-model ratio ranges from <strong>+1.0% (Llama-3.1-8B)</strong> to
     <strong>+4.2% (Qwen2.5-1.5B)</strong>, with the headline
-    <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>. Treat the ordering as the measured result.
+    <strong>+2.9% on Qwen2.5-7B (1.38× vs 1.34× FP16)</strong>; it trails symmetric FP8 on
+    Qwen2.5-0.5B (−6.9%), DS-R1-Qwen-7B (−1.0%), and Phi-4-14B (−2.2%). Treat the ordering as the measured result.
     Identify its cause with the tile-path matrix: K16/V8 removes FP8 K preparation, while K8/V8 saves one HBM
     byte per K element. Measure overlap, occupancy, cache state, and shape.
     Note the scope: this is a <em>fixed-batch-32</em> kernel-throughput result on the vLLM 0.19 / FlashInfer
-    0.6.7 stack below — a capacity- or residency-bound serving regime (where symmetric FP8's smaller cache
+    0.6.7 stack below, whose asymmetric decode routes to the CUDA-core kernel — a capacity- or
+    residency-bound serving regime (where symmetric FP8's smaller cache
     admits more concurrent sequences) is a separate measurement and is not this claim. What is
     model-independent is quality admissibility: asymmetric is the only configuration here that stays
     quality-safe on fragile-key models — the NIAH 0.00 → 0.89 retrieval rescue on Qwen2.5-7B — while
@@ -1140,19 +1163,19 @@ llm = LLM(
   </div>
 
   <div class="citation-block">
-    Source: the private results archive.
     Measurements at batch 32 through vLLM 0.19 + FlashInfer 0.6.7 with our K16/V8 branch applied
-    (<a href="https://github.com/mcgrof/flashinfer/tree/asym-prefill-refactor-stage"><code>asym-prefill-refactor-stage</code></a>).
+    (<a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream"><code>20260702-asym-k16v8-decode-upstream</code></a>,
+    fork commit 6dfdc833; vLLM fork commit 8a1714108); raw sweep data ships with the reproduction defconfig.
     Asymmetric K16/V8 requires the small vLLM/FlashInfer dtype-split extension described in the paper —
     no model changes, no calibration. Symmetric FP8 maps onto existing FlashInfer paged-cache infrastructure
     without modification.
   </div>
 </section>
 
-<!-- P2b: FUSION PRINCIPLE / MECHANISM PROOF (demoted to a compact aside) -->
-<section class="panel-section">
+<!-- FUSION PRINCIPLE / MECHANISM PROOF (demoted to a compact aside) -->
+<section class="panel-section" id="fused-int4-rd">
   <div class="panel-header">
-    <span class="panel-id">P2&#8239;·&#8239;R&amp;D</span>
+    <span class="panel-id">R&amp;D</span>
     <span class="panel-title">Earlier R&amp;D — Fusion Principle Proof (Custom INT4 Triton Kernel)</span>
   </div>
   <p class="panel-body">
@@ -1161,8 +1184,9 @@ llm = LLM(
     KV compression into real decode throughput. That claim was first established by a custom fused
     INT4 Triton kernel before FlashInfer's production paged-cache infrastructure existed. It remains
     on the repository as a controlled experiment and is now demoted to R&amp;D/appendix status; the
-    paper's main result is FlashInfer (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>,
-    P2 above).
+    paper's main result is the FlashInfer path (the
+    <a href="#asym-k16v8" style="color:var(--cyan);">headline asymmetric section</a> and the
+    per-model throughput above).
   </p>
 
   <div class="pipeline-grid">
@@ -1192,10 +1216,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P3: TRAFFIC REGIME -->
-<section class="panel-section">
+<!-- TRAFFIC REGIME -->
+<section class="panel-section" id="traffic-regime">
   <div class="panel-header">
-    <span class="panel-id">P3</span>
+    <span class="panel-id">REGIME</span>
     <span class="panel-title">Traffic Regime: Weight-Bound → KV-Bound Transition</span>
   </div>
   <p class="panel-body">
@@ -1234,10 +1258,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P4: KV PRECISION ASYMMETRY -->
-<section class="panel-section">
+<!-- KV PRECISION ASYMMETRY -->
+<section class="panel-section" id="kv-asymmetry">
   <div class="panel-header">
-    <span class="panel-id">P4</span>
+    <span class="panel-id">KV&nbsp;ASYM</span>
     <span class="panel-title">KV Precision Asymmetry — Keys and Values Are Not the Same</span>
   </div>
   <p class="panel-body">
@@ -1293,9 +1317,10 @@ llm = LLM(
     On Qwen2.5-7B the same fragility observed under INT4 keys reappears under symmetric FP8: WikiText-2 perplexity
     jumps from 5.2 (FP16) to 774–1046 at 2–16K context under uncalibrated symmetric FP8. Keeping K at FP16 and only
     quantizing V to FP8 recovers ppl to 5.23–6.07 across the same context range, GSM8K accuracy from 0.0% back to
-    84.5%, and MMLU from 48.9% back to 76.2% — essentially indistinguishable from FP16 baseline.
-    No calibration, no per-model tuning; asymmetric K16/V8 is the safe universal default.
-    See <a href="#" onclick="return false;" style="color:var(--cyan);">P0</a> for throughput data and the
+    84.5%, and MMLU from 48.9% back to 76.2% — the screen resolves no difference from the FP16 baseline.
+    No calibration or per-model tuning was required in this experiment; asymmetric K16/V8 is the safe
+    fragile-key default among the evaluated fused paths.
+    See the <a href="#asym-k16v8" style="color:var(--cyan);">headline asymmetric section</a> for throughput data and the
     <a href="https://github.com/mcgrof/knlp/blob/main/docs/fused-quant/fp8-attention-hardware-notes.md" style="color:var(--cyan);">hardware notes</a>
     for why the asymmetric pattern is a software workaround for a Hopper Tensor Core ISA constraint.
   </div>
@@ -1311,10 +1336,8 @@ llm = LLM(
     enough to absorb Qwen's K outliers leaves typical channel values rounded to a coarser grid than the
     unconditional default, destroying bulk precision in exchange for retaining a handful of outlier samples.
     Asymmetric K16/V8 under the identical protocol yields PPL 7.50 matching FP16 to four decimals and GSM8K
-    84.5% — a 169.5-point absolute improvement over static-calibrated FP8.  Calibration cannot solve a
-    precision-floor problem; what it can do is shift which part of the distribution gets sacrificed.
-    Archive at
-    qwen-fragility-bundled-20260425 (archived privately).
+    84.5% — an 84.5-point absolute GSM8K improvement over static-calibrated FP8 (84.5% vs 0%).  Calibration cannot solve a
+    precision-floor problem; it can only shift which part of the distribution loses precision.
   </div>
 
   <div class="key-result" style="margin-top:16px;">
@@ -1325,7 +1348,9 @@ llm = LLM(
     GSM8K 35.5% — sample-by-sample identical to FP16</strong>.  Asymmetric is also fastest at evaluation time
     (24 s for the WikiText-2 sweep vs 79 s FP16, 42 s FP8-sym) due to smaller V cache enabling more concurrency.
     The measured symmetric path remains slower across batch and context: at T=16,384, symmetric FP8 reaches
-    0.78×–0.80× of FP16 throughput across B ∈ [4, 32]. Run the controlled tile-path ablation at these shapes.
+    0.78×–0.80× of FP16 throughput across B ∈ [4, 32]. Interpret these results with the completed
+    <a href="bias-aware-kv-quantization.html" style="color:var(--cyan);">kernel and serving decision</a> rather than
+    treating reduced bytes as a universal speed prediction.
     Even on a model where 75% of layers do not use the standard KV cache
     at all, asymmetric delivers FP16-equivalent quality and a real throughput improvement.
   </div>
@@ -1351,10 +1376,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P5: CROSS-GPU -->
-<section class="panel-section">
+<!-- CROSS-GPU -->
+<section class="panel-section" id="cross-gpu">
   <div class="panel-header">
-    <span class="panel-id">P5</span>
+    <span class="panel-id">CROSS-GPU</span>
     <span class="panel-title">Cross-GPU Validation — Five Matched Lanes</span>
   </div>
   <p class="panel-body">
@@ -1364,8 +1389,8 @@ llm = LLM(
     <em>Cross-platform variation is explained better by sustained decode-bandwidth plateau than by headline peak HBM bandwidth.</em>
     B200 has 1.96× the H100 peak bandwidth but decode throughput gain is smaller — practical kernel bandwidth at decode batch sizes
     remains well below peak on both architectures. CDNA 3 has native FP8-by-FP8 MFMA with no scale operands.
-    Measure the smaller symmetric-FP8 cost on the tested MI300X path (1.7–2.5%) against H100 (3–8%) with matched
-    kernel, scale-placement, layout, and scheduling profiles.
+    Measure the smaller symmetric-FP8 cost on the tested MI300X MFMA path (1.7–2.5%) against the H100
+    CUDA-core decode path (3–8%) with matched kernel, scale-placement, layout, and scheduling profiles.
   </p>
 
   <table class="gpu-table">
@@ -1444,10 +1469,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P6: SPECULATIVE DECODING -->
-<section class="panel-section">
+<!-- SPECULATIVE DECODING -->
+<section class="panel-section" id="speculation">
   <div class="panel-header">
-    <span class="panel-id">P6</span>
+    <span class="panel-id">SPECULATION</span>
     <span class="panel-title">Speculation × Quantization — Sub- and Super-Multiplicative Composition</span>
   </div>
   <p class="panel-body">
@@ -1470,10 +1495,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P7: TIERING -->
-<section class="panel-section">
+<!-- MEMORY TIERING -->
+<section class="panel-section" id="tiering">
   <div class="panel-header">
-    <span class="panel-id">P7</span>
+    <span class="panel-id">TIERING</span>
     <span class="panel-title">Memory Tiering — No Current Interconnect Is Close</span>
   </div>
   <p class="panel-body">
@@ -1515,10 +1540,10 @@ llm = LLM(
   </div>
 </section>
 
-<!-- P8: FUTURE DIRECTIONS -->
-<section class="panel-section">
+<!-- FUTURE DIRECTIONS -->
+<section class="panel-section" id="future">
   <div class="panel-header">
-    <span class="panel-id">P8</span>
+    <span class="panel-id">FUTURE</span>
     <span class="panel-title">Future Directions — Reduce KV Access, Not Just Compress It</span>
   </div>
   <p class="panel-body">
@@ -1540,32 +1565,50 @@ llm = LLM(
       </div>
     </a>
     <div class="future-card" style="cursor:default;">
-      <div class="fc-label" style="color:var(--green);">Open Questions</div>
-      <div class="fc-title">What Remains Unknown</div>
+      <div class="fc-label" style="color:var(--green);">Production R&amp;D</div>
+      <div class="fc-title">What Remains to Ship</div>
       <div class="fc-desc">
-        <strong style="color:var(--text);">Qwen root cause:</strong> The key fragility is family-specific and attenuates at 72B. Does it disappear entirely at larger scale? What in the training pipeline creates the INT7 floor?
+        <strong style="color:var(--text);">Upstream integration:</strong> Land the asymmetric allocator, cache writer, decode kernel, serialization, and API path in the serving projects that own them.
         <br><br>
-        <strong style="color:var(--text);">Sparse attention interaction:</strong> Sliding-window and other sparse-attention variants reduce per-step KV traffic. How does that change the tiering bandwidth requirement and the quantization–speculation composition ratio?
+        <strong style="color:var(--text);">Capacity validation:</strong> Compare the
+        <a href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2">representation-aware byte model</a>
+        with allocator telemetry, fragmentation, prefix caching, sliding windows, offload, and disaggregated serving.
         <br><br>
-        <strong style="color:var(--text);">Multi-GPU tensor parallel:</strong> All results are single-GPU. Tensor parallelism changes the bandwidth-to-compute ratio and may shift the saturation model parameters.
+        <strong style="color:var(--text);">Runtime evidence:</strong> Have engines attest the effective key/value dtype and carry it through
+        <a href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2">benchmark provenance</a>.
+        Extend model, hardware, tensor-parallel, cache-lifecycle, and long-context coverage without reopening the closed pre-bias kernel line.
       </div>
     </div>
   </div>
 
   <div class="citation-block">
-    <strong>Practical deployment recipe:</strong> The recommended safe default among the evaluated fused FP8
-    KV-cache paths is <strong>asymmetric K16/V8</strong> via the modified FlashInfer + vLLM
-    (<a href="#" onclick="return false;" style="color:var(--cyan);">P0</a>). It provides 1.33× KV-cache
-    capacity, avoids the Qwen-family quality failures of symmetric FP8, and is within measurement noise of
-    FP16 at the standalone-kernel level. End-to-end throughput depends on model size, context, batch, and
+    <strong>Practical deployment recipe:</strong> The deployment default is model-conditional: biased-key
+    models (Qwen2/Qwen2.5 family) get <strong>asymmetric K16/V8</strong> via the modified FlashInfer + vLLM
+    (<a href="#asym-k16v8" style="color:var(--cyan);">headline section</a>) — quality preserved, 1.33× KV-cache
+    capacity; biasless models (Qwen3 and later, Llama-class; <code>attention_bias=false</code>) get plain
+    symmetric FP8 K8/V8, which is denser and quality-admissible there. Asymmetric K16/V8 is the recommended
+    safe default only when a single scheme must cover both classes. It avoids the Qwen-family quality
+    failures of symmetric FP8 and is within measurement noise of FP16 at the standalone-kernel level on the
+    CUDA-core decode kernel. End-to-end throughput depends on model size, context, batch, and
     serving-stack overhead. The implementation requires modified vLLM/FlashInfer kernels but no model
     changes, retraining, or calibration.
-    For maximum capacity, ordinary symmetric FP8 doubles KV storage and shows a 3–8% cost on the measured H100
-    path and 1.7–2.5% on the measured MI300X path. Treat those numbers as kernel and shape results. Use bias-aware
-    pre-bias K8/V8 on Qwen2.5-7B after the quality gate. The custom fused INT4 Triton kernel
-    (<a href="#" onclick="return false;" style="color:var(--cyan);">P2</a>) remains available in the
+    For maximum capacity, ordinary symmetric FP8 doubles KV storage and shows a 3–8% cost versus FP16 on the
+    measured H100 CUDA-core decode path and 1.7–2.5% on the measured MI300X MFMA path. The sign of FP8-vs-BF16
+    depends on the kernel family: on the CUDA-core decode kernel every FP8 configuration trails BF16, while
+    the SM90 Tensor Core kernel favors symmetric K8/V8 over K16/V8 by 16–19% at bandwidth-bound shapes
+    (tile-path result f75960a6 — a symmetric-vs-asymmetric comparison, not FP8-vs-FP16). Treat those numbers
+    as kernel- and shape-specific. Use symmetric
+    FP8 only after the model passes the key-fragility quality gate. The tested pre-bias K8/V8 representation
+    repairs Qwen2.5-7B retrieval (needle 1.00 up to 30,720 tokens; 1.50× the capacity of K16/V8) but failed
+    the equal-memory serving gate (0.654× completed req/s, 2.056× p95 latency against frozen bounds of 1.20×
+    and 1.25×; result 85fa7b2d, countersigned c82c5db9); the kernel-optimization line is closed, and pre-bias
+    remains a documented capacity option only, never the default. The custom fused INT4 Triton kernel
+    (<a href="#fused-int4-rd" style="color:var(--cyan);">the fused INT4 R&amp;D aside</a>) remains available in the
     repository as a controlled experiment that proves the fusion mechanism in isolation — it is not the
     production path.
+    See the <a href="bias-aware-kv-quantization.html" style="color:var(--cyan);">bias-aware KV deployment policy</a>
+    for the closed pre-bias conclusion and the <a href="kv-compression-frontier.html" style="color:var(--cyan);">compression frontier</a>
+    for the broader quality-versus-capacity comparison.
     <br>
     Code:
     <a href="https://github.com/mcgrof/flashinfer">FlashInfer fork</a> ·
@@ -1598,7 +1641,7 @@ llm = LLM(
         kernel-level result.
         <br><br><strong style="color:var(--amber);">Connection:</strong> our work establishes the
         instantaneous bandwidth requirement DualPath-style systems must route around; the tiering
-        projections (P7) are the quantitative input to that scheduling problem.
+        projections above are the quantitative input to that scheduling problem.
       </div>
     </a>
     <a class="future-card" href="https://arxiv.org/abs/2510.09665">
@@ -1609,7 +1652,7 @@ llm = LLM(
         Treats long-context inference as a cache-sharing problem instead of a per-request
         recomputation problem.
         <br><br><strong style="color:var(--amber);">Connection:</strong> the asymmetric K16/V8
-        codec and the split-tier K-host / V-NVMe placement (P7, Section IX-E) are implemented on
+        codec and the split-tier K-host / V-NVMe placement (Section IX-E of the paper) are implemented on
         the LMCache <code>asymmetric-kv-codec</code> branch and reuse the LMCache
         <code>SplitTierStore</code> directly.
       </div>
@@ -1621,7 +1664,7 @@ llm = LLM(
         Disaggregates the KV cache to FPGA-attached CXL memory and uses speculative prefetching to
         hide the slower-than-HBM tier behind draft-model lookahead.
         <br><br><strong style="color:var(--amber);">Connection:</strong> a concrete proposal for
-        the kind of overlap-the-cold-tier scheduling our P7 bandwidth bound implies is necessary —
+        the kind of overlap-the-cold-tier scheduling our tiering bandwidth bound implies is necessary —
         synchronous dense decode cannot wait on CXL latency, but asynchronous prefetch backed by
         speculation can.
       </div>
@@ -1655,12 +1698,12 @@ llm = LLM(
       <tbody>
         <tr style="border-bottom:1px solid var(--border);">
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/vllm/tree/20260702-k16fp8">mcgrof/vllm</a></td>
-          <td style="padding:10px 16px;"><code>20260702-k16fp8</code></td>
+          <td style="padding:10px 16px;"><code>20260702-k16fp8</code> (fork commit 8a1714108)</td>
           <td style="padding:10px 16px;">Latest, upstream-targeting: K16/V8 cache with a decode-only asym read (prefill stays full-precision), tuple K/V, loud-fail on asym misroute</td>
         </tr>
         <tr style="border-bottom:1px solid var(--border);">
           <td style="padding:10px 16px;"><a href="https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream">mcgrof/flashinfer</a></td>
-          <td style="padding:10px 16px;"><code>20260702-asym-k16v8-decode-upstream</code></td>
+          <td style="padding:10px 16px;"><code>20260702-asym-k16v8-decode-upstream</code> (fork commit 6dfdc833)</td>
           <td style="padding:10px 16px;">Latest, upstream-targeting: curated decode-only K16/FP8 dtype-split series, rebased on upstream main, GPU-gated for the upstream PR ladder</td>
         </tr>
         <tr>
@@ -1670,6 +1713,15 @@ llm = LLM(
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="citation-block">
+    <strong>Planning and result provenance:</strong>
+    <a href="https://github.com/mcgrof/aiconfigurator/tree/2026-09-01-kv-asym-byte-accounting-v2">aiconfigurator K16/V8 byte accounting v2</a>
+    prices conventional K16/V8 caches without claiming unmeasured latency and rejects compressed-latent layouts.
+    <a href="https://github.com/mcgrof/InferenceX/tree/2026-09-01-kv-dtype-provenance-v2">InferenceX KV dtype provenance v2</a>
+    records requested key/value dtypes without retaining raw server command lines and requires runtime attestation before
+    calling a dtype effective.
   </div>
 
   <p class="panel-body">
@@ -1698,6 +1750,9 @@ make</code></pre>
     Luis Chamberlain · <a href="https://mcgrof.github.io/knlp/" style="color:var(--green);text-decoration:none;">knlp project</a> · MIT License
   </div>
   <div class="foot-links">
+    <a href="bias-aware-kv-quantization.html">KV Policy</a>
+    <a href="fp8-kv-failure-atlas.html">FP8 Atlas</a>
+    <a href="kv-compression-frontier.html">KV Frontier</a>
     <a href="https://mcgrof.github.io/knlp/ar_decode_bottleneck.html">AR Decode</a>
     <a href="https://mcgrof.github.io/knlp/kv_bandwidth_visualization.html">Decode Scaling</a>
     <a href="https://mcgrof.github.io/knlp/spearman_rho.html">Spearman ρ</a>
@@ -1812,7 +1867,8 @@ function updateSatMarker() {
 
 // ── FlashInfer per-model production throughput bars ──
 // Source: h100_throughput_sweep.json (H100 SXM5, vLLM 0.19 + FlashInfer 0.6.7,
-// asym-prefill-refactor-stage branch, batch 32). tok/s measured end-to-end.
+// K16/V8 branches: vLLM fork 8a1714108, FlashInfer fork 6dfdc833, batch 32).
+// tok/s measured end-to-end.
 const fiModels = [
   { name: 'Qwen2.5-0.5B',   fp16: 3312.3, fp8: 3098.9, asym: 2884.4 },
   { name: 'Qwen2.5-1.5B',   fp16: 2912.9, fp8: 2741.3, asym: 2857.4 },
