@@ -10,9 +10,11 @@ accuracy back to near the uncompressed ceiling.
 
 This page documents an independent reproduction on a frozen Qwen3-8B over the
 LongHealth medical question-answering benchmark. The qualitative result and the
-baselines reproduce cleanly. A single isolated cartridge reaches about 0.50 where
-the paper reports 0.736; what follows is what we measured, what that gap is not,
-and where the remaining distance lives. Everything here is reproducible from the
+baselines reproduce cleanly. A single isolated cartridge reaches 0.65 at the
+paper's training recipe (about 0.50 at the small-batch recipe most of this page
+was measured with) where the paper reports 0.736; what follows is what we
+measured, what that gap is not, and where the remaining distance lives.
+Everything here is reproducible from the
 harness in
 [`research/cartridges_cas/`](https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas).
 
@@ -71,7 +73,8 @@ directly comparable.
 | No-context baseline (question only) | 0.39 | 0.375 |
 | Full document in context | 0.855 | 0.874 |
 | Full-document KV loaded through the cartridge path | 0.86 | — |
-| Single isolated cartridge (best) | 0.50 | 0.736 |
+| Single isolated cartridge, paper recipe | 0.65 | 0.736 |
+| Single isolated cartridge, small-batch recipe | 0.50 | 0.736 |
 
 The two ends of the range reproduce to within about two points: the model answers
 LongHealth at 0.39 with no record and at 0.855 with the full record in context.
@@ -165,6 +168,25 @@ same 0.4–0.5. A document-utility audit confirms the corpus is genuinely
 document-dependent — the answers require the record, they are not generic clinical
 prose — so the flatness is not a filler-data artifact.
 
+What does move it is the optimizer regime. All of the numbers above come from a
+small-batch regime: an effective batch of about 8, a peak learning rate of 0.02,
+a few hundred steps. The paper trains at a global batch of 128 with a linear
+schedule peaking at 0.1 for 80 epochs, with the cartridge sized to one twentieth
+of the document (632 tokens for patient_02) and initialized from the document's
+first tokens. Training the same patient_02 cartridge on the same data at that
+recipe lifts it from 0.55 to **0.65 ± 0.05** (the same cartridge evaluated three
+times), against the paper's 0.736. That is the only single change that has moved
+this number, and it retires two earlier readings: "learning rate ruled out" and
+"training length ruled out" were both taken at batch 8, where a peak of 0.1
+diverges; at batch 128 it is the right rate. The distillation loss reaches
+0.015 at this recipe, about where the small-batch recipe already got to at 80
+epochs (0.017) without any score gain, so the lift does not come from a lower
+fit; it comes from the optimization path that batch 128 at a peak of 0.1
+takes to it. The remaining 0.09 is left to data scale — the paper synthesizes
+roughly 40k self-study conversations per cartridge, this reproduction about
+4.4k — and to the objective-to-generation transfer. A confirmation on four more patients at
+the same recipe is in progress.
+
 <a id="what-our-code-does"></a>
 ## What our code does
 
@@ -211,7 +233,7 @@ The reproduction values that a reader needs in one place:
 | Cartridge on disk | ~90 MB, bf16 (Qwen3-8B, GQA, 611 tokens) |
 | Frozen prefix | one attention-sink token, load-bearing |
 | Distillation targets | teacher top-20 token log-probabilities per position |
-| Training loss reached | ~0.035 (isolated), 0.017 at 80 epochs |
+| Training loss reached | 0.015 (paper recipe); ~0.035, 0.017 at 80 epochs (small batch) |
 | Mixed-visibility rate | target alone 75%, target + sampled distractors 25% |
 | Serving TTFT | 757 ms → 81 ms median (677 ms/query saved) |
 | Decode | ~35 tok/s, both paths |
@@ -262,15 +284,28 @@ the public materials:
   batches per note rather than one at a time. The paper's ablations put the
   question-generation strategy among the largest quality levers, and it is the one
   our reconstruction is least sure of.
-- **The faithful optimizer regime.** The paper trains at batch 128 with a linear
-  learning-rate schedule peaking near 0.1. At batch 16 that peak diverges on this
-  stack, so the large-batch regime is a prerequisite, not an optional tweak.
+- **The faithful optimizer regime — done, and worth 0.10.** The paper trains at
+  batch 128 with a linear learning-rate schedule peaking near 0.1; at batch 8 or
+  16 that peak diverges on this stack, at batch 128 it lifts a single cartridge
+  from 0.55 to 0.65. This is now the frozen baseline recipe, documented with the
+  trainer in the
+  [harness README](https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas).
 - **A possible free-generation term.** A cartridge that minimizes teacher-forced
   distillation loss but free-generates poorly points at an objective that covers
   positions or a consistency signal our reconstruction omits.
 
 The reproduction has ruled out the cheap explanations, so the remaining distance
 is worth spending real training on the items above, in that order.
+
+A separate question is cost rather than quality. Every cartridge starts from the
+same kind of state, the KV of its own document's first tokens, and nine hours of
+training on one H100 moves it from there. If part of that motion is the same for
+every document, it can be fitted once on trained cartridges and applied to the
+start of every new one. The harness README describes the study and its tools:
+an audit of where trained cartridges move relative to their starts, a
+leave-one-document-out fit of the shared part, and held-out loss curves that ask
+whether a corrected start reaches the baseline's loss levels earlier than the
+run-to-run floor.
 
 <a id="reproduce"></a>
 ## Reproduce
