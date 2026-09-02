@@ -56,7 +56,7 @@ four nearest trees and items. The action is one of nine macro-actions
 (steer left/straight/right x coast/paddle/brake) held for four physics ticks
 at 60 Hz. The reward is the sum of named terms, each logged separately:
 progress counts only new maximum distance down the course (so oscillating
-across a point earns nothing), herrings, a small per-step time cost, a
+across a point earns nothing), herrings, a per-step time cost (0.2 per 1/15 s step, so 3 per race second, the same size as the finish bonus over the 16 s that separate the no-op racer from the centreline controller), a
 collision penalty per tree contact, a finish bonus, and a penalty when the
 episode is truncated for making no progress. Changing any of these is a
 visible diff to that file, not a flag.
