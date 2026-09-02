@@ -71,14 +71,15 @@ Apply these facts:
 - use Blackwell block-scaled MMA with the narrow Q/K and scale layouts required
   by the hardware.
 
-The K8/V8 versus K16/V8 measurement plan in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) has been
-run. The answer depends entirely on the kernel family. On the CUDA-core
+The K8/V8 versus K16/V8 measurement plan summarized in the
+[`bias-aware KV deployment policy`](../bias-aware-kv-quantization.html) has
+been run. The answer depends on the kernel family. On the CUDA-core
 decode kernel, conversion cost dominates: every FP8 cell is slower than
 BF16 there, and K16/V8 beats K8/V8. On the SM90 Tensor Core kernel with
 the split-dtype prefill kernels, bytes dominate: symmetric K8/V8 wins by
 16-19% over K16/V8 at bandwidth-bound shapes, and both beat BF16
-(K8/V8 by 1.4-1.5x, K16/V8 by 1.19-1.28x). FP8 loses only at batch 1.
+(K16/V8 by 1.19-1.28x; tile-path result commit f75960a6). FP8 loses
+only at batch 1.
 Any speed claim about these formats must name the kernel it was measured
 on.
 
@@ -90,11 +91,13 @@ V in FP8 E4M3. This produces 1.33x KV-cache capacity relative to 16-bit K/V.
 Use K16/V8 as:
 
 - the quality-safe fallback for hostile key distributions (measured in
-  serving: symmetric FP8 collapses Qwen2.5-7B GSM8K from 0.43 to 0.04
-  while K16/V8 restores 0.44);
+  serving: symmetric FP8 collapses Qwen2.5-7B GSM8K from 90.5% to 2.0%,
+  while K16/V8 measures 90.0% against the 90.5% FP16 baseline — n=200,
+  8-shot, a screen that did not resolve a difference);
 - the no-K-transform control; and
-- a production operating point on kernels where it wins, such as the
-  CUDA-core decode path.
+- the capacity and quality operating point on the CUDA-core decode
+  path, where it beats K8/V8 — though every FP8 cell, K16/V8 included,
+  trails BF16 on that kernel.
 
 On the Tensor Core kernel K16/V8 is not the fast FP8 option: symmetric
 K8/V8 beats it by 16-19% at bandwidth-bound shapes. Its remaining role
@@ -107,8 +110,11 @@ parity with 1.33x cache capacity.
 
 Public source lives at <https://github.com/mcgrof/flashinfer>. The
 upstream-oriented decode branch is
-`20260702-asym-k16v8-decode-upstream`. The corresponding vLLM branch is
-<https://github.com/mcgrof/vllm/tree/20260702-k16fp8>.
+`20260702-asym-k16v8-decode-upstream` (branch tip 2f3f0f6d). The
+corresponding vLLM branch is
+<https://github.com/mcgrof/vllm/tree/20260702-k16fp8> (branch tip
+758786e23). The validated serving-gate stack is pinned at vLLM fork
+commit 8a1714108 and FlashInfer fork commit 6dfdc833.
 
 ## Bias-aware symmetric FP8
 
@@ -128,12 +134,23 @@ The tested dynamic and static scale layouts make this representation
 quality-admissible on Qwen2.5-7B. The serving stakes are now measured on
 both sides: symmetric K8/V8 is the fastest cache on the Tensor Core
 kernel, and ordinary post-bias symmetric FP8 destroys Qwen2.5 reasoning
-in serving while a biasless model shows no damage at all. The pre-bias
-representation is what would let biased-K models use the fastest cache.
-Measure its serving cost against ordinary K8/V8, K16/V8, and Blackwell
-block-scaled paths.
+in serving, while on a biasless model no adverse quality effect was
+measured (Qwen3-8B needle 1.00; its GSM8K screen was uninformative for
+prompt-format reasons and cannot establish equivalence).
 
-Account for:
+The pre-bias representation would let biased-K models use the fastest
+cache, and its serving cost is measured; the question is closed. The
+kernel costs 1.69x K16/V8 latency at 4K context and 1.11x at 32K (five
+processes, Latin square, CIs exclude parity), and the equal-memory
+serving gate failed at 0.654x completed req/s and 2.056x p95 latency
+against frozen bounds of 1.20x and 1.25x (pre-bias at 48 requests vs
+K16/V8 at 32, 30,720 in / 128 out, Qwen2.5-7B, H100; result commit
+85fa7b2d, countersigned c82c5db9). The pre-bias kernel-optimization line
+is permanently closed. Pre-bias remains a documented capacity option
+only (1.50x K16/V8 capacity, 1,893,440 tokens measured), never the
+serving default — see the bias-aware KV deployment policy.
+
+The measured cost comprised:
 
 - per-tile K operand preparation;
 - bias reconstruction or score correction;
@@ -164,6 +181,10 @@ KOnly
 SeparateKv
 ```
 
+Note: on B200 trtllm-gen the k_only mode returns wrong output —
+validate outputs before timing it — and fp8 there measured nearly flat
+(~1.05x).
+
 Add FP8-Q × FP8-K and MXFP8 QK as native narrow controls. Run L2-warm and
 HBM-cold variants. Sweep batch, context, head dimension, GQA ratio, and page
 size.
@@ -187,8 +208,10 @@ Choose the serving format from quality, kernel time, capacity, and goodput.
 
 ## Paper and source pointers
 
-- [`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html) — public
-  hypothesis, microtests, profiler matrix, and decision rules.
+- [`bias-aware-kv-quantization.html`](../bias-aware-kv-quantization.html) —
+  deployment policy, pre-bias conclusion, and kernel-family boundary.
+- [`kv-compression-frontier.html`](../kv-compression-frontier.html) — measured
+  quality, capacity, and serving comparison across KV formats.
 - [`fp8-attention-hardware-notes.md`](fp8-attention-hardware-notes.md) — ISA
   and kernel-path details.
 - [`latency.md`](latency.md) — custom INT4 latency decomposition.

@@ -12,8 +12,13 @@ Use this page to navigate the fused KV-cache quantization work.
 
 ### FlashInfer and vLLM K/V dtype split
 
-- <https://github.com/mcgrof/flashinfer>
-- <https://github.com/mcgrof/vllm/tree/20260702-k16fp8>
+- <https://github.com/mcgrof/flashinfer/tree/20260702-asym-k16v8-decode-upstream>
+  (branch tip 2f3f0f6d)
+- <https://github.com/mcgrof/vllm/tree/20260702-k16fp8> (branch tip
+  758786e23)
+
+The validated serving-gate stack is pinned at vLLM fork commit
+8a1714108 and FlashInfer fork commit 6dfdc833.
 
 ## Documentation
 
@@ -23,8 +28,10 @@ Use this page to navigate the fused KV-cache quantization work.
   latency decomposition
 - [`docs/fused-quant/fp8-attention-hardware-notes.md`](fused-quant/fp8-attention-hardware-notes.md)
   — Hopper, Blackwell, and CDNA 3 instruction and tile paths
-- [`docs/fp8-attention-tile-path.html`](fp8-attention-tile-path.html) — K8/V8
-  versus K16/V8 microtests, profiler matrix, and decision rules
+- [`docs/bias-aware-kv-quantization.html`](bias-aware-kv-quantization.html) —
+  deployment policy, pre-bias conclusion, and kernel-family boundary
+- [`docs/kv-compression-frontier.html`](kv-compression-frontier.html) —
+  quality, capacity, and serving comparison across KV formats
 - [`docs/fp8-kv-failure-atlas.html`](fp8-kv-failure-atlas.html) — numerical
   failure mechanisms and bias-aware symmetric FP8
 - [`docs/fused-quant/lineage/`](fused-quant/lineage/) — dated provenance
