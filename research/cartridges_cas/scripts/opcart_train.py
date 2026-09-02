@@ -67,7 +67,7 @@ TERMINAL_WEIGHT = float(os.environ.get("TERMINAL_WEIGHT", "1.0"))
 SAVE_OPT = os.environ.get("SAVE_OPT", "0") == "1"
 LOAD_OPT = os.environ.get("LOAD_OPT", "")
 CHECKPOINT_AT = [int(x) for x in os.environ.get("CHECKPOINT_AT", "").split(",") if x]
-EVAL_EVERY = [int(x) for x in os.environ.get("EVAL_AT", "0,10,50,100").split(",")]
+EVAL_EVERY = [int(x) for x in os.environ.get("EVAL_AT", "0,10,50,100").split(",") if x]
 MAX_Q = int(os.environ.get("MAX_Q", "20"))
 SEED = int(os.environ.get("SEED", "0"))
 DEVICE = "cuda"
