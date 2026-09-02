@@ -61,7 +61,7 @@ NEAR_SCALE = 25.0
 DEFAULT_REWARD = {
     "progress": 1.0,  # per metre of new maximum progress along the course
     "herring": 2.0,  # per item collected
-    "time": 0.02,  # per agent step, subtracted
+    "time": 0.2,  # per agent step (1/15 s), subtracted: 3 reward per race second
     "collision": 2.0,  # per tree contact event, subtracted
     "finish": 50.0,  # once, on crossing the finish line
     "stuck": 5.0,  # once, subtracted when the episode is truncated for no progress
