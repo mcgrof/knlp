@@ -5,8 +5,8 @@
 #
 # SRC_DIR defaults to ~/devel/extremetuxracer-0.8.4. If it does not
 # exist the Debian source package is fetched there with apt-get source
-# (needs deb-src entries). The patch in rl/etr/patches/ is applied once
-# (skipped when the tree already carries it), then autoreconf,
+# (needs deb-src entries). The patches in rl/etr/patches/ are applied
+# in order (each skipped when the tree already carries it), then autoreconf,
 # configure with the Debian data paths and make. The binary lands at
 # SRC_DIR/src/etr; export ETR_RL_BIN to point the Python side at it.
 #
@@ -34,13 +34,14 @@ if [ ! -d .git ]; then
   git -c user.name=build -c user.email=build@localhost commit -q -m "Import Extreme Tux Racer 0.8.4"
 fi
 
-if grep -q "RunRlBridge" src/main.cpp 2>/dev/null; then
-  echo "bridge patch already present"
-else
-  echo "applying $PATCH"
-  git apply --index "$PATCH"
-  git -c user.name=build -c user.email=build@localhost commit -q -m "Add a headless --rl bridge for reinforcement learning"
-fi
+for patch in "$HERE"/patches/*.patch; do
+  if git apply --check --reverse "$patch" >/dev/null 2>&1; then
+    echo "already applied: $(basename "$patch")"
+    continue
+  fi
+  echo "applying $(basename "$patch")"
+  git am -q "$patch" || { echo "patch failed: $patch" >&2; exit 1; }
+done
 
 autoreconf -fi >/dev/null
 ./configure --prefix=/usr --bindir=/usr/games --datadir=/usr/share/games >/dev/null
