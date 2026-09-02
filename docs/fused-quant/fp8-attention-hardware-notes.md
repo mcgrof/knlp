@@ -61,8 +61,8 @@ II_K16 ~= max(load K16,              QK, softmax update, PV)
 ```
 
 Identify the limiting stage with transform-mode, dtype, cache-state, and
-profiler ablations. The public matrix is in
-[`fp8-attention-tile-path.html`](../fp8-attention-tile-path.html).
+profiler ablations. The public decision matrix is in the
+[`bias-aware KV deployment policy`](../bias-aware-kv-quantization.html).
 
 ## NVIDIA Hopper
 
@@ -139,7 +139,10 @@ KOnly
 SeparateKv
 ```
 
-Use these modes as a controlled scheduling ablation. For every mode, record:
+Use these modes as a controlled scheduling ablation. On B200 trtllm-gen
+the k_only mode returns wrong output; validate outputs before timing
+that arm. Measured fp8 on that generator was nearly flat (~1.05x). For
+every mode, record:
 
 - selected kernel and cubin;
 - K and V staging locations;
@@ -191,8 +194,13 @@ crushes the token-varying residual. Quantize the pre-bias residual and keep the
 fixed bias exact to make symmetric K8/V8 quality-admissible for the tested
 Qwen2.5-7B configurations.
 
-Benchmark the resulting cache representation as a separate kernel path.
-Include:
+This cache representation was benchmarked as a separate kernel path:
+1.69x K16/V8 kernel latency at 4K context, 1.11x at 32K, and a failed
+equal-memory serving gate (0.654x completed req/s, 2.056x p95 latency
+against frozen 1.20x/1.25x bounds; result commit 85fa7b2d,
+countersigned c82c5db9). The pre-bias kernel line is closed; pre-bias
+remains a documented capacity option (1.50x K16/V8 capacity) only,
+never the default. The benchmark covered:
 
 - pre-bias residual quantization;
 - exact bias storage;
@@ -231,8 +239,8 @@ fail the symmetric quality gate.
 
 ### Dispatch by operating point
 
-Choose among ordinary K8/V8, pre-bias K8/V8, block-scaled K8/V8, and K16/V8
-using:
+Choose among ordinary K8/V8 (biasless models), K16/V8 (the biased-key
+serving default), and block-scaled K8/V8 using:
 
 - model quality;
 - batch size;
@@ -241,6 +249,9 @@ using:
 - head dimension and GQA ratio;
 - kernel latency; and
 - admitted serving concurrency.
+
+Pre-bias K8/V8 is a documented capacity option only (1.50x K16/V8
+capacity), never the dispatch default; its kernel line is closed.
 
 ## Collect the profiler evidence
 
