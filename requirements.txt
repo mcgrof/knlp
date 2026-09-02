@@ -19,6 +19,7 @@ tokenizers
 tiktoken
 safetensors
 scikit-learn  # For incremental PCA in image tokenizers
+gymnasium  # Environment API for the rl/ scaffolding
 
 # Visualization & Monitoring
 matplotlib
