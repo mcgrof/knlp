@@ -1,0 +1,1015 @@
+From 4cad1285fb97b087a5bf83c9f358983b29d7b9fa Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Wed, 2 Sep 2026 12:40:40 -0700
+Subject: [PATCH] Add a headless --rl bridge for reinforcement learning
+
+Run the race physics without a window, GL context or audio device so
+an external learner can reset and step the game faster than real
+time. "etr --rl" reads one request per line on stdin (info, reset,
+step, quit) and answers one JSON object per line on stdout; the
+banner and every other message the game prints go to stderr.
+
+The step path feeds the same steering flip-flops the keyboard and
+joystick handlers set and then calls the unchanged CalcSteeringControls
+and CControl::UpdatePlayerPos, so a headless tick runs exactly the
+rendered game code minus drawing. Reset replays CLoading, CIntro (the
+start keyframe included) and CRacing::Enter at a fixed step, seeds
+the C library RNG, and restores every collectable item.
+
+Two static-initialisation hazards had to move: sf::RenderWindow and
+sf::Texture are GlResources, and merely constructing one opens the
+display, which SFML 3 turns into abort() when there is none. The
+window and each TTexture now hold a lazily created pointer, and the
+desktop-mode and joystick queries move from the CWinsys constructor
+into Init(), which the headless mode never calls. TTexture::Load is a
+no-op in headless mode. CControl gains a tree-contact event counter
+so a learner can see collisions.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ .gitignore        |  34 ++++
+ src/Makefile.am   |   2 +
+ src/etr_types.h   |   1 +
+ src/main.cpp      |  15 +-
+ src/physics.cpp   |   9 +-
+ src/physics.h     |   2 +
+ src/racing.cpp    |  58 ++++++
+ src/racing.h      |   3 +
+ src/rl_bridge.cpp | 461 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/rl_bridge.h   |  28 +++
+ src/textures.cpp  |  21 ++-
+ src/textures.h    |   5 +-
+ src/winsys.cpp    |  39 ++--
+ src/winsys.h      |  22 ++-
+ 14 files changed, 662 insertions(+), 38 deletions(-)
+ create mode 100644 .gitignore
+ create mode 100644 src/rl_bridge.cpp
+ create mode 100644 src/rl_bridge.h
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..609c63b
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,34 @@
++# build products (autotools regeneration and objects)
++*.o
++*.lo
++*.a
++.deps/
++.dirstamp
++/src/etr
++/config.log
++/config.status
++/etr_config.h
++/stamp-h1
++/Makefile
++/src/Makefile
++/build/Makefile
++/data/Makefile
++/resources/Makefile
++/autom4te.cache/
++/aclocal.m4
++/configure
++/Makefile.in
++/src/Makefile.in
++/build/Makefile.in
++/data/Makefile.in
++/resources/Makefile.in
++/etr_config.h.in~
++/compile
++/config.guess
++/config.sub
++/depcomp
++/install-sh
++/missing
++/libtool
++/m4/libtool.m4
++/m4/lt*.m4
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 2af2ff2..cfd1bdc 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -35,6 +35,7 @@ etr_SOURCES =		\
+ 	racing.cpp	\
+ 	regist.cpp	\
+ 	reset.cpp	\
++	rl_bridge.cpp	\
+ 	score.cpp	\
+ 	splash_screen.cpp \
+ 	spx.cpp		\
+@@ -86,6 +87,7 @@ noinst_HEADERS =	\
+ 	racing.h	\
+ 	regist.h	\
+ 	reset.h		\
++	rl_bridge.h	\
+ 	score.h		\
+ 	splash_screen.h	\
+ 	spx.h		\
+diff --git a/src/etr_types.h b/src/etr_types.h
+index b4e5a98..9487908 100644
+--- a/src/etr_types.h
++++ b/src/etr_types.h
+@@ -57,6 +57,7 @@ struct TGameData {
+ 	bool finish;
+ 	bool use_keyframe;
+ 	bool force_treemap;
++	bool headless;		// --rl: physics only, no window, textures or audio
+ 
+ 	// course and race params
+ 	bool mirrorred;
+diff --git a/src/main.cpp b/src/main.cpp
+index a2ec7a6..8854389 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -28,6 +28,7 @@ GNU General Public License for more details.
+ #include "tools.h"
+ #include "ogl_test.h"
+ #include "winsys.h"
++#include "rl_bridge.h"
+ #include <iostream>
+ #include <ctime>
+ #include <cstring>
+@@ -37,7 +38,11 @@ TGameData g_game;
+ void InitGame(int argc, char **argv) {
+ 	g_game.toolmode = NONE;
+ 	g_game.argument = 0;
+-	if (argc == 4) {
++	g_game.headless = false;
++	if (argc >= 2 && std::strcmp(argv[1], "--rl") == 0) {
++		g_game.headless = true;
++		g_game.argument = 100;
++	} else if (argc == 4) {
+ 		if (std::strcmp("--char", argv[1]) == 0)
+ 			g_game.argument = 4;
+ 		Tools.SetParameter(argv[2], argv[3]);
+@@ -62,12 +67,20 @@ void InitGame(int argc, char **argv) {
+ }
+ 
+ int main(int argc, char **argv) {
++	// Headless --rl: stdout is the protocol channel, so send everything
++	// the game prints (this banner included) to stderr instead.
++	std::streambuf* proto_out = nullptr;
++	if (argc >= 2 && std::strcmp(argv[1], "--rl") == 0)
++		proto_out = std::cout.rdbuf(std::cerr.rdbuf());
++
+ 	std::cout << "\n----------- Extreme Tux Racer " ETR_VERSION_STRING " ----------------";
+ 	std::cout << "\n----------- (C) 2010-2024 Extreme Tux Racer Team  --------\n\n";
+ 
+ 	std::srand(std::time(nullptr));
+ 	InitConfig();
+ 	InitGame(argc, argv);
++	if (g_game.headless)
++		return RunRlBridge(proto_out);
+ 	Winsys.Init();
+ 	InitOpenglExtensions();
+ 
+diff --git a/src/physics.cpp b/src/physics.cpp
+index 841a22f..a7dd143 100644
+--- a/src/physics.cpp
++++ b/src/physics.cpp
+@@ -43,6 +43,8 @@ CControl::CControl() :
+ 	orientation_initialized = false;
+ 	cairborne = false;
+ 	way = 0.0;
++	collisions = 0;
++	colliding = false;
+ 	front_flip = false;
+ 	back_flip = false;
+ 	roll_left = false;
+@@ -87,6 +89,8 @@ void CControl::Init() {
+ 	cdirection = init_vel;
+ 	cairborne = false;
+ 	way = 0.0;
++	collisions = 0;
++	colliding = false;
+ 
+ 	// tricks
+ 	front_flip = false;
+@@ -155,7 +159,10 @@ bool CControl::CheckTreeCollisions(const TVector3d& pos, TVector3d *tree_loc) co
+ void CControl::AdjustTreeCollision(const TVector3d& pos, TVector3d *vel) const {
+ 	TVector3d treeLoc;
+ 
+-	if (CheckTreeCollisions(pos, &treeLoc)) {
++	bool hit = CheckTreeCollisions(pos, &treeLoc);
++	if (hit && !colliding) collisions++;
++	colliding = hit;
++	if (hit) {
+ 		TVector3d treeNml(
+ 		    pos.x - treeLoc.x,
+ 		    0,
+diff --git a/src/physics.h b/src/physics.h
+index a42c5d8..78ace9e 100644
+--- a/src/physics.h
++++ b/src/physics.h
+@@ -123,6 +123,8 @@ public:
+ 	double way;
+ 
+ 	TVector3d plane_nml;
++	mutable int collisions;	// tree contact events since Init(), for the --rl bridge
++	mutable bool colliding;	// currently in contact with a tree
+ 
+ 	// steering:
+ 	double turn_fact;
+diff --git a/src/racing.cpp b/src/racing.cpp
+index a26a69c..58d4cca 100644
+--- a/src/racing.cpp
++++ b/src/racing.cpp
+@@ -416,3 +416,61 @@ void CRacing::Exit() {
+ 	Sound.HaltAll();
+ 	break_track_marks();
+ }
++
++// ====================================================================
++//			headless (--rl) entry points
++// ====================================================================
++// These mirror Enter() and Loop() minus everything that needs a
++// window, a GL context or an audio device, so a headless step runs the
++// exact steering and physics code the rendered game runs.
++
++void CRacing::HeadlessEnter() {
++	CControl *ctrl = g_game.player->ctrl;
++
++	ctrl->turn_fact = 0.0;
++	ctrl->turn_animation = 0.0;
++	ctrl->is_braking = false;
++	ctrl->is_paddling = false;
++	ctrl->jumping = false;
++	ctrl->jump_charging = false;
++
++	key_paddling = false;
++	key_braking = false;
++	left_turn = false;
++	right_turn = false;
++	key_charging = false;
++	trick_modifier = false;
++	stick_paddling = false;
++	stick_braking = false;
++	stick_turn = false;
++	stick_turnfact = 0.0;
++
++	ctrl->Init();
++	g_game.raceaborted = false;
++	g_game.finish = false;
++}
++
++void CRacing::HeadlessStep(float turn, bool brake, bool paddle, bool jump, float time_step) {
++	CControl *ctrl = g_game.player->ctrl;
++
++	// Feed the same flip-flops the keyboard/joystick handlers set.
++	stick_turn = (turn != 0.0f);
++	stick_turnfact = clamp(-1.0f, turn, 1.0f);
++	left_turn = false;
++	right_turn = false;
++	key_paddling = paddle;
++	key_braking = brake;
++	key_charging = jump;
++
++	double ycoord = Course.FindYCoord(ctrl->cpos.x, ctrl->cpos.z);
++	bool airborne = (bool)(ctrl->cpos.y > (ycoord + JUMP_MAX_START_HEIGHT));
++
++	CalcTrickControls(ctrl, time_step, airborne);
++	if (!g_game.finish) CalcSteeringControls(ctrl, time_step);
++	else CalcFinishControls(ctrl, time_step, airborne);
++
++	ctrl->UpdatePlayerPos(time_step);
++
++	UpdateWind(time_step);
++	if (g_game.finish == false) g_game.time += time_step;
++}
+diff --git a/src/racing.h b/src/racing.h
+index 903c014..553d397 100644
+--- a/src/racing.h
++++ b/src/racing.h
+@@ -29,6 +29,9 @@ class CRacing : public State {
+ 	void Jbutt(int button, bool pressed);
+ 	void Exit();
+ public:
++	// --rl bridge: same control and physics path as Loop(), no rendering.
++	void HeadlessEnter();
++	void HeadlessStep(float turn, bool brake, bool paddle, bool jump, float time_step);
+ };
+ 
+ extern CRacing Racing;
+diff --git a/src/rl_bridge.cpp b/src/rl_bridge.cpp
+new file mode 100644
+index 0000000..0b665b6
+--- /dev/null
++++ b/src/rl_bridge.cpp
+@@ -0,0 +1,461 @@
++/* --------------------------------------------------------------------
++EXTREME TUXRACER
++
++Headless reinforcement-learning bridge (--rl).
++
++Drives the race physics without rendering so an external learner can
++reset and step the game faster than real time. The wire protocol is
++one request per line on stdin and one JSON object per line on stdout:
++
++  info
++  reset seed=<u32> course=<dir> [group=default] [wind=0] [light=0]
++        [mirror=0] [dt=0.016667]
++  step turn=<-1..1> brake=<0|1> paddle=<0|1> jump=<0|1>
++       [ticks=1] [dt=0.016667]
++  quit
++
++Everything the game normally prints to stdout is redirected to
++stderr so stdout carries only protocol replies.
++
++This program is free software; you can redistribute it and/or
++modify it under the terms of the GNU General Public License
++as published by the Free Software Foundation; either version 2
++of the License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++---------------------------------------------------------------------*/
++
++#ifdef HAVE_CONFIG_H
++#include <etr_config.h>
++#endif
++
++#include "rl_bridge.h"
++#include "bh.h"
++#include "course.h"
++#include "env.h"
++#include "game_ctrl.h"
++#include "keyframe.h"
++#include "particles.h"
++#include "physics.h"
++#include "racing.h"
++#include "tux.h"
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <iomanip>
++#include <iostream>
++#include <map>
++#include <sstream>
++#include <string>
++#include <vector>
++
++namespace {
++
++const float RL_DEFAULT_DT = 1.0f / 60.0f;
++const int RL_MAX_TICKS = 100000;
++const std::size_t RL_NEAREST = 4;
++
++// Forward terrain probe fan, in course coordinates (forward is -z).
++const double PROBE_AHEAD[] = {3.0, 6.0, 12.0, 24.0};
++const double PROBE_SIDE[] = {-6.0, -3.0, 0.0, 3.0, 6.0};
++
++struct RlState {
++	bool loaded;
++	bool have_course;
++	long tick;
++	float dt;
++	std::string group;
++	std::string dir;
++	RlState() : loaded(false), have_course(false), tick(0), dt(RL_DEFAULT_DT) {}
++};
++
++RlState rl;
++
++typedef std::map<std::string, std::string> Args;
++
++double ArgF(const Args& a, const char* key, double def) {
++	Args::const_iterator it = a.find(key);
++	if (it == a.end() || it->second.empty()) return def;
++	return std::atof(it->second.c_str());
++}
++
++long ArgI(const Args& a, const char* key, long def) {
++	Args::const_iterator it = a.find(key);
++	if (it == a.end() || it->second.empty()) return def;
++	return std::atol(it->second.c_str());
++}
++
++std::string ArgS(const Args& a, const char* key, const std::string& def) {
++	Args::const_iterator it = a.find(key);
++	if (it == a.end()) return def;
++	return it->second;
++}
++
++std::string JsonStr(const std::string& s) {
++	std::string out = "\"";
++	for (std::size_t i = 0; i < s.size(); i++) {
++		char c = s[i];
++		if (c == '"' || c == '\\') { out += '\\'; out += c; }
++		else if (c == '\n') out += "\\n";
++		else if ((unsigned char)c < 0x20) out += ' ';
++		else out += c;
++	}
++	return out + "\"";
++}
++
++class Json {
++	std::ostringstream os;
++	bool first;
++public:
++	Json() : first(true) { os << std::setprecision(12); os << '{'; }
++	void Key(const char* k) {
++		if (!first) os << ',';
++		first = false;
++		os << '"' << k << "\":";
++	}
++	Json& Num(const char* k, double v) {
++		Key(k);
++		if (std::isfinite(v)) os << v; else os << "null";
++		return *this;
++	}
++	Json& Int(const char* k, long v) { Key(k); os << v; return *this; }
++	Json& Bool(const char* k, bool v) { Key(k); os << (v ? "true" : "false"); return *this; }
++	Json& Str(const char* k, const std::string& v) { Key(k); os << JsonStr(v); return *this; }
++	Json& Raw(const char* k, const std::string& v) { Key(k); os << v; return *this; }
++	std::string Done() { os << '}'; return os.str(); }
++};
++
++std::string Vec3(const TVector3d& v) {
++	std::ostringstream os;
++	os << std::setprecision(12) << '[' << v.x << ',' << v.y << ',' << v.z << ']';
++	return os.str();
++}
++
++std::string Nums(const std::vector<double>& v) {
++	std::ostringstream os;
++	os << std::setprecision(12) << '[';
++	for (std::size_t i = 0; i < v.size(); i++) {
++		if (i) os << ',';
++		os << v[i];
++	}
++	os << ']';
++	return os.str();
++}
++
++std::string Rows(const std::vector<std::vector<double> >& rows) {
++	std::string out = "[";
++	for (std::size_t i = 0; i < rows.size(); i++) {
++		if (i) out += ',';
++		out += Nums(rows[i]);
++	}
++	return out + "]";
++}
++
++std::string Error(const std::string& msg) {
++	Json j;
++	j.Bool("ok", false).Str("error", msg);
++	return j.Done();
++}
++
++bool LoadStaticData(std::string& err) {
++	if (rl.loaded) return true;
++	param.perf_level = 1;		// no particles; they are visual only
++	Course.MakeStandardPolyhedrons();
++	if (!Char.LoadCharacterList()) { err = "could not load characters"; return false; }
++	Course.LoadObjectTypes();
++	if (!Course.LoadTerrainTypes()) { err = "could not load terrain types"; return false; }
++	if (!Env.LoadEnvironmentList()) { err = "could not load environment list"; return false; }
++	if (!Course.LoadCourseList()) { err = "could not load course list"; return false; }
++	Players.LoadPlayers();
++	Players.AllocControl(0);
++	g_game.player = Players.GetPlayer(0);
++	g_game.character = nullptr;
++	for (std::size_t i = 0; i < Char.CharList.size(); i++) {
++		if (Char.CharList[i].shape != nullptr) {
++			g_game.character = &Char.CharList[i];
++			break;
++		}
++	}
++	if (g_game.character == nullptr) { err = "no character shape loaded"; return false; }
++	rl.loaded = true;
++	return true;
++}
++
++bool CourseFinished() {
++	const CControl* ctrl = g_game.player->ctrl;
++	return g_game.finish || (-ctrl->cpos.z >= Course.GetPlayDimensions().y);
++}
++
++double ProbeFriction(double x, double z) {
++	static std::vector<double> w;
++	if (w.size() != Course.TerrList.size()) w.resize(Course.TerrList.size());
++	Course.GetSurfaceType(x, z, &w[0]);
++	double f = 0.0;
++	for (std::size_t i = 0; i < Course.TerrList.size(); i++)
++		f += w[i] * Course.TerrList[i].friction;
++	return f;
++}
++
++std::string Observation(bool done) {
++	const CControl* ctrl = g_game.player->ctrl;
++	const TVector2d& size = Course.GetDimensions();
++	const TVector2d& play = Course.GetPlayDimensions();
++
++	// Terrain height (relative to the player) and friction on a fixed
++	// forward fan, clamped to the course rectangle.
++	std::vector<double> heights, fricts;
++	for (std::size_t a = 0; a < sizeof(PROBE_AHEAD) / sizeof(PROBE_AHEAD[0]); a++) {
++		for (std::size_t s = 0; s < sizeof(PROBE_SIDE) / sizeof(PROBE_SIDE[0]); s++) {
++			double px = clamp(0.0, ctrl->cpos.x + PROBE_SIDE[s], size.x);
++			double pz = clamp(-size.y, ctrl->cpos.z - PROBE_AHEAD[a], 0.0);
++			heights.push_back(Course.FindYCoord(px, pz) - ctrl->cpos.y);
++			fricts.push_back(ProbeFriction(px, pz));
++		}
++	}
++
++	// Nearest collidable objects (trees) ahead of or beside the player.
++	std::vector<std::pair<double, std::size_t> > order;
++	for (std::size_t i = 0; i < Course.CollArr.size(); i++) {
++		double dx = Course.CollArr[i].pt.x - ctrl->cpos.x;
++		double dz = Course.CollArr[i].pt.z - ctrl->cpos.z;
++		if (dz > 4.0) continue;		// already behind us
++		order.push_back(std::make_pair(dx * dx + dz * dz, i));
++	}
++	std::size_t keep = std::min(RL_NEAREST, order.size());
++	std::partial_sort(order.begin(), order.begin() + keep, order.end());
++	std::vector<std::vector<double> > trees;
++	for (std::size_t k = 0; k < keep; k++) {
++		const TCollidable& t = Course.CollArr[order[k].second];
++		std::vector<double> row;
++		row.push_back(t.pt.x - ctrl->cpos.x);
++		row.push_back(t.pt.z - ctrl->cpos.z);
++		row.push_back(t.diam);
++		trees.push_back(row);
++	}
++
++	// Nearest collectable items still on the course.
++	order.clear();
++	for (std::size_t i = 0; i < Course.NocollArr.size(); i++) {
++		if (Course.NocollArr[i].collectable != 1) continue;
++		double dx = Course.NocollArr[i].pt.x - ctrl->cpos.x;
++		double dz = Course.NocollArr[i].pt.z - ctrl->cpos.z;
++		if (dz > 4.0) continue;
++		order.push_back(std::make_pair(dx * dx + dz * dz, i));
++	}
++	keep = std::min(RL_NEAREST, order.size());
++	std::partial_sort(order.begin(), order.begin() + keep, order.end());
++	std::vector<std::vector<double> > items;
++	for (std::size_t k = 0; k < keep; k++) {
++		const TItem& t = Course.NocollArr[order[k].second];
++		std::vector<double> row;
++		row.push_back(t.pt.x - ctrl->cpos.x);
++		row.push_back(t.pt.z - ctrl->cpos.z);
++		items.push_back(row);
++	}
++
++	int remaining = 0;
++	for (std::size_t i = 0; i < Course.NocollArr.size(); i++)
++		if (Course.NocollArr[i].collectable == 1) remaining++;
++
++	TPlane plane = Course.GetLocalCoursePlane(ctrl->cpos);
++
++	Json j;
++	j.Bool("ok", true)
++	.Int("tick", rl.tick)
++	.Num("time", g_game.time)
++	.Raw("pos", Vec3(ctrl->cpos))
++	.Raw("vel", Vec3(ctrl->cvel))
++	.Num("speed", ctrl->cvel.Length())
++	.Num("way", ctrl->way)
++	.Num("progress", -ctrl->cpos.z)
++	.Int("herring", g_game.herring)
++	.Int("items_left", remaining)
++	.Int("collisions", ctrl->collisions)
++	.Bool("airborne", ctrl->cairborne)
++	.Bool("braking", ctrl->is_braking)
++	.Bool("paddling", ctrl->is_paddling)
++	.Bool("jumping", ctrl->jumping)
++	.Num("turn", ctrl->turn_fact)
++	.Num("friction", ProbeFriction(ctrl->cpos.x, ctrl->cpos.z))
++	.Raw("nml", Vec3(plane.nml))
++	.Bool("finish", g_game.finish)
++	.Bool("done", done)
++	.Raw("size", "[" + std::to_string(size.x) + "," + std::to_string(size.y) + "]")
++	.Raw("play", "[" + std::to_string(play.x) + "," + std::to_string(play.y) + "]")
++	.Raw("probe_h", Nums(heights))
++	.Raw("probe_f", Nums(fricts))
++	.Raw("trees", Rows(trees))
++	.Raw("items", Rows(items));
++	return j.Done();
++}
++
++std::string DoInfo() {
++	std::string err;
++	if (!LoadStaticData(err)) return Error(err);
++	std::string courses = "[";
++	bool first = true;
++	for (std::unordered_map<std::string, CCourseList>::iterator g = Course.CourseLists.begin();
++	        g != Course.CourseLists.end(); ++g) {
++		for (std::size_t i = 0; i < g->second.size(); i++) {
++			const TCourse& c = g->second[i];
++			Json cj;
++			cj.Str("group", g->first)
++			.Str("dir", c.dir)
++			.Str("name", c.name.toAnsiString())
++			.Num("width", c.size.x)
++			.Num("length", c.size.y)
++			.Num("play_width", c.play_size.x)
++			.Num("play_length", c.play_size.y)
++			.Num("start_x", c.start.x)
++			.Num("start_z", -c.start.y)
++			.Bool("use_keyframe", c.use_keyframe);
++			if (!first) courses += ',';
++			first = false;
++			courses += cj.Done();
++		}
++	}
++	courses += "]";
++	Json j;
++	j.Bool("ok", true)
++	.Str("version", ETR_VERSION_STRING)
++	.Str("character", g_game.character->name)
++	.Str("data_dir", param.data_dir)
++	.Num("default_dt", RL_DEFAULT_DT)
++	.Raw("courses", courses);
++	return j.Done();
++}
++
++std::string DoReset(const Args& a) {
++	std::string err;
++	if (!LoadStaticData(err)) return Error(err);
++
++	unsigned seed = (unsigned)ArgI(a, "seed", 0);
++	std::string group = ArgS(a, "group", "default");
++	std::string dir = ArgS(a, "course", "bunny_hill");
++	int wind = (int)ArgI(a, "wind", 0);
++	std::size_t light = (std::size_t)ArgI(a, "light", 0);
++	bool mirror = ArgI(a, "mirror", 0) != 0;
++	rl.dt = (float)ArgF(a, "dt", RL_DEFAULT_DT);
++	if (rl.dt <= 0.0f || rl.dt > 0.1f) return Error("dt must be in (0, 0.1]");
++
++	std::unordered_map<std::string, CCourseList>::iterator g = Course.CourseLists.find(group);
++	if (g == Course.CourseLists.end()) return Error("unknown course group: " + group);
++	TCourse* course = nullptr;
++	for (std::size_t i = 0; i < g->second.size(); i++)
++		if (g->second[i].dir == dir) course = &g->second[i];
++	if (course == nullptr) return Error("unknown course: " + group + "/" + dir);
++
++	std::srand(seed);
++	Course.currentCourseList = &g->second;
++	g_game.course = course;
++	g_game.cup = nullptr;
++	g_game.race = nullptr;
++	g_game.game_type = PRACTICING;
++	g_game.mirrorred = mirror;
++	g_game.light_id = light;
++	g_game.snow_id = 0;		// snow is a particle effect; physics is unaffected
++	g_game.wind_id = wind;
++	g_game.theme_id = course->music_theme;
++	g_game.force_treemap = false;
++
++	if (!Course.LoadCourse(course)) return Error("could not load course " + dir);
++	g_game.location_id = Course.GetEnv();
++
++	// CIntro::Enter, minus the camera, snow and music.
++	CControl* ctrl = g_game.player->ctrl;
++	const TVector2d& start_pt = Course.GetStartPoint();
++	ctrl->orientation_initialized = false;
++	ctrl->view_init = false;
++	ctrl->cpos.x = start_pt.x;
++	ctrl->cpos.z = start_pt.y;
++
++	CKeyframe* startframe = g_game.character->GetKeyframe(START);
++	if (startframe->loaded)
++		startframe->Init(ctrl->cpos, -0.05, g_game.character->shape);
++
++	g_game.herring = 0;
++	g_game.score = 0;
++	g_game.time = 0.f;
++	g_game.race_result = -1;
++	g_game.raceaborted = false;
++	ctrl->Init();
++	ctrl->cvel = TVector3d(0, 0, 0);
++	for (std::size_t i = 0; i < Course.NocollArr.size(); i++)
++		if (Course.NocollArr[i].collectable != -1)
++			Course.NocollArr[i].collectable = 1;
++	InitWind();
++
++	// CIntro::Loop: play the start animation at the fixed step so the
++	// player ends up where the rendered game puts them.
++	if (startframe->loaded) {
++		int guard = 0;
++		while (startframe->active && guard++ < 10000)
++			startframe->Update(rl.dt);
++	}
++
++	Racing.HeadlessEnter();
++	rl.tick = 0;
++	rl.have_course = true;
++	rl.group = group;
++	rl.dir = dir;
++	return Observation(CourseFinished());
++}
++
++std::string DoStep(const Args& a) {
++	if (!rl.have_course) return Error("reset first");
++	float turn = (float)ArgF(a, "turn", 0.0);
++	bool brake = ArgI(a, "brake", 0) != 0;
++	bool paddle = ArgI(a, "paddle", 0) != 0;
++	bool jump = ArgI(a, "jump", 0) != 0;
++	long ticks = ArgI(a, "ticks", 1);
++	float dt = (float)ArgF(a, "dt", rl.dt);
++	if (ticks < 1 || ticks > RL_MAX_TICKS) return Error("ticks out of range");
++	if (dt <= 0.0f || dt > 0.1f) return Error("dt must be in (0, 0.1]");
++	if (!std::isfinite(turn)) return Error("turn must be finite");
++
++	bool done = CourseFinished();
++	for (long i = 0; i < ticks && !done; i++) {
++		Racing.HeadlessStep(turn, brake, paddle, jump, dt);
++		rl.tick++;
++		done = CourseFinished();
++	}
++	return Observation(done);
++}
++
++bool ParseLine(const std::string& line, std::string& cmd, Args& args) {
++	std::istringstream is(line);
++	if (!(is >> cmd)) return false;
++	std::string tok;
++	while (is >> tok) {
++		std::string::size_type eq = tok.find('=');
++		if (eq == std::string::npos) args[tok] = "1";
++		else args[tok.substr(0, eq)] = tok.substr(eq + 1);
++	}
++	return true;
++}
++
++} // namespace
++
++int RunRlBridge(std::streambuf* proto_out) {
++	std::ostream proto(proto_out);
++	proto << std::setprecision(12);
++
++	std::string line;
++	while (std::getline(std::cin, line)) {
++		std::string cmd;
++		Args args;
++		if (!ParseLine(line, cmd, args)) continue;
++		std::string reply;
++		if (cmd == "info") reply = DoInfo();
++		else if (cmd == "reset") reply = DoReset(args);
++		else if (cmd == "step") reply = DoStep(args);
++		else if (cmd == "quit") break;
++		else reply = Error("unknown command: " + cmd);
++		proto << reply << '\n';
++		proto.flush();
++	}
++	return 0;
++}
+diff --git a/src/rl_bridge.h b/src/rl_bridge.h
+new file mode 100644
+index 0000000..e76d26c
+--- /dev/null
++++ b/src/rl_bridge.h
+@@ -0,0 +1,28 @@
++/* --------------------------------------------------------------------
++EXTREME TUXRACER
++
++Headless reinforcement-learning bridge (--rl).
++
++This program is free software; you can redistribute it and/or
++modify it under the terms of the GNU General Public License
++as published by the Free Software Foundation; either version 2
++of the License, or (at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++---------------------------------------------------------------------*/
++
++#ifndef RL_BRIDGE_H
++#define RL_BRIDGE_H
++
++#include <streambuf>
++
++// Run the physics-only bridge: read one request per line on stdin,
++// write one JSON object per line to proto_out (the real stdout, which
++// main() detached from std::cout). Never creates a window, GL context
++// or audio device. Returns the process exit code.
++int RunRlBridge(std::streambuf* proto_out);
++
++#endif
+diff --git a/src/textures.cpp b/src/textures.cpp
+index 498759d..c6129e9 100644
+--- a/src/textures.cpp
++++ b/src/textures.cpp
+@@ -40,9 +40,11 @@ static const GLshort fullsize_texture[] = {
+ // --------------------------------------------------------------------
+ 
+ bool TTexture::Load(const std::string& filename, bool repeatable) {
+-	texture.setSmooth(true);
+-	texture.setRepeated(repeatable);
+-	return texture.loadFromFile(filename);
++	if (g_game.headless) return true;	// no GL context; geometry only
++	if (!texture) texture.reset(new sf::Texture());
++	texture->setSmooth(true);
++	texture->setRepeated(repeatable);
++	return texture->loadFromFile(filename);
+ }
+ 
+ bool TTexture::Load(const std::string& dir, const std::string& filename, bool repeatable) {
+@@ -50,7 +52,7 @@ bool TTexture::Load(const std::string& dir, const std::string& filename, bool re
+ }
+ 
+ void TTexture::Bind() {
+-	sf::Texture::bind(&texture);
++	sf::Texture::bind(texture.get());
+ }
+ 
+ void TTexture::Draw() {
+@@ -151,15 +153,16 @@ void TTexture::Draw(int x, int y, float width, float height) {
+ }
+ 
+ void TTexture::DrawFrame(int x, int y, int w, int h, int frame, const sf::Color& col) {
+-	if (w < 1) w = texture.getSize().x;
+-	if (h < 1) h = texture.getSize().y;
++	if (!texture) return;
++	if (w < 1) w = texture->getSize().x;
++	if (h < 1) h = texture->getSize().y;
+ 
+ 	if (frame > 0)
+ 		DrawFrameX(x - frame, y - frame, w + 2 * frame, h + 2 * frame, frame, colTransp, col, 1.f);
+ 
+-	sf::Sprite temp(texture);
++	sf::Sprite temp(*texture);
+ 	temp.setPosition(sf::Vector2f(x, y));
+-	temp.setScale({(float) w / (float) texture.getSize().x, (float) h / (float) texture.getSize().y});
++	temp.setScale({(float) w / (float) texture->getSize().x, (float) h / (float) texture->getSize().y});
+ 	Winsys.draw(temp);
+ }
+ 
+@@ -210,7 +213,7 @@ TTexture* CTexture::GetTexture(std::size_t idx) const {
+ }
+ 
+ const sf::Texture& CTexture::GetSFTexture(std::size_t idx) const {
+-	return CommonTex[idx]->texture;
++	return *CommonTex[idx]->texture;
+ }
+ 
+ bool CTexture::BindTex(std::size_t idx) {
+diff --git a/src/textures.h b/src/textures.h
+index 6c806c5..9270353 100644
+--- a/src/textures.h
++++ b/src/textures.h
+@@ -20,6 +20,7 @@ GNU General Public License for more details.
+ 
+ #include "bh.h"
+ #include <vector>
++#include <memory>
+ 
+ #define TEXLOGO 0
+ #define SNOW_START 1
+@@ -62,7 +63,9 @@ GNU General Public License for more details.
+ // --------------------------------------------------------------------
+ 
+ class TTexture {
+-	sf::Texture texture;
++	// Allocated by Load(): sf::Texture is a GlResource and constructing
++	// one opens the display, which the headless --rl mode never does.
++	std::unique_ptr<sf::Texture> texture;
+ 	friend class CTexture;
+ public:
+ 	bool Load(const std::string& filename, bool repeatable = false);
+diff --git a/src/winsys.cpp b/src/winsys.cpp
+index 3603541..36c18b8 100644
+--- a/src/winsys.cpp
++++ b/src/winsys.cpp
+@@ -38,15 +38,10 @@ CWinsys::CWinsys()
+ 	, sfmlRenders(false)
+ 	, auto_resolution(800, 600)
+ 	, scale(1.f) {
+-	for (unsigned int i = 0; i < sf::Joystick::Count; i++) {
+-		if (sf::Joystick::isConnected(i))
+-			numJoysticks++;
+-		else
+-			break;
+-	}
+-
+-	sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
+-	resolutions[0] = TScreenRes(desktopMode.size.x, desktopMode.size.y);
++	// The desktop mode and joysticks are queried in Init(): asking the
++	// display server from a static constructor aborts the process when
++	// there is no display, which the headless --rl mode relies on.
++	resolutions[0] = auto_resolution;
+ 	resolutions[1] = TScreenRes(800, 600);
+ 	resolutions[2] = TScreenRes(1024, 768);
+ 	resolutions[3] = TScreenRes(1152, 864);
+@@ -106,17 +101,18 @@ void CWinsys::SetupVideoMode(const TScreenRes& res) {
+ 	ctx.stencilBits = 8;
+ #endif
+ 
+-	window.create(sf::VideoMode({resolution.width, resolution.height}, bpp), WINDOW_TITLE, style, state, ctx);
++	if (!window) window.reset(new sf::RenderWindow());
++	window->create(sf::VideoMode({resolution.width, resolution.height}, bpp), WINDOW_TITLE, style, state, ctx);
+ 	if (param.framerate)
+-		window.setFramerateLimit(param.framerate);
++		window->setFramerateLimit(param.framerate);
+ #ifdef _WIN32
+ #ifdef UNICODE
+ 	HICON icon = LoadIcon(GetModuleHandle(NULL), (LPCWSTR)IDI_APPLICATION);
+ #else
+ 	HICON icon = LoadIcon(GetModuleHandle(NULL), (LPCSTR)IDI_APPLICATION);
+ #endif
+-	SendMessageW(window.getSystemHandle(), WM_SETICON, ICON_BIG, (LPARAM)icon);
+-	SendMessageW(window.getSystemHandle(), WM_SETICON, ICON_SMALL, (LPARAM)icon);
++	SendMessageW(window->getSystemHandle(), WM_SETICON, ICON_BIG, (LPARAM)icon);
++	SendMessageW(window->getSystemHandle(), WM_SETICON, ICON_SMALL, (LPARAM)icon);
+ #endif
+ 
+ 	scale = CalcScreenScale();
+@@ -132,18 +128,27 @@ void CWinsys::SetupVideoMode(int width, int height) {
+ }
+ 
+ void CWinsys::Init() {
++	for (unsigned int i = 0; i < sf::Joystick::Count; i++) {
++		if (sf::Joystick::isConnected(i))
++			numJoysticks++;
++		else
++			break;
++	}
++
++	sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
++	resolutions[0] = TScreenRes(desktopMode.size.x, desktopMode.size.y);
+ 	SetupVideoMode(GetResolution(param.res_type));
+ }
+ 
+ void CWinsys::KeyRepeat(bool repeat) {
+-	window.setKeyRepeatEnabled(repeat);
++	if (window) window->setKeyRepeatEnabled(repeat);
+ }
+ 
+ void CWinsys::Quit() {
+ 	Score.SaveHighScore();
+ 	SaveMessages();
+ 	if (g_game.argument < 1) Players.SavePlayers();
+-	window.close();
++	if (window) window->close();
+ }
+ 
+ void CWinsys::Terminate() {
+@@ -173,8 +178,8 @@ void CWinsys::PrintJoystickInfo() const {
+ }
+ 
+ void CWinsys::TakeScreenshot() const {
+-	sf::Texture tex(window.getSize());
+-	tex.update(window);
++	sf::Texture tex(window->getSize());
++	tex.update(*window);
+ 	sf::Image img = tex.copyToImage();
+ 
+ 	std::string path = param.screenshot_dir;
+diff --git a/src/winsys.h b/src/winsys.h
+index a31f2ff..e1ea456 100644
+--- a/src/winsys.h
++++ b/src/winsys.h
+@@ -19,6 +19,7 @@ GNU General Public License for more details.
+ #define WINSYS_H
+ 
+ #include "bh.h"
++#include <memory>
+ 
+ #define NUM_RESOLUTIONS 10
+ #define SCREENSHOT_FORMAT ".png"
+@@ -36,7 +37,10 @@ private:
+ 
+ 	// sfml window
+ 	bool sfmlRenders;
+-	sf::RenderWindow window;
++	// Created in SetupVideoMode(): an sf::RenderWindow is a GlResource,
++	// and constructing one statically opens the display, which the
++	// headless --rl mode must never do.
++	std::unique_ptr<sf::RenderWindow> window;
+ 	TScreenRes resolutions[NUM_RESOLUTIONS];
+ 	TScreenRes auto_resolution;
+ 	float CalcScreenScale() const;
+@@ -54,16 +58,16 @@ public:
+ 	void SetupVideoMode(int width, int height);
+ 	void KeyRepeat(bool repeat);
+ 	void PrintJoystickInfo() const;
+-	void ShowCursor(bool visible) { window.setMouseCursorVisible(visible); }
+-	void SwapBuffers() { window.display(); }
++	void ShowCursor(bool visible) { window->setMouseCursorVisible(visible); }
++	void SwapBuffers() { window->display(); }
+ 	void Quit();
+ 	void Terminate();
+-	void draw(const sf::Drawable& drawable, const sf::RenderStates& states = sf::RenderStates::Default) { window.draw(drawable, states); }
+-	void clear() { window.clear(colBackgr); }
+-	void beginSFML() { if (!sfmlRenders) window.pushGLStates(); sfmlRenders = true; }
+-	void endSFML() { if (sfmlRenders) window.popGLStates(); sfmlRenders = false; }
+-	std::optional<sf::Event> PollEvent() { return window.pollEvent(); }
+-	const sf::Window& getWindow() const { return window; }
++	void draw(const sf::Drawable& drawable, const sf::RenderStates& states = sf::RenderStates::Default) { window->draw(drawable, states); }
++	void clear() { window->clear(colBackgr); }
++	void beginSFML() { if (!sfmlRenders) window->pushGLStates(); sfmlRenders = true; }
++	void endSFML() { if (sfmlRenders) window->popGLStates(); sfmlRenders = false; }
++	std::optional<sf::Event> PollEvent() { return window->pollEvent(); }
++	const sf::Window& getWindow() const { return *window; }
+ 	void TakeScreenshot() const;
+ };
+ 
+-- 
+2.53.0
+
