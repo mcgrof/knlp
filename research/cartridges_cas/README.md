@@ -132,6 +132,110 @@ remaining distance is an objective-to-generation transfer problem, and the lever
 left are the paper's exact self-study distribution and its faithful batch-128 /
 linear-schedule optimizer regime.
 
+**The optimizer regime closes half of it.** Every number above came from a
+small-batch regime (effective batch about 8, peak learning rate 0.02, a few
+hundred steps). Training the same patient_02 cartridge at the paper's isolated
+recipe instead lifts it from 0.55 to **0.65 ± 0.05** (three evaluation runs of
+the same cartridge; the paper reports 0.736). No other single change moved
+this number, so the training regime is a major part of the gap, and the earlier
+"learning rate ruled out" and "training length ruled out" readings were
+small-batch artifacts: a peak rate of 0.1 diverges at batch 8 and is right at
+batch 128. The residual 0.09 is left to data scale (the paper synthesizes about
+40k self-study conversations per cartridge, this harness about 4.4k) and to the
+objective-to-generation transfer.
+
+### The frozen single-cartridge baseline
+
+The recipe that produced 0.65 is fixed, and everything downstream (the
+five-patient confirmation, the meta-initialization study below) starts from it.
+It is `scripts/cas_train_isolated.py` with:
+
+```
+PATIENT=patient_02 DATA_PARQUET=<self-study parquet> RECORDS_DIR=<records>
+KV_TOKENS=auto KV_DIVISOR=20     # p = ceil(doc_tokens / 20) = 632 for patient_02
+LR=0.1 GLOBAL_BS=128 EPOCHS=80   # ends at step 1020 for 4420 conversations
+STEPS=5000                       # the linear-decay horizon; EPOCHS stops first
+SCHEDULE=linear WARMUP_STEPS=200 WARMUP_MIN_LR=2e-3 ALPHA_F=0.02
+```
+
+The cartridge is initialized from the KV state of the first p tokens of the
+document under the library's system-prompt template (three header tokens, the
+content, then the `<|im_end|>\n` pair), with the library's one frozen
+attention-sink token in front. The trainer keeps `STEPS` and the schedule
+horizon separate (`SCHED_STEPS`) so a shorter run can stop early on an unchanged
+schedule. The library itself never stops at its step limit (it only saves
+there and runs on to `EPOCHS`), so the script ends the run itself once `STEPS`
+updates have been applied; a run that ends at `STEPS` therefore holds exactly
+that many updates. It saves the cartridge at chosen steps (`SAVE_EVERY`,
+`SAVE_AT`; one write per step, holding the state after exactly that many
+updates), writes the untrained start as `<patient>_init.pt` (`SAVE_INIT`), can
+start from any saved cartridge (`CART_INIT`), and prints the held-out
+distillation loss on a validation parquet as `VAL_CSV,<step>,<loss>` lines
+(`VAL_PARQUET`, `VAL_EVERY`). Cut that validation set with `cas_split_val.py`,
+which holds out whole prompt groups: the self-study parquets carry exact
+duplicate rows and further rows that share a prompt, and a split by row index
+leaks them into the held-out set. Evaluate with `cas_eval_table15.py` in
+cartridge mode and at least three runs; a single 20-question run swings by
+±0.05–0.10. On one H100 a step at global batch 128 takes about 33 s, so the
+full recipe is about nine hours per cartridge.
+
+## Meta-initialization: is part of a cartridge document-agnostic?
+
+Cartridge training is expensive and every cartridge starts from the same
+kind of place: the KV state of its own document's first p tokens. If a fixed
+part of what training does is the same for every document — the cartridge
+learning to condition the model toward the self-study answer distribution, say,
+rather than learning its document — that part could be fitted once on trained
+cartridges and applied to the start of every new one, saving a slice of every
+training run. The study measures the displacement of trained cartridges from
+their own starts, tests whether a shared component exists across documents, fits
+the simplest correction that predicts a held-out document's displacement, and
+then asks the only question that matters: does a cartridge that starts from the
+corrected state reach the baseline's held-out loss in fewer steps than one that
+starts from the plain state, by more than the run-to-run floor.
+
+The instruments are small pure-torch scripts that read the library's cartridge
+files directly:
+
+- `cas_split_val.py` splits one patient's self-study conversations into a
+  training set and a held-out validation set, so a loss curve on rows the
+  cartridge never trained on is available.
+- `cas_cart_init.py` loads, splits and saves cartridge files and provides the
+  `KVFromCartFile` initializer the trainer uses for `CART_INIT`.
+- `cas_make_init.py` builds the step-0 cartridges the paper ablates: the first
+  p tokens of the document, p random tokens of the document, random vocabulary
+  tokens, and random vectors. The random-token starts are rulers: a correction
+  that lifts them as well is document-agnostic in the strongest sense.
+- `cas_cart_loss.py` scores many cartridges on one fixed validation slice with
+  the trainer's own per-entry distillation loss, model loaded once, and marks
+  each target position as document-informative when the no-cartridge model's
+  most likely token disagrees with the teacher's, so a cartridge that only
+  learned the format can be told from one that learned the document.
+- `cas_kv_rope.py` removes and re-applies the rotary embedding on stored keys,
+  which are kept post-rotation at absolute slot positions. Its self-test
+  recovers the pre-rotation keys from a real cartridge to a cosine of 0.9997
+  (the bf16 floor) and detects a one-slot position error.
+- `cas_meta_init.py` is the study itself: `audit` reports where the displacement
+  lives (template slots, content slots, keys versus values, fast versus slow
+  rotary pairs) and the across-document shared fraction against a
+  random-rotation null; `fit` fits a nested family of corrections (a per-head
+  bias, a per-slot bias, a per-head gain, a per-head ridge-regularized affine
+  map) in a chosen key frame with positive-part James–Stein shrinkage, scoring
+  each by leave-one-document-out R² and selecting the simplest family within a
+  margin of the best; `apply` writes the corrected start for a new document,
+  with sign-flip, key-only, value-only and norm-matched single-donor controls.
+- `cas_curve_shift.py` compares the held-out loss curves: for each arm and seed,
+  how many steps earlier it reaches the levels the baseline reaches, paired by
+  seed, raw and with the step-0 offset removed, against the floor set by
+  same-seed replicate runs.
+
+Key displacements are compared in three frames: as stored, de-rotated to slot
+positions (the pre-rotation state), and de-rotated by the document's own p (the
+frame in which a query placed after the cartridge sees every slot, and the one
+in which a displacement driven by such queries is shared across documents of
+different lengths). The frame is chosen by leave-one-out score rather than
+assumed.
+
 ### Faithful `P_iso`
 
 The joint trainer trains all cartridges together with a per-sample
