@@ -38,6 +38,15 @@ Env:
   KEEP_LAST_N   step checkpoints to keep (default 1; the library only prunes
                 cache-epoch*.pt, so step checkpoints persist regardless)
   SEED          training seed (default 42)
+  CLIP_NORM     clip the cartridge gradient to this global L2 norm before
+                every Adam step (default 0 = off, the library's behaviour).
+                The library has no clipping knob; the clip is applied
+                in the optimizer's step() so nothing else in the loop moves
+  LOG_GRADNORM  print GRADNORM_CSV,<step>,<norm>,<clipped> once per
+                optimizer step (default on whenever CLIP_NORM is set):
+                <norm> is the pre-clip global L2 norm of the cartridge
+                gradient in fp32, <step> the number of updates already
+                applied, <clipped> 1 when the clip scaled the gradient
   NAME          run name under OUT_DIR/runs (default cas_iso_<PATIENT>)
   CART_INIT     initialize from a cartridge FILE instead of the document's
                 first p tokens (a saved checkpoint, or a meta-learned init);
@@ -68,6 +77,9 @@ import inspect
 import logging
 import os
 import sys
+import types
+
+import torch
 
 os.environ.setdefault(
     "CARTRIDGES_DIR", os.environ.get("CARTRIDGES_DIR", "/root/cartridges")
@@ -101,6 +113,8 @@ WARMUP_STEPS = int(os.environ.get("WARMUP_STEPS", "200"))
 WARMUP_MIN_LR = float(os.environ.get("WARMUP_MIN_LR", "2e-3"))
 ALPHA_F = float(os.environ.get("ALPHA_F", "0.02"))
 SEED = int(os.environ.get("SEED", "42"))
+CLIP_NORM = float(os.environ.get("CLIP_NORM", "0"))
+LOG_GRADNORM = os.environ.get("LOG_GRADNORM", "1" if CLIP_NORM > 0 else "0") == "1"
 NAME = os.environ.get("NAME", f"cas_iso_{PATIENT}")
 CART_INIT = os.environ.get("CART_INIT", "")
 SAVE_INIT = os.environ.get("SAVE_INIT", "1") not in ("0", "", "n", "no")
@@ -241,6 +255,38 @@ def _save_cache_once(config, cache, optimizer_step):
 
 _ct.save_cache = _save_cache_once
 
+# The library builds ``optim.Adam(cache.parameters(), ...)`` and calls
+# ``optimizer.step()`` straight after the last accumulated backward, with
+# no clipping in between. Clipping and the gradient-norm log are put in
+# the optimizer's step() itself, so the training loop is untouched and
+# a run with CLIP_NORM unset is bit-identical to one from before this
+# knob existed (the norm is only measured, never applied).
+
+
+class _ClippedAdam(torch.optim.Adam):
+    _n_steps = 0
+
+    def step(self, closure=None):
+        if CLIP_NORM > 0 or LOG_GRADNORM:
+            params = [p for g in self.param_groups for p in g["params"]]
+            grads = [p.grad for p in params if p.grad is not None]
+            norm = torch.norm(torch.stack([g.float().norm() for g in grads]))
+            clipped = 0
+            if CLIP_NORM > 0 and float(norm) > CLIP_NORM:
+                torch.nn.utils.clip_grad_norm_(params, CLIP_NORM)
+                clipped = 1
+            if LOG_GRADNORM:
+                print(
+                    f"GRADNORM_CSV,{_ClippedAdam._n_steps},{float(norm):.6g},{clipped}",
+                    flush=True,
+                )
+        _ClippedAdam._n_steps += 1
+        return super().step(closure)
+
+
+# train.py uses its ``optim`` import for optim.Adam only
+_ct.optim = types.SimpleNamespace(Adam=_ClippedAdam)
+
 # Print the held-out loss as a parseable line. The library only logs
 # "Eval loss - <x>" through its logger, without the step.
 _orig_eval_ppl = _ct.evaluate_perplexity
@@ -311,7 +357,8 @@ if __name__ == "__main__":
     print(
         f"[iso] {PATIENT} steps={STEPS} sched_steps={SCHED_STEPS} epochs={EPOCHS} "
         f"lr={LR} global_bs={GLOBAL_BS} seed={SEED} save_every={SAVE_EVERY} "
-        f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None}",
+        f"save_at={SAVE_AT} val_every={VAL_EVERY if VAL_PARQUET else None} "
+        f"clip_norm={CLIP_NORM or None}",
         flush=True,
     )
     try:
