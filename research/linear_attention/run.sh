@@ -104,4 +104,36 @@ if [ "$(jq_get phase_campaign)" = "True" ]; then
     --results-dir "$RESULTS_DIR"
 fi
 
+if [ "$(jq_get phase_rank_eval)" = "True" ]; then
+  RSEED=$(jq_get rank_seed)
+  RPF=$(jq_get rank_per_family)
+  RCTL=$(jq_get rank_controls)
+  RNORM=$(jq_get rank_norm)
+  RMAX=$(jq_get rank_max_tokens)
+  CKPT_DIR="${CKPT_DIR:-$OUT_DIR}"
+  REVAL="$OUT_DIR/rank-eval"
+  mkdir -p "$REVAL"
+  echo "== RANK EVAL (seed $RSEED, $RPF/family, norm $RNORM) =="
+  [ -f "$REVAL/episodes.jsonl" ] ||
+    run "$PYTHON" "$KNLP/scripts/accountability_bench.py" generate \
+      --seed "$RSEED" --per-family "$RPF" --controls "$RCTL" \
+      --out "$REVAL/episodes.jsonl"
+  for D in "$CKPT_DIR"/campaign-b*-seed*-*; do
+    [ -d "$D" ] || continue
+    NAME=$(basename "$D")
+    ARM=${NAME##*-}
+    [ -f "$D/$ARM.pt" ] || { echo "-- rank-eval $NAME: no checkpoint, skip"; continue; }
+    echo "-- rank-eval $NAME"
+    run "$PYTHON" "$HERE/rank_eval.py" --checkpoint "$D/$ARM.pt" \
+      --episodes "$REVAL/episodes.jsonl" --out-dir "$REVAL/$NAME" \
+      --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda
+    run "$PYTHON" "$KNLP/scripts/accountability_bench.py" score \
+      --episodes "$REVAL/episodes.jsonl" \
+      --predictions "$REVAL/$NAME/predictions.jsonl" \
+      --out "$REVAL/$NAME/score.json"
+  done
+  run "$PYTHON" "$HERE/rank_summary.py" --out-dir "$OUT_DIR" \
+    --results-dir "$RESULTS_DIR"
+fi
+
 echo MICRO_RUN_DONE

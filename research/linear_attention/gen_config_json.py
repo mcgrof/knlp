@@ -21,6 +21,12 @@ KEYS = {
     "CONFIG_MATCHED_MICRO_CAMPAIGN_BATCH": ("campaign_batch", int),
     "CONFIG_MATCHED_MICRO_CAMPAIGN_TOKEN_BUDGET": ("campaign_token_budget", int),
     "CONFIG_MATCHED_MICRO_CAMPAIGN_EVAL_EVERY": ("campaign_eval_every", int),
+    "CONFIG_MATCHED_MICRO_PHASE_RANK_EVAL": ("phase_rank_eval", bool),
+    "CONFIG_MATCHED_MICRO_RANK_SEED": ("rank_seed", int),
+    "CONFIG_MATCHED_MICRO_RANK_PER_FAMILY": ("rank_per_family", int),
+    "CONFIG_MATCHED_MICRO_RANK_CONTROLS": ("rank_controls", str),
+    "CONFIG_MATCHED_MICRO_RANK_NORM": ("rank_norm", str),
+    "CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS": ("rank_max_tokens", int),
 }
 
 
@@ -37,7 +43,7 @@ def parse(path):
         name, typ = KEYS[k]
         v = v.strip()
         if typ is str:
-            cfg[name] = v.strip('"')
+            cfg[name] = v.strip('"').replace('\\"', '"')
         elif typ is int:
             cfg[name] = int(v)
         elif typ is bool:
@@ -64,6 +70,12 @@ def main():
     cfg.setdefault("campaign_batch", 128)
     cfg.setdefault("campaign_token_budget", 40_000_000)
     cfg.setdefault("campaign_eval_every", 150)
+    cfg.setdefault("phase_rank_eval", False)
+    cfg.setdefault("rank_seed", 7)
+    cfg.setdefault("rank_per_family", 25)
+    cfg.setdefault("rank_controls", '{"filler_sentences": 2}')
+    cfg.setdefault("rank_norm", "mean")
+    cfg.setdefault("rank_max_tokens", 512)
     json.dump(cfg, open(a.out, "w"), indent=2)
     print(f"wrote {a.out}:")
     print(json.dumps(cfg, indent=2))
