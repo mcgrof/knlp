@@ -1,0 +1,17 @@
+# Accountability option-ranking eval over the matched-campaign
+# checkpoints: one deterministic episode set (8 families, shared by
+# every arm and seed), each checkpoint scored by log-probability
+# option ranking with per-arm audited semantics (hope re-runs its
+# prequential two-pass per sequence from a fresh fast state; titans
+# loads with assign=True), predictions scored by the benchmark's
+# certified scorer. Point CKPT_DIR at the directory holding the
+# campaign-b*-seed*-<arm> run directories. Forward-only; a single
+# GPU; the hope arms dominate wall-clock.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="attn gdn3 gdn7 titans hope"
+CONFIG_MATCHED_MICRO_PHASE_RANK_EVAL=y
+CONFIG_MATCHED_MICRO_RANK_SEED=7
+CONFIG_MATCHED_MICRO_RANK_PER_FAMILY=25
+CONFIG_MATCHED_MICRO_RANK_CONTROLS="{\"filler_sentences\": 2}"
+CONFIG_MATCHED_MICRO_RANK_NORM="mean"
+CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS=512

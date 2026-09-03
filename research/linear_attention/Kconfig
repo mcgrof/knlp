@@ -114,4 +114,51 @@ config MATCHED_MICRO_CAMPAIGN_EVAL_EVERY
 	  Validation uses a capped batch set, so this mainly trades
 	  curve resolution against wall-clock on the slowest arm.
 
+config MATCHED_MICRO_PHASE_RANK_EVAL
+	bool "Accountability option-ranking eval over saved checkpoints"
+	depends on MATCHED_MICRO
+	default n
+	help
+	  Generates one deterministic accountability-benchmark episode
+	  set (scripts/accountability_bench.py) and scores every
+	  campaign checkpoint found under CKPT_DIR by log-probability
+	  option ranking (rank_eval.py, with per-arm audited scoring
+	  semantics and a mandatory self-check), then scores predictions
+	  with the benchmark's certified scorer and tables the result
+	  (rank_summary). One shared episode set for all arms and seeds
+	  keeps the test identical for everyone.
+
+config MATCHED_MICRO_RANK_SEED
+	int "Episode-set base seed"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default 7
+
+config MATCHED_MICRO_RANK_PER_FAMILY
+	int "Episodes per benchmark family"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default 25
+
+config MATCHED_MICRO_RANK_CONTROLS
+	string "Benchmark control overrides (JSON)"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default "{\"filler_sentences\": 2}"
+	help
+	  Passed to the generator's --controls. The default trims the
+	  neutral filler so episodes fit the arms' trained 512-token
+	  context; queries that still exceed it are skipped identically
+	  for every arm and counted wrong by the scorer for everyone.
+
+config MATCHED_MICRO_RANK_NORM
+	string "Option ranking statistic (mean or sum)"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default "mean"
+	help
+	  mean = per-token log-probability (length-robust, the primary
+	  statistic); raw sums are recorded alongside either way.
+
+config MATCHED_MICRO_RANK_MAX_TOKENS
+	int "Prompt token cap (the trained context length)"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default 512
+
 endmenu
