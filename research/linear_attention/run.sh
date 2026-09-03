@@ -64,10 +64,15 @@ subset() {
 ARMS=$(subset "$ARMS" "${ARMS_FILTER:-}")
 mkdir -p "$OUT_DIR" "$RESULTS_DIR"
 
-if [ ! -f "$DATA_DIR/tokens_gpt2.npy" ]; then
-  echo "== PREPARE DATA ($TOKENS tokens -> $DATA_DIR) =="
-  run "$PYTHON" "$KNLP/scripts/matched_micro_train.py" prepare-data \
-    --data-dir "$DATA_DIR" --tokens "$TOKENS"
+# only the training phases consume the token stream; an eval-only
+# run must not spend half an hour tokenizing data it never reads
+if [ "$(jq_get phase_batch_probe)" = "True" ] ||
+  [ "$(jq_get phase_campaign)" = "True" ]; then
+  if [ ! -f "$DATA_DIR/tokens_gpt2.npy" ]; then
+    echo "== PREPARE DATA ($TOKENS tokens -> $DATA_DIR) =="
+    run "$PYTHON" "$KNLP/scripts/matched_micro_train.py" prepare-data \
+      --data-dir "$DATA_DIR" --tokens "$TOKENS"
+  fi
 fi
 
 if [ "$(jq_get phase_batch_probe)" = "True" ]; then
