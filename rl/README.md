@@ -49,7 +49,7 @@ libsfml-dev libglu1-mesa-dev`; the course data comes from the distribution's
 ## The v0 contract
 
 `rl/envs/etr_env.py` fixes the observation, action and reward. The observation
-is a 73-value vector in course coordinates: progress fraction, lateral offset
+is a 77-value vector in course coordinates: progress fraction, lateral offset
 from the centre, heading error, velocity components, terrain tilt, contact and
 control flags, a 4 x 5 fan of forward terrain heights and frictions, and the
 four nearest trees and items. The action is one of nine macro-actions
