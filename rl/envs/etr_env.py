@@ -7,7 +7,7 @@ visible diff rather than a tuning drift. Reward components are
 reported separately in ``info["reward_terms"]`` so reward hacking is
 visible in the logs.
 
-Observation (float32, ``OBS_DIM``):
+Observation (float32, ``OBS_DIM`` = 77):
     progress fraction, lateral offset from the course centre,
     heading error, forward/lateral/vertical velocity, speed,
     terrain normal tilt (x, z), airborne/braking/paddling flags,
