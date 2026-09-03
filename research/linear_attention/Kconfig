@@ -161,4 +161,19 @@ config MATCHED_MICRO_RANK_MAX_TOKENS
 	depends on MATCHED_MICRO_PHASE_RANK_EVAL
 	default 512
 
+config MATCHED_MICRO_RANK_SHARDS
+	int "Concurrent shards per checkpoint"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default 1
+	help
+	  Split each checkpoint's query set across this many concurrent
+	  processes on one GPU. Every query is scored independently from
+	  a fresh state, so sharding is exact rather than an
+	  approximation, and the shards' predictions are concatenated
+	  before the certified scorer runs. The Hope arm is host-bound
+	  and scores roughly one option per second per process, so its
+	  sweep is impractical unsharded; the fast arms finish in a
+	  minute either way. Size it by host CPU, not GPU memory (each
+	  process holds a ~51M-parameter model, about 1.3GB).
+
 endmenu

@@ -115,6 +115,7 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
   RCTL=$(jq_get rank_controls)
   RNORM=$(jq_get rank_norm)
   RMAX=$(jq_get rank_max_tokens)
+  RSHARDS=$(jq_get rank_shards)
   CKPT_DIR="${CKPT_DIR:-$OUT_DIR}"
   REVAL="$OUT_DIR/rank-eval"
   mkdir -p "$REVAL"
@@ -128,10 +129,29 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
     NAME=$(basename "$D")
     ARM=${NAME##*-}
     [ -f "$D/$ARM.pt" ] || { echo "-- rank-eval $NAME: no checkpoint, skip"; continue; }
-    echo "-- rank-eval $NAME"
-    run "$PYTHON" "$HERE/rank_eval.py" --checkpoint "$D/$ARM.pt" \
-      --episodes "$REVAL/episodes.jsonl" --out-dir "$REVAL/$NAME" \
-      --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda
+    echo "-- rank-eval $NAME ($RSHARDS shard(s))"
+    if [ "$RSHARDS" -le 1 ]; then
+      run "$PYTHON" "$HERE/rank_eval.py" --checkpoint "$D/$ARM.pt" \
+        --episodes "$REVAL/episodes.jsonl" --out-dir "$REVAL/$NAME" \
+        --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda
+    else
+      # every query is scored independently from a fresh state, so
+      # sharding the query set across processes is exact, not an
+      # approximation.  Hope is host-bound, so the parallelism is what
+      # makes a full sweep affordable.
+      for I in $(seq 0 $((RSHARDS - 1))); do
+        run "$PYTHON" "$HERE/rank_eval.py" --checkpoint "$D/$ARM.pt" \
+          --episodes "$REVAL/episodes.jsonl" \
+          --out-dir "$REVAL/$NAME/shard$I" \
+          --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda \
+          --num-shards "$RSHARDS" --shard "$I" &
+      done
+      wait
+      if [ "${DRY_RUN:-0}" != "1" ]; then
+        cat "$REVAL/$NAME"/shard*/predictions.jsonl > "$REVAL/$NAME/predictions.jsonl"
+        cat "$REVAL/$NAME"/shard*/raw_logprobs.jsonl > "$REVAL/$NAME/raw_logprobs.jsonl"
+      fi
+    fi
     run "$PYTHON" "$KNLP/scripts/accountability_bench.py" score \
       --episodes "$REVAL/episodes.jsonl" \
       --predictions "$REVAL/$NAME/predictions.jsonl" \
