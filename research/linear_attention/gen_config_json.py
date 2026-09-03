@@ -27,6 +27,7 @@ KEYS = {
     "CONFIG_MATCHED_MICRO_RANK_CONTROLS": ("rank_controls", str),
     "CONFIG_MATCHED_MICRO_RANK_NORM": ("rank_norm", str),
     "CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS": ("rank_max_tokens", int),
+    "CONFIG_MATCHED_MICRO_RANK_SHARDS": ("rank_shards", int),
 }
 
 
@@ -76,6 +77,7 @@ def main():
     cfg.setdefault("rank_controls", '{"filler_sentences": 2}')
     cfg.setdefault("rank_norm", "mean")
     cfg.setdefault("rank_max_tokens", 512)
+    cfg.setdefault("rank_shards", 1)
     json.dump(cfg, open(a.out, "w"), indent=2)
     print(f"wrote {a.out}:")
     print(json.dumps(cfg, indent=2))

@@ -135,7 +135,18 @@ def main():
     ap.add_argument("--norm", choices=("mean", "sum"), default="mean")
     ap.add_argument("--max-tokens", type=int, default=512)
     ap.add_argument("--self-check", action="store_true")
+    ap.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="split the query set across this many processes; every query "
+        "is scored independently from a fresh state, so a sharded run and "
+        "a serial one produce the same predictions",
+    )
+    ap.add_argument("--shard", type=int, default=0, help="this process's shard index")
     a = ap.parse_args()
+    if not 0 <= a.shard < a.num_shards:
+        raise SystemExit(f"shard {a.shard} outside 0..{a.num_shards - 1}")
 
     from transformers import AutoTokenizer
 
@@ -155,8 +166,12 @@ def main():
     preds, raw = [], []
     skipped = 0
     done = 0
+    seen = -1
     for ep in episodes:
         for q in ep["queries"]:
+            seen += 1
+            if seen % a.num_shards != a.shard:
+                continue
             prefix = f"{ep['context']}\nQ: {q['question']}\nA:"
             prefix_ids = tok(prefix).input_ids
             per_option = []
@@ -199,6 +214,8 @@ def main():
         contract=ck.get("contract"),
         norm=a.norm,
         max_tokens=a.max_tokens,
+        shard=a.shard,
+        num_shards=a.num_shards,
         queries_scored=done,
         queries_skipped_overlength=skipped,
         env=mmt.environment_manifest(),

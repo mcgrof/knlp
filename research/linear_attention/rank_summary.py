@@ -29,7 +29,19 @@ def main():
         if not m or not os.path.exists(spath):
             continue
         s = json.load(open(spath))
-        man = json.load(open(os.path.join(d, "manifest.json")))
+        mpath = os.path.join(d, "manifest.json")
+        if os.path.exists(mpath):
+            man = json.load(open(mpath))
+        else:  # sharded run: fold the shards' manifests into one
+            shards = [
+                json.load(open(p))
+                for p in sorted(glob.glob(os.path.join(d, "shard*", "manifest.json")))
+            ]
+            man = dict(shards[0]) if shards else {}
+            man["queries_skipped_overlength"] = sum(
+                x.get("queries_skipped_overlength", 0) for x in shards
+            )
+            man["queries_scored"] = sum(x.get("queries_scored", 0) for x in shards)
         rows.append(
             dict(
                 arm=m.group(3),
