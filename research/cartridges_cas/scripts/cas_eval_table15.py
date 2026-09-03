@@ -31,6 +31,8 @@ Env: MODE, PATIENTS (space-sep; default all 20), MAX_Q (default 20), RUNS
 co-load ALL patients' carts in one prefix and answer every patient's questions
 against it -- the interference measurement), CONCURRENCY (baselines, default
 32), OUT_JSON, DEVICE (cart mode), SINK_MAX (cart reconstruction),
+MAX_COMPLETION (completion cap in tokens, thinking included; default 2048,
+recorded in the output JSON -- every published number was scored at 2048),
 SAVE_RAW=1 (cart mode: dump every generation plus a tagged-vs-untagged
 accuracy breakdown to OUT_JSON.raw.json -- needed because a missing
 answer tag is NOT scored as wrong, it falls back to the last 300 chars,
@@ -74,7 +76,10 @@ SINK_MAX = int(os.environ.get("SINK_MAX", "4"))
 SAVE_RAW = os.environ.get("SAVE_RAW", "0") == "1"
 RAW_ROWS = []
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
-MAX_COMPLETION = 2048
+# Completion cap in tokens (thinking + answer). 2048 is the value every
+# published number here was scored at; raise it to see how many of the
+# tag-missing answers are the cap and not the model
+MAX_COMPLETION = int(os.environ.get("MAX_COMPLETION", "2048"))
 TEMPERATURE = 0.6
 
 # --- Table 15 (Appendix H), LongHealth row, verbatim -------------------------
@@ -309,7 +314,7 @@ def run_cart_mode(patients_data):
     def generate(cache, ids, seed):
         """Single-sequence sampling loop mirroring flex_generate (temperature-
         scaled multinomial, fp32 softmax); terminates on the model EOS set or
-        the 2048-token cap — same protocol as the vLLM arms."""
+        the MAX_COMPLETION cap — same protocol as the vLLM arms."""
         torch.manual_seed(seed)
         cache.clear()
         cur_ids = ids
@@ -449,7 +454,7 @@ def main():
 
     res = {
         "protocol": "CAS Table 15 (system+user verbatim), temp 0.6, thinking "
-        "on, max 2048, fuzzy option match (difflib), "
+        f"on, max {MAX_COMPLETION}, fuzzy option match (difflib), "
         f"runs={RUNS}; top-p/k: vLLM=model generation_config "
         "defaults, flex=plain temperature sampling (paper leaves "
         "them unspecified)",
@@ -457,6 +462,7 @@ def main():
         "model": MODEL,
         "patients": [p.patient_id for p in patients_data],
         "max_q": MAX_Q,
+        "max_completion": MAX_COMPLETION,
         "cart_dir": CART_DIR or None,
         "cart_collapse": os.environ.get("COLLAPSE", "0") == "1",
         "summary": aggregate(per_run),
