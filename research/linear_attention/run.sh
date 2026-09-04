@@ -119,6 +119,9 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
   RTAG=$(jq_get rank_tag)
   RNOUPD=""
   [ "$(jq_get rank_no_memory_update)" = "True" ] && RNOUPD="--no-memory-update"
+  [ "$(jq_get rank_no_context)" = "True" ] && RNOUPD="$RNOUPD --no-context"
+  RCHUNK=$(jq_get rank_chunk_path)
+  [ "$RCHUNK" != "0" ] && RNOUPD="$RNOUPD --chunk-path $RCHUNK"
   CKPT_DIR="${CKPT_DIR:-$OUT_DIR}"
   REVAL="$OUT_DIR/$RTAG"
   mkdir -p "$REVAL"

@@ -1,0 +1,18 @@
+# Control: does any arm actually read the episode?
+# Scores the same questions and options with the story text removed,
+# so the model sees only "Q: <question>\nA: <option>". An arm whose
+# accuracy survives this was never using the context, which would mean
+# the reference ranking measures how plausible each option looks on
+# its own rather than state tracking. Everything else matches the
+# reference run exactly, so the two are directly comparable.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="attn gdn3 gdn7 titans hope"
+CONFIG_MATCHED_MICRO_PHASE_RANK_EVAL=y
+CONFIG_MATCHED_MICRO_RANK_SEED=7
+CONFIG_MATCHED_MICRO_RANK_PER_FAMILY=25
+CONFIG_MATCHED_MICRO_RANK_CONTROLS="{\"filler_sentences\": 2}"
+CONFIG_MATCHED_MICRO_RANK_NORM="mean"
+CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS=512
+CONFIG_MATCHED_MICRO_RANK_TAG="rank-eval-nocontext"
+CONFIG_MATCHED_MICRO_RANK_NO_CONTEXT=y
+CONFIG_MATCHED_MICRO_RANK_SHARDS=8
