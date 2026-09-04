@@ -180,6 +180,52 @@ section {
   margin: 42px 0;
 }
 
+.use-cases {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.use-case {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.use-case.primary-use-case {
+  border-color: rgb(93 230 163 / 30%);
+  background: linear-gradient(145deg, rgb(93 230 163 / 8%), var(--panel));
+}
+
+.use-case h3 {
+  margin: 5px 0 8px;
+  font-size: 18px;
+}
+
+.use-case p:not(.label) {
+  margin: 0;
+  color: var(--muted);
+}
+
+.use-case a {
+  display: inline-block;
+  margin-top: 13px;
+  color: var(--cyan);
+  font: 11px var(--mono);
+  text-decoration: none;
+}
+
+.use-case a:hover {
+  text-decoration: underline;
+}
+
+.template-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: 2fr repeat(3, 1fr);
@@ -497,6 +543,7 @@ footer {
   }
 
   .metrics,
+  .use-cases,
   .workstreams {
     grid-template-columns: 1fr;
   }
