@@ -24,7 +24,7 @@ function environment() {
   };
 }
 
-test("landing page states both uses and the security boundary", async () => {
+test("landing page states all uses and the security boundary", async () => {
   const index = await readFile(
     new URL("../public/index.html", import.meta.url),
     "utf8",
@@ -32,14 +32,19 @@ test("landing page states both uses and the security boundary", async () => {
 
   assert.match(index, /Proactive security hygiene/);
   assert.match(index, /Personal OKR tracking/);
+  assert.match(index, /Open-source maintainer assistance/);
+  assert.match(index, /knlp R&amp;D plans to release an open-source project/);
+  assert.match(index, /review scope is not merge authority/);
   assert.match(index, /must immediately report suspected unauthorized/);
   assert.match(index, /does not monitor agents or deliver incident reports/);
 });
 
-test("published OKR examples match their source templates", async () => {
+test("published examples match their source templates", async () => {
   for (const name of [
     "personal-okr-profile.json",
     "personal-okr-events.jsonl",
+    "open-source-maintainer-profile.json",
+    "open-source-maintainer-events.jsonl",
   ]) {
     const source = await readFile(
       new URL(`../../examples/${name}`, import.meta.url),

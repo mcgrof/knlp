@@ -44,7 +44,7 @@ evidence, independent review, and direct human reporting. A skill can request
 that behavior, but it cannot enforce it; policy checks, durable reporting, and
 monitoring must operate outside the agents for stronger guarantees.
 
-## Two chore families
+## Three chore families
 
 Agent security is the primary motivation and has the non-deferrable reporting
 rule above. The same status machinery also supports an optional personal
@@ -52,11 +52,17 @@ Objectives and Key Results (OKR) tracker. An OKR profile turns each measurable
 key result into a workstream and appends evidence-linked check-ins with optional
 progress, performer, reviewer, and next-review fields.
 
+A third family supports open-source maintainers who use agents to triage assigned
+issues, draft pull-request reviews, coordinate overlapping work, and prepare
+human handoffs. The profile records each agent's authority because reading and
+recommending do not imply permission to comment, approve, merge, or change
+repository state.
+
 These families share a file format, not an operating policy. Security incidents
-do not wait for a dashboard update, while an OKR blocker is an ordinary status
-event. [`EXTENSIONS.md`](EXTENSIONS.md) compares the mappings and explains how
-to adapt the synthetic [`examples/`](examples/) OKR template without exposing a
-private goal set.
+do not wait for a dashboard update, while an OKR blocker or maintainer handoff
+is an ordinary status event. [`EXTENSIONS.md`](EXTENSIONS.md) compares the
+mappings and explains how to adapt the synthetic [`examples/`](examples/)
+templates without exposing private goals or maintainer activity.
 
 ## Current scope
 
@@ -81,7 +87,9 @@ Each event records a workstream state and an implementation-coverage level.
 its coverage remains `documented` or `not-implemented`. An event may also record
 progress, who performed and reviewed the update, and its next review time. Those
 fields are optional because they are useful for an OKR check-in but may be
-irrelevant or unsafe to publish for a security chore.
+irrelevant or unsafe to publish for a security chore. Maintainer events may also
+record `authority_scope` so that an assignment cannot be mistaken for broader
+repository permission.
 
 ## Public and private projections
 
@@ -113,8 +121,9 @@ pytest
 
 The default command builds the checked-in public inputs under `web/public/`.
 Tests rebuild those artifacts, compare their bytes, and query the trace through
-Perfetto's trace processor. The synthetic personal OKR files under `examples/`
-exercise the same builder and trace path in the test suite.
+Perfetto's trace processor. The synthetic personal OKR and private maintainer
+files under `examples/` exercise the same builder and trace path in the test
+suite.
 
 A private deployment passes its own paths and must opt in explicitly:
 

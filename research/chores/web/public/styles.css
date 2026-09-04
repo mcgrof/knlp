@@ -182,7 +182,7 @@ section {
 
 .use-cases {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
 }
 
@@ -206,6 +206,14 @@ section {
 .use-case p:not(.label) {
   margin: 0;
   color: var(--muted);
+}
+
+.use-case .future-note {
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 12px;
 }
 
 .use-case a {
@@ -502,6 +510,10 @@ footer {
 }
 
 @media (max-width: 900px) {
+  .use-cases {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .metrics {
     grid-template-columns: 1fr 1fr;
   }
