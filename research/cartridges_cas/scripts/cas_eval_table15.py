@@ -80,6 +80,13 @@ MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 # published number here was scored at; raise it to see how many of the
 # tag-missing answers are the cap and not the model
 MAX_COMPLETION = int(os.environ.get("MAX_COMPLETION", "2048"))
+# Qwen3-8B ships top_k 20 / top_p 0.95 alongside temperature 0.6, and the vLLM
+# arms below pick those up from the model's generation config because the
+# request does not override them. The cartridge arm samples in-process, so it
+# has to apply them explicitly or the two arms in the same comparison are not
+# sampling alike. Set TOP_K=0 TOP_P=1 to recover the old full-vocab behaviour.
+TOP_K = int(os.environ.get("TOP_K", "20"))
+TOP_P = float(os.environ.get("TOP_P", "0.95"))
 TEMPERATURE = 0.6
 
 # --- Table 15 (Appendix H), LongHealth row, verbatim -------------------------
@@ -311,6 +318,25 @@ def run_cart_mode(patients_data):
     stop_ids = set(eos_cfg if isinstance(eos_cfg, (list, tuple)) else [eos_cfg])
 
     @torch.no_grad()
+    def _sample(probs):
+        """Top-k then nucleus, matching the model's shipped generation config.
+
+        Truncating the tail matters here beyond fidelity: a full-vocab draw at
+        temperature 0.6 occasionally picks a token from the far tail, and in a
+        long thinking block one such token is enough to send the model into a
+        re-verification loop that runs to the completion cap. At least one
+        token always survives both filters."""
+        if TOP_K > 0:
+            k = min(TOP_K, probs.numel())
+            vals, idx = torch.topk(probs, k)
+        else:
+            vals, idx = torch.sort(probs, descending=True)
+        if TOP_P < 1.0:
+            keep = (torch.cumsum(vals, dim=-1) - vals) < TOP_P
+            keep[0] = True
+            vals = vals * keep
+        return int(idx[torch.multinomial(vals / vals.sum(), 1)])
+
     def generate(cache, ids, seed):
         """Single-sequence sampling loop mirroring flex_generate (temperature-
         scaled multinomial, fp32 softmax); terminates on the model EOS set or
@@ -331,7 +357,7 @@ def run_cart_mode(patients_data):
                 mode="generate",
             )
             logits = o.logits[0, -1].float() / TEMPERATURE
-            nxt = int(torch.multinomial(torch.softmax(logits, dim=-1), 1))
+            nxt = _sample(torch.softmax(logits, dim=-1))
             if nxt in stop_ids:
                 break
             out.append(nxt)
@@ -454,7 +480,8 @@ def main():
 
     res = {
         "protocol": "CAS Table 15 (system+user verbatim), temp 0.6, thinking "
-        f"on, max {MAX_COMPLETION}, fuzzy option match (difflib), "
+        f"on, max {MAX_COMPLETION}, top-k {TOP_K}, top-p {TOP_P}, "
+        f"fuzzy option match (difflib), "
         f"runs={RUNS}; top-p/k: vLLM=model generation_config "
         "defaults, flex=plain temperature sampling (paper leaves "
         "them unspecified)",
@@ -463,6 +490,8 @@ def main():
         "patients": [p.patient_id for p in patients_data],
         "max_q": MAX_Q,
         "max_completion": MAX_COMPLETION,
+        "top_k": TOP_K,
+        "top_p": TOP_P,
         "cart_dir": CART_DIR or None,
         "cart_collapse": os.environ.get("COLLAPSE", "0") == "1",
         "summary": aggregate(per_run),
