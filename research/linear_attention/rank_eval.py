@@ -64,10 +64,16 @@ def stack_position_logprobs(model, idx):
     return logp.gather(-1, idx[:, 1:].unsqueeze(-1)).squeeze(-1).squeeze(0)
 
 
-def hope_position_logprobs(model, idx, train_chunk):
+def hope_position_logprobs(model, idx, train_chunk, memory_update=True):
     """Prequential per-position log-probs mirroring hope_two_pass:
     within a chunk [start, end), logits[i] predict idx[start+i+1],
-    the last one predicting the next chunk's first token."""
+    the last one predicting the next chunk's first token.
+
+    With memory_update=False the teach-signal update pass is skipped,
+    so the fast state stays at its initial value for the whole
+    sequence. Everything else — the chunking, the boundary targets,
+    the train-mode forward — is unchanged, which isolates what the
+    retained state contributes from what the scoring path does."""
     from nested_learning.training import compute_teach_signal
 
     fs = model.init_fast_state()
@@ -89,6 +95,8 @@ def hope_position_logprobs(model, idx, train_chunk):
                 logp = F.log_softmax(score_logits.float(), dim=-1)
                 vals = logp.gather(-1, targets.unsqueeze(-1)).squeeze(-1).squeeze(0)
             out[start : start + vals.numel()] = vals.cpu()
+        if not memory_update:
+            continue
         teach = compute_teach_signal(model, logits, chunk, next_tokens=next_tok)
         with torch.no_grad():
             model(
@@ -100,14 +108,19 @@ def hope_position_logprobs(model, idx, train_chunk):
     return out
 
 
-def position_logprobs(arm, model, cfg, idx):
+def position_logprobs(arm, model, cfg, idx, memory_update=True):
     if cfg["kind"] == "hope":
-        return hope_position_logprobs(model, idx, cfg["train_chunk"])
+        return hope_position_logprobs(
+            model, idx, cfg["train_chunk"], memory_update=memory_update
+        )
     return stack_position_logprobs(model, idx).cpu()
 
 
 def self_check(arm, model, cfg, device, seq_len=256, batch=1, tol=2e-4):
-    """The extraction must reproduce the harness's own loss."""
+    """The extraction must reproduce the harness's own loss.  Always
+    run against the unablated path: the reference is the trained
+    model's own evaluation, which an ablation is expected to differ
+    from."""
     torch.manual_seed(97)
     idx = torch.randint(0, mmt.CONTRACT["vocab_size"], (batch, seq_len)).to(device)
     lps = position_logprobs(arm, model, cfg, idx)
@@ -144,6 +157,13 @@ def main():
         "a serial one produce the same predictions",
     )
     ap.add_argument("--shard", type=int, default=0, help="this process's shard index")
+    ap.add_argument(
+        "--no-memory-update",
+        action="store_true",
+        help="Hope only: skip the teach-signal update pass so the fast "
+        "state never adapts within a sequence. Ablates retained state "
+        "while leaving the scoring path intact.",
+    )
     a = ap.parse_args()
     if not 0 <= a.shard < a.num_shards:
         raise SystemExit(f"shard {a.shard} outside 0..{a.num_shards - 1}")
@@ -181,8 +201,11 @@ def main():
                     per_option = None
                     break
                 idx = torch.tensor([prefix_ids + opt_ids]).to(a.device)
-                with torch.no_grad() if cfg["kind"] != "hope" else torch.enable_grad():
-                    lps = position_logprobs(arm, model, cfg, idx)
+                grad_needed = cfg["kind"] == "hope" and not a.no_memory_update
+                with torch.enable_grad() if grad_needed else torch.no_grad():
+                    lps = position_logprobs(
+                        arm, model, cfg, idx, memory_update=not a.no_memory_update
+                    )
                 span = lps[len(prefix_ids) - 1 :]
                 per_option.append(
                     dict(
@@ -216,6 +239,7 @@ def main():
         max_tokens=a.max_tokens,
         shard=a.shard,
         num_shards=a.num_shards,
+        memory_update=not a.no_memory_update,
         queries_scored=done,
         queries_skipped_overlength=skipped,
         env=mmt.environment_manifest(),

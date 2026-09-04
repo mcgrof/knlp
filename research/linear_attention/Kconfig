@@ -161,6 +161,28 @@ config MATCHED_MICRO_RANK_MAX_TOKENS
 	depends on MATCHED_MICRO_PHASE_RANK_EVAL
 	default 512
 
+config MATCHED_MICRO_RANK_TAG
+	string "Subdirectory name for this eval's outputs"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default "rank-eval"
+	help
+	  Lets an ablation write beside the reference run instead of over
+	  it, so both can be summarized and compared from one tree.
+
+config MATCHED_MICRO_RANK_NO_MEMORY_UPDATE
+	bool "Ablate Hope's retained state (skip the memory update)"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default n
+	help
+	  Scores the Hope arm with its teach-signal update pass skipped,
+	  so the fast state stays at its initial value for the whole
+	  sequence while the chunking, boundary targets and train-mode
+	  forward stay exactly as trained. Answers whether Hope's ranking
+	  accuracy comes from state it retains across the context or from
+	  the scoring path itself: if accuracy holds up without updates,
+	  the memory is not what earned it. No effect on the other arms,
+	  so pair it with an arm list of just "hope".
+
 config MATCHED_MICRO_RANK_SHARDS
 	int "Concurrent shards per checkpoint"
 	depends on MATCHED_MICRO_PHASE_RANK_EVAL
