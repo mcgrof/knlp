@@ -2,6 +2,20 @@
   "claim_scope": "Project-status publishing and a synthetic OKR example only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
   "events": [
     {
+      "coverage": "deployed",
+      "event_id": "evt-0010",
+      "evidence": "HTTPS returned 200; the live HTML, templates, status JSON, and trace matched the checked-in bytes.",
+      "kind": "deployment",
+      "occurred_at": "2026-09-04T21:45:34Z",
+      "schema_version": 1,
+      "source_url": "https://chores.knlp.io/",
+      "state": "complete",
+      "summary": "The public dashboard explains the security and OKR chore families and serves downloadable synthetic profile and event templates.",
+      "surface": "public",
+      "title": "Personal OKR extension published",
+      "workstream": "okr-example"
+    },
+    {
       "coverage": "implemented",
       "event_id": "evt-0009",
       "evidence": "The test suite builds the OKR example and preserves its progress, performer, reviewer, and next-review fields.",
@@ -127,12 +141,12 @@
   "summary": "Incident-motivated agent security hygiene, with a reusable personal OKR status example.",
   "surface": "public",
   "trace": {
-    "event_count": 9,
+    "event_count": 10,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "272ad774bf71871269e070cfd95eac5791c0218992adad2d104582ae78b4f3c9",
+    "sha256": "1d17cfd3fffacaf882aeb8a302654d6613c65103db6e3e34f635b2113383d566",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-04T21:35:18Z",
+  "updated_at": "2026-09-04T21:45:34Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -151,12 +165,12 @@
       "updated_at": "2026-09-03T00:24:00Z"
     },
     {
-      "coverage": "implemented",
+      "coverage": "deployed",
       "id": "okr-example",
       "label": "Personal OKR example",
       "state": "complete",
-      "summary": "A synthetic objective and three key-result lanes use the same validated JSON and Perfetto pipeline as the public project status.",
-      "updated_at": "2026-09-04T21:35:18Z"
+      "summary": "The public dashboard explains the security and OKR chore families and serves downloadable synthetic profile and event templates.",
+      "updated_at": "2026-09-04T21:45:34Z"
     },
     {
       "coverage": "not-implemented",
