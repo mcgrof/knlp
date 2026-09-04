@@ -1,0 +1,13 @@
+name = "knlp-chores"
+main = "src/worker.js"
+compatibility_date = "2026-09-02"
+workers_dev = false
+
+routes = [
+  { pattern = "chores.knlp.io", custom_domain = true }
+]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = true

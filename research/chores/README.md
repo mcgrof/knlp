@@ -108,3 +108,30 @@ python build.py --profile private-profile.json \
 
 That flag prevents an accidental private build through the public defaults. It
 does not make the output safe to publish or provide access control.
+
+## Serve the public dashboard
+
+Most Chores security practices are not implemented, so the public view must
+keep design status separate from working protection. The `web/` directory
+contains a static dashboard and a small Cloudflare Worker. The Worker maps
+`/api/status` to the generated status document, gives the trace the cross-origin
+header needed by Perfetto, rejects mutating methods, and adds browser security
+headers. The page displays the profile summary, the latest state and coverage
+of each workstream, and the event history.
+
+```bash
+npm --prefix web ci
+npm --prefix web test
+cd web
+npx wrangler dev
+```
+
+Deployment to <https://chores.knlp.io> is an owner-controlled operation:
+
+```bash
+cd web
+npx wrangler deploy
+```
+
+Wrangler obtains authentication from the operator's environment. Tokens and
+private dashboard configuration do not belong in this repository.

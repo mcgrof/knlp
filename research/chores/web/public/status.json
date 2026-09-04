@@ -2,6 +2,20 @@
   "claim_scope": "Project-status publishing only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
   "events": [
     {
+      "coverage": "deployed",
+      "event_id": "evt-0008",
+      "evidence": "HTTPS returned 200 and the live trace digest matched the generated status document.",
+      "kind": "deployment",
+      "occurred_at": "2026-09-04T00:49:14Z",
+      "schema_version": 1,
+      "source_url": "https://chores.knlp.io/",
+      "state": "complete",
+      "summary": "The read-only dashboard reports Chores security work without claiming to monitor agents or deliver incident reports.",
+      "surface": "public",
+      "title": "Public security project status deployed",
+      "workstream": "status-publishing"
+    },
+    {
       "coverage": "implemented",
       "event_id": "evt-0007",
       "evidence": "The test suite rebuilds both artifacts and reads the trace with Perfetto's trace processor.",
@@ -100,12 +114,12 @@
   "summary": "Incident-motivated security hygiene for people using AI agents.",
   "surface": "public",
   "trace": {
-    "event_count": 7,
+    "event_count": 8,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "5340b725747330f7279409f43701cfc1bd96315538b3779c1bd0fdcb0c16d004",
+    "sha256": "a9d5155d4c198f5bcf15a28b19f7fa62c203e505293205389bb277b09aad7119",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-03T01:40:00Z",
+  "updated_at": "2026-09-04T00:49:14Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -140,12 +154,12 @@
       "updated_at": "2026-09-03T00:26:00Z"
     },
     {
-      "coverage": "implemented",
+      "coverage": "deployed",
       "id": "status-publishing",
       "label": "Public status publishing",
       "state": "complete",
-      "summary": "One validated profile and event stream now produce a machine-readable status document and a deterministic Perfetto activity trace.",
-      "updated_at": "2026-09-03T01:40:00Z"
+      "summary": "The read-only dashboard reports Chores security work without claiming to monitor agents or deliver incident reports.",
+      "updated_at": "2026-09-04T00:49:14Z"
     },
     {
       "coverage": "documented",
