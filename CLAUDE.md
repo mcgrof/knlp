@@ -4,6 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git Commit Practices
 
+### Project Name
+
+- Spell the project name `knlp`, in lowercase, in prose and commit messages.
+- Preserve an uppercase spelling only when it is part of an existing code
+  identifier or an external interface; do not use it as the project name.
+
 ### Commit Structure
 - Make small, atomic commits - one logical change per commit
 - Each commit should be functional and not break the build

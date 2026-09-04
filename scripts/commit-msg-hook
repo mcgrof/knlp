@@ -9,6 +9,7 @@
 #   - a model-explicit `Generated-by` immediately followed by `Signed-off-by`
 #   - the bare `Co-Authored-By: Claude` and `Generated with [Claude Code]`
 #     / robot-emoji lines are rejected (a model-explicit Co-Authored-By is fine)
+#   - the knlp project name is lowercase in commit prose
 #   - subject line <= 70 chars (hard); body lines > 70 are warnings
 #   - when an `MCP-*` block is present, its core fields are sanity-checked (warn)
 #
@@ -31,6 +32,12 @@ warn() { echo "⚠  $*"; warns=$((warns+1)); }
 # --- subject length ---
 if [ "${#FIRST}" -gt 70 ]; then
   err "subject is ${#FIRST} chars (>70): $FIRST"
+fi
+
+# --- project spelling ---
+if printf '%s\n' "$CONTENT" \
+  | grep -qE '(^|[^[:alnum:]_])KNLP([^[:alnum:]_]|$)'; then
+  err "spell the knlp project name in lowercase in commit messages"
 fi
 
 # --- Generated-by present + model-explicit ---
