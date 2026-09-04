@@ -269,5 +269,20 @@ class EtrSim:
             "items": items,
         }
 
+    RECOVER_TIME = 1.0
+    RECOVER_BACK = 10.0
+
+    def recover(self) -> dict:
+        """Mirror of the game's reset: 10 m back up the course, 1 s of clock."""
+        if not self.reset_done:
+            raise RuntimeError("reset first")
+        self.z = min(self.z + self.RECOVER_BACK, -1.0)
+        self.x = self.size[0] / 2.0
+        self.speed = 3.0
+        self.heading = 0.0
+        self.colliding = False
+        self.time += self.RECOVER_TIME
+        return self._obs(self._finished())
+
     def close(self) -> None:
         pass

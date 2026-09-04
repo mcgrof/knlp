@@ -46,6 +46,16 @@ def max_seconds(course: dict) -> float:
     return 60.0 + course["play_length"] / 4.0
 
 
+def stuck_seconds(course: dict) -> float:
+    """How long without new maximum progress before an episode is cut off.
+
+    A fixed six seconds cut off legitimate episodes on the long courses,
+    where recovering the ground lost to one tree can take longer than
+    that; scale the window with the course instead.
+    """
+    return max(15.0, course["play_length"] / 100.0)
+
+
 def stage_controls(course, args, out):
     path = out / f"controls-{course['dir']}.json"
     if path.exists():
@@ -59,6 +69,7 @@ def stage_controls(course, args, out):
             1000,
             binary=args.etr_bin,
             max_seconds=max_seconds(course),
+            stuck_seconds=stuck_seconds(course),
         )
         rows[name] = summarize(name, stats, steps, wall)
     json.dump(rows, open(path, "w"), indent=2)
@@ -74,7 +85,10 @@ def stage_transfer(course, args, out):
     from rl.replay import load_agent
 
     env = make_env(
-        f"etr:{course['dir']}", binary=args.etr_bin, max_seconds=max_seconds(course)
+        f"etr:{course['dir']}",
+        binary=args.etr_bin,
+        max_seconds=max_seconds(course),
+        stuck_seconds=stuck_seconds(course),
     )
     res = {}
     try:
@@ -93,8 +107,13 @@ def stage_transfer(course, args, out):
     return res
 
 
+def run_name(course, args) -> str:
+    suffix = "" if args.action_set == "v0" else f"-{args.action_set}"
+    return f"{course['dir']}-s{args.seed}{suffix}"
+
+
 def stage_ppo(course, args, out):
-    name = f"{course['dir']}-s{args.seed}"
+    name = run_name(course, args)
     run_dir = Path(args.runs_dir) / name
     if (run_dir / "final_agent.pt").exists():
         return name
@@ -155,7 +174,10 @@ def stage_eval(course, name, args, out):
     from rl.replay import load_agent
 
     env = make_env(
-        f"etr:{course['dir']}", binary=args.etr_bin, max_seconds=max_seconds(course)
+        f"etr:{course['dir']}",
+        binary=args.etr_bin,
+        max_seconds=max_seconds(course),
+        stuck_seconds=stuck_seconds(course),
     )
     try:
         obs_dim = int(np.prod(env.observation_space.shape))
@@ -201,7 +223,7 @@ def summary(courses, args, out):
 
     for c in courses:
         d = c["dir"]
-        name = f"{d}-s{args.seed}"
+        name = run_name(c, args)
         con = (
             json.load(open(out / f"controls-{d}.json"))
             if (out / f"controls-{d}.json").exists()
@@ -237,6 +259,7 @@ def main(argv=None) -> int:
     p.add_argument("--total-timesteps", type=int, default=5_000_000)
     p.add_argument("--runs-dir", default=os.environ.get("KNLP_RL_RUNS", "runs/rl"))
     p.add_argument("--out-dir", default="results/campaign")
+    p.add_argument("--action-set", default="v0", choices=["v0", "v1"])
     p.add_argument("--transfer-from", default="bh-s2")
     p.add_argument(
         "--transfer-runs-dir", default=None, help="runs dir holding --transfer-from"

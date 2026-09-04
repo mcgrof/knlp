@@ -160,6 +160,10 @@ class EtrBridge:
             line += f" dt={dt:.9g}"
         return self._request(line)
 
+    def recover(self) -> dict:
+        """The game's R key: relocate behind and pay the reset time."""
+        return self._request("recover")
+
     def close(self) -> None:
         if self.proc.poll() is None:
             try:
