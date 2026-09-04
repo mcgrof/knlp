@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 web/.wrangler/
 web/node_modules/
+!web/public/index.html

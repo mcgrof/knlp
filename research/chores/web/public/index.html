@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Chores · Agent security hygiene status</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <nav>
+    <div class="shell nav-content">
+      <a class="brand" href="https://knlp.io" aria-label="knlp home">
+        <span class="brand-mark">k</span>
+        <span>knlp / chores</span>
+      </a>
+      <div class="nav-links">
+        <span class="connection" id="connection">loading status</span>
+        <a href="https://github.com/mcgrof/knlp">source</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="shell">
+    <p class="eyebrow">Agent security hygiene · public R&amp;D status</p>
+    <h1>Chores</h1>
+    <p class="lede">
+      Proactive security hygiene for people using AI agents. Routine checks can
+      rotate; every agent must immediately report suspected unauthorized
+      activity directly to the human owner.
+    </p>
+    <div class="scope">
+      <strong>Current boundary</strong>
+      <span id="claim">Loading the published claim scope…</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="metrics" aria-label="Project summary" aria-live="polite">
+      <div class="metric metric-wide">
+        <span class="label">Project</span>
+        <strong id="project-summary">loading</strong>
+      </div>
+      <div class="metric">
+        <span class="label">State</span>
+        <strong id="project-state">—</strong>
+      </div>
+      <div class="metric">
+        <span class="label">Updated</span>
+        <strong id="updated">—</strong>
+      </div>
+      <div class="metric">
+        <span class="label">Trace digest</span>
+        <strong class="mono" id="digest">—</strong>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <p class="label">Implementation boundary</p>
+          <h2>Workstreams</h2>
+        </div>
+        <p>State and implementation coverage are reported separately.</p>
+      </div>
+      <div class="workstreams" id="workstreams"></div>
+    </section>
+
+    <section class="trace-panel">
+      <div>
+        <p class="label">Perfetto TrackEvent trace</p>
+        <h2>Inspect the same activity on a time axis</h2>
+        <p>
+          The status document and trace come from the same profile and event
+          stream. Perfetto shows each workstream on its own lane with state
+          counters below the activity markers.
+        </p>
+      </div>
+      <div class="actions">
+        <a class="button" id="perfetto" href="#">Open in Perfetto</a>
+        <a class="button secondary" href="/traces/latest.pftrace" download>Download trace</a>
+        <a class="button secondary" href="/api/status">Status JSON</a>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <p class="label">Published project record</p>
+          <h2>Recent activity</h2>
+        </div>
+        <p id="refresh-note">waiting for status</p>
+      </div>
+      <div class="activity" id="events"></div>
+    </section>
+
+    <noscript>This page needs JavaScript to render the status document.</noscript>
+  </main>
+
+  <footer>
+    <div class="shell">Public project records only. This page does not monitor agents or deliver incident reports.</div>
+  </footer>
+</body>
+</html>
