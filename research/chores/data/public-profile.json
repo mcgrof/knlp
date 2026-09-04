@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "project": "knlp chores",
+  "surface": "public",
+  "state": "prototype",
+  "summary": "Incident-motivated security hygiene for people using AI agents.",
+  "claim_scope": "Project-status publishing only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
+  "refresh_seconds": 30,
+  "workstreams": [
+    { "id": "security-hygiene", "label": "Proactive security hygiene" },
+    { "id": "incident-reporting", "label": "Direct owner reporting" },
+    { "id": "collectors", "label": "Read-only security checks" },
+    { "id": "coordination", "label": "Agent assignment and review" },
+    { "id": "status-publishing", "label": "Public status publishing" },
+    { "id": "private-projection", "label": "Separate private projection" }
+  ]
+}

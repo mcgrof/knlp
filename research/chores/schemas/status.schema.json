@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/schemas/status-v1.json",
+  "title": "Chores derived status v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project",
+    "surface",
+    "state",
+    "summary",
+    "claim_scope",
+    "updated_at",
+    "refresh_seconds",
+    "workstreams",
+    "events",
+    "trace"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project": { "type": "string", "minLength": 1 },
+    "surface": { "enum": ["public", "private"] },
+    "state": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "claim_scope": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "refresh_seconds": { "type": "integer", "minimum": 10, "maximum": 300 },
+    "workstreams": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/workstream" }
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "https://chores.knlp.io/schemas/event-v1.json" }
+    },
+    "trace": { "$ref": "#/$defs/trace" }
+  },
+  "$defs": {
+    "workstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "state",
+        "coverage",
+        "summary",
+        "updated_at"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "state": {
+          "enum": ["planned", "active", "blocked", "complete", "held"]
+        },
+        "coverage": {
+          "enum": ["documented", "implemented", "deployed", "not-implemented"]
+        },
+        "summary": { "type": "string" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "url", "event_count", "sha256"],
+      "properties": {
+        "format": { "const": "perfetto-track-event-protobuf" },
+        "url": { "type": "string", "minLength": 1 },
+        "event_count": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

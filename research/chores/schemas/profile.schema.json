@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/schemas/profile-v1.json",
+  "title": "Chores status profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project",
+    "surface",
+    "state",
+    "summary",
+    "claim_scope",
+    "refresh_seconds",
+    "workstreams"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "project": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "surface": { "enum": ["public", "private"] },
+    "state": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "claim_scope": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "refresh_seconds": { "type": "integer", "minimum": 10, "maximum": 300 },
+    "workstreams": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/workstream" }
+    }
+  },
+  "$defs": {
+    "workstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    }
+  }
+}
