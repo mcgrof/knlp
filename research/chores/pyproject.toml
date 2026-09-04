@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knlp-chores"
+version = "0.1.0"
+description = "Status and Perfetto views for the Chores R&D project."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-2.0-only"
+authors = [{ name = "Luis Chamberlain", email = "mcgrof@do-not-panic.com" }]
+dependencies = [
+  "jsonschema>=4.20",
+  "perfetto==0.58.2",
+]
+
+[project.optional-dependencies]
+dev = ["black>=25.0", "pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
+
+[tool.setuptools]
+py-modules = ["build", "chores_perfetto"]

@@ -1,0 +1,7 @@
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+.venv/
+web/.wrangler/
+web/node_modules/

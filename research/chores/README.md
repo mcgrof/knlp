@@ -77,3 +77,34 @@ The `surface` field catches accidental mixing between a profile and its event
 stream. It is not a content sanitizer. Whoever publishes an event remains
 responsible for checking its title, summary, evidence, URL, and timing for
 sensitive information.
+
+## Build the status views
+
+`build.py` validates a profile and event stream, derives `status.json`, and
+renders the same events as a native Perfetto TrackEvent trace. Perfetto is an
+open trace viewer; the trace presents project events on per-workstream lanes
+with counters for state changes. The JSON document and trace are generated
+views rather than separate status ledgers.
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e '.[dev]'
+python build.py
+pytest
+```
+
+The default command builds the checked-in public inputs under `web/public/`.
+Tests rebuild those artifacts, compare their bytes, and query the trace through
+Perfetto's trace processor.
+
+A private deployment passes its own paths and must opt in explicitly:
+
+```bash
+python build.py --profile private-profile.json \
+  --events private-events.jsonl --output-dir private-web \
+  --allow-private
+```
+
+That flag prevents an accidental private build through the public defaults. It
+does not make the output safe to publish or provide access control.

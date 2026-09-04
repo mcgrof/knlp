@@ -1,0 +1,159 @@
+{
+  "claim_scope": "Project-status publishing only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
+  "events": [
+    {
+      "coverage": "implemented",
+      "event_id": "evt-0007",
+      "evidence": "The test suite rebuilds both artifacts and reads the trace with Perfetto's trace processor.",
+      "kind": "milestone",
+      "occurred_at": "2026-09-03T01:40:00Z",
+      "schema_version": 1,
+      "state": "complete",
+      "summary": "One validated profile and event stream now produce a machine-readable status document and a deterministic Perfetto activity trace.",
+      "surface": "public",
+      "title": "Status exporter produces JSON and Perfetto views",
+      "workstream": "status-publishing"
+    },
+    {
+      "coverage": "documented",
+      "event_id": "evt-0006",
+      "evidence": "The projection boundary is part of the public format contract.",
+      "kind": "gate",
+      "occurred_at": "2026-09-03T00:28:00Z",
+      "schema_version": 1,
+      "state": "planned",
+      "summary": "Private status must use its own profile, events, outputs, and deployment credentials rather than a redacted public artifact.",
+      "surface": "public",
+      "title": "Private data requires a separate projection",
+      "workstream": "private-projection"
+    },
+    {
+      "coverage": "documented",
+      "event_id": "evt-0005",
+      "evidence": "The versioned profile, event, and status schemas define the public status contract.",
+      "kind": "milestone",
+      "occurred_at": "2026-09-03T00:27:00Z",
+      "schema_version": 1,
+      "state": "active",
+      "summary": "A project profile and ordered event stream are the authored inputs for JSON status and Perfetto views.",
+      "surface": "public",
+      "title": "Public project status format defined",
+      "workstream": "status-publishing"
+    },
+    {
+      "coverage": "not-implemented",
+      "event_id": "evt-0004",
+      "evidence": "No scheduler, lease service, reviewer workflow, or agent identity registry is present.",
+      "kind": "gate",
+      "occurred_at": "2026-09-03T00:26:00Z",
+      "schema_version": 1,
+      "state": "held",
+      "summary": "Agent assignment and independent review must not delay or suppress direct human reporting of suspected unauthorized activity.",
+      "surface": "public",
+      "title": "Routine rotation remains a research question",
+      "workstream": "coordination"
+    },
+    {
+      "coverage": "not-implemented",
+      "event_id": "evt-0003",
+      "evidence": "The repository contains no collector or remote-execution path.",
+      "kind": "gate",
+      "occurred_at": "2026-09-03T00:25:00Z",
+      "schema_version": 1,
+      "state": "held",
+      "summary": "No failed-service, listening-socket, update, storage, backup, or monitoring-health check runs from the public status publisher.",
+      "surface": "public",
+      "title": "Read-only security checks remain outside the prototype",
+      "workstream": "collectors"
+    },
+    {
+      "coverage": "not-implemented",
+      "event_id": "evt-0002",
+      "evidence": "No incident receiver, delivery transport, or acknowledgement endpoint is present.",
+      "kind": "gate",
+      "occurred_at": "2026-09-03T00:24:00Z",
+      "schema_version": 1,
+      "state": "held",
+      "summary": "A dashboard is not an urgent notifier and cannot establish that an owner received or acknowledged a report.",
+      "surface": "public",
+      "title": "Direct owner reporting requires a tested delivery path",
+      "workstream": "incident-reporting"
+    },
+    {
+      "coverage": "documented",
+      "event_id": "evt-0001",
+      "evidence": "The project README defines the security goal, the reporting duty, and the current implementation limits.",
+      "kind": "project",
+      "occurred_at": "2026-09-03T00:19:15Z",
+      "schema_version": 1,
+      "state": "complete",
+      "summary": "Routine security checks may rotate, but every agent must immediately report suspected unauthorized activity, including its own, directly to the human owner.",
+      "surface": "public",
+      "title": "Chores defines proactive agent security hygiene",
+      "workstream": "security-hygiene"
+    }
+  ],
+  "project": "knlp chores",
+  "refresh_seconds": 30,
+  "schema_version": 1,
+  "state": "prototype",
+  "summary": "Incident-motivated security hygiene for people using AI agents.",
+  "surface": "public",
+  "trace": {
+    "event_count": 7,
+    "format": "perfetto-track-event-protobuf",
+    "sha256": "5340b725747330f7279409f43701cfc1bd96315538b3779c1bd0fdcb0c16d004",
+    "url": "/traces/latest.pftrace"
+  },
+  "updated_at": "2026-09-03T01:40:00Z",
+  "workstreams": [
+    {
+      "coverage": "documented",
+      "id": "security-hygiene",
+      "label": "Proactive security hygiene",
+      "state": "complete",
+      "summary": "Routine security checks may rotate, but every agent must immediately report suspected unauthorized activity, including its own, directly to the human owner.",
+      "updated_at": "2026-09-03T00:19:15Z"
+    },
+    {
+      "coverage": "not-implemented",
+      "id": "incident-reporting",
+      "label": "Direct owner reporting",
+      "state": "held",
+      "summary": "A dashboard is not an urgent notifier and cannot establish that an owner received or acknowledged a report.",
+      "updated_at": "2026-09-03T00:24:00Z"
+    },
+    {
+      "coverage": "not-implemented",
+      "id": "collectors",
+      "label": "Read-only security checks",
+      "state": "held",
+      "summary": "No failed-service, listening-socket, update, storage, backup, or monitoring-health check runs from the public status publisher.",
+      "updated_at": "2026-09-03T00:25:00Z"
+    },
+    {
+      "coverage": "not-implemented",
+      "id": "coordination",
+      "label": "Agent assignment and review",
+      "state": "held",
+      "summary": "Agent assignment and independent review must not delay or suppress direct human reporting of suspected unauthorized activity.",
+      "updated_at": "2026-09-03T00:26:00Z"
+    },
+    {
+      "coverage": "implemented",
+      "id": "status-publishing",
+      "label": "Public status publishing",
+      "state": "complete",
+      "summary": "One validated profile and event stream now produce a machine-readable status document and a deterministic Perfetto activity trace.",
+      "updated_at": "2026-09-03T01:40:00Z"
+    },
+    {
+      "coverage": "documented",
+      "id": "private-projection",
+      "label": "Separate private projection",
+      "state": "planned",
+      "summary": "Private status must use its own profile, events, outputs, and deployment credentials rather than a redacted public artifact.",
+      "updated_at": "2026-09-03T00:28:00Z"
+    }
+  ]
+}
