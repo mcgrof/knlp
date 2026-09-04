@@ -2,6 +2,20 @@
   "claim_scope": "Project-status publishing and synthetic examples only; no collectors, incident delivery, agent monitoring, repository writes, credential changes, or remediation are implemented.",
   "events": [
     {
+      "coverage": "deployed",
+      "event_id": "evt-0012",
+      "evidence": "HTTPS returned 200; the live HTML, maintainer templates, status JSON, and trace matched the checked-in bytes.",
+      "kind": "deployment",
+      "occurred_at": "2026-09-04T21:55:47Z",
+      "schema_version": 1,
+      "source_url": "https://chores.knlp.io/",
+      "state": "complete",
+      "summary": "The public dashboard presents scoped maintainer assistance and serves its synthetic private profile and event stream as downloads.",
+      "surface": "public",
+      "title": "Open-source maintainer assistance example published",
+      "workstream": "maintainer-example"
+    },
+    {
       "coverage": "implemented",
       "event_id": "evt-0011",
       "evidence": "The test suite builds the maintainer example and preserves its performer, reviewer, authority, and next-review fields.",
@@ -154,12 +168,12 @@
   "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped open-source maintenance.",
   "surface": "public",
   "trace": {
-    "event_count": 11,
+    "event_count": 12,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "7165240cfa0b0efee314d45c70c9639d74fbd6e5061e5cac82236e1b99231b41",
+    "sha256": "dc26f2864e8747819c7844edfc530cd021ae08de65d5fcc1460faa2c55c5245c",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-04T21:50:11Z",
+  "updated_at": "2026-09-04T21:55:47Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -186,12 +200,12 @@
       "updated_at": "2026-09-04T21:45:34Z"
     },
     {
-      "coverage": "implemented",
+      "coverage": "deployed",
       "id": "maintainer-example",
       "label": "Open-source maintainer example",
       "state": "complete",
-      "summary": "A synthetic private profile tracks issue triage, pull-request review, agent coordination, and maintainer handoff without granting repository write authority.",
-      "updated_at": "2026-09-04T21:50:11Z"
+      "summary": "The public dashboard presents scoped maintainer assistance and serves its synthetic private profile and event stream as downloads.",
+      "updated_at": "2026-09-04T21:55:47Z"
     },
     {
       "coverage": "not-implemented",
