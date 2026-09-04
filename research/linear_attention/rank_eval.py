@@ -39,6 +39,7 @@ import json
 import math
 import os
 import sys
+import time
 
 import torch
 import torch.nn.functional as F
@@ -62,6 +63,37 @@ def stack_position_logprobs(model, idx):
     logits = model(idx)
     logp = F.log_softmax(logits[:, :-1].float(), dim=-1)
     return logp.gather(-1, idx[:, 1:].unsqueeze(-1)).squeeze(-1).squeeze(0)
+
+
+def chunked_stack_logprobs(model, idx, chunk_size):
+    """Score a stateless arm through Hope's chunking: the sequence is
+    cut into chunks, each scored on its own with its last position
+    predicting the next chunk's first token, and nothing carried
+    across the boundary.
+
+    Hope's forward only ever sees one chunk (cross-chunk information
+    reaches it solely through the fast state), so with that state
+    frozen its information set is exactly this. Running a stateless
+    arm the same way therefore compares architectures at matched
+    visible context instead of giving the stack arms the whole
+    prompt."""
+    _, total_len = idx.shape
+    out = torch.empty(total_len - 1)
+    for start in range(0, total_len, chunk_size):
+        end = min(start + chunk_size, total_len)
+        chunk = idx[:, start:end]
+        next_tok = idx[:, end : end + 1] if end < total_len else None
+        logits = model(chunk)
+        if next_tok is not None:
+            targets = torch.cat([chunk[:, 1:], next_tok], dim=1)
+        else:
+            targets = chunk[:, 1:]
+            logits = logits[:, :-1]
+        if targets.numel():
+            logp = F.log_softmax(logits.float(), dim=-1)
+            vals = logp.gather(-1, targets.unsqueeze(-1)).squeeze(-1).squeeze(0)
+            out[start : start + vals.numel()] = vals.cpu()
+    return out
 
 
 def hope_position_logprobs(model, idx, train_chunk, memory_update=True):
@@ -108,15 +140,17 @@ def hope_position_logprobs(model, idx, train_chunk, memory_update=True):
     return out
 
 
-def position_logprobs(arm, model, cfg, idx, memory_update=True):
+def position_logprobs(arm, model, cfg, idx, memory_update=True, chunk_path=0):
     if cfg["kind"] == "hope":
         return hope_position_logprobs(
             model, idx, cfg["train_chunk"], memory_update=memory_update
         )
+    if chunk_path:
+        return chunked_stack_logprobs(model, idx, chunk_path)
     return stack_position_logprobs(model, idx).cpu()
 
 
-def self_check(arm, model, cfg, device, seq_len=256, batch=1, tol=2e-4):
+def self_check(arm, model, cfg, device, seq_len=256, batch=1, tol=2e-4):  # noqa: C901
     """The extraction must reproduce the harness's own loss.  Always
     run against the unablated path: the reference is the trained
     model's own evaluation, which an ablation is expected to differ
@@ -158,6 +192,21 @@ def main():
     )
     ap.add_argument("--shard", type=int, default=0, help="this process's shard index")
     ap.add_argument(
+        "--no-context",
+        action="store_true",
+        help="drop the episode text and score the question and options "
+        "alone. Answers whether an arm reads the story at all: accuracy "
+        "that survives this was never coming from the context.",
+    )
+    ap.add_argument(
+        "--chunk-path",
+        type=int,
+        default=0,
+        help="stateless arms only: score through this chunk size the way "
+        "Hope is scored, carrying nothing across boundaries, so the "
+        "comparison runs at matched visible context (0 = full sequence).",
+    )
+    ap.add_argument(
         "--no-memory-update",
         action="store_true",
         help="Hope only: skip the teach-signal update pass so the fast "
@@ -181,6 +230,7 @@ def main():
     if a.self_check:
         self_check(arm, model, cfg, a.device)
 
+    t_start = time.time()
     episodes = [json.loads(l) for l in open(a.episodes)]
     os.makedirs(a.out_dir, exist_ok=True)
     preds, raw = [], []
@@ -192,7 +242,11 @@ def main():
             seen += 1
             if seen % a.num_shards != a.shard:
                 continue
-            prefix = f"{ep['context']}\nQ: {q['question']}\nA:"
+            prefix = (
+                f"Q: {q['question']}\nA:"
+                if a.no_context
+                else f"{ep['context']}\nQ: {q['question']}\nA:"
+            )
             prefix_ids = tok(prefix).input_ids
             per_option = []
             for opt in q["options"]:
@@ -204,7 +258,15 @@ def main():
                 grad_needed = cfg["kind"] == "hope" and not a.no_memory_update
                 with torch.enable_grad() if grad_needed else torch.no_grad():
                     lps = position_logprobs(
-                        arm, model, cfg, idx, memory_update=not a.no_memory_update
+                        arm,
+                        model,
+                        cfg,
+                        idx,
+                        memory_update=not a.no_memory_update,
+                        context_shown=not a.no_context,
+                        chunk_path=a.chunk_path,
+                        wall_s=round(time.time() - t_start, 1),
+                        chunk_path=a.chunk_path,
                     )
                 span = lps[len(prefix_ids) - 1 :]
                 per_option.append(
@@ -240,6 +302,9 @@ def main():
         shard=a.shard,
         num_shards=a.num_shards,
         memory_update=not a.no_memory_update,
+        context_shown=not a.no_context,
+        chunk_path=a.chunk_path,
+        wall_s=round(time.time() - t_start, 1),
         queries_scored=done,
         queries_skipped_overlength=skipped,
         env=mmt.environment_manifest(),

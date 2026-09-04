@@ -183,6 +183,31 @@ config MATCHED_MICRO_RANK_NO_MEMORY_UPDATE
 	  the memory is not what earned it. No effect on the other arms,
 	  so pair it with an arm list of just "hope".
 
+config MATCHED_MICRO_RANK_NO_CONTEXT
+	bool "Control: hide the episode text"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default n
+	help
+	  Scores the question and its options with the story removed. An
+	  arm that keeps its accuracy under this was never reading the
+	  context, which would mean the ranking measures how plausible
+	  each option looks on its own rather than any state tracking.
+	  Applies to every arm, so run it across the full arm list.
+
+config MATCHED_MICRO_RANK_CHUNK_PATH
+	int "Control: score stateless arms through Hope's chunking"
+	depends on MATCHED_MICRO_PHASE_RANK_EVAL
+	default 0
+	help
+	  Non-zero cuts the sequence into chunks of this size for the
+	  stateless arms, scoring each on its own with its last position
+	  predicting the next chunk's first token and nothing carried
+	  across. Hope's forward only ever sees one chunk, so with its
+	  memory frozen this is exactly Hope's information set: setting
+	  this to Hope's chunk size (64) compares architectures at
+	  matched visible context instead of handing the stack arms the
+	  whole prompt. No effect on Hope itself.
+
 config MATCHED_MICRO_RANK_SHARDS
 	int "Concurrent shards per checkpoint"
 	depends on MATCHED_MICRO_PHASE_RANK_EVAL

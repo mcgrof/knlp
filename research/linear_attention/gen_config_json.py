@@ -29,6 +29,8 @@ KEYS = {
     "CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS": ("rank_max_tokens", int),
     "CONFIG_MATCHED_MICRO_RANK_SHARDS": ("rank_shards", int),
     "CONFIG_MATCHED_MICRO_RANK_TAG": ("rank_tag", str),
+    "CONFIG_MATCHED_MICRO_RANK_NO_CONTEXT": ("rank_no_context", bool),
+    "CONFIG_MATCHED_MICRO_RANK_CHUNK_PATH": ("rank_chunk_path", int),
     "CONFIG_MATCHED_MICRO_RANK_NO_MEMORY_UPDATE": ("rank_no_memory_update", bool),
 }
 
@@ -81,6 +83,8 @@ def main():
     cfg.setdefault("rank_max_tokens", 512)
     cfg.setdefault("rank_shards", 1)
     cfg.setdefault("rank_tag", "rank-eval")
+    cfg.setdefault("rank_no_context", False)
+    cfg.setdefault("rank_chunk_path", 0)
     cfg.setdefault("rank_no_memory_update", False)
     json.dump(cfg, open(a.out, "w"), indent=2)
     print(f"wrote {a.out}:")

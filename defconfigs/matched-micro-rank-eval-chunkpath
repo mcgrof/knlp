@@ -1,0 +1,19 @@
+# Control: is Hope's advantage the scoring path rather than the model?
+# Hope's forward only ever sees one 64-token chunk, so with its memory
+# frozen it cannot see earlier context at all -- yet it still outscored
+# the attention control, which saw the whole prompt. This run scores
+# the stateless arms through the same chunking, carrying nothing across
+# boundaries, so the comparison happens at matched visible context.
+# Hope needs no run here: its own frozen-memory numbers are the
+# matched-context reference, in rank-eval-noupdate.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="attn gdn3 gdn7 titans"
+CONFIG_MATCHED_MICRO_PHASE_RANK_EVAL=y
+CONFIG_MATCHED_MICRO_RANK_SEED=7
+CONFIG_MATCHED_MICRO_RANK_PER_FAMILY=25
+CONFIG_MATCHED_MICRO_RANK_CONTROLS="{\"filler_sentences\": 2}"
+CONFIG_MATCHED_MICRO_RANK_NORM="mean"
+CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS=512
+CONFIG_MATCHED_MICRO_RANK_TAG="rank-eval-chunkpath"
+CONFIG_MATCHED_MICRO_RANK_CHUNK_PATH=64
+CONFIG_MATCHED_MICRO_RANK_SHARDS=4
