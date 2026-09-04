@@ -194,6 +194,7 @@ def render_trace(
                 "progress_percent",
                 "performed_by",
                 "reviewed_by",
+                "authority_scope",
                 "next_review_at",
             ):
                 if field in row:

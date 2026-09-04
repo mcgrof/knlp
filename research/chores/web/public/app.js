@@ -39,6 +39,9 @@ function renderTrackingDetails(record) {
   if (record.reviewed_by) {
     details.push(`Reviewed by ${record.reviewed_by}`);
   }
+  if (record.authority_scope) {
+    details.push(`Scope: ${record.authority_scope}`);
+  }
   if (record.next_review_at) {
     details.push(`Next review ${formatTime(record.next_review_at)}`);
   }

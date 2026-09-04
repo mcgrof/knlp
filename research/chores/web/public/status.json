@@ -1,6 +1,19 @@
 {
-  "claim_scope": "Project-status publishing and a synthetic OKR example only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
+  "claim_scope": "Project-status publishing and synthetic examples only; no collectors, incident delivery, agent monitoring, repository writes, credential changes, or remediation are implemented.",
   "events": [
+    {
+      "coverage": "implemented",
+      "event_id": "evt-0011",
+      "evidence": "The test suite builds the maintainer example and preserves its performer, reviewer, authority, and next-review fields.",
+      "kind": "milestone",
+      "occurred_at": "2026-09-04T21:50:11Z",
+      "schema_version": 1,
+      "state": "complete",
+      "summary": "A synthetic private profile tracks issue triage, pull-request review, agent coordination, and maintainer handoff without granting repository write authority.",
+      "surface": "public",
+      "title": "Scoped open-source maintenance example exercises the pipeline",
+      "workstream": "maintainer-example"
+    },
     {
       "coverage": "deployed",
       "event_id": "evt-0010",
@@ -138,15 +151,15 @@
   "refresh_seconds": 30,
   "schema_version": 1,
   "state": "prototype",
-  "summary": "Incident-motivated agent security hygiene, with a reusable personal OKR status example.",
+  "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped open-source maintenance.",
   "surface": "public",
   "trace": {
-    "event_count": 10,
+    "event_count": 11,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "1d17cfd3fffacaf882aeb8a302654d6613c65103db6e3e34f635b2113383d566",
+    "sha256": "7165240cfa0b0efee314d45c70c9639d74fbd6e5061e5cac82236e1b99231b41",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-04T21:45:34Z",
+  "updated_at": "2026-09-04T21:50:11Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -171,6 +184,14 @@
       "state": "complete",
       "summary": "The public dashboard explains the security and OKR chore families and serves downloadable synthetic profile and event templates.",
       "updated_at": "2026-09-04T21:45:34Z"
+    },
+    {
+      "coverage": "implemented",
+      "id": "maintainer-example",
+      "label": "Open-source maintainer example",
+      "state": "complete",
+      "summary": "A synthetic private profile tracks issue triage, pull-request review, agent coordination, and maintainer handoff without granting repository write authority.",
+      "updated_at": "2026-09-04T21:50:11Z"
     },
     {
       "coverage": "not-implemented",
