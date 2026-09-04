@@ -19,11 +19,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--results-dir", required=True)
+    ap.add_argument(
+        "--tag",
+        default="rank-eval",
+        help="eval subdirectory to summarize; also names the output files, "
+        "so an ablation lands beside the reference run",
+    )
     a = ap.parse_args()
 
     pat = re.compile(r"campaign-b(\d+)-seed(\d+)-([a-z0-9]+)$")
     rows = []
-    for d in sorted(glob.glob(os.path.join(a.out_dir, "rank-eval", "campaign-*"))):
+    for d in sorted(glob.glob(os.path.join(a.out_dir, a.tag, "campaign-*"))):
         m = pat.search(os.path.basename(d))
         spath = os.path.join(d, "score.json")
         if not m or not os.path.exists(spath):
@@ -69,7 +75,8 @@ def main():
         )
 
     os.makedirs(a.results_dir, exist_ok=True)
-    with open(os.path.join(a.results_dir, "rank_summary.json"), "w") as f:
+    stem = a.tag.replace("-", "_")
+    with open(os.path.join(a.results_dir, f"{stem}_summary.json"), "w") as f:
         json.dump(dict(runs=rows, per_arm=means), f, indent=1)
 
     lines = [
@@ -87,7 +94,7 @@ def main():
         sd = f"{m['stdev']:.4f}" if m["stdev"] is not None else "-"
         lines.append(f"| {m['arm']} | {m['seeds']} | {m['mean_accuracy']:.4f} | {sd} |")
     md = "\n".join(lines) + "\n"
-    with open(os.path.join(a.results_dir, "rank_summary.md"), "w") as f:
+    with open(os.path.join(a.results_dir, f"{stem}_summary.md"), "w") as f:
         f.write(md)
     print(md, end="")
 

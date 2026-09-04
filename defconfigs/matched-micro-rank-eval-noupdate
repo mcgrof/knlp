@@ -1,0 +1,20 @@
+# Ablation of Hope's retained state, to be read against the
+# matched-micro-rank-eval reference run. Scores the same episode set
+# over the same Hope checkpoints with the teach-signal update pass
+# skipped, so the fast state never adapts within a sequence while the
+# chunking, boundary targets and train-mode forward stay exactly as
+# trained. If accuracy holds up without the updates, Hope's ranking
+# advantage does not come from state it retains across the context.
+# Only the Hope arm has a memory update to ablate, so the arm list is
+# just hope; everything else matches the reference run exactly.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="hope"
+CONFIG_MATCHED_MICRO_PHASE_RANK_EVAL=y
+CONFIG_MATCHED_MICRO_RANK_SEED=7
+CONFIG_MATCHED_MICRO_RANK_PER_FAMILY=25
+CONFIG_MATCHED_MICRO_RANK_CONTROLS="{\"filler_sentences\": 2}"
+CONFIG_MATCHED_MICRO_RANK_NORM="mean"
+CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS=512
+CONFIG_MATCHED_MICRO_RANK_TAG="rank-eval-noupdate"
+CONFIG_MATCHED_MICRO_RANK_NO_MEMORY_UPDATE=y
+CONFIG_MATCHED_MICRO_RANK_SHARDS=8

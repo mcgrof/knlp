@@ -28,6 +28,8 @@ KEYS = {
     "CONFIG_MATCHED_MICRO_RANK_NORM": ("rank_norm", str),
     "CONFIG_MATCHED_MICRO_RANK_MAX_TOKENS": ("rank_max_tokens", int),
     "CONFIG_MATCHED_MICRO_RANK_SHARDS": ("rank_shards", int),
+    "CONFIG_MATCHED_MICRO_RANK_TAG": ("rank_tag", str),
+    "CONFIG_MATCHED_MICRO_RANK_NO_MEMORY_UPDATE": ("rank_no_memory_update", bool),
 }
 
 
@@ -78,6 +80,8 @@ def main():
     cfg.setdefault("rank_norm", "mean")
     cfg.setdefault("rank_max_tokens", 512)
     cfg.setdefault("rank_shards", 1)
+    cfg.setdefault("rank_tag", "rank-eval")
+    cfg.setdefault("rank_no_memory_update", False)
     json.dump(cfg, open(a.out, "w"), indent=2)
     print(f"wrote {a.out}:")
     print(json.dumps(cfg, indent=2))

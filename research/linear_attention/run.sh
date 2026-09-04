@@ -116,10 +116,13 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
   RNORM=$(jq_get rank_norm)
   RMAX=$(jq_get rank_max_tokens)
   RSHARDS=$(jq_get rank_shards)
+  RTAG=$(jq_get rank_tag)
+  RNOUPD=""
+  [ "$(jq_get rank_no_memory_update)" = "True" ] && RNOUPD="--no-memory-update"
   CKPT_DIR="${CKPT_DIR:-$OUT_DIR}"
-  REVAL="$OUT_DIR/rank-eval"
+  REVAL="$OUT_DIR/$RTAG"
   mkdir -p "$REVAL"
-  echo "== RANK EVAL (seed $RSEED, $RPF/family, norm $RNORM) =="
+  echo "== RANK EVAL $RTAG (seed $RSEED, $RPF/family, norm $RNORM) $RNOUPD =="
   [ -f "$REVAL/episodes.jsonl" ] ||
     run "$PYTHON" "$KNLP/scripts/accountability_bench.py" generate \
       --seed "$RSEED" --per-family "$RPF" --controls "$RCTL" \
@@ -128,12 +131,18 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
     [ -d "$D" ] || continue
     NAME=$(basename "$D")
     ARM=${NAME##*-}
+    # honor the configured arm list: an ablation that only applies to
+    # one arm must not silently re-score the whole checkpoint set
+    case " $ARMS " in
+    *" $ARM "*) ;;
+    *) continue ;;
+    esac
     [ -f "$D/$ARM.pt" ] || { echo "-- rank-eval $NAME: no checkpoint, skip"; continue; }
     echo "-- rank-eval $NAME ($RSHARDS shard(s))"
     if [ "$RSHARDS" -le 1 ]; then
       run "$PYTHON" "$HERE/rank_eval.py" --checkpoint "$D/$ARM.pt" \
         --episodes "$REVAL/episodes.jsonl" --out-dir "$REVAL/$NAME" \
-        --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda
+        --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda $RNOUPD
     else
       # every query is scored independently from a fresh state, so
       # sharding the query set across processes is exact, not an
@@ -144,7 +153,7 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
           --episodes "$REVAL/episodes.jsonl" \
           --out-dir "$REVAL/$NAME/shard$I" \
           --norm "$RNORM" --max-tokens "$RMAX" --self-check --device cuda \
-          --num-shards "$RSHARDS" --shard "$I" &
+          --num-shards "$RSHARDS" --shard "$I" $RNOUPD &
       done
       wait
       if [ "${DRY_RUN:-0}" != "1" ]; then
@@ -158,7 +167,7 @@ if [ "$(jq_get phase_rank_eval)" = "True" ]; then
       --out "$REVAL/$NAME/score.json"
   done
   run "$PYTHON" "$HERE/rank_summary.py" --out-dir "$OUT_DIR" \
-    --results-dir "$RESULTS_DIR"
+    --results-dir "$RESULTS_DIR" --tag "$RTAG"
 fi
 
 echo MICRO_RUN_DONE
