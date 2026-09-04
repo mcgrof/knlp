@@ -43,7 +43,9 @@ TOKENIZER = os.environ.get("TOKENIZER", "Qwen/Qwen3-8B")
 NO_TOKENIZE = os.environ.get("NO_TOKENIZE", "0") == "1"
 
 CAP_RE = re.compile(r"max (\d+)")
-STEM_RE = re.compile(r"^t15_(.+?)_runs(\d+)$")
+# t15_<arm>_<patient>[_cap<n>]_runs<n>.json -- the arm names the cartridge, so
+# two cartridges scored on the same patient at the same cap stay separate
+ARM_RE = re.compile(r"^t15_(.+?)_(patient_\d+)(?:_cap\d+)?_runs\d+$")
 
 
 def _load_tokenizer():
@@ -110,6 +112,8 @@ def _read(path, tok, cache):
     rows = raw["rows"] if isinstance(raw, dict) else raw
     if not rows:
         return None
+    m = ARM_RE.match(os.path.splitext(os.path.basename(path))[0])
+    arm = m.group(1) if m else os.path.splitext(os.path.basename(path))[0]
     cap, cap_src = _cap_of(summary)
     if cap is None:
         print(
@@ -132,6 +136,7 @@ def _read(path, tok, cache):
     return {
         "path": path,
         "file": key,
+        "arm": arm,
         "cap": cap,
         "cap_source": cap_src,
         "sampler": _sampler_of(summary),
@@ -241,6 +246,7 @@ def main():
                 continue
             entry = {
                 "file": f["file"],
+                "arm": f["arm"],
                 "patient": pt,
                 "cap": f["cap"],
                 "cap_source": f["cap_source"],
@@ -256,16 +262,19 @@ def main():
             per_file.append(entry)
             # a patient may be scored more than once at one cap; the sampler
             # distinguishes those runs, so key on both
-            by_patient_cap[pt][(f["cap"], f["sampler"])] = {**f, "rows": rows}
+            by_patient_cap[pt][(f["arm"], f["cap"], f["sampler"])] = {**f, "rows": rows}
 
     transitions = []
     for pt, runs in sorted(by_patient_cap.items()):
-        for samp in sorted({s for _, s in runs}):
-            caps = sorted(c for c, s in runs if s == samp)
+        # a transition is only meaningful within one cartridge and one sampler
+        for arm, samp in sorted({(a, s) for a, _, s in runs}):
+            caps = sorted(c for a, c, s in runs if a == arm and s == samp)
             for lo_cap, hi_cap in zip(caps, caps[1:]):
-                d = _decompose(runs[(lo_cap, samp)], runs[(hi_cap, samp)])
+                d = _decompose(runs[(arm, lo_cap, samp)], runs[(arm, hi_cap, samp)])
                 if d:
-                    transitions.append({"patient": pt, "sampler": samp, **d})
+                    transitions.append(
+                        {"patient": pt, "arm": arm, "sampler": samp, **d}
+                    )
 
     unpaired = sorted(
         {e["patient"] for e in per_file} - {t["patient"] for t in transitions}
@@ -289,10 +298,12 @@ def main():
 
     w = sys.stdout.write
     w(f"cap hits measured by {result['provenance']['cap_hit_rule']}\n\n")
-    w(f"{'patient':<12}{'cap':>6}{'n':>5}{'acc':>8}{'at cap':>8}  sampler\n")
-    for e in sorted(per_file, key=lambda e: (e["patient"], e["sampler"], e["cap"])):
+    w(f"{'arm':<14}{'patient':<12}{'cap':>6}{'n':>5}{'acc':>8}{'at cap':>8}  sampler\n")
+    for e in sorted(
+        per_file, key=lambda e: (e["arm"], e["patient"], e["sampler"], e["cap"])
+    ):
         w(
-            f"{e['patient']:<12}{e['cap']:>6}{e['n']:>5}{e['acc']:>8.4f}"
+            f"{e['arm']:<14}{e['patient']:<12}{e['cap']:>6}{e['n']:>5}{e['acc']:>8.4f}"
             f"{e['cap_hits']:>5}/{e['n']:<3}  {e['sampler']}\n"
         )
     dis = [
@@ -337,7 +348,11 @@ def main():
                 )
             w(f"    still at the upper cap: {t['still_at_upper_cap']} of {t['n']}\n")
     if unpaired:
-        w(f"\nno cap transition available for: {', '.join(unpaired)}\n")
+        w(
+            "\nno cap transition available for: "
+            + ", ".join(f"{a}/{p}" for a, p in unpaired)
+            + "\n"
+        )
     w(f"\nwrote {out_path}\n")
     return 0
 
