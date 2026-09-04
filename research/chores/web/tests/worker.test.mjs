@@ -24,15 +24,33 @@ function environment() {
   };
 }
 
-test("landing page states the agent security purpose", async () => {
+test("landing page states both uses and the security boundary", async () => {
   const index = await readFile(
     new URL("../public/index.html", import.meta.url),
     "utf8",
   );
 
   assert.match(index, /Proactive security hygiene/);
+  assert.match(index, /Personal OKR tracking/);
   assert.match(index, /must immediately report suspected unauthorized/);
   assert.match(index, /does not monitor agents or deliver incident reports/);
+});
+
+test("published OKR examples match their source templates", async () => {
+  for (const name of [
+    "personal-okr-profile.json",
+    "personal-okr-events.jsonl",
+  ]) {
+    const source = await readFile(
+      new URL(`../../examples/${name}`, import.meta.url),
+      "utf8",
+    );
+    const published = await readFile(
+      new URL(`../public/examples/${name}`, import.meta.url),
+      "utf8",
+    );
+    assert.equal(published, source);
+  }
 });
 
 test("status route maps to the generated document", async () => {

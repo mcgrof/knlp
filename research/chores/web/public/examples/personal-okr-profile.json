@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "project": "Personal OKR example",
+  "surface": "public",
+  "state": "example",
+  "summary": "Objective: make a small open-source project easier to release.",
+  "claim_scope": "Synthetic template data only; replace every actor, result, date, and evidence statement before publishing.",
+  "refresh_seconds": 60,
+  "workstreams": [
+    { "id": "o1-kr1-checklist", "label": "O1 · KR1 · Publish a release checklist" },
+    { "id": "o1-kr2-clean-setup", "label": "O1 · KR2 · Verify a clean setup" },
+    { "id": "o1-kr3-review", "label": "O1 · KR3 · Review each release" }
+  ]
+}

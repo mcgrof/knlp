@@ -44,6 +44,20 @@ evidence, independent review, and direct human reporting. A skill can request
 that behavior, but it cannot enforce it; policy checks, durable reporting, and
 monitoring must operate outside the agents for stronger guarantees.
 
+## Two chore families
+
+Agent security is the primary motivation and has the non-deferrable reporting
+rule above. The same status machinery also supports an optional personal
+Objectives and Key Results (OKR) tracker. An OKR profile turns each measurable
+key result into a workstream and appends evidence-linked check-ins with optional
+progress, performer, reviewer, and next-review fields.
+
+These families share a file format, not an operating policy. Security incidents
+do not wait for a dashboard update, while an OKR blocker is an ordinary status
+event. [`EXTENSIONS.md`](EXTENSIONS.md) compares the mappings and explains how
+to adapt the synthetic [`examples/`](examples/) OKR template without exposing a
+private goal set.
+
 ## Current scope
 
 The code in this directory begins with a status projection, not a security
@@ -64,7 +78,10 @@ stream:
 
 Each event records a workstream state and an implementation-coverage level.
 "Complete" therefore does not mean "deployed": a design can be complete while
-its coverage remains `documented` or `not-implemented`.
+its coverage remains `documented` or `not-implemented`. An event may also record
+progress, who performed and reviewed the update, and its next review time. Those
+fields are optional because they are useful for an OKR check-in but may be
+irrelevant or unsafe to publish for a security chore.
 
 ## Public and private projections
 
@@ -96,7 +113,8 @@ pytest
 
 The default command builds the checked-in public inputs under `web/public/`.
 Tests rebuild those artifacts, compare their bytes, and query the trace through
-Perfetto's trace processor.
+Perfetto's trace processor. The synthetic personal OKR files under `examples/`
+exercise the same builder and trace path in the test suite.
 
 A private deployment passes its own paths and must opt in explicitly:
 

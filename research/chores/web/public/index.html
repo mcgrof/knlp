@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Chores · Agent security hygiene status</title>
+  <title>Chores · Agent workflows and personal OKR status</title>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -23,12 +23,13 @@
   </nav>
 
   <header class="shell">
-    <p class="eyebrow">Agent security hygiene · public R&amp;D status</p>
+    <p class="eyebrow">Agent security · personal OKRs · public R&amp;D status</p>
     <h1>Chores</h1>
     <p class="lede">
       Proactive security hygiene for people using AI agents. Routine checks can
       rotate; every agent must immediately report suspected unauthorized
-      activity directly to the human owner.
+      activity directly to the human owner. The same evidence-linked status
+      model can track personal Objectives and Key Results (OKRs).
     </p>
     <div class="scope">
       <strong>Current boundary</strong>
@@ -37,6 +38,44 @@
   </header>
 
   <main class="shell">
+    <section aria-labelledby="starting-points">
+      <div class="section-heading">
+        <div>
+          <p class="label">Optional chore families</p>
+          <h2 id="starting-points">Two starting points</h2>
+        </div>
+        <p>One event model; distinct operating and privacy rules.</p>
+      </div>
+      <div class="use-cases">
+        <article class="use-case primary-use-case">
+          <p class="label">Primary motivation</p>
+          <h3>Agent security workflows</h3>
+          <p>
+            Rotate bounded routine checks and record their evidence. Suspected
+            unauthorized activity bypasses the rotation and goes directly to
+            the human owner; this dashboard is not that reporting channel.
+          </p>
+        </article>
+        <article class="use-case">
+          <p class="label">Reusable extension</p>
+          <h3>Personal OKR tracking</h3>
+          <p>
+            Treat each measurable key result as a workstream. Append progress,
+            performer, reviewer, evidence, and the next review time without
+            publishing a private goal set.
+          </p>
+          <div class="template-links">
+            <a href="/examples/personal-okr-profile.json" download>
+              profile template
+            </a>
+            <a href="/examples/personal-okr-events.jsonl" download>
+              example events
+            </a>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section class="metrics" aria-label="Project summary" aria-live="polite">
       <div class="metric metric-wide">
         <span class="label">Project</span>
@@ -99,7 +138,7 @@
   </main>
 
   <footer>
-    <div class="shell">Public project records only. This page does not monitor agents or deliver incident reports.</div>
+    <div class="shell">Public project records and synthetic examples only. This page does not monitor agents or deliver incident reports.</div>
   </footer>
 </body>
 </html>
