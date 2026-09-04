@@ -5,10 +5,12 @@ import hashlib
 import json
 from pathlib import Path
 
-import pytest
-
 import build
+import pytest
 from chores_perfetto import render_trace
+
+OKR_PROFILE = build.ROOT / "examples" / "personal-okr-profile.json"
+OKR_EVENTS = build.ROOT / "examples" / "personal-okr-events.jsonl"
 
 
 def test_public_projection_builds_and_validates(tmp_path: Path) -> None:
@@ -140,6 +142,55 @@ def test_private_projection_requires_explicit_opt_in(tmp_path: Path) -> None:
         allow_private=True,
     )
     assert status["surface"] == "private"
+
+
+def test_personal_okr_example_builds_with_review_metadata(tmp_path: Path) -> None:
+    from perfetto.trace_processor import TraceProcessor
+
+    status = build.build(
+        profile_path=OKR_PROFILE,
+        events_path=OKR_EVENTS,
+        output_dir=tmp_path,
+    )
+
+    build.validator("status.schema.json").validate(status)
+    assert status["project"] == "Personal OKR example"
+    assert status["surface"] == "public"
+    assert len(status["workstreams"]) == 3
+    checklist = next(
+        item for item in status["workstreams"] if item["id"] == "o1-kr1-checklist"
+    )
+    assert checklist["progress_percent"] == 40
+    assert checklist["performed_by"] == "agent-writer"
+    assert checklist["reviewed_by"] == "owner"
+    assert checklist["next_review_at"] == "2026-01-19T17:00:00Z"
+    assert status["trace"]["event_count"] == len(status["events"])
+
+    processor = TraceProcessor(trace=str(tmp_path / "traces/latest.pftrace"))
+    try:
+        progress = {
+            row.int_value
+            for row in processor.query(
+                "select distinct a.int_value from slice s join args a "
+                "on s.arg_set_id = a.arg_set_id "
+                "where s.name = 'Release checklist receives its first review' "
+                "and a.key = 'debug.progress_percent'"
+            )
+        }
+        performers = {
+            row.string_value
+            for row in processor.query(
+                "select distinct a.string_value from slice s join args a "
+                "on s.arg_set_id = a.arg_set_id "
+                "where s.name = 'Release checklist receives its first review' "
+                "and a.key = 'debug.performed_by'"
+            )
+        }
+    finally:
+        processor.close()
+
+    assert progress == {40}
+    assert performers == {"agent-writer"}
 
 
 def test_event_stream_rejects_duplicate_ids(tmp_path: Path) -> None:

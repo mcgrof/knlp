@@ -11,10 +11,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from chores_perfetto import parse_time, render_trace
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
-
-from chores_perfetto import parse_time, render_trace
 
 ROOT = Path(__file__).resolve().parent
 SCHEMAS = ROOT / "schemas"
@@ -131,16 +130,23 @@ def derive_status(
         event = latest[workstream_id]
         if event is None:
             raise ValueError(f"workstream {workstream_id} has no event")
-        workstreams.append(
-            {
-                "id": workstream_id,
-                "label": item["label"],
-                "state": event["state"],
-                "coverage": event["coverage"],
-                "summary": event["summary"],
-                "updated_at": event["occurred_at"],
-            }
-        )
+        workstream = {
+            "id": workstream_id,
+            "label": item["label"],
+            "state": event["state"],
+            "coverage": event["coverage"],
+            "summary": event["summary"],
+            "updated_at": event["occurred_at"],
+        }
+        for field in (
+            "progress_percent",
+            "performed_by",
+            "reviewed_by",
+            "next_review_at",
+        ):
+            if field in event:
+                workstream[field] = event[field]
+        workstreams.append(workstream)
 
     return {
         "schema_version": 1,
