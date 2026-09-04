@@ -22,7 +22,16 @@
     "event_id": { "type": "string", "pattern": "^evt-[0-9]{4}$" },
     "occurred_at": { "type": "string", "format": "date-time" },
     "kind": {
-      "enum": ["project", "milestone", "result", "gate", "deployment"]
+      "enum": [
+        "project",
+        "milestone",
+        "result",
+        "gate",
+        "deployment",
+        "triage",
+        "review",
+        "handoff"
+      ]
     },
     "workstream": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
     "state": {
@@ -39,6 +48,7 @@
     "progress_percent": { "type": "integer", "minimum": 0, "maximum": 100 },
     "performed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
     "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "authority_scope": { "type": "string", "minLength": 1, "maxLength": 240 },
     "next_review_at": { "type": "string", "format": "date-time" }
   }
 }

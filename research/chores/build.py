@@ -142,6 +142,7 @@ def derive_status(
             "progress_percent",
             "performed_by",
             "reviewed_by",
+            "authority_scope",
             "next_review_at",
         ):
             if field in event:

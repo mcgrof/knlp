@@ -11,6 +11,8 @@ from chores_perfetto import render_trace
 
 OKR_PROFILE = build.ROOT / "examples" / "personal-okr-profile.json"
 OKR_EVENTS = build.ROOT / "examples" / "personal-okr-events.jsonl"
+MAINTAINER_PROFILE = build.ROOT / "examples" / "open-source-maintainer-profile.json"
+MAINTAINER_EVENTS = build.ROOT / "examples" / "open-source-maintainer-events.jsonl"
 PUBLIC_COPY = (
     build.ROOT / "README.md",
     build.ROOT / "EXTENSIONS.md",
@@ -18,6 +20,8 @@ PUBLIC_COPY = (
     build.DEFAULT_EVENTS,
     OKR_PROFILE,
     OKR_EVENTS,
+    MAINTAINER_PROFILE,
+    MAINTAINER_EVENTS,
     build.DEFAULT_OUTPUT / "index.html",
     build.DEFAULT_OUTPUT / "examples" / OKR_PROFILE.name,
     build.DEFAULT_OUTPUT / "examples" / OKR_EVENTS.name,
@@ -208,6 +212,50 @@ def test_personal_okr_example_builds_with_review_metadata(tmp_path: Path) -> Non
 
     assert progress == {40}
     assert performers == {"agent-writer"}
+
+
+def test_private_maintainer_example_preserves_authority(tmp_path: Path) -> None:
+    from perfetto.trace_processor import TraceProcessor
+
+    status = build.build(
+        profile_path=MAINTAINER_PROFILE,
+        events_path=MAINTAINER_EVENTS,
+        output_dir=tmp_path,
+        allow_private=True,
+    )
+
+    build.validator("status.schema.json").validate(status)
+    assert status["project"] == "Open-source maintainer assistance example"
+    assert status["surface"] == "private"
+    assert len(status["workstreams"]) == 4
+    pull_requests = next(
+        item for item in status["workstreams"] if item["id"] == "pull-request-review"
+    )
+    assert pull_requests["performed_by"] == "agent-reviewer"
+    assert pull_requests["reviewed_by"] == "maintainer"
+    assert "do not submit" in pull_requests["authority_scope"]
+    assert {event["kind"] for event in status["events"]} >= {
+        "triage",
+        "review",
+        "handoff",
+    }
+
+    processor = TraceProcessor(trace=str(tmp_path / "traces/latest.pftrace"))
+    try:
+        authority = {
+            row.string_value
+            for row in processor.query(
+                "select distinct a.string_value from slice s join args a "
+                "on s.arg_set_id = a.arg_set_id "
+                "where s.name = "
+                "'Assigned pull request receives an evidence-linked review' "
+                "and a.key = 'debug.authority_scope'"
+            )
+        }
+    finally:
+        processor.close()
+
+    assert authority == {pull_requests["authority_scope"]}
 
 
 def test_event_stream_rejects_duplicate_ids(tmp_path: Path) -> None:
