@@ -15,9 +15,11 @@ Observation (float32, ``OBS_DIM`` = 77):
     frictions, the 4 nearest trees (dx, dz, present) and the 4
     nearest items (dx, dz, present), all in course coordinates.
 
-Action (``Discrete(9)``): steer {left, straight, right} x
-    {coast, paddle, brake}, held for ``FRAME_SKIP`` physics ticks at
-    60 Hz (a 15 Hz decision rate). Jumping is not exposed in v0.
+Action: steer {left, straight, right} x the modes of the chosen action
+    set, held for ``FRAME_SKIP`` physics ticks at 60 Hz (a 15 Hz decision
+    rate). ``v0`` is nine actions with no jump; ``v1`` adds the jump
+    charge and the game's reset key, and prices that key at the second of
+    race clock it costs.
 """
 
 from __future__ import annotations
@@ -36,17 +38,35 @@ FRAME_SKIP = 4
 TICK_DT = DEFAULT_DT
 N_PROBES = len(PROBE_AHEAD) * len(PROBE_SIDE)
 
-# steer, paddle, brake for each macro action
-ACTION_TABLE = tuple(
-    (steer, mode == "paddle", mode == "brake")
-    for steer in (-1.0, 0.0, 1.0)
-    for mode in ("coast", "paddle", "brake")
-)
-ACTION_NAMES = tuple(
-    f"{s}+{m}"
-    for s in ("left", "straight", "right")
-    for m in ("coast", "paddle", "brake")
-)
+# Action sets. v0 is the frozen first contract: steer x {coast, paddle,
+# brake}. v1 adds the jump charge (held actions charge, releasing fires,
+# exactly as the space bar does) and the game's reset key as an explicit
+# action, because several courses strand a racer where the rendered game
+# expects the player to press R.
+ACTION_SETS = {
+    "v0": ("coast", "paddle", "brake"),
+    "v1": ("coast", "paddle", "brake", "jump"),
+}
+RECOVER_IN = ("v1",)
+
+
+def build_actions(action_set: str):
+    modes = ACTION_SETS[action_set]
+    table, names = [], []
+    for steer, sname in ((-1.0, "left"), (0.0, "straight"), (1.0, "right")):
+        for mode in modes:
+            table.append((steer, mode == "paddle", mode == "brake", mode == "jump"))
+            names.append(f"{sname}+{mode}")
+    if action_set in RECOVER_IN:
+        table.append(None)  # the reset key: no physics action of its own
+        names.append("recover")
+    return tuple(table), tuple(names)
+
+
+# The v0 table stays importable under its old name for the tools and the
+# checkpoints that were trained against it.
+ACTION_TABLE = tuple(a[:3] for a in build_actions("v0")[0])
+ACTION_NAMES = build_actions("v0")[1]
 
 OBS_DIM = (
     1 + 1 + 1 + 3 + 1 + 2 + 3 + 1 + N_PROBES + N_PROBES + 3 * NEAREST + 3 * NEAREST
@@ -65,6 +85,7 @@ DEFAULT_REWARD = {
     "collision": 2.0,  # per tree contact event, subtracted
     "finish": 50.0,  # once, on crossing the finish line
     "stuck": 5.0,  # once, subtracted when the episode is truncated for no progress
+    "recover": 3.0,  # per use of the reset key: the 1 s of race clock it costs
 }
 
 BACKENDS = {"etr": EtrBridge, "sim": EtrSim}
@@ -133,7 +154,8 @@ class EtrEnv(gym.Env):
         wind: int = 0,
         frame_skip: int = FRAME_SKIP,
         max_seconds: float = 120.0,
-        stuck_seconds: float = 6.0,
+        stuck_seconds: float = 15.0,
+        action_set: str = "v0",
         reward_weights: Optional[dict] = None,
         binary: Optional[str] = None,
         stderr_path: Optional[str] = None,
@@ -151,10 +173,12 @@ class EtrEnv(gym.Env):
         self.weights = dict(DEFAULT_REWARD)
         if reward_weights:
             self.weights.update(reward_weights)
+        self.action_set = action_set
+        self.actions, self.action_names = build_actions(action_set)
         self.observation_space = spaces.Box(
             -OBS_BOUND, OBS_BOUND, (OBS_DIM,), np.float32
         )
-        self.action_space = spaces.Discrete(len(ACTION_TABLE))
+        self.action_space = spaces.Discrete(len(self.actions))
         kwargs: dict[str, Any] = {"binary": binary}
         if backend == "etr":
             kwargs["stderr_path"] = stderr_path
@@ -191,11 +215,19 @@ class EtrEnv(gym.Env):
 
     def step(self, action: int):
         assert self._raw is not None, "reset first"
-        steer, paddle, brake = ACTION_TABLE[int(action)]
+        entry = self.actions[int(action)]
         prev = self._raw
-        raw = self.backend.step(
-            turn=steer, brake=brake, paddle=paddle, jump=False, ticks=self.frame_skip
-        )
+        if entry is None:
+            raw = self.backend.recover()
+        else:
+            steer, paddle, brake, jump = entry
+            raw = self.backend.step(
+                turn=steer,
+                brake=brake,
+                paddle=paddle,
+                jump=jump,
+                ticks=self.frame_skip,
+            )
         self._raw = raw
         self._steps += 1
 
@@ -207,6 +239,7 @@ class EtrEnv(gym.Env):
         terms["progress"] = self.weights["progress"] * gain
         terms["herring"] = self.weights["herring"] * (raw["herring"] - prev["herring"])
         terms["time"] = -self.weights["time"]
+        terms["recover"] = -self.weights["recover"] if entry is None else 0.0
         terms["collision"] = -self.weights["collision"] * (
             raw["collisions"] - prev["collisions"]
         )

@@ -8,7 +8,13 @@ import pytest
 gym = pytest.importorskip("gymnasium")
 
 from rl.envs import make_env, parse_env_id
-from rl.envs.etr_env import ACTION_TABLE, OBS_DIM, encode_observation
+from rl.envs.etr_env import (
+    ACTION_TABLE,
+    DEFAULT_REWARD,
+    OBS_DIM,
+    build_actions,
+    encode_observation,
+)
 from rl.envs.etr_sim import EtrSim
 
 
@@ -61,14 +67,7 @@ def test_env_episode_terminates_and_reports_terms():
     ]
     while not done:
         obs, r, term, trunc, info = env.step(paddle_straight)
-        assert set(info["reward_terms"]) == {
-            "progress",
-            "herring",
-            "time",
-            "collision",
-            "finish",
-            "stuck",
-        }
+        assert set(info["reward_terms"]) == set(DEFAULT_REWARD)
         total += r
         steps += 1
         done = term or trunc
@@ -109,3 +108,26 @@ def test_progress_reward_cannot_be_farmed_by_backtracking():
     env.backend.z += 5.0
     _, _, _, _, info = env.step(paddle_straight)
     assert info["reward_terms"]["progress"] == 0.0
+
+
+def test_v1_action_set_adds_jump_and_the_reset_key():
+    table, names = build_actions("v1")
+    assert len(table) == 13
+    assert names[-1] == "recover" and table[-1] is None
+    assert "straight+jump" in names
+    # v0 is untouched, so checkpoints trained against it still load
+    assert len(build_actions("v0")[0]) == 9
+
+
+def test_recover_costs_time_and_moves_backwards():
+    env = make_env("sim:sim_trees", action_set="v1")
+    env.reset(seed=0)
+    paddle = env.action_names.index("straight+paddle")
+    for _ in range(60):
+        _, _, _, _, info = env.step(paddle)
+    before, t0 = info["progress"], info["time"]
+    _, r, _, _, info = env.step(env.action_names.index("recover"))
+    assert info["progress"] < before
+    assert info["time"] > t0
+    assert info["reward_terms"]["recover"] < 0
+    assert info["reward_terms"]["progress"] == 0.0  # cannot farm progress by resetting
