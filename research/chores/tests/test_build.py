@@ -11,6 +11,18 @@ from chores_perfetto import render_trace
 
 OKR_PROFILE = build.ROOT / "examples" / "personal-okr-profile.json"
 OKR_EVENTS = build.ROOT / "examples" / "personal-okr-events.jsonl"
+PUBLIC_COPY = (
+    build.ROOT / "README.md",
+    build.ROOT / "EXTENSIONS.md",
+    build.DEFAULT_PROFILE,
+    build.DEFAULT_EVENTS,
+    OKR_PROFILE,
+    OKR_EVENTS,
+    build.DEFAULT_OUTPUT / "index.html",
+    build.DEFAULT_OUTPUT / "examples" / OKR_PROFILE.name,
+    build.DEFAULT_OUTPUT / "examples" / OKR_EVENTS.name,
+    build.ROOT.parents[1] / "docs" / "index.html",
+)
 
 
 def test_public_projection_builds_and_validates(tmp_path: Path) -> None:
@@ -37,6 +49,11 @@ def test_public_projection_builds_and_validates(tmp_path: Path) -> None:
         status["trace"]["sha256"]
         == hashlib.sha256((tmp_path / "traces/latest.pftrace").read_bytes()).hexdigest()
     )
+
+
+def test_public_copy_uses_lowercase_knlp_project_name() -> None:
+    for path in PUBLIC_COPY:
+        assert "KNLP" not in path.read_text(encoding="utf-8"), path
 
 
 def test_tracked_artifacts_are_current(tmp_path: Path) -> None:
