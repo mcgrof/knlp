@@ -263,9 +263,6 @@ def main():
                         cfg,
                         idx,
                         memory_update=not a.no_memory_update,
-                        context_shown=not a.no_context,
-                        chunk_path=a.chunk_path,
-                        wall_s=round(time.time() - t_start, 1),
                         chunk_path=a.chunk_path,
                     )
                 span = lps[len(prefix_ids) - 1 :]
