@@ -337,6 +337,7 @@ def run_cart_mode(patients_data):
             vals = vals * keep
         return int(idx[torch.multinomial(vals / vals.sum(), 1)])
 
+    @torch.no_grad()
     def generate(cache, ids, seed):
         """Single-sequence sampling loop mirroring flex_generate (temperature-
         scaled multinomial, fp32 softmax); terminates on the model EOS set or
