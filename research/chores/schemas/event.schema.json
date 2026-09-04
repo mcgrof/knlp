@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chores.knlp.io/schemas/event-v1.json",
+  "title": "Chores activity event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "occurred_at",
+    "kind",
+    "workstream",
+    "state",
+    "coverage",
+    "title",
+    "summary",
+    "evidence",
+    "surface"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "pattern": "^evt-[0-9]{4}$" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "kind": {
+      "enum": ["project", "milestone", "result", "gate", "deployment"]
+    },
+    "workstream": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "state": {
+      "enum": ["planned", "active", "blocked", "complete", "held"]
+    },
+    "coverage": {
+      "enum": ["documented", "implemented", "deployed", "not-implemented"]
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "evidence": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "surface": { "enum": ["public", "private"] },
+    "source_url": { "type": "string", "format": "uri", "maxLength": 500 }
+  }
+}
