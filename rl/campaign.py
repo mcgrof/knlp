@@ -182,6 +182,7 @@ def stage_eval(course, name, args, out):
         binary=args.etr_bin,
         max_seconds=max_seconds(course),
         stuck_seconds=stuck_seconds(course),
+        action_set=args.action_set,
     )
     try:
         obs_dim = int(np.prod(env.observation_space.shape))
