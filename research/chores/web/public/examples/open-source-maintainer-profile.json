@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "project": "Open-source maintainer assistance example",
+  "surface": "private",
+  "state": "example",
+  "summary": "A private operator view of scoped agent help with public issues and pull requests.",
+  "claim_scope": "Synthetic template only; agents may inspect assigned public material and draft recommendations, but they may not merge, close, label, comment, or otherwise change repository state without explicit authority.",
+  "refresh_seconds": 60,
+  "workstreams": [
+    { "id": "issue-triage", "label": "Assigned issue triage" },
+    { "id": "pull-request-review", "label": "Assigned pull-request review" },
+    { "id": "coordination-sync", "label": "Agent coordination and sync" },
+    { "id": "maintainer-handoff", "label": "Maintainer handoff" }
+  ]
+}
