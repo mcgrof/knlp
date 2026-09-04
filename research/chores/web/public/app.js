@@ -16,6 +16,42 @@ function badge(value) {
   return element;
 }
 
+function renderProgress(value) {
+  const row = document.createElement("div");
+  row.className = "progress-row";
+
+  const progress = document.createElement("progress");
+  progress.max = 100;
+  progress.value = value;
+  progress.setAttribute("aria-label", `${value}% complete`);
+
+  const label = document.createElement("span");
+  label.textContent = `${value}%`;
+  row.append(progress, label);
+  return row;
+}
+
+function renderTrackingDetails(record) {
+  const details = [];
+  if (record.performed_by) {
+    details.push(`Performed by ${record.performed_by}`);
+  }
+  if (record.reviewed_by) {
+    details.push(`Reviewed by ${record.reviewed_by}`);
+  }
+  if (record.next_review_at) {
+    details.push(`Next review ${formatTime(record.next_review_at)}`);
+  }
+  if (!details.length) {
+    return null;
+  }
+
+  const element = document.createElement("p");
+  element.className = "tracking-details";
+  element.textContent = details.join(" · ");
+  return element;
+}
+
 function renderWorkstream(workstream) {
   const article = document.createElement("article");
   article.className = "workstream";
@@ -34,6 +70,13 @@ function renderWorkstream(workstream) {
   badges.append(badge(workstream.coverage));
 
   article.append(heading, summary, badges);
+  if (Number.isInteger(workstream.progress_percent)) {
+    article.append(renderProgress(workstream.progress_percent));
+  }
+  const tracking = renderTrackingDetails(workstream);
+  if (tracking) {
+    article.append(tracking);
+  }
   return article;
 }
 
@@ -55,7 +98,15 @@ function renderEvent(event) {
 
   const metadata = document.createElement("div");
   metadata.className = "event-meta";
-  metadata.textContent = `${event.workstream} · ${event.kind} · ${formatTime(event.occurred_at)}`;
+  const metadataItems = [
+    event.workstream,
+    event.kind,
+    formatTime(event.occurred_at),
+  ];
+  if (Number.isInteger(event.progress_percent)) {
+    metadataItems.push(`${event.progress_percent}%`);
+  }
+  metadata.textContent = metadataItems.join(" · ");
 
   const title = document.createElement("h3");
   title.textContent = event.title;
@@ -78,6 +129,10 @@ function renderEvent(event) {
   }
 
   article.append(metadata, title, summary, evidence);
+  const tracking = renderTrackingDetails(event);
+  if (tracking) {
+    article.append(tracking);
+  }
   return article;
 }
 

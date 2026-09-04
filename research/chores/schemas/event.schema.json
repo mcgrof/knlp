@@ -35,6 +35,10 @@
     "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
     "evidence": { "type": "string", "minLength": 1, "maxLength": 240 },
     "surface": { "enum": ["public", "private"] },
-    "source_url": { "type": "string", "format": "uri", "maxLength": 500 }
+    "source_url": { "type": "string", "format": "uri", "maxLength": 500 },
+    "progress_percent": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "performed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "next_review_at": { "type": "string", "format": "date-time" }
   }
 }

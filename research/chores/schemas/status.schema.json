@@ -60,7 +60,15 @@
           "enum": ["documented", "implemented", "deployed", "not-implemented"]
         },
         "summary": { "type": "string" },
-        "updated_at": { "type": "string", "format": "date-time" }
+        "updated_at": { "type": "string", "format": "date-time" },
+        "progress_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "performed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "next_review_at": { "type": "string", "format": "date-time" }
       }
     },
     "trace": {

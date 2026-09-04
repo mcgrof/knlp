@@ -189,8 +189,15 @@ def render_trace(
                 "evidence": row["evidence"],
                 "surface": row["surface"],
             }
-            if "source_url" in row:
-                annotations["source_url"] = row["source_url"]
+            for field in (
+                "source_url",
+                "progress_percent",
+                "performed_by",
+                "reviewed_by",
+                "next_review_at",
+            ):
+                if field in row:
+                    annotations[field] = row[field]
             for track in (overview, event_tracks[workstream_id]):
                 event_packet(
                     builder,

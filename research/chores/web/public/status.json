@@ -1,6 +1,19 @@
 {
-  "claim_scope": "Project-status publishing only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
+  "claim_scope": "Project-status publishing and a synthetic OKR example only; no collectors, incident delivery, agent monitoring, credential changes, or remediation are implemented.",
   "events": [
+    {
+      "coverage": "implemented",
+      "event_id": "evt-0009",
+      "evidence": "The test suite builds the OKR example and preserves its progress, performer, reviewer, and next-review fields.",
+      "kind": "milestone",
+      "occurred_at": "2026-09-04T21:35:18Z",
+      "schema_version": 1,
+      "state": "complete",
+      "summary": "A synthetic objective and three key-result lanes use the same validated JSON and Perfetto pipeline as the public project status.",
+      "surface": "public",
+      "title": "Personal OKR status example exercises the shared pipeline",
+      "workstream": "okr-example"
+    },
     {
       "coverage": "deployed",
       "event_id": "evt-0008",
@@ -111,15 +124,15 @@
   "refresh_seconds": 30,
   "schema_version": 1,
   "state": "prototype",
-  "summary": "Incident-motivated security hygiene for people using AI agents.",
+  "summary": "Incident-motivated agent security hygiene, with a reusable personal OKR status example.",
   "surface": "public",
   "trace": {
-    "event_count": 8,
+    "event_count": 9,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "a9d5155d4c198f5bcf15a28b19f7fa62c203e505293205389bb277b09aad7119",
+    "sha256": "272ad774bf71871269e070cfd95eac5791c0218992adad2d104582ae78b4f3c9",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-04T00:49:14Z",
+  "updated_at": "2026-09-04T21:35:18Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -136,6 +149,14 @@
       "state": "held",
       "summary": "A dashboard is not an urgent notifier and cannot establish that an owner received or acknowledged a report.",
       "updated_at": "2026-09-03T00:24:00Z"
+    },
+    {
+      "coverage": "implemented",
+      "id": "okr-example",
+      "label": "Personal OKR example",
+      "state": "complete",
+      "summary": "A synthetic objective and three key-result lanes use the same validated JSON and Perfetto pipeline as the public project status.",
+      "updated_at": "2026-09-04T21:35:18Z"
     },
     {
       "coverage": "not-implemented",
