@@ -13,6 +13,8 @@ OKR_PROFILE = build.ROOT / "examples" / "personal-okr-profile.json"
 OKR_EVENTS = build.ROOT / "examples" / "personal-okr-events.jsonl"
 MAINTAINER_PROFILE = build.ROOT / "examples" / "open-source-maintainer-profile.json"
 MAINTAINER_EVENTS = build.ROOT / "examples" / "open-source-maintainer-events.jsonl"
+KERNEL_PROFILE = build.ROOT / "examples" / "linux-kernel-review-profile.json"
+KERNEL_EVENTS = build.ROOT / "examples" / "linux-kernel-review-events.jsonl"
 PUBLIC_COPY = (
     build.ROOT / "README.md",
     build.ROOT / "EXTENSIONS.md",
@@ -258,6 +260,103 @@ def test_private_maintainer_example_preserves_authority(tmp_path: Path) -> None:
         processor.close()
 
     assert authority == {pull_requests["authority_scope"]}
+
+
+def test_private_kernel_example_preserves_scope_and_priority(tmp_path: Path) -> None:
+    from perfetto.trace_processor import TraceProcessor
+
+    status = build.build(
+        profile_path=KERNEL_PROFILE,
+        events_path=KERNEL_EVENTS,
+        output_dir=tmp_path,
+        allow_private=True,
+    )
+
+    build.validator("status.schema.json").validate(status)
+    assert status["project"] == "Linux kernel review assistance example"
+    assert status["surface"] == "private"
+    assert len(status["workstreams"]) == 5
+    assert status["repository_scope"] == {
+        "include_paths": ["block/", "drivers/nvme/", "include/linux/blk-mq.h"],
+        "exclude_paths": ["drivers/nvme/target/"],
+    }
+    syzbot = next(
+        item for item in status["workstreams"] if item["id"] == "syzbot-reports"
+    )
+    assert syzbot["priority"] == "critical"
+    assert syzbot["matched_paths"] == ["block/blk-mq.c"]
+
+    processor = TraceProcessor(trace=str(tmp_path / "traces/latest.pftrace"))
+    try:
+        matched_paths = {
+            row.string_value
+            for row in processor.query(
+                "select distinct a.string_value from slice s join args a "
+                "on s.arg_set_id = a.arg_set_id "
+                "where s.name = "
+                "'Reproducer-backed memory-safety report heads the briefing' "
+                "and a.key = 'debug.matched_paths'"
+            )
+        }
+        priorities = {
+            row.string_value
+            for row in processor.query(
+                "select distinct a.string_value from slice s join args a "
+                "on s.arg_set_id = a.arg_set_id "
+                "where s.name = "
+                "'Reproducer-backed memory-safety report heads the briefing' "
+                "and a.key = 'debug.priority'"
+            )
+        }
+    finally:
+        processor.close()
+
+    assert matched_paths == {"block/blk-mq.c"}
+    assert priorities == {"critical"}
+
+
+def test_repository_scope_matches_files_and_recursive_directories() -> None:
+    scope = build.read_json(KERNEL_PROFILE)["repository_scope"]
+
+    assert build.path_in_repository_scope("block/blk-mq.c", scope)
+    assert build.path_in_repository_scope("drivers/nvme/host/core.c", scope)
+    assert build.path_in_repository_scope("include/linux/blk-mq.h", scope)
+    assert not build.path_in_repository_scope("include/linux/blkdev.h", scope)
+    assert not build.path_in_repository_scope("drivers/nvme/target/core.c", scope)
+
+
+def test_priority_requires_an_explanation(tmp_path: Path) -> None:
+    event = json.loads(KERNEL_EVENTS.read_text(encoding="utf-8").splitlines()[5])
+    del event["priority_reason"]
+
+    errors = list(build.validator("event.schema.json").iter_errors(event))
+    assert any("priority_reason" in error.message for error in errors)
+
+    status = build.build(
+        profile_path=KERNEL_PROFILE,
+        events_path=KERNEL_EVENTS,
+        output_dir=tmp_path,
+        allow_private=True,
+    )
+    del status["workstreams"][0]["priority_reason"]
+    errors = list(build.validator("status.schema.json").iter_errors(status))
+    assert any("priority_reason" in error.message for error in errors)
+
+
+def test_event_stream_rejects_paths_outside_repository_scope(tmp_path: Path) -> None:
+    profile = build.read_json(KERNEL_PROFILE)
+    event = json.loads(KERNEL_EVENTS.read_text(encoding="utf-8").splitlines()[0])
+    event["matched_paths"] = ["net/core/dev.c"]
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside repository scope"):
+        build.load_events(
+            events_path,
+            surface="private",
+            workstreams={str(item["id"]) for item in profile["workstreams"]},
+            repository_scope=profile["repository_scope"],
+        )
 
 
 def test_event_stream_rejects_duplicate_ids(tmp_path: Path) -> None:

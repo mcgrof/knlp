@@ -2,6 +2,19 @@
   "claim_scope": "Project-status publishing and synthetic examples only; no collectors, incident delivery, agent monitoring, repository writes, credential changes, or remediation are implemented.",
   "events": [
     {
+      "coverage": "implemented",
+      "event_id": "evt-0013",
+      "evidence": "The test suite builds the kernel example, rejects out-of-scope paths, and preserves priority reasons and path matches in JSON and Perfetto.",
+      "kind": "milestone",
+      "occurred_at": "2026-09-05T00:32:27Z",
+      "schema_version": 1,
+      "state": "complete",
+      "summary": "A synthetic private morning briefing ranks mailing-list patches, syzbot reports, CVE announcements, and lore discussions that match configured files and directories.",
+      "surface": "public",
+      "title": "Path-scoped Linux kernel review example exercises the pipeline",
+      "workstream": "kernel-review-example"
+    },
+    {
       "coverage": "deployed",
       "event_id": "evt-0012",
       "evidence": "HTTPS returned 200; the live HTML, maintainer templates, status JSON, and trace matched the checked-in bytes.",
@@ -165,15 +178,15 @@
   "refresh_seconds": 30,
   "schema_version": 1,
   "state": "prototype",
-  "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped open-source maintenance.",
+  "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped maintenance of open-source projects and Linux kernel subsystems.",
   "surface": "public",
   "trace": {
-    "event_count": 12,
+    "event_count": 13,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "dc26f2864e8747819c7844edfc530cd021ae08de65d5fcc1460faa2c55c5245c",
+    "sha256": "a7228fb841d03f12cf909c86f5c5b5bb3ed8f2f1e5f1f2192e550acbb276aad5",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-04T21:55:47Z",
+  "updated_at": "2026-09-05T00:32:27Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -206,6 +219,14 @@
       "state": "complete",
       "summary": "The public dashboard presents scoped maintainer assistance and serves its synthetic private profile and event stream as downloads.",
       "updated_at": "2026-09-04T21:55:47Z"
+    },
+    {
+      "coverage": "implemented",
+      "id": "kernel-review-example",
+      "label": "Linux kernel review example",
+      "state": "complete",
+      "summary": "A synthetic private morning briefing ranks mailing-list patches, syzbot reports, CVE announcements, and lore discussions that match configured files and directories.",
+      "updated_at": "2026-09-05T00:32:27Z"
     },
     {
       "coverage": "not-implemented",

@@ -49,6 +49,18 @@
     "performed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
     "reviewed_by": { "type": "string", "minLength": 1, "maxLength": 80 },
     "authority_scope": { "type": "string", "minLength": 1, "maxLength": 240 },
-    "next_review_at": { "type": "string", "format": "date-time" }
+    "next_review_at": { "type": "string", "format": "date-time" },
+    "priority": { "enum": ["critical", "high", "normal", "low"] },
+    "priority_reason": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "matched_paths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+    }
+  },
+  "dependentRequired": {
+    "priority": ["priority_reason"],
+    "priority_reason": ["priority"]
   }
 }

@@ -196,9 +196,21 @@ def render_trace(
                 "reviewed_by",
                 "authority_scope",
                 "next_review_at",
+                "priority",
+                "priority_reason",
             ):
                 if field in row:
                     annotations[field] = row[field]
+            if "matched_paths" in row:
+                annotations["matched_paths"] = ", ".join(row["matched_paths"])
+            repository_scope = profile.get("repository_scope")
+            if repository_scope:
+                annotations["scope_include_paths"] = ", ".join(
+                    repository_scope["include_paths"]
+                )
+                annotations["scope_exclude_paths"] = ", ".join(
+                    repository_scope.get("exclude_paths", [])
+                )
             for track in (overview, event_tracks[workstream_id]):
                 event_packet(
                     builder,

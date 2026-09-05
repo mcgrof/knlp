@@ -22,6 +22,7 @@
     "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
     "claim_scope": { "type": "string", "minLength": 1, "maxLength": 500 },
     "refresh_seconds": { "type": "integer", "minimum": 10, "maximum": 300 },
+    "repository_scope": { "$ref": "#/$defs/repository_scope" },
     "workstreams": {
       "type": "array",
       "minItems": 1,
@@ -29,6 +30,24 @@
     }
   },
   "$defs": {
+    "repository_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include_paths"],
+      "properties": {
+        "include_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+        },
+        "exclude_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+        }
+      }
+    },
     "workstream": {
       "type": "object",
       "additionalProperties": false,
