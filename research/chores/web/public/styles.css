@@ -182,7 +182,7 @@ section {
 
 .use-cases {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
 }
 
@@ -265,6 +265,53 @@ section {
   color: var(--cyan);
   font: 13px var(--mono);
   overflow-wrap: anywhere;
+}
+
+.repository-scope {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 32px;
+  padding: 24px;
+  border: 1px solid rgb(102 217 212 / 28%);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgb(102 217 212 / 7%), var(--panel));
+}
+
+.repository-scope[hidden] {
+  display: none;
+}
+
+.repository-scope h2 {
+  margin: 4px 0 8px;
+}
+
+.repository-scope p:not(.label) {
+  margin: 0;
+  color: var(--muted);
+}
+
+.repository-scope code,
+.scope-paths {
+  font-family: var(--mono);
+}
+
+.scope-paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.scope-paths ul {
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--cyan);
+  font-size: 12px;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.scope-paths li + li {
+  margin-top: 6px;
 }
 
 .section-heading {
@@ -526,6 +573,10 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .repository-scope {
+    grid-template-columns: 1fr;
+  }
+
   .actions {
     justify-content: start;
   }
@@ -556,7 +607,8 @@ footer {
 
   .metrics,
   .use-cases,
-  .workstreams {
+  .workstreams,
+  .scope-paths {
     grid-template-columns: 1fr;
   }
 

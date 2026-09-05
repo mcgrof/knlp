@@ -165,6 +165,26 @@ function renderEvent(event) {
   return article;
 }
 
+function renderRepositoryScope(scope) {
+  const section = byId("repository-scope");
+  if (!section || !scope) {
+    return;
+  }
+
+  const pathItem = (path) => {
+    const item = document.createElement("li");
+    item.textContent = path;
+    return item;
+  };
+  byId("scope-includes").replaceChildren(
+    ...scope.include_paths.map(pathItem),
+  );
+  byId("scope-excludes").replaceChildren(
+    ...(scope.exclude_paths ?? []).map(pathItem),
+  );
+  section.hidden = false;
+}
+
 function render(status) {
   const connection = byId("connection");
   connection.textContent = "status available";
@@ -177,6 +197,7 @@ function render(status) {
   byId("updated").textContent = formatTime(status.updated_at);
   byId("digest").textContent = `${status.trace.sha256.slice(0, 12)}…`;
   byId("refresh-note").textContent = `Updated ${formatTime(status.updated_at)}`;
+  renderRepositoryScope(status.repository_scope);
 
   const traceUrl = new URL(status.trace.url, window.location.origin);
   byId("perfetto").href = `https://ui.perfetto.dev/#!/?url=${encodeURIComponent(traceUrl.href)}`;

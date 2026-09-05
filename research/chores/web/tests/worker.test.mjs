@@ -34,6 +34,9 @@ test("landing page states all uses and the security boundary", async () => {
   assert.match(index, /Proactive security hygiene/);
   assert.match(index, /Personal OKR tracking/);
   assert.match(index, /Open-source maintainer assistance/);
+  assert.match(index, /Linux kernel morning briefing/);
+  assert.match(index, /mailing-list patch series, syzbot reports/);
+  assert.match(index, /Exact files and recursive directories bound the analysis/);
   assert.match(index, /knlp R&amp;D plans to release an open-source project/);
   assert.match(index, /review scope is not merge authority/);
   assert.match(index, /must immediately report suspected unauthorized/);
@@ -46,6 +49,8 @@ test("published examples match their source templates", async () => {
     "personal-okr-events.jsonl",
     "open-source-maintainer-profile.json",
     "open-source-maintainer-events.jsonl",
+    "linux-kernel-review-profile.json",
+    "linux-kernel-review-events.jsonl",
   ]) {
     const source = await readFile(
       new URL(`../../examples/${name}`, import.meta.url),
