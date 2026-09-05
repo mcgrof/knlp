@@ -24,11 +24,15 @@ PUBLIC_COPY = (
     OKR_EVENTS,
     MAINTAINER_PROFILE,
     MAINTAINER_EVENTS,
+    KERNEL_PROFILE,
+    KERNEL_EVENTS,
     build.DEFAULT_OUTPUT / "index.html",
     build.DEFAULT_OUTPUT / "examples" / OKR_PROFILE.name,
     build.DEFAULT_OUTPUT / "examples" / OKR_EVENTS.name,
     build.DEFAULT_OUTPUT / "examples" / MAINTAINER_PROFILE.name,
     build.DEFAULT_OUTPUT / "examples" / MAINTAINER_EVENTS.name,
+    build.DEFAULT_OUTPUT / "examples" / KERNEL_PROFILE.name,
+    build.DEFAULT_OUTPUT / "examples" / KERNEL_EVENTS.name,
     build.ROOT.parents[1] / "docs" / "index.html",
 )
 

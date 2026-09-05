@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Chores · Agent workflows, OKRs, and maintainer status</title>
+  <title>Chores · Agent workflows, OKRs, and maintainer briefings</title>
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -23,14 +23,14 @@
   </nav>
 
   <header class="shell">
-    <p class="eyebrow">Agent security · OKRs · open-source maintenance</p>
+    <p class="eyebrow">Agent security · OKRs · open-source and kernel maintenance</p>
     <h1>Chores</h1>
     <p class="lede">
       Proactive security hygiene for people using AI agents. Routine checks can
       rotate; every agent must immediately report suspected unauthorized
       activity directly to the human owner. The same evidence-linked status
       model can track personal Objectives and Key Results (OKRs) and scoped
-      open-source maintainer assistance.
+      maintainer assistance, including private Linux kernel morning briefings.
     </p>
     <div class="scope">
       <strong>Current boundary</strong>
@@ -43,7 +43,7 @@
       <div class="section-heading">
         <div>
           <p class="label">Optional chore families</p>
-          <h2 id="starting-points">Three starting points</h2>
+          <h2 id="starting-points">Four starting points</h2>
         </div>
         <p>One event model; distinct operating and privacy rules.</p>
       </div>
@@ -95,6 +95,24 @@
             </a>
           </div>
         </article>
+        <article class="use-case">
+          <p class="label">Kernel maintainer workflow</p>
+          <h3>Linux kernel morning briefing</h3>
+          <p>
+            Rank in-scope mailing-list patch series, syzbot reports, public CVE
+            announcements, and lore discussions for a maintainer's morning
+            review. Exact files and recursive directories bound the analysis;
+            the maintainer retains every review and write decision.
+          </p>
+          <div class="template-links">
+            <a href="/examples/linux-kernel-review-profile.json" download>
+              private profile
+            </a>
+            <a href="/examples/linux-kernel-review-events.jsonl" download>
+              example briefing
+            </a>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -114,6 +132,27 @@
       <div class="metric">
         <span class="label">Trace digest</span>
         <strong class="mono" id="digest">—</strong>
+      </div>
+    </section>
+
+    <section class="repository-scope" id="repository-scope" hidden>
+      <div>
+        <p class="label">Repository boundary</p>
+        <h2>Configured review scope</h2>
+        <p>
+          Directory selectors end in <code>/</code>; other selectors are exact
+          files. Exclusions take precedence.
+        </p>
+      </div>
+      <div class="scope-paths">
+        <div>
+          <span class="label">Include</span>
+          <ul id="scope-includes"></ul>
+        </div>
+        <div>
+          <span class="label">Exclude</span>
+          <ul id="scope-excludes"></ul>
+        </div>
       </div>
     </section>
 
@@ -149,7 +188,7 @@
       <div class="section-heading">
         <div>
           <p class="label">Published project record</p>
-          <h2>Recent activity</h2>
+          <h2>Priority briefing and activity</h2>
         </div>
         <p id="refresh-note">waiting for status</p>
       </div>
