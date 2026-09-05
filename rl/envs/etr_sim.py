@@ -92,6 +92,7 @@ class EtrSim:
         light: int = 0,
         mirror: bool = False,
         dt: float = DEFAULT_DT,
+        start: int = 0,
     ) -> dict:
         if course not in COURSES:
             raise ValueError(f"unknown sim course {course}")
@@ -242,6 +243,7 @@ class EtrSim:
             items = [[float(rel[i, 0]), float(rel[i, 1])] for i in order]
         return {
             "ok": True,
+            "reset_points": 0,
             "tick": self.tick,
             "time": self.time,
             "pos": [self.x, y, self.z],
