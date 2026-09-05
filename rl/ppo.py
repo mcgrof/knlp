@@ -69,6 +69,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--max-seconds", type=float, default=120.0)
     p.add_argument("--stuck-seconds", type=float, default=15.0)
     p.add_argument("--action-set", default="v0", choices=["v0", "v1"])
+    p.add_argument(
+        "--random-start",
+        action="store_true",
+        help="begin training episodes at a randomly chosen course reset point",
+    )
     p.add_argument("--etr-bin", default=None, help="path to the patched etr binary")
     # operations
     p.add_argument(
@@ -237,6 +242,7 @@ def main(argv=None) -> int:
         "max_seconds": args.max_seconds,
         "stuck_seconds": args.stuck_seconds,
         "action_set": args.action_set,
+        "random_start": args.random_start,
         "binary": args.etr_bin,
     }
     if args.env.startswith("etr"):

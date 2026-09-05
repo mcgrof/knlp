@@ -156,6 +156,7 @@ class EtrEnv(gym.Env):
         max_seconds: float = 120.0,
         stuck_seconds: float = 15.0,
         action_set: str = "v0",
+        random_start: bool = False,
         reward_weights: Optional[dict] = None,
         binary: Optional[str] = None,
         stderr_path: Optional[str] = None,
@@ -173,6 +174,11 @@ class EtrEnv(gym.Env):
         self.weights = dict(DEFAULT_REWARD)
         if reward_weights:
             self.weights.update(reward_weights)
+        # Training may begin an episode at one of the course's own reset
+        # points, so a segment past an obstacle is reachable; evaluation
+        # always starts at the line.
+        self.random_start = random_start
+        self._n_starts = None
         self.action_set = action_set
         self.actions, self.action_names = build_actions(action_set)
         self.observation_space = spaces.Box(
@@ -199,13 +205,28 @@ class EtrEnv(gym.Env):
         else:
             self._episode_seed = int(self.np_random.integers(0, 2**31 - 1))
         course = (options or {}).get("course", self.course)
+        start = 0
+        if self.random_start:
+            if self._n_starts is None:
+                probe = self.backend.reset(
+                    seed=self._episode_seed,
+                    course=course,
+                    group=self.group,
+                    wind=self.wind,
+                    dt=TICK_DT,
+                )
+                self._n_starts = int(probe.get("reset_points", 0))
+            if self._n_starts:
+                start = int(self.np_random.integers(0, self._n_starts + 1))
         raw = self.backend.reset(
             seed=self._episode_seed,
             course=course,
             group=self.group,
             wind=self.wind,
             dt=TICK_DT,
+            start=start,
         )
+        self._start_index = start
         self._raw = raw
         self._max_progress = float(raw["progress"])
         self._steps = 0
@@ -279,6 +300,7 @@ class EtrEnv(gym.Env):
             "collisions": int(raw["collisions"]),
             "time": float(raw["time"]),
             "tick": int(raw["tick"]),
+            "start_index": getattr(self, "_start_index", 0),
         }
 
     def raw(self) -> Optional[dict]:

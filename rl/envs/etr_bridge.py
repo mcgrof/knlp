@@ -137,10 +137,11 @@ class EtrBridge:
         light: int = 0,
         mirror: bool = False,
         dt: float = DEFAULT_DT,
+        start: int = 0,
     ) -> dict:
         return self._request(
             f"reset seed={int(seed)} course={course} group={group} wind={int(wind)} "
-            f"light={int(light)} mirror={int(mirror)} dt={dt:.9g}"
+            f"light={int(light)} mirror={int(mirror)} dt={dt:.9g} start={int(start)}"
         )
 
     def step(
