@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,39 @@ def validate_profile(profile: dict[str, Any]) -> None:
     identifiers = [str(item["id"]) for item in profile["workstreams"]]
     if len(identifiers) != len(set(identifiers)):
         raise ValueError("profile contains duplicate workstream ids")
+    if "repository_scope" in profile:
+        validate_repository_scope(profile["repository_scope"])
+
+
+def validate_repository_path(value: str, *, directory_allowed: bool) -> None:
+    """Reject paths that are not normalized repository-relative selectors."""
+    if value.startswith("/") or "\\" in value or "//" in value:
+        raise ValueError(f"invalid repository path: {value}")
+    is_directory = value.endswith("/")
+    if is_directory and not directory_allowed:
+        raise ValueError(f"matched path must name a file: {value}")
+    path = value[:-1] if is_directory else value
+    if not path or any(part in {"", ".", ".."} for part in path.split("/")):
+        raise ValueError(f"invalid repository path: {value}")
+
+
+def validate_repository_scope(scope: Mapping[str, Any]) -> None:
+    """Validate path selectors not expressible in the JSON schema."""
+    for field in ("include_paths", "exclude_paths"):
+        for value in scope.get(field, []):
+            validate_repository_path(str(value), directory_allowed=True)
+
+
+def path_in_repository_scope(path: str, scope: Mapping[str, Any]) -> bool:
+    """Return whether one exact file is included after exclusions."""
+    validate_repository_path(path, directory_allowed=False)
+
+    def matches(selector: str) -> bool:
+        return path.startswith(selector) if selector.endswith("/") else path == selector
+
+    if any(matches(str(selector)) for selector in scope.get("exclude_paths", [])):
+        return False
+    return any(matches(str(selector)) for selector in scope["include_paths"])
 
 
 def load_events(
@@ -65,8 +99,11 @@ def load_events(
     *,
     surface: str,
     workstreams: set[str],
+    repository_scope: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Load and validate an ordered event stream."""
+    if repository_scope is not None:
+        validate_repository_scope(repository_scope)
     check = validator("event.schema.json")
     events: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -99,6 +136,20 @@ def load_events(
                     f"{path}:{line_number}: {event_id} names unknown workstream "
                     f"{event['workstream']}"
                 )
+            if "matched_paths" in event:
+                if repository_scope is None:
+                    raise ValueError(
+                        f"{path}:{line_number}: {event_id} records matched paths "
+                        "without a repository scope"
+                    )
+                for matched_path in event["matched_paths"]:
+                    if not path_in_repository_scope(
+                        str(matched_path), repository_scope
+                    ):
+                        raise ValueError(
+                            f"{path}:{line_number}: {event_id} matched path is "
+                            f"outside repository scope: {matched_path}"
+                        )
 
             timestamp = parse_time(str(event["occurred_at"]))
             if timestamp < previous_time:
@@ -144,12 +195,15 @@ def derive_status(
             "reviewed_by",
             "authority_scope",
             "next_review_at",
+            "priority",
+            "priority_reason",
+            "matched_paths",
         ):
             if field in event:
                 workstream[field] = event[field]
         workstreams.append(workstream)
 
-    return {
+    status = {
         "schema_version": 1,
         "project": profile["project"],
         "surface": profile["surface"],
@@ -167,6 +221,9 @@ def derive_status(
             "sha256": trace_sha256,
         },
     }
+    if "repository_scope" in profile:
+        status["repository_scope"] = profile["repository_scope"]
+    return status
 
 
 def build(
@@ -191,6 +248,7 @@ def build(
         events_path,
         surface=str(profile["surface"]),
         workstreams=workstreams,
+        repository_scope=profile.get("repository_scope"),
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

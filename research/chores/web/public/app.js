@@ -1,5 +1,22 @@
 const byId = (id) => document.getElementById(id);
 
+const priorityRank = {
+  critical: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+};
+
+export function compareBriefingItems(left, right) {
+  const priorityDifference =
+    (priorityRank[left.priority] ?? priorityRank.normal) -
+    (priorityRank[right.priority] ?? priorityRank.normal);
+  if (priorityDifference) {
+    return priorityDifference;
+  }
+  return new Date(right.occurred_at) - new Date(left.occurred_at);
+}
+
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -41,6 +58,12 @@ function renderTrackingDetails(record) {
   }
   if (record.authority_scope) {
     details.push(`Scope: ${record.authority_scope}`);
+  }
+  if (record.priority_reason) {
+    details.push(`Priority: ${record.priority_reason}`);
+  }
+  if (record.matched_paths) {
+    details.push(`Paths: ${record.matched_paths.join(", ")}`);
   }
   if (record.next_review_at) {
     details.push(`Next review ${formatTime(record.next_review_at)}`);
@@ -109,6 +132,9 @@ function renderEvent(event) {
   if (Number.isInteger(event.progress_percent)) {
     metadataItems.push(`${event.progress_percent}%`);
   }
+  if (event.priority) {
+    metadataItems.push(`${event.priority} priority`);
+  }
   metadata.textContent = metadataItems.join(" · ");
 
   const title = document.createElement("h3");
@@ -158,7 +184,8 @@ function render(status) {
   byId("workstreams").replaceChildren(
     ...status.workstreams.map(renderWorkstream),
   );
-  byId("events").replaceChildren(...status.events.map(renderEvent));
+  const briefing = [...status.events].sort(compareBriefingItems);
+  byId("events").replaceChildren(...briefing.map(renderEvent));
 }
 
 function retryDelay(status) {
@@ -188,4 +215,6 @@ async function refresh() {
   window.setTimeout(refresh, retryDelay(status));
 }
 
-refresh();
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  refresh();
+}

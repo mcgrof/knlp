@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { compareBriefingItems } from "../public/app.js";
 import worker from "../src/worker.js";
 
 function environment() {
@@ -130,4 +131,24 @@ test("mutating methods are rejected before asset lookup", async () => {
   assert.equal(response.status, 405);
   assert.deepEqual(requests, []);
   assert.equal(response.headers.get("Allow"), "GET, HEAD");
+});
+
+test("briefing items put priority before recency", () => {
+  const items = [
+    { priority: "normal", occurred_at: "2026-03-09T15:00:00Z" },
+    { priority: "critical", occurred_at: "2026-03-09T14:00:00Z" },
+    { priority: "high", occurred_at: "2026-03-09T16:00:00Z" },
+    { priority: "critical", occurred_at: "2026-03-09T14:30:00Z" },
+  ];
+
+  items.sort(compareBriefingItems);
+  assert.deepEqual(
+    items.map((item) => [item.priority, item.occurred_at]),
+    [
+      ["critical", "2026-03-09T14:30:00Z"],
+      ["critical", "2026-03-09T14:00:00Z"],
+      ["high", "2026-03-09T16:00:00Z"],
+      ["normal", "2026-03-09T15:00:00Z"],
+    ],
+  );
 });

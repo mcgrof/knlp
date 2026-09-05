@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "project": "Linux kernel review assistance example",
+  "surface": "private",
+  "state": "example",
+  "summary": "A private morning briefing of prioritized Linux kernel patches, syzbot reports, CVE announcements, and lore discussions.",
+  "claim_scope": "Synthetic template over public material only; agents may analyze matching sources and draft recommendations, but may not send email, issue syzbot commands, apply patches, change a git tree, or ingest embargoed material without explicit authority.",
+  "refresh_seconds": 60,
+  "repository_scope": {
+    "include_paths": [
+      "block/",
+      "drivers/nvme/",
+      "include/linux/blk-mq.h"
+    ],
+    "exclude_paths": [
+      "drivers/nvme/target/"
+    ]
+  },
+  "workstreams": [
+    { "id": "patch-series", "label": "Mailing-list patch series" },
+    { "id": "syzbot-reports", "label": "syzbot reports" },
+    { "id": "security-watch", "label": "Security and CVE watch" },
+    { "id": "lore-discussions", "label": "Relevant lore discussions" },
+    { "id": "morning-handoff", "label": "Maintainer morning handoff" }
+  ]
+}

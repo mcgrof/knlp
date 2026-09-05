@@ -3,7 +3,7 @@
   "project": "knlp chores",
   "surface": "public",
   "state": "prototype",
-  "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped open-source maintenance.",
+  "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped maintenance of open-source projects and Linux kernel subsystems.",
   "claim_scope": "Project-status publishing and synthetic examples only; no collectors, incident delivery, agent monitoring, repository writes, credential changes, or remediation are implemented.",
   "refresh_seconds": 30,
   "workstreams": [
@@ -11,6 +11,7 @@
     { "id": "incident-reporting", "label": "Direct owner reporting" },
     { "id": "okr-example", "label": "Personal OKR example" },
     { "id": "maintainer-example", "label": "Open-source maintainer example" },
+    { "id": "kernel-review-example", "label": "Linux kernel review example" },
     { "id": "collectors", "label": "Read-only security checks" },
     { "id": "coordination", "label": "Agent assignment and review" },
     { "id": "status-publishing", "label": "Public status publishing" },
