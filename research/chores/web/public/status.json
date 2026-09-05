@@ -2,6 +2,20 @@
   "claim_scope": "Project-status publishing and synthetic examples only; no collectors, incident delivery, agent monitoring, repository writes, credential changes, or remediation are implemented.",
   "events": [
     {
+      "coverage": "deployed",
+      "event_id": "evt-0014",
+      "evidence": "HTTPS returned 200; the live page, kernel templates, status JSON, and Perfetto trace matched the checked-in bytes.",
+      "kind": "deployment",
+      "occurred_at": "2026-09-05T00:43:30Z",
+      "schema_version": 1,
+      "source_url": "https://chores.knlp.io/",
+      "state": "complete",
+      "summary": "The public dashboard explains the private morning briefing and serves its path-scoped profile and ranked synthetic event stream as downloads.",
+      "surface": "public",
+      "title": "Linux kernel review assistance example published",
+      "workstream": "kernel-review-example"
+    },
+    {
       "coverage": "implemented",
       "event_id": "evt-0013",
       "evidence": "The test suite builds the kernel example, rejects out-of-scope paths, and preserves priority reasons and path matches in JSON and Perfetto.",
@@ -181,12 +195,12 @@
   "summary": "Incident-motivated agent security hygiene, with reusable examples for personal OKRs and scoped maintenance of open-source projects and Linux kernel subsystems.",
   "surface": "public",
   "trace": {
-    "event_count": 13,
+    "event_count": 14,
     "format": "perfetto-track-event-protobuf",
-    "sha256": "a7228fb841d03f12cf909c86f5c5b5bb3ed8f2f1e5f1f2192e550acbb276aad5",
+    "sha256": "21b8c5a820044cb4a6e0d83b68cf69211c59b4cd5817d9e95b4732a486ac1ba4",
     "url": "/traces/latest.pftrace"
   },
-  "updated_at": "2026-09-05T00:32:27Z",
+  "updated_at": "2026-09-05T00:43:30Z",
   "workstreams": [
     {
       "coverage": "documented",
@@ -221,12 +235,12 @@
       "updated_at": "2026-09-04T21:55:47Z"
     },
     {
-      "coverage": "implemented",
+      "coverage": "deployed",
       "id": "kernel-review-example",
       "label": "Linux kernel review example",
       "state": "complete",
-      "summary": "A synthetic private morning briefing ranks mailing-list patches, syzbot reports, CVE announcements, and lore discussions that match configured files and directories.",
-      "updated_at": "2026-09-05T00:32:27Z"
+      "summary": "The public dashboard explains the private morning briefing and serves its path-scoped profile and ranked synthetic event stream as downloads.",
+      "updated_at": "2026-09-05T00:43:30Z"
     },
     {
       "coverage": "not-implemented",
