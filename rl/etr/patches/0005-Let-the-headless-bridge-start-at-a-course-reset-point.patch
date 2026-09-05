@@ -1,0 +1,76 @@
+From 446ac6ca43d872f69c2420b2f203ab7bfe6e04f4 Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Fri, 4 Sep 2026 17:45:18 -0700
+Subject: [PATCH] Let the headless bridge start at a course reset point
+
+reset start=N begins the episode at the Nth reset point counted down
+the course, instead of the start line, and the observation reports how
+many the course defines. Reset points are the course author own safe
+places along the route, so this gives an external trainer a way to
+reach a later segment without hinting at a particular line through an
+obstacle.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ src/rl_bridge.cpp | 24 +++++++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/src/rl_bridge.cpp b/src/rl_bridge.cpp
+index df11133..50a4b13 100644
+--- a/src/rl_bridge.cpp
++++ b/src/rl_bridge.cpp
+@@ -9,7 +9,7 @@ one request per line on stdin and one JSON object per line on stdout:
+ 
+   info
+   reset seed=<u32> course=<dir> [group=default] [wind=0] [light=0]
+-        [mirror=0] [dt=0.016667]
++        [mirror=0] [dt=0.016667] [start=0]
+   step turn=<-1..1> brake=<0|1> paddle=<0|1> jump=<0|1>
+        [ticks=1] [dt=0.016667]
+   recover
+@@ -282,6 +282,7 @@ std::string Observation(bool done) {
+ 	.Num("turn", ctrl->turn_fact)
+ 	.Num("friction", ProbeFriction(ctrl->cpos.x, ctrl->cpos.z))
+ 	.Raw("nml", Vec3(plane.nml))
++	.Int("reset_points", (long)std::count_if(Course.NocollArr.begin(), Course.NocollArr.end(), [](const TItem& i) { return i.type.reset_point; }))
+ 	.Bool("finish", g_game.finish)
+ 	.Bool("done", done)
+ 	.Raw("size", "[" + std::to_string(size.x) + "," + std::to_string(size.y) + "]")
+@@ -341,6 +342,9 @@ std::string DoReset(const Args& a) {
+ 	bool mirror = ArgI(a, "mirror", 0) != 0;
+ 	rl.dt = (float)ArgF(a, "dt", RL_DEFAULT_DT);
+ 	if (rl.dt <= 0.0f || rl.dt > 0.1f) return Error("dt must be in (0, 0.1]");
++	// start=N begins the episode at the Nth reset point the course defines,
++	// counted down the course; start=0 (the default) is the start line.
++	long start_at = ArgI(a, "start", 0);
+ 
+ 	std::unordered_map<std::string, CCourseList>::iterator g = Course.CourseLists.find(group);
+ 	if (g == Course.CourseLists.end()) return Error("unknown course group: " + group);
+@@ -397,6 +401,24 @@ std::string DoReset(const Args& a) {
+ 			startframe->Update(rl.dt);
+ 	}
+ 
++	// Reset points are the course author's own safe places along the route;
++	// starting from one teaches a later segment without hinting at a line.
++	if (start_at > 0) {
++		std::vector<std::size_t> pts;
++		for (std::size_t i = 0; i < Course.NocollArr.size(); i++)
++			if (Course.NocollArr[i].type.reset_point) pts.push_back(i);
++		std::sort(pts.begin(), pts.end(), [](std::size_t l, std::size_t r) {
++			return Course.NocollArr[l].pt.z > Course.NocollArr[r].pt.z;
++		});
++		if (pts.empty()) return Error("course defines no reset points");
++		if ((std::size_t)start_at > pts.size()) return Error("start beyond the last reset point");
++		const TObject& pt = Course.NocollArr[pts[start_at - 1]];
++		ctrl->cpos.x = pt.pt.x;
++		ctrl->cpos.z = pt.pt.z;
++		ctrl->Init();
++		ctrl->cvel = TVector3d(0, 0, 0);
++	}
++
+ 	Racing.HeadlessEnter();
+ 	rl.tick = 0;
+ 	rl.have_course = true;
+-- 
+2.53.0
+
