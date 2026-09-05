@@ -44,7 +44,7 @@ evidence, independent review, and direct human reporting. A skill can request
 that behavior, but it cannot enforce it; policy checks, durable reporting, and
 monitoring must operate outside the agents for stronger guarantees.
 
-## Three chore families
+## Four chore families
 
 Agent security is the primary motivation and has the non-deferrable reporting
 rule above. The same status machinery also supports an optional personal
@@ -57,6 +57,14 @@ issues, draft pull-request reviews, coordinate overlapping work, and prepare
 human handoffs. The profile records each agent's authority because reading and
 recommending do not imply permission to comment, approve, merge, or change
 repository state.
+
+A fourth family specializes that maintainer model for the Linux kernel. Its
+private morning briefing follows mailing-list patch series, reports from the
+syzbot automated kernel bug reporter, public Common Vulnerabilities and
+Exposures (CVE) announcements, and discussions in the lore mailing-list
+archive. A maintainer or developer selects repository-relative files and
+recursive directories; the builder rejects event path matches outside that
+scope, and the dashboard puts operator-ranked items ahead of routine activity.
 
 These families share a file format, not an operating policy. Security incidents
 do not wait for a dashboard update, while an OKR blocker or maintainer handoff
@@ -88,8 +96,11 @@ its coverage remains `documented` or `not-implemented`. An event may also record
 progress, who performed and reviewed the update, and its next review time. Those
 fields are optional because they are useful for an OKR check-in but may be
 irrelevant or unsafe to publish for a security chore. Maintainer events may also
-record `authority_scope` so that an assignment cannot be mistaken for broader
-repository permission.
+record `authority_scope`, `priority`, `priority_reason`, and `matched_paths` so
+that an assignment cannot be mistaken for broader repository permission and a
+prominent item retains the evidence for its rank. A profile may define
+`repository_scope` with exact file selectors, recursive directory selectors,
+and exclusions; the event loader verifies every reported match against it.
 
 ## Public and private projections
 
@@ -121,9 +132,9 @@ pytest
 
 The default command builds the checked-in public inputs under `web/public/`.
 Tests rebuild those artifacts, compare their bytes, and query the trace through
-Perfetto's trace processor. The synthetic personal OKR and private maintainer
-files under `examples/` exercise the same builder and trace path in the test
-suite.
+Perfetto's trace processor. The synthetic personal OKR, private maintainer, and
+Linux kernel review files under `examples/` exercise the same builder and trace
+path in the test suite.
 
 A private deployment passes its own paths and must opt in explicitly:
 
