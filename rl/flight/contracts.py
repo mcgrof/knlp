@@ -1,0 +1,295 @@
+"""Versioned flight vectors and timestamped wire messages.
+
+The simulator plugin, a standalone environment and a policy worker must agree
+on more than vector width.  This module gives field order, units, bounds and
+timing semantics one canonical representation and hashes that representation.
+Every telemetry frame and control command carries the hash, so a stale client
+fails closed instead of applying values to the wrong axes.
+
+Advice is deliberately absent.  A shadow coach consumes ``TelemetryFrame``
+objects but must use a separate advice-only transport; it cannot acquire a
+``ControlCommand`` sender by changing a mode flag.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from dataclasses import asdict, dataclass
+from typing import Any, Mapping, Sequence
+
+PROTOCOL = "knlp.flight"
+PROTOCOL_VERSION = 1
+
+
+def _finite_vector(values: Sequence[float], width: int, name: str) -> tuple[float, ...]:
+    result = tuple(float(value) for value in values)
+    if len(result) != width:
+        raise ValueError(f"{name} has width {len(result)}, expected {width}")
+    if not all(math.isfinite(value) for value in result):
+        raise ValueError(f"{name} must contain only finite values")
+    return result
+
+
+@dataclass(frozen=True)
+class VectorSpec:
+    """Ordered, bounded fields for one vector in the environment contract."""
+
+    fields: tuple[str, ...]
+    units: tuple[str, ...]
+    low: tuple[float, ...]
+    high: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        width = len(self.fields)
+        if width == 0:
+            raise ValueError("a vector must contain at least one field")
+        if len(set(self.fields)) != width:
+            raise ValueError("vector field names must be unique")
+        if not (len(self.units) == len(self.low) == len(self.high) == width):
+            raise ValueError("fields, units and bounds must have equal widths")
+        if any(not field for field in self.fields):
+            raise ValueError("vector field names must not be empty")
+        for field, lower, upper in zip(self.fields, self.low, self.high):
+            if math.isnan(lower) or math.isnan(upper) or lower >= upper:
+                raise ValueError(f"invalid bounds for {field}: [{lower}, {upper}]")
+
+    @property
+    def width(self) -> int:
+        return len(self.fields)
+
+    def validate(self, values: Sequence[float], name: str) -> tuple[float, ...]:
+        result = _finite_vector(values, self.width, name)
+        for field, value, lower, upper in zip(self.fields, result, self.low, self.high):
+            if value < lower or value > upper:
+                raise ValueError(
+                    f"{name}.{field}={value} is outside [{lower}, {upper}]"
+                )
+        return result
+
+
+@dataclass(frozen=True)
+class FlightContract:
+    """The complete vector and timing contract for one flight environment."""
+
+    name: str
+    revision: int
+    nominal_dt_s: float
+    observation: VectorSpec
+    goal: VectorSpec
+    action: VectorSpec
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("contract name must not be empty")
+        if self.revision < 1:
+            raise ValueError("contract revision must be positive")
+        if not math.isfinite(self.nominal_dt_s) or self.nominal_dt_s <= 0:
+            raise ValueError("nominal_dt_s must be finite and positive")
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            asdict(self), allow_nan=False, separators=(",", ":"), sort_keys=True
+        )
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class TelemetryFrame:
+    """One observation sampled from a simulator or standalone environment."""
+
+    contract_hash: str
+    episode_id: str
+    sequence: int
+    monotonic_ns: int
+    dt_s: float
+    observation: tuple[float, ...]
+    goal: tuple[float, ...]
+    terminated: bool = False
+    truncated: bool = False
+
+    @classmethod
+    def create(
+        cls,
+        contract: FlightContract,
+        *,
+        episode_id: str,
+        sequence: int,
+        monotonic_ns: int,
+        dt_s: float,
+        observation: Sequence[float],
+        goal: Sequence[float],
+        terminated: bool = False,
+        truncated: bool = False,
+    ) -> "TelemetryFrame":
+        frame = cls(
+            contract_hash=contract.digest,
+            episode_id=episode_id,
+            sequence=sequence,
+            monotonic_ns=monotonic_ns,
+            dt_s=float(dt_s),
+            observation=tuple(float(value) for value in observation),
+            goal=tuple(float(value) for value in goal),
+            terminated=bool(terminated),
+            truncated=bool(truncated),
+        )
+        frame.validate(contract)
+        return frame
+
+    def validate(self, contract: FlightContract) -> None:
+        if self.contract_hash != contract.digest:
+            raise ValueError("telemetry contract hash does not match")
+        if not self.episode_id:
+            raise ValueError("episode_id must not be empty")
+        if self.sequence < 0 or self.monotonic_ns < 0:
+            raise ValueError("sequence and monotonic_ns must be non-negative")
+        if not math.isfinite(self.dt_s) or self.dt_s <= 0:
+            raise ValueError("dt_s must be finite and positive")
+        if self.terminated and self.truncated:
+            raise ValueError("a frame cannot be both terminated and truncated")
+        contract.observation.validate(self.observation, "observation")
+        contract.goal.validate(self.goal, "goal")
+
+    def to_wire(self) -> bytes:
+        payload = {
+            "protocol": PROTOCOL,
+            "protocol_version": PROTOCOL_VERSION,
+            "kind": "telemetry",
+            **asdict(self),
+        }
+        return (
+            json.dumps(payload, allow_nan=False, separators=(",", ":")) + "\n"
+        ).encode()
+
+    @classmethod
+    def from_wire(cls, data: bytes, contract: FlightContract) -> "TelemetryFrame":
+        payload = _wire_payload(data, "telemetry")
+        frame = cls(**_select_fields(payload, cls.__dataclass_fields__))
+        frame.validate(contract)
+        return frame
+
+
+@dataclass(frozen=True)
+class ControlCommand:
+    """A bounded action tied to one unexpired telemetry frame."""
+
+    contract_hash: str
+    episode_id: str
+    source_sequence: int
+    issued_monotonic_ns: int
+    valid_until_monotonic_ns: int
+    action: tuple[float, ...]
+
+    @classmethod
+    def create(
+        cls,
+        contract: FlightContract,
+        *,
+        episode_id: str,
+        source_sequence: int,
+        issued_monotonic_ns: int,
+        valid_until_monotonic_ns: int,
+        action: Sequence[float],
+    ) -> "ControlCommand":
+        command = cls(
+            contract_hash=contract.digest,
+            episode_id=episode_id,
+            source_sequence=source_sequence,
+            issued_monotonic_ns=issued_monotonic_ns,
+            valid_until_monotonic_ns=valid_until_monotonic_ns,
+            action=tuple(float(value) for value in action),
+        )
+        command.validate(contract)
+        return command
+
+    def validate(
+        self,
+        contract: FlightContract,
+        *,
+        frame: TelemetryFrame | None = None,
+        now_monotonic_ns: int | None = None,
+    ) -> None:
+        if self.contract_hash != contract.digest:
+            raise ValueError("control contract hash does not match")
+        if not self.episode_id:
+            raise ValueError("episode_id must not be empty")
+        if self.source_sequence < 0 or self.issued_monotonic_ns < 0:
+            raise ValueError("sequence and timestamps must be non-negative")
+        if self.valid_until_monotonic_ns <= self.issued_monotonic_ns:
+            raise ValueError("control validity window must be positive")
+        contract.action.validate(self.action, "action")
+        if frame is not None:
+            frame.validate(contract)
+            if self.episode_id != frame.episode_id:
+                raise ValueError("control and telemetry episode IDs differ")
+            if self.source_sequence != frame.sequence:
+                raise ValueError("control does not answer the supplied telemetry frame")
+            if self.issued_monotonic_ns < frame.monotonic_ns:
+                raise ValueError("control was issued before its telemetry frame")
+        if (
+            now_monotonic_ns is not None
+            and now_monotonic_ns > self.valid_until_monotonic_ns
+        ):
+            raise ValueError("control command has expired")
+
+    def to_wire(self) -> bytes:
+        payload = {
+            "protocol": PROTOCOL,
+            "protocol_version": PROTOCOL_VERSION,
+            "kind": "control",
+            **asdict(self),
+        }
+        return (
+            json.dumps(payload, allow_nan=False, separators=(",", ":")) + "\n"
+        ).encode()
+
+    @classmethod
+    def from_wire(cls, data: bytes, contract: FlightContract) -> "ControlCommand":
+        payload = _wire_payload(data, "control")
+        command = cls(**_select_fields(payload, cls.__dataclass_fields__))
+        command.validate(contract)
+        return command
+
+
+def _wire_payload(data: bytes, kind: str) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid JSON wire message") from error
+    if not isinstance(payload, dict):
+        raise ValueError("wire message must be a JSON object")
+    if payload.get("protocol") != PROTOCOL:
+        raise ValueError("unknown flight protocol")
+    if payload.get("protocol_version") != PROTOCOL_VERSION:
+        raise ValueError("unsupported flight protocol version")
+    if payload.get("kind") != kind:
+        raise ValueError(f"expected a {kind} message")
+    return payload
+
+
+def _select_fields(
+    payload: Mapping[str, Any], fields: Mapping[str, Any]
+) -> dict[str, Any]:
+    missing = set(fields) - set(payload)
+    if missing:
+        raise ValueError(f"wire message is missing {sorted(missing)}")
+    unexpected = (
+        set(payload)
+        - set(fields)
+        - {
+            "protocol",
+            "protocol_version",
+            "kind",
+        }
+    )
+    if unexpected:
+        raise ValueError(f"wire message has unexpected fields {sorted(unexpected)}")
+    selected = {field: payload[field] for field in fields}
+    for field in ("observation", "goal", "action"):
+        if field in selected:
+            selected[field] = tuple(selected[field])
+    return selected
