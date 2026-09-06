@@ -212,6 +212,47 @@ def save_checkpoint(path: Path, agent: Agent, optimizer, state: dict) -> None:
     os.replace(tmp, path)
 
 
+def bootstrap_time_limits(
+    reward: np.ndarray,
+    infos: dict,
+    agent: Agent,
+    device: torch.device,
+    gamma: float,
+) -> np.ndarray:
+    """Add the value of final observations for time-limit truncations.
+
+    ``SyncVec`` resets an ended environment in the same step, so its returned
+    observation belongs to the next episode.  A truncation is not a terminal
+    state: evaluate the retained final observation and add its discounted
+    value to that transition's reward.  The ordinary done mask can then stop
+    generalised advantage estimation from crossing the reset boundary without
+    discarding the timeout bootstrap.
+    """
+
+    truncations = np.asarray(infos.get("truncations", ()), dtype=np.bool_)
+    indices = np.flatnonzero(truncations)
+    if not len(indices):
+        return reward
+    final_observations = infos.get("final_observations", ())
+    try:
+        selected = [final_observations[index] for index in indices]
+        if any(observation is None for observation in selected):
+            raise ValueError
+        final_batch = np.stack(selected)
+    except (IndexError, TypeError, ValueError) as error:
+        raise ValueError("truncations require matching final observations") from error
+    with torch.no_grad():
+        values = (
+            agent.get_value(torch.as_tensor(final_batch, device=device))
+            .flatten()
+            .cpu()
+            .numpy()
+        )
+    adjusted = np.asarray(reward, dtype=np.float32).copy()
+    adjusted[indices] += gamma * values
+    return adjusted
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     run_dir = Path(args.runs_dir) / args.run_name
@@ -340,6 +381,7 @@ def main(argv=None) -> int:
                 act_buf[step] = action
                 logp_buf[step] = logprob
                 nobs, reward, done, infos = envs.step(action.cpu().numpy())
+                reward = bootstrap_time_limits(reward, infos, agent, device, args.gamma)
                 rew_buf[step] = torch.tensor(reward, device=device)
                 next_obs = torch.tensor(nobs, device=device)
                 next_done = torch.tensor(done, device=device, dtype=torch.float32)
