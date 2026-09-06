@@ -19,6 +19,11 @@ point for later RL work in knlp.
 - [`ppo.py`](ppo.py): PPO with generalised advantage estimation for discrete
   actions, in the CleanRL style, plus exact-resume checkpoints, a wall-clock
   budget and the yield protocol.
+- [`continuous.py`](continuous.py): a bounded squashed-Gaussian actor-critic
+  for flight-control environments.  It is separate from the discrete actor so
+  existing ETR checkpoints retain their original layout.
+- [`flight/`](flight/): hashed observation, goal and action-vector contracts,
+  plus timestamped telemetry and expiring control messages.
 - [`vec.py`](vec.py): a minimal synchronous vector environment with
   same-step reset and per-episode statistics.
 - [`envs/`](envs/): the ETR bridge client, a pure-Python simulator that speaks
