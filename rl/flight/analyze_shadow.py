@@ -123,6 +123,9 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
     applied_actions = [
         frame.applied_action for frame in frames if frame.applied_action is not None
     ]
+    requested_actions = [
+        frame.requested_action for frame in frames if frame.requested_action is not None
+    ]
     simulator_total_wrenches = [
         frame.simulator_total_wrench
         for frame in frames
@@ -135,6 +138,11 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
     ]
     vehicle_masses = [
         frame.vehicle_mass_kg for frame in frames if frame.vehicle_mass_kg is not None
+    ]
+    vehicle_inertias = [
+        frame.vehicle_inertia_kg_m2
+        for frame in frames
+        if frame.vehicle_inertia_kg_m2 is not None
     ]
     quaternion_norm_errors = [
         abs(math.sqrt(sum(value * value for value in frame.observation[6:10])) - 1.0)
@@ -184,6 +192,8 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
         ),
         "observation_ranges": observation_ranges,
         "action_ranges": action_ranges,
+        "requested_action_frames": len(requested_actions),
+        "requested_action_ranges": wrench_ranges(requested_actions, contract),
         "applied_action_frames": len(applied_actions),
         "applied_action_ranges": wrench_ranges(applied_actions, contract),
         "simulator_total_wrench_frames": len(simulator_total_wrenches),
@@ -194,6 +204,15 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
         "aerodynamic_wrench_ranges": wrench_ranges(aerodynamic_wrenches, contract),
         "vehicle_mass_frames": len(vehicle_masses),
         "vehicle_mass_kg": distribution(vehicle_masses) if vehicle_masses else None,
+        "vehicle_inertia_frames": len(vehicle_inertias),
+        "vehicle_inertia_kg_m2": (
+            {
+                axis: distribution(values)
+                for axis, values in zip(("x", "y", "z"), zip(*vehicle_inertias))
+            }
+            if vehicle_inertias
+            else None
+        ),
     }
 
 

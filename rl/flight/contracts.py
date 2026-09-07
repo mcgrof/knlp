@@ -166,10 +166,12 @@ class TelemetryFrame:
     dt_s: float
     observation: tuple[float, ...]
     goal: tuple[float, ...]
+    requested_action: tuple[float, ...] | None = None
     applied_action: tuple[float, ...] | None = None
     simulator_total_wrench: tuple[float, ...] | None = None
     aerodynamic_wrench: tuple[float, ...] | None = None
     vehicle_mass_kg: float | None = None
+    vehicle_inertia_kg_m2: tuple[float, ...] | None = None
     terminated: bool = False
     truncated: bool = False
 
@@ -184,10 +186,12 @@ class TelemetryFrame:
         dt_s: float,
         observation: Sequence[float],
         goal: Sequence[float],
+        requested_action: Sequence[float] | None = None,
         applied_action: Sequence[float] | None = None,
         simulator_total_wrench: Sequence[float] | None = None,
         aerodynamic_wrench: Sequence[float] | None = None,
         vehicle_mass_kg: float | None = None,
+        vehicle_inertia_kg_m2: Sequence[float] | None = None,
         terminated: bool = False,
         truncated: bool = False,
     ) -> "TelemetryFrame":
@@ -199,6 +203,11 @@ class TelemetryFrame:
             dt_s=float(dt_s),
             observation=tuple(float(value) for value in observation),
             goal=tuple(float(value) for value in goal),
+            requested_action=(
+                tuple(float(value) for value in requested_action)
+                if requested_action is not None
+                else None
+            ),
             applied_action=(
                 tuple(float(value) for value in applied_action)
                 if applied_action is not None
@@ -216,6 +225,11 @@ class TelemetryFrame:
             ),
             vehicle_mass_kg=(
                 float(vehicle_mass_kg) if vehicle_mass_kg is not None else None
+            ),
+            vehicle_inertia_kg_m2=(
+                tuple(float(value) for value in vehicle_inertia_kg_m2)
+                if vehicle_inertia_kg_m2 is not None
+                else None
             ),
             terminated=bool(terminated),
             truncated=bool(truncated),
@@ -236,9 +250,10 @@ class TelemetryFrame:
             raise ValueError("a frame cannot be both terminated and truncated")
         contract.observation.validate(self.observation, "observation")
         contract.goal.validate(self.goal, "goal")
-        if self.applied_action is not None:
-            contract.action.validate(self.applied_action, "applied_action")
+        if self.requested_action is not None:
+            contract.action.validate(self.requested_action, "requested_action")
         for name, wrench in (
+            ("applied_action", self.applied_action),
             ("simulator_total_wrench", self.simulator_total_wrench),
             ("aerodynamic_wrench", self.aerodynamic_wrench),
         ):
@@ -253,6 +268,16 @@ class TelemetryFrame:
             not math.isfinite(self.vehicle_mass_kg) or self.vehicle_mass_kg <= 0.0
         ):
             raise ValueError("vehicle_mass_kg must be finite and positive")
+        if self.vehicle_inertia_kg_m2 is not None and (
+            len(self.vehicle_inertia_kg_m2) != 3
+            or not all(
+                math.isfinite(value) and value > 0.0
+                for value in self.vehicle_inertia_kg_m2
+            )
+        ):
+            raise ValueError(
+                "vehicle_inertia_kg_m2 must contain three positive finite values"
+            )
 
     def to_wire(self) -> bytes:
         payload = {
@@ -273,10 +298,12 @@ class TelemetryFrame:
                 payload,
                 cls.__dataclass_fields__,
                 optional={
+                    "requested_action",
                     "applied_action",
                     "simulator_total_wrench",
                     "aerodynamic_wrench",
                     "vehicle_mass_kg",
+                    "vehicle_inertia_kg_m2",
                 },
             )
         )
@@ -408,9 +435,11 @@ def _select_fields(
         "observation",
         "goal",
         "action",
+        "requested_action",
         "applied_action",
         "simulator_total_wrench",
         "aerodynamic_wrench",
+        "vehicle_inertia_kg_m2",
     ):
         if field in selected and selected[field] is not None:
             selected[field] = tuple(selected[field])
