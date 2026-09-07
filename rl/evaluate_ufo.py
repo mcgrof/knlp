@@ -97,6 +97,11 @@ def evaluate_episode(env, policy: Policy, seed: int) -> dict:
 
     duration = steps * env.dt_s
     stats = info["episode_stats"]
+    final_state = np.asarray(info["state"], dtype=np.float64)
+    final_velocity_error = float(
+        np.linalg.norm(env.body_velocity(final_state) - env.goal[:3])
+    )
+    final_yaw_rate_error = float(abs(final_state[12] - env.goal[3]))
     return {
         "seed": seed,
         "steps": steps,
@@ -107,6 +112,12 @@ def evaluate_episode(env, policy: Policy, seed: int) -> dict:
         "out_of_envelope": bool(stats.get("out_of_envelope", 0.0)),
         "velocity_rmse_mps": math.sqrt(velocity_square_time / (duration * 3.0)),
         "yaw_rate_rmse_radps": math.sqrt(yaw_square_time / duration),
+        "final_velocity_error_mps": (
+            final_velocity_error if math.isfinite(final_velocity_error) else None
+        ),
+        "final_yaw_rate_error_radps": (
+            final_yaw_rate_error if math.isfinite(final_yaw_rate_error) else None
+        ),
         "maximum_tilt_deg": math.degrees(maximum_tilt),
         "saturation_fraction": saturated / steps,
         "mean_normalized_action_delta": action_delta / steps,
@@ -117,6 +128,10 @@ def summarize(episodes: Sequence[dict]) -> dict:
     def mean(name: str) -> float:
         return float(np.mean([episode[name] for episode in episodes]))
 
+    def finite_mean(name: str) -> float | None:
+        values = [episode[name] for episode in episodes if episode[name] is not None]
+        return float(np.mean(values)) if values else None
+
     return {
         "episodes": len(episodes),
         "success_rate": mean("success"),
@@ -125,6 +140,12 @@ def summarize(episodes: Sequence[dict]) -> dict:
         "mean_return": mean("return"),
         "mean_velocity_rmse_mps": mean("velocity_rmse_mps"),
         "mean_yaw_rate_rmse_radps": mean("yaw_rate_rmse_radps"),
+        "mean_final_velocity_error_mps": finite_mean(
+            "final_velocity_error_mps"
+        ),
+        "mean_final_yaw_rate_error_radps": finite_mean(
+            "final_yaw_rate_error_radps"
+        ),
         "mean_maximum_tilt_deg": mean("maximum_tilt_deg"),
         "mean_saturation_fraction": mean("saturation_fraction"),
         "mean_normalized_action_delta": mean("mean_normalized_action_delta"),
