@@ -79,10 +79,12 @@ def test_telemetry_and_control_round_trip(contract):
         dt_s=0.02,
         observation=(0.2, -0.1),
         goal=(0.0,),
-        applied_action=(-0.2, 0.1),
+        requested_action=(-0.2, 0.1),
+        applied_action=(-3.0, 4.0),
         simulator_total_wrench=(-3.0, 4.0),
         aerodynamic_wrench=(-2.5, 3.5),
         vehicle_mass_kg=1200.0,
+        vehicle_inertia_kg_m2=(100.0, 200.0, 300.0),
     )
     command = ControlCommand.create(
         contract,
@@ -109,15 +111,19 @@ def test_telemetry_accepts_legacy_frames_without_vehicle_diagnostics(contract):
         goal=(0.0,),
     )
     payload = json.loads(frame.to_wire())
+    del payload["requested_action"]
     del payload["applied_action"]
     del payload["simulator_total_wrench"]
     del payload["aerodynamic_wrench"]
     del payload["vehicle_mass_kg"]
+    del payload["vehicle_inertia_kg_m2"]
     decoded = TelemetryFrame.from_wire(json.dumps(payload).encode(), contract)
+    assert decoded.requested_action is None
     assert decoded.applied_action is None
     assert decoded.simulator_total_wrench is None
     assert decoded.aerodynamic_wrench is None
     assert decoded.vehicle_mass_kg is None
+    assert decoded.vehicle_inertia_kg_m2 is None
 
 
 def test_contract_rejects_mismatches_and_stale_control(contract):
@@ -159,6 +165,28 @@ def test_contract_rejects_mismatches_and_stale_control(contract):
             observation=(0.2, -0.1),
             goal=(0.0,),
             vehicle_mass_kg=0.0,
+        )
+    with pytest.raises(ValueError, match="requested_action"):
+        TelemetryFrame.create(
+            contract,
+            episode_id="episode-7",
+            sequence=5,
+            monotonic_ns=2_000,
+            dt_s=0.02,
+            observation=(0.2, -0.1),
+            goal=(0.0,),
+            requested_action=(2.0, 0.0),
+        )
+    with pytest.raises(ValueError, match="vehicle_inertia_kg_m2"):
+        TelemetryFrame.create(
+            contract,
+            episode_id="episode-7",
+            sequence=5,
+            monotonic_ns=2_000,
+            dt_s=0.02,
+            observation=(0.2, -0.1),
+            goal=(0.0,),
+            vehicle_inertia_kg_m2=(1.0, -2.0, 3.0),
         )
     with pytest.raises(ValueError, match="simulator_total_wrench"):
         TelemetryFrame.create(

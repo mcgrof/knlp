@@ -45,10 +45,12 @@ def write_trace(path: Path, contract: FlightContract) -> None:
                 0.0,
             ),
             goal=(0.0, 0.0, 0.0, 0.0),
+            requested_action=action,
             applied_action=action,
             simulator_total_wrench=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
             aerodynamic_wrench=(-1.0, -2.0, -3.0, -4.0, -5.0, -6.0),
             vehicle_mass_kg=1600.0 + sequence,
+            vehicle_inertia_kg_m2=(100.0 + sequence, 200.0, 300.0),
         )
         rows.append(
             {
@@ -79,6 +81,11 @@ def test_analyze_consistent_shadow_trace(tmp_path):
     assert report["quaternion_maximum_norm_error"] == 0.0
     assert report["action_normalized_delta"]["maximum"] == 0.0
     assert report["applied_action_frames"] == 3
+    assert report["requested_action_frames"] == 3
+    assert report["requested_action_ranges"]["force_body_x"] == {
+        "minimum": 100.0,
+        "maximum": 100.0,
+    }
     assert report["applied_action_ranges"]["force_body_z"] == {
         "minimum": -10_000.0,
         "maximum": -10_000.0,
@@ -95,6 +102,8 @@ def test_analyze_consistent_shadow_trace(tmp_path):
     }
     assert report["vehicle_mass_frames"] == 3
     assert report["vehicle_mass_kg"]["median"] == 1601.0
+    assert report["vehicle_inertia_frames"] == 3
+    assert report["vehicle_inertia_kg_m2"]["x"]["median"] == 101.0
 
 
 def test_analyze_rejects_non_shadow_record(tmp_path):
