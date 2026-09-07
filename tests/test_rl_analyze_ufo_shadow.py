@@ -45,6 +45,8 @@ def write_trace(path: Path, contract: FlightContract) -> None:
                 0.0,
             ),
             goal=(0.0, 0.0, 0.0, 0.0),
+            applied_action=action,
+            vehicle_mass_kg=1600.0 + sequence,
         )
         rows.append(
             {
@@ -74,6 +76,13 @@ def test_analyze_consistent_shadow_trace(tmp_path):
     assert report["position_velocity_consistency_rmse_mps"] < 1e-12
     assert report["quaternion_maximum_norm_error"] == 0.0
     assert report["action_normalized_delta"]["maximum"] == 0.0
+    assert report["applied_action_frames"] == 3
+    assert report["applied_action_ranges"]["force_body_z"] == {
+        "minimum": -10_000.0,
+        "maximum": -10_000.0,
+    }
+    assert report["vehicle_mass_frames"] == 3
+    assert report["vehicle_mass_kg"]["median"] == 1601.0
 
 
 def test_analyze_rejects_non_shadow_record(tmp_path):

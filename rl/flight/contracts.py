@@ -166,6 +166,8 @@ class TelemetryFrame:
     dt_s: float
     observation: tuple[float, ...]
     goal: tuple[float, ...]
+    applied_action: tuple[float, ...] | None = None
+    vehicle_mass_kg: float | None = None
     terminated: bool = False
     truncated: bool = False
 
@@ -180,6 +182,8 @@ class TelemetryFrame:
         dt_s: float,
         observation: Sequence[float],
         goal: Sequence[float],
+        applied_action: Sequence[float] | None = None,
+        vehicle_mass_kg: float | None = None,
         terminated: bool = False,
         truncated: bool = False,
     ) -> "TelemetryFrame":
@@ -191,6 +195,14 @@ class TelemetryFrame:
             dt_s=float(dt_s),
             observation=tuple(float(value) for value in observation),
             goal=tuple(float(value) for value in goal),
+            applied_action=(
+                tuple(float(value) for value in applied_action)
+                if applied_action is not None
+                else None
+            ),
+            vehicle_mass_kg=(
+                float(vehicle_mass_kg) if vehicle_mass_kg is not None else None
+            ),
             terminated=bool(terminated),
             truncated=bool(truncated),
         )
@@ -210,6 +222,12 @@ class TelemetryFrame:
             raise ValueError("a frame cannot be both terminated and truncated")
         contract.observation.validate(self.observation, "observation")
         contract.goal.validate(self.goal, "goal")
+        if self.applied_action is not None:
+            contract.action.validate(self.applied_action, "applied_action")
+        if self.vehicle_mass_kg is not None and (
+            not math.isfinite(self.vehicle_mass_kg) or self.vehicle_mass_kg <= 0.0
+        ):
+            raise ValueError("vehicle_mass_kg must be finite and positive")
 
     def to_wire(self) -> bytes:
         payload = {
@@ -225,7 +243,13 @@ class TelemetryFrame:
     @classmethod
     def from_wire(cls, data: bytes, contract: FlightContract) -> "TelemetryFrame":
         payload = _wire_payload(data, "telemetry")
-        frame = cls(**_select_fields(payload, cls.__dataclass_fields__))
+        frame = cls(
+            **_select_fields(
+                payload,
+                cls.__dataclass_fields__,
+                optional={"applied_action", "vehicle_mass_kg"},
+            )
+        )
         frame.validate(contract)
         return frame
 
@@ -329,9 +353,13 @@ def _wire_payload(data: bytes, kind: str) -> Mapping[str, Any]:
 
 
 def _select_fields(
-    payload: Mapping[str, Any], fields: Mapping[str, Any]
+    payload: Mapping[str, Any],
+    fields: Mapping[str, Any],
+    *,
+    optional: set[str] | None = None,
 ) -> dict[str, Any]:
-    missing = set(fields) - set(payload)
+    optional = optional or set()
+    missing = set(fields) - optional - set(payload)
     if missing:
         raise ValueError(f"wire message is missing {sorted(missing)}")
     unexpected = (
@@ -345,9 +373,9 @@ def _select_fields(
     )
     if unexpected:
         raise ValueError(f"wire message has unexpected fields {sorted(unexpected)}")
-    selected = {field: payload[field] for field in fields}
-    for field in ("observation", "goal", "action"):
-        if field in selected:
+    selected = {field: payload[field] for field in fields if field in payload}
+    for field in ("observation", "goal", "action", "applied_action"):
+        if field in selected and selected[field] is not None:
             selected[field] = tuple(selected[field])
     return selected
 

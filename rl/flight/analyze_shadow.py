@@ -109,6 +109,12 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
 
     observations = list(zip(*(frame.observation for frame in frames)))
     action_channels = list(zip(*actions))
+    applied_actions = [
+        frame.applied_action for frame in frames if frame.applied_action is not None
+    ]
+    vehicle_masses = [
+        frame.vehicle_mass_kg for frame in frames if frame.vehicle_mass_kg is not None
+    ]
     quaternion_norm_errors = [
         abs(math.sqrt(sum(value * value for value in frame.observation[6:10])) - 1.0)
         for frame in frames
@@ -135,6 +141,12 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
                 max(abs(value - midpoint) / half_range for value in values)
             ),
         }
+    applied_action_ranges = None
+    if applied_actions:
+        applied_action_ranges = {
+            field: {"minimum": float(min(values)), "maximum": float(max(values))}
+            for field, values in zip(contract.action.fields, zip(*applied_actions))
+        }
 
     return {
         "schema_version": 1,
@@ -158,6 +170,10 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
         ),
         "observation_ranges": observation_ranges,
         "action_ranges": action_ranges,
+        "applied_action_frames": len(applied_actions),
+        "applied_action_ranges": applied_action_ranges,
+        "vehicle_mass_frames": len(vehicle_masses),
+        "vehicle_mass_kg": distribution(vehicle_masses) if vehicle_masses else None,
     }
 
 
