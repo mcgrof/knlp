@@ -35,7 +35,11 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
-from rl.continuous import SquashedGaussianAgent, action_bounds
+from rl.continuous import (
+    SquashedGaussianAgent,
+    action_bounds,
+    load_continuous_state_dict,
+)
 from rl.envs import env_factory
 from rl.pace.lease import EXIT_YIELD, GpuLease, YieldRequest
 from rl.vec import SyncVec
@@ -90,6 +94,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--resume", action="store_true", help="continue from the run's checkpoint"
     )
     p.add_argument(
+        "--init-agent",
+        default=None,
+        help="initialize a fresh run from an agent or checkpoint file",
+    )
+    p.add_argument(
         "--checkpoint-every", type=int, default=10, help="updates between checkpoints"
     )
     p.add_argument(
@@ -107,6 +116,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     args.batch_size = args.num_envs * args.num_steps
     args.minibatch_size = args.batch_size // args.num_minibatches
     args.num_updates = max(1, args.total_timesteps // args.batch_size)
+    if args.resume and args.init_agent:
+        p.error("--resume and --init-agent are mutually exclusive")
     if args.run_name is None:
         args.run_name = f"{args.env.replace(':', '-')}-s{args.seed}"
     return args
@@ -275,6 +286,12 @@ def write_manifest(
         "python_version": platform.python_version(),
         "platform": platform.platform(),
     }
+    if args.init_agent:
+        initial_path = Path(args.init_agent).expanduser().resolve()
+        manifest["initial_agent"] = {
+            "path": str(initial_path),
+            "sha256": _sha256(initial_path),
+        }
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
@@ -385,6 +402,26 @@ def main(argv=None) -> int:
         envs.single_action_space, obs_dim, args.hidden
     )
     agent = agent.to(device)
+    if args.init_agent:
+        initial_path = Path(args.init_agent).expanduser().resolve()
+        saved = torch.load(initial_path, map_location=device, weights_only=False)
+        saved_state = saved.get("state", {}) if isinstance(saved, dict) else {}
+        initial_kind = saved_state.get("action_kind", action_kind)
+        if initial_kind != action_kind:
+            raise ValueError(
+                f"initial agent action kind {initial_kind!r} does not match "
+                f"environment action kind {action_kind!r}"
+            )
+        weights = (
+            saved["agent"]
+            if isinstance(saved, dict) and "agent" in saved
+            else saved
+        )
+        if action_kind == "continuous":
+            load_continuous_state_dict(agent, weights)
+        else:
+            agent.load_state_dict(weights)
+        print(f"[ppo] initialized agent from {initial_path}", flush=True)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in agent.parameters())
     write_manifest(
@@ -406,7 +443,10 @@ def main(argv=None) -> int:
                 f"checkpoint action kind {checkpoint_action_kind!r} does not match "
                 f"environment action kind {action_kind!r}"
             )
-        agent.load_state_dict(ck["agent"])
+        if action_kind == "continuous":
+            load_continuous_state_dict(agent, ck["agent"])
+        else:
+            agent.load_state_dict(ck["agent"])
         optimizer.load_state_dict(ck["optimizer"])
         state = ck["state"]
         state["action_kind"] = action_kind
