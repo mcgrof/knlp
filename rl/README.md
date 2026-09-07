@@ -99,6 +99,13 @@ XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
   python -m rl.evaluate_ufo --run-dir runs/rl/ufo-hover-s1 \
   --random-start --output runs/rl/ufo-hover-s1/evaluation.json
 
+# clone the deterministic controller, then start a fresh PPO run from it
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.clone_ufo --run-dir runs/rl/ufo-hover-clone-s1
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.ppo --env ufo:hover --init-agent \
+  runs/rl/ufo-hover-clone-s1/checkpoint.pt --run-name ufo-hover-bc-ppo-s1
+
 # same, under the supervisor that restarts after every yield
 python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill --run-name bh-s1 --resume
 ```

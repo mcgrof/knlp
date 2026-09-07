@@ -11,7 +11,11 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from rl.continuous import SquashedGaussianAgent, action_bounds
+from rl.continuous import (
+    SquashedGaussianAgent,
+    action_bounds,
+    load_continuous_state_dict,
+)
 from rl.controls.ufo import VelocityTargetController, zero_wrench
 from rl.envs import make_env
 from rl.flight.geometry import quaternion_body_to_ned
@@ -45,7 +49,7 @@ def checkpoint_policy(env, run_dir: Path, checkpoint: Path | None = None):
     if state.get("action_kind", "continuous") != "continuous":
         raise ValueError("UFO evaluation requires a continuous-action checkpoint")
     weights = saved["agent"] if isinstance(saved, dict) and "agent" in saved else saved
-    agent.load_state_dict(weights)
+    load_continuous_state_dict(agent, weights)
     agent.eval()
 
     def act(observation: np.ndarray) -> np.ndarray:
