@@ -23,7 +23,13 @@ point for later RL work in knlp.
   for flight-control environments.  It is separate from the discrete actor so
   existing ETR checkpoints retain their original layout.
 - [`flight/`](flight/): hashed observation, goal and action-vector contracts,
-  plus timestamped telemetry and expiring control messages.
+  timestamped telemetry, expiring control messages and explicit coordinate
+  transforms.
+- [`envs/ufo_env.py`](envs/ufo_env.py): a Gymnasium adapter over the shared
+  `xplane-ufo` C dynamics library.  The aircraft repository owns the physical
+  model and concrete vector schema; knlp owns the learning environment.
+- [`controls/ufo.py`](controls/ufo.py): zero-wrench, hover and velocity-target
+  reference controllers for the standalone flight environment.
 - [`vec.py`](vec.py): a minimal synchronous vector environment with
   same-step reset and per-episode statistics.
 - [`envs/`](envs/): the ETR bridge client, a pure-Python simulator that speaks
