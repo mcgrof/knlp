@@ -35,6 +35,10 @@ def test_reference_beats_zero_wrench_on_fixed_hover():
     assert zero["success_rate"] == 0.0
     assert reference["success_rate"] == 1.0
     assert reference["mean_velocity_rmse_mps"] < zero["mean_velocity_rmse_mps"]
+    assert (
+        reference["mean_final_velocity_error_mps"]
+        < zero["mean_final_velocity_error_mps"]
+    )
     assert reference["mean_maximum_tilt_deg"] == pytest.approx(0.0)
 
 
