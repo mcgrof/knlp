@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 PROTOCOL = "knlp.flight"
@@ -40,6 +41,28 @@ class VectorSpec:
     units: tuple[str, ...]
     low: tuple[float, ...]
     high: tuple[float, ...]
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any], name: str) -> "VectorSpec":
+        payload = _strict_mapping(value, {"fields", "units", "low", "high"}, name)
+        fields = payload["fields"]
+        units = payload["units"]
+        low = payload["low"]
+        high = payload["high"]
+        if not isinstance(fields, (list, tuple)) or not all(
+            isinstance(field, str) for field in fields
+        ):
+            raise ValueError(f"{name}.fields must be a string array")
+        if not isinstance(units, (list, tuple)) or not all(
+            isinstance(unit, str) for unit in units
+        ):
+            raise ValueError(f"{name}.units must be a string array")
+        try:
+            lower = tuple(float(item) for item in low)
+            upper = tuple(float(item) for item in high)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{name} bounds must be numeric arrays") from error
+        return cls(tuple(fields), tuple(units), lower, upper)
 
     def __post_init__(self) -> None:
         width = len(self.fields)
@@ -80,8 +103,42 @@ class FlightContract:
     goal: VectorSpec
     action: VectorSpec
 
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "FlightContract":
+        payload = _strict_mapping(
+            value,
+            {"name", "revision", "nominal_dt_s", "observation", "goal", "action"},
+            "contract",
+        )
+        revision = payload["revision"]
+        if isinstance(revision, bool) or not isinstance(revision, int):
+            raise ValueError("contract.revision must be an integer")
+        try:
+            nominal_dt_s = float(payload["nominal_dt_s"])
+        except (TypeError, ValueError) as error:
+            raise ValueError("contract.nominal_dt_s must be numeric") from error
+        return cls(
+            name=payload["name"],
+            revision=revision,
+            nominal_dt_s=nominal_dt_s,
+            observation=VectorSpec.from_mapping(
+                payload["observation"], "contract.observation"
+            ),
+            goal=VectorSpec.from_mapping(payload["goal"], "contract.goal"),
+            action=VectorSpec.from_mapping(payload["action"], "contract.action"),
+        )
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> "FlightContract":
+        source = Path(path)
+        try:
+            value = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"cannot read flight contract {source}") from error
+        return cls.from_mapping(value)
+
     def __post_init__(self) -> None:
-        if not self.name:
+        if not isinstance(self.name, str) or not self.name:
             raise ValueError("contract name must not be empty")
         if self.revision < 1:
             raise ValueError("contract revision must be positive")
@@ -293,3 +350,17 @@ def _select_fields(
         if field in selected:
             selected[field] = tuple(selected[field])
     return selected
+
+
+def _strict_mapping(
+    value: Mapping[str, Any], expected: set[str], name: str
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    missing = expected - set(value)
+    if missing:
+        raise ValueError(f"{name} is missing {sorted(missing)}")
+    unexpected = set(value) - expected
+    if unexpected:
+        raise ValueError(f"{name} has unexpected fields {sorted(unexpected)}")
+    return value
