@@ -94,6 +94,11 @@ XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
   --num-steps 256 --num-minibatches 8 --update-epochs 5 \
   --learning-rate 3e-4 --gamma 0.995 --run-name ufo-hover-s1
 
+# fixed-seed physical comparison against zero and reference control
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.evaluate_ufo --run-dir runs/rl/ufo-hover-s1 \
+  --random-start --output runs/rl/ufo-hover-s1/evaluation.json
+
 # same, under the supervisor that restarts after every yield
 python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill --run-name bh-s1 --resume
 ```
