@@ -3,6 +3,9 @@
 import io
 import json
 import os
+import socket
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +16,7 @@ torch = pytest.importorskip("torch")
 from rl.continuous import SquashedGaussianAgent
 from rl.export_ufo_actor import export_checkpoint
 from rl.flight.contracts import FlightContract, TelemetryFrame
-from rl.flight.shadow_ufo import ShadowPolicy, process_stream
+from rl.flight.shadow_ufo import ShadowPolicy, connect_telemetry, process_stream
 
 
 def load_contract() -> FlightContract:
@@ -160,3 +163,29 @@ def test_shadow_stream_preserves_stats_on_interrupt(tmp_path):
     stats = process_stream(InterruptedSource(), io.StringIO(), policy)
     assert stats.frames == 0
     assert stats.interrupted
+
+
+def test_shadow_connect_retries_a_stale_socket(tmp_path):
+    path = tmp_path / "telemetry.sock"
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(path))
+    stale.close()
+
+    accepted = threading.Event()
+
+    def replace_with_listener():
+        time.sleep(0.1)
+        path.unlink()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(path))
+            server.listen(1)
+            connection, _ = server.accept()
+            connection.close()
+            accepted.set()
+
+    server = threading.Thread(target=replace_with_listener)
+    server.start()
+    with connect_telemetry(path, 2.0):
+        pass
+    server.join(timeout=2.0)
+    assert accepted.is_set()

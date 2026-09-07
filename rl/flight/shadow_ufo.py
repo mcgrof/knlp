@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -174,6 +175,32 @@ def default_socket_path() -> Path:
     return Path(f"/tmp/xplane-ufo-telemetry-{os.getuid()}.sock")
 
 
+def connect_telemetry(path: Path, timeout: float) -> socket.socket:
+    """Wait for a live listener, tolerating absent or stale socket paths."""
+
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise TimeoutError(
+                f"timed out waiting for X-Plane telemetry at {path}"
+            ) from last_error
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(min(1.0, remaining))
+        try:
+            client.connect(str(path))
+        except OSError as error:
+            client.close()
+            if error.errno not in {None, errno.ENOENT, errno.ECONNREFUSED}:
+                raise
+            last_error = error
+            time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+            continue
+        client.settimeout(None)
+        return client
+
+
 def request_stop(signum, frame) -> None:
     del signum, frame
     raise KeyboardInterrupt
@@ -200,10 +227,7 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(args.connect_timeout)
-        client.connect(str(args.socket))
-        client.settimeout(None)
+    with connect_telemetry(args.socket, args.connect_timeout) as client:
         with client.makefile("rb") as source, args.output.open("x") as output:
             stats = process_stream(source, output, policy, max_frames=args.max_frames)
     summary = {
