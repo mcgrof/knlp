@@ -167,6 +167,8 @@ class TelemetryFrame:
     observation: tuple[float, ...]
     goal: tuple[float, ...]
     applied_action: tuple[float, ...] | None = None
+    simulator_total_wrench: tuple[float, ...] | None = None
+    aerodynamic_wrench: tuple[float, ...] | None = None
     vehicle_mass_kg: float | None = None
     terminated: bool = False
     truncated: bool = False
@@ -183,6 +185,8 @@ class TelemetryFrame:
         observation: Sequence[float],
         goal: Sequence[float],
         applied_action: Sequence[float] | None = None,
+        simulator_total_wrench: Sequence[float] | None = None,
+        aerodynamic_wrench: Sequence[float] | None = None,
         vehicle_mass_kg: float | None = None,
         terminated: bool = False,
         truncated: bool = False,
@@ -198,6 +202,16 @@ class TelemetryFrame:
             applied_action=(
                 tuple(float(value) for value in applied_action)
                 if applied_action is not None
+                else None
+            ),
+            simulator_total_wrench=(
+                tuple(float(value) for value in simulator_total_wrench)
+                if simulator_total_wrench is not None
+                else None
+            ),
+            aerodynamic_wrench=(
+                tuple(float(value) for value in aerodynamic_wrench)
+                if aerodynamic_wrench is not None
                 else None
             ),
             vehicle_mass_kg=(
@@ -224,6 +238,17 @@ class TelemetryFrame:
         contract.goal.validate(self.goal, "goal")
         if self.applied_action is not None:
             contract.action.validate(self.applied_action, "applied_action")
+        for name, wrench in (
+            ("simulator_total_wrench", self.simulator_total_wrench),
+            ("aerodynamic_wrench", self.aerodynamic_wrench),
+        ):
+            if wrench is not None and (
+                len(wrench) != contract.action.width
+                or not all(math.isfinite(value) for value in wrench)
+            ):
+                raise ValueError(
+                    f"{name} must contain {contract.action.width} finite values"
+                )
         if self.vehicle_mass_kg is not None and (
             not math.isfinite(self.vehicle_mass_kg) or self.vehicle_mass_kg <= 0.0
         ):
@@ -247,7 +272,12 @@ class TelemetryFrame:
             **_select_fields(
                 payload,
                 cls.__dataclass_fields__,
-                optional={"applied_action", "vehicle_mass_kg"},
+                optional={
+                    "applied_action",
+                    "simulator_total_wrench",
+                    "aerodynamic_wrench",
+                    "vehicle_mass_kg",
+                },
             )
         )
         frame.validate(contract)
@@ -374,7 +404,14 @@ def _select_fields(
     if unexpected:
         raise ValueError(f"wire message has unexpected fields {sorted(unexpected)}")
     selected = {field: payload[field] for field in fields if field in payload}
-    for field in ("observation", "goal", "action", "applied_action"):
+    for field in (
+        "observation",
+        "goal",
+        "action",
+        "applied_action",
+        "simulator_total_wrench",
+        "aerodynamic_wrench",
+    ):
         if field in selected and selected[field] is not None:
             selected[field] = tuple(selected[field])
     return selected

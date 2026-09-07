@@ -36,6 +36,17 @@ def _root_mean_square(values: Sequence[float]) -> float:
     return math.sqrt(sum(value * value for value in values) / len(values))
 
 
+def wrench_ranges(
+    wrenches: Sequence[Sequence[float]], contract: FlightContract
+) -> dict[str, dict[str, float]] | None:
+    if not wrenches:
+        return None
+    return {
+        field: {"minimum": float(min(values)), "maximum": float(max(values))}
+        for field, values in zip(contract.action.fields, zip(*wrenches))
+    }
+
+
 def analyze_trace(path: Path, contract: FlightContract) -> dict:
     frames: list[TelemetryFrame] = []
     actions: list[tuple[float, ...]] = []
@@ -112,6 +123,16 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
     applied_actions = [
         frame.applied_action for frame in frames if frame.applied_action is not None
     ]
+    simulator_total_wrenches = [
+        frame.simulator_total_wrench
+        for frame in frames
+        if frame.simulator_total_wrench is not None
+    ]
+    aerodynamic_wrenches = [
+        frame.aerodynamic_wrench
+        for frame in frames
+        if frame.aerodynamic_wrench is not None
+    ]
     vehicle_masses = [
         frame.vehicle_mass_kg for frame in frames if frame.vehicle_mass_kg is not None
     ]
@@ -141,13 +162,6 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
                 max(abs(value - midpoint) / half_range for value in values)
             ),
         }
-    applied_action_ranges = None
-    if applied_actions:
-        applied_action_ranges = {
-            field: {"minimum": float(min(values)), "maximum": float(max(values))}
-            for field, values in zip(contract.action.fields, zip(*applied_actions))
-        }
-
     return {
         "schema_version": 1,
         "source": str(path),
@@ -171,7 +185,13 @@ def analyze_trace(path: Path, contract: FlightContract) -> dict:
         "observation_ranges": observation_ranges,
         "action_ranges": action_ranges,
         "applied_action_frames": len(applied_actions),
-        "applied_action_ranges": applied_action_ranges,
+        "applied_action_ranges": wrench_ranges(applied_actions, contract),
+        "simulator_total_wrench_frames": len(simulator_total_wrenches),
+        "simulator_total_wrench_ranges": wrench_ranges(
+            simulator_total_wrenches, contract
+        ),
+        "aerodynamic_wrench_frames": len(aerodynamic_wrenches),
+        "aerodynamic_wrench_ranges": wrench_ranges(aerodynamic_wrenches, contract),
         "vehicle_mass_frames": len(vehicle_masses),
         "vehicle_mass_kg": distribution(vehicle_masses) if vehicle_masses else None,
     }
