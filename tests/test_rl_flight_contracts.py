@@ -56,6 +56,20 @@ def test_contract_digest_changes_with_semantics(contract):
     assert json.loads(contract.canonical_json())["name"] == "test-flight"
 
 
+def test_contract_loads_strict_json_without_changing_its_digest(tmp_path, contract):
+    path = tmp_path / "contract.json"
+    path.write_text(contract.canonical_json())
+    loaded = FlightContract.from_json(path)
+    assert loaded == contract
+    assert loaded.digest == contract.digest
+
+    payload = json.loads(contract.canonical_json())
+    payload["observation"]["unknown"] = 1
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="unexpected"):
+        FlightContract.from_json(path)
+
+
 def test_telemetry_and_control_round_trip(contract):
     frame = TelemetryFrame.create(
         contract,
