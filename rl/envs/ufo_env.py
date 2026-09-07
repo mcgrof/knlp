@@ -173,6 +173,8 @@ class UfoEnv(gym.Env):
         self.random_start = bool(random_start)
         self.default_goal = self.contract.goal.validate(goal, "goal")
         self.goal = np.asarray(self.default_goal, dtype=np.float64)
+        self._state_low = np.asarray(self.contract.observation.low, dtype=np.float64)
+        self._state_high = np.asarray(self.contract.observation.high, dtype=np.float64)
         self.observation_space = spaces.Box(
             low=np.asarray(
                 (*self.contract.observation.low, *self.contract.goal.low),
@@ -202,9 +204,20 @@ class UfoEnv(gym.Env):
             if getattr(self.contract, name).fields != fields:
                 raise ValueError(f"xplane-ufo {name} ABI does not match the contract")
 
-    def _observation(self) -> np.ndarray:
-        state = self.dynamics.state_vector()
-        self.contract.observation.validate(state, "observation")
+    def _observation(
+        self, state: np.ndarray | None = None, *, clip_terminal: bool = False
+    ) -> np.ndarray:
+        state = self.dynamics.state_vector() if state is None else state
+        if clip_terminal:
+            state = np.nan_to_num(
+                state,
+                nan=0.0,
+                posinf=self._state_high,
+                neginf=self._state_low,
+            )
+            state = np.clip(state, self._state_low, self._state_high)
+        else:
+            self.contract.observation.validate(state, "observation")
         return np.asarray((*state, *self.goal), dtype=np.float32)
 
     def reset(self, *, seed=None, options=None):
@@ -241,20 +254,33 @@ class UfoEnv(gym.Env):
         self.contract.action.validate(values, "action")
         state = self.dynamics.step(values, self.dt_s)
         self._steps += 1
-        terms = self._reward_terms(state, values)
+        state_is_finite = bool(np.isfinite(state).all())
+        out_of_envelope = bool(
+            not state_is_finite
+            or np.any(state < self._state_low)
+            or np.any(state > self._state_high)
+        )
+        terms = (
+            self._reward_terms(state, values)
+            if state_is_finite
+            else {"alive": 0.0, "nonfinite_state": -100.0}
+        )
         reward = float(sum(terms.values()))
-        self._return += reward
-        ground_contact = state[2] >= 0.0
-        escaped = abs(state[0]) >= 1_000_000.0 or abs(state[1]) >= 1_000_000.0
-        terminated = bool(ground_contact or escaped)
-        truncated = bool(not terminated and self._steps >= self.max_steps)
+        ground_contact = bool(state_is_finite and state[2] >= 0.0)
         if ground_contact:
             reward -= 25.0
             terms["ground"] = -25.0
-            self._return -= 25.0
+        if out_of_envelope:
+            reward -= 25.0
+            terms["out_of_envelope"] = -25.0
+        self._return += reward
+        terminated = bool(ground_contact or out_of_envelope)
+        truncated = bool(not terminated and self._steps >= self.max_steps)
         info = self._info(terms)
         if terminated or truncated:
-            body_velocity = self.body_velocity(state)
+            body_velocity = (
+                self.body_velocity(state) if state_is_finite else np.full(3, np.inf)
+            )
             info["episode_stats"] = {
                 "return": self._return,
                 "time": self._steps * self.dt_s,
@@ -262,10 +288,13 @@ class UfoEnv(gym.Env):
                     np.linalg.norm(body_velocity - self.goal[:3]) < 1.0
                     and abs(state[12] - self.goal[3]) < 0.1
                     and not ground_contact
+                    and not out_of_envelope
                 ),
                 "ground_contact": float(ground_contact),
+                "out_of_envelope": float(out_of_envelope),
             }
-        return self._observation(), reward, terminated, truncated, info
+        observation = self._observation(state, clip_terminal=out_of_envelope)
+        return observation, reward, terminated, truncated, info
 
     def body_velocity(self, state: np.ndarray | None = None) -> np.ndarray:
         state = self.dynamics.state_vector() if state is None else state
