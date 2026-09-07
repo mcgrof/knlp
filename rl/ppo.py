@@ -1,4 +1,4 @@
-"""Single-file PPO for discrete actions, in the CleanRL style.
+"""Single-file PPO for discrete or bounded continuous actions.
 
 Everything that matters for reading the algorithm is in this file:
 rollout collection, generalised advantage estimation, the clipped
@@ -31,6 +31,7 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
+from rl.continuous import SquashedGaussianAgent, action_bounds
 from rl.envs import env_factory
 from rl.pace.lease import EXIT_YIELD, GpuLease, YieldRequest
 from rl.vec import SyncVec
@@ -46,7 +47,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--torch-threads", type=int, default=0)
-    # PPO (CleanRL defaults for discrete control)
+    # PPO (CleanRL defaults)
     p.add_argument("--total-timesteps", type=int, default=500_000)
     p.add_argument("--num-envs", type=int, default=8)
     p.add_argument("--num-steps", type=int, default=128, help="rollout length per env")
@@ -144,6 +145,20 @@ class Agent(nn.Module):
         return self.actor(x).argmax(dim=-1)
 
 
+def make_agent(action_space, obs_dim: int, hidden: int):
+    """Select the checkpoint-compatible actor for an environment's action ABI."""
+
+    if hasattr(action_space, "n"):
+        return Agent(obs_dim, int(action_space.n), hidden), (), torch.long, "discrete"
+    low, high = action_bounds(action_space)
+    return (
+        SquashedGaussianAgent(obs_dim, low, high, hidden),
+        (len(low),),
+        torch.float32,
+        "continuous",
+    )
+
+
 class RunLog:
     """CSV metrics plus a small JSON progress file that survives restarts."""
 
@@ -194,7 +209,7 @@ def pick_device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
-def save_checkpoint(path: Path, agent: Agent, optimizer, state: dict) -> None:
+def save_checkpoint(path: Path, agent: nn.Module, optimizer, state: dict) -> None:
     tmp = path.with_suffix(".tmp")
     torch.save(
         {
@@ -215,7 +230,7 @@ def save_checkpoint(path: Path, agent: Agent, optimizer, state: dict) -> None:
 def bootstrap_time_limits(
     reward: np.ndarray,
     infos: dict,
-    agent: Agent,
+    agent: nn.Module,
     device: torch.device,
     gamma: float,
 ) -> np.ndarray:
@@ -279,29 +294,50 @@ def main(argv=None) -> int:
         )
         yield_req.install_signals()
 
-    env_kwargs = {
-        "max_seconds": args.max_seconds,
-        "stuck_seconds": args.stuck_seconds,
-        "action_set": args.action_set,
-        "random_start": args.random_start,
-        "binary": args.etr_bin,
-    }
-    if args.env.startswith("etr"):
-        env_kwargs["stderr_path"] = str(run_dir / "etr.stderr.log")
+    if args.env.partition(":")[0] == "ufo":
+        env_kwargs = {
+            "max_seconds": args.max_seconds,
+            "random_start": args.random_start,
+        }
+    else:
+        env_kwargs = {
+            "max_seconds": args.max_seconds,
+            "stuck_seconds": args.stuck_seconds,
+            "action_set": args.action_set,
+            "random_start": args.random_start,
+            "binary": args.etr_bin,
+        }
+        if args.env.startswith("etr"):
+            env_kwargs["stderr_path"] = str(run_dir / "etr.stderr.log")
     envs = SyncVec([env_factory(args.env, **env_kwargs) for _ in range(args.num_envs)])
     obs_dim = int(np.prod(envs.single_observation_space.shape))
-    n_actions = int(envs.single_action_space.n)
 
-    agent = Agent(obs_dim, n_actions, args.hidden).to(device)
+    agent, action_shape, action_dtype, action_kind = make_agent(
+        envs.single_action_space, obs_dim, args.hidden
+    )
+    agent = agent.to(device)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in agent.parameters())
 
-    state = {"update": 0, "global_step": 0, "wall_s": 0.0, "env_seed": args.seed}
+    state = {
+        "update": 0,
+        "global_step": 0,
+        "wall_s": 0.0,
+        "env_seed": args.seed,
+        "action_kind": action_kind,
+    }
     if args.resume and ckpt_path.exists():
         ck = torch.load(ckpt_path, map_location=device, weights_only=False)
+        checkpoint_action_kind = ck["state"].get("action_kind", action_kind)
+        if checkpoint_action_kind != action_kind:
+            raise ValueError(
+                f"checkpoint action kind {checkpoint_action_kind!r} does not match "
+                f"environment action kind {action_kind!r}"
+            )
         agent.load_state_dict(ck["agent"])
         optimizer.load_state_dict(ck["optimizer"])
         state = ck["state"]
+        state["action_kind"] = action_kind
         random.setstate(ck["rng"]["python"])
         np.random.set_state(ck["rng"]["numpy"])
         torch.set_rng_state(ck["rng"]["torch"])
@@ -314,12 +350,15 @@ def main(argv=None) -> int:
     log = RunLog(run_dir)
     print(
         f"[ppo] run={args.run_name} env={args.env} device={device} params={n_params} "
-        f"envs={args.num_envs} steps={args.num_steps} batch={args.batch_size} updates={args.num_updates}"
+        f"actions={action_kind} envs={args.num_envs} steps={args.num_steps} "
+        f"batch={args.batch_size} updates={args.num_updates}"
     )
 
     obs_buf = torch.zeros((args.num_steps, args.num_envs, obs_dim), device=device)
     act_buf = torch.zeros(
-        (args.num_steps, args.num_envs), device=device, dtype=torch.long
+        (args.num_steps, args.num_envs, *action_shape),
+        device=device,
+        dtype=action_dtype,
     )
     logp_buf = torch.zeros((args.num_steps, args.num_envs), device=device)
     rew_buf = torch.zeros((args.num_steps, args.num_envs), device=device)
@@ -412,7 +451,10 @@ def main(argv=None) -> int:
 
             b_obs = obs_buf.reshape((-1, obs_dim))
             b_logp = logp_buf.reshape(-1)
-            b_act = act_buf.reshape(-1)
+            if action_kind == "continuous":
+                b_act = act_buf.reshape((-1, *action_shape))
+            else:
+                b_act = act_buf.reshape(-1)
             b_adv = advantages.reshape(-1)
             b_ret = returns.reshape(-1)
             b_val = val_buf.reshape(-1)
