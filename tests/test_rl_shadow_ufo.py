@@ -77,6 +77,8 @@ def test_shadow_stream_emits_actions_but_no_control_wire(tmp_path):
     records = [json.loads(line) for line in output.getvalue().splitlines()]
     assert stats.frames == 2
     assert stats.rejected == 0
+    assert stats.rejected_by_reason == {}
+    assert stats.first_rejection is None
     assert stats.first_sequence == 10
     assert stats.last_sequence == 11
     assert all(record["kind"] == "shadow_action" for record in records)
@@ -136,7 +138,132 @@ def test_shadow_stream_rejects_replayed_sequence(tmp_path):
     stats = process_stream(io.BytesIO(frame.to_wire() * 2), output, policy)
     assert stats.frames == 1
     assert stats.rejected == 1
+    assert stats.rejected_by_reason == {
+        "ValueError: telemetry sequence did not increase": 1
+    }
+    assert stats.first_rejection == "ValueError: telemetry sequence did not increase"
     assert not stats.interrupted
+
+
+def test_shadow_stream_reports_out_of_bounds_field(tmp_path):
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 8}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = ShadowPolicy(contract, model)
+    frame = TelemetryFrame.create(
+        contract,
+        episode_id="xplane-test",
+        sequence=0,
+        monotonic_ns=1,
+        dt_s=0.02,
+        observation=(
+            0.0,
+            0.0,
+            -100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        goal=(0.0, 0.0, 0.0, 0.0),
+    )
+    payload = json.loads(frame.to_wire())
+    payload["observation"][0] = 2_000_000.0
+    invalid = (json.dumps(payload) + "\n").encode()
+    stats = process_stream(io.BytesIO(invalid * 2), io.StringIO(), policy)
+    assert stats.frames == 0
+    assert stats.rejected == 2
+    assert stats.rejected_by_reason == {
+        "ValueError: observation.position_ned_x is outside bounds": 2
+    }
+    assert stats.first_rejection == (
+        "ValueError: observation.position_ned_x=2000000.0 is outside "
+        "[-1000000.0, 1000000.0]"
+    )
+
+
+def test_shadow_stream_recovers_after_policy_rejects_a_frame(tmp_path):
+    class RejectOnce:
+        def __init__(self, policy):
+            self.contract = policy.contract
+            self.policy = policy
+            self.rejected = False
+
+        def record(self, frame):
+            if not self.rejected:
+                self.rejected = True
+                raise ValueError("synthetic inference rejection")
+            return self.policy.record(frame)
+
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 8}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = RejectOnce(ShadowPolicy(contract, model))
+    frames = [
+        TelemetryFrame.create(
+            contract,
+            episode_id="xplane-test",
+            sequence=sequence,
+            monotonic_ns=sequence + 1,
+            dt_s=0.02,
+            observation=(
+                0.0,
+                0.0,
+                -100.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+            goal=(0.0, 0.0, 0.0, 0.0),
+        )
+        for sequence in (0, 1)
+    ]
+    output = io.StringIO()
+    stats = process_stream(
+        io.BytesIO(b"".join(frame.to_wire() for frame in frames)), output, policy
+    )
+    assert stats.frames == 1
+    assert stats.last_sequence == 1
+    assert stats.rejected_by_reason == {"ValueError: synthetic inference rejection": 1}
 
 
 def test_shadow_stream_preserves_stats_on_interrupt(tmp_path):

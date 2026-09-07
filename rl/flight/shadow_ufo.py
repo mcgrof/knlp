@@ -10,7 +10,7 @@ import os
 import signal
 import socket
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
@@ -25,10 +25,27 @@ MAXIMUM_WIRE_BYTES = 64 * 1024
 class StreamStats:
     frames: int = 0
     rejected: int = 0
+    rejected_by_reason: dict[str, int] = field(default_factory=dict)
+    first_rejection: str | None = None
     first_sequence: int | None = None
     last_sequence: int | None = None
     maximum_inference_ns: int = 0
     interrupted: bool = False
+
+
+def record_rejection(stats: StreamStats, reason: str) -> None:
+    """Retain actionable rejection evidence without unbounded key growth."""
+
+    if " is outside [" in reason and "=" in reason:
+        reason_key = f"{reason.split('=', 1)[0]} is outside bounds"
+    else:
+        reason_key = reason
+    stats.rejected += 1
+    stats.rejected_by_reason[reason_key] = (
+        stats.rejected_by_reason.get(reason_key, 0) + 1
+    )
+    if stats.first_rejection is None:
+        stats.first_rejection = reason
 
 
 class ShadowPolicy:
@@ -49,12 +66,10 @@ class ShadowPolicy:
             self.action_mid = saved["action_mid"].astype(np.float32)
             self.action_scale = saved["action_scale"].astype(np.float32)
             self.weights = tuple(
-                saved[f"layer_{index}_weight"].astype(np.float32)
-                for index in range(3)
+                saved[f"layer_{index}_weight"].astype(np.float32) for index in range(3)
             )
             self.biases = tuple(
-                saved[f"layer_{index}_bias"].astype(np.float32)
-                for index in range(3)
+                saved[f"layer_{index}_bias"].astype(np.float32) for index in range(3)
             )
         self._validate_model()
 
@@ -69,15 +84,23 @@ class ShadowPolicy:
             action_width,
         ):
             raise ValueError("shadow actor action transform has the wrong width")
-        expected_inputs = (input_width, self.weights[0].shape[0], self.weights[1].shape[0])
+        expected_inputs = (
+            input_width,
+            self.weights[0].shape[0],
+            self.weights[1].shape[0],
+        )
         for index, (weight, bias, expected_input) in enumerate(
             zip(self.weights, self.biases, expected_inputs)
         ):
             expected_output = action_width if index == 2 else weight.shape[0]
             if weight.ndim != 2 or weight.shape != (expected_output, expected_input):
-                raise ValueError(f"shadow actor layer {index} has an invalid weight shape")
+                raise ValueError(
+                    f"shadow actor layer {index} has an invalid weight shape"
+                )
             if bias.shape != (expected_output,):
-                raise ValueError(f"shadow actor layer {index} has an invalid bias shape")
+                raise ValueError(
+                    f"shadow actor layer {index} has an invalid bias shape"
+                )
         arrays = (
             self.observation_mean,
             self.observation_scale,
@@ -135,25 +158,24 @@ def process_stream(
             if not line:
                 break
             if len(line) > MAXIMUM_WIRE_BYTES or not line.endswith(b"\n"):
-                stats.rejected += 1
+                record_rejection(stats, "telemetry frame is oversized or incomplete")
                 continue
             try:
                 frame = TelemetryFrame.from_wire(line, policy.contract)
-                if frame.episode_id == episode_id:
+                if frame.episode_id == episode_id and last_sequence is not None:
                     if frame.sequence <= last_sequence:
                         raise ValueError("telemetry sequence did not increase")
                     if frame.monotonic_ns < last_monotonic_ns:
                         raise ValueError("telemetry monotonic time moved backwards")
-                else:
-                    episode_id = frame.episode_id
                 record = policy.record(frame)
-            except ValueError:
-                stats.rejected += 1
+            except (TypeError, ValueError) as error:
+                record_rejection(stats, f"{type(error).__name__}: {error}")
                 continue
             output.write(
                 json.dumps(record, allow_nan=False, separators=(",", ":")) + "\n"
             )
             output.flush()
+            episode_id = frame.episode_id
             last_sequence = frame.sequence
             last_monotonic_ns = frame.monotonic_ns
             if stats.first_sequence is None:
@@ -223,7 +245,9 @@ def main(argv=None) -> int:
     contract = FlightContract.from_json(args.contract)
     policy = ShadowPolicy(contract, args.model)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    summary_path = args.summary or args.output.with_suffix(args.output.suffix + ".summary.json")
+    summary_path = args.summary or args.output.with_suffix(
+        args.output.suffix + ".summary.json"
+    )
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
