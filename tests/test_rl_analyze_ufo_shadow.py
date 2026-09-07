@@ -46,6 +46,8 @@ def write_trace(path: Path, contract: FlightContract) -> None:
             ),
             goal=(0.0, 0.0, 0.0, 0.0),
             applied_action=action,
+            simulator_total_wrench=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+            aerodynamic_wrench=(-1.0, -2.0, -3.0, -4.0, -5.0, -6.0),
             vehicle_mass_kg=1600.0 + sequence,
         )
         rows.append(
@@ -80,6 +82,16 @@ def test_analyze_consistent_shadow_trace(tmp_path):
     assert report["applied_action_ranges"]["force_body_z"] == {
         "minimum": -10_000.0,
         "maximum": -10_000.0,
+    }
+    assert report["simulator_total_wrench_frames"] == 3
+    assert report["simulator_total_wrench_ranges"]["moment_body_z"] == {
+        "minimum": 6.0,
+        "maximum": 6.0,
+    }
+    assert report["aerodynamic_wrench_frames"] == 3
+    assert report["aerodynamic_wrench_ranges"]["force_body_x"] == {
+        "minimum": -1.0,
+        "maximum": -1.0,
     }
     assert report["vehicle_mass_frames"] == 3
     assert report["vehicle_mass_kg"]["median"] == 1601.0
