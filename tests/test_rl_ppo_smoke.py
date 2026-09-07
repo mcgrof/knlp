@@ -1,6 +1,7 @@
 """PPO smoke: learns on the simulator on CPU, checkpoints, yields, resumes."""
 
 import csv
+import json
 import os
 import subprocess
 import sys
@@ -89,6 +90,7 @@ def test_continuous_ufo_ppo_smoke(tmp_path):
         **os.environ,
         "PYTHONPATH": _subprocess_pythonpath(),
         "XPLANE_UFO_ROOT": UFO_ROOT,
+        "XPLANE_UFO_SOURCE_COMMIT": "e256c526675193c0fd8152c69c734d566a139708",
         "OMP_NUM_THREADS": "2",
     }
     args = [
@@ -128,6 +130,12 @@ def test_continuous_ufo_ppo_smoke(tmp_path):
     )
     assert checkpoint["state"]["action_kind"] == "continuous"
     assert "actor_log_std" in checkpoint["agent"]
+    manifest = json.loads((runs / "ufo-smoke" / "manifest.json").read_text())
+    assert manifest["action_abi"]["kind"] == "continuous"
+    assert manifest["action_abi"]["shape"] == [6]
+    assert manifest["contract_hash"]
+    assert manifest["environment_source_commit"].startswith("e256c526")
+    assert manifest["dynamics_library_sha256"]
     rows = list(csv.DictReader(open(runs / "ufo-smoke" / "metrics.csv")))
     assert len(rows) == 2
     assert int(rows[-1]["global_step"]) == 128

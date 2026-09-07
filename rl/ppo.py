@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
+import platform
 import random
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -76,6 +80,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="begin training episodes at a randomly chosen course reset point",
     )
     p.add_argument("--etr-bin", default=None, help="path to the patched etr binary")
+    p.add_argument(
+        "--environment-source-commit",
+        default=os.environ.get("XPLANE_UFO_SOURCE_COMMIT"),
+        help="source commit for an external environment runtime",
+    )
     # operations
     p.add_argument(
         "--resume", action="store_true", help="continue from the run's checkpoint"
@@ -209,6 +218,66 @@ def pick_device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _git_head(root: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def write_manifest(
+    path: Path,
+    args: argparse.Namespace,
+    envs: SyncVec,
+    action_kind: str,
+    n_params: int,
+    device: torch.device,
+) -> None:
+    if path.exists():
+        return
+    environment = envs.envs[0]
+    contract = getattr(environment, "contract", None)
+    dynamics = getattr(environment, "dynamics", None)
+    library_path = getattr(dynamics, "library_path", None)
+    action_space = envs.single_action_space
+    action_abi = {"kind": action_kind, "shape": list(action_space.shape)}
+    if action_kind == "continuous":
+        low, high = action_bounds(action_space)
+        action_abi.update(low=low.tolist(), high=high.tolist())
+    else:
+        action_abi["count"] = int(action_space.n)
+    manifest = {
+        "schema_version": 1,
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "knlp_commit": _git_head(Path(__file__).resolve().parents[1]),
+        "environment_source_commit": args.environment_source_commit,
+        "contract_hash": getattr(contract, "digest", None),
+        "dynamics_library": str(library_path) if library_path else None,
+        "dynamics_library_sha256": _sha256(library_path) if library_path else None,
+        "environment": args.env,
+        "action_abi": action_abi,
+        "observation_shape": list(envs.single_observation_space.shape),
+        "model_parameters": n_params,
+        "device": str(device),
+        "torch_version": torch.__version__,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+    }
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
 def save_checkpoint(path: Path, agent: nn.Module, optimizer, state: dict) -> None:
     tmp = path.with_suffix(".tmp")
     torch.save(
@@ -318,6 +387,9 @@ def main(argv=None) -> int:
     agent = agent.to(device)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in agent.parameters())
+    write_manifest(
+        run_dir / "manifest.json", args, envs, action_kind, n_params, device
+    )
 
     state = {
         "update": 0,
