@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from rl.envs.ufo_env import ACTION_FIELDS, UfoEnv
-from rl.flight.geometry import quaternion_body_to_ned, roll_pitch
+from rl.flight.ufo_reference import UfoReferenceParameters, velocity_target_wrench
 
 
 def zero_wrench(env: UfoEnv) -> np.ndarray:
@@ -27,39 +27,23 @@ class VelocityTargetController:
     def __call__(self, env: UfoEnv) -> np.ndarray:
         state = env.dynamics.state_vector()
         params = env.dynamics.params
-        rotation = quaternion_body_to_ned(state[6:10])
-        velocity_ned = state[3:6]
-        velocity_body = rotation.T @ velocity_ned
-        desired_acceleration_body = np.clip(
-            self.velocity_gain * (env.goal[:3] - velocity_body),
-            -self.max_acceleration_mps2,
-            self.max_acceleration_mps2,
-        )
-
-        mass = float(params.mass_kg)
-        drag_ned = np.asarray(params.linear_drag_n_per_mps) * velocity_ned
-        gravity_cancel_ned = np.asarray([0.0, 0.0, -mass * params.gravity_mps2])
-        force_body = mass * desired_acceleration_body + rotation.T @ (
-            drag_ned + gravity_cancel_ned
-        )
-
-        omega = state[10:13]
-        roll, pitch = roll_pitch(state[6:10])
-        desired_angular_acceleration = np.asarray(
-            [
-                -self.attitude_gain * roll - self.roll_pitch_rate_gain * omega[0],
-                -self.attitude_gain * pitch - self.roll_pitch_rate_gain * omega[1],
-                self.yaw_rate_gain * (env.goal[3] - omega[2]),
-            ]
-        )
-        inertia = np.asarray(params.inertia_kg_m2)
-        inertia_omega = inertia * omega
-        gyroscopic = np.cross(omega, inertia_omega)
-        angular_drag = np.asarray(params.angular_drag_nm_per_radps) * omega
-        moment_body = inertia * desired_angular_acceleration + gyroscopic + angular_drag
-        action = np.asarray((*force_body, *moment_body), dtype=np.float64)
-        return np.clip(action, env.action_space.low, env.action_space.high).astype(
-            np.float32
+        return velocity_target_wrench(
+            state,
+            env.goal,
+            env.action_space.low,
+            env.action_space.high,
+            parameters=UfoReferenceParameters(
+                mass_kg=float(params.mass_kg),
+                inertia_kg_m2=tuple(params.inertia_kg_m2),
+                linear_drag_n_per_mps=tuple(params.linear_drag_n_per_mps),
+                angular_drag_nm_per_radps=tuple(params.angular_drag_nm_per_radps),
+                gravity_mps2=float(params.gravity_mps2),
+            ),
+            velocity_gain=self.velocity_gain,
+            max_acceleration_mps2=self.max_acceleration_mps2,
+            attitude_gain=self.attitude_gain,
+            roll_pitch_rate_gain=self.roll_pitch_rate_gain,
+            yaw_rate_gain=self.yaw_rate_gain,
         )
 
 
