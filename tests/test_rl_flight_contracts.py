@@ -79,6 +79,8 @@ def test_telemetry_and_control_round_trip(contract):
         dt_s=0.02,
         observation=(0.2, -0.1),
         goal=(0.0,),
+        applied_action=(-0.2, 0.1),
+        vehicle_mass_kg=1200.0,
     )
     command = ControlCommand.create(
         contract,
@@ -92,6 +94,24 @@ def test_telemetry_and_control_round_trip(contract):
     decoded = ControlCommand.from_wire(command.to_wire(), contract)
     decoded.validate(contract, frame=frame, now_monotonic_ns=1_200)
     assert decoded == command
+
+
+def test_telemetry_accepts_legacy_frames_without_vehicle_diagnostics(contract):
+    frame = TelemetryFrame.create(
+        contract,
+        episode_id="legacy",
+        sequence=1,
+        monotonic_ns=1_000,
+        dt_s=0.02,
+        observation=(0.0, 0.0),
+        goal=(0.0,),
+    )
+    payload = json.loads(frame.to_wire())
+    del payload["applied_action"]
+    del payload["vehicle_mass_kg"]
+    decoded = TelemetryFrame.from_wire(json.dumps(payload).encode(), contract)
+    assert decoded.applied_action is None
+    assert decoded.vehicle_mass_kg is None
 
 
 def test_contract_rejects_mismatches_and_stale_control(contract):
@@ -122,6 +142,17 @@ def test_contract_rejects_mismatches_and_stale_control(contract):
             issued_monotonic_ns=1_100,
             valid_until_monotonic_ns=2_000,
             action=(2.0, 0.0),
+        )
+    with pytest.raises(ValueError, match="vehicle_mass_kg"):
+        TelemetryFrame.create(
+            contract,
+            episode_id="episode-7",
+            sequence=5,
+            monotonic_ns=2_000,
+            dt_s=0.02,
+            observation=(0.2, -0.1),
+            goal=(0.0,),
+            vehicle_mass_kg=0.0,
         )
     command = ControlCommand.create(
         contract,
