@@ -17,8 +17,8 @@ point for later RL work in knlp.
 ## Contents
 
 - [`ppo.py`](ppo.py): PPO with generalised advantage estimation for discrete
-  actions, in the CleanRL style, plus exact-resume checkpoints, a wall-clock
-  budget and the yield protocol.
+  ETR actions or bounded continuous flight actions, in the CleanRL style,
+  plus exact-resume checkpoints, a wall-clock budget and the yield protocol.
 - [`continuous.py`](continuous.py): a bounded squashed-Gaussian actor-critic
   for flight-control environments.  It is separate from the discrete actor so
   existing ETR checkpoints retain their original layout.
@@ -87,6 +87,12 @@ python -m rl.ppo --env etr:bunny_hill --num-envs 8 --run-name bh-s1 --seed 1
 
 # continue a stopped run from its checkpoint
 python -m rl.ppo --run-name bh-s1 --resume
+
+# CPU smoke for the L2 raw-wrench UFO policy
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.ppo --env ufo:hover --device cpu --num-envs 8 \
+  --num-steps 256 --num-minibatches 8 --update-epochs 5 \
+  --learning-rate 3e-4 --gamma 0.995 --run-name ufo-hover-s1
 
 # same, under the supervisor that restarts after every yield
 python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill --run-name bh-s1 --resume
