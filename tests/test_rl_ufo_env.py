@@ -99,6 +99,25 @@ def test_out_of_contract_action_fails_closed():
         env.close()
 
 
+def test_out_of_envelope_state_ends_episode_without_escaping_space():
+    env = UfoEnv(root=UFO_ROOT, max_seconds=30.0, random_start=False)
+    try:
+        env.reset(seed=0)
+        for _ in range(2000):
+            action = hover_wrench(env)
+            action[3] = env.action_space.high[3]
+            observation, _, terminated, truncated, info = env.step(action)
+            if terminated or truncated:
+                break
+        assert terminated and not truncated
+        assert info["episode_stats"]["out_of_envelope"] == 1.0
+        assert "out_of_envelope" in info["reward_terms"]
+        assert env.observation_space.contains(observation)
+        assert abs(info["state"][10]) > env.contract.observation.high[10]
+    finally:
+        env.close()
+
+
 def test_standalone_step_rate_is_above_real_time():
     env = UfoEnv(root=UFO_ROOT, max_seconds=30.0, random_start=False)
     try:
