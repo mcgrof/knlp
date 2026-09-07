@@ -106,6 +106,16 @@ XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
   python -m rl.ppo --env ufo:hover --init-agent \
   runs/rl/ufo-hover-clone-s1/checkpoint.pt --run-name ufo-hover-bc-ppo-s1
 
+# read X-Plane telemetry and log policy proposals without sending controls
+python -m rl.export_ufo_actor \
+  --contract ~/devel/xplane-ufo/schemas/ufo-wrench-v1.json \
+  --checkpoint /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/checkpoint.pt \
+  --output /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/actor.npz
+python -m rl.flight.shadow_ufo \
+  --contract ~/devel/xplane-ufo/schemas/ufo-wrench-v1.json \
+  --model /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/actor.npz \
+  --output runs/rl/xplane-shadow.jsonl
+
 # same, under the supervisor that restarts after every yield
 python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill --run-name bh-s1 --resume
 ```
