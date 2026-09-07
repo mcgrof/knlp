@@ -5,8 +5,16 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from rl.flight.contracts import ControlCommand, FlightContract, TelemetryFrame
-from rl.flight.control_ufo import process_stream, zero_action
+from rl.flight.control_ufo import (
+    process_stream,
+    reference_action,
+    validate_live_envelope,
+    zero_action,
+)
+from rl.flight.ufo_reference import UfoReferenceParameters
 
 
 class CapturingSink:
@@ -98,3 +106,30 @@ def test_sender_rejects_replayed_telemetry():
     assert stats.sent == 1
     assert stats.rejected_telemetry == 1
     assert len(sink.messages) == 1
+
+
+def test_reference_sender_matches_hover_feed_forward():
+    contract = load_contract()
+    frame = telemetry(contract, 0)
+    action = reference_action(contract, UfoReferenceParameters())(frame)
+    assert tuple(action[:2]) == (0.0, 0.0)
+    assert action[2] == pytest.approx(-11767.98)
+    assert tuple(action[3:]) == (0.0, 0.0, 0.0)
+
+
+def test_nonzero_sender_rejects_state_outside_live_envelope():
+    contract = load_contract()
+    frame = telemetry(contract, 0)
+    values = list(frame.observation)
+    values[0] = 20.01
+    outside = TelemetryFrame.create(
+        contract,
+        episode_id=frame.episode_id,
+        sequence=frame.sequence,
+        monotonic_ns=frame.monotonic_ns,
+        dt_s=frame.dt_s,
+        observation=values,
+        goal=frame.goal,
+    )
+    with pytest.raises(ValueError, match="horizontal"):
+        validate_live_envelope(outside)

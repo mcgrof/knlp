@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import BinaryIO, Callable, Protocol, Sequence, TextIO
 
 from rl.flight.contracts import ControlCommand, FlightContract, TelemetryFrame
-from rl.flight.shadow_ufo import MAXIMUM_WIRE_BYTES, connect_telemetry
+from rl.flight.shadow_ufo import MAXIMUM_WIRE_BYTES, ShadowPolicy, connect_telemetry
+from rl.flight.ufo_reference import UfoReferenceParameters, velocity_target_wrench
 
 
 class CommandSink(Protocol):
@@ -35,6 +36,54 @@ class ControlStats:
 def zero_action(contract: FlightContract) -> ActionProvider:
     action = tuple(0.0 for _ in range(contract.action.width))
     return lambda frame: action
+
+
+def validate_live_envelope(frame: TelemetryFrame) -> None:
+    position = frame.observation[:3]
+    velocity = frame.observation[3:6]
+    quaternion = frame.observation[6:10]
+    angular_velocity = frame.observation[10:13]
+    if abs(position[0]) > 20.0 or abs(position[1]) > 20.0:
+        raise ValueError("aircraft left the horizontal control envelope")
+    if position[2] < -120.0 or position[2] > -80.0:
+        raise ValueError("aircraft left the vertical control envelope")
+    if max(abs(value) for value in velocity) > 10.0:
+        raise ValueError("aircraft left the velocity control envelope")
+    quaternion_norm = sum(value * value for value in quaternion) ** 0.5
+    if abs(quaternion_norm - 1.0) > 1e-3:
+        raise ValueError("aircraft quaternion is not normalized")
+    upright_cosine = 1.0 - 2.0 * (
+        quaternion[1] * quaternion[1] + quaternion[2] * quaternion[2]
+    )
+    if upright_cosine < 0.9396926207859084:
+        raise ValueError("aircraft tilt exceeds 20 degrees")
+    if max(abs(value) for value in angular_velocity) > 1.0:
+        raise ValueError("aircraft left the angular-rate control envelope")
+
+
+def reference_action(
+    contract: FlightContract, parameters: UfoReferenceParameters
+) -> ActionProvider:
+    def provide(frame: TelemetryFrame) -> Sequence[float]:
+        validate_live_envelope(frame)
+        return velocity_target_wrench(
+            frame.observation,
+            frame.goal,
+            contract.action.low,
+            contract.action.high,
+            parameters=parameters,
+        )
+
+    return provide
+
+
+def actor_action(policy: ShadowPolicy) -> ActionProvider:
+    def provide(frame: TelemetryFrame) -> Sequence[float]:
+        validate_live_envelope(frame)
+        action, _ = policy.infer(frame)
+        return action
+
+    return provide
 
 
 def process_stream(
@@ -119,7 +168,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", type=Path)
     parser.add_argument("--contract", type=Path, required=True)
-    parser.add_argument("--mode", choices=("zero",), default="zero")
+    parser.add_argument(
+        "--mode", choices=("zero", "reference", "actor"), default="zero"
+    )
+    parser.add_argument("--model", type=Path)
+    parser.add_argument("--mass-kg", type=float)
+    parser.add_argument("--allow-nonzero", action="store_true")
     parser.add_argument("--valid-ms", type=float, default=100.0)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--summary", type=Path)
@@ -131,6 +185,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be positive")
     contract = FlightContract.from_json(args.contract)
+    policy_identity = None
+    if args.mode == "zero":
+        action_provider = zero_action(contract)
+    elif not args.allow_nonzero:
+        parser.error("nonzero control requires --allow-nonzero")
+    elif args.mode == "reference":
+        if args.mass_kg is None or args.mass_kg <= 0.0:
+            parser.error("reference control requires a positive --mass-kg")
+        action_provider = reference_action(
+            contract, UfoReferenceParameters(mass_kg=args.mass_kg)
+        )
+    else:
+        if args.model is None:
+            parser.error("actor control requires --model")
+        policy = ShadowPolicy(contract, args.model)
+        action_provider = actor_action(policy)
+        policy_identity = {
+            "checkpoint_sha256": policy.checkpoint_sha256,
+            "model_sha256": policy.model_sha256,
+        }
     socket_path = args.socket or Path(f"/tmp/xplane-ufo-telemetry-{os.getuid()}.sock")
     summary_path = args.summary or args.output.with_suffix(
         args.output.suffix + ".summary.json"
@@ -145,16 +219,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client,
                 output,
                 contract,
-                zero_action(contract),
+                action_provider,
                 validity_ns=round(args.valid_ms * 1_000_000),
                 max_frames=args.max_frames,
             )
     summary = {
         "schema_version": 1,
-        "mode": "external_zero_control",
+        "mode": "external_control_sender",
         "socket": str(socket_path),
         "contract_hash": contract.digest,
         "valid_ms": args.valid_ms,
+        "control_mode": args.mode,
+        "mass_kg": args.mass_kg,
+        "policy": policy_identity,
         **asdict(stats),
     }
     encoded = json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n"
