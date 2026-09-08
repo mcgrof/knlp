@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trellis Minimal — Read the Fast-Memory Update in Code</title>
+  <meta name="description" content="A line-by-line teaching guide to scripts/trellis_minimal.py: fast-weight memory, write vectors, SiLU, Jacobians, backpropagation, the outer-product memory update, and the connection to Gated DeltaNet.">
+  <meta name="keywords" content="Trellis, Gated DeltaNet, DeltaNet, fast weights, associative memory, Jacobian, backpropagation, SiLU, vector-Jacobian product, recurrent memory">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <style>
+    :root {
+      --bg:#0f172a; --panel:#111827; --line:#334155; --text:#e2e8f0;
+      --muted:#94a3b8; --dim:#64748b; --blue:#60a5fa;
+      --green:#34d399; --amber:#fbbf24; --violet:#a78bfa;
+      --rose:#fb7185; --cyan:#22d3ee;
+    }
+    html { scroll-behavior:smooth; }
+    body { background:var(--bg); color:var(--text); }
+    .card {
+      background:linear-gradient(145deg,rgba(30,41,59,.95),rgba(17,24,39,.95));
+      border:1px solid var(--line);
+    }
+    .formula {
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      background:#09111f; border:1px solid #263449; border-radius:.5rem;
+      padding:.8rem 1rem; overflow-x:auto; color:#dbeafe;
+    }
+    .kbd {
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      background:#09111f; border:1px solid #334155; border-radius:.35rem;
+      padding:.08rem .35rem; color:#cbd5e1; white-space:nowrap;
+    }
+    .proseish p { margin:.8rem 0; line-height:1.75; color:var(--muted); }
+    .proseish strong { color:var(--text); }
+    .proseish a {
+      color:var(--blue); text-decoration:underline;
+      text-decoration-color:#315b88; text-underline-offset:3px;
+    }
+    .anchor { scroll-margin-top:5rem; }
+    .eyebrow {
+      color:var(--violet); letter-spacing:.12em; text-transform:uppercase;
+      font-size:.72rem; font-weight:700;
+    }
+    .callout {
+      border-left:4px solid var(--blue); background:#09111f;
+      border-radius:.5rem; padding:1rem;
+    }
+    .mini { color:var(--dim); font-size:.8rem; }
+    table { border-collapse:collapse; }
+    th { color:#cbd5e1; font-weight:600; }
+    td,th { border-bottom:1px solid #263449; vertical-align:top; }
+    pre[class*="language-"] {
+      border:1px solid #263449; border-radius:.65rem; margin:1rem 0;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.02);
+      font-size:.88rem; line-height:1.55;
+    }
+    code[class*="language-"] { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .flow-node {
+      border:1px solid #334155; background:#09111f; border-radius:.7rem;
+      padding:.75rem; text-align:center;
+    }
+    .arrow { color:var(--dim); text-align:center; font-size:1.2rem; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <nav class="bg-gray-950/95 border-b border-gray-800 sticky top-0 z-50 backdrop-blur">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
+      <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-300">&larr; Home</a>
+      <a href="linear_attention.html" class="px-3 py-1.5 bg-gray-800 hover:bg-violet-600 rounded text-sm text-gray-300">Linear Attn</a>
+      <a href="trellis_minimal.html" class="px-3 py-1.5 bg-violet-600 rounded text-sm text-white">Trellis Minimal</a>
+      <a href="least_squares_lineage.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-700 rounded text-sm text-gray-300">Least Squares</a>
+      <a href="wy_ut.html" class="px-3 py-1.5 bg-gray-800 hover:bg-indigo-600 rounded text-sm text-gray-300">WY/UT</a>
+    </div>
+  </nav>
+
+  <main class="max-w-5xl mx-auto px-5 py-12">
+    <header class="mb-10">
+      <div class="eyebrow mb-3">Code first &rarr; math only when it earns its keep</div>
+      <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">Trellis Minimal: read the fast-memory update in code</h1>
+      <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed">
+        <code class="kbd">scripts/trellis_minimal.py</code> strips Trellis down to the mechanism that matters:
+        a fixed-size memory is rewritten token by token with one tiny learning step.
+        This page follows that file in execution order, explains every symbol and tensor shape,
+        and spends extra time on the point that tends to eject readers from papers: why a Jacobian appears,
+        what it means in the forward pass, and why backprop uses its transpose.
+      </p>
+    </header>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="map">
+      <div class="eyebrow">The map first</div>
+      <h2 class="text-2xl font-bold mt-2">The entire mechanism in six arrows</h2>
+      <div class="grid md:grid-cols-6 gap-2 mt-5 text-sm items-center">
+        <div class="flow-node"><div class="text-cyan-300 font-semibold">input</div><div class="mini mt-1">alias or token-like event</div></div>
+        <div class="flow-node"><div class="text-blue-300 font-semibold">address</div><div class="mini mt-1">produce $w_t$, $\alpha_t$, $\beta_t$</div></div>
+        <div class="flow-node"><div class="text-amber-300 font-semibold">predict</div><div class="mini mt-1">$z_t=Mw_t$</div></div>
+        <div class="flow-node"><div class="text-violet-300 font-semibold">measure error</div><div class="mini mt-1">through $\phi$</div></div>
+        <div class="flow-node"><div class="text-rose-300 font-semibold">write</div><div class="mini mt-1">$M\leftarrow\beta M-\gamma u_tw_t^T$</div></div>
+        <div class="flow-node"><div class="text-emerald-300 font-semibold">read</div><div class="mini mt-1">query updated memory</div></div>
+      </div>
+      <p>The important conceptual split is between <strong>slow weights</strong> and <strong>fast state</strong>. The neural-network projections are ordinary learned parameters shared by every sequence. The matrix <span class="kbd">M</span> is not a model parameter: it starts blank for each episode and changes while the sequence is being processed.</p>
+      <div class="callout mt-5">
+        <strong>Connection to the surrounding family.</strong> The <a href="linear_attention.html">linear-attention and bounded-memory page</a> develops DeltaNet and Gated DeltaNet. In this teaching script, setting <span class="kbd">phi = identity</span> removes the nonlinear pullback and exposes the gated delta-rule form directly.
+      </div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="symbols">
+      <div class="eyebrow">1. Name everything before differentiating anything</div>
+      <h2 class="text-2xl font-bold mt-2">The state, the write vector, and the target code</h2>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[760px]">
+          <thead><tr><th class="text-left py-3 pr-4">Symbol</th><th class="text-left py-3 pr-4">Code name</th><th class="text-left py-3 pr-4">Shape in the scan</th><th class="text-left py-3">Meaning</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-3 pr-4"><strong>$M$</strong></td><td class="py-3 pr-4"><code class="kbd">state</code></td><td class="py-3 pr-4"><code>[B,H,M,D]</code></td><td class="py-3">The request-local fast memory.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$w_t$</strong></td><td class="py-3 pr-4"><code class="kbd">w</code></td><td class="py-3 pr-4"><code>[B,H,D]</code></td><td class="py-3">The address/write direction for this event.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$z_t$</strong></td><td class="py-3 pr-4"><code class="kbd">z</code></td><td class="py-3 pr-4"><code>[B,H,M]</code></td><td class="py-3">What memory currently predicts at that address.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$\alpha_t$</strong></td><td class="py-3 pr-4"><code class="kbd">alpha</code></td><td class="py-3 pr-4"><code>[B,H,M]</code></td><td class="py-3">The slot-space target the current event wants memory to return.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$u_t$</strong></td><td class="py-3 pr-4"><code class="kbd">u</code></td><td class="py-3 pr-4"><code>[B,H,M]</code></td><td class="py-3">The loss gradient with respect to $z_t$.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$\beta_t$</strong></td><td class="py-3 pr-4"><code class="kbd">beta</code></td><td class="py-3 pr-4"><code>[B,H,1]</code></td><td class="py-3">Retention/forget gate.</td></tr>
+            <tr><td class="py-3 pr-4"><strong>$\gamma$</strong></td><td class="py-3 pr-4"><code class="kbd">gamma</code></td><td class="py-3 pr-4"><code>[H]</code></td><td class="py-3">Positive inner learning rate.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="address">
+      <div class="eyebrow">2. Follow <code>_address()</code></div>
+      <h2 class="text-2xl font-bold mt-2">An alias is one token-like event, but the tensor holds a sequence</h2>
+      <pre><code class="language-python">def _address(self, aliases: torch.Tensor):
+    h = self.encode(aliases)
+    key = F.normalize(self.to_key(h), dim=-1).unsqueeze(1)
+    alpha = self.to_alpha(h).unsqueeze(1)
+    beta = 0.98 + 0.019 * torch.sigmoid(self.beta_raw)
+    beta = beta.expand(aliases.shape[0], 1, aliases.shape[1], 1)
+    return key, alpha, beta</code></pre>
+      <p>If <span class="kbd">aliases</span> has shape <span class="kbd">[B,T,32]</span>, then <span class="kbd">aliases[:, t, :]</span> is one synthetic event. The call <span class="kbd">self.encode(aliases)</span> processes all $T$ events in parallel because PyTorch linear layers operate on the final dimension. The code is not pretending that the whole sequence is one token.</p>
+      <p><span class="kbd">F.normalize(..., dim=-1)</span> L2-normalizes each produced address independently. It changes the vector's length to one while preserving its direction. This keeps address magnitude from secretly becoming another write-strength knob.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Why is it called <code>key</code> here but <code>w</code> later?</h3>
+      <p>The names come from two abstraction levels. The router calls the alias-derived vector a <strong>key</strong> because that is its semantic role. The generic scan receives a whole sequence of vectors under the neutral name <span class="kbd">write</span>. Inside the timestep loop, one member of that sequence is called <span class="kbd">w</span>.</p>
+      <div class="formula">key[:, :, t, :] = write[:, :, t, :] = w_t &nbsp;&nbsp; (key-memory pass)</div>
+      <p>The generic name matters because the same scan is reused for the value memory. There, <span class="kbd">write[:, :, t, :]</span> is a normalized <em>tool vector</em>, not the alias key. Calling everything <span class="kbd">key</span> inside the scan would make the second pass actively misleading. Naming is apparently allowed to have context, a rare mercy.</p>
+
+      <h3 class="text-xl font-semibold mt-7">There are two sigmoids in the story</h3>
+      <p>The sigmoid above produces the retention gate <span class="kbd">beta</span>. Later, another <span class="kbd">torch.sigmoid(z)</span> appears inside the derivative of SiLU. They have nothing to do with each other except that humanity reused the same function for two useful purposes.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="objective">
+      <div class="eyebrow">3. The private per-event objective</div>
+      <h2 class="text-2xl font-bold mt-2">Trellis writes by taking one gradient step</h2>
+      <p>For one event, the teaching script uses the objective</p>
+      <div class="formula">$L_t(M)=\frac12\lVert\phi(Mw_t)-\alpha_t\rVert^2$</div>
+      <p>Read it literally: address memory with $w_t$, pass the resulting slot code through $\phi$, compare it with the desired target $\alpha_t$, and alter $M$ to reduce that error.</p>
+      <p>It helps to name the intermediate quantity</p>
+      <div class="formula">$z_t=Mw_t$</div>
+      <p>so the nested computation becomes</p>
+      <div class="formula">$M \rightarrow z=Mw \rightarrow y=\phi(z) \rightarrow L=\frac12\lVert y-\alpha\rVert^2$</div>
+      <p>Backpropagation simply walks this chain in reverse.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="jacobian">
+      <div class="eyebrow">4. Jacobian without the intimidation tax</div>
+      <h2 class="text-2xl font-bold mt-2">A Jacobian records how multiple inputs affect multiple outputs</h2>
+      <p>For a scalar function, a derivative answers how one output changes when one input changes. For a vector function $\mathbf y=f(\mathbf x)$, every output may depend on every input. The Jacobian is just the table of those partial derivatives:</p>
+      <div class="formula">$J_{ij}=\frac{\partial y_i}{\partial x_j}$</div>
+      <p>That same matrix appears in two directions. This is worth learning because papers routinely write $J$ and then behave as though everyone spent childhood weekends differentiating vector functions.</p>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <div class="rounded-xl border border-cyan-900/60 bg-cyan-950/15 p-5">
+          <div class="text-cyan-300 font-semibold">Forward sensitivity</div>
+          <div class="formula mt-3">$\Delta\mathbf y\approx J\,\Delta\mathbf x$</div>
+          <p class="text-sm text-slate-400 mt-3">A small change in the input is pushed forward through the local linear approximation.</p>
+        </div>
+        <div class="rounded-xl border border-violet-900/60 bg-violet-950/15 p-5">
+          <div class="text-violet-300 font-semibold">Backward gradient</div>
+          <div class="formula mt-3">$\nabla_{\mathbf x}L=J^\top\nabla_{\mathbf y}L$</div>
+          <p class="text-sm text-slate-400 mt-3">The loss gradient arriving from downstream is pulled backward to tell each input how it affects the loss.</p>
+        </div>
+      </div>
+
+      <p>The forward equation says what the function does to a perturbation. The backward equation asks the reverse bookkeeping question: given how the loss cares about each output, how much should it care about each input?</p>
+      <div class="callout mt-5" style="border-left-color:var(--violet)">
+        <strong>Backprop normally does not build the Jacobian.</strong> It needs the product $J^\top g$, where $g$ is the gradient arriving from the next operation. Automatic differentiation computes that vector-Jacobian product directly whenever it can. Materializing a giant Jacobian merely to multiply it would be mathematically valid and computationally ridiculous.
+      </div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="silu-jacobian">
+      <div class="eyebrow">5. Why SiLU makes the Jacobian diagonal</div>
+      <h2 class="text-2xl font-bold mt-2">The diagonal comes from elementwise use, not from the loss</h2>
+      <p>In the minimal script, $\phi$ is SiLU applied independently to every coordinate:</p>
+      <div class="formula">$\phi(\mathbf z)=[\operatorname{SiLU}(z_1),\operatorname{SiLU}(z_2),\operatorname{SiLU}(z_3),\ldots]^\top$</div>
+      <p>Therefore output coordinate 1 does not depend on input coordinate 2. So $\partial y_1/\partial z_2=0$. Every cross-coordinate derivative is zero, which forces the Jacobian to be diagonal:</p>
+      <div class="formula">$J_\phi(\mathbf z)=\begin{bmatrix}
+\phi'(z_1)&0&0\\
+0&\phi'(z_2)&0\\
+0&0&\phi'(z_3)
+\end{bmatrix}$</div>
+      <p>This is an exact structural fact, not an approximation. A diagonal matrix also satisfies $J^\top=J$, but the bigger win is that multiplying by it is just elementwise multiplication:</p>
+      <div class="formula">$J_\phi(\mathbf z)^\top\mathbf g=\phi'(\mathbf z)\odot\mathbf g$</div>
+      <p>The loss still matters because it determines the incoming gradient $\mathbf g$. For Trellis's squared-error objective,</p>
+      <div class="formula">$\mathbf g=\nabla_yL=\phi(z)-\alpha$</div>
+      <p>so the full pullback becomes</p>
+      <div class="formula">$u=\nabla_zL=\phi'(z)\odot(\phi(z)-\alpha)$</div>
+      <p>A different loss could couple output coordinates and produce a very different $\nabla_yL$. SiLU's <em>local</em> Jacobian would still be diagonal because each SiLU output still depends on only one input coordinate.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="silu-code">
+      <div class="eyebrow">6. Read <code>error_code()</code> one line at a time</div>
+      <h2 class="text-2xl font-bold mt-2">The scary Jacobian expression becomes four cheap tensor operations</h2>
+      <pre><code class="language-python">def error_code(z: torch.Tensor, alpha: torch.Tensor, phi: str):
+    if phi == "identity":
+        return z - alpha
+
+    sig = torch.sigmoid(z)
+    s = z * sig
+    dsilu = sig + s * (1.0 - sig)
+    return dsilu * (s - alpha)</code></pre>
+      <p>SiLU is defined by</p>
+      <div class="formula">$\operatorname{SiLU}(z)=z\,\sigma(z)$</div>
+      <p>so <span class="kbd">sig = torch.sigmoid(z)</span> is not a surprise extra mechanism. It is simply computing the $\sigma(z)$ already inside SiLU. Then <span class="kbd">s = z * sig</span> is SiLU itself.</p>
+      <p>Using the product rule and $\sigma'(z)=\sigma(z)(1-\sigma(z))$ gives</p>
+      <div class="formula">$\operatorname{SiLU}'(z)=\sigma(z)+z\sigma(z)(1-\sigma(z))$</div>
+      <p>Because <span class="kbd">s = z * sig</span>, the code can write that derivative as</p>
+      <pre><code class="language-python">dsilu = sig + s * (1.0 - sig)</code></pre>
+      <p>The final line</p>
+      <pre><code class="language-python">return dsilu * (s - alpha)</code></pre>
+      <p>is therefore the complete vector backpropagation operation</p>
+      <div class="formula">$J_{\operatorname{SiLU}}(z)^\top(\operatorname{SiLU}(z)-\alpha)$</div>
+      <p>without ever allocating $J$. The multiplication is a Hadamard or elementwise product, not a Kronecker product. The outer product arrives one step later.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="backprop-chain">
+      <div class="eyebrow">7. Connect the Jacobian all the way back to memory</div>
+      <h2 class="text-2xl font-bold mt-2">Backprop peels the nested loss from right to left</h2>
+      <div class="formula">$L(M)=\frac12\lVert\operatorname{SiLU}(Mw)-\alpha\rVert^2$</div>
+      <p>There are three derivative steps:</p>
+      <div class="grid gap-3 mt-5">
+        <div class="rounded-xl border border-slate-700 bg-slate-950/30 p-4"><strong>1. Squared error:</strong> $\nabla_yL=y-\alpha$.</div>
+        <div class="rounded-xl border border-slate-700 bg-slate-950/30 p-4"><strong>2. SiLU:</strong> $u=\nabla_zL=J_\phi(z)^\top(y-\alpha)$.</div>
+        <div class="rounded-xl border border-slate-700 bg-slate-950/30 p-4"><strong>3. Matrix-vector product:</strong> $\nabla_ML=u w^\top$.</div>
+      </div>
+      <p>The last expression is an <strong>outer product</strong>. If $u$ has length $M$ and $w$ has length $D$, then $uw^\top$ has shape $M\times D$, exactly the shape of the memory matrix that must be updated.</p>
+      <div class="formula">$M\leftarrow\beta_tM-\gamma u_tw_t^\top$</div>
+      <p>So $u$ answers <em>which slot-space outputs were wrong and in what direction?</em> The vector $w$ answers <em>at which address should that correction be written?</em> Their outer product turns those two vectors into a structured matrix edit.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="scan">
+      <div class="eyebrow">8. The recurrence in executable form</div>
+      <h2 class="text-2xl font-bold mt-2">Five lines are the memory operator</h2>
+      <pre><code class="language-python">for t in range(write.shape[2]):
+    w = write[:, :, t, :]
+    z = torch.einsum("bhmd,bhd->bhm", state, w)
+    u = error_code(z, alpha[:, :, t, :], phi)
+    update = torch.einsum("bhm,bhd->bhmd", u, w)
+    state = beta[:, :, t, :].unsqueeze(-1) * state - g * update</code></pre>
+      <p><span class="kbd">z = state @ w</span> asks what the current memory says at the event's address. <span class="kbd">error_code()</span> computes $\partial L/\partial z$. The second <span class="kbd">einsum</span> forms $uw^\top$. The last line applies retention and subtracts the gradient step.</p>
+      <p>The use of <span class="kbd">einsum</span> is shape bookkeeping, not additional mathematics. Written for one batch item and one head, the same code is simply:</p>
+      <div class="formula">$z=Mw,\qquad u=\nabla_zL,\qquad \Delta M=uw^\top,\qquad M\leftarrow\beta M-\gamma\Delta M$</div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="identity">
+      <div class="eyebrow">9. Remove one thing and Gated DeltaNet appears</div>
+      <h2 class="text-2xl font-bold mt-2">Set $\phi$ to identity</h2>
+      <p>If $\phi(z)=z$, then its derivative is one in every coordinate and its Jacobian is the identity matrix:</p>
+      <div class="formula">$J_\phi=I$</div>
+      <p>Therefore</p>
+      <div class="formula">$u=I^\top(z-\alpha)=z-\alpha=Mw-\alpha$</div>
+      <p>and the Trellis write becomes</p>
+      <div class="formula">$M\leftarrow\beta M-\gamma(Mw-\alpha)w^\top$</div>
+      <p>or, after moving the sign inside the residual,</p>
+      <div class="formula">$M\leftarrow\beta M+\gamma(\alpha-Mw)w^\top$</div>
+      <p>That is the gated delta-rule shape: decay the old state, predict the value at the key, measure the residual, and write that residual back along the key direction. The <a href="linear_attention.html">bounded-memory overview</a> develops this lineage in more detail, while <a href="least_squares_lineage.html">the least-squares lineage</a> connects the same residual-driven update to the classical delta rule.</p>
+      <div class="callout mt-5" style="border-left-color:var(--green)">
+        <strong>The useful mental jump:</strong> going from the identity control to the minimal Trellis write does not replace the recurrent-memory idea. It changes the error signal from a linear residual $z-\alpha$ to a nonlinear residual pulled backward through $\phi$.
+      </div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="two-pass">
+      <div class="eyebrow">10. Why the router owns two memories</div>
+      <h2 class="text-2xl font-bold mt-2">Key memory finds the internal code; value memory reconstructs the tool</h2>
+      <pre><code class="language-python">key_state, _ = trellis_scan(
+    key, alpha, beta, gamma, self.phi, key_state
+)
+value_state, _ = trellis_scan(
+    value, alpha, beta, gamma, self.phi, value_state
+)</code></pre>
+      <p>Both memories learn against the same target code $\alpha$. The key memory is written by alias-derived address vectors. The value memory is written by tool vectors. Sharing the target code creates an internal bridge between them.</p>
+      <div class="formula">alias $\rightarrow$ key memory $\rightarrow$ slot code $\rightarrow f \rightarrow$ value memory $\rightarrow$ tool vector</div>
+      <p>The query path makes that explicit:</p>
+      <pre><code class="language-python">code = torch.einsum("bhmd,bhqd->bhqm", key_state, query)
+code = F.silu(code)
+code = code - code.mean(-1, keepdim=True)
+code = code / (code.std(-1, keepdim=True, unbiased=False) + 1e-6)
+
+got = torch.einsum("bhmd,bhqm->bhqd", value_state, code)
+got = F.normalize(got, dim=-1).squeeze(1)
+logits = got @ self._tool_bank().T</code></pre>
+      <p>This second use of <span class="kbd">F.silu</span> is part of the read map $f$. Do not confuse it with <span class="kbd">error_code()</span>, where the SiLU derivative is written manually because that function constructs the inner learning signal.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="episode">
+      <div class="eyebrow">11. Why random aliases make the example educational</div>
+      <h2 class="text-2xl font-bold mt-2">The slow weights can learn the protocol, not the episode</h2>
+      <p><span class="kbd">make_episode()</span> draws fresh normalized 32-dimensional aliases every time. Since a particular alias is not a persistent vocabulary item, the ordinary model parameters cannot memorize that alias A means calculator. The binding must live in the fast state created for this episode.</p>
+      <pre><code class="language-python">state = model.blank_state(batch, aliases.device, aliases.dtype)
+state = model.bind(state, aliases, tools)
+logits_before = model.query(state, aliases)
+
+state = model.bind(
+    state,
+    aliases[rows, index].unsqueeze(1),
+    new.unsqueeze(1),
+)
+logits_after = model.query(state, aliases)</code></pre>
+      <p>The overwrite is the sharp test. A memory that only accumulates associations can keep returning the stale tool. The residual-driven update must suppress the old association enough for the replacement to win. This is why the example is more informative than a one-shot store-and-read demo.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="chunking">
+      <div class="eyebrow">12. Why the nonlinear write changes parallelization</div>
+      <h2 class="text-2xl font-bold mt-2">Exact sequential semantics are cheap to understand, harder to batch</h2>
+      <p>With identity $\phi$, the state update is affine in the current memory. A sequence of such updates has enough algebraic structure to be blocked into chunkwise matrix operations. The <a href="wy_ut.html">WY/UT page</a> explains why products of rank-one transformations can be reorganized into GPU-friendly blocks.</p>
+      <p>With nonlinear $\phi$, the current error code depends nonlinearly on the current state:</p>
+      <div class="formula">$u_t=J_\phi(M_tw_t)^\top(\phi(M_tw_t)-\alpha_t)$</div>
+      <p>The exact next update therefore depends on the result of the previous update in a way that no longer closes into the same simple affine chunk rule. The minimal file intentionally implements the exact token-by-token recurrence. The production path can trade exact within-chunk state freshness for parallel work; that is a systems approximation, not a mysterious new memory mechanism.</p>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="cheat-sheet">
+      <div class="eyebrow">13. Keep this beside the source</div>
+      <h2 class="text-2xl font-bold mt-2">The compact reading guide</h2>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[760px]">
+          <thead><tr><th class="text-left py-3 pr-4">When you see</th><th class="text-left py-3">Read it as</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-3 pr-4"><code class="kbd">aliases[:, t, :]</code></td><td class="py-3">One token-like synthetic event.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">key</code></td><td class="py-3">Semantic name for the alias-derived write/address vector.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">write</code></td><td class="py-3">Generic sequence of vectors passed into the reusable scan.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">w</code></td><td class="py-3">One timestep from <code>write</code>; $w_t$ in the equations.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">z = state @ w</code></td><td class="py-3">Current memory prediction at this address.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">s - alpha</code></td><td class="py-3">Squared-error gradient with respect to the SiLU output.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">dsilu * residual</code></td><td class="py-3">$J^\top g$ for an elementwise activation whose Jacobian is diagonal.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">outer(u, w)</code></td><td class="py-3">Gradient with respect to the memory matrix.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">beta * state</code></td><td class="py-3">Retain most of the old memory before applying the new write.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">phi == identity</code></td><td class="py-3">Remove the nonlinear pullback and recover the gated delta-rule control.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout mt-6" style="border-left-color:var(--amber)">
+        <strong>The one equation worth remembering.</strong>
+        Trellis's inner write is ordinary backprop applied to a tiny request-local loss:
+        $M\rightarrow Mw\rightarrow\phi(Mw)\rightarrow\frac12\lVert\phi(Mw)-\alpha\rVert^2$.
+        The Jacobian is not decoration added by the paper. It is what naturally appears when a vector-valued nonlinear function sits inside a loss and we differentiate through it.
+      </div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="links">
+      <div class="eyebrow">Continue from here</div>
+      <h2 class="text-2xl font-bold mt-2">Background pages that now have somewhere to attach</h2>
+      <p><a href="linear_attention.html"><strong>Linear attention and bounded memory</strong></a> compares DeltaNet, Gated DeltaNet, and Trellis and provides the architecture-level context.</p>
+      <p><a href="least_squares_lineage.html"><strong>The least-squares lineage</strong></a> follows residual-driven updates from classical least squares and the delta rule into modern fast-weight memory.</p>
+      <p><a href="wy_ut.html"><strong>WY / UT</strong></a> explains why exact affine rank-one updates can be blocked efficiently and why nonlinear state dependence complicates that GPU-friendly algebra.</p>
+      <p>The source for this page is the actual teaching program: <a href="https://github.com/mcgrof/knlp/blob/main/scripts/trellis_minimal.py"><code>scripts/trellis_minimal.py</code></a>.</p>
+    </section>
+  </main>
+</body>
+</html>
