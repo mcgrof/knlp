@@ -116,16 +116,14 @@
     <header class="mb-10">
       <div class="eyebrow mb-3">Trellis from the teaching script</div>
       <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">Trellis Minimal: read the fast-memory update in code</h1>
-      <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed"><code class="kbd">scripts/trellis_minimal.py</code> turns the Trellis memory operator into a small episodic key-value problem. This page follows that program from the task it solves, through the tensors it constructs, to the gradient step that rewrites memory. The notation is introduced only when the code needs it.</p>
+      <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed"><code class="kbd">scripts/trellis_minimal.py</code> turns the Trellis memory operator into a small episodic alias-to-tool problem. This page follows the actual call path: generate one episode, create the two fast memories, turn aliases into learned codes, bind aliases to tools, and only then enter the Trellis recurrence and its gradient.</p>
     </header>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="task">
-      <div class="eyebrow">1. Start with the task</div>
-      <h2 class="text-2xl font-bold mt-2">The program learns how to bind an alias to a tool inside one episode</h2>
-      <p>The toy problem is an in-context key-value store. Each episode creates fresh random 32-dimensional aliases and assigns them to a small set of tools. The model must remember those bindings, answer queries, then replace one binding when the episode says that it changed.</p>
-      <div class="formula">bind: alias A &rarr; calculator<br>bind: alias B &rarr; sql-runner<br>query: alias A &rarr; calculator<br>overwrite: alias A &rarr; shell<br>query: alias A &rarr; shell</div>
-      <p>The aliases are freshly sampled every episode. Slow model weights cannot memorize that a particular alias means a particular tool because that alias does not persist across training examples. The slow weights can only learn the protocol for storing and retrieving a binding. The episode-specific binding must live in fast memory.</p>
-      <pre><code class="language-python">def make_episode(batch, n_bindings, n_tools, gen, device):
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="episode-data">
+      <div class="eyebrow">1. Generate one episode</div>
+      <h2 class="text-2xl font-bold mt-2">Random vectors are aliases; random integers are tool identities</h2>
+      <p>The teaching task needs two different kinds of random data. An alias is deliberately an arbitrary continuous vector that should have no meaning outside the current episode. A tool is one member of a fixed discrete set such as calculator, shell, or SQL runner. That is why the function uses <span class="kbd">torch.randn()</span> for aliases and <span class="kbd">torch.randint()</span> for tools.</p>
+      <pre><code class="language-python">def make_episode(batch: int, n_bindings: int, n_tools: int, gen, device):
     aliases = F.normalize(
         torch.randn(batch, n_bindings, 32, generator=gen),
         dim=-1,
@@ -133,101 +131,182 @@
     tools = torch.randint(
         0, n_tools, (batch, n_bindings), generator=gen
     )
-    ...</code></pre>
-      <div class="callout mt-5" style="border-left-color:var(--green)"><strong>Keep this picture in mind.</strong> One <span class="kbd">aliases[:, t, :]</span> vector is one synthetic event identifier. The plural tensor <span class="kbd">aliases</span> holds the batch of episode bindings.</div>
-    </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="state">
-      <div class="eyebrow">2. Separate slow weights from fast state</div>
-      <h2 class="text-2xl font-bold mt-2">The neural network learns how to use memory; M stores this episode</h2>
-      <p><span class="kbd">MiniRouter</span> contains ordinary learned parameters: an encoder, projections, tool embeddings, a step size, and a retention gate. Those parameters survive from one sequence to the next. The two Trellis state matrices do not. They start at zero for a new episode and are rewritten by the bindings in that episode.</p>
-      <pre><code class="language-python">def blank_state(self, batch: int, device, dtype):
-    shape = (batch, 1, self.n_slots, self.d_head)
-    zeros = torch.zeros(shape, device=device, dtype=dtype)
-    return zeros, zeros.clone()</code></pre>
-      <p>For one memory head, call the fast state <span class="math-inline">M</span>. In the script its shape is <span class="kbd">[B,H,S,D]</span>: batch, head, memory-slot coordinate, and write-vector coordinate.</p>
+    index = torch.randint(0, n_bindings, (batch,), generator=gen)
+    old = tools[torch.arange(batch), index]
+    new = torch.randint(0, n_tools - 1, (batch,), generator=gen)
+    new = new + (new >= old).long()
+
+    return (
+        aliases.to(device),
+        tools.to(device),
+        index.to(device),
+        new.to(device),
+    )</code></pre>
+
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[760px]">
-          <thead><tr><th class="text-left py-3 pr-4">Math</th><th class="text-left py-3 pr-4">Code</th><th class="text-left py-3 pr-4">Shape</th><th class="text-left py-3">Role</th></tr></thead>
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-4">Argument</th><th class="text-left py-3">Meaning</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-3 pr-4"><strong>M</strong></td><td class="py-3 pr-4"><code class="kbd">state</code></td><td class="py-3 pr-4"><code>[B,H,S,D]</code></td><td class="py-3">Fast memory for the current request.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>w<sub>t</sub></strong></td><td class="py-3 pr-4"><code class="kbd">w</code></td><td class="py-3 pr-4"><code>[B,H,D]</code></td><td class="py-3">Write direction or address for event t.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>z<sub>t</sub></strong></td><td class="py-3 pr-4"><code class="kbd">z</code></td><td class="py-3 pr-4"><code>[B,H,S]</code></td><td class="py-3">Current memory response at w<sub>t</sub>.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>&alpha;<sub>t</sub></strong></td><td class="py-3 pr-4"><code class="kbd">alpha</code></td><td class="py-3 pr-4"><code>[B,H,S]</code></td><td class="py-3">Desired slot-space code for event t.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>u<sub>t</sub></strong></td><td class="py-3 pr-4"><code class="kbd">u</code></td><td class="py-3 pr-4"><code>[B,H,S]</code></td><td class="py-3">Gradient of the inner loss with respect to z<sub>t</sub>.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>&beta;<sub>t</sub></strong></td><td class="py-3 pr-4"><code class="kbd">beta</code></td><td class="py-3 pr-4"><code>[B,H,1]</code></td><td class="py-3">Retention factor for the old state.</td></tr>
-            <tr><td class="py-3 pr-4"><strong>&gamma;</strong></td><td class="py-3 pr-4"><code class="kbd">gamma</code></td><td class="py-3 pr-4"><code>[H]</code></td><td class="py-3">Positive inner learning rate.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">batch</code></td><td class="py-3">How many independent episodes are generated together.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">n_bindings</code></td><td class="py-3">How many alias-to-tool pairs each episode initially contains. This becomes the sequence length T for the initial bind.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">n_tools</code></td><td class="py-3">How many discrete tool identities exist. Tool IDs are integers from 0 through <code>n_tools - 1</code>.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">gen</code></td><td class="py-3">A PyTorch random generator. Supplying the same seeded generator makes the random episode stream reproducible.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">device</code></td><td class="py-3">Where the returned tensors should live, for example CPU or GPU. The function generates them, then moves them with <code>.to(device)</code>.</td></tr>
           </tbody>
         </table>
       </div>
+
+      <h3 class="text-xl font-semibold mt-7">Why <code>torch.randn(batch, n_bindings, 32)</code>?</h3>
+      <p><span class="kbd">torch.randn()</span> draws continuous values from a standard normal distribution. Its three dimensions are <span class="kbd">[B,T,32]</span>: B episodes, T bindings per episode, and 32 coordinates per alias. <span class="kbd">F.normalize(..., dim=-1)</span> then rescales every 32-dimensional alias to unit length. The direction is random; the magnitude is fixed.</p>
+      <p>Be precise about the indexing. <span class="kbd">aliases[b, t, :]</span> is one 32-dimensional alias in one episode. <span class="kbd">aliases[:, t, :]</span> is not one alias: it is the whole batch of B aliases at binding position t, with shape <span class="kbd">[B,32]</span>. The batched Trellis code processes those B independent episodes together.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Why <code>torch.randint()</code> for tools?</h3>
+      <p>A tool is a category, not a random point in continuous space. <span class="kbd">torch.randint(0, n_tools, (batch, n_bindings))</span> therefore produces integer IDs with shape <span class="kbd">[B,T]</span>. Later, <span class="kbd">nn.Embedding</span> turns each integer tool ID into a learned 32-dimensional tool vector.</p>
+      <p>The remaining random integers create the overwrite test. <span class="kbd">index</span> chooses which binding in each episode will be replaced. <span class="kbd">old</span> retrieves its current tool ID. <span class="kbd">new</span> is sampled from only <code>n_tools - 1</code> possibilities and shifted upward whenever it would collide with <span class="kbd">old</span>. That little arithmetic guarantees the replacement tool differs from the old one.</p>
+
+      <div class="callout mt-5" style="border-left-color:var(--green)"><strong>Call path.</strong> <span class="kbd">make_episode()</span> returns <span class="kbd">aliases</span> and <span class="kbd">tools</span>. <span class="kbd">run_episode()</span> passes both whole tensors to <span class="kbd">model.bind(state, aliases, tools)</span>. There is no hidden conversion from one alias into a sequence; the T dimension already is the list of bindings in the episode.</div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="two-states">
+      <div class="eyebrow">2. Create the two fast memories</div>
+      <h2 class="text-2xl font-bold mt-2"><code>blank_state()</code> returns <code>key_state</code> and <code>value_state</code></h2>
+      <p><span class="kbd">MiniRouter</span> has ordinary learned parameters that persist across episodes: the alias encoder, projections, tool embedding table, the inner step size, and the retention parameter. The episode-specific information is different. It lives in two fast-memory matrices that are created as zeros for every new episode.</p>
+      <pre><code class="language-python">def blank_state(self, batch: int, device, dtype):
+    shape = (batch, 1, self.n_slots, self.d_head)
+    zeros = torch.zeros(shape, device=device, dtype=dtype)
+    return zeros, zeros.clone()
+
+# Later, bind() gives the two returned matrices their names:
+key_state, value_state = state</code></pre>
+      <p>The two tensors have the same shape, <span class="kbd">[B,1,n_slots,d_head]</span>, but they do different jobs.</p>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-4">Fast state</th><th class="text-left py-3">What it learns during this episode</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-3 pr-4"><code class="kbd">key_state</code></td><td class="py-3">Takes an alias-derived address and is trained to produce an internal slot-space code for that alias.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">value_state</code></td><td class="py-3">Takes the vector for the tool bound to that alias and is trained toward the same internal slot-space code. During query, this relationship is used in the reverse direction to reconstruct the tool vector.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="formula">alias-derived vector &rarr; key_state &rarr; shared internal code<br>tool vector &rarr; value_state &rarr; same shared internal code</div>
+      <p>The shared internal code is named <span class="kbd">alpha</span> in the script. The next section shows where it comes from. At this point the important fact is simply that the router keeps two separate mutable matrices, not one vague thing called “state.”</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="address">
-      <div class="eyebrow">3. Turn each alias into a write address and target</div>
-      <h2 class="text-2xl font-bold mt-2">Follow <code>_address()</code> after the task is clear</h2>
+      <div class="eyebrow">3. Decode <code>_address()</code> line by line</div>
+      <h2 class="text-2xl font-bold mt-2">It produces an address, a target code, and a retention factor</h2>
       <pre><code class="language-python">def _address(self, aliases: torch.Tensor):
     h = self.encode(aliases)
     key = F.normalize(self.to_key(h), dim=-1).unsqueeze(1)
     alpha = self.to_alpha(h).unsqueeze(1)
     beta = 0.98 + 0.019 * torch.sigmoid(self.beta_raw)
-    beta = beta.expand(
-        aliases.shape[0], 1, aliases.shape[1], 1
-    )
+    beta = beta.expand(aliases.shape[0], 1, aliases.shape[1], 1)
     return key, alpha, beta</code></pre>
-      <p>If <span class="kbd">aliases</span> has shape <span class="kbd">[B,T,32]</span>, the encoder runs over all T aliases in parallel. Each <span class="kbd">aliases[:, t, :]</span> is still one event. PyTorch linear layers apply the same learned map to the final dimension at every batch and sequence position.</p>
-      <p><span class="kbd">to_key(h)</span> produces the vector that tells memory where to write. <span class="kbd">F.normalize(..., dim=-1)</span> gives each address unit L2 norm, so direction carries the address information without magnitude becoming another uncontrolled write-strength parameter.</p>
-      <p><span class="kbd">to_alpha(h)</span> produces the target code memory should return at that address. The learned <span class="kbd">beta_raw</span> is passed through sigmoid only to keep the retention factor in a controlled range.</p>
-      <h3 class="text-xl font-semibold mt-7"><code>key</code>, <code>write</code>, and <code>w</code> are three names along one call path</h3>
-      <p>In the key-memory pass, <span class="kbd">_address()</span> calls the alias-derived vector <span class="kbd">key</span> because that is its semantic role. <span class="kbd">trellis_scan()</span> is generic, so its argument is called <span class="kbd">write</span>. Inside the timestep loop, one vector from that sequence is called <span class="kbd">w</span>.</p>
-      <div class="formula">key[:, :, t, :] = write[:, :, t, :] = w<sub>t</sub> &nbsp;&nbsp; in the key-memory pass</div>
-      <p>The neutral name <span class="kbd">write</span> is necessary because the same scan is used for the value-memory pass, where the write vector is a normalized tool embedding rather than an alias-derived key.</p>
+      <p><strong>No Trellis memory is read or updated in this function.</strong> <span class="kbd">_address()</span> only runs the persistent learned network on each alias and prepares three tensors that a later memory update will use.</p>
+
+      <h3 class="text-xl font-semibold mt-7"><code>h = self.encode(aliases)</code></h3>
+      <p>The input has shape <span class="kbd">[B,T,32]</span>. The encoder is a small ordinary neural network whose linear layers operate on the final dimension, so it applies the same learned transformation independently to every <span class="kbd">aliases[b,t,:]</span>. With <span class="kbd">d_model = 64</span>, <span class="kbd">h</span> has shape <span class="kbd">[B,T,64]</span>. It is simply the hidden representation of each alias. It is not fast memory.</p>
+
+      <h3 class="text-xl font-semibold mt-7"><code>key = F.normalize(self.to_key(h), dim=-1).unsqueeze(1)</code></h3>
+      <p><span class="kbd">to_key</span> projects each 64-dimensional hidden alias to a <span class="kbd">d_head = 32</span> vector. Normalization gives it unit L2 norm. This vector will later become the address or write direction used with <span class="kbd">key_state</span>. <span class="kbd">unsqueeze(1)</span> inserts the one-head dimension, changing <span class="kbd">[B,T,32]</span> into <span class="kbd">[B,1,T,32]</span>.</p>
+
+      <h3 class="text-xl font-semibold mt-7"><code>alpha = self.to_alpha(h).unsqueeze(1)</code></h3>
+      <p><strong><code>alpha</code> is not the current result stored at the key.</strong> It is a target produced directly from the alias hidden representation by the persistent learned projection <span class="kbd">to_alpha</span>. With <span class="kbd">n_slots = 32</span>, its shape is <span class="kbd">[B,1,T,32]</span>.</p>
+      <p>The current memory result does not exist until the later Trellis recurrence computes <span class="math-inline">z = M w</span>. That distinction is central:</p>
+      <div class="formula">&alpha;<sub>t</sub> = desired slot-space code<br>z<sub>t</sub> = what the current fast memory actually returns<br>error = compare &phi;(z<sub>t</sub>) with &alpha;<sub>t</sub></div>
+      <p>Both fast memories are trained toward the same <span class="kbd">alpha</span> for a binding. The alias-derived key is associated with that code in <span class="kbd">key_state</span>; the bound tool vector is associated with that same code in <span class="kbd">value_state</span>. That shared target is what links the two memories.</p>
+
+      <h3 class="text-xl font-semibold mt-7"><code>beta = 0.98 + 0.019 * torch.sigmoid(self.beta_raw)</code></h3>
+      <p><span class="kbd">beta_raw</span> is one trainable scalar. A sigmoid maps any real number into the interval <span class="math-inline">(0,1)</span>. Multiplying by <span class="kbd">0.019</span> gives <span class="math-inline">(0,0.019)</span>; adding <span class="kbd">0.98</span> pins beta to the high-retention interval <span class="math-inline">(0.98,0.999)</span>.</p>
+      <div class="formula">sigmoid(beta_raw) in (0, 1)<br>0.019 × sigmoid(beta_raw) in (0, 0.019)<br>beta in (0.98, 0.999)</div>
+      <p>The parameter starts at zero, so <span class="kbd">sigmoid(0) = 0.5</span> and the initial beta is <span class="kbd">0.9895</span>. Later the state update multiplies old memory by beta before applying the new write. A beta near one therefore retains most of the old memory; a smaller beta forgets more.</p>
+      <p>The constants <span class="kbd">0.98</span> and <span class="kbd">0.019</span> are not derived in this teaching file from some theorem. The source comment states the intent: this minimal router pins one learned scalar into a high-retention band, while the full model predicts beta per token.</p>
+
+      <h3 class="text-xl font-semibold mt-7"><code>beta.expand(B, 1, T, 1)</code></h3>
+      <p>The teaching router has only one learned beta scalar. <span class="kbd">expand()</span> broadcasts that same value across every episode and every binding position so its tensor shape matches what the recurrence expects. It does <strong>not</strong> create a different learned beta for every t.</p>
+      <div class="callout mt-5" style="border-left-color:var(--amber)"><strong>Stop here before reading the recurrence.</strong> After <span class="kbd">_address()</span>, we have only prepared <span class="kbd">key</span>, <span class="kbd">alpha</span>, and <span class="kbd">beta</span>. Nothing has yet been written to <span class="kbd">key_state</span> or <span class="kbd">value_state</span>.</div>
+    </section>
+
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="bind">
+      <div class="eyebrow">4. Bind aliases to tools</div>
+      <h2 class="text-2xl font-bold mt-2"><code>bind()</code> is where the two memories and <code>trellis_scan()</code> finally meet</h2>
+      <pre><code class="language-python">def bind(self, state, aliases, tool_ids):
+    key_state, value_state = state
+    key, alpha, beta = self._address(aliases)
+    value = self._tool_bank()[tool_ids].unsqueeze(1)
+    gamma = F.softplus(self.gamma_raw)
+
+    key_state, _ = trellis_scan(
+        key, alpha, beta, gamma, self.phi, key_state
+    )
+    value_state, _ = trellis_scan(
+        value, alpha, beta, gamma, self.phi, value_state
+    )
+    return key_state, value_state</code></pre>
+      <p>The first line finally names the two zero matrices created by <span class="kbd">blank_state()</span>. The second line prepares alias-derived <span class="kbd">key</span>, <span class="kbd">alpha</span>, and <span class="kbd">beta</span>. The third line looks up each integer <span class="kbd">tool_id</span> in the learned embedding table and normalizes it, producing the continuous tool vector called <span class="kbd">value</span>.</p>
+      <p><span class="kbd">gamma</span> is the positive inner learning rate. The script stores an unconstrained <span class="kbd">gamma_raw</span> and applies <span class="kbd">softplus</span> so gamma cannot become negative. Its initializer is chosen so the initial gamma is 0.05.</p>
+
+      <h3 class="text-xl font-semibold mt-7">Now the word <code>write</code> has a reason to exist</h3>
+      <p><span class="kbd">trellis_scan()</span> is generic. Its first argument is named <span class="kbd">write</span> because the same recurrence is used with two different kinds of vectors. In the first call, <span class="kbd">write</span> is <span class="kbd">key</span>. In the second call, <span class="kbd">write</span> is <span class="kbd">value</span>.</p>
+      <div class="overflow-x-auto mt-5">
+        <table class="w-full text-sm min-w-[820px]">
+          <thead><tr><th class="text-left py-3 pr-4">Call</th><th class="text-left py-3 pr-4"><code>write</code> means</th><th class="text-left py-3">State being updated</th></tr></thead>
+          <tbody class="text-slate-400">
+            <tr><td class="py-3 pr-4">first scan</td><td class="py-3 pr-4">alias-derived <code>key</code></td><td class="py-3"><code>key_state</code></td></tr>
+            <tr><td class="py-3 pr-4">second scan</td><td class="py-3 pr-4">tool embedding <code>value</code></td><td class="py-3"><code>value_state</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Inside <span class="kbd">trellis_scan()</span>, the loop eventually selects one timestep with <span class="kbd">w = write[:, :, t, :]</span>. So <span class="kbd">w_t</span> is not a third mysterious object. It means “the current vector from whichever write sequence this scan received.” For the key-state scan, <span class="kbd">w_t = key_t</span>. For the value-state scan, <span class="kbd">w_t = value_t</span>.</p>
+      <div class="formula">key<sub>t</sub> &rarr; key_state, target &alpha;<sub>t</sub><br>value<sub>t</sub> &rarr; value_state, same target &alpha;<sub>t</sub></div>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="objective">
-      <div class="eyebrow">4. Read the Trellis write as a tiny learning problem</div>
-      <h2 class="text-2xl font-bold mt-2">Each event asks memory to reduce one squared-error objective</h2>
-      <p>For event <span class="math-inline">t</span>, Trellis addresses the current state with <span class="math-inline">w<sub>t</sub></span>:</p>
+      <div class="eyebrow">5. Read one Trellis write as a tiny learning problem</div>
+      <h2 class="text-2xl font-bold mt-2">The current memory response is <code>z</code>; <code>alpha</code> is the target</h2>
+      <p>Now enter one call to <span class="kbd">trellis_scan()</span>. For event t, the scan takes the current write vector <span class="math-inline">w<sub>t</sub></span> and asks the current memory matrix what it returns at that direction:</p>
       <div class="formula">z<sub>t</sub> = M w<sub>t</sub></div>
-      <p>Memory is trained, for this event, to make the transformed response <span class="math-inline">&phi;(z<sub>t</sub>)</span> match the target code <span class="math-inline">&alpha;<sub>t</sub></span>:</p>
+      <p>The private objective for that event asks the transformed current response to match the precomputed target code:</p>
       <div class="formula">L<sub>t</sub>(M) = ½ ‖&phi;(M w<sub>t</sub>) − &alpha;<sub>t</sub>‖<sup>2</sup></div>
-      <p>This is ordinary gradient descent used inside sequence processing. The model does not run a separate optimizer object. It writes out the derivative of this small objective directly and takes one step on <span class="math-inline">M</span>.</p>
-      <div class="formula">M &rarr; z = Mw &rarr; &phi;(z) &rarr; ½ ‖&phi;(z) − &alpha;‖<sup>2</sup></div>
+      <div class="formula">M &rarr; z = Mw &rarr; &phi;(z) &rarr; compare with &alpha; &rarr; squared error</div>
+      <p>This is ordinary gradient descent used inside sequence processing. The model does not launch a separate optimizer object for every token; the recurrence writes this derivative directly and takes one step on the fast state.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="jacobian">
-      <div class="eyebrow">5. Jacobian review and application in Trellis</div>
+      <div class="eyebrow">6. Jacobian review and application in Trellis</div>
       <h2 class="text-2xl font-bold mt-2">The Jacobian is the local dependency table used by backpropagation</h2>
-      <p>A scalar derivative describes how one output changes with one input. Here <span class="math-inline">&phi;</span> maps a vector <span class="math-inline">z</span> to another vector <span class="math-inline">y = &phi;(z)</span>. A change in one coordinate of <span class="math-inline">z</span> can, in general, affect several coordinates of <span class="math-inline">y</span>. The Jacobian records those local dependencies:</p>
+      <p>A scalar derivative describes how one output changes with one input. Here <span class="math-inline">&phi;</span> maps a vector <span class="math-inline">z</span> to another vector <span class="math-inline">y = &phi;(z)</span>. A change in one coordinate of z can, in general, affect several coordinates of y. The Jacobian records those local dependencies:</p>
       <div class="formula">J<sub>ij</sub> = &part;y<sub>i</sub> / &part;z<sub>j</sub></div>
-      <p>Row <span class="math-inline">i</span> asks about output coordinate <span class="math-inline">y<sub>i</sub></span>. Column <span class="math-inline">j</span> asks about input coordinate <span class="math-inline">z<sub>j</sub></span>. If <span class="math-inline">y<sub>i</sub></span> does not depend on <span class="math-inline">z<sub>j</sub></span>, that entry is zero.</p>
+      <p>Row i asks about output coordinate y<sub>i</sub>. Column j asks about input coordinate z<sub>j</sub>. If y<sub>i</sub> does not depend on z<sub>j</sub>, that entry is zero.</p>
       <p>Backpropagation arrives at <span class="math-inline">&phi;</span> with a gradient telling us how the loss changes with each output coordinate:</p>
       <div class="formula">&nabla;<sub>y</sub>L</div>
-      <p>To continue backward, we need the gradient with respect to the inputs of <span class="math-inline">&phi;</span>. The multivariable chain rule gives:</p>
+      <p>To continue backward, the multivariable chain rule maps that gradient to the inputs of <span class="math-inline">&phi;</span>:</p>
       <div class="formula">&nabla;<sub>z</sub>L = J<sub>&phi;</sub>(z)<sup>T</sup> &nabla;<sub>y</sub>L</div>
-      <p>This is the vector form of the same chain rule used in a scalar computation. Given how the loss reacts to each output of <span class="math-inline">&phi;</span>, the Jacobian transpose maps that signal back to each input coordinate.</p>
-      <div class="callout mt-5" style="border-left-color:var(--violet)"><strong>Backprop needs the product, not the matrix.</strong> Frameworks normally compute <span class="math-inline">J<sup>T</sup>g</span> directly. They do not materialize the full Jacobian unless a program explicitly asks for it.</div>
+      <p>That is the vector version of ordinary chain-rule bookkeeping: given how the loss reacts to each output of <span class="math-inline">&phi;</span>, determine how much it reacts to each input coordinate.</p>
+      <div class="callout mt-5" style="border-left-color:var(--violet)"><strong>Backprop needs the product, not the full matrix.</strong> Frameworks normally compute <span class="math-inline">J<sup>T</sup>g</span> directly. They do not materialize the entire Jacobian unless a program explicitly asks for it.</div>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="silu">
-      <div class="eyebrow">6. Apply the Jacobian to SiLU</div>
+      <div class="eyebrow">7. Apply the Jacobian to SiLU</div>
       <h2 class="text-2xl font-bold mt-2">Elementwise SiLU makes the local Jacobian diagonal</h2>
       <p>In the minimal script, <span class="math-inline">&phi;</span> applies SiLU independently to each coordinate:</p>
       <div class="formula">&phi;(z) = [SiLU(z<sub>1</sub>), SiLU(z<sub>2</sub>), SiLU(z<sub>3</sub>), ...]<sup>T</sup></div>
-      <p>Output coordinate 1 depends on <span class="math-inline">z<sub>1</sub></span>, but not on <span class="math-inline">z<sub>2</sub></span> or <span class="math-inline">z<sub>3</sub></span>. The cross-coordinate derivatives are therefore zero:</p>
+      <p>Output coordinate 1 depends on z<sub>1</sub>, but not on z<sub>2</sub> or z<sub>3</sub>. The cross-coordinate derivatives are therefore zero:</p>
       <div class="formula">&part;&phi;(z<sub>i</sub>) / &part;z<sub>j</sub> = 0 &nbsp;&nbsp; for i &ne; j</div>
       <p>The Jacobian is diagonal:</p>
       <div class="formula">J<sub>&phi;</sub>(z) = diag(&phi;&prime;(z<sub>1</sub>), &phi;&prime;(z<sub>2</sub>), ...)</div>
-      <p>A diagonal matrix is equal to its transpose, but the more useful fact is that multiplying by a diagonal matrix is just elementwise multiplication:</p>
+      <p>A diagonal matrix equals its transpose, but the more useful fact is that multiplying by it becomes elementwise multiplication:</p>
       <div class="formula">J<sub>&phi;</sub>(z)<sup>T</sup> g = &phi;&prime;(z) &odot; g</div>
-      <p>For the squared-error objective above, the gradient arriving from the loss is:</p>
+      <p>For the squared-error objective, the gradient arriving from the loss is:</p>
       <div class="formula">&nabla;<sub>y</sub>L = y − &alpha; = &phi;(z) − &alpha;</div>
       <p>Therefore Trellis needs:</p>
       <div class="formula">u = &nabla;<sub>z</sub>L = &phi;&prime;(z) &odot; (&phi;(z) − &alpha;)</div>
-      <p>The diagonal structure comes from applying SiLU independently by coordinate. The squared-error loss determines the incoming residual. Those are separate facts that combine in the final gradient.</p>
+      <p>The diagonal structure comes from applying SiLU independently by coordinate. The squared-error loss supplies the incoming residual. Those are separate facts that combine in the final gradient.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="error-code">
-      <div class="eyebrow">7. Match the equation to <code>error_code()</code></div>
+      <div class="eyebrow">8. Match the equation to <code>error_code()</code></div>
       <h2 class="text-2xl font-bold mt-2">The code writes the SiLU derivative and the VJP explicitly</h2>
       <pre><code class="language-python">def error_code(z, alpha, phi):
     if phi == "identity":
@@ -237,8 +316,7 @@
     s = z * sig
     dsilu = sig + s * (1.0 - sig)
     return dsilu * (s - alpha)</code></pre>
-      <p>The sigmoid on this path appears because SiLU itself is <span class="math-inline">SiLU(z) = z &sigma;(z)</span>. It is unrelated to the sigmoid used earlier to constrain <span class="kbd">beta</span>.</p>
-      <p>The derivative is:</p>
+      <p>The sigmoid on this path appears because SiLU itself is <span class="math-inline">SiLU(z) = z &sigma;(z)</span>. It is unrelated to the sigmoid used earlier to constrain beta.</p>
       <div class="formula">SiLU&prime;(z) = &sigma;(z) + z &sigma;(z)(1 − &sigma;(z))</div>
       <p>In the code, <span class="kbd">s = z * sig</span>, so <span class="kbd">sig + s * (1 - sig)</span> is exactly that derivative. The return statement is:</p>
       <div class="formula"><code>dsilu * (s - alpha)</code> &nbsp;=&nbsp; &phi;&prime;(z) &odot; (&phi;(z) − &alpha;) &nbsp;=&nbsp; J<sub>&phi;</sub>(z)<sup>T</sup>(&phi;(z) − &alpha;)</div>
@@ -246,11 +324,11 @@
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="outer">
-      <div class="eyebrow">8. Continue back through <code>z = M w</code></div>
+      <div class="eyebrow">9. Continue back through <code>z = M w</code></div>
       <h2 class="text-2xl font-bold mt-2">The gradient with respect to memory is an outer product</h2>
       <p>We now have <span class="math-inline">u = &part;L / &part;z</span>. The previous operation was <span class="math-inline">z = Mw</span>. Differentiating that operation with respect to the memory matrix gives:</p>
       <div class="formula">&nabla;<sub>M</sub>L = u w<sup>T</sup></div>
-      <p>If <span class="math-inline">u</span> has S coordinates and <span class="math-inline">w</span> has D coordinates, then <span class="math-inline">u w<sup>T</sup></span> has shape S &times; D, exactly the shape of one memory matrix.</p>
+      <p>If u has S coordinates and w has D coordinates, then <span class="math-inline">u w<sup>T</sup></span> has shape S &times; D, exactly the shape of one memory matrix.</p>
       <div class="overflow-x-auto mt-5">
         <table class="w-full text-sm min-w-[720px]">
           <thead><tr><th class="text-left py-3 pr-4">Notation</th><th class="text-left py-3">Operation here</th></tr></thead>
@@ -264,57 +342,46 @@
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="scan">
-      <div class="eyebrow">9. Read the full recurrence in <code>trellis_scan()</code></div>
+      <div class="eyebrow">10. Read the full recurrence in <code>trellis_scan()</code></div>
       <h2 class="text-2xl font-bold mt-2">Predict, compute the error code, form the outer product, update memory</h2>
       <pre><code class="language-python">for t in range(write.shape[2]):
     w = write[:, :, t, :]
     z = torch.einsum("bhmd,bhd->bhm", state, w)
     u = error_code(z, alpha[:, :, t, :], phi)
     update = torch.einsum("bhm,bhd->bhmd", u, w)
-    state = (
-        beta[:, :, t, :].unsqueeze(-1) * state
-        - g * update
-    )</code></pre>
+    state = beta[:, :, t, :].unsqueeze(-1) * state - g * update</code></pre>
       <p>For one batch item and one head, the same code is:</p>
       <div class="formula">z<sub>t</sub> = M<sub>t−1</sub>w<sub>t</sub><br>u<sub>t</sub> = &nabla;<sub>z<sub>t</sub></sub>L<sub>t</sub><br>&nabla;<sub>M</sub>L<sub>t</sub> = u<sub>t</sub>w<sub>t</sub><sup>T</sup><br>M<sub>t</sub> = &beta;<sub>t</sub>M<sub>t−1</sub> − &gamma;u<sub>t</sub>w<sub>t</sub><sup>T</sup></div>
-      <p>The first line asks what memory currently says at this address. The second computes how that answer should change. The third lifts that error back into a matrix-shaped gradient. The fourth retains most of the old state and takes one gradient step.</p>
+      <p>The first line asks what the current memory says at this write direction. The second computes how that answer should change. The third lifts that error into a matrix-shaped gradient. The fourth retains a beta fraction of the previous state and takes one gradient step.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="two-pass">
-      <div class="eyebrow">10. Understand why the router has two memories</div>
-      <h2 class="text-2xl font-bold mt-2">One memory maps aliases to a shared code; the other maps that code to tools</h2>
-      <pre><code class="language-python">key_state, _ = trellis_scan(
-    key, alpha, beta, gamma, self.phi, key_state
-)
-value_state, _ = trellis_scan(
-    value, alpha, beta, gamma, self.phi, value_state
-)</code></pre>
-      <p>The key memory writes alias-derived vectors against target <span class="math-inline">&alpha;</span>. The value memory writes tool vectors against the same target <span class="math-inline">&alpha;</span>. The shared target code is the bridge between the two memories.</p>
-      <div class="formula">alias &rarr; key memory &rarr; code &rarr; read map &rarr; value memory &rarr; tool vector</div>
-      <p>The query path first reads the key memory with the alias-derived query. It transforms and normalizes that slot code, then uses the resulting code to read the value memory and compare the reconstructed vector against the tool bank.</p>
-      <pre><code class="language-python">code = torch.einsum(
-    "bhmd,bhqd->bhqm", key_state, query
-)
-code = F.silu(code)
-code = code - code.mean(-1, keepdim=True)
-code = code / (
-    code.std(-1, keepdim=True, unbiased=False) + 1e-6
-)
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="query">
+      <div class="eyebrow">11. Query the two memories</div>
+      <h2 class="text-2xl font-bold mt-2">Alias to key memory to shared code to value memory to tool</h2>
+      <pre><code class="language-python">def query(self, state, aliases):
+    key_state, value_state = state
+    query, _, _ = self._address(aliases)
 
-got = torch.einsum(
-    "bhmd,bhqm->bhqd", value_state, code
-)
-got = F.normalize(got, dim=-1).squeeze(1)
-logits = got @ self._tool_bank().T</code></pre>
-      <p>This <span class="kbd">F.silu(code)</span> is part of the read map. It is separate from the manual SiLU derivative in <span class="kbd">error_code()</span>, which constructs the inner learning signal used to update memory.</p>
+    code = torch.einsum("bhmd,bhqd->bhqm", key_state, query)
+    code = F.silu(code)
+    code = code - code.mean(-1, keepdim=True)
+    code = code / (
+        code.std(-1, keepdim=True, unbiased=False) + 1e-6
+    )
+
+    got = torch.einsum("bhmd,bhqm->bhqd", value_state, code)
+    got = F.normalize(got, dim=-1).squeeze(1)
+    logits = got @ self._tool_bank().T
+    return logits * self.logit_scale.exp().clamp(1.0, 100.0)</code></pre>
+      <p>The query alias goes through <span class="kbd">_address()</span> again, but only the alias-derived key is used. Reading <span class="kbd">key_state</span> with that key produces the slot-space code. The fixed read map applies SiLU and standardization. The resulting code then reads <span class="kbd">value_state</span> in the transpose direction, producing a 32-dimensional vector that should point toward the bound tool embedding.</p>
+      <div class="formula">alias &rarr; query key &rarr; key_state &rarr; code &rarr; value_state &rarr; reconstructed tool vector &rarr; tool logits</div>
+      <p>The final matrix multiply compares the reconstructed vector with every normalized tool embedding. The largest logit is the predicted tool ID.</p>
     </section>
 
-    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="episode">
-      <div class="eyebrow">11. Follow one episode through bind, query, overwrite</div>
-      <h2 class="text-2xl font-bold mt-2">The overwrite is the important test of the learned write rule</h2>
-      <pre><code class="language-python">state = model.blank_state(
-    batch, aliases.device, aliases.dtype
-)
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="overwrite">
+      <div class="eyebrow">12. Follow bind, query, overwrite, query</div>
+      <h2 class="text-2xl font-bold mt-2">The overwrite tests whether fast memory can correct an old association</h2>
+      <pre><code class="language-python">state = model.blank_state(batch, aliases.device, aliases.dtype)
 state = model.bind(state, aliases, tools)
 logits_before = model.query(state, aliases)
 
@@ -324,12 +391,12 @@ state = model.bind(
     new.unsqueeze(1),
 )
 logits_after = model.query(state, aliases)</code></pre>
-      <p>A memory that merely accumulates associations can keep returning a stale value after an overwrite. The Trellis residual is state-dependent: <span class="math-inline">z = Mw</span> first asks what is already stored, and the update is based on the error between that existing response and the new target. That gives the mechanism a direct way to correct an old association rather than only add another one.</p>
+      <p>A memory that merely accumulates associations can keep returning a stale value after an overwrite. Trellis first computes <span class="math-inline">z = Mw</span>, so the update depends on what is already stored. The error against the new target can therefore correct an old association rather than blindly add another one.</p>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="identity">
-      <div class="eyebrow">12. Recover Gated DeltaNet by removing the nonlinearity</div>
-      <h2 class="text-2xl font-bold mt-2">Set <code>phi = identity</code> and the Jacobian disappears</h2>
+      <div class="eyebrow">13. Recover Gated DeltaNet by removing the nonlinearity</div>
+      <h2 class="text-2xl font-bold mt-2">Set <code>phi = identity</code> and the Jacobian becomes the identity</h2>
       <p>If <span class="math-inline">&phi;(z) = z</span>, then <span class="math-inline">J<sub>&phi;</sub> = I</span>. The error code becomes:</p>
       <div class="formula">u = z − &alpha; = Mw − &alpha;</div>
       <p>The Trellis write becomes:</p>
@@ -340,7 +407,7 @@ logits_after = model.query(state, aliases)</code></pre>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="chunking">
-      <div class="eyebrow">13. Connect the nonlinear write to the implementation cost</div>
+      <div class="eyebrow">14. Connect the nonlinear write to implementation cost</div>
       <h2 class="text-2xl font-bold mt-2">State-dependent nonlinear writes break the exact affine chunking shortcut</h2>
       <p>With identity <span class="math-inline">&phi;</span>, the update is affine in the current state. A sequence of such rank-one updates can be reorganized into chunkwise matrix operations. The <a href="wy_ut.html">WY/UT page</a> explains the algebraic machinery behind that kind of blocking.</p>
       <p>With nonlinear <span class="math-inline">&phi;</span>, the next error code depends nonlinearly on the state produced by earlier writes:</p>
@@ -349,21 +416,23 @@ logits_after = model.query(state, aliases)</code></pre>
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="cheat-sheet">
-      <div class="eyebrow">14. Keep this beside the source</div>
+      <div class="eyebrow">15. Keep this beside the source</div>
       <h2 class="text-2xl font-bold mt-2">Compact reading guide</h2>
       <div class="overflow-x-auto mt-5">
-        <table class="w-full text-sm min-w-[760px]">
+        <table class="w-full text-sm min-w-[820px]">
           <thead><tr><th class="text-left py-3 pr-4">Code or notation</th><th class="text-left py-3">Read it as</th></tr></thead>
           <tbody class="text-slate-400">
-            <tr><td class="py-3 pr-4"><code class="kbd">aliases[:, t, :]</code></td><td class="py-3">One fresh synthetic alias in the episode.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">key</code></td><td class="py-3">Alias-derived write/address vector.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">write</code></td><td class="py-3">Generic sequence of vectors passed to the scan.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">w</code></td><td class="py-3">One timestep from <code>write</code>; w<sub>t</sub> in the equations.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">z = state @ w</code></td><td class="py-3">Current memory response at this address.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">s - alpha</code></td><td class="py-3">Gradient of squared error with respect to the SiLU output.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">aliases[b, t, :]</code></td><td class="py-3">One 32-dimensional alias in one episode.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">aliases[:, t, :]</code></td><td class="py-3">The batch of B aliases at binding position t.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">key_state</code></td><td class="py-3">Fast memory that associates alias-derived keys with the shared slot code.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">value_state</code></td><td class="py-3">Fast memory that associates tool vectors with the same slot code.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">alpha</code></td><td class="py-3">Target slot code produced from the alias; not the current memory result.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">z = state @ w</code></td><td class="py-3">Current memory result at the current write direction.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">write</code></td><td class="py-3">Generic scan argument: key vectors in one scan, tool vectors in the other.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">w</code></td><td class="py-3">One timestep from the current <code>write</code> sequence.</td></tr>
+            <tr><td class="py-3 pr-4"><code class="kbd">beta</code></td><td class="py-3">Retention factor, constrained to the teaching model's high-retention band.</td></tr>
             <tr><td class="py-3 pr-4"><code class="kbd">dsilu * (s - alpha)</code></td><td class="py-3">J<sub>&phi;</sub><sup>T</sup>g, the gradient with respect to z.</td></tr>
             <tr><td class="py-3 pr-4"><code class="kbd">outer(u, w)</code></td><td class="py-3">Gradient with respect to the memory matrix.</td></tr>
-            <tr><td class="py-3 pr-4"><code class="kbd">beta * state</code></td><td class="py-3">Retained portion of the previous memory.</td></tr>
             <tr><td class="py-3 pr-4"><code class="kbd">phi == "identity"</code></td><td class="py-3">Gated delta-rule control.</td></tr>
           </tbody>
         </table>
