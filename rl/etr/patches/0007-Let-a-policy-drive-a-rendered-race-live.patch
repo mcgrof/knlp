@@ -1,0 +1,261 @@
+From 74daa759572ec73c51783a5de6420e2a18a2bf18 Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Wed, 9 Sep 2026 14:04:20 -0700
+Subject: [PATCH] Let a policy drive a rendered race live
+
+--rl-live HOST:PORT TRACE_OUT [LOG] connects to a policy, takes the
+race setup from it as a trace header, and then hands it the same
+observation the headless bridge produces once per physics tick,
+applying the trace line it answers with. What the policy chose is
+written to TRACE_OUT in the trace format, so a live race and a
+recorded one can be compared line for line.
+
+The game stays a dumb client: it never learns what an action set is,
+because the policy replies with controls rather than an action index.
+Reuses the replay path for the race setup, the fixed timestep and the
+per-tick logging.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ src/main.cpp      |   4 ++
+ src/rl_bridge.cpp |   4 ++
+ src/rl_bridge.h   |   5 ++
+ src/rl_replay.cpp | 118 +++++++++++++++++++++++++++++++++++++++++++++-
+ src/rl_replay.h   |   5 ++
+ 5 files changed, 134 insertions(+), 2 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index b0a584f..dedbed9 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -43,6 +43,10 @@ void InitGame(int argc, char **argv) {
+ 	if (argc >= 2 && std::strcmp(argv[1], "--rl") == 0) {
+ 		g_game.headless = true;
+ 		g_game.argument = 100;
++	} else if (argc >= 4 && std::strcmp(argv[1], "--rl-live") == 0) {
++		// --rl-live HOST:PORT TRACE_OUT [LOG]: a policy drives the race
++		if (!RlReplay::Connect(argv[2], argv[3], argc >= 5 ? argv[4] : ""))
++			std::exit(2);
+ 	} else if (argc >= 3 && std::strcmp(argv[1], "--rl-replay") == 0) {
+ 		// --rl-replay TRACE [LOG]: rendered playback of a recorded trace
+ 		if (!RlReplay::Load(argv[2], argc >= 4 ? argv[3] : ""))
+diff --git a/src/rl_bridge.cpp b/src/rl_bridge.cpp
+index 50a4b13..3080231 100644
+--- a/src/rl_bridge.cpp
++++ b/src/rl_bridge.cpp
+@@ -468,6 +468,10 @@ bool ParseLine(const std::string& line, std::string& cmd, Args& args) {
+ 
+ } // namespace
+ 
++std::string RlObservationJson() {
++	return Observation(CourseFinished());
++}
++
+ int RunRlBridge(std::streambuf* proto_out) {
+ 	std::ostream proto(proto_out);
+ 	proto << std::setprecision(12);
+diff --git a/src/rl_bridge.h b/src/rl_bridge.h
+index e76d26c..2e2a539 100644
+--- a/src/rl_bridge.h
++++ b/src/rl_bridge.h
+@@ -18,6 +18,7 @@ GNU General Public License for more details.
+ #define RL_BRIDGE_H
+ 
+ #include <streambuf>
++#include <string>
+ 
+ // Run the physics-only bridge: read one request per line on stdin,
+ // write one JSON object per line to proto_out (the real stdout, which
+@@ -25,4 +26,8 @@ GNU General Public License for more details.
+ // or audio device. Returns the process exit code.
+ int RunRlBridge(std::streambuf* proto_out);
+ 
++// The observation the bridge emits, for other consumers: live play hands
++// this to a policy so a rendered race sees exactly what training saw.
++std::string RlObservationJson();
++
+ #endif
+diff --git a/src/rl_replay.cpp b/src/rl_replay.cpp
+index 56ed331..22947dc 100644
+--- a/src/rl_replay.cpp
++++ b/src/rl_replay.cpp
+@@ -31,6 +31,7 @@ GNU General Public License for more details.
+ #endif
+ 
+ #include "rl_replay.h"
++#include "rl_bridge.h"
+ #include "bh.h"
+ #include "course.h"
+ #include "game_ctrl.h"
+@@ -41,7 +42,11 @@ GNU General Public License for more details.
+ #include <iomanip>
+ #include <iostream>
+ #include <sstream>
++#include <cstring>
+ #include <vector>
++#include <netdb.h>
++#include <sys/socket.h>
++#include <unistd.h>
+ 
+ namespace {
+ 
+@@ -52,6 +57,10 @@ struct Action {
+ };
+ 
+ bool active = false;
++bool live = false;
++int live_fd = -1;
++std::ofstream trace_out;
++std::string live_buf;
+ bool autoquit = false;
+ float dt = 1.0f / 60.0f;
+ unsigned seed = 0;
+@@ -129,6 +138,82 @@ bool Load(const std::string& trace_path, const std::string& log_path) {
+ 	return true;
+ }
+ 
++// One line from the policy socket, or empty at end of stream.
++std::string LiveLine() {
++	for (;;) {
++		std::string::size_type nl = live_buf.find('\n');
++		if (nl != std::string::npos) {
++			std::string line = live_buf.substr(0, nl);
++			live_buf.erase(0, nl + 1);
++			return line;
++		}
++		char buf[4096];
++		ssize_t n = read(live_fd, buf, sizeof buf);
++		if (n <= 0) return std::string();
++		live_buf.append(buf, (std::size_t)n);
++	}
++}
++
++bool LiveSend(const std::string& s) {
++	std::string out = s + "\n";
++	std::size_t off = 0;
++	while (off < out.size()) {
++		ssize_t n = write(live_fd, out.data() + off, out.size() - off);
++		if (n <= 0) return false;
++		off += (std::size_t)n;
++	}
++	return true;
++}
++
++bool Connect(const std::string& hostport, const std::string& trace_path,
++             const std::string& log_path) {
++	std::string host = hostport;
++	std::string port = "5077";
++	std::string::size_type c = hostport.rfind(':');
++	if (c != std::string::npos) {
++		host = hostport.substr(0, c);
++		port = hostport.substr(c + 1);
++	}
++	struct addrinfo hints;
++	std::memset(&hints, 0, sizeof hints);
++	hints.ai_family = AF_UNSPEC;
++	hints.ai_socktype = SOCK_STREAM;
++	struct addrinfo* res = nullptr;
++	if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || res == nullptr) {
++		std::cerr << "rl-live: cannot resolve " << host << ':' << port << '\n';
++		return false;
++	}
++	live_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
++	if (live_fd < 0 || connect(live_fd, res->ai_addr, res->ai_addrlen) != 0) {
++		std::cerr << "rl-live: cannot connect to " << host << ':' << port << '\n';
++		freeaddrinfo(res);
++		return false;
++	}
++	freeaddrinfo(res);
++
++	// The policy dictates the race the way a trace header does.
++	if (!LiveSend("hello")) return false;
++	std::string header = LiveLine();
++	if (header.empty()) {
++		std::cerr << "rl-live: policy sent no race header\n";
++		return false;
++	}
++	Header(header);
++	if (!trace_path.empty()) {
++		trace_out.open(trace_path);
++		trace_out << "# etr rl trace v1\n" << header << '\n';
++	}
++	if (!log_path.empty()) {
++		logfile.open(log_path);
++		logfile << std::setprecision(12);
++	}
++	live = true;
++	active = true;
++	std::cerr << "rl-live: " << host << ':' << port << " drives " << group << '/' << course
++	          << " seed " << seed << " dt " << dt << '\n';
++	return true;
++}
++
+ bool Active() { return active; }
+ float Dt() { return dt; }
+ bool AutoQuit() { return autoquit; }
+@@ -171,8 +256,29 @@ bool SetupRace() {
+ }
+ 
+ Step Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge) {
+-	if (next >= actions.size()) return END;
+-	const Action& a = actions[next++];
++	Action a;
++	if (live) {
++		// Hand the policy the same observation the bridge produces, and take
++		// back one trace line: four control values, or R for the reset key.
++		if (!LiveSend(RlObservationJson())) return END;
++		std::string reply = LiveLine();
++		if (reply.empty()) return END;
++		if (trace_out.is_open()) trace_out << reply << '\n';
++		if (reply[0] == 'R' || reply[0] == 'r') {
++			a.recover = true;
++		} else {
++			std::istringstream is(reply);
++			int b = 0, p = 0, j = 0;
++			if (!(is >> a.turn >> b >> p >> j)) return END;
++			a.brake = b != 0;
++			a.paddle = p != 0;
++			a.jump = j != 0;
++			a.recover = false;
++		}
++	} else {
++		if (next >= actions.size()) return END;
++		a = actions[next++];
++	}
+ 	if (a.recover) return RECOVER;
+ 	stick_turn = a.turn != 0.0f;
+ 	stick_turnfact = clamp(-1.0f, a.turn, 1.0f);
+@@ -193,6 +299,14 @@ void LogTick(const CControl* ctrl) {
+ }
+ 
+ void Close() {
++	if (live_fd >= 0) {
++		close(live_fd);
++		live_fd = -1;
++	}
++	if (trace_out.is_open()) {
++		trace_out.flush();
++		trace_out.close();
++	}
+ 	if (logfile.is_open()) {
+ 		logfile.flush();
+ 		logfile.close();
+diff --git a/src/rl_replay.h b/src/rl_replay.h
+index e4f45b1..a13f2c8 100644
+--- a/src/rl_replay.h
++++ b/src/rl_replay.h
+@@ -27,6 +27,11 @@ class CControl;
+ // it can be compared with the headless run of the same trace.
+ namespace RlReplay {
+ bool Load(const std::string& trace_path, const std::string& log_path);
++// Play live: connect to a policy, take the race setup from it, and ask it
++// for an action every physics tick. Optionally record what it chose as a
++// trace, so a live race and a replayed one can be compared line for line.
++bool Connect(const std::string& hostport, const std::string& trace_out,
++             const std::string& log_path);
+ bool Active();
+ float Dt();
+ bool AutoQuit();
+-- 
+2.53.0
+
