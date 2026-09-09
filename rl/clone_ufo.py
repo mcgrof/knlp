@@ -80,9 +80,14 @@ def collect_dagger(
     return observations, actions, episodes, learner_steps
 
 
-def cloning_loss(agent, observations, actions) -> torch.Tensor:
+def cloning_loss(
+    agent,
+    observations,
+    actions,
+    action_loss_scale,
+) -> torch.Tensor:
     predicted = agent.act_deterministic(observations)
-    normalized_error = (predicted - actions) / agent.action_scale
+    normalized_error = (predicted - actions) / action_loss_scale
     return normalized_error.square().mean()
 
 
@@ -104,6 +109,11 @@ def train_actor(
     training_indices = permutation[validation_size:]
     observation_tensor = torch.as_tensor(observations)
     action_tensor = torch.as_tensor(actions)
+    training_actions = action_tensor[training_indices]
+    minimum_action_scale = agent.action_scale.detach().cpu() * 1e-3
+    action_loss_scale = training_actions.std(dim=0).clamp_min(
+        minimum_action_scale
+    )
 
     if update_normalization:
         training_observations = observation_tensor[training_indices]
@@ -123,7 +133,12 @@ def train_actor(
     validation_actions = action_tensor[validation_indices]
     with torch.no_grad():
         initial_validation_loss = float(
-            cloning_loss(agent, validation_observations, validation_actions)
+            cloning_loss(
+                agent,
+                validation_observations,
+                validation_actions,
+                action_loss_scale,
+            )
         )
     rows = []
     for epoch in range(1, epochs + 1):
@@ -135,7 +150,10 @@ def train_actor(
         for start in range(0, len(shuffled), batch_size):
             indices = shuffled[start : start + batch_size]
             loss = cloning_loss(
-                agent, observation_tensor[indices], action_tensor[indices]
+                agent,
+                observation_tensor[indices],
+                action_tensor[indices],
+                action_loss_scale,
             )
             optimizer.zero_grad()
             loss.backward()
@@ -144,7 +162,12 @@ def train_actor(
             batches += 1
         with torch.no_grad():
             validation_loss = float(
-                cloning_loss(agent, validation_observations, validation_actions)
+                cloning_loss(
+                    agent,
+                    validation_observations,
+                    validation_actions,
+                    action_loss_scale,
+                )
             )
         rows.append(
             {
@@ -153,7 +176,13 @@ def train_actor(
                 "validation_loss": validation_loss,
             }
         )
-    return rows, initial_validation_loss, mean.numpy(), scale.numpy()
+    return (
+        rows,
+        initial_validation_loss,
+        mean.numpy(),
+        scale.numpy(),
+        action_loss_scale.numpy(),
+    )
 
 
 def main(argv=None) -> int:
@@ -206,7 +235,7 @@ def main(argv=None) -> int:
         agent = SquashedGaussianAgent(
             int(np.prod(env.observation_space.shape)), low, high, args.hidden
         )
-        rows, initial_loss, mean, scale = train_actor(
+        rows, initial_loss, mean, scale, action_loss_scale = train_actor(
             agent,
             observations,
             actions,
@@ -240,7 +269,7 @@ def main(argv=None) -> int:
             )
             observations = np.concatenate((observations, new_observations))
             actions = np.concatenate((actions, new_actions))
-            dagger_rows, _, mean, scale = train_actor(
+            dagger_rows, _, mean, scale, action_loss_scale = train_actor(
                 agent,
                 observations,
                 actions,
@@ -332,6 +361,7 @@ def main(argv=None) -> int:
             "model_parameters": sum(parameter.numel() for parameter in agent.parameters()),
             "observation_mean": mean.tolist(),
             "observation_scale": scale.tolist(),
+            "action_loss_scale": action_loss_scale.tolist(),
             "initial_validation_loss": initial_loss,
             "final_validation_loss": rows[-1]["validation_loss"],
             "checkpoint_sha256": _sha256(checkpoint_path),

@@ -40,6 +40,8 @@ def test_clone_writes_normalized_reloadable_actor(tmp_path):
     assert manifest["method"] == "behavioral_cloning"
     assert manifest["samples"] == 512
     assert manifest["final_validation_loss"] < manifest["initial_validation_loss"]
+    assert len(manifest["action_loss_scale"]) == 6
+    assert all(value > 0.0 for value in manifest["action_loss_scale"])
 
     checkpoint = torch.load(
         run_dir / "checkpoint.pt", map_location="cpu", weights_only=False
