@@ -29,7 +29,7 @@ import numpy as np
 from rl.controls.policies import POLICIES
 from rl.envs import make_env, parse_env_id
 from rl.envs.etr_bridge import DEFAULT_DT, EtrBridge
-from rl.envs.etr_env import ACTION_TABLE, FRAME_SKIP
+from rl.envs.etr_env import FRAME_SKIP
 
 
 def load_agent(
@@ -63,8 +63,14 @@ def record_episode(env, policy, seed: int):
     rng = np.random.default_rng(seed)
     while not done:
         a = policy(obs, rng)
-        steer, paddle, brake = ACTION_TABLE[int(a)]
-        rows.extend([(steer, int(brake), int(paddle), 0)] * env.frame_skip)
+        entry = env.actions[int(a)]
+        if entry is None:
+            # the reset key: one marker, and no physics ticks, matching the
+            # environment, where recovering replaces the step entirely
+            rows.append("R")
+        else:
+            steer, paddle, brake, jump = entry
+            rows.extend([(steer, int(brake), int(paddle), int(jump))] * env.frame_skip)
         obs, r, term, trunc, info = env.step(a)
         done = term or trunc
     return rows, info["episode_stats"]
@@ -79,8 +85,12 @@ def write_trace(
             f"course={course} group={group} seed={seed} dt={DEFAULT_DT:.9g} wind=0 light=0 "
             f"mirror=0 autoquit={int(autoquit)}\n"
         )
-        for steer, brake, paddle, jump in rows:
-            f.write(f"{steer:g} {brake} {paddle} {jump}\n")
+        for r in rows:
+            if r == "R":
+                f.write("R\n")
+            else:
+                steer, brake, paddle, jump = r
+                f.write(f"{steer:g} {brake} {paddle} {jump}\n")
 
 
 def headless_log(
@@ -89,8 +99,14 @@ def headless_log(
     """Replay the trace tick by tick through the bridge and log each tick."""
     with EtrBridge(binary) as b, open(path, "w") as f:
         last = b.reset(seed=seed, course=course, group=group, dt=DEFAULT_DT)
-        for steer, brake, paddle, jump in rows:
-            last = b.step(turn=steer, brake=brake, paddle=paddle, jump=jump, ticks=1)
+        for r in rows:
+            if r == "R":
+                last = b.recover()
+            else:
+                steer, brake, paddle, jump = r
+                last = b.step(
+                    turn=steer, brake=brake, paddle=paddle, jump=jump, ticks=1
+                )
             f.write(
                 json.dumps(
                     {
@@ -118,7 +134,22 @@ def cmd_trace(args) -> int:
             file=sys.stderr,
         )
         return 2
-    env = make_env(args.env, binary=args.etr_bin)
+    # Time and no-progress caps scale with the course, as they do in the
+    # campaign; a fixed default silently truncates the long courses.
+    with EtrBridge(args.etr_bin) as probe:
+        info = probe.info()
+    length = next(
+        (c["play_length"] for c in info["courses"] if c["dir"] == course), 470.0
+    )
+    max_seconds = args.max_seconds or 60.0 + length / 4.0
+    stuck_seconds = args.stuck_seconds or max(15.0, length / 100.0)
+    env = make_env(
+        args.env,
+        binary=args.etr_bin,
+        action_set=args.action_set,
+        max_seconds=max_seconds,
+        stuck_seconds=stuck_seconds,
+    )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.policy:
@@ -232,6 +263,24 @@ def main(argv=None) -> int:
     t.add_argument("--out-dir", default="traces")
     t.add_argument("--autoquit", action="store_true")
     t.add_argument("--etr-bin", default=None)
+    t.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="episode time cap; by default 60 s plus a quarter of the course length",
+    )
+    t.add_argument(
+        "--stuck-seconds",
+        type=float,
+        default=None,
+        help="no-progress cap; by default the course length over 100, at least 15 s",
+    )
+    t.add_argument(
+        "--action-set",
+        default="v0",
+        choices=["v0", "v1"],
+        help="the action set the checkpoint was trained with",
+    )
     c = sub.add_parser("compare", help="diff a headless and a rendered per-tick log")
     c.add_argument("headless")
     c.add_argument("rendered")
