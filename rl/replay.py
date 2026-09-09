@@ -32,6 +32,16 @@ from rl.envs.etr_bridge import DEFAULT_DT, EtrBridge
 from rl.envs.etr_env import FRAME_SKIP
 
 
+def run_action_set(run_name: str, runs_dir: str) -> str:
+    """The action set a run was trained with, from its saved arguments."""
+    try:
+        return json.load(open(Path(runs_dir) / run_name / "args.json")).get(
+            "action_set", "v0"
+        )
+    except OSError:
+        return "v0"
+
+
 def load_agent(
     run_name: str, runs_dir: str, checkpoint: str | None, obs_dim: int, n_actions: int
 ):
@@ -143,10 +153,15 @@ def cmd_trace(args) -> int:
     )
     max_seconds = args.max_seconds or 60.0 + length / 4.0
     stuck_seconds = args.stuck_seconds or max(15.0, length / 100.0)
+    action_set = args.action_set
+    if action_set == "auto":
+        action_set = (
+            run_action_set(args.run_name, args.runs_dir) if args.run_name else "v0"
+        )
     env = make_env(
         args.env,
         binary=args.etr_bin,
-        action_set=args.action_set,
+        action_set=action_set,
         max_seconds=max_seconds,
         stuck_seconds=stuck_seconds,
     )
@@ -277,9 +292,9 @@ def main(argv=None) -> int:
     )
     t.add_argument(
         "--action-set",
-        default="v0",
-        choices=["v0", "v1"],
-        help="the action set the checkpoint was trained with",
+        default="auto",
+        choices=["auto", "v0", "v1"],
+        help="by default, whichever the run was trained with",
     )
     c = sub.add_parser("compare", help="diff a headless and a rendered per-tick log")
     c.add_argument("headless")
