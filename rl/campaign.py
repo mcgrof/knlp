@@ -175,14 +175,14 @@ def stage_eval(course, name, args, out):
     if path.exists():
         return json.load(open(path))
     from rl.envs import make_env
-    from rl.replay import load_agent
+    from rl.replay import load_agent, run_action_set
 
     env = make_env(
         f"etr:{course['dir']}",
         binary=args.etr_bin,
         max_seconds=max_seconds(course),
         stuck_seconds=stuck_seconds(course),
-        action_set=args.action_set,
+        action_set=run_action_set(name, args.runs_dir),
     )
     try:
         obs_dim = int(np.prod(env.observation_space.shape))
