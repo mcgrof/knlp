@@ -132,6 +132,20 @@ the sampled command does not deliberately point through the terrain safety
 margin during that interval. This trains the continuous flight actor; target
 selection, firing, and camera control remain separate mission-director
 responsibilities.
+
+Before exporting a maneuver actor, compare it with the reference pilot on at
+least 100 fixed seeds and gate the resulting report:
+
+```
+python -m rl.certify_ufo \
+  --evaluation runs/rl/ufo-maneuver-s1/evaluation.json \
+  --output runs/rl/ufo-maneuver-s1/certification.json
+```
+
+The gate rejects any terrain or contract-envelope termination, any episode
+that tilts past 20 degrees, mean velocity error above 1.25 times the reference,
+or mean yaw-rate error above 1.5 times the reference. Passing covers only the
+standalone dynamics; it does not authorize or arm live X-Plane control.
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.
