@@ -336,6 +336,7 @@ def main(argv=None) -> int:
                     "train_loss",
                     "validation_loss",
                 ],
+                lineterminator="\n",
             )
             writer.writeheader()
             writer.writerows(rows)

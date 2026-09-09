@@ -77,6 +77,7 @@ def test_ppo_smoke_learns_then_yields_and_resumes(tmp_path):
     assert len(rows) == 5120 // (4 * 64)
     assert all(float(r["approx_kl"]) >= 0 for r in rows)
     assert int(rows[-1]["global_step"]) == 5120
+    assert b"\r\n" not in (runs / "smoke" / "metrics.csv").read_bytes()
 
     # 3. resuming a finished run is a no-op that exits cleanly
     out = _run(common + ["--resume"], env)

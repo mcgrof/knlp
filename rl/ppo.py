@@ -209,7 +209,12 @@ class RunLog:
         self.csv_path = run_dir / "metrics.csv"
         new = not self.csv_path.exists()
         self._f = open(self.csv_path, "a", newline="")
-        self._w = csv.DictWriter(self._f, fieldnames=self.FIELDS, extrasaction="ignore")
+        self._w = csv.DictWriter(
+            self._f,
+            fieldnames=self.FIELDS,
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         if new:
             self._w.writeheader()
 
