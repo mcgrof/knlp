@@ -58,6 +58,7 @@ def test_clone_writes_normalized_reloadable_actor(tmp_path, monkeypatch):
     assert events[:2] == ["git_head", "collect_reference"]
     assert len(manifest["action_loss_scale"]) == 6
     assert all(value > 0.0 for value in manifest["action_loss_scale"])
+    assert b"\r\n" not in (run_dir / "metrics.csv").read_bytes()
 
     checkpoint = torch.load(
         run_dir / "checkpoint.pt", map_location="cpu", weights_only=False
