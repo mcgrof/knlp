@@ -9,6 +9,7 @@ import pytest
 
 from rl.flight.contracts import ControlCommand, FlightContract, TelemetryFrame
 from rl.flight.control_ufo import (
+    LIVE_ENVELOPES,
     process_stream,
     reference_action,
     validate_live_envelope,
@@ -133,3 +134,36 @@ def test_nonzero_sender_rejects_state_outside_live_envelope():
     )
     with pytest.raises(ValueError, match="horizontal"):
         validate_live_envelope(outside)
+
+
+def test_combat_envelope_allows_pursuit_but_keeps_tilt_guard():
+    contract = load_contract()
+    frame = telemetry(contract, 0)
+    values = list(frame.observation)
+    values[0] = 2500.0
+    values[3] = 45.0
+    pursuit = TelemetryFrame.create(
+        contract,
+        episode_id=frame.episode_id,
+        sequence=frame.sequence,
+        monotonic_ns=frame.monotonic_ns,
+        dt_s=frame.dt_s,
+        observation=values,
+        goal=(45.0, 0.0, 0.0, 0.0),
+    )
+    validate_live_envelope(pursuit, LIVE_ENVELOPES["combat"])
+    with pytest.raises(ValueError, match="horizontal"):
+        validate_live_envelope(pursuit, LIVE_ENVELOPES["hover"])
+
+    values[6:10] = (0.965925826, 0.258819045, 0.0, 0.0)
+    tilted = TelemetryFrame.create(
+        contract,
+        episode_id=frame.episode_id,
+        sequence=frame.sequence,
+        monotonic_ns=frame.monotonic_ns,
+        dt_s=frame.dt_s,
+        observation=values,
+        goal=frame.goal,
+    )
+    with pytest.raises(ValueError, match="tilt"):
+        validate_live_envelope(tilted, LIVE_ENVELOPES["combat"])

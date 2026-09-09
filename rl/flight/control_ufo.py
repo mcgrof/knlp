@@ -33,21 +33,57 @@ class ControlStats:
     interrupted: bool = False
 
 
+@dataclass(frozen=True)
+class LiveEnvelope:
+    horizontal_position_m: float
+    minimum_position_ned_z_m: float
+    maximum_position_ned_z_m: float
+    velocity_mps: float
+    minimum_upright_cosine: float
+    angular_rate_radps: float
+
+
+LIVE_ENVELOPES = {
+    "hover": LiveEnvelope(
+        horizontal_position_m=20.0,
+        minimum_position_ned_z_m=-120.0,
+        maximum_position_ned_z_m=-80.0,
+        velocity_mps=10.0,
+        minimum_upright_cosine=0.9396926207859084,
+        angular_rate_radps=1.0,
+    ),
+    "combat": LiveEnvelope(
+        horizontal_position_m=20_000.0,
+        minimum_position_ned_z_m=-5_000.0,
+        maximum_position_ned_z_m=-25.0,
+        velocity_mps=100.0,
+        minimum_upright_cosine=0.9396926207859084,
+        angular_rate_radps=1.5,
+    ),
+}
+
+
 def zero_action(contract: FlightContract) -> ActionProvider:
     action = tuple(0.0 for _ in range(contract.action.width))
     return lambda frame: action
 
 
-def validate_live_envelope(frame: TelemetryFrame) -> None:
+def validate_live_envelope(
+    frame: TelemetryFrame,
+    envelope: LiveEnvelope = LIVE_ENVELOPES["hover"],
+) -> None:
     position = frame.observation[:3]
     velocity = frame.observation[3:6]
     quaternion = frame.observation[6:10]
     angular_velocity = frame.observation[10:13]
-    if abs(position[0]) > 20.0 or abs(position[1]) > 20.0:
+    if max(abs(position[0]), abs(position[1])) > envelope.horizontal_position_m:
         raise ValueError("aircraft left the horizontal control envelope")
-    if position[2] < -120.0 or position[2] > -80.0:
+    if (
+        position[2] < envelope.minimum_position_ned_z_m
+        or position[2] > envelope.maximum_position_ned_z_m
+    ):
         raise ValueError("aircraft left the vertical control envelope")
-    if max(abs(value) for value in velocity) > 10.0:
+    if max(abs(value) for value in velocity) > envelope.velocity_mps:
         raise ValueError("aircraft left the velocity control envelope")
     quaternion_norm = sum(value * value for value in quaternion) ** 0.5
     if abs(quaternion_norm - 1.0) > 1e-3:
@@ -55,17 +91,19 @@ def validate_live_envelope(frame: TelemetryFrame) -> None:
     upright_cosine = 1.0 - 2.0 * (
         quaternion[1] * quaternion[1] + quaternion[2] * quaternion[2]
     )
-    if upright_cosine < 0.9396926207859084:
+    if upright_cosine < envelope.minimum_upright_cosine:
         raise ValueError("aircraft tilt exceeds 20 degrees")
-    if max(abs(value) for value in angular_velocity) > 1.0:
+    if max(abs(value) for value in angular_velocity) > envelope.angular_rate_radps:
         raise ValueError("aircraft left the angular-rate control envelope")
 
 
 def reference_action(
-    contract: FlightContract, parameters: UfoReferenceParameters
+    contract: FlightContract,
+    parameters: UfoReferenceParameters,
+    envelope: LiveEnvelope = LIVE_ENVELOPES["hover"],
 ) -> ActionProvider:
     def provide(frame: TelemetryFrame) -> Sequence[float]:
-        validate_live_envelope(frame)
+        validate_live_envelope(frame, envelope)
         return velocity_target_wrench(
             frame.observation,
             frame.goal,
@@ -77,9 +115,12 @@ def reference_action(
     return provide
 
 
-def actor_action(policy: ShadowPolicy) -> ActionProvider:
+def actor_action(
+    policy: ShadowPolicy,
+    envelope: LiveEnvelope = LIVE_ENVELOPES["hover"],
+) -> ActionProvider:
     def provide(frame: TelemetryFrame) -> Sequence[float]:
-        validate_live_envelope(frame)
+        validate_live_envelope(frame, envelope)
         action, _ = policy.infer(frame)
         return action
 
@@ -173,6 +214,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--model", type=Path)
     parser.add_argument("--mass-kg", type=float)
+    parser.add_argument(
+        "--envelope", choices=tuple(LIVE_ENVELOPES), default="hover"
+    )
     parser.add_argument("--allow-nonzero", action="store_true")
     parser.add_argument("--valid-ms", type=float, default=100.0)
     parser.add_argument("--output", type=Path, required=True)
@@ -185,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be positive")
     contract = FlightContract.from_json(args.contract)
+    envelope = LIVE_ENVELOPES[args.envelope]
     policy_identity = None
     if args.mode == "zero":
         action_provider = zero_action(contract)
@@ -194,13 +239,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mass_kg is None or args.mass_kg <= 0.0:
             parser.error("reference control requires a positive --mass-kg")
         action_provider = reference_action(
-            contract, UfoReferenceParameters(mass_kg=args.mass_kg)
+            contract,
+            UfoReferenceParameters(mass_kg=args.mass_kg),
+            envelope,
         )
     else:
         if args.model is None:
             parser.error("actor control requires --model")
         policy = ShadowPolicy(contract, args.model)
-        action_provider = actor_action(policy)
+        action_provider = actor_action(policy, envelope)
         policy_identity = {
             "checkpoint_sha256": policy.checkpoint_sha256,
             "model_sha256": policy.model_sha256,
@@ -230,6 +277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "contract_hash": contract.digest,
         "valid_ms": args.valid_ms,
         "control_mode": args.mode,
+        "envelope": args.envelope,
         "mass_kg": args.mass_kg,
         "policy": policy_identity,
         **asdict(stats),
