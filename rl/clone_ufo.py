@@ -159,7 +159,11 @@ def train_actor(
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--env", default="ufo:hover", choices=["ufo:hover"])
+    parser.add_argument(
+        "--env",
+        default="ufo:hover",
+        choices=["ufo:hover", "ufo:forward", "ufo:maneuver"],
+    )
     parser.add_argument("--steps", type=int, default=50_000)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=512)

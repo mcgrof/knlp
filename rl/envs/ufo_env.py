@@ -156,6 +156,8 @@ class UfoEnv(gym.Env):
         contract_path: str | Path | None = None,
         library_path: str | Path | None = None,
         goal: Sequence[float] = (0.0, 0.0, 0.0, 0.0),
+        goal_mode: str = "fixed",
+        goal_hold_seconds: float = 4.0,
         max_seconds: float = 20.0,
         random_start: bool = True,
     ):
@@ -171,6 +173,12 @@ class UfoEnv(gym.Env):
             raise ValueError("max_seconds must exceed one environment step")
         self.max_steps = int(math.ceil(max_seconds / self.dt_s))
         self.random_start = bool(random_start)
+        if goal_mode not in {"fixed", "maneuver"}:
+            raise ValueError(f"unknown UFO goal mode {goal_mode!r}")
+        if not math.isfinite(goal_hold_seconds) or goal_hold_seconds <= self.dt_s:
+            raise ValueError("goal hold time must exceed one environment step")
+        self.goal_mode = goal_mode
+        self.goal_hold_steps = int(math.ceil(goal_hold_seconds / self.dt_s))
         self.default_goal = self.contract.goal.validate(goal, "goal")
         self.goal = np.asarray(self.default_goal, dtype=np.float64)
         self._state_low = np.asarray(self.contract.observation.low, dtype=np.float64)
@@ -226,10 +234,6 @@ class UfoEnv(gym.Env):
         self.dynamics.reset()
         self._steps = 0
         self._return = 0.0
-        self.goal = np.asarray(
-            self.contract.goal.validate(options.get("goal", self.default_goal), "goal"),
-            dtype=np.float64,
-        )
         state = self.dynamics.state
         state.position_ned_m[2] = -100.0
         if options.get("randomize", self.random_start):
@@ -246,12 +250,19 @@ class UfoEnv(gym.Env):
             )
             for index, value in enumerate(attitude):
                 state.quaternion_body_to_ned[index] = value
+        self.goal = np.asarray(
+            self.contract.goal.validate(options.get("goal", self.default_goal), "goal"),
+            dtype=np.float64,
+        )
+        if self.goal_mode == "maneuver" and "goal" not in options:
+            self.goal = self._sample_maneuver_goal()
         observation = self._observation()
         return observation, self._info({})
 
     def step(self, action):
         values = np.asarray(action, dtype=np.float64)
         self.contract.action.validate(values, "action")
+        applied_goal = self.goal.copy()
         state = self.dynamics.step(values, self.dt_s)
         self._steps += 1
         state_is_finite = bool(np.isfinite(state).all())
@@ -276,7 +287,7 @@ class UfoEnv(gym.Env):
         self._return += reward
         terminated = bool(ground_contact or out_of_envelope)
         truncated = bool(not terminated and self._steps >= self.max_steps)
-        info = self._info(terms)
+        info = self._info(terms, applied_goal=applied_goal)
         if terminated or truncated:
             body_velocity = (
                 self.body_velocity(state) if state_is_finite else np.full(3, np.inf)
@@ -285,16 +296,39 @@ class UfoEnv(gym.Env):
                 "return": self._return,
                 "time": self._steps * self.dt_s,
                 "success": float(
-                    np.linalg.norm(body_velocity - self.goal[:3]) < 1.0
-                    and abs(state[12] - self.goal[3]) < 0.1
+                    np.linalg.norm(body_velocity - applied_goal[:3]) < 1.0
+                    and abs(state[12] - applied_goal[3]) < 0.1
                     and not ground_contact
                     and not out_of_envelope
                 ),
                 "ground_contact": float(ground_contact),
                 "out_of_envelope": float(out_of_envelope),
             }
+        if (
+            not terminated
+            and not truncated
+            and self.goal_mode == "maneuver"
+            and self._steps % self.goal_hold_steps == 0
+        ):
+            self.goal = self._sample_maneuver_goal()
+            info["goal"] = self.goal.copy()
         observation = self._observation(state, clip_terminal=out_of_envelope)
         return observation, reward, terminated, truncated, info
+
+    def _sample_maneuver_goal(self) -> np.ndarray:
+        """Sample a broad but controllable body-velocity command."""
+
+        low = np.asarray((-20.0, -30.0, -12.0, -1.0), dtype=np.float64)
+        high = np.asarray((55.0, 30.0, 12.0, 1.0), dtype=np.float64)
+        position_ned_z = float(self.dynamics.state.position_ned_m[2])
+        hold_seconds = self.goal_hold_steps * self.dt_s
+        maximum_descent = (-30.0 - position_ned_z) / hold_seconds
+        high[2] = max(low[2], min(high[2], maximum_descent))
+        sampled = self.np_random.uniform(low, high)
+        return np.asarray(
+            self.contract.goal.validate(sampled, "maneuver goal"),
+            dtype=np.float64,
+        )
 
     def body_velocity(self, state: np.ndarray | None = None) -> np.ndarray:
         state = self.dynamics.state_vector() if state is None else state
@@ -320,8 +354,13 @@ class UfoEnv(gym.Env):
             * float(np.dot(normalized_action, normalized_action) / len(action)),
         }
 
-    def _info(self, reward_terms: dict[str, float]) -> dict:
-        return {
+    def _info(
+        self,
+        reward_terms: dict[str, float],
+        *,
+        applied_goal: np.ndarray | None = None,
+    ) -> dict:
+        info = {
             "contract_hash": self.contract.digest,
             "step": self._steps,
             "dt_s": self.dt_s,
@@ -329,3 +368,6 @@ class UfoEnv(gym.Env):
             "state": self.dynamics.state_vector(),
             "reward_terms": reward_terms,
         }
+        if applied_goal is not None:
+            info["applied_goal"] = applied_goal.copy()
+        return info

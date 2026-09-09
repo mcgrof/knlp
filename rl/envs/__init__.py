@@ -31,6 +31,8 @@ def make_env(env_id: str, **kwargs) -> gym.Env:
             "hover": (0.0, 0.0, 0.0, 0.0),
             "forward": (10.0, 0.0, 0.0, 0.0),
         }
+        if course == "maneuver":
+            return UfoEnv(goal_mode="maneuver", **kwargs)
         if course not in goals:
             raise ValueError(f"unknown UFO task {course!r}")
         return UfoEnv(goal=goals[course], **kwargs)
