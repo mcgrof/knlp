@@ -1,0 +1,127 @@
+From bda529a6ed804487f71e318192509805e9bc6bf1 Mon Sep 17 00:00:00 2001
+From: Luis Chamberlain <mcgrof@do-not-panic.com>
+Date: Wed, 9 Sep 2026 10:54:30 -0700
+Subject: [PATCH] Let a replayed trace use the reset key
+
+A trace records one line per physics tick, so it had no way to express
+the reset key, which consumes no tick. Accept an R line for it: the
+racing loop performs the same relocation the headless bridge does,
+logs the frame so a comparison against the headless run stays aligned,
+and returns without advancing physics, so a rendered replay reproduces
+a recorded race tick for tick even when the recorded policy used the
+key.
+
+Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
+---
+ src/racing.cpp    | 13 ++++++++++++-
+ src/rl_replay.cpp | 14 +++++++++++---
+ src/rl_replay.h   | 10 ++++++++--
+ 3 files changed, 31 insertions(+), 6 deletions(-)
+
+diff --git a/src/racing.cpp b/src/racing.cpp
+index 56e15c3..3eeebcc 100644
+--- a/src/racing.cpp
++++ b/src/racing.cpp
+@@ -384,13 +384,24 @@ void CRacing::Loop(float time_step) {
+ 
+ 	if (RlReplay::Active() && !g_game.finish) {
+ 		left_turn = right_turn = false;
+-		if (!RlReplay::Apply(stick_turn, stick_turnfact, key_paddling, key_braking, key_charging)) {
++		RlReplay::Step step = RlReplay::Apply(stick_turn, stick_turnfact,
++		                                      key_paddling, key_braking, key_charging);
++		if (step == RlReplay::END) {
+ 			RlReplay::Close();
+ 			g_game.raceaborted = true;
+ 			g_game.race_result = -1;
+ 			State::manager.RequestEnterState(GameOver);
+ 			return;
+ 		}
++		if (step == RlReplay::RECOVER) {
++			// The reset key consumes no physics tick, exactly as it does
++			// for the headless bridge, so the frame renders and returns.
++			// It still logs, so both sides emit one record per trace entry
++			// and a comparison stays aligned.
++			HeadlessRecover();
++			RlReplay::LogTick(ctrl);
++			return;
++		}
+ 	}
+ 	if (!g_game.finish) CalcSteeringControls(ctrl, time_step);
+ 	else CalcFinishControls(ctrl, time_step, airborne);
+diff --git a/src/rl_replay.cpp b/src/rl_replay.cpp
+index fee3fb6..56ed331 100644
+--- a/src/rl_replay.cpp
++++ b/src/rl_replay.cpp
+@@ -48,6 +48,7 @@ namespace {
+ struct Action {
+ 	float turn;
+ 	bool brake, paddle, jump;
++	bool recover;   // an "R" line: the reset key, which consumes no physics tick
+ };
+ 
+ bool active = false;
+@@ -99,6 +100,11 @@ bool Load(const std::string& trace_path, const std::string& log_path) {
+ 			header_seen = true;
+ 			continue;
+ 		}
++		if (line[0] == 'R' || line[0] == 'r') {
++			Action r = {0.f, false, false, false, true};
++			actions.push_back(r);
++			continue;
++		}
+ 		std::istringstream is(line);
+ 		Action a;
+ 		int b = 0, p = 0, j = 0;
+@@ -106,6 +112,7 @@ bool Load(const std::string& trace_path, const std::string& log_path) {
+ 		a.brake = b != 0;
+ 		a.paddle = p != 0;
+ 		a.jump = j != 0;
++		a.recover = false;
+ 		actions.push_back(a);
+ 	}
+ 	if (!header_seen || actions.empty()) {
+@@ -163,15 +170,16 @@ bool SetupRace() {
+ 	return true;
+ }
+ 
+-bool Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge) {
+-	if (next >= actions.size()) return false;
++Step Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge) {
++	if (next >= actions.size()) return END;
+ 	const Action& a = actions[next++];
++	if (a.recover) return RECOVER;
+ 	stick_turn = a.turn != 0.0f;
+ 	stick_turnfact = clamp(-1.0f, a.turn, 1.0f);
+ 	paddle = a.paddle;
+ 	brake = a.brake;
+ 	charge = a.jump;
+-	return true;
++	return ACTION;
+ }
+ 
+ void LogTick(const CControl* ctrl) {
+diff --git a/src/rl_replay.h b/src/rl_replay.h
+index 5748d0d..e4f45b1 100644
+--- a/src/rl_replay.h
++++ b/src/rl_replay.h
+@@ -33,9 +33,15 @@ bool AutoQuit();
+ // Called by the splash screen once data is loaded: selects the
+ // player, character and course named in the trace header.
+ bool SetupRace();
++// What the next trace entry asks the racing loop to do.
++enum Step {
++	ACTION,   // steer/paddle/brake/jump were filled in; advance physics
++	RECOVER,  // perform the reset relocation and advance no physics this frame
++	END       // the trace is exhausted
++};
++
+ // Called by the racing loop before the steering controls are computed.
+-// Returns false when the trace is exhausted.
+-bool Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge);
++Step Apply(bool& stick_turn, float& stick_turnfact, bool& paddle, bool& brake, bool& charge);
+ void LogTick(const CControl* ctrl);
+ void Close();
+ }
+-- 
+2.53.0
+
