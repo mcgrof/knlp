@@ -228,6 +228,7 @@ def main(argv=None) -> int:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     started = time.perf_counter()
+    knlp_commit = _git_head(Path(__file__).resolve().parents[1])
     env = make_env(args.env, max_seconds=args.max_seconds, random_start=True)
     try:
         observations, actions, episodes = collect_reference(env, args.steps, args.seed)
@@ -342,7 +343,7 @@ def main(argv=None) -> int:
         manifest = {
             "schema_version": 1,
             "created_utc": datetime.now(timezone.utc).isoformat(),
-            "knlp_commit": _git_head(Path(__file__).resolve().parents[1]),
+            "knlp_commit": knlp_commit,
             "environment_source_commit": args.environment_source_commit,
             "contract_hash": env.contract.digest,
             "dynamics_library_sha256": _sha256(library_path),

@@ -8,6 +8,7 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("gymnasium")
 
+from rl import clone_ufo
 from rl.clone_ufo import main
 from rl.continuous import SquashedGaussianAgent, load_continuous_state_dict
 
@@ -15,7 +16,20 @@ UFO_ROOT = os.environ.get("XPLANE_UFO_ROOT")
 pytestmark = pytest.mark.skipif(not UFO_ROOT, reason="XPLANE_UFO_ROOT is not set")
 
 
-def test_clone_writes_normalized_reloadable_actor(tmp_path):
+def test_clone_writes_normalized_reloadable_actor(tmp_path, monkeypatch):
+    events = []
+    original_collect = clone_ufo.collect_reference
+
+    def git_head(path):
+        events.append("git_head")
+        return "source-commit"
+
+    def collect_reference(*args, **kwargs):
+        events.append("collect_reference")
+        return original_collect(*args, **kwargs)
+
+    monkeypatch.setattr(clone_ufo, "_git_head", git_head)
+    monkeypatch.setattr(clone_ufo, "collect_reference", collect_reference)
     run_dir = tmp_path / "clone"
     result = main(
         [
@@ -40,6 +54,8 @@ def test_clone_writes_normalized_reloadable_actor(tmp_path):
     assert manifest["method"] == "behavioral_cloning"
     assert manifest["samples"] == 512
     assert manifest["final_validation_loss"] < manifest["initial_validation_loss"]
+    assert manifest["knlp_commit"] == "source-commit"
+    assert events[:2] == ["git_head", "collect_reference"]
     assert len(manifest["action_loss_scale"]) == 6
     assert all(value > 0.0 for value in manifest["action_loss_scale"])
 
