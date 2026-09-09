@@ -6,13 +6,21 @@ The 20-question accuracy read that the CAS (Cartridges at Scale) line
 reports has a dynamic range of about five questions and is mostly
 deterministic per question, so it cannot resolve the effects the
 meta-initialization comparisons look for. The dense signal that can is
-the objective itself: the top-20 distillation cross-entropy on
-conversations the cartridge never trained on. This script computes it
-for any number of cartridge files with the model loaded once, using the
+the objective itself: the top-20 distillation cross-entropy on a fixed
+slice of conversations. This script computes it for any number of
+cartridge files with the model loaded once, using the
 same dataset packing and the same per-entry formula as
 ``cartridges.train.evaluate_perplexity`` (mean over stored top-k
 entries of -p * log q), so a number here is directly comparable to the
 "Eval loss" lines the trainer prints during a run.
+
+Whether that slice is held out is a property of the cartridge, not of
+this script, and it is easy to get wrong: a cartridge trained on a
+patient's full self-study parquet has seen every row of any split taken
+from it, so its loss here is in-sample. Check the training run's
+dataloader length against the split's before calling a number held out.
+Paired comparisons between readings of the same cartridge are unaffected
+either way; the loss level and any spread between cartridges are not.
 
 Two refinements the trainer does not offer:
 
