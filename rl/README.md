@@ -140,12 +140,21 @@ least 100 fixed seeds and gate the resulting report:
 python -m rl.certify_ufo \
   --evaluation runs/rl/ufo-maneuver-s1/evaluation.json \
   --output runs/rl/ufo-maneuver-s1/certification.json
+
+# probe every corner of the combat director goal envelope
+python -m rl.stress_ufo \
+  --run-dir runs/rl/ufo-maneuver-s1 \
+  --output runs/rl/ufo-maneuver-s1/combat-stress.json
 ```
 
 The gate rejects any terrain or contract-envelope termination, any episode
 that tilts past 20 degrees, mean velocity error above 1.25 times the reference,
 or mean yaw-rate error above 1.5 times the reference. Passing covers only the
 standalone dynamics; it does not authorize or arm live X-Plane control.
+The combat stress adds an adversarial gate over all 16 Cartesian corners of
+the director velocity and yaw-rate limits. It applies the same terminal,
+tilt, and relative tracking limits instead of relying only on average random
+goal coverage.
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.
