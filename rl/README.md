@@ -106,6 +106,11 @@ XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
   python -m rl.ppo --env ufo:hover --init-agent \
   runs/rl/ufo-hover-clone-s1/checkpoint.pt --run-name ufo-hover-bc-ppo-s1
 
+# clone control across changing combat-maneuver goals
+XPLANE_UFO_ROOT=~/devel/xplane-ufo \
+  python -m rl.clone_ufo --env ufo:maneuver \
+  --run-dir runs/rl/ufo-maneuver-clone-s1
+
 # read X-Plane telemetry and log policy proposals without sending controls
 python -m rl.export_ufo_actor \
   --contract ~/devel/xplane-ufo/schemas/ufo-wrench-v1.json \
@@ -121,6 +126,12 @@ python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill 
 ```
 
 Environment ids are `<backend>:<course>`; `sim:sim_trees` needs no game.
+The synthetic `ufo:maneuver` task changes body velocity and yaw-rate targets
+every four simulated seconds. Its descent limit uses the current altitude so
+the sampled command does not deliberately point through the terrain safety
+margin during that interval. This trains the continuous flight actor; target
+selection, firing, and camera control remain separate mission-director
+responsibilities.
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.

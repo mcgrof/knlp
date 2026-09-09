@@ -87,6 +87,41 @@ def test_velocity_controller_tracks_forward_goal():
         env.close()
 
 
+def test_maneuver_goals_are_seeded_and_change_during_flight():
+    first = make_env(
+        "ufo:maneuver",
+        root=UFO_ROOT,
+        max_seconds=0.2,
+        goal_hold_seconds=0.08,
+        random_start=False,
+    )
+    second = make_env(
+        "ufo:maneuver",
+        root=UFO_ROOT,
+        max_seconds=0.2,
+        goal_hold_seconds=0.08,
+        random_start=False,
+    )
+    try:
+        first_observation, _ = first.reset(seed=23)
+        second_observation, _ = second.reset(seed=23)
+        assert np.array_equal(first_observation, second_observation)
+        initial_goal = first.goal.copy()
+        for _ in range(first.goal_hold_steps):
+            first_result = first.step(VelocityTargetController()(first))
+            second_result = second.step(VelocityTargetController()(second))
+        assert not np.array_equal(first.goal, initial_goal)
+        assert np.array_equal(first.goal, second.goal)
+        assert np.allclose(first_result[0][-4:], first.goal)
+        assert np.array_equal(first_result[4]["goal"], first.goal)
+        assert np.array_equal(second_result[4]["goal"], second.goal)
+        assert np.all(first.goal >= np.asarray(first.contract.goal.low))
+        assert np.all(first.goal <= np.asarray(first.contract.goal.high))
+    finally:
+        first.close()
+        second.close()
+
+
 def test_out_of_contract_action_fails_closed():
     env = UfoEnv(root=UFO_ROOT)
     try:

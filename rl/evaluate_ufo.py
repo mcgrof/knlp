@@ -80,8 +80,9 @@ def evaluate_episode(env, policy: Policy, seed: int) -> dict:
             raise ValueError("policy returned an invalid UFO action")
         observation, reward, terminated, truncated, info = env.step(action)
         state = np.asarray(info["state"], dtype=np.float64)
-        velocity_error = env.body_velocity(state) - env.goal[:3]
-        yaw_error = state[12] - env.goal[3]
+        applied_goal = np.asarray(info["applied_goal"], dtype=np.float64)
+        velocity_error = env.body_velocity(state) - applied_goal[:3]
+        yaw_error = state[12] - applied_goal[3]
         rotation = quaternion_body_to_ned(state[6:10])
         tilt = math.acos(float(np.clip(rotation[2, 2], -1.0, 1.0)))
         normalized = action / action_scale
@@ -98,10 +99,11 @@ def evaluate_episode(env, policy: Policy, seed: int) -> dict:
     duration = steps * env.dt_s
     stats = info["episode_stats"]
     final_state = np.asarray(info["state"], dtype=np.float64)
+    final_goal = np.asarray(info["applied_goal"], dtype=np.float64)
     final_velocity_error = float(
-        np.linalg.norm(env.body_velocity(final_state) - env.goal[:3])
+        np.linalg.norm(env.body_velocity(final_state) - final_goal[:3])
     )
-    final_yaw_rate_error = float(abs(final_state[12] - env.goal[3]))
+    final_yaw_rate_error = float(abs(final_state[12] - final_goal[3]))
     return {
         "seed": seed,
         "steps": steps,
@@ -166,7 +168,11 @@ def evaluate(
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--env", default="ufo:hover", choices=["ufo:hover", "ufo:forward"])
+    parser.add_argument(
+        "--env",
+        default="ufo:hover",
+        choices=["ufo:hover", "ufo:forward", "ufo:maneuver"],
+    )
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--seeds", type=parse_seeds, default=parse_seeds("1000,1001,1002,1003,1004"))

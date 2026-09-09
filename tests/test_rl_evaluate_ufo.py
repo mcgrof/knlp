@@ -63,3 +63,29 @@ def test_cli_writes_strict_json_for_reference_policies(tmp_path, monkeypatch):
     assert report["schema_version"] == 1
     assert report["seeds"] == [3, 5]
     assert set(report["policies"]) == {"zero", "reference"}
+
+
+def test_maneuver_evaluation_uses_the_goal_applied_to_each_step():
+    env = make_env(
+        "ufo:maneuver",
+        root=UFO_ROOT,
+        max_seconds=1.0,
+        goal_hold_seconds=0.4,
+        random_start=False,
+    )
+    controller = VelocityTargetController()
+    try:
+        results = evaluate(
+            env,
+            {
+                "zero": lambda observation: zero_wrench(env),
+                "reference": lambda observation: controller(env),
+            },
+            [13],
+        )
+    finally:
+        env.close()
+    reference = results["reference"]["summary"]
+    zero = results["zero"]["summary"]
+    assert reference["out_of_envelope_rate"] == 0.0
+    assert reference["mean_velocity_rmse_mps"] < zero["mean_velocity_rmse_mps"]
