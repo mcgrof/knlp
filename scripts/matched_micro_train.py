@@ -14,9 +14,22 @@ This harness supplies that contract for five arms:
               candidate, audited in the fidelity lane)
     hope      Hope paper block (self-modifying Titans + continuum
               memory; kmccleary3301 candidate, audited likewise)
+    mom3      3:1 Mixture-of-Memories / full-attention hybrid
+    mom7      7:1 Mixture-of-Memories / full-attention hybrid
 
 The attention and hybrid arms are implemented here (RoPE attention,
 pre-norm blocks, fla's GatedDeltaNet layer for the linear positions).
+The Mixture-of-Memories arms (Du et al., arXiv 2502.13685) swap each
+Gated DeltaNet position for fla's MomAttention layer in the paper's
+released configuration: four routed memories, two active per token,
+one always-on shared memory, gated-delta updates, and the
+Switch-style load-balancing loss at the released coefficient. The
+7:1 layout is the paper's own hybrid ratio (one attention layer after
+every seven MoM layers). Per-memory key/value projections cost
+parameters, so the MoM arms carry fewer heads per memory to stay
+inside the parameter tolerance; the aux loss is added to the training
+objective only, and every reported loss is the plain token
+cross-entropy.
 The Titans and Hope arms use the audited community candidates
 unchanged, because the point is to evaluate those candidates; their
 audited configuration obligations are honored and recorded — the
@@ -37,6 +50,7 @@ peak memory as JSON.
     python3 scripts/matched_micro_train.py prepare-data --tokens 40000000
     python3 scripts/matched_micro_train.py params
     python3 scripts/matched_micro_train.py train --arm gdn3 --steps 300
+    python3 scripts/matched_micro_train.py train --arm mom3 --steps 300
 """
 
 import argparse
@@ -76,10 +90,37 @@ CONTRACT = dict(
 
 # per-arm architecture configs, sized by the `params` subcommand to sit
 # within 5% of the attention control's total parameter count
+# Mixture-of-Memories routing, as released with the paper
+# (training/configs/mom_340M.json in the reference repository): four
+# memories, top-2 routing, a shared memory, per-memory key/value
+# projections, load-balancing coefficient 0.01.  The memory cell is the
+# same Gated DeltaNet cell the gdn arms use (head_dim 64, expand_v 2);
+# mom_heads is the sizing lever that lands the arm inside the
+# parameter tolerance.
+MOM_ROUTING = dict(num_memories=4, topk=2, shared_mem=True, aux_loss_scale=0.01)
+
 ARMS = dict(
     attn=dict(kind="stack", dim=512, layers=8, heads=8, layout="A"),
     gdn3=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=5, layout="GGGA"),
     gdn7=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=5, layout="GGGGGGGA"),
+    mom3=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        mom_heads=2,
+        layout="MMMA",
+        **MOM_ROUTING,
+    ),
+    mom7=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        mom_heads=2,
+        layout="MMMMMMMA",
+        **MOM_ROUTING,
+    ),
     titans=dict(
         kind="titans",
         dim=384,
@@ -262,28 +303,51 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim, heads, mixer_kind, gdn_heads=None):
+    def __init__(self, dim, heads, mixer_kind, cfg):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
         self.mixer_kind = mixer_kind
+        self.router_logits = None
         if mixer_kind == "A":
             self.mixer = Attention(dim, heads)
-        else:
+        elif mixer_kind == "G":
             from fla.layers.gated_deltanet import GatedDeltaNet
 
             self.mixer = GatedDeltaNet(
                 hidden_size=dim,
                 head_dim=64,
-                num_heads=gdn_heads or heads,
+                num_heads=cfg.get("gdn_heads") or heads,
                 mode="chunk",
             )
+        elif mixer_kind == "M":
+            from fla.layers.mom import MomAttention
+
+            self.mixer = MomAttention(
+                hidden_size=dim,
+                head_dim=64,
+                num_heads=cfg["mom_heads"],
+                expand_v=2,
+                mode="chunk",
+                num_memories=cfg["num_memories"],
+                topk=cfg["topk"],
+                capacity=1.0,
+                shared_mem=cfg["shared_mem"],
+                single_kv_proj=False,
+            )
+        else:
+            raise ValueError(mixer_kind)
         self.mlp = MLP(dim)
 
     def forward(self, x):
         h = self.norm1(x)
         if self.mixer_kind == "A":
             h = self.mixer(h)
+        elif self.mixer_kind == "M":
+            # (output, None, cache, router logits flattened to
+            # (batch*seq, num_memories)); the logits feed the
+            # load-balancing loss
+            h, _, _, self.router_logits = self.mixer(h)
         else:
             h = self.mixer(h)
             if isinstance(h, tuple):
@@ -300,9 +364,10 @@ class StackLM(nn.Module):
         kinds = [layout[i % len(layout)] for i in range(cfg["layers"])]
         self.kinds = "".join(kinds)
         self.blocks = nn.ModuleList(
-            Block(cfg["dim"], cfg["heads"], k, gdn_heads=cfg.get("gdn_heads"))
-            for k in kinds
+            Block(cfg["dim"], cfg["heads"], k, cfg) for k in kinds
         )
+        self.num_memories = cfg.get("num_memories")
+        self.topk = cfg.get("topk")
         self.norm = nn.LayerNorm(cfg["dim"])
         self.head = nn.Linear(cfg["dim"], vocab_size, bias=False)
         nn.init.normal_(self.embed.weight, std=0.02)
@@ -313,6 +378,25 @@ class StackLM(nn.Module):
         for block in self.blocks:
             x = block(x)
         return self.head(self.norm(x))
+
+    def load_balance_loss(self):
+        """The Switch-Transformer auxiliary loss exactly as the
+        Mixture-of-Memories reference model computes it: every MoM
+        layer's router logits from the last forward, concatenated,
+        fraction of tokens routed to each memory times the mean router
+        probability for it, summed and scaled by the memory count."""
+        logits = [b.router_logits for b in self.blocks if b.mixer_kind == "M"]
+        if not logits:
+            return None
+        gate = torch.cat(logits, dim=0)
+        probs = F.softmax(gate, dim=-1)
+        _, selected = torch.topk(probs, self.topk, dim=-1)
+        mask = F.one_hot(selected, self.num_memories)
+        tokens_per_memory = mask.float().mean(dim=0)
+        prob_per_memory = probs.mean(dim=0)
+        return (
+            tokens_per_memory * prob_per_memory.unsqueeze(0)
+        ).sum() * self.num_memories
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +487,16 @@ def ce_loss(logits, idx):
     )
 
 
-def step_standard(model, idx):
+def step_standard(model, idx, aux_loss_scale=0.0):
+    """Returns (token cross-entropy, auxiliary loss or None).  The
+    auxiliary term enters the backward pass only; the reported loss
+    is always the plain cross-entropy so arms stay comparable."""
     logits = model(idx)
     loss = ce_loss(logits, idx)
-    loss.backward()
-    return loss.item()
+    aux = model.load_balance_loss() if aux_loss_scale else None
+    total = loss if aux is None else loss + aux_loss_scale * aux
+    total.backward()
+    return loss.item(), (aux.item() if aux is not None else None)
 
 
 def step_titans(model, idx):
@@ -587,8 +676,9 @@ def train(
             group["lr"] = lr_at(step, steps)
         idx = stream.train_batch(step, device)
         opt.zero_grad(set_to_none=True)
+        aux = None
         if cfg["kind"] == "stack":
-            loss = step_standard(model, idx)
+            loss, aux = step_standard(model, idx, cfg.get("aux_loss_scale", 0.0))
         elif cfg["kind"] == "titans":
             loss = step_titans(model, idx)
         else:
@@ -608,10 +698,13 @@ def train(
             )
             if device.type == "cuda":
                 entry["peak_mem_gb"] = torch.cuda.max_memory_allocated() / 2**30
+            if aux is not None:
+                entry["aux_loss"] = aux
             run["history"].append(entry)
             print(
                 f"  step {step:5d}  loss {loss:.4f}  ppl {entry['ppl']:.2f}  "
-                f"tok/s {entry['tok_s']:.0f}",
+                f"tok/s {entry['tok_s']:.0f}"
+                + (f"  aux {aux:.4f}" if aux is not None else ""),
                 flush=True,
             )
         if eval_every and step and step % eval_every == 0:
