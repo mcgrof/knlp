@@ -3,9 +3,10 @@
 # nothing is buried in Python constants; the driver reads a JSON generated from
 # .config (gen_config_json.py) and never hard-codes experiment policy.
 #
-# The harness itself is scripts/matched_micro_train.py: five arms (a
-# full-attention control, two Gated DeltaNet hybrids, Titans, and Hope)
-# trained under one matched contract — one tokenizer, one materialized
+# The harness itself is scripts/matched_micro_train.py: seven arms (a
+# full-attention control, two Gated DeltaNet hybrids, two
+# Mixture-of-Memories hybrids, Titans, and Hope) trained under one
+# matched contract — one tokenizer, one materialized
 # TinyStories token stream consumed in the same order, one optimizer and
 # schedule, parameter counts within tolerance. See that script's docstring.
 
@@ -26,10 +27,12 @@ config MATCHED_MICRO_ARMS
 	depends on MATCHED_MICRO
 	default "hope"
 	help
-	  Space-separated subset of: attn gdn3 gdn7 titans hope. The hope
-	  arm needs the pinned nested_learning package (the driver prepends
-	  NESTED_LEARNING_SRC to PYTHONPATH); titans needs titans-pytorch
-	  (TITANS_PYTORCH_DIR); the gdn arms need flash-linear-attention.
+	  Space-separated subset of: attn gdn3 gdn7 mom3 mom7 titans hope.
+	  The hope arm needs the pinned nested_learning package (the driver
+	  prepends NESTED_LEARNING_SRC to PYTHONPATH); titans needs
+	  titans-pytorch (TITANS_PYTORCH_DIR); the gdn and mom arms need
+	  flash-linear-attention (the Mixture-of-Memories layer ships in
+	  fla 0.5.2).
 
 config MATCHED_MICRO_PHASE_BATCH_PROBE
 	bool "Batch-throughput probe"
