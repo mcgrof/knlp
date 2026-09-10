@@ -121,6 +121,27 @@ ARMS = dict(
         layout="MMMMMMMA",
         **MOM_ROUTING,
     ),
+    # Controls for the state-capacity confound.  At matched parameters
+    # mom3 holds 2x gdn3's total recurrent state per layer (five
+    # memories of two heads against five heads) but 0.4x per memory,
+    # so a MoM gain could be routing or just more state.  gdn3w widens
+    # the Gated DeltaNet cell to ten heads, matching mom3's total state
+    # at +19% parameters (outside the tolerance; a labeled control).
+    # mom3s keeps five heads per memory and shares one key/value
+    # projection across memories (the layer's single_kv_proj option),
+    # landing at gdn3's parameter count with 5x its total state: the
+    # partition-into-memories idea without the per-memory projections.
+    gdn3w=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=10, layout="GGGA"),
+    mom3s=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        mom_heads=5,
+        single_kv_proj=True,
+        layout="MMMA",
+        **MOM_ROUTING,
+    ),
     titans=dict(
         kind="titans",
         dim=384,
@@ -333,7 +354,7 @@ class Block(nn.Module):
                 topk=cfg["topk"],
                 capacity=1.0,
                 shared_mem=cfg["shared_mem"],
-                single_kv_proj=False,
+                single_kv_proj=cfg.get("single_kv_proj", False),
             )
         else:
             raise ValueError(mixer_kind)
@@ -805,6 +826,13 @@ def main():
         action="store_true",
         help="save final weights as <out-dir>/<arm>.pt next to the run JSON",
     )
+    t.add_argument(
+        "--aux-loss-scale",
+        type=float,
+        default=None,
+        help="override the arm's load-balancing coefficient (MoM arms; a "
+        "sensitivity knob recorded in the run JSON's config)",
+    )
 
     args = ap.parse_args()
 
@@ -841,6 +869,10 @@ def main():
             CONTRACT["contract_overridden"] = True
         if args.seed is not None:
             CONTRACT["seed"] = args.seed
+        if args.aux_loss_scale is not None:
+            if "aux_loss_scale" not in ARMS[args.arm]:
+                ap.error(f"--aux-loss-scale does not apply to arm {args.arm}")
+            ARMS[args.arm]["aux_loss_scale"] = args.aux_loss_scale
         if args.token_budget:
             per_step = CONTRACT["batch_size"] * (CONTRACT["seq_len"] - 1)
             args.steps = max(1, args.token_budget // per_step)
