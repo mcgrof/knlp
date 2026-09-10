@@ -132,6 +132,13 @@ ARMS = dict(
     # landing at gdn3's parameter count with 5x its total state: the
     # partition-into-memories idea without the per-memory projections.
     gdn3w=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=10, layout="GGGA"),
+    # pure linear arms, no attention layer: the configuration a recall
+    # stress test needs, since in the hybrids the attention layers can
+    # carry the retrieval
+    gdn=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=5, layout="G"),
+    mom=dict(
+        kind="stack", dim=512, layers=8, heads=8, mom_heads=2, layout="M", **MOM_ROUTING
+    ),
     mom3s=dict(
         kind="stack",
         dim=512,
