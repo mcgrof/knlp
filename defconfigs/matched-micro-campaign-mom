@@ -1,0 +1,24 @@
+# Mixture-of-Memories ablation for the matched micro-scale harness:
+# the two MoM / full-attention hybrids (mom3 and mom7, mirroring the
+# gdn3 and gdn7 layouts) trained under exactly the contract the
+# matched campaign ran, so their validation losses compare directly
+# with the archived Gated DeltaNet hybrid results.
+# Batch 64 is the batch the campaign actually ran at (its defconfig
+# default of 128 was lowered after the attention control ran out of
+# memory on an 80GB GPU), so the update count, warmup fraction, and
+# cosine decay match the archived runs step for step.
+# The probe phase stays on as the pre-flight: a ten-step run of each
+# arm at the campaign batch catches an out-of-memory arm in minutes.
+# Requires: CUDA or ROCm torch; flash-linear-attention 0.5.2 or later
+# for the MoM layer; network or a pre-staged token stream in DATA_DIR.
+CONFIG_MATCHED_MICRO=y
+CONFIG_MATCHED_MICRO_ARMS="mom3 mom7"
+CONFIG_MATCHED_MICRO_PHASE_BATCH_PROBE=y
+CONFIG_MATCHED_MICRO_PROBE_BATCHES="64"
+CONFIG_MATCHED_MICRO_PROBE_STEPS=10
+CONFIG_MATCHED_MICRO_DATA_TOKENS=40000000
+CONFIG_MATCHED_MICRO_PHASE_CAMPAIGN=y
+CONFIG_MATCHED_MICRO_CAMPAIGN_SEEDS="1234 2027 31337"
+CONFIG_MATCHED_MICRO_CAMPAIGN_BATCH=64
+CONFIG_MATCHED_MICRO_CAMPAIGN_TOKEN_BUDGET=40000000
+CONFIG_MATCHED_MICRO_CAMPAIGN_EVAL_EVERY=150
