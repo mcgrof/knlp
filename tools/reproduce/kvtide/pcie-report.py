@@ -13,7 +13,12 @@ def load_rows(path: Path):
     rows = []
     with path.open(newline="", encoding="utf-8") as stream:
         for row in csv.DictReader(stream):
-            if row["rep"].startswith("warmup-") or row["iops"] == "ERR":
+            if (
+                row["rep"].startswith("warmup-")
+                or row["iops"] == "ERR"
+                or row["failed"] == "ERR"
+                or int(row["failed"]) != 0
+            ):
                 continue
             row["iops"] = float(row["iops"])
             row["MiBps"] = float(row["MiBps"])
@@ -53,6 +58,7 @@ def render(summaries):
         "premap beat SPDK in that measured cell; it is not a general claim.",
         "The latest SPDK arm uses spdk_nvme_perf while premap uses",
         "uring_nvm_perf, so their ratio compares complete software paths.",
+        "Warmups and rows with errors or failed I/O are excluded.",
         "",
         "profile  bytes     qd  thr  arm          median IOPS  median MiB/s  CPU cores  reps",
     ]

@@ -29,7 +29,9 @@ def test_report_uses_recorded_medians_and_ignores_warmups(tmp_path):
         "kv,spdk,spdk_nvme_perf,vfio-pci,randread,4096,16,1,1,100,"
         "0.39,0,1,1.0\n"
         "kv,spdk,spdk_nvme_perf,vfio-pci,randread,4096,16,1,2,ERR,"
-        "ERR,ERR,1,1.0\n",
+        "ERR,ERR,1,1.0\n"
+        "kv,linux,xnvmeperf,nvme,randread,4096,16,1,1,0,0,99,1,"
+        "1.0\n",
         encoding="utf-8",
     )
 
@@ -39,3 +41,4 @@ def test_report_uses_recorded_medians_and_ignores_warmups(tmp_path):
     assert summary[("kv", 4096, 16, 1, "premap")]["iops"] == 250
     assert "2.50x  premap higher" in rendered
     assert "9999" not in rendered
+    assert ("kv", 4096, 16, 1, "linux") not in summary

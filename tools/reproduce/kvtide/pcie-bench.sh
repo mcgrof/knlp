@@ -400,10 +400,15 @@ run_cell() {
 	local arm=$1 size=$2 qd=$3 threads=$4 rep=$5 cpus mask log
 	local -a command
 
-	if [ "$arm" = fixed ] && [ "$size" -gt "$NORMAL_MAX_BYTES" ]; then
-		kvtide_log "skip fixed: $size bytes exceeds the ordinary $NORMAL_MAX_BYTES-byte limit"
-		return
-	fi
+	case "$arm" in
+	linux|fixed)
+		if [ "$size" -gt "$NORMAL_MAX_BYTES" ]; then
+			kvtide_log "skip $arm: $size bytes exceeds the ordinary \
+$NORMAL_MAX_BYTES-byte limit"
+			return
+		fi
+		;;
+	esac
 
 	CURRENT_ARM=$arm
 	CURRENT_SIZE=$size
