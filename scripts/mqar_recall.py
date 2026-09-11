@@ -468,6 +468,10 @@ def main():
                 + " ".join(f"N{n}={r['accuracy']:.3f}" for n, r in rep.items()),
                 flush=True,
             )
+            # the partial record survives a crash (a shared GPU hang cost
+            # two runs their final JSON once)
+            with open(os.path.join(args.out_dir, f"{args.arm}.partial.json"), "w") as f:
+                json.dump(run, f, indent=1)
     rep = evaluate(
         model,
         args.arm,
