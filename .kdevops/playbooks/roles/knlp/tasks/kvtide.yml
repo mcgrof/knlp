@@ -31,6 +31,8 @@
       - flex
       - bc
       - libelf-dev
+      # gendwarfksyms includes dwarf.h when the distro config enables it.
+      - libdw-dev
       - zstd
       # pahole: BTF generation for the kernel under test -- the kvio
       # eBPF tracers need CONFIG_DEBUG_INFO_BTF=y to attach
