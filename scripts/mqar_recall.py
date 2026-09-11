@@ -543,12 +543,16 @@ def main():
     )
     for n, r in rep.items():
         if "routing_overlap" in r:
-            print(
+            line = (
                 f"  N{n}: routing overlap {r['routing_overlap']:.3f} "
-                f"(chance {r['routing_overlap_chance']:.3f})  "
-                f"shared-off acc {r['accuracy_shared_off']:.3f}  "
-                f"routed-off acc {r['accuracy_routed_off']:.3f}"
+                f"(chance {r['routing_overlap_chance']:.3f})"
             )
+            if "accuracy_shared_off" in r:
+                line += (
+                    f"  shared-off acc {r['accuracy_shared_off']:.3f}  "
+                    f"routed-off acc {r['accuracy_routed_off']:.3f}"
+                )
+            print(line)
     path = os.path.join(args.out_dir, f"{args.arm}.json")
     with open(path, "w") as f:
         json.dump(run, f, indent=1)
