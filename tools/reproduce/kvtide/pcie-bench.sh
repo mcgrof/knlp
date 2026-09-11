@@ -329,7 +329,7 @@ validate_premap() {
 		kvtide_die "namespace is too small to validate premapping"
 	cpu=$(cpu_list 1) || kvtide_die "the CPU list is empty"
 	log="$RUN_DIR/premap-validation.log"
-	command=(sudo "$URING_PERF" --mode premap --qdepth 1
+	command=(sudo "$URING_PERF" --mode premap --qd 1
 		--iosize "$probe" --lba-size "$LBA_SIZE"
 		--namespace-bytes "$NAMESPACE_BYTES" --seconds 1 --cpus "$cpu")
 	for dev in $KERNEL_DEVS; do command+=("$dev"); done
@@ -452,7 +452,7 @@ run_cell() {
 			kvtide_log "skip $arm: thread count exceeds device count"
 			return
 		fi
-		command=(sudo "$URING_PERF" --mode "$arm" --qdepth "$qd"
+		command=(sudo "$URING_PERF" --mode "$arm" --qd "$qd"
 			--iosize "$size" --lba-size "$LBA_SIZE"
 			--namespace-bytes "$NAMESPACE_BYTES"
 			--seconds "${CONFIG_KVTIDE_PCIE_SECS}" --cpus "$cpus")
