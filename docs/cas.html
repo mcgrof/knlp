@@ -37,7 +37,7 @@ li { margin-bottom: 8px; }
 .toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 0 0 32px; columns: 2; column-gap: 32px; font-family: var(--mono); font-size: 12px; }
 .toc a { color: var(--text2); display: block; padding: 3px 0; }
 .toc a:hover { color: var(--green); text-decoration: none; }
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 20px 0; }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
 .stat .val { font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--green); }
 .stat .val.amber { color: var(--amber); }
@@ -55,6 +55,8 @@ tr:hover td { background: var(--bg3); }
 .note strong { color: var(--green); }
 .note.amber { background: #f0a03018; border-left-color: var(--amber); }
 .note.amber strong { color: var(--amber); }
+.note.red { background: #e8404018; border-left-color: var(--red); }
+.note.red strong { color: var(--red); }
 code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
 footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
 footer a { color: var(--text2); }
@@ -67,9 +69,9 @@ footer a { color: var(--text2); }
 <header>
   <h1>Cartridges at Scale</h1>
   <p>An independent reproduction on a frozen Qwen3-8B over the LongHealth
-  medical question-answering benchmark. The baselines and the collapse/rescue
-  effect reproduce; a single isolated cartridge reaches 0.50 where the paper
-  reports 0.736, and the distance is traced to where it lives.</p>
+  medical question-answering benchmark. The faithful isolated recipe reaches
+  0.603 across five H100-trained cartridges. Do not use the earlier
+  collapse/rescue numbers; run that comparison again on clean targets.</p>
   <p><a href="https://arxiv.org/abs/2606.04557">Cartridges at Scale (arXiv:2606.04557)</a>
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
   &middot; <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">harness</a></p>
@@ -79,20 +81,23 @@ footer a { color: var(--text2); }
   <div class="stat"><div class="val">0.39</div><div class="label">No context<br>(paper 0.375)</div></div>
   <div class="stat"><div class="val">0.855</div><div class="label">Full document<br>(paper 0.874)</div></div>
   <div class="stat"><div class="val cyan">0.86</div><div class="label">Cartridge-path<br>ceiling</div></div>
-  <div class="stat"><div class="val amber">0.50</div><div class="label">Single cartridge<br>(paper 0.736)</div></div>
+  <div class="stat"><div class="val amber">0.603</div><div class="label">Five cartridges<br>H100 mean</div></div>
+  <div class="stat"><div class="val">0.650</div><div class="label">Patient 02<br>H100</div></div>
+  <div class="stat"><div class="val cyan">0.833</div><div class="label">Patient 02<br>A100 control</div></div>
 </div>
 
 <div class="toc">
   <a href="#what-cas-adds">1. What a cartridge is, and what CAS adds</a>
-  <a href="#what-reproduces">2. What reproduces</a>
-  <a href="#cartridge-path-lossless">3. The cartridge path is lossless</a>
-  <a href="#collapse-rescue">4. Collapse and rescue</a>
-  <a href="#single-cartridge-gap">5. The single-cartridge gap</a>
-  <a href="#what-our-code-does">6. What our code does</a>
-  <a href="#deltas">7. Deltas against the public implementation</a>
-  <a href="#next-gains">8. Where the next gains come from</a>
-  <a href="#reproduce">9. Reproduce</a>
-  <a href="#serving">10. Serving and upstream enablement</a>
+  <a href="#validated">2. What is validated</a>
+  <a href="#recipe">3. The faithful isolated recipe</a>
+  <a href="#five-patient">4. Five-patient result</a>
+  <a href="#length">5. The remaining quality gap</a>
+  <a href="#hardware">6. A100 cross-hardware control</a>
+  <a href="#cartridge-path-lossless">7. The cartridge path is lossless</a>
+  <a href="#collapse-rescue">8. Collapse/rescue status</a>
+  <a href="#ablations">9. Closed ablations and stability</a>
+  <a href="#code">10. Code and reproduction</a>
+  <a href="#serving">11. Serving</a>
 </div>
 
 <section id="what-cas-adds">
@@ -121,242 +126,223 @@ cartridges, observe the collapse when they are combined, and recover it with the
 training-rule change — measured on Qwen3-8B and LongHealth.</p>
 </section>
 
-<section id="what-reproduces">
-<h2>2. What reproduces</h2>
-<p>Every number on this page uses one protocol: the LongHealth multiple-choice
-task with option-text prompting, thinking enabled, temperature 0.6, a 2048-token
-generation budget, fuzzy matching of the generated answer against the five
-options, and a mean over at least three runs. The cartridge path and the
-in-context baselines sample identically (top-k 20, top-p 0.95), so the paths are
-directly comparable.</p>
+<section id="validated">
+<h2>2. What is validated</h2>
+<p>The clean result is now the isolated-cartridge reproduction. Accuracy uses the
+CAS Table-15 LongHealth protocol: option-text prompting, thinking enabled,
+temperature 0.6, a 2048-token generation budget, fuzzy option matching, all 20
+questions for each patient, and three generation runs per trained cartridge.</p>
 <div class="table-wrap">
 <table>
-<tr><th>Measurement</th><th>Ours</th><th>Paper</th></tr>
-<tr><td>No-context baseline (question only)</td><td class="hi">0.39</td><td>0.375</td></tr>
-<tr><td>Full document in context</td><td class="hi">0.855</td><td>0.874</td></tr>
-<tr><td>Full-document KV loaded through the cartridge path</td><td class="hi">0.86</td><td>&mdash;</td></tr>
-<tr><td>Single isolated cartridge (best)</td><td class="warn">0.50</td><td>0.736</td></tr>
+<tr><th>Measurement</th><th>Ours</th><th>Paper</th><th>Status</th></tr>
+<tr><td>No-context baseline (question only)</td><td class="hi">0.390</td><td>0.375</td><td>matched anchor</td></tr>
+<tr><td>Full document in context</td><td class="hi">0.855</td><td>0.874</td><td>matched anchor</td></tr>
+<tr><td>Full-document KV through cartridge execution</td><td class="hi">0.860</td><td>&mdash;</td><td>path control</td></tr>
+<tr><td>Isolated cartridges, five-patient H100 mean</td><td class="warn">0.603</td><td>0.736</td><td>clean result</td></tr>
+<tr><td>Patient 02, H100-trained cartridge</td><td>0.650 &plusmn; 0.050</td><td>&mdash;</td><td>three generation runs</td></tr>
+<tr><td>Patient 02, A100-trained cartridge</td><td class="hi">0.833 &plusmn; 0.058</td><td>&mdash;</td><td>cross-hardware control</td></tr>
 </table>
 </div>
-<p>The two ends of the range reproduce to within about two points: the model
-answers LongHealth at 0.39 with no record and at 0.855 with the full record in
-context. The compression path — a trained cartridge standing in for the record —
-is the piece that does not yet match.</p>
+<p>The no-context and full-document anchors reproduce the paper within about two
+percentage points. The exact full-document KV control proves that the alternate
+cache path itself does not explain the learned-cartridge gap. The five-patient
+number is a mean over five separately trained H100 cartridges; each patient row
+is itself the mean of three generations of that one cartridge.</p>
+<div class="note red"><strong>Do not cite the old collapse/rescue table.</strong>
+It was trained on data from a defective teacher-target path. Keep it outside the
+validated result set and run the comparison again on clean targets.</div>
+</section>
+
+<section id="recipe">
+<h2>3. The faithful isolated recipe</h2>
+<p>The optimizer regime was the missing lever in the earlier 0.50&ndash;0.55
+plateau. Holding the patient and data fixed, moving from the small-batch recipe
+to the paper's global-batch-128 schedule raised patient 02 from 0.55 to
+<strong>0.65 &plusmn; 0.05</strong>. Discard the earlier claims that learning rate
+and training length had been ruled out.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Quantity</th><th>Faithful setting</th></tr>
+<tr><td>Model</td><td>Qwen3-8B, frozen BF16 weights</td></tr>
+<tr><td>Training data</td><td>about 4,400 self-study conversations per patient; teacher top-20 token distributions</td></tr>
+<tr><td>Cartridge length</td><td>ceil(document tokens &divide; 20); 632 positions for patient 02</td></tr>
+<tr><td>Patient 02 layout</td><td>one frozen sink + 631 trainable KV positions</td></tr>
+<tr><td>Initialization</td><td>KV of the document's first <em>p</em> tokens under the system template</td></tr>
+<tr><td>Optimization</td><td>80 epochs, global batch 128, Adam, BF16 cartridge</td></tr>
+<tr><td>Learning rate</td><td>linear warmup from 0.002 to 0.1 over 200 steps, then linear decay</td></tr>
+<tr><td>Schedule horizon</td><td>5,000 steps; epochs stop first at roughly 800&ndash;1,130 steps by patient</td></tr>
+<tr><td>Evaluation</td><td>Table-15 generation, 20 questions, three runs, 2,048-token cap</td></tr>
+</table>
+</div>
+<p>The schedule horizon is not the number of optimizer updates. For patient 02,
+80 epochs end at roughly 1,000 updates while the learning rate is still about
+0.083. The harness now stops explicitly at a requested step; the upstream
+trainer's <code>max_optimizer_steps</code> hook saves a checkpoint but does not
+otherwise stop training.</p>
+<div class="note"><strong>What the sink is.</strong> Position 0 is the frozen KV
+entry for the first system-template token, Qwen's
+<code>&lt;|im_start|&gt;</code>. Queries can place otherwise unhelpful attention mass
+on this stable slot instead of document-bearing slots. The model does attend to
+it; dropping it produces degenerate results.</div>
+</section>
+
+<section id="five-patient">
+<h2>4. Five-patient isolated result</h2>
+<p>Five separate cartridges were trained with the faithful H100 recipe. The
+&ldquo;per run&rdquo; entries below are repeated generation runs of the same trained
+cartridge, not independent training replicas.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Patient</th><th>Accuracy, 3 runs</th><th>Per run</th><th>Hit 2,048 cap</th><th>Accuracy if completed</th></tr>
+<tr><td>01</td><td>0.450 &plusmn; 0.000</td><td>0.45 / 0.45 / 0.45</td><td>17 / 60</td><td>0.512 (n=43)</td></tr>
+<tr><td>02</td><td class="hi">0.650 &plusmn; 0.050</td><td>0.70 / 0.65 / 0.60</td><td>not retained</td><td>&mdash;</td></tr>
+<tr><td>03</td><td class="hi">0.650 &plusmn; 0.087</td><td>0.60 / 0.75 / 0.60</td><td>18 / 60</td><td>0.857 (n=42)</td></tr>
+<tr><td>05</td><td class="hi">0.650 &plusmn; 0.050</td><td>0.70 / 0.65 / 0.60</td><td>17 / 60</td><td>0.814 (n=43)</td></tr>
+<tr><td>06</td><td>0.617 &plusmn; 0.161</td><td>0.50 / 0.80 / 0.55</td><td>8 / 60</td><td>0.673 (n=52)</td></tr>
+<tr><td><strong>Mean</strong></td><td class="warn"><strong>0.603</strong></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+</table>
+</div>
+<p>The mean remains below the paper's isolated aggregate of 0.736, but a single
+mean hides two different failure modes. Patients 03 and 05 know the answers when
+they finish; patient 01 usually finishes quickly and is often wrong.</p>
+</section>
+
+<section id="length">
+<h2>5. The remaining quality gap</h2>
+<p>The main residual is generation control under the paper's 2,048-token cap,
+not simply missing document facts. Patients 03 and 05 hit the cap on about 28%
+of generations. Their completed answers score 0.81&ndash;0.86, above the paper's
+aggregate, while truncated answers fall near chance because the scorer sees the
+tail of unfinished reasoning. Patient 06 shows a smaller version of the same
+effect.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Observed behavior</th><th>Interpretation</th></tr>
+<tr><td>Patients 03 and 05: 28% capped; completed accuracy 0.81&ndash;0.86</td><td>knowledge is present; answer control is too long</td></tr>
+<tr><td>Patient 06: 13% capped; completed accuracy 0.67</td><td>mixed length and knowledge effect</td></tr>
+<tr><td>Patient 01: median output 77 characters; completed accuracy 0.51</td><td>genuine knowledge/representation gap</td></tr>
+</table>
+</div>
+<p>A 4,096-token cap ablation would quantify the length effect directly; it has
+not been run. The paper synthesizes roughly 40,000 conversations per cartridge,
+versus about 4,400 here, so data scale remains a plausible lever for patient 01.
+Earlier small-batch synthesis variants did not close the old 0.4&ndash;0.5 plateau,
+but they do not rule out better data under the faithful optimizer regime.</p>
+</section>
+
+<section id="hardware">
+<h2>6. A100 cross-hardware control</h2>
+<p>A separately trained patient-02 cartridge on one A100 PCIe 40 GB, using the
+same faithful recipe, scored <strong>0.833 &plusmn; 0.058</strong>: 0.80, 0.80,
+and 0.90, or 50 correct answers out of 60. The H100-trained cartridge scored
+0.65, or 39 out of 60. The A100 run finished at optimizer step 1,068 with final
+training loss about 0.0153.</p>
+<div class="note amber"><strong>Do not call this an A100 advantage.</strong> The
+two runs produced different learned cartridges and evaluation is sampled. A
+matched cross-evaluation of both cartridge files with controlled generation
+seeds is required before attributing the difference to hardware or training
+trajectory. Today this is a surprising cross-hardware observation, not a causal
+result.</div>
 </section>
 
 <section id="cartridge-path-lossless">
-<h2>3. The cartridge path is lossless</h2>
-<p>Before attributing the gap to training, we ruled out the execution path. The
-cartridge runs through a custom FlexAttention Qwen3 forward with a trainable KV
-cache, not through the same code as the in-context baselines, so the 0.855
-full-document anchor does not by itself prove the cartridge path is faithful.</p>
-<p>The control: prefill the entire ~12K-token record normally, capture its exact
-key/value tensors, write them into the cartridge format unchanged, and evaluate
-that untrained "cartridge" through the cartridge path. It reaches <strong>0.86</strong>,
-matching ordinary full-document inference (0.855) to within a point, with
-per-patient scores tracking tightly.</p>
-<div class="note"><strong>The path has no loss.</strong> No positional, RoPE,
-serialization, or loading error. The ceiling for a perfect cartridge is 0.86, so
-the entire distance from 0.50 to 0.86 is a compression-and-training question, not
-an execution one.</div>
+<h2>7. The cartridge path is lossless</h2>
+<p>The cartridge evaluator uses a custom FlexAttention Qwen3 forward, so the
+ordinary full-document anchor alone cannot validate it. The direct control
+prefills the complete roughly 12,000-token record, captures every exact K and V
+tensor, writes that full KV into cartridge format unchanged, and evaluates it
+through the cartridge path. It scores <strong>0.86</strong>, matching ordinary
+full-document inference at 0.855.</p>
+<div class="note"><strong>The path has no measurable loss.</strong> This rules
+out positional offsets, RoPE handling, serialization, reconstruction, and cache
+loading as explanations for the learned-cartridge gap. It does not say that a
+632-position learned cartridge is lossless; it says the execution path can carry
+the full document KV without loss. For patient 02, the full document is 12,628
+tokens. Do not confuse this control with the 631 document-derived trainable
+positions used to initialize its learned cartridge.</div>
 </section>
 
 <section id="collapse-rescue">
-<h2>4. Collapse and rescue</h2>
-<p>The qualitative CAS result reproduces. With five per-document cartridges:</p>
+<h2>8. Collapse/rescue status</h2>
+<p>The CAS paper reports that independently trained cartridges lose accuracy when
+co-loaded and that mixed-visibility joint training prevents the collapse. Treat
+the following measurements from the earlier page as invalid historical output:</p>
 <div class="table-wrap">
 <table>
-<tr><th>Arm</th><th>Alone (oracle)</th><th>Co-loaded</th><th>Co-load delta</th></tr>
-<tr><td>Isolated cartridges</td><td>0.58</td><td class="bad">0.38</td><td class="bad">&minus;0.20 (collapse to floor)</td></tr>
-<tr><td>Mixed-visibility joint</td><td>0.44</td><td class="hi">0.46</td><td class="hi">+0.02 (no collapse)</td></tr>
+<tr><th>Invalid historical arm</th><th>Alone</th><th>Co-loaded</th><th>Delta</th></tr>
+<tr><td>Isolated cartridges</td><td>0.58</td><td>0.38</td><td class="bad">&minus;0.20</td></tr>
+<tr><td>Mixed-visibility joint</td><td>0.44</td><td>0.46</td><td>+0.02</td></tr>
 </table>
 </div>
-<p>An isolated cartridge that scores 0.58 alone drops to 0.38 — the no-context
-floor — when the other four cartridges share its cache. The mixed-visibility
-cartridge starts lower alone (0.44 — in this reproduction a jointly trained
-cartridge pays for coexistence when evaluated by itself) but does not degrade when
-co-loaded; its co-load delta flips sign. That sign flip is the rescue. It mirrors
-the paper's larger-N result, where isolated accuracy collapses from 0.736 toward
-0.26 under co-load while the joint rule holds it near 0.78. One divergence to
-note: the paper's joint training raises the alone score (near 0.79, above its
-0.736 isolated) where ours lowers it — the same single-cartridge shortfall traced
-in the next section.</p>
-<h3>Why a naive joint trainer inverts the result</h3>
-<p>If every cartridge is physically resident during training and only masked, the
-request tokens always sit at the same cache offset, and the cartridges learn only
-the co-loaded geometry — they then fail when served alone. A faithful
-implementation assembles each training example's cache per-sample, so that most
-examples present the target cartridge alone (solo geometry) and a minority present
-it alongside sampled distractors. Getting that per-sample assembly right, and
-matching the per-cartridge training budget, is what turns the inverted result into
-the sign flip above.</p>
+<div class="note red"><strong>Do not use those numbers.</strong> Their
+self-study data came through a vLLM teacher path that serialized the sampled
+token and then repeated it in the top-k list. Once real token IDs were added to
+an otherwise incomplete upstream path, greedy outputs turned that latent layout
+trap into live duplicate supervision. A separate earlier smoke was worse: every
+stored target ID was <code>-1</code> and could not train the intended objective.</div>
+<p>The affected synthesis parquet was not archived, so the classification rests
+on the generator code and run provenance rather than a row-by-row audit of that
+exact file. That uncertainty does not rescue the result: a run with unverified,
+known-affected targets cannot support the central claim.</p>
+<p><strong>Current status:</strong> keep the isolated reproduction in the clean
+result set. Mark collapse and rescue as open. Before citing a numerical result,
+run fresh deduplicated synthesis, evaluate isolated cartridges under co-load,
+and then train and evaluate the joint cartridges on those clean targets. The
+public harness already implements the paper's mixed-visibility rule with
+per-sample cache assembly.</p>
 </section>
 
-<section id="single-cartridge-gap">
-<h2>5. The single-cartridge gap</h2>
-<p>A single isolated cartridge reaches about 0.50 under the strict scorer (0.58 at
-its best), against the paper's 0.736. This is the open item, and it is a specific
-one.</p>
-<p>It is <strong>not the evaluation protocol</strong>: the no-context and
-full-document anchors land on the paper's values, and raising the generation
-budget to 8192 tokens does not move the cartridge score. It is <strong>not the
-sampler</strong>: the cartridge path and the baselines are matched. It is
-<strong>not the execution path</strong>: the lossless control reaches 0.86. It is
-<strong>not training length</strong>: cartridges trained for 80 epochs reach a
-distillation loss of 0.017 and score the same as ones trained for a fraction of
-that. It is not raw data volume, cartridge capacity, or the initialization.</p>
-<div class="note amber"><strong>The load-bearing observation.</strong> A cartridge
-trains to a distillation loss of about 0.035 — it matches the teacher's next-token
-distribution well under teacher forcing — yet, decoding on its own, it produces
-the correct answer only about 0.4&ndash;0.5 of the time. This holds even when the
-cartridge is trained directly on paraphrases of the exact questions it is later
-asked: it is no more accurate on those trained questions (0.38) than on held-out
-ones (0.50). Minimizing the teacher-forced distillation loss is not, by itself,
-producing a cartridge that free-generates the right answer.</div>
-<p>Reshaping the synthetic training distribution does not close the gap. Each
-strategy below trains to the same low distillation loss and free-generates at the
-same 0.4&ndash;0.5:</p>
-<div class="table-wrap">
-<table>
-<tr><th>Synthesis strategy</th><th>Single-cartridge accuracy</th></tr>
-<tr><td>Generic self-study</td><td>0.50</td></tr>
-<tr><td>Forced hard question forms (negation, temporal, binding, comparison)</td><td>0.48</td></tr>
-<tr><td>Hard-negative entity binding (same-record distractors, five-option)</td><td>0.40</td></tr>
-<tr><td>Paraphrases of the benchmark's own questions (held-out)</td><td>0.50</td></tr>
-</table>
-</div>
-<p>A document-utility audit confirms the corpus is genuinely document-dependent —
-the answers require the record, they are not generic clinical prose — so the
-flatness is not a filler-data artifact. The distance from 0.50 to 0.736 lives in
-the objective-to-generation transfer, not in which questions the corpus asks.</p>
+<section id="ablations">
+<h2>9. Closed ablations and training stability</h2>
+<h3>Meta-learned initialization: no useful speedup</h3>
+<p>A displacement fitted from other documents lowers the step-zero held-out loss,
+but training forgets it. The best step-60 affine initialization reached the
+baseline's 50%, 75%, and 90% loss-drop targets only 3.3, 5.0, and 5.6 steps
+earlier out of roughly 1,000 total steps. Remove its lower step-zero loss and it
+is slower. By step 180, baseline and fitted starts are within 0.00003. A same-seed
+replicate was bit-for-bit identical through step 110, so &ldquo;independent
+replicate&rdquo; here means a determinism control, not new statistical evidence.
+This line is closed.</p>
+<h3>Reverse KL: no measurable gain</h3>
+<p>A reverse-KL warm-start pilot moved patient 02 from 0.65 &plusmn; 0.05 to
+0.70 &plusmn; 0.05 after 200 steps: 42 versus 39 correct answers out of 60,
+less than one binomial standard deviation. It did not collapse, but this
+evaluation does not resolve a gain.</p>
+<h3>The paper learning rate can spike</h3>
+<p>The 0.1 peak learning rate uses plain Adam without gradient clipping. Three of
+five anchor-initialized H100 runs showed a loss spike after warmup; all recovered
+within about 60 steps. Whether clipping improves final accuracy is untested. This
+is a stability caveat, not evidence against the recipe that produced the quality
+gain.</p>
 </section>
 
-<section id="what-our-code-does">
-<h2>6. What our code does</h2>
-<p>The harness wraps the public Cartridges package and drives it from a small set
-of scripts. The pieces that matter for a reproduction:</p>
-<h3>The cartridge path</h3>
-<p>A FlexAttention Qwen3 forward with a trainable KV cache. For the collection,
-all N cartridges live in one cache; each is hidden or revealed per training sample
-by a reveal-vector block mask. A cartridge's identity is its cache slot: cartridge
-id equals <code>kv_idx // KV_TOKENS</code>.</p>
-<h3>The per-sample visibility mask</h3>
-<p>The library's block mask attends iff the key is a global sink or the key's
-sequence id equals the query's — it can express visible-to-all or visible-to-one,
-but not a per-sample <em>random</em> reveal. The faithful joint rule needs the
-latter, so the mask is replaced with a full-length reveal-vector lookup: for each
-key position, look up whether its cartridge is revealed for this sample.</p>
-<h3>Two trainers</h3>
-<p>The isolated trainer trains one cartridge with the target always visible. The
-joint trainer holds all N cartridges in one cache and, per sample, reveals the
-target alone 75% of the time and reveals the target plus a random handful of
-distractor cartridges the other 25%; gradients flow only into the revealed
-cartridges. This is the mixed-visibility rule that produces the rescue. Both use
-the exact distillation loss — the negative teacher log-probability under the
-cartridge, over the teacher's top-20 tokens per position.</p>
-<h3>Synthesis and evaluation</h3>
-<p>A question-generator model reads a note and produces diverse questions; an
-answerer model answers each with thinking enabled and returns its top-20 token
-log-probabilities as the distillation targets. The evaluation harness runs the
-LongHealth protocol with a matched-sampler decoder and the cache-path parity
-control that produces the 0.86 lossless number.</p>
-<div class="table-wrap">
-<table>
-<tr><th>Quantity</th><th>Value</th></tr>
-<tr><td>Base model</td><td>Qwen3-8B, frozen</td></tr>
-<tr><td>Document</td><td>LongHealth patient record, ~12K tokens</td></tr>
-<tr><td>Cartridge size</td><td>document tokens &divide; 20 &asymp; 611 KV entries</td></tr>
-<tr><td>Cartridge on disk</td><td>~90 MB, bf16 (Qwen3-8B, GQA, 611 tokens)</td></tr>
-<tr><td>Frozen prefix</td><td>one attention-sink token, load-bearing</td></tr>
-<tr><td>Distillation targets</td><td>teacher top-20 token log-probabilities per position</td></tr>
-<tr><td>Training loss reached</td><td>~0.035 isolated; 0.017 at 80 epochs</td></tr>
-<tr><td>Mixed-visibility rate</td><td>target alone 75%, target + sampled distractors 25%</td></tr>
-<tr><td>Serving TTFT</td><td>757 ms &rarr; 81 ms median (677 ms/query saved)</td></tr>
-<tr><td>Decode</td><td>~35 tok/s, both paths</td></tr>
-</table>
-</div>
-</section>
-
-<section id="deltas">
-<h2>7. Deltas against the public implementation</h2>
-<p>Three alignments to the paper matter for anyone reproducing from the public
-code, because the stock trainer differs from the paper's description in ways a
-reproduction must reconcile.</p>
+<section id="code">
+<h2>10. Code and reproduction</h2>
+<p>The public
+<a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">research/cartridges_cas</a>
+harness contains the synthesis, isolated and joint trainers, Table-15 evaluator,
+cache-path parity control, prompt-grouped validation split, checkpoint controls,
+and meta-initialization analysis.</p>
+<p>Three rules are load-bearing:</p>
 <ul>
-<li><strong>Distillation loss reduction.</strong> The loss is defined per token:
-sum the negative teacher log-probability over the top-20 classes, then average
-over tokens. Averaging over the sparse <em>entries</em> instead under-scales the
-gradient by roughly the top-k factor, putting the effective learning rate far
-below the paper's. The harness reduces per token.</li>
-<li><strong>Learning-rate warmup.</strong> Warmup must be applied before the first
-optimizer step; applying it after means the first update fires at peak learning
-rate rather than at the warmup floor.</li>
-<li><strong>Packing window.</strong> Teacher answers can be long. Packing to a
-short sequence length truncates a meaningful fraction of them mid-thought, which
-trains cartridges to begin reasoning without concluding. The window is enlarged so
-complete teacher trajectories survive into training.</li>
+<li><strong>Validate generated targets.</strong> Token IDs in every stored row
+must be real, unique within the top-k support, and checked at write time.</li>
+<li><strong>Reconstruct the right cache.</strong> An isolated checkpoint needs its
+one frozen sink plus trainable KV. A joint checkpoint's frozen region contains
+distractors, so an oracle read loads only the target's trainable region plus its
+required sink representation.</li>
+<li><strong>Validate the protocol first.</strong> No-context must land near 0.39
+and full-document inference near 0.855 before a cartridge score is interpretable.
+A single 20-question run is too noisy; use at least three.</li>
 </ul>
-<p>Two further deltas are execution details rather than the recipe. The public
-package writes FlexAttention as a raw kernel because RDNA3 cannot compile it; on
-CUDA sm&ge;80 the compiled path restores about a 16&times; training speedup. And
-the teacher top-k flattening keeps all K log-probabilities when a confident
-teacher's cumulative mass never reaches the retention threshold, rather than
-collapsing to a hard top-1 label.</p>
-<div class="note"><strong>None of these closes the gap alone.</strong> With all
-three alignments applied, the cartridge trains cleanly to a distillation loss of
-0.03 and still scores about 0.50. They are corrections a faithful reproduction
-needs, not the missing ingredient.</div>
-</section>
-
-<section id="next-gains">
-<h2>8. Where the next gains come from</h2>
-<p>The gap is an objective-to-generation transfer problem, so the levers are the
-parts of the method that shape that transfer and are least specified in the public
-materials:</p>
-<ul>
-<li><strong>The exact self-study distribution.</strong> A larger, cross-family
-question-generator; sampling notes proportional to their length; generating
-diverse questions in batches per note rather than one at a time. The paper's
-ablations put the question-generation strategy among the largest quality levers,
-and it is the one this reconstruction is least sure of.</li>
-<li><strong>The faithful optimizer regime.</strong> The paper trains at batch 128
-with a linear learning-rate schedule peaking near 0.1. At batch 16 that peak
-diverges on this stack, so the large-batch regime is a prerequisite, not an
-optional tweak.</li>
-<li><strong>A possible free-generation term.</strong> A cartridge that minimizes
-teacher-forced distillation loss but free-generates poorly points at an objective
-that covers positions, or a consistency signal, that this reconstruction omits.</li>
-</ul>
-<p>The reproduction has ruled out the cheap explanations, so the remaining
-distance is worth spending real training on the items above, in that order.</p>
-</section>
-
-<section id="reproduce">
-<h2>9. Reproduce</h2>
-<p>The harness lives in
-<a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">research/cartridges_cas</a>.
-It wraps the pinned public Cartridges package, applies the alignments above, and
-runs the phases in order: synthesize the self-study corpora, train isolated
-cartridges, run the combine-at-inference collapse evaluation, then train the
-mixed-visibility cartridges and run the rescue evaluation.</p>
-<p>Two settings decide whether the numbers mean anything, and both are easy to get
-wrong:</p>
-<ul>
-<li><strong>Cartridge reconstruction.</strong> A checkpoint stores trainable and
-frozen tensors. For an isolated cartridge the frozen part is the single
-attention-sink token — load it, because dropping it leaves a degenerate control
-prefix. For a joint cartridge the frozen part is the distractor cartridges — load
-the trainable part only, because baking the distractors in turns each oracle into
-a collapse.</li>
-<li><strong>The evaluation protocol.</strong> Use the option-text prompt with
-thinking enabled. Before trusting any cartridge score, confirm the no-context
-baseline lands near 0.39 and the full-document baseline near 0.855; if they do
-not, the protocol is wrong and every cartridge number is uninterpretable.</li>
-</ul>
+<p>Compiled FlexAttention on CUDA sm&ge;80 gives about a 16&times; training
+speedup over the raw path. The target flattener also preserves the full available
+top-k when cumulative probability does not reach its threshold, instead of
+silently falling back to top-1.</p>
 </section>
 
 <section id="serving">
-<h2>10. Serving and upstream enablement</h2>
+<h2>11. Serving</h2>
 <p>The serving side is already built. A cartridge injects as a
 <code>KVConnectorBase_V1</code> plugin into vLLM with no core modifications, and on
 this record the time-to-first-token drops from 757 ms (re-prefilling the ~12K-token
@@ -364,12 +350,11 @@ document every query) to 81 ms (loading the 611-token KV prefix), a 677 ms media
 saving per query at equal decode throughput. The connector, the multi-cartridge
 router, GPU residency and eviction, and an asymmetric-KV storage codec have all
 been implemented and tested against vLLM and LMCache.</p>
-<p>CAS makes that plumbing broadly useful. Retrieval-grounded serving does not have
-to re-prefill retrieved documents on every request: a document collection can be
-compiled once into cartridges and composed at request time, which is exactly the
-multi-cartridge residency and routing the connector already handles. The next step
-is a first-class serving path for it — cartridge storage, per-request composition,
-and an asymmetric-KV offload tier.</p>
+<p>CAS makes that plumbing broadly useful: a document collection can be compiled
+once, kept resident under a budget, and selected per request without repeatedly
+prefilling each retrieved document. Quantization of the stored cartridge is a
+separate serving R&amp;D result and is intentionally documented separately from
+this training reproduction.</p>
 </section>
 
 <footer>
