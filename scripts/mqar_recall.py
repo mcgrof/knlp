@@ -50,17 +50,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matched_micro_train import MOM_ROUTING, StackLM, environment_manifest  # noqa: E402
 
 PAD = 0
+# the token that follows every query in the input.  The answer itself
+# must NOT be fed back: with answers in the input a two-layer attention
+# stack learns to output any value not yet used as an answer, which
+# scores exactly the mean of 1/(N-j) over query order j (0.52 at four
+# pairs, 0.20 at sixteen) without ever binding a key to its value
+FILL = 1
 # set by main() from --vocab: keys occupy the lower half of the
-# vocabulary above the pad token, values the upper half
+# vocabulary above the two special tokens, values the upper half
 VOCAB = 8192
-KEY_LO, KEY_HI = 1, VOCAB // 2
+KEY_LO, KEY_HI = 2, VOCAB // 2
 VAL_LO, VAL_HI = VOCAB // 2, VOCAB
 
 
 def set_vocab(vocab):
     global VOCAB, KEY_LO, KEY_HI, VAL_LO, VAL_HI
     VOCAB = vocab
-    KEY_LO, KEY_HI = 1, vocab // 2
+    KEY_LO, KEY_HI = 2, vocab // 2
     VAL_LO, VAL_HI = vocab // 2, vocab
 
 
@@ -109,7 +115,8 @@ ARMS = dict(
 
 def make_examples(rng, num_pairs, count, seq_len):
     """count sequences of num_pairs key-value pairs followed by the keys
-    in random order; returns (inputs, targets, write_pos, read_pos)
+    in random order, each followed by a filler token, with the value as
+    the target at the key; returns (inputs, targets, write_pos, read_pos)
     where targets are -100 except at query positions, and the two index
     arrays map pair i to the position that wrote its value and the
     position that asks for it."""
@@ -127,7 +134,7 @@ def make_examples(rng, num_pairs, count, seq_len):
         order = rng.permutation(n)
         q = 2 * n + 2 * np.arange(n)
         x[c, q] = keys[order]
-        x[c, q + 1] = vals[order]
+        x[c, q + 1] = FILL
         y[c, q] = vals[order]
         write_pos[c, order] = 2 * np.arange(n) + 1
         read_pos[c, order] = q
@@ -223,6 +230,11 @@ def evaluate(model, arm, device, levels, examples, seed, eval_batch):
         x, y, wpos, rpos = make_examples(rng, n, examples, seq_len)
         correct = total = 0
         overlap_hits = overlap_total = 0
+        # correctness by query order (recency of the question) and by
+        # pair index (age of the association) for the first and last
+        # quarter of each, a forgetting/recency read on every arm
+        by_order = np.zeros(n)
+        by_pair = np.zeros(n)
         for s in range(0, examples, eval_batch):
             xb = torch.from_numpy(x[s : s + eval_batch]).to(device)
             yb = torch.from_numpy(y[s : s + eval_batch]).to(device)
@@ -230,6 +242,13 @@ def evaluate(model, arm, device, levels, examples, seed, eval_batch):
             mask = yb != -100
             correct += (pred[mask] == yb[mask]).sum().item()
             total += mask.sum().item()
+            hit = (pred == yb).cpu().numpy()  # (b, seq)
+            r = rpos[s : s + eval_batch]  # (b, n): pair i -> query position
+            rows = np.arange(r.shape[0])[:, None]
+            hit_pair = hit[rows, r]  # (b, n) indexed by pair
+            by_pair += hit_pair.sum(0)
+            order = np.argsort(r, axis=1)  # pair index in query order
+            by_order += np.take_along_axis(hit_pair, order, axis=1).sum(0)
             for blk in mom_blocks(model):
                 # (batch*seq, memories) -> top-2 memory sets per position
                 logits = blk.router_logits.view(xb.shape[0], xb.shape[1], -1)
@@ -243,6 +262,11 @@ def evaluate(model, arm, device, levels, examples, seed, eval_batch):
                 overlap_hits += hit.sum().item()
                 overlap_total += hit.numel()
         entry = dict(pairs=n, seq_len=seq_len, accuracy=correct / max(1, total))
+        q = max(1, n // 4)
+        entry["acc_first_queries"] = float(by_order[:q].sum() / (q * examples))
+        entry["acc_last_queries"] = float(by_order[-q:].sum() / (q * examples))
+        entry["acc_oldest_pairs"] = float(by_pair[:q].sum() / (q * examples))
+        entry["acc_newest_pairs"] = float(by_pair[-q:].sum() / (q * examples))
         if overlap_total:
             entry["routing_overlap"] = overlap_hits / overlap_total
             # two independent top-k draws from E memories share a member
@@ -337,6 +361,7 @@ def main():
             train_pairs=levels,
             train_seq_len=seq_len,
             eval_pairs=eval_levels,
+            answers_in_input=False,
         ),
         params=params,
         environment=environment_manifest(),
