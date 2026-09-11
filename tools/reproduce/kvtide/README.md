@@ -86,6 +86,11 @@ hugepage count. A restore failure is printed as a critical error. These checks
 do not make an OS disk disposable; verify the PCI addresses yourself before
 setting the opt-in.
 
+On a translated-IOMMU boot, `pcie-bind.sh` tries to load
+`vfio_iommu_type1` explicitly so it is available when the kernel does not
+expose vfio device cdevs through iommufd. Loading `vfio-pci` alone does not
+make the legacy type1 transport available to xNVMe.
+
 `defconfig-kvtide-pcie-linux-baremetal` additionally builds and installs the
 public `blk-iobuf-pool-v5-premap-iova` kernel. It writes the required IOMMU,
 non-multipath, pool-order, and pool-size settings into a GRUB fragment and

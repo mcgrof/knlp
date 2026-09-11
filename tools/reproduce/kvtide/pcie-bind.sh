@@ -13,6 +13,7 @@ is_pcie || kvtide_die "select CONFIG_KVTIDE_MODE_PCIE"
 	kvtide_die "CONFIG_KVTIDE_PCIE_BDFS is empty"
 
 SYSFS_ROOT=${KVTIDE_SYSFS_ROOT:-/sys}
+DEV_ROOT=${KVTIDE_DEV_ROOT:-/dev}
 
 case "$1" in
 kernel) target=nvme ;;
@@ -20,6 +21,36 @@ vfio) target=vfio-pci ;;
 uio) target=uio_pci_generic ;;
 *) kvtide_die "driver mode must be kernel, vfio or uio" ;;
 esac
+
+prepare_vfio() {
+	# vfio-pci does not depend on the legacy type1 IOMMU module. Load it
+	# explicitly so xNVMe can use its type1 fallback when the host does not
+	# expose a vfio device cdev through iommufd.
+	sudo modprobe vfio-pci
+	sudo modprobe vfio_iommu_type1 2>/dev/null || true
+}
+
+prepare_target() {
+	case "$target" in
+	nvme) sudo modprobe nvme ;;
+	vfio-pci) prepare_vfio ;;
+	uio_pci_generic) sudo modprobe uio_pci_generic ;;
+	esac
+}
+
+validate_vfio_transport() {
+	local bdf cdev_ready=y
+
+	[ -c "$DEV_ROOT/iommu" ] || cdev_ready=n
+	for bdf in ${CONFIG_KVTIDE_PCIE_BDFS}; do
+		[ -d "$SYSFS_ROOT/bus/pci/devices/$bdf/vfio-dev" ] || \
+			cdev_ready=n
+	done
+	[ "$cdev_ready" = n ] || return 0
+
+	[ -d "$SYSFS_ROOT/module/vfio_iommu_type1" ] || \
+		kvtide_die "vfio-pci needs vfio_iommu_type1 when vfio cdevs are unavailable"
+}
 
 PREMAP_ORDER_PATH="$SYSFS_ROOT/module/nvme_core/parameters/iobuf_pool_order"
 PREMAP_FOLIOS_PATH="$SYSFS_ROOT/module/nvme_core/parameters/iobuf_pool_folios"
@@ -92,11 +123,6 @@ bind_one() {
 	}
 	[ "$current" != nvme ] || assert_unused "$bdf"
 
-	case "$target" in
-	nvme) sudo modprobe nvme ;;
-	vfio-pci) sudo modprobe vfio-pci ;;
-	uio_pci_generic) sudo modprobe uio_pci_generic ;;
-	esac
 	override="$devdir/driver_override"
 	bind="$SYSFS_ROOT/bus/pci/drivers/$target/bind"
 	printf '%s' "$target" | sudo tee "$override" >/dev/null
@@ -109,9 +135,12 @@ bind_one() {
 	kvtide_log "$bdf: ${current:-unbound} -> $target"
 }
 
+prepare_target
 for bdf in ${CONFIG_KVTIDE_PCIE_BDFS}; do
 	bind_one "$bdf"
 done
+
+[ "$target" != vfio-pci ] || validate_vfio_transport
 
 if [ "$target" = nvme ]; then
 	command -v udevadm >/dev/null 2>&1 && sudo udevadm settle

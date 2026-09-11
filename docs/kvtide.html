@@ -177,6 +177,12 @@
         refuses mounted namespaces, swap devices, block holders, and process-open devices. You
         must still verify every PCI address before enabling the explicit rebind option.
       </p>
+      <p>
+        A translated-IOMMU run binds the test controllers to <code>vfio-pci</code>. KVTide uses
+        vfio device cdevs through iommufd when the host exposes them. It also tries to load the
+        legacy <code>vfio_iommu_type1</code> transport explicitly for hosts without cdevs; loading
+        <code>vfio-pci</code> alone does not make that transport available to xNVMe.
+      </p>
       <table>
         <thead><tr><th>Arm</th><th>Code that submits the reads</th><th>Buffer path</th></tr></thead>
         <tbody>
