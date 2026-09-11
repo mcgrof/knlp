@@ -6,24 +6,25 @@
 # constants; the stage scripts under tools/reproduce/kvtide/ source the
 # generated .config and never hard-code experiment policy.
 
-menu "KVTide NVMe-KV bench harness"
+menu "KVTide storage bench harness"
 
 config KVTIDE
-	bool "Enable the KVTide NVMe-KV bench harness"
+	bool "Enable the KVTide storage bench harness"
 	default n
 	help
-	  KVTide stands up a software NVMe key-value target (the SPDK
-	  kvmalloc KV bdev exported over NVMe-oF/TCP on loopback) and
-	  drives it with one or two initiators over the exact same
-	  matrix: the SPDK userspace kernel-bypass initiator
-	  (spdk_nvme_perf KV mode) and the xNVMe io_uring_cmd initiator,
-	  which goes through the kernel nvme-tcp host stack and a
-	  /dev/ngXnY char device. Identical workload, identical CPU
-	  accounting, one CSV -- easy A/B.
+	  Select either a software NVMe-KV comparison or a physical NVM
+	  read-path comparison. The software mode exports the SPDK
+	  kvmalloc KV bdev over loopback NVMe-oF/TCP, then compares the
+	  SPDK kernel-bypass and xNVMe io_uring_cmd initiators. It needs
+	  no KV hardware and runs in a QEMU guest.
 
-	  No KV hardware is required: the target is pure software, so
-	  the whole harness runs inside a QEMU guest (see the kdevops
-	  integration in tools/reproduce/kvtide/README.md).
+	  The physical mode compares current xNVMe uPCIe, current SPDK,
+	  Linux io_uring_cmd, ordinary registered buffers and the
+	  blk_iobuf premapped-buffer path on the same unused NVMe
+	  controllers. It records the exact source revisions and runs
+	  both the published AISIO command-rate profile and an explicitly
+	  synthetic small-to-large read sweep. Matching or beating SPDK
+	  is the goal under evaluation, not a result claimed by KVTide.
 
 	  Off by default so it never perturbs existing knlp defconfigs
 	  or make check.
@@ -31,7 +32,34 @@ config KVTIDE
 if KVTIDE
 
 choice
+	prompt "Benchmark mode"
+	default KVTIDE_MODE_KV
+
+config KVTIDE_MODE_KV
+	bool "Software NVMe-KV target over loopback TCP"
+	help
+	  Run the original KVTide comparison against the SPDK software
+	  NVMe-KV target. This mode needs no physical NVMe device.
+
+config KVTIDE_MODE_PCIE
+	bool "Physical PCIe NVM read-path comparison"
+	help
+	  Compare xNVMe uPCIe, SPDK, the Linux NVMe driver and the
+	  blk_iobuf premapped-buffer path on the same unused physical
+	  NVMe namespaces. This mode encodes the request size, queue depth
+	  and thread controls from the published AISIO synthetic test and
+	  tests whether the kernel path can match or beat SPDK across small
+	  and large reads. Hardware parity remains a separate requirement.
+
+	  The mode performs read-only I/O, but it detaches and reattaches
+	  the selected PCI devices. It therefore requires an explicit
+	  rebind opt-in and refuses mounted, swap-backed or held devices.
+
+endchoice
+
+choice
 	prompt "Initiator selection"
+	depends on KVTIDE_MODE_KV
 	default KVTIDE_INITIATOR_BOTH
 	help
 	  Which initiator(s) to build and bench against the target.
@@ -69,6 +97,7 @@ config KVTIDE_XNVME
 
 config KVTIDE_URING_FIXED
 	bool "Add the pool-backed fixed-buffer initiator arm"
+	depends on KVTIDE_MODE_KV
 	default n
 	help
 	  Bench a third kernel-path arm: raw io_uring NVMe passthrough
@@ -97,16 +126,220 @@ config KVTIDE_IOBUF_FORCE_ORDER
 	  disables pools, N forces order N (4 = 64 KiB folios, matching
 	  the default large value size).
 
-menu "Sources"
+menu "Physical PCIe NVM comparison"
+	depends on KVTIDE_MODE_PCIE
+
+config KVTIDE_PCIE_BDFS
+	string "Disposable NVMe controller PCI addresses"
+	default ""
+	help
+	  Space-separated domain:bus:device.function addresses. Every
+	  controller must expose the configured namespace and must be
+	  safe to detach from the kernel. The benchmark refuses to run
+	  when this list is empty.
+
+config KVTIDE_PCIE_NSID
+	int "Namespace identifier on each controller"
+	default 1
+	range 1 2147483647
+
+config KVTIDE_PCIE_ALLOW_REBIND
+	bool "Allow KVTide to rebind the listed PCI devices"
+	default n
+	help
+	  Confirm that every controller in KVTIDE_PCIE_BDFS is disposable.
+	  KVTide still checks mounts, swap and block-device holders before
+	  detaching a kernel-owned controller. Never enable this for an OS
+	  or data device.
+
+choice
+	prompt "Userspace driver"
+	default KVTIDE_PCIE_DRIVER_VFIO
+
+config KVTIDE_PCIE_DRIVER_VFIO
+	bool "vfio-pci with a translating IOMMU"
+	help
+	  Use the same IOMMU-enabled boot for the userspace and kernel
+	  comparison. Current xNVMe uPCIe supports host and CUDA buffers
+	  through vfio-pci. The CUDA path additionally needs uPCIe's
+	  iommu-map-pa module to map GPU memory into each controller domain.
+
+config KVTIDE_PCIE_DRIVER_UIO
+	bool "uio_pci_generic with the IOMMU disabled"
+	help
+	  Match the published AISIO uPCIe and uPCIe-CUDA environment.
+	  Premapping cannot retain an I/O virtual address in this boot, so
+	  collect the premapped comparison in a separate vfio-pci run.
+
+endchoice
+
+config KVTIDE_PCIE_UPCIE
+	bool "Run xNVMe uPCIe host-memory arm"
+	default y
+
+config KVTIDE_PCIE_SPDK
+	bool "Run latest standalone SPDK arm"
+	default y
+
+config KVTIDE_PCIE_LINUX
+	bool "Run Linux io_uring_cmd arm"
+	default y
+
+config KVTIDE_PCIE_FIXED
+	bool "Run Linux registered-buffer arm"
+	default y
+	depends on KVTIDE_PCIE_LINUX
+
+config KVTIDE_PCIE_PREMAP
+	bool "Run Linux blk_iobuf premapped-buffer arm"
+	default y
+	depends on KVTIDE_PCIE_LINUX && KVTIDE_PCIE_DRIVER_VFIO
+
+config KVTIDE_PCIE_IOBUF_ORDER
+	int "Premapped pool folio order"
+	default 9
+	range 0 10
+	depends on KVTIDE_PCIE_PREMAP
+	help
+	  Configure 2 MiB pool folios by default on a 4 KiB-page machine.
+	  Set this lower than the kernel's MAX_PAGE_ORDER and no larger
+	  than the largest useful command on the selected NVMe devices.
+
+config KVTIDE_PCIE_IOBUF_FOLIOS
+	int "Premapped pool folios per controller"
+	default 64
+	range 1 1048576
+	depends on KVTIDE_PCIE_PREMAP
+
+config KVTIDE_PCIE_UPCIE_CUDA
+	bool "Run xNVMe uPCIe-CUDA host-initiated arm"
+	default n
+	depends on KVTIDE_PCIE_UPCIE
+	help
+	  Put read buffers in CUDA device memory while the host submits
+	  and completes the NVMe commands. This requires a compatible GPU,
+	  CUDA, peer-to-peer PCIe topology and uPCIe's dma-buf import module.
+	  The vfio-pci configuration also needs iommu-map-pa. This is
+	  distinct from xnvmeperf cuda-run, where GPU threads initiate the
+	  commands.
+
+config KVTIDE_PCIE_GPU_ID
+	int "CUDA GPU ordinal"
+	default 0
+	range 0 1024
+	depends on KVTIDE_PCIE_UPCIE_CUDA
+
+config KVTIDE_PCIE_XNVME_GIT
+	string "xNVMe git URL"
+	default "https://github.com/xnvme/xnvme.git"
+
+config KVTIDE_PCIE_XNVME_REF
+	string "xNVMe branch or ref"
+	default "main"
+	help
+	  Resolve this ref when KVTide fetches the source and record the
+	  resulting commit in the run metadata. The default therefore
+	  tests current xNVMe main without losing result reproducibility.
+
+config KVTIDE_PCIE_SPDK_GIT
+	string "SPDK git URL"
+	default "https://github.com/spdk/spdk.git"
+
+config KVTIDE_PCIE_SPDK_REF
+	string "SPDK branch or ref"
+	default "master"
+	help
+	  Resolve this ref when KVTide fetches the source and record the
+	  resulting commit in the run metadata. This standalone SPDK tree
+	  supplies the latest spdk_nvme_perf comparison arm.
+
+config KVTIDE_PCIE_PROFILES
+	string "Workload profiles to run"
+	default "aisio kv"
+	help
+	  The aisio profile reproduces the published synthetic command-rate
+	  workload controls. The kv profile sweeps the transition from small
+	  requests into the sizes where DMA mapping and command splitting
+	  matter. Neither profile is labeled as a production trace.
+
+config KVTIDE_PCIE_AISIO_SIZES
+	string "AISIO profile read sizes in bytes"
+	default "512 4096 8192"
+
+config KVTIDE_PCIE_AISIO_QDS
+	string "AISIO profile queue depths"
+	default "128"
+
+config KVTIDE_PCIE_AISIO_THREADS
+	string "AISIO profile CPU thread counts"
+	default "1 2 3 4"
+
+config KVTIDE_PCIE_KV_SIZES
+	string "KV crossover profile read sizes in bytes"
+	default "4096 16384 32768 65536 131072 1048576 2097152"
+
+config KVTIDE_PCIE_KV_QDS
+	string "KV crossover profile queue depths"
+	default "1 16 64 128"
+
+config KVTIDE_PCIE_KV_THREADS
+	string "KV crossover profile CPU thread counts"
+	default "1"
+
+config KVTIDE_PCIE_CPUS
+	string "Ordered logical CPUs available to initiators"
+	default "4 5 6 7"
+	help
+	  A thread-count cell uses the first N CPUs from this list. Keep
+	  them local to the tested NVMe devices and outside housekeeping
+	  work where possible.
+
+config KVTIDE_PCIE_NQUEUES
+	int "I/O queues per controller"
+	default 1
+	range 1 1024
+	help
+	  Keep this at one when comparing the fixed and premap arms. Their
+	  companion tool currently creates one queue per controller. Increase
+	  it only for a userspace-versus-xNVMe Linux comparison.
+
+config KVTIDE_PCIE_SECS
+	int "Measured seconds per cell"
+	default 10
+	range 1 86400
+
+config KVTIDE_PCIE_WARMUPS
+	int "Warm-up runs per cell"
+	default 1
+	range 0 100
+
+config KVTIDE_PCIE_REPS
+	int "Recorded repetitions per cell"
+	default 5
+	range 1 100
+
+config KVTIDE_PCIE_HUGEPAGES
+	int "Number of 2 MiB hugepages for userspace drivers"
+	default 5120
+	help
+	  Reserve 10 GiB by default, matching the published AISIO setup.
+	  Reduce this for a smaller device count after checking the heap
+	  requirement printed by xnvmeperf.
+
+endmenu
+
+menu "Sources and output"
 
 config KVTIDE_SRC_DIR
 	string "Source and build directory"
 	default "/data/kvtide"
 	help
-	  Where KVTide clones and builds SPDK, xNVMe and (optionally)
-	  NIXL, and where results land. The default matches the kdevops
-	  guest layout where /data is the large data disk; point it
-	  anywhere writable on other hosts. Use a path without spaces.
+	  Where KVTide clones and builds the selected software stacks and
+	  where results land. The default matches the kdevops data disk;
+	  point it anywhere writable on other hosts. Use a path without
+	  spaces.
+
+if KVTIDE_MODE_KV
 
 config KVTIDE_SPDK_GIT
 	string "SPDK git URL"
@@ -171,9 +404,12 @@ config KVTIDE_NIXL_REF
 	  device layer, async data path, unit and integration tests,
 	  docs and focused benchmark).
 
+endif
+
 endmenu
 
 menu "Target"
+	depends on KVTIDE_MODE_KV
 
 config KVTIDE_TARGET_ADDR
 	string "Target listen address"
@@ -286,6 +522,7 @@ endif
 endmenu
 
 menu "Bench matrix"
+	depends on KVTIDE_MODE_KV
 
 config KVTIDE_BENCH_OPS
 	string "Operations to sweep"

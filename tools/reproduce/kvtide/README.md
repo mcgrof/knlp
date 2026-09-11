@@ -1,9 +1,14 @@
-# KVTide — NVMe-KV target + initiator bench harness
+# KVTide — KV-cache storage I/O bench harness
 
 KVTide is a Kconfig-reproducible harness for portable, vendor-neutral
-tiered KV-cache I/O work. It stands up a software NVMe key-value target
-(the SPDK `kvmalloc` KV bdev exported over NVMe-oF/TCP on loopback) and
-drives it with one or two initiators over the exact same matrix:
+tiered KV-cache storage I/O work. It has two separate benchmark modes.
+The original mode stands up a software NVMe key-value target and compares
+NVMe-KV commands over loopback TCP. The physical-PCIe mode drives ordinary
+NVM reads on unused real NVMe namespaces. Keeping the modes separate avoids
+confusing an NVMe command set with the block reads used by AISIO, SPDK, and
+the Linux premapped-buffer path.
+
+The software NVMe-KV mode drives the SPDK `kvmalloc` KV bdev through:
 
 - **spdk** — `spdk_nvme_perf` in KV mode, userspace kernel-bypass,
   connecting straight to the target.
@@ -11,16 +16,36 @@ drives it with one or two initiators over the exact same matrix:
   commands through the kernel nvme-tcp host stack and a `/dev/ngXnY`
   KV namespace char device.
 
-Identical workload, identical CPU accounting (busy jiffies on all cores
-except the target's busy-polling reactor cores), one CSV — so an A/B
-comparison between the userspace and kernel data paths is one sort away.
+The physical-PCIe mode compares current upstream implementations through:
 
-No KV hardware is required; everything runs inside a QEMU guest.
+- **upcie** — xNVMe's minimal userspace PCIe/NVMe driver with host buffers.
+- **upcie-cuda** — the same host-initiated command path with read buffers in
+  CUDA memory, so the NVMe controller transfers payloads directly to the GPU.
+- **spdk** — current standalone `spdk_nvme_perf` using its userspace driver.
+- **linux** — current xNVMe `xnvmeperf` through the kernel NVMe driver and
+  `io_uring_cmd`.
+- **fixed** — the same kernel command interface with an ordinary registered
+  userspace buffer.
+- **premap** — a kernel-owned `blk_iobuf` pool buffer DMA-mapped once, then
+  reused with `IORING_URING_CMD_FIXED`; it never pins userspace memory.
+
+Beating SPDK across small and large reads is the engineering goal. It is not
+an empirical claim. The report says that premap won only for cells where the
+recorded median exceeds SPDK, and keeps every cell where SPDK wins.
+The current `spdk` and `premap` arms use different benchmark programs, so
+their ratio compares complete software paths rather than isolating one
+backend function. The `upcie` and `linux` arms both use `xnvmeperf` and provide
+the closest same-tool comparison.
+
+No KV hardware is required for the software mode. Physical-PCIe results need
+real disposable NVMe namespaces; QEMU is useful only for functional checks.
 
 ## Quick start
 
+For the software target:
+
 ```
-make defconfig-kvtide-ab      # or -spdk / -xnvme / -nixl
+make defconfig-kvtide-ab
 make
 ```
 
@@ -32,7 +57,7 @@ The target stays up afterwards so cells can be re-run; tear it down with
 tools/reproduce/kvtide/bench.sh xnvme store 64 4096
 ```
 
-All knobs live in the "KVTide NVMe-KV bench harness" Kconfig menu:
+All knobs live in the "KVTide storage bench harness" Kconfig menu:
 source pins, target address/NQN/core mask, hugepages, and the bench
 matrix (ops, value sizes, queue depths, seconds per cell, initiator CPU
 pin). Host-specific overrides append to `.config`:
@@ -41,13 +66,86 @@ pin). Host-specific overrides append to `.config`:
 echo 'CONFIG_KVTIDE_SRC_DIR="/home/me/kvtide"' >> .config
 ```
 
+For the current physical-PCIe comparison, first boot a kernel carrying the
+premap work and a translating input-output memory management unit (IOMMU).
+Then name only unused NVMe controllers and explicitly allow their drivers to
+be rebound:
+
+```
+make defconfig-kvtide-pcie
+echo 'CONFIG_KVTIDE_PCIE_BDFS="0000:41:00.0 0000:42:00.0 0000:43:00.0 0000:44:00.0"' >> .config
+echo 'CONFIG_KVTIDE_PCIE_ALLOW_REBIND=y' >> .config
+make
+```
+
+`pcie-bind.sh` checks that each PCI function is an NVMe controller and refuses
+to detach it when its block devices are mounted, used as swap, or held by a
+stacked block device or process. The benchmark is read-only and returns every
+listed controller to the kernel `nvme` driver on exit. It also restores the original
+hugepage count. A restore failure is printed as a critical error. These checks
+do not make an OS disk disposable; verify the PCI addresses yourself before
+setting the opt-in.
+
+`defconfig-kvtide-pcie-linux-baremetal` additionally builds and installs the
+public `blk-iobuf-pool-v5-premap-iova` kernel. It writes the required IOMMU,
+non-multipath, pool-order, and pool-size settings into a GRUB fragment and
+stops for a reboot before benchmarking. This defconfig deliberately leaves
+PCI rebinding disabled until the operator supplies the two lines above.
+
+The premap allocation can fall back to an ordinary registered buffer when the
+kernel cannot retain an I/O virtual address. KVTide does not accept that silent
+fallback as evidence. Before recording a premap cell, it submits a read one
+logical block larger than every namespace's ordinary
+`queue/max_hw_sectors_kb` limit. The run stops unless that read succeeds. The
+validation command, ordinary limit, probe size, and output remain beside the
+CSV. Crossing the ordinary limit proves that the request used the retained
+mapping and the separate premapped request limit on this kernel.
+
+The two workload profiles answer different questions:
+
+- `aisio` runs random reads at queue depth 128 with 512-byte, 4 KiB, and
+  8 KiB commands while increasing the submitting threads from one to four.
+  This reproduces the published AISIO synthetic command-rate controls. The
+  512-byte cell is meaningful only on a namespace formatted with 512-byte
+  logical blocks; KVTide records and enforces the actual logical block size.
+  Matching the published platform additionally requires its 16 Samsung
+  PM1753 SSDs, H100 system and PCIe topology. The profile cannot manufacture
+  that hardware parity, so compare absolute IOPS only after confirming it.
+- `kv` runs random reads from 4 KiB through 2 MiB at queue depths 1, 16, 64,
+  and 128. These are synthetic size and concurrency crossover points, not a
+  recorded production KV-cache distribution. They show where command rate,
+  the ordinary DMA-mapping limit, device MDTS, and bandwidth become the
+  active constraint. Add trace-derived profiles after preserving their size,
+  offset, ordering, pacing, and concurrency fidelity.
+
+The physical mode performs one warm-up and five recorded ten-second runs by
+default. It records the median rather than selecting the best repetition.
+Global busy CPU time is reported as utilized cores; it includes system work,
+so use it to expose a full-stack cost rather than to attribute cycles to one
+function. None of the current physical tools reports a compatible latency
+distribution. Do not infer tail latency from this harness. Keep one queue per
+controller when comparing `fixed` or `premap`; their companion tool does not
+yet create multiple queues per controller. Configure at least four controllers
+for the default one-to-four-thread AISIO profile. The run rejects a profile
+that asks for more threads than its configured CPUs or queues. Each benchmark
+program generates its own random offsets. The cells match the random
+distribution and controls, not an identical ordered request stream.
+
 ## What gets fetched
 
-| Component | Source | Pin |
+| Mode | Component | Source selection |
 |---|---|---|
-| SPDK KV target stack | SPDK Gerrit | `refs/changes/07/28307/12` |
-| xNVMe | github.com/xnvme/xnvme | `a5bf2a65` |
-| NIXL + XNVME_KV plugin (optional) | github.com/mcgrof/nixl | `20260717-xnvme-kv` |
+| Software KV | SPDK KV target stack | SPDK Gerrit `refs/changes/07/28307/12` |
+| Software KV | xNVMe | commit `a5bf2a65` |
+| Software KV | NIXL + XNVME_KV plugin | branch `20260717-xnvme-kv` |
+| Physical PCIe | xNVMe | resolve `main` at fetch time |
+| Physical PCIe | SPDK | resolve `master` at fetch time |
+
+The physical defaults intentionally name upstream branches. Every fetch
+refreshes a clean harness-owned checkout to the then-current tip, and refuses
+to overwrite tracked local changes. Every run records the resulting commit IDs
+in `run.meta`, making the result reproducible even after upstream moves. Pin a
+commit in Kconfig when a campaign must keep the same source across later runs.
 
 The SPDK KV command set support (bdev/kvmalloc, nvmf KV namespaces,
 `spdk_nvme_perf` KV mode) is in review on SPDK Gerrit; one change ref
@@ -141,6 +239,25 @@ kdevops also carries blk_iobuf_pool validation tooling (its
 workflow can boot a kernel of choice and A/B the kernel-side block-layer
 path underneath the xNVMe initiator.
 
+QEMU cannot reproduce PCIe or GPU-direct throughput. Use a declared bare-metal
+host for the physical mode. Stage the physical fragment instead and select the
+uPCIe CUDA dependency option only on a node where the NVIDIA driver and CUDA
+toolkit are already installed:
+
+```
+cp ~/.config/kdevops/plugins/knlp/defconfigs/configs/knlp-kvtide-pcie.config \
+   ~/.config/kdevops/defconfigs/configs/
+make defconfig-<base>+knlp-kvtide-pcie \
+    DECLARED_HOSTS="storage-node"
+make && make bringup
+```
+
+The plugin installs the current uPCIe v0.8.0 `dmabuf-import` and
+`iommu-map-pa` DKMS packages when requested. That version is not a performance
+pin: xNVMe and SPDK still resolve their configured upstream branches on the
+node, and their exact commits go into each result. The plugin does not install
+or license CUDA.
+
 ## Bare metal
 
 Two paths, both optional:
@@ -191,7 +308,26 @@ Results land in `$KVTIDE_SRC_DIR/results/` (outside the repo);
 `kvtide-bench-latest.csv` symlinks the newest run and
 `make kvtide-report` renders the table plus per-cell A/B IOPS ratios.
 
+Physical results use a separate timestamped directory and
+`kvtide-pcie-latest` link. `results.csv` records profile, arm, benchmark tool,
+driver, request size, queue depth, submitting threads, repetition, IOPS,
+MiB/s, failed commands, wall time, and system CPU cores. `run.meta` records the
+kernel, command line, selected source refs, resolved source commits, and the
+goal statement. The directory also keeps PCIe and NUMA topology, CPU
+governors, interrupt counters, identify data, and before-and-after NVMe health
+logs so frequency, placement, errors, and thermal state remain auditable.
+`make kvtide-pcie-report` writes `summary.txt` and compares premap with SPDK
+only where both have valid recorded repetitions.
+
 ## Status
+
+The physical-PCIe mode has passed configuration, compilation, and static
+validation locally. It has not yet produced a real-device performance result.
+Treat its first bare-metal campaign as harness validation as well as data: keep
+failed commands at zero, check every recorded command and source commit, and
+repeat any surprising crossover before making a performance statement.
+
+The software NVMe-KV mode has the following validation history.
 
 Validated in a QEMU guest (Debian, kernel 6.12, loopback TCP,
 including the NIXL plugin unit + integration tests) **and on bare

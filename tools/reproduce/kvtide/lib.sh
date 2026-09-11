@@ -30,11 +30,13 @@ SPDK_SRC="$KVTIDE_SRC/spdk"
 XNVME_SRC="$KVTIDE_SRC/xnvme"
 XNVME_PREFIX="$KVTIDE_SRC/opt/xnvme"
 NIXL_SRC="$KVTIDE_SRC/nixl"
+PCIE_SPDK_SRC="$KVTIDE_SRC/spdk-pcie"
+PCIE_XNVME_SRC="$KVTIDE_SRC/xnvme-pcie"
 
-TARGET_ADDR=${CONFIG_KVTIDE_TARGET_ADDR}
-TARGET_PORT=${CONFIG_KVTIDE_TARGET_PORT}
-TARGET_NQN=${CONFIG_KVTIDE_TARGET_NQN}
-TARGET_CORE_MASK=${CONFIG_KVTIDE_TARGET_CORE_MASK}
+TARGET_ADDR=${CONFIG_KVTIDE_TARGET_ADDR:-}
+TARGET_PORT=${CONFIG_KVTIDE_TARGET_PORT:-}
+TARGET_NQN=${CONFIG_KVTIDE_TARGET_NQN:-}
+TARGET_CORE_MASK=${CONFIG_KVTIDE_TARGET_CORE_MASK:-}
 TRID="trtype:TCP adrfam:IPv4 traddr:$TARGET_ADDR trsvcid:$TARGET_PORT subnqn:$TARGET_NQN"
 
 kvtide_log() {
@@ -48,6 +50,38 @@ kvtide_die() {
 
 want_spdk() {
 	[ "${CONFIG_KVTIDE_SPDK:-n}" = y ]
+}
+
+is_pcie() {
+	[ "${CONFIG_KVTIDE_MODE_PCIE:-n}" = y ]
+}
+
+is_kv() {
+	! is_pcie
+}
+
+want_pcie_spdk() {
+	[ "${CONFIG_KVTIDE_PCIE_SPDK:-n}" = y ]
+}
+
+want_pcie_upcie() {
+	[ "${CONFIG_KVTIDE_PCIE_UPCIE:-n}" = y ]
+}
+
+want_pcie_cuda() {
+	[ "${CONFIG_KVTIDE_PCIE_UPCIE_CUDA:-n}" = y ]
+}
+
+want_pcie_linux() {
+	[ "${CONFIG_KVTIDE_PCIE_LINUX:-n}" = y ]
+}
+
+want_pcie_fixed() {
+	[ "${CONFIG_KVTIDE_PCIE_FIXED:-n}" = y ]
+}
+
+want_pcie_premap() {
+	[ "${CONFIG_KVTIDE_PCIE_PREMAP:-n}" = y ]
 }
 
 want_xnvme() {
@@ -75,6 +109,15 @@ want_kernel_attach() {
 
 xnvme_pkgconfig_dir() {
 	find "$XNVME_PREFIX" -name xnvme.pc -printf '%h\n' 2>/dev/null | head -1
+}
+
+pcie_xnvmeperf() {
+	local built="$PCIE_XNVME_SRC/build-kvtide-pcie/tools/xnvmeperf/xnvmeperf"
+
+	if [ -x "$built" ]; then
+		echo "$built"
+	fi
+	return 0
 }
 
 # Expand a core mask like 0x3 into "0 1" (target cores, excluded from

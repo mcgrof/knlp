@@ -1,12 +1,54 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 #
-# KVTide build: SPDK target + enabled initiators. Everything installs
-# under KVTIDE_SRC_DIR; nothing touches system prefixes.
+# Build the selected KVTide software-KV or physical-PCIe tools. Everything
+# installs under KVTIDE_SRC_DIR; nothing touches system prefixes.
 
 . "$(dirname "$0")/lib.sh"
 
 JOBS=$(nproc)
+
+if is_pcie; then
+	if want_pcie_spdk; then
+		kvtide_log "building standalone SPDK PCIe benchmark"
+		( cd "$PCIE_SPDK_SRC" && \
+		  ./configure --disable-tests --disable-unit-tests \
+			--disable-examples && make -j"$JOBS" )
+		test -x "$PCIE_SPDK_SRC/build/bin/spdk_nvme_perf" || \
+			kvtide_die "standalone spdk_nvme_perf did not build"
+	fi
+
+	if want_pcie_upcie || want_pcie_linux; then
+		MESON_SETUP=(meson setup)
+		CUDA_OPT=disabled
+		want_pcie_cuda && CUDA_OPT=enabled
+		if [ -f "$PCIE_XNVME_SRC/build-kvtide-pcie/meson-private/coredata.dat" ]; then
+			MESON_SETUP+=(--reconfigure)
+		fi
+		kvtide_log "building xNVMe PCIe backends"
+		( cd "$PCIE_XNVME_SRC" && \
+			  "${MESON_SETUP[@]}" build-kvtide-pcie \
+				-Dwith-liburing=enabled -Dwith-spdk=disabled \
+				-Dwith-cuda="$CUDA_OPT" -Dwith-hip=disabled \
+				-Dwith-libvfn=disabled -Dbe_upcie=true \
+				-Dtests=false -Dexamples=false && \
+			  meson compile -C build-kvtide-pcie )
+		XNVMEPERF=$(pcie_xnvmeperf)
+		[ -n "$XNVMEPERF" ] || kvtide_die "xnvmeperf did not build"
+	fi
+
+	if want_pcie_linux; then
+		SRC="$KVTIDE_DIR/src/uring_nvm_perf.c"
+		DST="$KVTIDE_SRC/uring_nvm_perf"
+		if [ ! -x "$DST" ] || [ "$SRC" -nt "$DST" ]; then
+			kvtide_log "building Linux fixed and premapped NVM benchmark"
+			gcc -O2 -Wall -Wextra -Werror -pthread "$SRC" -luring -o "$DST"
+		fi
+	fi
+
+	kvtide_log "physical PCIe build done"
+	exit 0
+fi
 
 # SPDK: provides nvmf_tgt (the target) always, and spdk_nvme_perf (the
 # userspace initiator) when the SPDK initiator is enabled. Flags match
