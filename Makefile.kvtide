@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# Make targets for the KVTide NVMe-KV target + initiator bench harness.
+# Make targets for the KVTide storage bench harness.
 #
 # Selecting one of:
 #   make defconfig-kvtide-ab        both initiators, A/B bake-off (default)
@@ -8,10 +8,12 @@
 #   make defconfig-kvtide-nixl      A/B plus the NIXL XNVME_KV plugin tests
 #   make defconfig-kvtide-ab-linux  A/B plus a kernel under test
 #   make defconfig-kvtide-ab-linux-baremetal   same, allowed on bare metal
+#   make defconfig-kvtide-pcie     physical xNVMe/SPDK/Linux comparison
+#   make defconfig-kvtide-pcie-aisio   published AISIO control profile
+#   make defconfig-kvtide-pcie-linux-baremetal   install premap kernel
 # writes .config and enables CONFIG_KVTIDE.  Plain `make` after that runs
-# kvtide-doctor -> kvtide-fetch -> kvtide-build -> kvtide-target-up ->
-# kvtide-bench -> kvtide-report.  The target stays up afterwards so cells
-# can be re-run; `make kvtide-target-down` tears it down.
+# the selected staged pipeline. The software-KV target stays up afterwards
+# so cells can be re-run; `make kvtide-target-down` tears it down.
 #
 # kvtide-ab-linux adds a kvtide-linux stage before target-up: it fetches,
 # builds and installs a kernel, then gates on running it (one reboot,
@@ -22,12 +24,11 @@
 # (CONFIG_KVTIDE_LINUX_ALLOW_BAREMETAL=y) says otherwise; the perf
 # harness itself runs anywhere, VM or metal.
 #
-# The target is pure software (SPDK kvmalloc KV bdev over NVMe-oF/TCP on
-# loopback) so the whole harness runs inside a QEMU guest.  No PCI
-# rebinding is ever performed; local NVMe stays kernel-owned.
+# The software target runs in a QEMU guest without physical KV hardware.
+# Physical mode instead uses only explicitly listed disposable NVMe PCI
+# functions and requires CONFIG_KVTIDE_PCIE_ALLOW_REBIND=y.
 #
-# All knobs live in Kconfig.kvtide ("KVTide NVMe-KV bench harness" menu):
-# source pins, target address/NQN/core mask, and the bench matrix.
+# All knobs live in Kconfig.kvtide ("KVTide storage bench harness" menu).
 # Host-specific overrides append to .config, e.g.:
 #   echo 'CONFIG_KVTIDE_SRC_DIR="/home/me/kvtide"' >> .config
 #
@@ -37,7 +38,8 @@ KVTIDE_SH := tools/reproduce/kvtide
 
 .PHONY: kvtide kvtide-doctor kvtide-fetch kvtide-build kvtide-linux \
         kvtide-target-up kvtide-target-down kvtide-bench kvtide-nixl \
-        kvtide-report
+		kvtide-report kvtide-pcie-bind-kernel kvtide-pcie-bind-vfio \
+		kvtide-pcie-bind-uio kvtide-pcie-bench kvtide-pcie-report
 
 # When CONFIG_KVTIDE=y, plain `make` defaults to the kvtide pipeline.
 # Otherwise the existing all: target is unaffected.
@@ -53,8 +55,13 @@ ifeq ($(CONFIG_KVTIDE_LINUX),y)
 KVTIDE_LINUX_STAGE := kvtide-linux
 endif
 
+ifeq ($(CONFIG_KVTIDE_MODE_PCIE),y)
+kvtide: kvtide-doctor kvtide-fetch kvtide-build $(KVTIDE_LINUX_STAGE) \
+	kvtide-pcie-bench kvtide-pcie-report
+else
 kvtide: kvtide-doctor kvtide-fetch kvtide-build $(KVTIDE_LINUX_STAGE) \
 	kvtide-target-up kvtide-bench kvtide-report
+endif
 
 kvtide-doctor:
 	@$(KVTIDE_SH)/doctor.sh
@@ -82,3 +89,18 @@ kvtide-nixl:
 
 kvtide-report:
 	@$(KVTIDE_SH)/report.sh
+
+kvtide-pcie-bind-kernel:
+	@$(KVTIDE_SH)/pcie-bind.sh kernel
+
+kvtide-pcie-bind-vfio:
+	@$(KVTIDE_SH)/pcie-bind.sh vfio
+
+kvtide-pcie-bind-uio:
+	@$(KVTIDE_SH)/pcie-bind.sh uio
+
+kvtide-pcie-bench:
+	@$(KVTIDE_SH)/pcie-bench.sh
+
+kvtide-pcie-report:
+	@$(KVTIDE_SH)/pcie-report.sh

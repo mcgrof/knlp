@@ -52,6 +52,30 @@ fi
 
 cd "$LINUX_SRC"
 
+premap_boot_params() {
+	local vendor iommu
+
+	vendor=$(lscpu | awk -F: '/Vendor ID/ {gsub(/^[[:space:]]+/, "", $2); print $2}')
+	case "$vendor" in
+	AuthenticAMD) iommu=amd_iommu=on ;;
+	GenuineIntel) iommu=intel_iommu=on ;;
+	*) kvtide_die "cannot select an IOMMU boot option for CPU vendor '$vendor'" ;;
+	esac
+	echo "$iommu iommu=nopt nvme_core.multipath=N \
+nvme_core.iobuf_pool_order=${CONFIG_KVTIDE_PCIE_IOBUF_ORDER} \
+nvme_core.iobuf_pool_folios=${CONFIG_KVTIDE_PCIE_IOBUF_FOLIOS}"
+}
+
+install_premap_boot_params() {
+	local params
+
+	params=$(premap_boot_params)
+	sudo mkdir -p /etc/default/grub.d
+	printf '%s\n' \
+		'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} '"$params"'"' | \
+		sudo tee /etc/default/grub.d/99-kvtide-pcie-premap.cfg >/dev/null
+}
+
 # Configure once: base on the running kernel's config, drop the distro
 # signing keys, then apply the pool knob. BTF stays ON: the kvio eBPF
 # tracers (nvme_uring_cmd_monitor, nvme_tp_monitor) attach via
@@ -99,6 +123,20 @@ fi
 
 REL=$(make -s kernelrelease)
 if [ "$(uname -r)" = "$REL" ]; then
+	if is_pcie && want_pcie_premap; then
+		missing=""
+		for param in $(premap_boot_params); do
+			case " $(cat /proc/cmdline) " in
+			*" $param "*) ;;
+			*) missing="$missing $param" ;;
+			esac
+		done
+		if [ -n "$missing" ]; then
+			install_premap_boot_params
+			command -v update-grub >/dev/null 2>&1 && sudo update-grub
+			kvtide_die "installed premap boot parameters; reboot once more:$missing"
+		fi
+	fi
 	kvtide_log "running the kernel under test ($REL), gate passes"
 	exit 0
 fi
@@ -107,6 +145,9 @@ kvtide_log "building $REL"
 make -j"$(nproc)"
 kvtide_log "installing $REL"
 sudo make INSTALL_MOD_STRIP=1 modules_install install
+if is_pcie && want_pcie_premap; then
+	install_premap_boot_params
+fi
 if command -v update-grub >/dev/null 2>&1; then
 	sudo update-grub
 fi
