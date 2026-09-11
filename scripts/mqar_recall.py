@@ -47,7 +47,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from matched_micro_train import MOM_ROUTING, StackLM, environment_manifest  # noqa: E402
+from matched_micro_train import (  # noqa: E402
+    MOM_ROUTING,
+    Attention,
+    StackLM,
+    environment_manifest,
+)
 
 PAD = 0
 # the token that follows every query in the input.  The answer itself
@@ -77,6 +82,16 @@ ARMS = dict(
     # The Zoology attention baselines carry learned absolute position
     # embeddings, which make that head trivial; this variant adds them.
     attn_pos=dict(kind="stack", dim=512, layers=2, heads=8, layout="A", abs_pos=True),
+    # Neither position scheme forms an induction circuit at this scale:
+    # both variants sit at 1/N, a value picked from the context without
+    # the key.  Every linear cell here carries a size-4 short
+    # convolution on q, k and v that hands it the previous token; this
+    # variant gives attention the same convolution, so the ceiling is
+    # attention with the linear cells' inductive bias, not a two-layer
+    # stack that has to discover it
+    attn_conv=dict(
+        kind="stack", dim=512, layers=2, heads=8, layout="A", short_conv=True
+    ),
     gdn=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=5, layout="G"),
     gdn6=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=6, layout="G"),
     gdnw=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=10, layout="G"),
@@ -156,6 +171,31 @@ def train_batch(rng, levels, batch, seq_len):
 # ---------------------------------------------------------------------------
 
 
+class ConvAttention(Attention):
+    """The harness's RoPE attention with fla's short convolution (kernel
+    4, SiLU) on the q, k and v projections, as in GatedDeltaNet."""
+
+    def __init__(self, dim, heads):
+        super().__init__(dim, heads)
+        from fla.modules import ShortConvolution
+
+        self.convs = nn.ModuleList(
+            ShortConvolution(hidden_size=dim, kernel_size=4, activation="silu")
+            for _ in range(3)
+        )
+
+    def forward(self, x):
+        b, t, d = x.shape
+        q, k, v = self.qkv(x).chunk(3, dim=-1)
+        q, k, v = (conv(z)[0] for conv, z in zip(self.convs, (q, k, v)))
+        q, k, v = (
+            z.view(b, t, self.heads, self.dim_head).transpose(1, 2) for z in (q, k, v)
+        )
+        q, k = self.rope(q, k)
+        o = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return self.out(o.transpose(1, 2).reshape(b, t, d))
+
+
 class PosEmbed(nn.Module):
     """Token embedding plus a learned absolute position embedding; wraps
     the stack's embedding so the tied output head keeps its weight."""
@@ -179,6 +219,10 @@ def build(arm, device, seed, dim=None):
         model = StackLM(cfg, VOCAB)
         if cfg.get("abs_pos"):
             model.embed = PosEmbed(model.embed, 4096, cfg["dim"])
+        if cfg.get("short_conv"):
+            for blk in model.blocks:
+                if blk.mixer_kind == "A":
+                    blk.mixer = ConvAttention(cfg["dim"], cfg["heads"])
     else:
         from titans_pytorch import MemoryAsContextTransformer
 
