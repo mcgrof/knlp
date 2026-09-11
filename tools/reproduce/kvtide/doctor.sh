@@ -105,6 +105,8 @@ if want_linux; then
 	check "kernel build: bc"         command -v bc
 	check "kernel build: libelf dev" sh -c \
 		'test -e /usr/include/libelf.h || pkg-config --exists libelf'
+	check "kernel build: libdw dev" sh -c \
+		'test -e /usr/include/dwarf.h && test -e /usr/include/elfutils/libdw.h'
 	check "kernel build: zstd"       command -v zstd
 	# BTF generation: the kernel stage keeps CONFIG_DEBUG_INFO_BTF on
 	# so the kvio eBPF tracers can attach to the kernel under test;
