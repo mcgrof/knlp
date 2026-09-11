@@ -13,22 +13,24 @@ def _write_executable(path, content):
     path.chmod(0o755)
 
 
-def _run_bind(tmp_path, type1_available, cdev_available=False):
+def _run_bind(tmp_path, type1_available, cdev_available=False, vfio_mode=None):
     repo = tmp_path / "repo"
     scripts = repo / "tools" / "reproduce" / "kvtide"
     scripts.mkdir(parents=True)
     for name in ("lib.sh", "pcie-bind.sh"):
         shutil.copy2(KVTIDE / name, scripts / name)
 
-    (repo / ".config").write_text(
+    config = (
         "CONFIG_KVTIDE=y\n"
         "CONFIG_KVTIDE_MODE_PCIE=y\n"
         f'CONFIG_KVTIDE_PCIE_BDFS="{BDF}"\n'
         "CONFIG_KVTIDE_PCIE_ALLOW_REBIND=y\n"
         "CONFIG_KVTIDE_PCIE_PREMAP=n\n"
-        'CONFIG_KVTIDE_SRC_DIR="/tmp/kvtide-test"\n',
-        encoding="utf-8",
+        'CONFIG_KVTIDE_SRC_DIR="/tmp/kvtide-test"\n'
     )
+    if vfio_mode is not None:
+        config += f'CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE="{vfio_mode}"\n'
+    (repo / ".config").write_text(config, encoding="utf-8")
 
     sysfs = tmp_path / "sys"
     dev = sysfs / "bus" / "pci" / "devices" / BDF
@@ -97,7 +99,7 @@ def test_vfio_binding_rejects_a_host_without_a_transport(tmp_path):
 
     assert result.returncode != 0
     assert modules == ["vfio-pci", "vfio_iommu_type1"]
-    assert "vfio-pci needs vfio_iommu_type1" in result.stderr
+    assert "no usable cdev or type1 transport" in result.stderr
 
 
 def test_vfio_binding_accepts_device_cdevs(tmp_path):
@@ -105,3 +107,29 @@ def test_vfio_binding_accepts_device_cdevs(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert modules == ["vfio-pci", "vfio_iommu_type1"]
+
+
+def test_vfio_binding_honors_explicit_type1(tmp_path):
+    result, modules = _run_bind(
+        tmp_path,
+        type1_available=False,
+        cdev_available=True,
+        vfio_mode="type1",
+    )
+
+    assert result.returncode != 0
+    assert modules == ["vfio-pci", "vfio_iommu_type1"]
+    assert "type1 mode needs vfio_iommu_type1" in result.stderr
+
+
+def test_vfio_binding_honors_explicit_iommufd(tmp_path):
+    result, modules = _run_bind(
+        tmp_path,
+        type1_available=True,
+        cdev_available=False,
+        vfio_mode="iommufd",
+    )
+
+    assert result.returncode != 0
+    assert modules == ["vfio-pci", "vfio_iommu_type1"]
+    assert "iommufd mode needs a cdev" in result.stderr

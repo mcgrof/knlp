@@ -91,6 +91,11 @@ On a translated-IOMMU boot, `pcie-bind.sh` tries to load
 expose vfio device cdevs through iommufd. Loading `vfio-pci` alone does not
 make the legacy type1 transport available to xNVMe.
 
+`KVTIDE_PCIE_XNVME_VFIO_MODE` selects `auto`, `iommufd`, or `type1` and is
+recorded in `run.meta`. Keep `auto` unless the host exposes device cdevs but
+cannot initialize xNVMe's iommufd path. Select `type1` explicitly on that host
+instead of presenting a fallback run as an iommufd result.
+
 `defconfig-kvtide-pcie-linux-baremetal` additionally builds and installs the
 public `blk-iobuf-pool-v5-premap-iova` kernel. It writes the required IOMMU,
 non-multipath, pool-order, and pool-size settings into a GRUB fragment and

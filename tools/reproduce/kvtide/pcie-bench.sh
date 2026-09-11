@@ -144,6 +144,12 @@ validate_bench_config() {
 	if ! want_pcie_upcie && ! want_pcie_spdk && ! want_pcie_linux; then
 		kvtide_die "enable at least one physical PCIe benchmark arm"
 	fi
+	if want_vfio && want_pcie_upcie; then
+		case "${CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE:-auto}" in
+		auto|iommufd|type1) ;;
+		*) kvtide_die "xNVMe VFIO mode must be auto, iommufd or type1" ;;
+		esac
+	fi
 	if want_pcie_fixed || want_pcie_premap; then
 		[ "${CONFIG_KVTIDE_PCIE_NQUEUES}" -eq 1 ] || \
 			kvtide_die "fixed and premap arms require one queue per controller"
@@ -211,6 +217,7 @@ record_metadata() {
 		echo "spdk_ref=${CONFIG_KVTIDE_PCIE_SPDK_REF}"
 		echo "spdk_commit=$(git -C "$PCIE_SPDK_SRC" rev-parse HEAD 2>/dev/null || echo unavailable)"
 		echo "userspace_driver=$(want_vfio && echo vfio-pci || echo uio_pci_generic)"
+		echo "xnvme_vfio_mode=${CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE:-auto}"
 		echo "goal=Evaluate whether Linux premap can match or beat current SPDK"
 		echo "evidence=No performance conclusion is implied by this configuration"
 	} > "$RUN_DIR/run.meta"
@@ -406,7 +413,12 @@ run_cell() {
 	case "$arm" in
 	upcie|upcie-cuda)
 		CURRENT_TOOL=xnvmeperf
-		command=(sudo "$XNVME_PERF" run --iopattern randread
+		command=(sudo)
+		if want_vfio && \
+		   [ "${CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE:-auto}" != auto ]; then
+			command+=(env "XNVME_UPCIE_VFIO_MODE=${CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE}")
+		fi
+		command+=("$XNVME_PERF" run --iopattern randread
 			--qdepth "$qd" --iosize "$size" --runtime "${CONFIG_KVTIDE_PCIE_SECS}"
 			--cpumask "$mask" --nqueues "${CONFIG_KVTIDE_PCIE_NQUEUES}"
 			--be "$arm")

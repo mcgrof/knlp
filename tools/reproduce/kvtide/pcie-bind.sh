@@ -40,16 +40,29 @@ prepare_target() {
 
 validate_vfio_transport() {
 	local bdf cdev_ready=y
+	local mode=${CONFIG_KVTIDE_PCIE_XNVME_VFIO_MODE:-auto}
 
 	[ -c "$DEV_ROOT/iommu" ] || cdev_ready=n
 	for bdf in ${CONFIG_KVTIDE_PCIE_BDFS}; do
 		[ -d "$SYSFS_ROOT/bus/pci/devices/$bdf/vfio-dev" ] || \
 			cdev_ready=n
 	done
-	[ "$cdev_ready" = n ] || return 0
-
-	[ -d "$SYSFS_ROOT/module/vfio_iommu_type1" ] || \
-		kvtide_die "vfio-pci needs vfio_iommu_type1 when vfio cdevs are unavailable"
+	case "$mode" in
+	auto)
+		[ "$cdev_ready" = n ] || return 0
+		[ -d "$SYSFS_ROOT/module/vfio_iommu_type1" ] || \
+			kvtide_die "vfio-pci has no usable cdev or type1 transport"
+		;;
+	iommufd)
+		[ "$cdev_ready" = y ] || \
+			kvtide_die "xNVMe iommufd mode needs a cdev for every controller"
+		;;
+	type1)
+		[ -d "$SYSFS_ROOT/module/vfio_iommu_type1" ] || \
+			kvtide_die "xNVMe type1 mode needs vfio_iommu_type1"
+		;;
+	*) kvtide_die "xNVMe VFIO mode must be auto, iommufd or type1" ;;
+	esac
 }
 
 PREMAP_ORDER_PATH="$SYSFS_ROOT/module/nvme_core/parameters/iobuf_pool_order"
