@@ -49,10 +49,20 @@ import torch.nn.functional as F
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matched_micro_train import MOM_ROUTING, StackLM, environment_manifest  # noqa: E402
 
-VOCAB = 8192
 PAD = 0
+# set by main() from --vocab: keys occupy the lower half of the
+# vocabulary above the pad token, values the upper half
+VOCAB = 8192
 KEY_LO, KEY_HI = 1, VOCAB // 2
 VAL_LO, VAL_HI = VOCAB // 2, VOCAB
+
+
+def set_vocab(vocab):
+    global VOCAB, KEY_LO, KEY_HI, VAL_LO, VAL_HI
+    VOCAB = vocab
+    KEY_LO, KEY_HI = 1, vocab // 2
+    VAL_LO, VAL_HI = vocab // 2, vocab
+
 
 ARMS = dict(
     attn=dict(kind="stack", dim=512, layers=2, heads=8, layout="A"),
@@ -134,8 +144,10 @@ def train_batch(rng, levels, batch, seq_len):
 # ---------------------------------------------------------------------------
 
 
-def build(arm, device, seed):
-    cfg = ARMS[arm]
+def build(arm, device, seed, dim=None):
+    cfg = dict(ARMS[arm])
+    if dim:
+        cfg["dim"] = dim
     torch.manual_seed(seed)
     if cfg["kind"] == "stack":
         model = StackLM(cfg, VOCAB)
@@ -265,14 +277,30 @@ def main():
     ap.add_argument("--out-dir", default="mqar-runs")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--log-every", type=int, default=50)
+    ap.add_argument(
+        "--dim",
+        type=int,
+        default=None,
+        help="override every arm's model width (the cells keep their head "
+        "configuration, so state size is unchanged)",
+    )
+    ap.add_argument(
+        "--vocab",
+        type=int,
+        default=8192,
+        help="task vocabulary; half keys, half values (smaller trains faster)",
+    )
     args = ap.parse_args()
+    set_vocab(args.vocab)
 
     device = torch.device(args.device)
     levels = [int(n) for n in args.train_pairs.split(",")]
     eval_levels = [int(n) for n in args.eval_pairs.split(",")]
     seq_len = 4 * max(levels)
-    cfg = ARMS[args.arm]
-    model = build(args.arm, device, args.seed)
+    cfg = dict(ARMS[args.arm])
+    if args.dim:
+        cfg["dim"] = args.dim
+    model = build(args.arm, device, args.seed, args.dim)
     params = sum(p.numel() for p in model.parameters())
     opt = torch.optim.AdamW(
         model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.1
