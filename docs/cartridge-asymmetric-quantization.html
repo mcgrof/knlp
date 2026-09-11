@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Asymmetric KV quantization for trained cartridges</title>
+<meta name="description" content="Quality, memory, and fused H100 serving results for BF16-key, FP8-value trained cartridges in BF16 and globally asymmetric vLLM deployments.">
+<link rel="canonical" href="https://knlp.io/cartridge-asymmetric-quantization.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1100px;margin:16px 0 24px}
+.lead{max-width:990px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:960px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(25px,4vw,40px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.warn{color:var(--amber)}.metric.bad{color:var(--red)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.warn{border-left-color:var(--amber)}.rule.bad{border-left-color:var(--red)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.warn strong{color:var(--amber)}.rule.bad strong{color:var(--red)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}.note.good{border-left-color:var(--green);background:rgba(42,230,163,.06)}.note.bad{border-left-color:var(--red);background:rgba(241,120,120,.06)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#performance">serving result</a><a href="#quality">quality</a>
+<a href="#kernel">fused kernel</a><a href="#implementation">implementation</a>
+<a href="#limits">limits</a><a href="bias-aware-kv-quantization.html">main KV policy</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">Trained cartridges · asymmetric KV · fused serving</div>
+<h1>Compress the shared cartridge.<br>Keep the keys.</h1>
+<p class="lead"><strong>Cartridges are a sharper quantization stressor than ordinary inference.</strong> Symmetric FP8 looks harmless on short MMLU and GSM8K checks, yet raises the trained-cartridge objective by 0.9&ndash;1.3%. Almost all of that damage comes from the keys. Keep cartridge keys in BF16, store values in FP8 E4M3, and the increase falls to about 0.03%.</p>
+<p class="lead">The deployment path is real, not fake quantization: a shared 632-position K16/V8 cartridge stays outside every request's live cache, and one FlashInfer FA3 kernel attends over the cartridge and live suffix with one online-softmax state. With a BF16 live cache, it improves both measured throughput and TTFT against ordinary BF16 cartridge injection at batches 1, 16, and 64.</p>
+<div class="decision"><b>Deployment result</b><span>Use a shared K16/V8 cartridge over an otherwise BF16 cache. If the whole model already uses K16/V8, keep the shared path for TTFT and memory sharing, but do not claim a high-batch decode win: batch-64 throughput is 10.57% below the matching global-K16/V8 control.</span></div>
+<div class="badges"><span class="badge green">ONE ATTENTION PASS</span><span class="badge cyan">PREFILL + DECODE</span><span class="badge green">+1.333&times; CARTRIDGE CAPACITY</span><span class="badge amber">SM90 RESEARCH PATH</span></div>
+</div>
+
+<section id="performance">
+<h2>The fused path wins against a regular BF16 cartridge</h2>
+<p class="sub">Qwen3-8B on one H100 SXM 80 GB, exact 632-position patient-02 cartridge, vLLM eager mode, FlashInfer FA3, 32 generated tokens per request, two exact-shape warmups, and five measured repetitions. Report medians. Configure every engine with <code>max_num_seqs=64</code> and <code>max_num_batched_tokens=16384</code>.</p>
+<div class="grid3">
+<div class="card"><div class="kicker">Batch 1</div><div class="metric good">+0.22%</div><p>64.44 &rarr; 64.58 output tok/s. TTFT p50 improves 32.72 &rarr; 32.34 ms (&minus;1.17%).</p></div>
+<div class="card"><div class="kicker">Batch 16</div><div class="metric good">+3.82%</div><p>887.12 &rarr; 920.98 output tok/s. TTFT p50 improves 92.65 &rarr; 69.37 ms (&minus;25.13%).</p></div>
+<div class="card"><div class="kicker">Batch 64</div><div class="metric good">+2.57%</div><p>2,340.33 &rarr; 2,400.47 output tok/s. TTFT p50 improves 323.76 &rarr; 220.63 ms (&minus;31.85%).</p></div>
+</div>
+<div class="scroll" style="margin-top:22px"><table>
+<thead><tr><th>batch</th><th>ordinary BF16 cartridge</th><th>shared K16/V8 cartridge</th><th>tok/s delta</th><th>ordinary TTFT p50</th><th>shared TTFT p50</th><th>TTFT delta</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>64.44 tok/s</td><td>64.58 tok/s</td><td class="yes">+0.22%</td><td>32.72 ms</td><td>32.34 ms</td><td class="yes">&minus;1.17%</td></tr>
+<tr><td>16</td><td>887.12 tok/s</td><td>920.98 tok/s</td><td class="yes">+3.82%</td><td>92.65 ms</td><td>69.37 ms</td><td class="yes">&minus;25.13%</td></tr>
+<tr><td>64</td><td>2,340.33 tok/s</td><td>2,400.47 tok/s</td><td class="yes">+2.57%</td><td>323.76 ms</td><td>220.63 ms</td><td class="yes">&minus;31.85%</td></tr>
+</tbody></table></div>
+<div class="note good"><strong>Use the right baseline.</strong> This table compares a shared K16/V8 cartridge plus BF16 live KV with ordinary BF16 cartridge injection plus BF16 live KV. It shows the clean win requested for regular cartridge serving.</div>
+
+<h3>When the model already uses K16/V8</h3>
+<p class="sub">Compare the shared cartridge path with the ordinary globally asymmetric K16/V8 engine, not with BF16. Sharing still cuts TTFT and avoids per-request cartridge copies. The custom mixed-source kernel does not beat the stock global path at batch-64 sustained decode.</p>
+<div class="scroll"><table>
+<thead><tr><th>batch</th><th>ordinary global K16/V8</th><th>shared cart + global K16/V8</th><th>tok/s delta</th><th>ordinary TTFT p50</th><th>shared TTFT p50</th><th>TTFT delta</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>62.61 tok/s</td><td>62.21 tok/s</td><td class="conditional">&minus;0.63%</td><td>34.13 ms</td><td>32.93 ms</td><td class="yes">&minus;3.53%</td></tr>
+<tr><td>16</td><td>883.24 tok/s</td><td>884.16 tok/s</td><td class="yes">+0.10%</td><td>84.08 ms</td><td>70.28 ms</td><td class="yes">&minus;16.41%</td></tr>
+<tr><td>64</td><td>2,456.57 tok/s</td><td>2,196.87 tok/s</td><td class="no">&minus;10.57%</td><td>289.89 ms</td><td>223.46 ms</td><td class="yes">&minus;22.92%</td></tr>
+</tbody></table></div>
+<div class="note"><strong>Interpret the &minus;10.57% precisely.</strong> It is the batch-64 throughput gap between two globally K16/V8 live-cache configurations: stock global attention and the shared-cartridge mixed-source specialization. It does not negate the BF16-control wins above. It marks a remaining optimization target for deployments that already quantize every live value.</div>
+</section>
+
+<section id="quality">
+<h2>Keys carry the cartridge quantization loss</h2>
+<p class="sub">Qwen3-8B has 36 layers, eight KV heads, and head dimension 128. The patient-02 cartridge has 632 positions: one frozen attention sink and 631 trainable positions. Report raw KV payloads without scale or serialization metadata.</p>
+<div class="scroll"><table>
+<thead><tr><th>layout</th><th>bytes / token</th><th>full 12,628-token KV</th><th>632-position cartridge</th><th>capacity</th><th>measured cartridge loss increase</th></tr></thead>
+<tbody>
+<tr><td>BF16 K16/V16</td><td>144 KiB</td><td>1.734 GiB</td><td>88.875 MiB</td><td>1.00&times;</td><td>baseline</td></tr>
+<tr><td>Asymmetric K16/V8</td><td>108 KiB</td><td>1.301 GiB</td><td>66.656 MiB</td><td class="yes">1.333&times;</td><td class="yes">+0.031%, +0.029%, +0.038%</td></tr>
+<tr><td>Reverse asym. K8/V16</td><td>108 KiB</td><td>1.301 GiB</td><td>66.656 MiB</td><td>1.333&times;</td><td class="no">+0.837%, +1.271%, +1.140%</td></tr>
+<tr><td>Symmetric K8/V8</td><td>72 KiB</td><td>0.867 GiB</td><td>44.438 MiB</td><td>2.00&times;</td><td class="no">+0.873%, +1.303%, +1.177%</td></tr>
+</tbody></table></div>
+<div class="grid3" style="margin-top:20px">
+<div class="card"><div class="kicker">V8 only</div><div class="metric good">+0.033%</div><p>Mean relative objective increase across the three separately trained cartridge checkpoints.</p></div>
+<div class="card"><div class="kicker">K8 only</div><div class="metric bad">+1.083%</div><p>Quantizing keys causes essentially all of the measured cartridge loss.</p></div>
+<div class="card"><div class="kicker">K8 + V8</div><div class="metric bad">+1.118%</div><p>Symmetric FP8 gains 2&times; payload capacity but misses the cartridge quality knee.</p></div>
+</div>
+
+<h3>What the three loss values mean</h3>
+<div class="scroll"><table>
+<thead><tr><th>trained cartridge</th><th>BF16 loss</th><th>K16/V8 increase</th><th>K8/V8 loss</th><th>K8/V8 increase</th></tr></thead>
+<tbody>
+<tr><td>CAS cartridge run 1</td><td>0.016542</td><td>+0.031%</td><td>0.016687</td><td>+0.873%</td></tr>
+<tr><td>Half-learning-rate ablation</td><td>0.016799</td><td>+0.029%</td><td>0.017018</td><td>+1.303%</td></tr>
+<tr><td>CAS cartridge run 2</td><td>0.016932</td><td>+0.038%</td><td>0.017131</td><td>+1.177%</td></tr>
+</tbody></table></div>
+<p class="fine" style="margin-top:10px">These are three separately trained cartridge artifacts, not three samples from one inference run. The half-learning-rate arm is an ablation; run 2 is a second CAS-regime cartridge.</p>
+
+<h3>Why ordinary inference did not warn us</h3>
+<div class="scroll"><table>
+<thead><tr><th>measurement</th><th>BF16 K16/V16</th><th>asymmetric K16/V8</th><th>symmetric K8/V8</th></tr></thead>
+<tbody>
+<tr><td>Regular inference MMLU</td><td>77.360%</td><td>77.393% (+0.033 pp)</td><td>77.458% (+0.099 pp)</td></tr>
+<tr><td>Regular inference GSM8K (n=200)</td><td>93.0%</td><td>92.5% (&minus;0.5 pp)</td><td>91.5% (&minus;1.5 pp)</td></tr>
+<tr><td>Cartridge objective</td><td>baseline</td><td class="yes">+0.029% to +0.038%</td><td class="no">+0.873% to +1.303%</td></tr>
+</tbody></table></div>
+<p>Short regular-inference checks show no resolved MMLU loss and only a small GSM8K drop, while the learned cartridge exposes a consistent key-precision penalty. Treat a cartridge as its own quantization qualification workload. Do not infer cartridge safety from ordinary generation scores alone.</p>
+<div class="note bad"><strong>Do not claim a full-document quantization-quality result.</strong> The 1.734, 1.301, and 0.867 GiB entries are byte accounting for a 12,628-token KV cache. Quality was not measured on the full quantized document KV. The earlier 631-token initialization control used only the document's first 631 trainable positions; it was not a full-document cache test.</div>
+
+<h3>What fake quantization does with the other eight bits</h3>
+<p>The loss study rounded each BF16 value to the nearest FP8-E4M3 representable value, then stored that reconstructed number in a BF16 tensor so the existing model code could consume it. The BF16 container still occupies 16 bits, but the lower precision bits contain no independent information. They are fixed by the exact FP8 value represented in BF16; the conversion does not invent eight bits of new attention data.</p>
+<p>The arithmetic uses the reconstructed numerical value. It does not ignore half of a BF16 register, but only the FP8-level information survives the round trip. Therefore fake quantization measures numerical damage and saves no memory. The serving kernel below stores a real eight-bit V payload and converts it while loading into the attention pipeline.</p>
+</section>
+
+<section id="kernel">
+<h2>One kernel spans cartridge and live KV</h2>
+<p class="sub">Avoid the original two-attention-call design and its exact LSE merge. Present the shared cartridge and each request's paged live suffix as one logical sequence, then feed both regions into FlashInfer's existing register-resident online softmax.</p>
+<div class="flow">
+<div><b>Shared prefix</b><span>Read dense BF16 keys and packed FP8-E4M3 values from one resident cartridge.</span></div>
+<div><b>Boundary</b><span>Select cartridge or live storage only in the tile that crosses position 632.</span></div>
+<div><b>Live suffix</b><span>Read ordinary paged BF16 KV or paged K16/V8 KV for each request.</span></div>
+<div><b>One output</b><span>Keep max, normalization sum, and output accumulator in registers; write once.</span></div>
+</div>
+<div class="grid2" style="margin-top:20px">
+<div class="card rule good"><strong>DENSE CARTRIDGE TILES</strong><p>Bypass page-table division and index loads. Issue FP8 value reads before conversion and shared-memory stores to expose memory-level parallelism.</p></div>
+<div class="card rule good"><strong>ONE ONLINE SOFTMAX</strong><p>Launch attention once. Do not materialize a second output, an LSE tensor, a temporary merge buffer, or a separate merge kernel. Disable internal split-KV partial outputs for this specialization.</p></div>
+<div class="card rule good"><strong>DECODE GEOMETRY</strong><p>Use a 64&times;128 tile with one consumer warpgroup. Give producer and consumer 216 registers each; the final kernel uses 32 bytes of stack.</p></div>
+<div class="card rule good"><strong>PREFILL GEOMETRY</strong><p>Retain the 128&times;96 prefill tile. The custom dtype pair and mixed-source planning cover both prefill and decode.</p></div>
+</div>
+
+<h3>Memory behavior</h3>
+<div class="grid3">
+<div class="card"><div class="kicker">Packed cartridge</div><div class="metric good">66.656 MiB</div><p>K16/V8 payload for one 632-position Qwen3-8B cartridge, down from 88.875 MiB BF16.</p></div>
+<div class="card"><div class="kicker">Avoided at batch 64</div><div class="metric good">5.49 GiB</div><p>Do not duplicate an 88.875 MiB BF16 prefix into every request's ordinary cache. Keep one shared cartridge instead.</p></div>
+<div class="card"><div class="kicker">Global K16/V8 pool</div><div class="metric good">+33.33%</div><p>Reported live KV-token capacity rises from 365,200 to 486,928 when the whole cache uses K16/V8.</p></div>
+</div>
+</section>
+
+<section id="implementation">
+<h2>The implementation is split between FlashInfer and vLLM</h2>
+<p class="sub">Use the same branch name in both public forks: <code>20260911-fused-asym-cartridge</code>. FlashInfer owns dtype-specialized attention and the fused mixed-source kernel. vLLM owns cartridge residency, scheduler allocation, request planning, backend dispatch, and the end-to-end benchmark.</p>
+<div class="grid2">
+<div class="card">
+<div class="kicker">FlashInfer · 2 commits</div>
+<h3><a href="https://github.com/mcgrof/flashinfer/tree/20260911-fused-asym-cartridge">Review the FlashInfer branch</a></h3>
+<p><code>8b3608e6</code> lets custom decode and prefill modules compile distinct key and value dtypes.</p>
+<p><code>68153db5</code> fuses the dense shared cartridge with paged live KV inside one Hopper FA3 attention pass.</p>
+</div>
+<div class="card">
+<div class="kicker">vLLM · 4 commits</div>
+<h3><a href="https://github.com/mcgrof/vllm/tree/20260911-fused-asym-cartridge">Review the vLLM branch</a></h3>
+<p><code>1dfe7de2e0</code> preserves split K and V planes in GPU residency.</p>
+<p><code>c04e7137d1</code> releases cache blocks owned by the external cartridge.</p>
+<p><code>0ec079cdf1</code> plans and serves the cartridge and live suffix in one pass.</p>
+<p><code>a7cb3769f5</code> adds the fresh-process four-layout benchmark and summary.</p>
+</div>
+</div>
+<div class="note good"><strong>No KNLP runtime patch is required.</strong> KNLP holds the research harness and public analysis. The executing code lives in the FlashInfer and vLLM branches above.</div>
+
+<h3>Validation gates</h3>
+<div class="scroll"><table>
+<thead><tr><th>gate</th><th>coverage</th><th>result</th></tr></thead>
+<tbody>
+<tr><td>FlashInfer numerical matrix</td><td>prefill/decode &times; BF16/FP8 live V; exact token-632 boundary; BF16 PyTorch reference at rtol=atol=3e-2</td><td class="yes">4 / 4 pass</td></tr>
+<tr><td>vLLM connector, core, fused attention</td><td>residency, allocation, routing, planning, backend dispatch</td><td class="yes">81 / 81 pass</td></tr>
+<tr><td>Static checks</td><td>Ruff, formatter, git diff whitespace</td><td class="yes">pass</td></tr>
+<tr><td>Real generation smoke</td><td>four LongHealth questions: BF16 3/4, K16/V8 2/4</td><td class="conditional">smoke only</td></tr>
+</tbody></table></div>
+<p class="fine" style="margin-top:10px">Do not use the four-question smoke as a quality estimate. Use the three-checkpoint objective result above for the measured quantization signal and run a larger generation evaluation before a production quality claim.</p>
+</section>
+
+<section id="limits">
+<h2>Keep the result inside its tested envelope</h2>
+<div class="grid3">
+<div class="card rule warn"><strong>HOPPER ONLY</strong><p>The fused specialization targets SM90 / FlashInfer FA3. Do not infer Ampere or ROCm performance.</p></div>
+<div class="card rule warn"><strong>EAGER EXECUTION</strong><p>The current vLLM path excludes CUDA graphs. Measure graph-compatible integration separately.</p></div>
+<div class="card rule warn"><strong>ONE HOMOGENEOUS CARTRIDGE</strong><p>Routing supports a singleton shared cartridge per request group. Multi-cartridge composition is not implemented in this specialization.</p></div>
+<div class="card rule warn"><strong>PAGE-ALIGNED PREFIX</strong><p>The tested 632-position cartridge aligns exactly to eight-token pages. Reject unsupported boundary layouts instead of silently falling back.</p></div>
+<div class="card rule warn"><strong>NO DCP OR SPECULATION</strong><p>Data-context parallelism and speculative decoding are outside the current contract.</p></div>
+<div class="card rule warn"><strong>FP8 E4M3 VALUES</strong><p>The packed cartridge path supports BF16 keys and FP8-E4M3 values. Other value formats need their own numerical and performance gates.</p></div>
+</div>
+<div class="note"><strong>Next optimization target.</strong> Preserve the BF16-live win while closing the batch-64 gap against stock global K16/V8. Profile the mixed-source specialization under globally FP8 live values before changing tile geometry or scheduling; keep the existing like-for-like benchmark as the gate.</div>
+</section>
+
+<section id="related">
+<h2>Read the result in context</h2>
+<div class="map">
+<a href="bias-aware-kv-quantization.html"><b>Bias-aware KV quantization</b><span>The model-level deployment policy: classify key fragility, then select BF16, K16/V8, or K8/V8.</span></a>
+<a href="cas.html"><b>Cartridges at Scale reproduction</b><span>The training recipe, five-patient LongHealth result, controls, and current collapse/rescue status.</span></a>
+<a href="cartridges_visualization.html"><b>Cartridges</b><span>The base learned-KV technique and why a trained prefix can replace repeated document prefill.</span></a>
+<a href="paper_memory_decode.html"><b>Asymmetric KV decode study</b><span>The broader K16/V8 kernel and end-to-end serving evidence outside the cartridge workload.</span></a>
+</div>
+</section>
+</main>
+<footer>KNLP · asymmetric KV quantization for trained cartridges · measured scope and public implementation links</footer>
+</body>
+</html>
