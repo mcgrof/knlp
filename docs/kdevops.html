@@ -107,7 +107,7 @@
         — the same Kconfig-driven bringup you use for kernel test workflows.
       </p>
       <div style="margin-top:18px">
-        <span class="pill">kdevops plugin v1.0.0</span>
+        <span class="pill">kdevops plugin v1.2.0</span>
         <span class="pill">Kconfig-driven bringup</span>
         <span class="pill">bare metal / cloud / VM</span>
       </div>
@@ -187,6 +187,8 @@ make bringup</pre>
           <tr><td class="mono">WORKFLOW_KNLP_GIT_URL</td><td class="mono">…/mcgrof/knlp.git</td><td>which repository to clone</td></tr>
           <tr><td class="mono">WORKFLOW_KNLP_GIT_REF</td><td class="mono">main</td><td>branch, tag, or commit to check out</td></tr>
           <tr><td class="mono">WORKFLOW_KNLP_DATA_PATH</td><td class="mono">/data/knlp</td><td>where knlp is cloned and installed</td></tr>
+          <tr><td class="mono">WORKFLOW_KNLP_KVTIDE</td><td class="mono">n</td><td>install the software NVMe-KV and physical PCIe benchmark dependencies</td></tr>
+          <tr><td class="mono">WORKFLOW_KNLP_KVTIDE_UPCIE_CUDA</td><td class="mono">n</td><td>install the uPCIe GPU-memory DKMS modules; does not install CUDA</td></tr>
         </tbody>
       </table>
       <div class="callout">
@@ -195,6 +197,12 @@ make bringup</pre>
         top of knlp's <code>requirements.txt</code>. The plugin provisions and checks out; you pick
         the accelerator stack for the node.
       </div>
+      <p>
+        To provision a physical <a href="kvtide.html">KVTide</a> comparison, stage the plugin's
+        <code>knlp-kvtide-pcie.config</code> fragment and compose it with a declared-hosts
+        bare-metal configuration. QEMU can check the harness, but cannot reproduce physical PCIe
+        or GPU-direct performance.
+      </p>
     </section>
 
     <section>
