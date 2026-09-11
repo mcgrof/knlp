@@ -1,10 +1,9 @@
 ---
 # SPDX-License-Identifier: copyleft-next-0.3.1
 #
-# KVTide bench dependencies: packages needed to build the knlp KVTide
-# harness's software NVMe-KV target (SPDK), the xNVMe io_uring_cmd
-# initiator and the optional NIXL XNVME_KV plugin. The harness itself
-# is driven from the knlp checkout (make defconfig-kvtide-ab && make).
+# KVTide bench dependencies for the software NVMe-KV and physical PCIe
+# modes. The optional DKMS packages let xNVMe uPCIe import GPU memory
+# under UIO and map it through a VFIO IOMMU domain.
 
 - name: Install KVTide build dependencies (Debian family)
   become: yes
@@ -22,6 +21,7 @@
       - python3-pyelftools
       - liburing-dev
       - libnuma-dev
+      - numactl
       - libssl-dev
       - libaio-dev
       - uuid-dev
@@ -40,6 +40,13 @@
       - libtool
       - libncurses-dev
       - bsdextrautils
+      - pciutils
+      - psmisc
+      - kmod
+      - udev
+      - dkms
+      - wget
+      - "linux-headers-{{ ansible_kernel }}"
     state: present
     update_cache: yes
   when: ansible_facts['os_family'] == 'Debian'
@@ -51,3 +58,71 @@
       family only; install the equivalents manually and run
       'make kvtide-doctor' in the knlp checkout to verify.
   when: ansible_facts['os_family'] != 'Debian'
+
+- name: Download the uPCIe dma-buf importer
+  become: yes
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/safl/upcie/releases/download/{{
+      workflow_knlp_kvtide_upcie_release }}/dmabuf-import-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+    dest: >-
+      /tmp/dmabuf-import-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+    mode: "0644"
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - workflow_knlp_kvtide_upcie_cuda | default(false) | bool
+
+- name: Download the uPCIe IOMMU GPU mapper
+  become: yes
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/safl/upcie/releases/download/{{
+      workflow_knlp_kvtide_upcie_release }}/iommu-map-pa-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+    dest: >-
+      /tmp/iommu-map-pa-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+    mode: "0644"
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - workflow_knlp_kvtide_upcie_cuda | default(false) | bool
+
+- name: Install the uPCIe GPU-memory modules
+  become: yes
+  ansible.builtin.apt:
+    deb: "{{ item }}"
+  loop:
+    - >-
+      /tmp/dmabuf-import-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+    - >-
+      /tmp/iommu-map-pa-dkms_{{
+      workflow_knlp_kvtide_upcie_dkms_version }}_all.deb
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - workflow_knlp_kvtide_upcie_cuda | default(false) | bool
+
+- name: Load the uPCIe GPU-memory modules at boot
+  become: yes
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/kvtide-upcie.conf
+    mode: "0644"
+    content: |
+      dmabuf_import
+      iommu_map_pa
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - workflow_knlp_kvtide_upcie_cuda | default(false) | bool
+
+- name: Load the uPCIe GPU-memory modules now
+  become: yes
+  ansible.builtin.command: "modprobe {{ item }}"
+  changed_when: false
+  loop:
+    - dmabuf_import
+    - iommu_map_pa
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - workflow_knlp_kvtide_upcie_cuda | default(false) | bool

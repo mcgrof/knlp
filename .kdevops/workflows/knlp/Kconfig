@@ -40,19 +40,41 @@ config WORKFLOW_KNLP_DATA_PATH
 	  The directory where knlp will be cloned and installed.
 
 config WORKFLOW_KNLP_KVTIDE
-	bool "Provision KVTide NVMe-KV bench dependencies"
+	bool "Provision KVTide storage bench dependencies"
 	default n
 	output yaml
 	help
-	  Install the packages knlp's KVTide harness needs to build its
-	  software NVMe-KV target (SPDK kvmalloc over NVMe-oF/TCP), the
-	  xNVMe io_uring_cmd initiator and the optional NIXL XNVME_KV
-	  plugin. The harness runs entirely inside the provisioned node,
-	  QEMU guests included; no KV hardware is required.
+	  Install the packages knlp's KVTide harness needs for its software
+	  NVMe-KV target and physical PCIe NVM comparison modes. The latter
+	  compares current xNVMe uPCIe and SPDK against Linux io_uring_cmd
+	  with ordinary, registered and blk_iobuf-premapped buffers.
 
 	  After bringup, on the node:
 	    cd <knlp data path>
 	    make defconfig-kvtide-ab && make
+
+config WORKFLOW_KNLP_KVTIDE_UPCIE_CUDA
+	bool "Install uPCIe GPU-memory DKMS modules"
+	depends on WORKFLOW_KNLP_KVTIDE
+	default n
+	output yaml
+	help
+	  Install the out-of-tree dmabuf-import and iommu-map-pa modules
+	  required by current xNVMe main for NVMe peer-to-peer reads into
+	  CUDA memory. The modules come from the configured uPCIe release.
+	  This does not install the NVIDIA driver or CUDA toolkit.
+
+config WORKFLOW_KNLP_KVTIDE_UPCIE_RELEASE
+	string "uPCIe release carrying the DKMS packages"
+	depends on WORKFLOW_KNLP_KVTIDE_UPCIE_CUDA
+	default "v0.8.0"
+	output yaml
+
+config WORKFLOW_KNLP_KVTIDE_UPCIE_DKMS_VERSION
+	string "uPCIe DKMS package version"
+	depends on WORKFLOW_KNLP_KVTIDE_UPCIE_CUDA
+	default "0.2.0"
+	output yaml
 
 endmenu
 
