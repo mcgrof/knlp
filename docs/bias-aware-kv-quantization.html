@@ -46,7 +46,7 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <body>
 <header><nav>
 <a class="logo" href="./">KNLP</a><span class="spacer"></span>
-<a href="#policy">deployment policy</a><a href="#prebias">pre-bias conclusion</a><a href="#tools">planning tools</a><a href="#remaining">remaining work</a>
+<a href="#policy">deployment policy</a><a href="cartridge-asymmetric-quantization.html">cartridges</a><a href="#prebias">pre-bias conclusion</a><a href="#tools">planning tools</a><a href="#remaining">remaining work</a>
 <a href="fp8-kv-failure-atlas.html">failure atlas</a><a href="kv-compression-frontier.html">compression frontier</a><a href="paper_memory_decode.html">decode study</a>
 </nav></header>
 <main>
@@ -91,6 +91,7 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <a href="fp8-kv-failure-atlas.html"><b>FP8 KV-cache failure atlas</b><span>Model geometry, failure mechanism, prediction, and qualification probes.</span></a>
 <a href="kv-compression-frontier.html"><b>KV-cache compression frontier</b><span>Quality and capacity across K16/V8, symmetric FP8, pre-bias, and sub-8-bit research tiers.</span></a>
 <a href="paper_memory_decode.html"><b>Asymmetric KV decode study</b><span>End-to-end serving results, kernel integration, and the systems case for value-side compression.</span></a>
+<a href="cartridge-asymmetric-quantization.html"><b>Asymmetric quantization for cartridges</b><span>Why trained cartridges expose key sensitivity, and how one fused kernel serves a shared K16/V8 cartridge with BF16 or K16/V8 live KV.</span></a>
 <a href="fused-quant/fp8-attention-hardware-notes.md"><b>FP8 attention hardware notes</b><span>Kernel-family, Tensor Core, conversion, layout, and scheduling constraints behind the measurements.</span></a>
 </div>
 </section>
