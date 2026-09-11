@@ -182,6 +182,9 @@
         vfio device cdevs through iommufd when the host exposes them. It also tries to load the
         legacy <code>vfio_iommu_type1</code> transport explicitly for hosts without cdevs; loading
         <code>vfio-pci</code> alone does not make that transport available to xNVMe.
+        Set <code>KVTIDE_PCIE_XNVME_VFIO_MODE</code> to <code>auto</code>,
+        <code>iommufd</code>, or <code>type1</code>. KVTide records the selection so an explicit
+        type1 workaround cannot be mistaken for an iommufd result.
       </p>
       <table>
         <thead><tr><th>Arm</th><th>Code that submits the reads</th><th>Buffer path</th></tr></thead>

@@ -164,6 +164,16 @@ config KVTIDE_PCIE_DRIVER_VFIO
 	  through vfio-pci. The CUDA path additionally needs uPCIe's
 	  iommu-map-pa module to map GPU memory into each controller domain.
 
+config KVTIDE_PCIE_XNVME_VFIO_MODE
+	string "xNVMe VFIO transport"
+	default "auto"
+	depends on KVTIDE_PCIE_DRIVER_VFIO
+	help
+	  Pass auto, type1 or iommufd to current xNVMe uPCIe. Auto lets
+	  xNVMe select a transport. Use type1 when a host exposes vfio
+	  device cdevs but its iommufd path cannot initialize. KVTide
+	  records this choice with the result.
+
 config KVTIDE_PCIE_DRIVER_UIO
 	bool "uio_pci_generic with the IOMMU disabled"
 	help
