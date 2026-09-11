@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>KVTide — NVMe-KV bench harness | knlp</title>
+  <title>KVTide — storage I/O bench harness | knlp</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -97,22 +97,22 @@
 
   <div class="wrap">
     <header class="hero">
-      <div class="kicker">Storage &middot; NVMe-KV &middot; Reproducibility</div>
+      <div class="kicker">Storage &middot; NVMe &middot; Reproducibility</div>
       <h1><span class="accent">KVTide</span> — tiered KV-cache I/O, measured.</h1>
       <p class="lede">
-        KVTide is a vendor-neutral harness for studying tiered KV-cache I/O over NVMe key-value
-        namespaces. It stands up a pure-software NVMe-KV target and drives it with two competing
-        data paths — a userspace kernel-bypass initiator and a kernel <code>io_uring_cmd</code>
-        initiator — over the exact same matrix, so the architecture question "which data path, at
-        what cost?" gets numbers instead of opinions. Everything runs in a QEMU guest; no KV
-        hardware required.
+        KVTide runs two separate storage comparisons. Use its software NVMe-KV mode to compare
+        key-value commands over loopback TCP without KV hardware. Use its physical-PCIe mode on
+        disposable NVMe namespaces to compare current xNVMe uPCIe, current SPDK, Linux
+        <code>io_uring_cmd</code>, and Linux buffers that retain their DMA mapping. Beating SPDK
+        across small and large reads is the goal under test, not a result claimed here.
       </p>
       <div style="margin-top:18px">
         <span class="pill">NVMe-KV</span>
         <span class="pill">SPDK</span>
         <span class="pill">xNVMe</span>
         <span class="pill">io_uring_cmd</span>
-        <span class="pill">QEMU-friendly</span>
+        <span class="pill">uPCIe-CUDA</span>
+        <span class="pill">blk_iobuf</span>
         <span class="pill">kdevops</span>
       </div>
     </header>
@@ -169,6 +169,54 @@
     </section>
 
     <section>
+      <h2>Compare physical NVMe read paths</h2>
+      <p>
+        Run the physical mode on the same unused controllers under one translating-IOMMU boot.
+        KVTide rebinds those controllers between the userspace and kernel drivers, records the
+        exact xNVMe and SPDK commits, and returns the controllers to Linux when it exits. It
+        refuses mounted namespaces, swap devices, block holders, and process-open devices. You
+        must still verify every PCI address before enabling the explicit rebind option.
+      </p>
+      <table>
+        <thead><tr><th>Arm</th><th>Code that submits the reads</th><th>Buffer path</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">upcie</td><td>xNVMe <code>xnvmeperf</code></td><td>uPCIe userspace NVMe driver, host memory</td></tr>
+          <tr><td class="mono">upcie-cuda</td><td>xNVMe <code>xnvmeperf</code></td><td>host-initiated uPCIe commands, payload DMA directly into CUDA memory</td></tr>
+          <tr><td class="mono">spdk</td><td>current standalone <code>spdk_nvme_perf</code></td><td>SPDK userspace NVMe driver</td></tr>
+          <tr><td class="mono">linux</td><td>xNVMe <code>xnvmeperf</code></td><td>kernel NVMe and <code>io_uring_cmd</code></td></tr>
+          <tr><td class="mono">fixed</td><td>KVTide <code>uring_nvm_perf</code></td><td>registered userspace buffer, DMA-mapped per command</td></tr>
+          <tr><td class="mono">premap</td><td>KVTide <code>uring_nvm_perf</code></td><td>kernel <code>blk_iobuf</code> buffer, DMA-mapped once and reused</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Read the ratios as full-stack outcomes. SPDK and premap use different benchmark programs.
+        Use the upcie-versus-linux pair for the closest same-tool comparison. The harness reports
+        IOPS, MiB/s, failed commands, and global busy CPU cores. It does not report a compatible
+        latency distribution, so do not make tail-latency claims from these runs. Each benchmark
+        program generates its own random offsets; cells match a distribution and its controls,
+        not an identical ordered request stream.
+      </p>
+      <h3>run both synthetic questions</h3>
+      <ul>
+        <li><strong>AISIO command rate:</strong> run random 512-byte, 4 KiB, and 8 KiB reads at
+          queue depth 128 while scaling from one to four host threads. A 512-byte cell runs only
+          when the namespace has 512-byte logical blocks. Matching the published platform also
+          requires its 16 Samsung PM1753 SSDs, H100 system, and PCIe topology; the profile only
+          supplies its request controls.</li>
+        <li><strong>KV crossover:</strong> sweep random reads from 4 KiB through 2 MiB at queue
+          depths 1, 16, 64, and 128. Use it to locate command-rate, DMA-mapping, MDTS, and
+          bandwidth limits. Do not call this a production KV-cache workload; add trace-derived
+          profiles only after preserving sizes, offsets, order, pacing, and concurrency.</li>
+      </ul>
+      <p>
+        Before recording premap results, KVTide must complete a read one logical block larger
+        than Linux's ordinary queue limit. This catches the kernel allocation's allowed fallback
+        to an ordinary registered buffer. Crossing that limit proves this run used the retained
+        mapping and the separate premapped request limit.
+      </p>
+    </section>
+
+    <section>
       <h2>Quick start</h2>
       <pre><span class="c"># in a knlp checkout, on the bench host (a QEMU guest is fine)</span>
 make defconfig-kvtide-ab
@@ -196,7 +244,20 @@ make</pre>
         a storage backend that moves buffers to and from KV namespaces over the same
         <code>io_uring_cmd</code> path — and runs its unit and integration tests against the same
         target. Every knob (pins, target address/NQN/core mask, the matrix) lives in the
-        <em>KVTide NVMe-KV bench harness</em> Kconfig menu.
+        <em>KVTide storage bench harness</em> Kconfig menu.
+      </p>
+      <h3>run physical PCIe</h3>
+      <pre><span class="c"># boot the premap kernel with a translating IOMMU first</span>
+make defconfig-kvtide-pcie
+echo 'CONFIG_KVTIDE_PCIE_BDFS="0000:41:00.0 0000:42:00.0 0000:43:00.0 0000:44:00.0"' &gt;&gt; .config
+echo 'CONFIG_KVTIDE_PCIE_ALLOW_REBIND=y' &gt;&gt; .config
+make</pre>
+      <p>
+        Use <code>defconfig-kvtide-pcie-linux-baremetal</code> to build and install the public
+        premap kernel before the run. The first <code>make</code> installs the kernel and required
+        GRUB command line, then stops for a reboot. The next <code>make</code> runs the comparison.
+        Use <code>defconfig-kvtide-pcie-aisio</code> only to reproduce the published uPCIe
+        no-IOMMU setup; that boot cannot evaluate retained-IOMMU mappings.
       </p>
     </section>
 
@@ -270,6 +331,19 @@ make</pre>
         the kernel paths that block-layer work touches; the userspace initiator doubles as the
         control arm that skips the kernel entirely.
       </p>
+      <p>
+        Do not use QEMU throughput as a stand-in for physical PCIe. Stage
+        <code>knlp-kvtide-pcie.config</code> and use kdevops declared-hosts mode for the storage
+        node. Enable the uPCIe-CUDA option only when the NVIDIA driver and CUDA toolkit are
+        already present. The plugin installs the uPCIe v0.8.0
+        <code>dmabuf-import</code> and <code>iommu-map-pa</code> DKMS packages; it does not install
+        CUDA. Then run a physical KVTide defconfig in the provisioned knlp checkout.
+      </p>
+      <pre>cp ~/.config/kdevops/plugins/knlp/defconfigs/configs/knlp-kvtide-pcie.config \
+   ~/.config/kdevops/defconfigs/configs/
+make defconfig-&lt;your-base&gt;+knlp-kvtide-pcie \
+    DECLARED_HOSTS="storage-node"
+make &amp;&amp; make bringup</pre>
 
       <h3>the kernel under test, one command</h3>
       <p>
@@ -326,13 +400,15 @@ make defconfig-kvtide-ab &amp;&amp; make</pre>
     </section>
 
     <section>
-      <h2>Reproducibility pins</h2>
+      <h2>Reproduce the source state</h2>
       <table>
         <thead><tr><th>Component</th><th>Source</th><th>Pin</th></tr></thead>
         <tbody>
           <tr><td>SPDK KV target stack</td><td><a href="https://review.spdk.io/c/spdk/spdk/+/28307">SPDK Gerrit change 28307</a> (in review)</td><td class="mono">refs/changes/07/28307/12</td></tr>
-          <tr><td>xNVMe</td><td><a href="https://github.com/xnvme/xnvme">github.com/xnvme/xnvme</a></td><td class="mono">a5bf2a65</td></tr>
+          <tr><td>software-mode xNVMe</td><td><a href="https://github.com/xnvme/xnvme">github.com/xnvme/xnvme</a></td><td class="mono">a5bf2a65</td></tr>
           <tr><td>NIXL + XNVME_KV plugin</td><td><a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">github.com/mcgrof/nixl</a></td><td class="mono">20260717-xnvme-kv</td></tr>
+          <tr><td>physical-mode xNVMe</td><td><a href="https://github.com/xnvme/xnvme">github.com/xnvme/xnvme</a></td><td class="mono">resolve main at fetch time</td></tr>
+          <tr><td>physical-mode SPDK</td><td><a href="https://github.com/spdk/spdk">github.com/spdk/spdk</a></td><td class="mono">resolve master at fetch time</td></tr>
         </tbody>
       </table>
       <p>
@@ -342,6 +418,14 @@ make defconfig-kvtide-ab &amp;&amp; make</pre>
         and an RPC decoder collision until those land upstream. The harness README
         (<code>tools/reproduce/kvtide/README.md</code>) documents every default.
       </p>
+      <p>
+        Each physical fetch refreshes a clean checkout to the current configured upstream branch
+        and refuses tracked local changes. Each run records the resulting commit IDs in
+        <code>run.meta</code>, so later branch movement does not hide what produced the CSV. Pin
+        commits in Kconfig to freeze a campaign. The physical harness has passed configuration, compilation, and static
+        validation but has not yet produced a real-device performance result. Check zero failed
+        commands and repeat every surprising crossover before publishing a conclusion.
+      </p>
     </section>
 
     <section>
@@ -350,8 +434,10 @@ make defconfig-kvtide-ab &amp;&amp; make</pre>
         <li>NVMe Key-Value command set — <a href="https://nvmexpress.org/specifications/">NVM Express specifications</a></li>
         <li>SPDK KV target stack — <a href="https://review.spdk.io/c/spdk/spdk/+/28307">review.spdk.io change 28307</a></li>
         <li>xNVMe — <a href="https://xnvme.io/">xnvme.io</a></li>
+        <li>AISIO published setup — <a href="https://xnvme.io/aisio/">xnvme.io/aisio</a></li>
+        <li>SPDK — <a href="https://github.com/spdk/spdk">github.com/spdk/spdk</a></li>
         <li>NIXL XNVME_KV plugin branch — <a href="https://github.com/mcgrof/nixl/tree/20260717-xnvme-kv">mcgrof/nixl @ 20260717-xnvme-kv</a></li>
-        <li>blk_iobuf_pool kernel branch — <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=blk-iobuf-pool-v3">mcgrof/linux @ blk-iobuf-pool-v3</a></li>
+        <li>premapped blk_iobuf kernel branch — <a href="https://git.kernel.org/pub/scm/linux/kernel/git/mcgrof/linux.git/log/?h=blk-iobuf-pool-v5-premap-iova">mcgrof/linux @ blk-iobuf-pool-v5-premap-iova</a></li>
         <li>blk_iobuf_pool RFC + tooling in kdevops — <a href="https://github.com/linux-kdevops/kdevops/blob/main/docs/rfc-20260630-v1-blk-iobuf-pool.html">RFC page</a>, <a href="https://github.com/linux-kdevops/kdevops/tree/main/scripts/workflows/iobuf_bench">iobuf_bench</a></li>
         <li>Running knlp with kdevops — <a href="kdevops.html">the kdevops integration page</a></li>
         <li>kdevops — <a href="https://github.com/linux-kdevops/kdevops">github.com/linux-kdevops/kdevops</a></li>
@@ -363,8 +449,8 @@ make defconfig-kvtide-ab &amp;&amp; make</pre>
       <p>
         knlp is a research project applying Linux kernel development methodologies to ML
         experimentation and reproducibility. KVTide is its storage-side harness: the same
-        Kconfig-driven, pinned, one-command flow, pointed at the NVMe-KV data paths that tiered
-        KV-cache serving will stand on.
+        Kconfig-driven, revision-recorded flow, pointed at both NVMe-KV commands and the physical
+        NVMe read paths that tiered KV-cache serving can use.
       </p>
     </footer>
   </div>
