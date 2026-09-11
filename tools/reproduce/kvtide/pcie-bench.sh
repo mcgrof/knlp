@@ -387,6 +387,8 @@ run_command() {
 	read -r iops mibps failed <<< "$parsed"
 	if [ "$status" -ne 0 ] || [ -z "${iops:-}" ]; then
 		iops=ERR mibps=ERR failed=ERR
+	elif ! [[ "$failed" =~ ^[0-9]+$ ]] || [ "$failed" -ne 0 ]; then
+		status=1
 	fi
 	printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
 		"$CURRENT_PROFILE" "$CURRENT_ARM" "$CURRENT_TOOL" \
