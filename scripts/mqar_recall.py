@@ -66,6 +66,11 @@ def set_vocab(vocab):
 
 ARMS = dict(
     attn=dict(kind="stack", dim=512, layers=2, heads=8, layout="A"),
+    # RoPE alone leaves a two-layer stack stuck near half accuracy on
+    # four pairs at this scale: the previous-token head forms slowly.
+    # The Zoology attention baselines carry learned absolute position
+    # embeddings, which make that head trivial; this variant adds them.
+    attn_pos=dict(kind="stack", dim=512, layers=2, heads=8, layout="A", abs_pos=True),
     gdn=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=5, layout="G"),
     gdn6=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=6, layout="G"),
     gdnw=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=10, layout="G"),
@@ -144,6 +149,20 @@ def train_batch(rng, levels, batch, seq_len):
 # ---------------------------------------------------------------------------
 
 
+class PosEmbed(nn.Module):
+    """Token embedding plus a learned absolute position embedding; wraps
+    the stack's embedding so the tied output head keeps its weight."""
+
+    def __init__(self, embed, max_len, dim):
+        super().__init__()
+        self.embed = embed
+        self.pos = nn.Embedding(max_len, dim)
+        nn.init.normal_(self.pos.weight, std=0.02)
+
+    def forward(self, idx):
+        return self.embed(idx) + self.pos(torch.arange(idx.shape[1], device=idx.device))
+
+
 def build(arm, device, seed, dim=None):
     cfg = dict(ARMS[arm])
     if dim:
@@ -151,6 +170,8 @@ def build(arm, device, seed, dim=None):
     torch.manual_seed(seed)
     if cfg["kind"] == "stack":
         model = StackLM(cfg, VOCAB)
+        if cfg.get("abs_pos"):
+            model.embed = PosEmbed(model.embed, 4096, cfg["dim"])
     else:
         from titans_pytorch import MemoryAsContextTransformer
 
