@@ -108,6 +108,36 @@ ARMS = dict(
         layout="M",
         **MOM_ROUTING,
     ),
+    # The ablations locate the paper-config cell's recall in its shared
+    # memory.  These two remove the shared memory at training time, so
+    # the routed memories have to carry the task: per-memory
+    # projections with two heads (four memories, 64K total, 32K active)
+    # and the shared-projection variant with five heads.
+    mom_ns=dict(
+        kind="stack",
+        dim=512,
+        layers=2,
+        heads=8,
+        mom_heads=2,
+        layout="M",
+        num_memories=4,
+        topk=2,
+        shared_mem=False,
+        aux_loss_scale=0.01,
+    ),
+    moms_ns=dict(
+        kind="stack",
+        dim=512,
+        layers=2,
+        heads=8,
+        mom_heads=5,
+        single_kv_proj=True,
+        layout="M",
+        num_memories=4,
+        topk=2,
+        shared_mem=False,
+        aux_loss_scale=0.01,
+    ),
     titans=dict(
         kind="titans",
         dim=512,
@@ -319,7 +349,7 @@ def evaluate(model, arm, device, levels, examples, seed, eval_batch):
             blk = mom_blocks(model)[0].mixer
             e, k = blk.num_memories, blk.topk
             entry["routing_overlap_chance"] = 1 - math.comb(e - k, k) / math.comb(e, k)
-        blocks = mom_blocks(model)
+        blocks = [b for b in mom_blocks(model) if b.mixer.shared_mem]
         if blocks:
 
             def score():
@@ -376,7 +406,7 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--warmup", type=int, default=200)
     ap.add_argument("--train-pairs", default="4,8,16,32,64")
-    ap.add_argument("--eval-pairs", default="4,8,16,32,64,128,256")
+    ap.add_argument("--eval-pairs", default="4,8,16,32,64,128,256,512")
     ap.add_argument("--eval-examples", type=int, default=512)
     ap.add_argument("--eval-batch", type=int, default=64)
     ap.add_argument("--eval-every", type=int, default=500)
