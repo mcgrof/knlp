@@ -423,7 +423,7 @@ run_cell() {
 			--cpumask "$mask" --nqueues "${CONFIG_KVTIDE_PCIE_NQUEUES}"
 			--be "$arm")
 		[ "$arm" != upcie-cuda ] || \
-			command+=(--gpu_id "${CONFIG_KVTIDE_PCIE_GPU_ID}")
+			command+=(--gpu_id "${CONFIG_KVTIDE_PCIE_GPU_ID:-0}")
 		for bdf in ${CONFIG_KVTIDE_PCIE_BDFS}; do command+=("$bdf"); done
 		;;
 	spdk)
