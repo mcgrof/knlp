@@ -21,7 +21,15 @@ if is_pcie; then
 	if want_pcie_upcie || want_pcie_linux; then
 		MESON_SETUP=(meson setup)
 		CUDA_OPT=disabled
-		want_pcie_cuda && CUDA_OPT=enabled
+		if want_pcie_cuda; then
+			CUDA_OPT=enabled
+			if ! command -v nvcc >/dev/null 2>&1; then
+				[ -x /usr/local/cuda/bin/nvcc ] || \
+					kvtide_die "CUDA is enabled but nvcc is unavailable"
+				PATH=/usr/local/cuda/bin:$PATH
+				export PATH
+			fi
+		fi
 		if [ -f "$PCIE_XNVME_SRC/build-kvtide-pcie/meson-private/coredata.dat" ]; then
 			MESON_SETUP+=(--reconfigure)
 		fi
