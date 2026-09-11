@@ -321,18 +321,36 @@ def evaluate(model, arm, device, levels, examples, seed, eval_batch):
             entry["routing_overlap_chance"] = 1 - math.comb(e - k, k) / math.comb(e, k)
         blocks = mom_blocks(model)
         if blocks:
+
+            def score():
+                hits = 0
+                for s in range(0, examples, eval_batch):
+                    xb = torch.from_numpy(x[s : s + eval_batch]).to(device)
+                    yb = torch.from_numpy(y[s : s + eval_batch]).to(device)
+                    pred = logits_of(model, xb).argmax(-1)
+                    mask = yb != -100
+                    hits += (pred[mask] == yb[mask]).sum().item()
+                return hits / max(1, total)
+
+            # shared memory off: only the routed memories answer
             for blk in blocks:
                 blk.mixer.shared_mem = False
-            correct_off = 0
-            for s in range(0, examples, eval_batch):
-                xb = torch.from_numpy(x[s : s + eval_batch]).to(device)
-                yb = torch.from_numpy(y[s : s + eval_batch]).to(device)
-                pred = logits_of(model, xb).argmax(-1)
-                mask = yb != -100
-                correct_off += (pred[mask] == yb[mask]).sum().item()
+            entry["accuracy_shared_off"] = score()
             for blk in blocks:
                 blk.mixer.shared_mem = True
-            entry["accuracy_shared_off"] = correct_off / max(1, total)
+            # routed memories off: the layer's reconstruct() assembles the
+            # routed output before the shared path is added; zeroing it
+            # leaves only the shared memory answering.  The pair of
+            # ablations separates "the shared path carries the recall"
+            # from "the routed path is load-bearing for the output scale"
+            import fla.layers.mom as mom_mod
+
+            orig = mom_mod.reconstruct
+            mom_mod.reconstruct = lambda *a, **k: torch.zeros_like(orig(*a, **k))
+            try:
+                entry["accuracy_routed_off"] = score()
+            finally:
+                mom_mod.reconstruct = orig
         report[n] = entry
     model.train()
     return report
@@ -366,6 +384,11 @@ def main():
     ap.add_argument("--out-dir", default="mqar-runs")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--log-every", type=int, default=50)
+    ap.add_argument(
+        "--save-checkpoint",
+        action="store_true",
+        help="save final weights as <out-dir>/<arm>.pt next to the run JSON",
+    )
     ap.add_argument(
         "--dim",
         type=int,
@@ -449,7 +472,8 @@ def main():
                 entry["peak_mem_gb"] = torch.cuda.max_memory_allocated() / 2**30
             run["history"].append(entry)
             print(
-                f"  step {step:5d}  loss {loss.item():.4f}  tok/s {entry['tok_s']:.0f}",
+                f"  step {step:5d}  loss {loss.item():.4f}  tok/s {entry['tok_s']:.0f}"
+                + (f"  aux {aux.item():.3f}" if aux is not None else ""),
                 flush=True,
             )
         if args.eval_every and step and step % args.eval_every == 0:
@@ -492,12 +516,20 @@ def main():
             print(
                 f"  N{n}: routing overlap {r['routing_overlap']:.3f} "
                 f"(chance {r['routing_overlap_chance']:.3f})  "
-                f"shared-off acc {r['accuracy_shared_off']:.3f}"
+                f"shared-off acc {r['accuracy_shared_off']:.3f}  "
+                f"routed-off acc {r['accuracy_routed_off']:.3f}"
             )
     path = os.path.join(args.out_dir, f"{args.arm}.json")
     with open(path, "w") as f:
         json.dump(run, f, indent=1)
     print(f"  -> {path}", flush=True)
+    if args.save_checkpoint:
+        ckpt = os.path.join(args.out_dir, f"{args.arm}.pt")
+        torch.save(
+            dict(arm=args.arm, config=cfg, args=vars(args), model=model.state_dict()),
+            ckpt,
+        )
+        print(f"  -> {ckpt}", flush=True)
     return 0
 
 
