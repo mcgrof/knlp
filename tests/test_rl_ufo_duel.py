@@ -1,4 +1,4 @@
-"""Headless same-actor UFO duel tests."""
+"""Headless actor-versus-enemy UFO duel tests."""
 
 import math
 import os
@@ -71,3 +71,25 @@ def test_time_limit_is_not_reported_as_a_flight_failure():
     )
     assert result["outcome"] == "timeout"
     assert result["winner"] is None
+
+
+@pytest.mark.skipif(not UFO_ROOT, reason="XPLANE_UFO_ROOT is not set")
+def test_actor_and_enemy_policies_load_independently():
+    loaded = []
+
+    def factory(role):
+        def load(environment):
+            loaded.append((role, id(environment)))
+            return lambda observation: np.zeros(6, dtype=np.float32)
+
+        return load
+
+    run_duel(
+        factory("actor"),
+        7000,
+        enemy_policy_factory=factory("enemy"),
+        root=UFO_ROOT,
+        rules=DuelRules(maximum_seconds=0.1),
+    )
+    assert [role for role, _ in loaded] == ["actor", "enemy"]
+    assert loaded[0][1] != loaded[1][1]
