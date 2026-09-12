@@ -6,6 +6,7 @@ import argparse
 import itertools
 import json
 import math
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from rl.evaluate_ufo import (
     parse_seeds,
     summarize,
 )
-from rl.ppo import _git_head
+from rl.ppo import _git_head, _sha256
 
 COMBAT_GOAL_AXES = (
     (-10.0, 45.0),
@@ -147,6 +148,7 @@ def evaluate_corners(
     actor = None
     checkpoint_info = None
     contract_hash = None
+    dynamics_path = None
     for goal in goals:
         env = UfoEnv(
             goal=goal,
@@ -167,6 +169,7 @@ def evaluate_corners(
                     **state,
                 }
                 contract_hash = env.contract.digest
+                dynamics_path = env.dynamics.library_path
             controller = velocity_target_controller(env)
             for seed in seeds:
                 policies = {
@@ -185,8 +188,13 @@ def evaluate_corners(
         "schema_version": 1,
         "kind": "ufo_combat_corner_stress",
         "knlp_commit": knlp_commit,
+        "environment_source_commit": os.environ.get(
+            "XPLANE_UFO_SOURCE_COMMIT"
+        ),
         "environment": f"ufo:{profile}-corners",
         "contract_hash": contract_hash,
+        "dynamics_library": str(dynamics_path),
+        "dynamics_library_sha256": _sha256(dynamics_path),
         "checkpoint": checkpoint_info,
         "max_seconds": max_seconds,
         "random_start": True,
