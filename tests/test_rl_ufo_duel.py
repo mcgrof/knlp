@@ -14,6 +14,7 @@ from rl.ufo_duel import (
     reference_policy_factory,
     relative_geometry,
     run_duel,
+    summarize_duels,
 )
 
 UFO_ROOT = os.environ.get("XPLANE_UFO_ROOT")
@@ -43,6 +44,23 @@ def test_relative_geometry_uses_each_fighter_local_origin():
     assert distance == pytest.approx(3000.0)
     assert bearing == pytest.approx(0.0)
     assert body == pytest.approx((3000.0, 0.0, 0.0))
+
+
+def test_duel_gate_attributes_an_unsafe_enemy():
+    episodes = [
+        {
+            "outcome": "kill",
+            "winner": 0,
+            "maximum_tilt_deg": [5.0, 85.0],
+            "flight_failures": [False, False],
+        }
+    ]
+    summary, gates, passed = summarize_duels(episodes, DuelRules())
+    assert summary["resolved"] == 1
+    assert summary["safety"]["actor"]["tilt_violations"] == 0
+    assert summary["safety"]["enemy"]["tilt_violations"] == 1
+    assert gates["fighters"] == {"actor": True, "enemy": False}
+    assert not passed
 
 
 @pytest.mark.skipif(not UFO_ROOT, reason="XPLANE_UFO_ROOT is not set")
