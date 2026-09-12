@@ -30,6 +30,7 @@ class DuelRules:
     firing_bearing_deg: float = 12.0
     firing_height_m: float = 250.0
     firing_dwell_s: float = 0.3
+    maximum_tilt_deg: float = 20.0
 
     def validate(self) -> None:
         values = asdict(self)
@@ -129,6 +130,7 @@ def run_duel(
     )
     closest_range = rules.initial_range_m
     maximum_tilt = [0.0, 0.0]
+    flight_failures = [False, False]
     outcome = "timeout"
     winner = None
     elapsed_s = 0.0
@@ -184,6 +186,7 @@ def run_duel(
                 timed_out.append(bool(truncated))
             elapsed_s += environments[0].dt_s
             if any(failed):
+                flight_failures = failed
                 outcome = "flight_failure"
                 if failed[0] != failed[1]:
                     winner = 1 if failed[0] else 0
@@ -226,7 +229,68 @@ def run_duel(
         "elapsed_s": elapsed_s,
         "closest_range_m": closest_range,
         "maximum_tilt_deg": maximum_tilt,
+        "flight_failures": flight_failures,
     }
+
+
+def summarize_duels(
+    episodes: Sequence[dict],
+    rules: DuelRules,
+) -> tuple[dict, dict, bool]:
+    """Summarize outcomes and fail closed on each fighter's safety."""
+
+    resolved = sum(
+        episode["outcome"] in {"kill", "mutual_kill"}
+        for episode in episodes
+    )
+    safety = {
+        role: {
+            "terminal_failures": sum(
+                episode["flight_failures"][index]
+                for episode in episodes
+            ),
+            "tilt_violations": sum(
+                episode["maximum_tilt_deg"][index]
+                > rules.maximum_tilt_deg
+                for episode in episodes
+            ),
+            "maximum_tilt_deg": max(
+                episode["maximum_tilt_deg"][index]
+                for episode in episodes
+            ),
+        }
+        for index, role in enumerate(("actor", "enemy"))
+    }
+    fighter_gates = {
+        role: not values["terminal_failures"]
+        and not values["tilt_violations"]
+        for role, values in safety.items()
+    }
+    summary = {
+        "episodes": len(episodes),
+        "resolved": resolved,
+        "flight_failures": sum(
+            episode["outcome"] == "flight_failure"
+            for episode in episodes
+        ),
+        "timeouts": sum(
+            episode["outcome"] == "timeout" for episode in episodes
+        ),
+        "wins": {
+            "actor": sum(
+                episode["winner"] == 0 for episode in episodes
+            ),
+            "enemy": sum(
+                episode["winner"] == 1 for episode in episodes
+            ),
+        },
+        "safety": safety,
+    }
+    gates = {
+        "all_resolved": resolved == len(episodes),
+        "fighters": fighter_gates,
+    }
+    return summary, gates, gates["all_resolved"] and all(fighter_gates.values())
 
 
 def reference_policy_factory(environment: UfoEnv) -> MotorPolicy:
@@ -303,6 +367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for seed in args.seeds
     ]
+    summary, gates, machine_gate_passed = summarize_duels(episodes, rules)
     report = {
         "schema_version": 2,
         "kind": "ufo_actor_enemy_duel",
@@ -332,28 +397,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "rules": asdict(rules),
         "seeds": args.seeds,
         "episodes": episodes,
-        "summary": {
-            "episodes": len(episodes),
-            "resolved": sum(
-                episode["outcome"] in {"kill", "mutual_kill"}
-                for episode in episodes
-            ),
-            "flight_failures": sum(
-                episode["outcome"] == "flight_failure"
-                for episode in episodes
-            ),
-            "timeouts": sum(
-                episode["outcome"] == "timeout" for episode in episodes
-            ),
-            "wins": {
-                "actor": sum(
-                    episode["winner"] == 0 for episode in episodes
-                ),
-                "enemy": sum(
-                    episode["winner"] == 1 for episode in episodes
-                ),
-            },
-        },
+        "summary": summary,
+        "gates": gates,
+        "machine_gate_passed": machine_gate_passed,
         "scope": (
             "This compares independently loaded actor and enemy motor "
             "policies in shared headless dynamics under deterministic "
@@ -365,11 +411,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"
     )
     print(json.dumps(report["summary"], sort_keys=True))
-    passed = (
-        report["summary"]["resolved"] == len(episodes)
-        and not report["summary"]["flight_failures"]
-    )
-    return 0 if passed else 3
+    return 0 if machine_gate_passed else 3
 
 
 if __name__ == "__main__":
