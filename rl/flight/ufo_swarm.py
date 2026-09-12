@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
 
-from rl.flight.contracts import EnemyPose, FlightContract, TelemetryFrame
+from rl.flight.contracts import (
+    EnemyPose,
+    EnemyShot,
+    FlightContract,
+    TelemetryFrame,
+)
 from rl.flight.ufo_dynamics import UfoDynamics
 from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
 from rl.flight.shadow_ufo import ShadowPolicy
 
 MAXIMUM_ENEMIES = 19
-INITIAL_RANGE_M = 2400.0
+INITIAL_RANGE_M = 4200.0
+SHOT_PERIOD_S = 4.8
+SHOT_DURATION_S = 0.65
+SHOT_MINIMUM_RANGE_M = 350.0
+SHOT_MAXIMUM_RANGE_M = 5200.0
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -27,6 +36,10 @@ class _Enemy:
     policy: ShadowPolicy
     origin_ned_m: np.ndarray
     frame_yaw_rad: float
+    goal: np.ndarray
+    goal_until_s: float = 0.0
+    shot_active: bool = False
+    shot_aim_ned_m: np.ndarray | None = None
 
     def world_state(self) -> np.ndarray:
         state = self.dynamics.state_vector()
@@ -64,6 +77,8 @@ class RlUfoSwarm:
         self.episode_id: str | None = None
         self.elapsed_s = 0.0
         self.enemies: list[_Enemy] = []
+        self.shots: tuple[EnemyShot, ...] = ()
+        self.player_goal = np.zeros(4, dtype=np.float64)
 
     def _reset(self, frame: TelemetryFrame) -> None:
         self.enemies = []
@@ -96,31 +111,116 @@ class RlUfoSwarm:
                     policy=ShadowPolicy(self.contract, self.model),
                     origin_ned_m=origin,
                     frame_yaw_rad=heading,
+                    goal=np.zeros(4, dtype=np.float64),
                 )
             )
         self.episode_id = frame.episode_id
         self.elapsed_s = 0.0
+        self.shots = ()
+        self.player_goal = np.zeros(4, dtype=np.float64)
 
     def _goal(
-        self, slot: int, enemy_state: np.ndarray, player_state: np.ndarray
+        self,
+        slot: int,
+        enemy: _Enemy,
+        enemy_state: np.ndarray,
+        player_state: np.ndarray,
     ) -> np.ndarray:
         delta_ned = player_state[:3] - enemy_state[:3]
         target_body = quaternion_body_to_ned(enemy_state[6:10]).T @ delta_ned
         target_range = float(np.linalg.norm(target_body))
         bearing = math.atan2(float(target_body[1]), float(target_body[0]))
         yaw_rate = _clamp(bearing * 2.0, -1.4, 1.4)
-        if float(np.linalg.norm(enemy_state[3:6])) > 115.0:
-            return np.asarray((0.0, 0.0, 0.0, yaw_rate), dtype=np.float64)
-        weave = 6.0 * math.sin(self.elapsed_s * 0.9 + slot * 1.7)
-        return np.asarray(
+        vertical = _clamp(float(target_body[2]) * 0.08, -24.0, 24.0)
+        if float(np.max(np.abs(enemy_state[3:6]))) > 105.0:
+            enemy.goal = np.asarray(
+                (0.0, 0.0, vertical, yaw_rate), dtype=np.float64
+            )
+            enemy.goal_until_s = self.elapsed_s + 2.0
+            return enemy.goal
+        if self.elapsed_s < enemy.goal_until_s:
+            return enemy.goal
+        direction = 1.0 if slot % 2 == 0 else -1.0
+        weave = 14.0 * math.sin(self.elapsed_s * 1.4 + slot * 1.7)
+        if target_range < 1000.0:
+            lateral = direction * 50.0
+            yaw_rate = _clamp(yaw_rate + direction * 0.9, -1.4, 1.4)
+        elif target_range < 1600.0:
+            lateral = direction * 38.0 + weave
+        else:
+            lateral = math.degrees(bearing) * 0.28 + weave
+        enemy.goal = np.asarray(
             (
-                _clamp((target_range - 520.0) * 0.06, -20.0, 90.0),
-                _clamp(math.degrees(bearing) * 0.2 + weave, -25.0, 25.0),
-                _clamp(float(target_body[2]) * 0.05, -24.0, 24.0),
+                75.0,
+                _clamp(lateral, -50.0, 50.0),
+                vertical,
                 yaw_rate,
             ),
             dtype=np.float64,
         )
+        enemy.goal_until_s = self.elapsed_s + 4.0
+        return enemy.goal
+
+    def _update_shots(self, player_state: np.ndarray) -> None:
+        shots = []
+        spacing_s = SHOT_PERIOD_S / self.size
+        for slot, enemy in enumerate(self.enemies):
+            enemy_state = enemy.world_state()
+            distance_m = float(
+                np.linalg.norm(player_state[:3] - enemy_state[:3])
+            )
+            phase_s = (self.elapsed_s - slot * spacing_s) % SHOT_PERIOD_S
+            firing = (
+                SHOT_MINIMUM_RANGE_M <= distance_m <= SHOT_MAXIMUM_RANGE_M
+                and phase_s < SHOT_DURATION_S
+            )
+            if firing and not enemy.shot_active:
+                lead_s = _clamp(0.35 + distance_m / 10_000.0, 0.35, 0.85)
+                enemy.shot_aim_ned_m = (
+                    player_state[:3] + lead_s * player_state[3:6]
+                )
+            enemy.shot_active = firing
+            if firing and enemy.shot_aim_ned_m is not None:
+                shots.append(
+                    EnemyShot.create(
+                        slot=slot,
+                        aim_position_ned_m=enemy.shot_aim_ned_m,
+                    )
+                )
+        self.shots = tuple(shots)
+
+    def _player_evasive_goal(self, player_state: np.ndarray) -> np.ndarray:
+        jink = 1.0 if int(self.elapsed_s / 4.0) % 2 == 0 else -1.0
+        altitude_error = -320.0 - float(player_state[2])
+        vertical = _clamp(
+            altitude_error * 0.06 + 10.0 * math.sin(self.elapsed_s * 1.3),
+            -24.0,
+            18.0,
+        )
+        if self.shots:
+            return np.asarray(
+                (75.0, 40.0 * jink, vertical, 1.2 * jink),
+                dtype=np.float64,
+            )
+        return np.asarray(
+            (
+                75.0,
+                25.0 * math.sin(self.elapsed_s * 0.3),
+                vertical,
+                0.7 * math.sin(self.elapsed_s * 0.3),
+            ),
+            dtype=np.float64,
+        )
+
+    def control_frame(self, frame: TelemetryFrame) -> TelemetryFrame:
+        """Return the live player frame with the swarm's evasive goal."""
+
+        controlled = replace(
+            frame,
+            goal=tuple(float(value) for value in self.player_goal),
+        )
+        controlled.validate(self.contract)
+        return controlled
 
     @staticmethod
     def _recenter(enemy: _Enemy) -> None:
@@ -152,7 +252,9 @@ class RlUfoSwarm:
             dt_s = min(self.contract.nominal_dt_s, remaining)
             for slot, enemy in enumerate(self.enemies):
                 world_state = enemy.world_state()
-                goal = self._goal(slot, world_state, player_state)
+                goal = self._goal(
+                    slot, enemy, world_state, player_state
+                )
                 local_state = enemy.dynamics.state_vector()
                 actor_frame = TelemetryFrame.create(
                     self.contract,
@@ -168,6 +270,8 @@ class RlUfoSwarm:
                 self._recenter(enemy)
             self.elapsed_s += dt_s
             remaining -= dt_s
+        self._update_shots(player_state)
+        self.player_goal = self._player_evasive_goal(player_state)
         return tuple(
             EnemyPose.create(
                 slot=slot,

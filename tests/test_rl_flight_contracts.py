@@ -7,6 +7,7 @@ import pytest
 from rl.flight.contracts import (
     ControlCommand,
     EnemyPose,
+    EnemyShot,
     FlightContract,
     TelemetryFrame,
     VectorSpec,
@@ -122,8 +123,32 @@ def test_control_round_trip_with_enemy_poses(contract):
         valid_until_monotonic_ns=200,
         action=(0.0, 0.0),
         enemies=enemies,
+        enemy_shots=(
+            EnemyShot.create(
+                slot=2,
+                aim_position_ned_m=(0.0, 0.0, -100.0),
+            ),
+        ),
     )
     assert ControlCommand.from_wire(command.to_wire(), contract) == command
+
+
+def test_control_rejects_enemy_shot_without_matching_pose(contract):
+    with pytest.raises(ValueError, match="matching enemy pose"):
+        ControlCommand.create(
+            contract,
+            episode_id="swarm",
+            source_sequence=1,
+            issued_monotonic_ns=100,
+            valid_until_monotonic_ns=200,
+            action=(0.0, 0.0),
+            enemy_shots=(
+                EnemyShot.create(
+                    slot=0,
+                    aim_position_ned_m=(0.0, 0.0, -100.0),
+                ),
+            ),
+        )
 
 
 def test_control_rejects_unordered_enemy_slots(contract):

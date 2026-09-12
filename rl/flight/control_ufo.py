@@ -173,13 +173,17 @@ def process_stream(
                     and frame.sequence <= last_sequence
                 ):
                     raise ValueError("telemetry sequence did not increase")
+                enemies = swarm.update(frame) if swarm is not None else ()
+                enemy_shots = swarm.shots if swarm is not None else ()
+                control_frame = (
+                    swarm.control_frame(frame) if swarm is not None else frame
+                )
                 action = contract.action.validate(
-                    action_provider(frame), "control action"
+                    action_provider(control_frame), "control action"
                 )
             except (TypeError, ValueError):
                 stats.rejected_telemetry += 1
                 continue
-            enemies = swarm.update(frame) if swarm is not None else ()
             issued_ns = max(time.monotonic_ns(), frame.monotonic_ns)
             command = ControlCommand.create(
                 contract,
@@ -189,6 +193,7 @@ def process_stream(
                 valid_until_monotonic_ns=issued_ns + validity_ns,
                 action=action,
                 enemies=enemies,
+                enemy_shots=enemy_shots,
             )
             sink.sendall(command.to_wire())
             output.write(
