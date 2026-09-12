@@ -2,10 +2,19 @@
 
 import json
 
+import pytest
+
 from rl.certify_ufo import build_verdict, main
 
 
-def evaluation(*, failures=0, tilt=12.0, velocity=12.0, yaw=0.15):
+def evaluation(
+    *,
+    environment="ufo:maneuver",
+    failures=0,
+    tilt=12.0,
+    velocity=12.0,
+    yaw=0.15,
+):
     episodes = [
         {
             "ground_contact": index < failures,
@@ -15,8 +24,12 @@ def evaluation(*, failures=0, tilt=12.0, velocity=12.0, yaw=0.15):
         for index in range(100)
     ]
     return {
-        "environment": "ufo:maneuver",
+        "environment": environment,
+        "knlp_commit": "test-knlp",
+        "environment_source_commit": "test-xplane-ufo",
         "contract_hash": "test-contract",
+        "dynamics_library": "/test/libxplane_ufo_dynamics.so",
+        "dynamics_library_sha256": "test-dynamics",
         "checkpoint": {"sha256": "checkpoint"},
         "policies": {
             "checkpoint": {
@@ -44,6 +57,19 @@ def test_certification_accepts_bounded_actor_close_to_reference():
     assert verdict["machine_gate_passed"]
     assert all(verdict["gates"].values())
     assert verdict["observed"]["terminal_failures"] == 0
+
+
+def test_certification_accepts_and_identifies_showcase_evidence():
+    verdict = build_verdict(evaluation(environment="ufo:showcase"))
+    assert verdict["machine_gate_passed"]
+    assert verdict["knlp_commit"] == "test-knlp"
+    assert verdict["environment_source_commit"] == "test-xplane-ufo"
+    assert verdict["dynamics_library_sha256"] == "test-dynamics"
+
+
+def test_certification_rejects_an_unrecognized_environment():
+    with pytest.raises(ValueError, match="maneuver or showcase"):
+        build_verdict(evaluation(environment="ufo:hover"))
 
 
 def test_certification_rejects_any_terminal_failure():
