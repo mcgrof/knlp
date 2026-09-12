@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import time
@@ -60,6 +61,14 @@ LIVE_ENVELOPES = {
         minimum_upright_cosine=0.9396926207859084,
         angular_rate_radps=1.5,
     ),
+    "showcase": LiveEnvelope(
+        horizontal_position_m=40_000.0,
+        minimum_position_ned_z_m=-10_000.0,
+        maximum_position_ned_z_m=-25.0,
+        velocity_mps=130.0,
+        minimum_upright_cosine=0.9396926207859084,
+        angular_rate_radps=1.8,
+    ),
 }
 
 
@@ -101,6 +110,8 @@ def reference_action(
     contract: FlightContract,
     parameters: UfoReferenceParameters,
     envelope: LiveEnvelope = LIVE_ENVELOPES["hover"],
+    *,
+    max_acceleration_mps2: float = 8.0,
 ) -> ActionProvider:
     def provide(frame: TelemetryFrame) -> Sequence[float]:
         validate_live_envelope(frame, envelope)
@@ -110,6 +121,7 @@ def reference_action(
             contract.action.low,
             contract.action.high,
             parameters=parameters,
+            max_acceleration_mps2=max_acceleration_mps2,
         )
 
     return provide
@@ -215,6 +227,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model", type=Path)
     parser.add_argument("--mass-kg", type=float)
     parser.add_argument(
+        "--reference-max-acceleration-mps2",
+        type=float,
+        default=8.0,
+    )
+    parser.add_argument(
         "--envelope", choices=tuple(LIVE_ENVELOPES), default="hover"
     )
     parser.add_argument("--allow-nonzero", action="store_true")
@@ -226,6 +243,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.valid_ms <= 0.0:
         parser.error("--valid-ms must be positive")
+    if (
+        not math.isfinite(args.reference_max_acceleration_mps2)
+        or args.reference_max_acceleration_mps2 <= 0.0
+    ):
+        parser.error("--reference-max-acceleration-mps2 must be positive")
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be positive")
     contract = FlightContract.from_json(args.contract)
@@ -242,6 +264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             contract,
             UfoReferenceParameters(mass_kg=args.mass_kg),
             envelope,
+            max_acceleration_mps2=args.reference_max_acceleration_mps2,
         )
     else:
         if args.model is None:
@@ -279,6 +302,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "control_mode": args.mode,
         "envelope": args.envelope,
         "mass_kg": args.mass_kg,
+        "reference_max_acceleration_mps2": (
+            args.reference_max_acceleration_mps2
+            if args.mode == "reference"
+            else None
+        ),
         "policy": policy_identity,
         **asdict(stats),
     }

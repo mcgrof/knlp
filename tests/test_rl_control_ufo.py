@@ -118,6 +118,32 @@ def test_reference_sender_matches_hover_feed_forward():
     assert tuple(action[3:]) == (0.0, 0.0, 0.0)
 
 
+def test_reference_sender_accepts_a_wider_acceleration_limit():
+    contract = load_contract()
+    frame = telemetry(contract, 0)
+    faster = TelemetryFrame.create(
+        contract,
+        episode_id=frame.episode_id,
+        sequence=frame.sequence,
+        monotonic_ns=frame.monotonic_ns,
+        dt_s=frame.dt_s,
+        observation=frame.observation,
+        goal=(90.0, 0.0, 0.0, 0.0),
+    )
+    ordinary = reference_action(
+        contract,
+        UfoReferenceParameters(),
+        LIVE_ENVELOPES["showcase"],
+    )(faster)
+    showcase = reference_action(
+        contract,
+        UfoReferenceParameters(),
+        LIVE_ENVELOPES["showcase"],
+        max_acceleration_mps2=24.0,
+    )(faster)
+    assert showcase[0] == pytest.approx(3.0 * ordinary[0])
+
+
 def test_nonzero_sender_rejects_state_outside_live_envelope():
     contract = load_contract()
     frame = telemetry(contract, 0)

@@ -46,6 +46,19 @@ ACTION_FIELDS = (
 )
 DYNAMICS_ABI_VERSION = 1
 
+MANEUVER_PROFILES = {
+    "certified": {
+        "low": (-20.0, -30.0, -12.0, -1.0),
+        "high": (55.0, 30.0, 12.0, 1.0),
+        "reference_max_acceleration_mps2": 8.0,
+    },
+    "showcase": {
+        "low": (-20.0, -50.0, -24.0, -1.4),
+        "high": (90.0, 50.0, 24.0, 1.4),
+        "reference_max_acceleration_mps2": 24.0,
+    },
+}
+
 
 class UfoParameters(ctypes.Structure):
     _fields_ = [
@@ -157,6 +170,7 @@ class UfoEnv(gym.Env):
         library_path: str | Path | None = None,
         goal: Sequence[float] = (0.0, 0.0, 0.0, 0.0),
         goal_mode: str = "fixed",
+        maneuver_profile: str = "certified",
         goal_hold_seconds: float = 4.0,
         max_seconds: float = 20.0,
         random_start: bool = True,
@@ -175,9 +189,19 @@ class UfoEnv(gym.Env):
         self.random_start = bool(random_start)
         if goal_mode not in {"fixed", "maneuver"}:
             raise ValueError(f"unknown UFO goal mode {goal_mode!r}")
+        if maneuver_profile not in MANEUVER_PROFILES:
+            raise ValueError(
+                f"unknown UFO maneuver profile {maneuver_profile!r}"
+            )
         if not math.isfinite(goal_hold_seconds) or goal_hold_seconds <= self.dt_s:
             raise ValueError("goal hold time must exceed one environment step")
         self.goal_mode = goal_mode
+        self.maneuver_profile = maneuver_profile
+        self.reference_max_acceleration_mps2 = float(
+            MANEUVER_PROFILES[maneuver_profile][
+                "reference_max_acceleration_mps2"
+            ]
+        )
         self.goal_hold_steps = int(math.ceil(goal_hold_seconds / self.dt_s))
         self.default_goal = self.contract.goal.validate(goal, "goal")
         self.goal = np.asarray(self.default_goal, dtype=np.float64)
@@ -318,8 +342,9 @@ class UfoEnv(gym.Env):
     def _sample_maneuver_goal(self) -> np.ndarray:
         """Sample a broad but controllable body-velocity command."""
 
-        low = np.asarray((-20.0, -30.0, -12.0, -1.0), dtype=np.float64)
-        high = np.asarray((55.0, 30.0, 12.0, 1.0), dtype=np.float64)
+        profile = MANEUVER_PROFILES[self.maneuver_profile]
+        low = np.asarray(profile["low"], dtype=np.float64)
+        high = np.asarray(profile["high"], dtype=np.float64)
         position_ned_z = float(self.dynamics.state.position_ned_m[2])
         hold_seconds = self.goal_hold_steps * self.dt_s
         maximum_descent = (-30.0 - position_ned_z) / hold_seconds

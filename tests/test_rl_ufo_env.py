@@ -122,6 +122,26 @@ def test_maneuver_goals_are_seeded_and_change_during_flight():
         second.close()
 
 
+def test_showcase_goals_use_the_wider_reference_profile():
+    env = make_env(
+        "ufo:showcase",
+        root=UFO_ROOT,
+        max_seconds=0.2,
+        goal_hold_seconds=0.08,
+        random_start=False,
+    )
+    try:
+        env.reset(seed=23)
+        assert env.maneuver_profile == "showcase"
+        assert env.reference_max_acceleration_mps2 == 24.0
+        assert np.all(
+            env.goal >= np.asarray((-20.0, -50.0, -24.0, -1.4))
+        )
+        assert np.all(env.goal <= np.asarray((90.0, 50.0, 24.0, 1.4)))
+    finally:
+        env.close()
+
+
 def test_out_of_contract_action_fails_closed():
     env = UfoEnv(root=UFO_ROOT)
     try:

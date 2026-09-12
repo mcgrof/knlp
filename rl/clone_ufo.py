@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 from rl.continuous import SquashedGaussianAgent, action_bounds
-from rl.controls.ufo import VelocityTargetController
+from rl.controls.ufo import velocity_target_controller
 from rl.envs import make_env
 from rl.ppo import _git_head, _sha256
 
@@ -24,7 +24,7 @@ from rl.ppo import _git_head, _sha256
 def collect_reference(env, steps: int, seed: int):
     observations = np.empty((steps, *env.observation_space.shape), dtype=np.float32)
     actions = np.empty((steps, *env.action_space.shape), dtype=np.float32)
-    controller = VelocityTargetController()
+    controller = velocity_target_controller(env)
     episode_seed = seed
     observation, _ = env.reset(seed=episode_seed)
     episodes = 0
@@ -51,7 +51,7 @@ def collect_dagger(
 
     observations = np.empty((steps, *env.observation_space.shape), dtype=np.float32)
     actions = np.empty((steps, *env.action_space.shape), dtype=np.float32)
-    controller = VelocityTargetController()
+    controller = velocity_target_controller(env)
     generator = np.random.default_rng(seed)
     episode_seed = seed
     observation, _ = env.reset(seed=episode_seed)
@@ -191,7 +191,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--env",
         default="ufo:hover",
-        choices=["ufo:hover", "ufo:forward", "ufo:maneuver"],
+        choices=[
+            "ufo:hover",
+            "ufo:forward",
+            "ufo:maneuver",
+            "ufo:showcase",
+        ],
     )
     parser.add_argument("--steps", type=int, default=50_000)
     parser.add_argument("--epochs", type=int, default=20)

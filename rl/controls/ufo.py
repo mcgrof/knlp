@@ -47,6 +47,14 @@ class VelocityTargetController:
         )
 
 
+def velocity_target_controller(env: UfoEnv) -> VelocityTargetController:
+    """Build the reference controller selected by the environment profile."""
+
+    return VelocityTargetController(
+        max_acceleration_mps2=env.reference_max_acceleration_mps2
+    )
+
+
 def hover_wrench(env: UfoEnv) -> np.ndarray:
     """Hold zero body velocity and yaw rate with the reference controller."""
 

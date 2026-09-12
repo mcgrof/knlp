@@ -133,6 +133,12 @@ margin during that interval. This trains the continuous flight actor; target
 selection, firing, and camera control remain separate mission-director
 responsibilities.
 
+`ufo:showcase` widens that task to the Hollywood demonstration envelope:
+90 m/s forward, 50 m/s laterally, 24 m/s vertically, and 1.4 rad/s yaw.
+Its reference controller permits 24 m/s² acceleration instead of the
+certified profile's 8 m/s². Keep checkpoints trained for these two profiles
+separate; passing the certified combat gate does not cover showcase control.
+
 Before exporting a maneuver actor, compare it with the reference pilot on at
 least 100 fixed seeds and gate the resulting report:
 
@@ -155,6 +161,11 @@ The combat stress adds an adversarial gate over all 16 Cartesian corners of
 the director velocity and yaw-rate limits. It applies the same terminal,
 tilt, and relative tracking limits instead of relying only on average random
 goal coverage.
+
+The accepted maneuver actor is a DAgger behavioral clone, not a PPO result.
+Use it as an initialization checkpoint when running PPO rather than describing
+imitation training as reinforcement learning.
+
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.
