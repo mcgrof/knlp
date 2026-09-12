@@ -20,10 +20,16 @@ from rl.flight.shadow_ufo import ShadowPolicy
 
 MAXIMUM_ENEMIES = 19
 INITIAL_RANGE_M = 4200.0
+FORMATION_LONGITUDINAL_SPACING_M = 90.0
+FORMATION_LATERAL_SPACING_M = 60.0
+FORMATION_VERTICAL_SPACING_M = 12.0
 SHOT_PERIOD_S = 4.8
 SHOT_DURATION_S = 0.65
 SHOT_MINIMUM_RANGE_M = 350.0
 SHOT_MAXIMUM_RANGE_M = 5200.0
+SHIELD_REQUEST_RANGE_M = 1800.0
+SHIELD_REQUEST_DURATION_S = 0.5
+SWARM_BEHAVIORS = ("combat", "formation")
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -40,6 +46,8 @@ class _Enemy:
     goal_until_s: float = 0.0
     shot_active: bool = False
     shot_aim_ned_m: np.ndarray | None = None
+    shield_used: bool = False
+    shield_requested_until_s: float = 0.0
 
     def world_state(self) -> np.ndarray:
         state = self.dynamics.state_vector()
@@ -67,38 +75,78 @@ class RlUfoSwarm:
         model: str | Path,
         dynamics_library: str | Path,
         size: int,
+        behavior: str = "combat",
     ):
         if size < 1 or size > MAXIMUM_ENEMIES:
             raise ValueError("swarm size must be between 1 and 19")
+        if behavior not in SWARM_BEHAVIORS:
+            raise ValueError(f"swarm behavior must be one of {SWARM_BEHAVIORS}")
         self.contract = contract
         self.model = Path(model)
         self.dynamics_library = Path(dynamics_library)
         self.size = size
+        self.behavior = behavior
         self.episode_id: str | None = None
         self.elapsed_s = 0.0
         self.enemies: list[_Enemy] = []
         self.shots: tuple[EnemyShot, ...] = ()
         self.player_goal = np.zeros(4, dtype=np.float64)
 
+    @staticmethod
+    def _player_heading(player_state: np.ndarray) -> float:
+        body_to_ned = quaternion_body_to_ned(player_state[6:10])
+        return math.atan2(float(body_to_ned[1, 0]), float(body_to_ned[0, 0]))
+
+    def _formation_offset(self, slot: int) -> np.ndarray:
+        row = 1
+        row_start = 0
+        while slot - row_start >= row + 1:
+            row_start += row + 1
+            row += 1
+        row_index = slot - row_start
+        row_count = min(row + 1, self.size - row_start)
+        return np.asarray(
+            (
+                -FORMATION_LONGITUDINAL_SPACING_M * row,
+                FORMATION_LATERAL_SPACING_M * (row_index - 0.5 * (row_count - 1)),
+                FORMATION_VERTICAL_SPACING_M * ((slot % 3) - 1),
+            ),
+            dtype=np.float64,
+        )
+
+    def _initial_pose(
+        self, slot: int, player_state: np.ndarray
+    ) -> tuple[np.ndarray, float]:
+        player_position = player_state[:3]
+        if self.behavior == "formation":
+            heading = self._player_heading(player_state)
+            cosine = math.cos(heading)
+            sine = math.sin(heading)
+            rotation = np.asarray(
+                ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
+            )
+            return player_position + rotation @ self._formation_offset(slot), heading
+        angle = 2.0 * math.pi * slot / self.size
+        radius = INITIAL_RANGE_M + 180.0 * (slot % 3)
+        desired = player_position + np.asarray(
+            (
+                radius * math.cos(angle),
+                radius * math.sin(angle),
+                80.0 * ((slot % 3) - 1),
+            ),
+            dtype=np.float64,
+        )
+        delta = player_position - desired
+        return desired, math.atan2(float(delta[1]), float(delta[0]))
+
     def _reset(self, frame: TelemetryFrame) -> None:
         self.enemies = []
-        player_position = np.asarray(frame.observation[:3], dtype=np.float64)
+        player_state = np.asarray(frame.observation, dtype=np.float64)
         for slot in range(self.size):
             dynamics = UfoDynamics(self.dynamics_library)
             dynamics.reset()
             dynamics.state.position_ned_m[2] = -100.0
-            angle = 2.0 * math.pi * slot / self.size
-            radius = INITIAL_RANGE_M + 180.0 * (slot % 3)
-            desired = player_position + np.asarray(
-                (
-                    radius * math.cos(angle),
-                    radius * math.sin(angle),
-                    80.0 * ((slot % 3) - 1),
-                ),
-                dtype=np.float64,
-            )
-            delta = player_position - desired
-            heading = math.atan2(float(delta[1]), float(delta[0]))
+            desired, heading = self._initial_pose(slot, player_state)
             cosine = math.cos(heading)
             sine = math.sin(heading)
             rotation = np.asarray(
@@ -119,7 +167,7 @@ class RlUfoSwarm:
         self.shots = ()
         self.player_goal = np.zeros(4, dtype=np.float64)
 
-    def _goal(
+    def _combat_goal(
         self,
         slot: int,
         enemy: _Enemy,
@@ -132,6 +180,9 @@ class RlUfoSwarm:
         bearing = math.atan2(float(target_body[1]), float(target_body[0]))
         yaw_rate = _clamp(bearing * 2.0, -1.4, 1.4)
         vertical = _clamp(float(target_body[2]) * 0.08, -24.0, 24.0)
+        if not enemy.shield_used and target_range < SHIELD_REQUEST_RANGE_M:
+            enemy.shield_used = True
+            enemy.shield_requested_until_s = self.elapsed_s + SHIELD_REQUEST_DURATION_S
         if float(np.max(np.abs(enemy_state[3:6]))) > 105.0:
             enemy.goal = np.asarray(
                 (0.0, 0.0, vertical, yaw_rate), dtype=np.float64
@@ -161,7 +212,66 @@ class RlUfoSwarm:
         enemy.goal_until_s = self.elapsed_s + 4.0
         return enemy.goal
 
+    def _formation_goal(
+        self,
+        slot: int,
+        enemy_state: np.ndarray,
+        player_state: np.ndarray,
+    ) -> np.ndarray:
+        player_heading = self._player_heading(player_state)
+        cosine = math.cos(player_heading)
+        sine = math.sin(player_heading)
+        leader_rotation = np.asarray(
+            ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
+        )
+        desired_position = player_state[:3] + leader_rotation @ self._formation_offset(
+            slot
+        )
+        position_error = desired_position - enemy_state[:3]
+        rotating_offset = desired_position - player_state[:3]
+        yaw_rate = float(player_state[12])
+        slot_velocity = np.asarray(
+            (
+                -yaw_rate * rotating_offset[1],
+                yaw_rate * rotating_offset[0],
+                0.0,
+            )
+        )
+        desired_velocity = player_state[3:6] + slot_velocity + 0.16 * position_error
+        enemy_rotation = quaternion_body_to_ned(enemy_state[6:10])
+        if float(np.max(np.abs(enemy_state[3:6]))) > 105.0:
+            desired_velocity = np.zeros(3, dtype=np.float64)
+        velocity_body = enemy_rotation.T @ desired_velocity
+        leader_forward_body = enemy_rotation.T @ leader_rotation[:, 0]
+        heading_error = math.atan2(
+            float(leader_forward_body[1]), float(leader_forward_body[0])
+        )
+        return np.asarray(
+            (
+                _clamp(float(velocity_body[0]), -20.0, 90.0),
+                _clamp(float(velocity_body[1]), -50.0, 50.0),
+                _clamp(float(velocity_body[2]), -24.0, 24.0),
+                _clamp(2.0 * heading_error, -1.4, 1.4),
+            ),
+            dtype=np.float64,
+        )
+
+    def _goal(
+        self,
+        slot: int,
+        enemy: _Enemy,
+        enemy_state: np.ndarray,
+        player_state: np.ndarray,
+    ) -> np.ndarray:
+        if self.behavior == "formation":
+            enemy.goal = self._formation_goal(slot, enemy_state, player_state)
+            return enemy.goal
+        return self._combat_goal(slot, enemy, enemy_state, player_state)
+
     def _update_shots(self, player_state: np.ndarray) -> None:
+        if self.behavior != "combat":
+            self.shots = ()
+            return
         shots = []
         spacing_s = SHOT_PERIOD_S / self.size
         for slot, enemy in enumerate(self.enemies):
@@ -271,12 +381,16 @@ class RlUfoSwarm:
             self.elapsed_s += dt_s
             remaining -= dt_s
         self._update_shots(player_state)
-        self.player_goal = self._player_evasive_goal(player_state)
+        if self.behavior == "combat":
+            self.player_goal = self._player_evasive_goal(player_state)
+        else:
+            self.player_goal = np.zeros(4, dtype=np.float64)
         return tuple(
             EnemyPose.create(
                 slot=slot,
                 position_ned_m=enemy.world_state()[:3],
                 quaternion_body_to_ned=enemy.world_state()[6:10],
+                shield_requested=(self.elapsed_s < enemy.shield_requested_until_s),
             )
             for slot, enemy in enumerate(self.enemies)
         )

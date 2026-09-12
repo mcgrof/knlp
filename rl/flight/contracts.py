@@ -318,6 +318,7 @@ class EnemyPose:
     slot: int
     position_ned_m: tuple[float, ...]
     quaternion_body_to_ned: tuple[float, ...]
+    shield_requested: bool = False
 
     @classmethod
     def create(
@@ -326,6 +327,7 @@ class EnemyPose:
         slot: int,
         position_ned_m: Sequence[float],
         quaternion_body_to_ned: Sequence[float],
+        shield_requested: bool = False,
     ) -> "EnemyPose":
         pose = cls(
             slot=slot,
@@ -333,21 +335,27 @@ class EnemyPose:
             quaternion_body_to_ned=_finite_vector(
                 quaternion_body_to_ned, 4, "enemy quaternion"
             ),
+            shield_requested=shield_requested,
         )
         pose.validate()
         return pose
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "EnemyPose":
-        payload = _strict_mapping(
-            value,
-            {"slot", "position_ned_m", "quaternion_body_to_ned"},
-            "enemy pose",
-        )
+        if not isinstance(value, Mapping):
+            raise ValueError("enemy pose must be an object")
+        required = {"slot", "position_ned_m", "quaternion_body_to_ned"}
+        missing = required - set(value)
+        if missing:
+            raise ValueError(f"enemy pose is missing {sorted(missing)}")
+        unexpected = set(value) - required - {"shield_requested"}
+        if unexpected:
+            raise ValueError(f"enemy pose has unexpected fields {sorted(unexpected)}")
         return cls.create(
-            slot=payload["slot"],
-            position_ned_m=payload["position_ned_m"],
-            quaternion_body_to_ned=payload["quaternion_body_to_ned"],
+            slot=value["slot"],
+            position_ned_m=value["position_ned_m"],
+            quaternion_body_to_ned=value["quaternion_body_to_ned"],
+            shield_requested=value.get("shield_requested", False),
         )
 
     def validate(self) -> None:
@@ -355,6 +363,8 @@ class EnemyPose:
             raise ValueError("enemy slot must be an integer")
         if self.slot < 0 or self.slot >= 19:
             raise ValueError("enemy slot must be between 0 and 18")
+        if not isinstance(self.shield_requested, bool):
+            raise ValueError("enemy shield request must be boolean")
         _finite_vector(self.position_ned_m, 3, "enemy position")
         quaternion = _finite_vector(self.quaternion_body_to_ned, 4, "enemy quaternion")
         norm = math.sqrt(sum(value * value for value in quaternion))

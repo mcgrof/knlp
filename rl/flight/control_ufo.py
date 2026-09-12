@@ -15,7 +15,7 @@ from typing import BinaryIO, Callable, Protocol, Sequence, TextIO
 from rl.flight.contracts import ControlCommand, FlightContract, TelemetryFrame
 from rl.flight.shadow_ufo import MAXIMUM_WIRE_BYTES, ShadowPolicy, connect_telemetry
 from rl.flight.ufo_reference import UfoReferenceParameters, velocity_target_wrench
-from rl.flight.ufo_swarm import RlUfoSwarm
+from rl.flight.ufo_swarm import RlUfoSwarm, SWARM_BEHAVIORS
 
 
 class CommandSink(Protocol):
@@ -235,6 +235,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--model", type=Path)
     parser.add_argument("--swarm-size", type=int, default=0)
+    parser.add_argument("--swarm-behavior", choices=SWARM_BEHAVIORS, default="combat")
+    parser.add_argument("--manual-player", action="store_true")
     parser.add_argument("--dynamics-library", type=Path)
     parser.add_argument("--mass-kg", type=float)
     parser.add_argument(
@@ -295,9 +297,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.model,
                 args.dynamics_library,
                 args.swarm_size,
+                behavior=args.swarm_behavior,
             )
     if args.swarm_size and args.mode != "actor":
         parser.error("a swarm requires actor control mode")
+    if args.manual_player and not args.swarm_size:
+        parser.error("manual player control requires a swarm")
+    if args.manual_player:
+        action_provider = zero_action(contract)
     socket_path = args.socket or Path(f"/tmp/xplane-ufo-telemetry-{os.getuid()}.sock")
     summary_path = args.summary or args.output.with_suffix(
         args.output.suffix + ".summary.json"
@@ -331,6 +338,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "policy": policy_identity,
         "swarm_size": args.swarm_size,
+        "swarm_behavior": args.swarm_behavior if args.swarm_size else None,
+        "player_control": "manual" if args.manual_player else args.mode,
         **asdict(stats),
     }
     encoded = json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n"
