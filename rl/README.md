@@ -181,6 +181,19 @@ Omit `--enemy-run-dir` for a symmetric same-checkpoint duel. This is a gate
 for composing two learned motor policies, not learned combat tactics or live
 control of an X-Plane AI aircraft.
 
+The live multiplayer adapter can run the same frozen motor actor once per
+configured UFO. Its formation behavior places the player at the point of a V
+and gives every follower a body-velocity and yaw-rate goal that closes its
+error from a fixed slot behind the player. The player remains manual and the
+followers do not fire. This isolates heading match, spacing, cohesion, and
+recovery before combat adds target selection and weapon timing.
+
+Combat exposes a one-use shield request beside each enemy pose. The current
+director raises it deterministically on the first close attack. That field is
+an interface for a future tactical policy, not evidence that shield timing is
+learned. The motor actor still receives only velocity and yaw-rate goals and
+never chooses targets, fire, or shields.
+
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.
