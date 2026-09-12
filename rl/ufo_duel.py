@@ -1,4 +1,4 @@
-"""Run two copies of one UFO pilot actor in a headless duel."""
+"""Run an actor and an enemy UFO motor policy in a headless duel."""
 
 from __future__ import annotations
 
@@ -89,14 +89,16 @@ def _maximum_tilt_deg(state: np.ndarray) -> float:
 
 
 def run_duel(
-    policy_factory: MotorPolicyFactory,
+    actor_policy_factory: MotorPolicyFactory,
     seed: int,
     *,
+    enemy_policy_factory: MotorPolicyFactory | None = None,
     root: str | Path | None = None,
-    rules: DuelRules = DuelRules(),
+    rules: DuelRules | None = None,
 ) -> dict:
-    """Simulate one duel with the same policy factory on both aircraft."""
+    """Simulate one duel with independently loaded actor and enemy policies."""
 
+    rules = rules or DuelRules()
     rules.validate()
     environments = [
         UfoEnv(
@@ -106,7 +108,11 @@ def run_duel(
         )
         for _ in range(2)
     ]
-    policies = [policy_factory(environment) for environment in environments]
+    enemy_factory = enemy_policy_factory or actor_policy_factory
+    policies = [
+        actor_policy_factory(environments[0]),
+        enemy_factory(environments[1]),
+    ]
     generator = np.random.default_rng(seed)
     origins = [
         np.asarray((-rules.initial_range_m / 2.0, 0.0, 0.0)),
@@ -241,8 +247,25 @@ def checkpoint_policy_factory(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument(
+        "--actor-run-dir",
+        "--run-dir",
+        dest="actor_run_dir",
+        type=Path,
+        required=True,
+    )
+    parser.add_argument(
+        "--actor-checkpoint",
+        "--checkpoint",
+        dest="actor_checkpoint",
+        type=Path,
+    )
+    parser.add_argument(
+        "--enemy-run-dir",
+        type=Path,
+        help="enemy motor run; defaults to the actor run",
+    )
+    parser.add_argument("--enemy-checkpoint", type=Path)
     parser.add_argument(
         "--seeds",
         type=parse_seeds,
@@ -251,7 +274,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     rules = DuelRules()
-    checkpoint_path = args.checkpoint or args.run_dir / "checkpoint.pt"
+    enemy_run_dir = args.enemy_run_dir or args.actor_run_dir
+    actor_checkpoint = (
+        args.actor_checkpoint or args.actor_run_dir / "checkpoint.pt"
+    )
+    enemy_checkpoint = (
+        args.enemy_checkpoint or enemy_run_dir / "checkpoint.pt"
+    )
     probe = UfoEnv(max_seconds=rules.maximum_seconds, random_start=False)
     try:
         contract_hash = probe.contract.digest
@@ -261,15 +290,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         probe.close()
     episodes = [
         run_duel(
-            checkpoint_policy_factory(args.run_dir, args.checkpoint),
+            checkpoint_policy_factory(
+                args.actor_run_dir,
+                args.actor_checkpoint,
+            ),
             seed,
+            enemy_policy_factory=checkpoint_policy_factory(
+                enemy_run_dir,
+                args.enemy_checkpoint,
+            ),
             rules=rules,
         )
         for seed in args.seeds
     ]
     report = {
-        "schema_version": 1,
-        "kind": "ufo_same_actor_duel",
+        "schema_version": 2,
+        "kind": "ufo_actor_enemy_duel",
         "knlp_commit": _git_head(Path(__file__).resolve().parents[1]),
         "environment_source_commit": os.environ.get(
             "XPLANE_UFO_SOURCE_COMMIT"
@@ -277,10 +313,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         "contract_hash": contract_hash,
         "dynamics_library": str(dynamics_path),
         "dynamics_library_sha256": dynamics_hash,
-        "run_dir": str(args.run_dir),
-        "checkpoint": {
-            "path": str(checkpoint_path),
-            "sha256": _sha256(checkpoint_path),
+        "fighters": {
+            "actor": {
+                "run_dir": str(args.actor_run_dir),
+                "checkpoint": {
+                    "path": str(actor_checkpoint),
+                    "sha256": _sha256(actor_checkpoint),
+                },
+            },
+            "enemy": {
+                "run_dir": str(enemy_run_dir),
+                "checkpoint": {
+                    "path": str(enemy_checkpoint),
+                    "sha256": _sha256(enemy_checkpoint),
+                },
+            },
         },
         "rules": asdict(rules),
         "seeds": args.seeds,
@@ -299,16 +346,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 episode["outcome"] == "timeout" for episode in episodes
             ),
             "wins": {
-                str(index): sum(
-                    episode["winner"] == index for episode in episodes
-                )
-                for index in range(2)
+                "actor": sum(
+                    episode["winner"] == 0 for episode in episodes
+                ),
+                "enemy": sum(
+                    episode["winner"] == 1 for episode in episodes
+                ),
             },
         },
         "scope": (
-            "This proves two independent copies of one motor actor can fly "
-            "the shared headless dynamics. It does not yet control an "
-            "X-Plane AI aircraft."
+            "This compares independently loaded actor and enemy motor "
+            "policies in shared headless dynamics under deterministic "
+            "tactics. It does not yet control an X-Plane AI aircraft."
         ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
