@@ -312,6 +312,57 @@ class TelemetryFrame:
 
 
 @dataclass(frozen=True)
+class EnemyPose:
+    """One actor-driven multiplayer aircraft pose in episode-relative NED."""
+
+    slot: int
+    position_ned_m: tuple[float, ...]
+    quaternion_body_to_ned: tuple[float, ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        slot: int,
+        position_ned_m: Sequence[float],
+        quaternion_body_to_ned: Sequence[float],
+    ) -> "EnemyPose":
+        pose = cls(
+            slot=slot,
+            position_ned_m=_finite_vector(position_ned_m, 3, "enemy position"),
+            quaternion_body_to_ned=_finite_vector(
+                quaternion_body_to_ned, 4, "enemy quaternion"
+            ),
+        )
+        pose.validate()
+        return pose
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "EnemyPose":
+        payload = _strict_mapping(
+            value,
+            {"slot", "position_ned_m", "quaternion_body_to_ned"},
+            "enemy pose",
+        )
+        return cls.create(
+            slot=payload["slot"],
+            position_ned_m=payload["position_ned_m"],
+            quaternion_body_to_ned=payload["quaternion_body_to_ned"],
+        )
+
+    def validate(self) -> None:
+        if isinstance(self.slot, bool) or not isinstance(self.slot, int):
+            raise ValueError("enemy slot must be an integer")
+        if self.slot < 0 or self.slot >= 19:
+            raise ValueError("enemy slot must be between 0 and 18")
+        _finite_vector(self.position_ned_m, 3, "enemy position")
+        quaternion = _finite_vector(self.quaternion_body_to_ned, 4, "enemy quaternion")
+        norm = math.sqrt(sum(value * value for value in quaternion))
+        if abs(norm - 1.0) > 1e-3:
+            raise ValueError("enemy quaternion is not normalized")
+
+
+@dataclass(frozen=True)
 class ControlCommand:
     """A bounded action tied to one unexpired telemetry frame."""
 
@@ -321,6 +372,7 @@ class ControlCommand:
     issued_monotonic_ns: int
     valid_until_monotonic_ns: int
     action: tuple[float, ...]
+    enemies: tuple[EnemyPose, ...] = ()
 
     @classmethod
     def create(
@@ -332,6 +384,7 @@ class ControlCommand:
         issued_monotonic_ns: int,
         valid_until_monotonic_ns: int,
         action: Sequence[float],
+        enemies: Sequence[EnemyPose] = (),
     ) -> "ControlCommand":
         command = cls(
             contract_hash=contract.digest,
@@ -340,6 +393,7 @@ class ControlCommand:
             issued_monotonic_ns=issued_monotonic_ns,
             valid_until_monotonic_ns=valid_until_monotonic_ns,
             action=tuple(float(value) for value in action),
+            enemies=tuple(enemies),
         )
         command.validate(contract)
         return command
@@ -360,6 +414,14 @@ class ControlCommand:
         if self.valid_until_monotonic_ns <= self.issued_monotonic_ns:
             raise ValueError("control validity window must be positive")
         contract.action.validate(self.action, "action")
+        slots = []
+        for enemy in self.enemies:
+            if not isinstance(enemy, EnemyPose):
+                raise ValueError("enemies must contain EnemyPose values")
+            enemy.validate()
+            slots.append(enemy.slot)
+        if slots != sorted(set(slots)):
+            raise ValueError("enemy slots must be unique and increasing")
         if frame is not None:
             frame.validate(contract)
             if self.episode_id != frame.episode_id:
@@ -379,8 +441,15 @@ class ControlCommand:
             "protocol": PROTOCOL,
             "protocol_version": PROTOCOL_VERSION,
             "kind": "control",
-            **asdict(self),
+            "contract_hash": self.contract_hash,
+            "episode_id": self.episode_id,
+            "source_sequence": self.source_sequence,
+            "issued_monotonic_ns": self.issued_monotonic_ns,
+            "valid_until_monotonic_ns": self.valid_until_monotonic_ns,
+            "action": self.action,
         }
+        if self.enemies:
+            payload["enemies"] = [asdict(enemy) for enemy in self.enemies]
         return (
             json.dumps(payload, allow_nan=False, separators=(",", ":")) + "\n"
         ).encode()
@@ -388,7 +457,13 @@ class ControlCommand:
     @classmethod
     def from_wire(cls, data: bytes, contract: FlightContract) -> "ControlCommand":
         payload = _wire_payload(data, "control")
-        command = cls(**_select_fields(payload, cls.__dataclass_fields__))
+        selected = _select_fields(
+            payload, cls.__dataclass_fields__, optional={"enemies"}
+        )
+        selected["enemies"] = tuple(
+            EnemyPose.from_mapping(enemy) for enemy in selected.get("enemies", ())
+        )
+        command = cls(**selected)
         command.validate(contract)
         return command
 
