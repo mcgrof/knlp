@@ -49,14 +49,11 @@ th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2
 td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text2); }
 td.hi { color: var(--green); font-weight: 600; }
 td.warn { color: var(--amber); font-weight: 600; }
-td.bad { color: var(--red); font-weight: 600; }
 tr:hover td { background: var(--bg3); }
 .note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
 .note strong { color: var(--green); }
 .note.amber { background: #f0a03018; border-left-color: var(--amber); }
 .note.amber strong { color: var(--amber); }
-.note.red { background: #e8404018; border-left-color: var(--red); }
-.note.red strong { color: var(--red); }
 code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
 footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
 footer a { color: var(--text2); }
@@ -70,9 +67,8 @@ footer a { color: var(--text2); }
   <h1>Cartridges at Scale</h1>
   <p>An independent reproduction on a frozen Qwen3-8B over the LongHealth
   medical question-answering benchmark. The faithful isolated recipe reaches
-  0.603 across five H100-trained cartridges. The earlier collapse/rescue
-  numbers came from affected teacher targets and are outside the supported
-  result set.</p>
+  0.603 across five H100-trained cartridges. This page reports the validated
+  isolated-cartridge results and controls.</p>
   <p><a href="https://arxiv.org/abs/2606.04557">Cartridges at Scale (arXiv:2606.04557)</a>
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
   &middot; <a href="cartridge-asymmetric-quantization.html">asymmetric cartridge quantization</a>
@@ -96,10 +92,9 @@ footer a { color: var(--text2); }
   <a href="#length">5. The remaining quality gap</a>
   <a href="#hardware">6. A100 cross-hardware control</a>
   <a href="#cartridge-path-lossless">7. The cartridge path is lossless</a>
-  <a href="#collapse-rescue">8. Collapse/rescue status</a>
-  <a href="#ablations">9. Closed ablations and stability</a>
-  <a href="#code">10. Code and reproduction</a>
-  <a href="#serving">11. Serving</a>
+  <a href="#ablations">8. Closed ablations and stability</a>
+  <a href="#code">9. Code and reproduction</a>
+  <a href="#serving">10. Serving</a>
 </div>
 
 <section id="what-cas-adds">
@@ -120,17 +115,15 @@ collection trains within memory.</li>
 <li><strong>Mixed-visibility joint training.</strong> Independently trained
 cartridges interfere when placed in one cache. CAS co-trains them with a
 per-sample visibility rule so they learn to coexist.</li>
-<li><strong>Collapse and rescue</strong> as the headline: isolated cartridges
-collapse toward the no-context floor when co-loaded; the joint rule prevents it.</li>
+<li><strong>Collapse and rescue.</strong> The CAS paper reports that isolated
+cartridges collapse toward the no-context floor when co-loaded and that the
+joint rule prevents it.</li>
 </ul>
-<p>The reproduction target is that story — split a collection into per-document
-cartridges, observe the collapse when they are combined, and recover it with the
-training-rule change — measured on Qwen3-8B and LongHealth.</p>
 </section>
 
 <section id="validated">
 <h2>2. What is validated</h2>
-<p>The clean result is now the isolated-cartridge reproduction. Accuracy uses the
+<p>The validated result is the isolated-cartridge reproduction. Accuracy uses the
 CAS Table-15 LongHealth protocol: option-text prompting, thinking enabled,
 temperature 0.6, a 2048-token generation budget, fuzzy option matching, all 20
 questions for each patient, and three generation runs per trained cartridge.</p>
@@ -150,18 +143,17 @@ percentage points. The exact full-document KV control proves that the alternate
 cache path itself does not explain the learned-cartridge gap. The five-patient
 number is a mean over five separately trained H100 cartridges; each patient row
 is itself the mean of three generations of that one cartridge.</p>
-<div class="note red"><strong>Evidence boundary.</strong> The old
-collapse/rescue table was trained on data from a defective teacher-target path.
-The numerical claim remains open pending a clean-target comparison.</div>
+<p>This reproduction measures isolated-cartridge training only. It does not
+include cartridge co-loading or mixed-visibility joint-training results.</p>
 </section>
 
 <section id="recipe">
 <h2>3. The faithful isolated recipe</h2>
-<p>The optimizer regime was the missing lever in the earlier 0.50&ndash;0.55
-plateau. Holding the patient and data fixed, moving from the small-batch recipe
-to the paper's global-batch-128 schedule raised patient 02 from 0.55 to
-<strong>0.65 &plusmn; 0.05</strong>. The earlier small-batch experiments therefore
-did not rule out learning rate or training length.</p>
+<p>Holding the patient and data fixed, replacing the small-batch optimizer regime
+with the paper's global-batch-128 schedule raised patient 02 from 0.55 to
+<strong>0.65 &plusmn; 0.05</strong>. Batch size, learning rate, and schedule changed
+together, so this comparison establishes the value of the complete regime rather
+than attributing the gain to one component.</p>
 <div class="table-wrap">
 <table>
 <tr><th>Quantity</th><th>Faithful setting</th></tr>
@@ -205,31 +197,29 @@ cartridge, not independent training replicas.</p>
 </table>
 </div>
 <p>The mean remains below the paper's isolated aggregate of 0.736, but a single
-mean hides two different failure modes. Patients 03 and 05 know the answers when
-they finish; patient 01 usually finishes quickly and is often wrong.</p>
+mean hides two different output patterns. Completed responses score 0.81&ndash;0.86
+for patients 03 and 05. Patient 01 usually finishes quickly and scores 0.51 among
+completed responses.</p>
 </section>
 
 <section id="length">
 <h2>5. The remaining quality gap</h2>
-<p>The main residual is generation control under the paper's 2,048-token cap,
-not simply missing document facts. Patients 03 and 05 hit the cap on about 28%
-of generations. Their completed answers score 0.81&ndash;0.86, above the paper's
-aggregate, while truncated answers fall near chance because the scorer sees the
-tail of unfinished reasoning. Patient 06 shows a smaller version of the same
-effect.</p>
+<p>The paper's 2,048-token generation cap contributes substantially to the
+measured residual for patients 03 and 05. About 28% of their generations hit the
+cap. Their completed answers score 0.81&ndash;0.86, above the paper's aggregate,
+while truncated answers score 0.17&ndash;0.29 because the scorer sees the tail of
+unfinished reasoning. Patient 06 shows a smaller length effect.</p>
 <div class="table-wrap">
 <table>
-<tr><th>Observed behavior</th><th>Interpretation</th></tr>
-<tr><td>Patients 03 and 05: 28% capped; completed accuracy 0.81&ndash;0.86</td><td>knowledge is present; answer control is too long</td></tr>
-<tr><td>Patient 06: 13% capped; completed accuracy 0.67</td><td>mixed length and knowledge effect</td></tr>
-<tr><td>Patient 01: median output 77 characters; completed accuracy 0.51</td><td>genuine knowledge/representation gap</td></tr>
+<tr><th>Observed behavior</th><th>Measured consequence</th></tr>
+<tr><td>Patients 03 and 05: 28% capped</td><td>0.81&ndash;0.86 completed accuracy; 0.17&ndash;0.29 truncated accuracy</td></tr>
+<tr><td>Patient 06: 13% capped</td><td>0.67 completed accuracy</td></tr>
+<tr><td>Patient 01: median output 77 characters</td><td>0.51 completed accuracy</td></tr>
 </table>
 </div>
-<p>A 4,096-token cap ablation would quantify the length effect directly; it has
-not been run. The paper synthesizes roughly 40,000 conversations per cartridge,
-versus about 4,400 here, so data scale remains a plausible lever for patient 01.
-Earlier small-batch synthesis variants did not close the old 0.4&ndash;0.5 plateau,
-but they do not rule out better data under the faithful optimizer regime.</p>
+<p>No larger-cap evaluation isolates the length effect. The paper synthesizes
+roughly 40,000 conversations per cartridge versus about 4,400 here; these
+measurements do not isolate the effect of that data-scale difference.</p>
 </section>
 
 <section id="hardware">
@@ -239,8 +229,8 @@ same faithful recipe, scored <strong>0.833 &plusmn; 0.058</strong>: 0.80, 0.80,
 and 0.90, or 50 correct answers out of 60. The H100-trained cartridge scored
 0.65, or 39 out of 60. The A100 run finished at optimizer step 1,068 with final
 training loss about 0.0153.</p>
-<div class="note amber"><strong>Cross-hardware interpretation.</strong> The
-0.833 result does not establish an A100 advantage. The two runs produced
+<div class="note amber"><strong>The hardware comparison is unmatched.</strong>
+The 0.833 result does not establish an A100 advantage. The two runs produced
 different learned cartridges and evaluation is sampled. Hardware and training-
 trajectory effects remain confounded without matched cross-evaluation of both
 cartridge files under controlled generation seeds.</div>
@@ -263,47 +253,16 @@ tokens. This control is distinct from the 631 document-derived trainable
 positions in the learned-cartridge initialization.</div>
 </section>
 
-<section id="collapse-rescue">
-<h2>8. Collapse/rescue status</h2>
-<p>The CAS paper reports that independently trained cartridges lose accuracy when
-co-loaded and that mixed-visibility joint training prevents the collapse. The
-following measurements from the earlier page are affected historical output:</p>
-<div class="table-wrap">
-<table>
-<tr><th>Invalid historical arm</th><th>Alone</th><th>Co-loaded</th><th>Delta</th></tr>
-<tr><td>Isolated cartridges</td><td>0.58</td><td>0.38</td><td class="bad">&minus;0.20</td></tr>
-<tr><td>Mixed-visibility joint</td><td>0.44</td><td>0.46</td><td>+0.02</td></tr>
-</table>
-</div>
-<div class="note red"><strong>Evidence boundary.</strong> These numbers do not
-support a collapse/rescue reproduction. Their self-study data came through a
-vLLM teacher path that serialized the sampled token and then repeated it in the
-top-k list. Once real token IDs were added to an otherwise incomplete upstream
-path, greedy outputs turned that latent layout trap into live duplicate
-supervision. A separate earlier smoke was worse: every stored target ID was
-<code>-1</code> and could not train the intended objective.</div>
-<p>The affected synthesis parquet was not archived, so the classification rests
-on the generator code and run provenance rather than a row-by-row audit of that
-exact file. That uncertainty does not rescue the result: a run with unverified,
-known-affected targets cannot support the central claim.</p>
-<p><strong>Current status:</strong> the isolated reproduction is supported by
-clean data. Collapse and rescue remain open. A supported numerical result
-requires fresh deduplicated synthesis, isolated co-load evaluation, and joint
-training and evaluation on the same clean targets. The public harness already
-implements the paper's mixed-visibility rule with per-sample cache assembly.</p>
-</section>
-
 <section id="ablations">
-<h2>9. Closed ablations and training stability</h2>
+<h2>8. Closed ablations and training stability</h2>
 <h3>Meta-learned initialization: no useful speedup</h3>
 <p>A displacement fitted from other documents lowers the step-zero held-out loss,
 but training forgets it. The best step-60 affine initialization reached the
 baseline's 50%, 75%, and 90% loss-drop targets only 3.3, 5.0, and 5.6 steps
 earlier out of roughly 1,000 total steps. Remove its lower step-zero loss and it
 is slower. By step 180, baseline and fitted starts are within 0.00003. A same-seed
-replicate was bit-for-bit identical through step 110, so &ldquo;independent
-replicate&rdquo; here means a determinism control, not new statistical evidence.
-This line is closed.</p>
+repeat was bit-for-bit identical through step 110. The fitted initialization
+therefore provides no useful training-speed gain at this scale.</p>
 <h3>Reverse KL: no measurable gain</h3>
 <p>A reverse-KL warm-start pilot moved patient 02 from 0.65 &plusmn; 0.05 to
 0.70 &plusmn; 0.05 after 200 steps: 42 versus 39 correct answers out of 60,
@@ -318,7 +277,7 @@ gain.</p>
 </section>
 
 <section id="code">
-<h2>10. Code and reproduction</h2>
+<h2>9. Code and reproduction</h2>
 <p>The public
 <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">research/cartridges_cas</a>
 harness contains the synthesis, isolated and joint trainers, Table-15 evaluator,
@@ -343,7 +302,7 @@ silently falling back to top-1.</p>
 </section>
 
 <section id="serving">
-<h2>11. Serving</h2>
+<h2>10. Serving</h2>
 <p>The serving side is already built. A cartridge injects as a
 <code>KVConnectorBase_V1</code> plugin into vLLM with no core modifications, and on
 this record the time-to-first-token drops from 757 ms (re-prefilling the ~12K-token
