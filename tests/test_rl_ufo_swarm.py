@@ -155,3 +155,22 @@ def test_formation_tracks_player_without_firing(tmp_path):
     assert [pose.position_ned_m[0] for pose in poses] == pytest.approx(
         [-90.0, -90.0, -180.0, -180.0], abs=0.1
     )
+
+    blink_displacement = np.asarray((8000.0, 1200.0, -600.0))
+    blink_observation = np.asarray(frame.observation, dtype=np.float64)
+    blink_observation[:3] += blink_displacement
+    blink_frame = TelemetryFrame.create(
+        contract,
+        episode_id="formation-test",
+        sequence=2,
+        monotonic_ns=21_000_000,
+        dt_s=0.02,
+        observation=blink_observation,
+        goal=(0.0, 0.0, 0.0, 0.0),
+    )
+    blink_poses = swarm.update(blink_frame)
+    for before, after in zip(poses, blink_poses, strict=True):
+        actual = np.asarray(after.position_ned_m) - np.asarray(
+            before.position_ned_m
+        )
+        assert actual == pytest.approx(blink_displacement, abs=0.1)
