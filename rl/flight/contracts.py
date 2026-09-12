@@ -363,6 +363,49 @@ class EnemyPose:
 
 
 @dataclass(frozen=True)
+class EnemyShot:
+    """One enemy FLUX shot aimed at an episode-relative NED point."""
+
+    slot: int
+    aim_position_ned_m: tuple[float, ...]
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        slot: int,
+        aim_position_ned_m: Sequence[float],
+    ) -> "EnemyShot":
+        shot = cls(
+            slot=slot,
+            aim_position_ned_m=_finite_vector(
+                aim_position_ned_m, 3, "enemy shot aim"
+            ),
+        )
+        shot.validate()
+        return shot
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "EnemyShot":
+        payload = _strict_mapping(
+            value,
+            {"slot", "aim_position_ned_m"},
+            "enemy shot",
+        )
+        return cls.create(
+            slot=payload["slot"],
+            aim_position_ned_m=payload["aim_position_ned_m"],
+        )
+
+    def validate(self) -> None:
+        if isinstance(self.slot, bool) or not isinstance(self.slot, int):
+            raise ValueError("enemy shot slot must be an integer")
+        if self.slot < 0 or self.slot >= 19:
+            raise ValueError("enemy shot slot must be between 0 and 18")
+        _finite_vector(self.aim_position_ned_m, 3, "enemy shot aim")
+
+
+@dataclass(frozen=True)
 class ControlCommand:
     """A bounded action tied to one unexpired telemetry frame."""
 
@@ -373,6 +416,7 @@ class ControlCommand:
     valid_until_monotonic_ns: int
     action: tuple[float, ...]
     enemies: tuple[EnemyPose, ...] = ()
+    enemy_shots: tuple[EnemyShot, ...] = ()
 
     @classmethod
     def create(
@@ -385,6 +429,7 @@ class ControlCommand:
         valid_until_monotonic_ns: int,
         action: Sequence[float],
         enemies: Sequence[EnemyPose] = (),
+        enemy_shots: Sequence[EnemyShot] = (),
     ) -> "ControlCommand":
         command = cls(
             contract_hash=contract.digest,
@@ -394,6 +439,7 @@ class ControlCommand:
             valid_until_monotonic_ns=valid_until_monotonic_ns,
             action=tuple(float(value) for value in action),
             enemies=tuple(enemies),
+            enemy_shots=tuple(enemy_shots),
         )
         command.validate(contract)
         return command
@@ -422,6 +468,16 @@ class ControlCommand:
             slots.append(enemy.slot)
         if slots != sorted(set(slots)):
             raise ValueError("enemy slots must be unique and increasing")
+        shot_slots = []
+        for shot in self.enemy_shots:
+            if not isinstance(shot, EnemyShot):
+                raise ValueError("enemy_shots must contain EnemyShot values")
+            shot.validate()
+            shot_slots.append(shot.slot)
+        if shot_slots != sorted(set(shot_slots)):
+            raise ValueError("enemy shot slots must be unique and increasing")
+        if not set(shot_slots).issubset(slots):
+            raise ValueError("every enemy shot must have a matching enemy pose")
         if frame is not None:
             frame.validate(contract)
             if self.episode_id != frame.episode_id:
@@ -450,6 +506,10 @@ class ControlCommand:
         }
         if self.enemies:
             payload["enemies"] = [asdict(enemy) for enemy in self.enemies]
+        if self.enemy_shots:
+            payload["enemy_shots"] = [
+                asdict(shot) for shot in self.enemy_shots
+            ]
         return (
             json.dumps(payload, allow_nan=False, separators=(",", ":")) + "\n"
         ).encode()
@@ -458,10 +518,16 @@ class ControlCommand:
     def from_wire(cls, data: bytes, contract: FlightContract) -> "ControlCommand":
         payload = _wire_payload(data, "control")
         selected = _select_fields(
-            payload, cls.__dataclass_fields__, optional={"enemies"}
+            payload,
+            cls.__dataclass_fields__,
+            optional={"enemies", "enemy_shots"},
         )
         selected["enemies"] = tuple(
             EnemyPose.from_mapping(enemy) for enemy in selected.get("enemies", ())
+        )
+        selected["enemy_shots"] = tuple(
+            EnemyShot.from_mapping(shot)
+            for shot in selected.get("enemy_shots", ())
         )
         command = cls(**selected)
         command.validate(contract)

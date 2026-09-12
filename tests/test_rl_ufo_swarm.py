@@ -61,8 +61,18 @@ def test_swarm_emits_distinct_normalized_enemy_poses(tmp_path):
         ),
         goal=(0.0, 0.0, 0.0, 0.0),
     )
-    poses = RlUfoSwarm(contract, model, library, 5).update(frame)
+    swarm = RlUfoSwarm(contract, model, library, 5)
+    poses = swarm.update(frame)
     assert [pose.slot for pose in poses] == list(range(5))
     assert len({tuple(pose.position_ned_m) for pose in poses}) == 5
     for pose in poses:
         assert np.linalg.norm(pose.quaternion_body_to_ned) == pytest.approx(1.0)
+    assert [shot.slot for shot in swarm.shots] == [0]
+    assert swarm.shots[0].aim_position_ned_m == pytest.approx(
+        frame.observation[:3]
+    )
+    controlled = swarm.control_frame(frame)
+    assert swarm.enemies[0].goal[0] == 75.0
+    assert controlled.goal[0] == 75.0
+    assert controlled.goal[1] == 40.0
+    assert controlled.goal[3] == 1.2
