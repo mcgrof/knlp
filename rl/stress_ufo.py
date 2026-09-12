@@ -9,7 +9,7 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from rl.controls.ufo import VelocityTargetController
+from rl.controls.ufo import velocity_target_controller
 from rl.envs.ufo_env import UfoEnv
 from rl.evaluate_ufo import (
     checkpoint_policy,
@@ -25,12 +25,20 @@ COMBAT_GOAL_AXES = (
     (-12.0, 0.0),
     (-1.0, 1.0),
 )
+SHOWCASE_GOAL_AXES = (
+    (-20.0, 90.0),
+    (-50.0, 50.0),
+    (-24.0, 0.0),
+    (-1.4, 1.4),
+)
 
 
-def combat_corner_goals() -> list[tuple[float, ...]]:
+def combat_corner_goals(
+    axes: Sequence[Sequence[float]] = COMBAT_GOAL_AXES,
+) -> list[tuple[float, ...]]:
     """Return the Cartesian corners of the director goal envelope."""
 
-    return list(itertools.product(*COMBAT_GOAL_AXES))
+    return list(itertools.product(*axes))
 
 
 def _positive(value, name: str) -> float:
@@ -128,9 +136,13 @@ def evaluate_corners(
     *,
     checkpoint: Path | None = None,
     max_seconds: float = 20.0,
+    profile: str = "certified",
 ) -> dict:
+    if profile not in {"certified", "showcase"}:
+        raise ValueError(f"unknown combat profile {profile!r}")
     knlp_commit = _git_head(Path(__file__).resolve().parents[1])
-    goals = combat_corner_goals()
+    axes = COMBAT_GOAL_AXES if profile == "certified" else SHOWCASE_GOAL_AXES
+    goals = combat_corner_goals(axes)
     records = {"checkpoint": [], "reference": []}
     actor = None
     checkpoint_info = None
@@ -138,6 +150,7 @@ def evaluate_corners(
     for goal in goals:
         env = UfoEnv(
             goal=goal,
+            maneuver_profile=profile,
             max_seconds=max_seconds,
             random_start=True,
         )
@@ -154,7 +167,7 @@ def evaluate_corners(
                     **state,
                 }
                 contract_hash = env.contract.digest
-            controller = VelocityTargetController()
+            controller = velocity_target_controller(env)
             for seed in seeds:
                 policies = {
                     "checkpoint": actor,
@@ -172,7 +185,7 @@ def evaluate_corners(
         "schema_version": 1,
         "kind": "ufo_combat_corner_stress",
         "knlp_commit": knlp_commit,
-        "environment": "ufo:combat-corners",
+        "environment": f"ufo:{profile}-corners",
         "contract_hash": contract_hash,
         "checkpoint": checkpoint_info,
         "max_seconds": max_seconds,
@@ -204,6 +217,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=parse_seeds("6000,6001,6002"),
     )
     parser.add_argument("--max-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--profile",
+        choices=("certified", "showcase"),
+        default="certified",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     report = evaluate_corners(
@@ -211,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.seeds,
         checkpoint=args.checkpoint,
         max_seconds=args.max_seconds,
+        profile=args.profile,
     )
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"

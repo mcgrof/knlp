@@ -1,6 +1,11 @@
 """Adversarial combat-envelope checks for standalone UFO actors."""
 
-from rl.stress_ufo import COMBAT_GOAL_AXES, attach_verdict, combat_corner_goals
+from rl.stress_ufo import (
+    COMBAT_GOAL_AXES,
+    SHOWCASE_GOAL_AXES,
+    attach_verdict,
+    combat_corner_goals,
+)
 
 
 def stress_report(*, failures=0, tilt=10.0, velocity=11.0, yaw=0.11):
@@ -39,6 +44,13 @@ def test_combat_corners_cover_every_director_limit():
     goals = combat_corner_goals()
     assert len(goals) == 16
     for index, limits in enumerate(COMBAT_GOAL_AXES):
+        assert {goal[index] for goal in goals} == set(limits)
+
+
+def test_showcase_corners_cover_the_wider_limits():
+    goals = combat_corner_goals(SHOWCASE_GOAL_AXES)
+    assert len(goals) == 16
+    for index, limits in enumerate(SHOWCASE_GOAL_AXES):
         assert {goal[index] for goal in goals} == set(limits)
 
 

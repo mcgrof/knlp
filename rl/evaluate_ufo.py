@@ -16,7 +16,7 @@ from rl.continuous import (
     action_bounds,
     load_continuous_state_dict,
 )
-from rl.controls.ufo import VelocityTargetController, zero_wrench
+from rl.controls.ufo import velocity_target_controller, zero_wrench
 from rl.envs import make_env
 from rl.flight.geometry import quaternion_body_to_ned
 
@@ -171,7 +171,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--env",
         default="ufo:hover",
-        choices=["ufo:hover", "ufo:forward", "ufo:maneuver"],
+        choices=[
+            "ufo:hover",
+            "ufo:forward",
+            "ufo:maneuver",
+            "ufo:showcase",
+        ],
     )
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--checkpoint", type=Path)
@@ -198,7 +203,7 @@ def main(argv=None) -> int:
     if "zero" in args.policies:
         policies["zero"] = lambda observation: zero_wrench(env)
     if "reference" in args.policies:
-        controller = VelocityTargetController()
+        controller = velocity_target_controller(env)
         policies["reference"] = lambda observation: controller(env)
     checkpoint_metadata = None
     if "checkpoint" in args.policies:
