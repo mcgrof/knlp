@@ -1,6 +1,7 @@
 """PPO smoke: learns on the simulator on CPU, checkpoints, yields, resumes."""
 
 import csv
+import json
 import os
 import subprocess
 import sys
@@ -12,10 +13,18 @@ pytest.importorskip("gymnasium")
 
 from rl.pace.lease import EXIT_YIELD, GpuLease
 
+UFO_ROOT = os.environ.get("XPLANE_UFO_ROOT")
+
 
 def _run(args, env):
     return subprocess.run(
         [sys.executable, "-m", "rl.ppo", *args], env=env, capture_output=True, text=True
+    )
+
+
+def _subprocess_pythonpath():
+    return os.pathsep.join(
+        path for path in (os.getcwd(), os.environ.get("PYTHONPATH")) if path
     )
 
 
@@ -24,7 +33,7 @@ def test_ppo_smoke_learns_then_yields_and_resumes(tmp_path):
     lease_dir = tmp_path / "lease"
     env = {
         **os.environ,
-        "PYTHONPATH": os.getcwd(),
+        "PYTHONPATH": _subprocess_pythonpath(),
         "KNLP_GPU_LEASE_DIR": str(lease_dir),
         "OMP_NUM_THREADS": "2",
     }
@@ -68,7 +77,66 @@ def test_ppo_smoke_learns_then_yields_and_resumes(tmp_path):
     assert len(rows) == 5120 // (4 * 64)
     assert all(float(r["approx_kl"]) >= 0 for r in rows)
     assert int(rows[-1]["global_step"]) == 5120
+    assert b"\r\n" not in (runs / "smoke" / "metrics.csv").read_bytes()
 
     # 3. resuming a finished run is a no-op that exits cleanly
     out = _run(common + ["--resume"], env)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+@pytest.mark.skipif(not UFO_ROOT, reason="XPLANE_UFO_ROOT is not set")
+def test_continuous_ufo_ppo_smoke(tmp_path):
+    runs = tmp_path / "runs"
+    env = {
+        **os.environ,
+        "PYTHONPATH": _subprocess_pythonpath(),
+        "XPLANE_UFO_ROOT": UFO_ROOT,
+        "XPLANE_UFO_SOURCE_COMMIT": "e256c526675193c0fd8152c69c734d566a139708",
+        "OMP_NUM_THREADS": "2",
+    }
+    args = [
+        "--env",
+        "ufo:hover",
+        "--run-name",
+        "ufo-smoke",
+        "--runs-dir",
+        str(runs),
+        "--device",
+        "cpu",
+        "--num-envs",
+        "2",
+        "--num-steps",
+        "32",
+        "--total-timesteps",
+        "128",
+        "--num-minibatches",
+        "2",
+        "--update-epochs",
+        "1",
+        "--checkpoint-every",
+        "1",
+        "--max-seconds",
+        "0.5",
+        "--torch-threads",
+        "2",
+        "--no-lease",
+    ]
+    out = _run(args, env)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "actions=continuous" in out.stdout
+    checkpoint = torch.load(
+        runs / "ufo-smoke" / "checkpoint.pt",
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert checkpoint["state"]["action_kind"] == "continuous"
+    assert "actor_log_std" in checkpoint["agent"]
+    manifest = json.loads((runs / "ufo-smoke" / "manifest.json").read_text())
+    assert manifest["action_abi"]["kind"] == "continuous"
+    assert manifest["action_abi"]["shape"] == [6]
+    assert manifest["contract_hash"]
+    assert manifest["environment_source_commit"].startswith("e256c526")
+    assert manifest["dynamics_library_sha256"]
+    rows = list(csv.DictReader(open(runs / "ufo-smoke" / "metrics.csv")))
+    assert len(rows) == 2
+    assert int(rows[-1]["global_step"]) == 128

@@ -1,4 +1,4 @@
-"""Single-file PPO for discrete actions, in the CleanRL style.
+"""Single-file PPO for discrete or bounded continuous actions.
 
 Everything that matters for reading the algorithm is in this file:
 rollout collection, generalised advantage estimation, the clipped
@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
+import platform
 import random
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +35,11 @@ import torch
 import torch.nn as nn
 from torch.distributions.categorical import Categorical
 
+from rl.continuous import (
+    SquashedGaussianAgent,
+    action_bounds,
+    load_continuous_state_dict,
+)
 from rl.envs import env_factory
 from rl.pace.lease import EXIT_YIELD, GpuLease, YieldRequest
 from rl.vec import SyncVec
@@ -46,7 +55,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--torch-threads", type=int, default=0)
-    # PPO (CleanRL defaults for discrete control)
+    # PPO (CleanRL defaults)
     p.add_argument("--total-timesteps", type=int, default=500_000)
     p.add_argument("--num-envs", type=int, default=8)
     p.add_argument("--num-steps", type=int, default=128, help="rollout length per env")
@@ -75,9 +84,19 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="begin training episodes at a randomly chosen course reset point",
     )
     p.add_argument("--etr-bin", default=None, help="path to the patched etr binary")
+    p.add_argument(
+        "--environment-source-commit",
+        default=os.environ.get("XPLANE_UFO_SOURCE_COMMIT"),
+        help="source commit for an external environment runtime",
+    )
     # operations
     p.add_argument(
         "--resume", action="store_true", help="continue from the run's checkpoint"
+    )
+    p.add_argument(
+        "--init-agent",
+        default=None,
+        help="initialize a fresh run from an agent or checkpoint file",
     )
     p.add_argument(
         "--checkpoint-every", type=int, default=10, help="updates between checkpoints"
@@ -97,6 +116,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     args.batch_size = args.num_envs * args.num_steps
     args.minibatch_size = args.batch_size // args.num_minibatches
     args.num_updates = max(1, args.total_timesteps // args.batch_size)
+    if args.resume and args.init_agent:
+        p.error("--resume and --init-agent are mutually exclusive")
     if args.run_name is None:
         args.run_name = f"{args.env.replace(':', '-')}-s{args.seed}"
     return args
@@ -144,6 +165,20 @@ class Agent(nn.Module):
         return self.actor(x).argmax(dim=-1)
 
 
+def make_agent(action_space, obs_dim: int, hidden: int):
+    """Select the checkpoint-compatible actor for an environment's action ABI."""
+
+    if hasattr(action_space, "n"):
+        return Agent(obs_dim, int(action_space.n), hidden), (), torch.long, "discrete"
+    low, high = action_bounds(action_space)
+    return (
+        SquashedGaussianAgent(obs_dim, low, high, hidden),
+        (len(low),),
+        torch.float32,
+        "continuous",
+    )
+
+
 class RunLog:
     """CSV metrics plus a small JSON progress file that survives restarts."""
 
@@ -174,7 +209,12 @@ class RunLog:
         self.csv_path = run_dir / "metrics.csv"
         new = not self.csv_path.exists()
         self._f = open(self.csv_path, "a", newline="")
-        self._w = csv.DictWriter(self._f, fieldnames=self.FIELDS, extrasaction="ignore")
+        self._w = csv.DictWriter(
+            self._f,
+            fieldnames=self.FIELDS,
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         if new:
             self._w.writeheader()
 
@@ -194,7 +234,73 @@ def pick_device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
-def save_checkpoint(path: Path, agent: Agent, optimizer, state: dict) -> None:
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _git_head(root: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def write_manifest(
+    path: Path,
+    args: argparse.Namespace,
+    envs: SyncVec,
+    action_kind: str,
+    n_params: int,
+    device: torch.device,
+) -> None:
+    if path.exists():
+        return
+    environment = envs.envs[0]
+    contract = getattr(environment, "contract", None)
+    dynamics = getattr(environment, "dynamics", None)
+    library_path = getattr(dynamics, "library_path", None)
+    action_space = envs.single_action_space
+    action_abi = {"kind": action_kind, "shape": list(action_space.shape)}
+    if action_kind == "continuous":
+        low, high = action_bounds(action_space)
+        action_abi.update(low=low.tolist(), high=high.tolist())
+    else:
+        action_abi["count"] = int(action_space.n)
+    manifest = {
+        "schema_version": 1,
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "knlp_commit": _git_head(Path(__file__).resolve().parents[1]),
+        "environment_source_commit": args.environment_source_commit,
+        "contract_hash": getattr(contract, "digest", None),
+        "dynamics_library": str(library_path) if library_path else None,
+        "dynamics_library_sha256": _sha256(library_path) if library_path else None,
+        "environment": args.env,
+        "action_abi": action_abi,
+        "observation_shape": list(envs.single_observation_space.shape),
+        "model_parameters": n_params,
+        "device": str(device),
+        "torch_version": torch.__version__,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+    }
+    if args.init_agent:
+        initial_path = Path(args.init_agent).expanduser().resolve()
+        manifest["initial_agent"] = {
+            "path": str(initial_path),
+            "sha256": _sha256(initial_path),
+        }
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def save_checkpoint(path: Path, agent: nn.Module, optimizer, state: dict) -> None:
     tmp = path.with_suffix(".tmp")
     torch.save(
         {
@@ -210,6 +316,47 @@ def save_checkpoint(path: Path, agent: Agent, optimizer, state: dict) -> None:
         tmp,
     )
     os.replace(tmp, path)
+
+
+def bootstrap_time_limits(
+    reward: np.ndarray,
+    infos: dict,
+    agent: nn.Module,
+    device: torch.device,
+    gamma: float,
+) -> np.ndarray:
+    """Add the value of final observations for time-limit truncations.
+
+    ``SyncVec`` resets an ended environment in the same step, so its returned
+    observation belongs to the next episode.  A truncation is not a terminal
+    state: evaluate the retained final observation and add its discounted
+    value to that transition's reward.  The ordinary done mask can then stop
+    generalised advantage estimation from crossing the reset boundary without
+    discarding the timeout bootstrap.
+    """
+
+    truncations = np.asarray(infos.get("truncations", ()), dtype=np.bool_)
+    indices = np.flatnonzero(truncations)
+    if not len(indices):
+        return reward
+    final_observations = infos.get("final_observations", ())
+    try:
+        selected = [final_observations[index] for index in indices]
+        if any(observation is None for observation in selected):
+            raise ValueError
+        final_batch = np.stack(selected)
+    except (IndexError, TypeError, ValueError) as error:
+        raise ValueError("truncations require matching final observations") from error
+    with torch.no_grad():
+        values = (
+            agent.get_value(torch.as_tensor(final_batch, device=device))
+            .flatten()
+            .cpu()
+            .numpy()
+        )
+    adjusted = np.asarray(reward, dtype=np.float32).copy()
+    adjusted[indices] += gamma * values
+    return adjusted
 
 
 def main(argv=None) -> int:
@@ -238,29 +385,76 @@ def main(argv=None) -> int:
         )
         yield_req.install_signals()
 
-    env_kwargs = {
-        "max_seconds": args.max_seconds,
-        "stuck_seconds": args.stuck_seconds,
-        "action_set": args.action_set,
-        "random_start": args.random_start,
-        "binary": args.etr_bin,
-    }
-    if args.env.startswith("etr"):
-        env_kwargs["stderr_path"] = str(run_dir / "etr.stderr.log")
+    if args.env.partition(":")[0] == "ufo":
+        env_kwargs = {
+            "max_seconds": args.max_seconds,
+            "random_start": args.random_start,
+        }
+    else:
+        env_kwargs = {
+            "max_seconds": args.max_seconds,
+            "stuck_seconds": args.stuck_seconds,
+            "action_set": args.action_set,
+            "random_start": args.random_start,
+            "binary": args.etr_bin,
+        }
+        if args.env.startswith("etr"):
+            env_kwargs["stderr_path"] = str(run_dir / "etr.stderr.log")
     envs = SyncVec([env_factory(args.env, **env_kwargs) for _ in range(args.num_envs)])
     obs_dim = int(np.prod(envs.single_observation_space.shape))
-    n_actions = int(envs.single_action_space.n)
 
-    agent = Agent(obs_dim, n_actions, args.hidden).to(device)
+    agent, action_shape, action_dtype, action_kind = make_agent(
+        envs.single_action_space, obs_dim, args.hidden
+    )
+    agent = agent.to(device)
+    if args.init_agent:
+        initial_path = Path(args.init_agent).expanduser().resolve()
+        saved = torch.load(initial_path, map_location=device, weights_only=False)
+        saved_state = saved.get("state", {}) if isinstance(saved, dict) else {}
+        initial_kind = saved_state.get("action_kind", action_kind)
+        if initial_kind != action_kind:
+            raise ValueError(
+                f"initial agent action kind {initial_kind!r} does not match "
+                f"environment action kind {action_kind!r}"
+            )
+        weights = (
+            saved["agent"]
+            if isinstance(saved, dict) and "agent" in saved
+            else saved
+        )
+        if action_kind == "continuous":
+            load_continuous_state_dict(agent, weights)
+        else:
+            agent.load_state_dict(weights)
+        print(f"[ppo] initialized agent from {initial_path}", flush=True)
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
     n_params = sum(p.numel() for p in agent.parameters())
+    write_manifest(
+        run_dir / "manifest.json", args, envs, action_kind, n_params, device
+    )
 
-    state = {"update": 0, "global_step": 0, "wall_s": 0.0, "env_seed": args.seed}
+    state = {
+        "update": 0,
+        "global_step": 0,
+        "wall_s": 0.0,
+        "env_seed": args.seed,
+        "action_kind": action_kind,
+    }
     if args.resume and ckpt_path.exists():
         ck = torch.load(ckpt_path, map_location=device, weights_only=False)
-        agent.load_state_dict(ck["agent"])
+        checkpoint_action_kind = ck["state"].get("action_kind", action_kind)
+        if checkpoint_action_kind != action_kind:
+            raise ValueError(
+                f"checkpoint action kind {checkpoint_action_kind!r} does not match "
+                f"environment action kind {action_kind!r}"
+            )
+        if action_kind == "continuous":
+            load_continuous_state_dict(agent, ck["agent"])
+        else:
+            agent.load_state_dict(ck["agent"])
         optimizer.load_state_dict(ck["optimizer"])
         state = ck["state"]
+        state["action_kind"] = action_kind
         random.setstate(ck["rng"]["python"])
         np.random.set_state(ck["rng"]["numpy"])
         torch.set_rng_state(ck["rng"]["torch"])
@@ -273,12 +467,15 @@ def main(argv=None) -> int:
     log = RunLog(run_dir)
     print(
         f"[ppo] run={args.run_name} env={args.env} device={device} params={n_params} "
-        f"envs={args.num_envs} steps={args.num_steps} batch={args.batch_size} updates={args.num_updates}"
+        f"actions={action_kind} envs={args.num_envs} steps={args.num_steps} "
+        f"batch={args.batch_size} updates={args.num_updates}"
     )
 
     obs_buf = torch.zeros((args.num_steps, args.num_envs, obs_dim), device=device)
     act_buf = torch.zeros(
-        (args.num_steps, args.num_envs), device=device, dtype=torch.long
+        (args.num_steps, args.num_envs, *action_shape),
+        device=device,
+        dtype=action_dtype,
     )
     logp_buf = torch.zeros((args.num_steps, args.num_envs), device=device)
     rew_buf = torch.zeros((args.num_steps, args.num_envs), device=device)
@@ -340,6 +537,7 @@ def main(argv=None) -> int:
                 act_buf[step] = action
                 logp_buf[step] = logprob
                 nobs, reward, done, infos = envs.step(action.cpu().numpy())
+                reward = bootstrap_time_limits(reward, infos, agent, device, args.gamma)
                 rew_buf[step] = torch.tensor(reward, device=device)
                 next_obs = torch.tensor(nobs, device=device)
                 next_done = torch.tensor(done, device=device, dtype=torch.float32)
@@ -370,7 +568,10 @@ def main(argv=None) -> int:
 
             b_obs = obs_buf.reshape((-1, obs_dim))
             b_logp = logp_buf.reshape(-1)
-            b_act = act_buf.reshape(-1)
+            if action_kind == "continuous":
+                b_act = act_buf.reshape((-1, *action_shape))
+            else:
+                b_act = act_buf.reshape(-1)
             b_adv = advantages.reshape(-1)
             b_ret = returns.reshape(-1)
             b_val = val_buf.reshape(-1)

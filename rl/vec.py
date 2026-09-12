@@ -1,12 +1,12 @@
 """A minimal synchronous vector environment with same-step autoreset.
 
 When a sub-environment ends, it is reset immediately and the returned
-observation is the first one of the new episode; the terminal
-observation is not needed by PPO with bootstrapping masked by
-``done``. Episode statistics (return, length, and whatever the env
-puts in ``info["episode_stats"]``) are surfaced in ``infos["episodes"]``.
-This keeps the trainer independent of Gymnasium's autoreset mode
-changes across versions.
+observation is the first one of the new episode.  Termination and truncation
+remain distinct, and the final observation is retained so a trainer can
+bootstrap a time limit without treating it as a terminal state.  Episode
+statistics (return, length, and whatever the environment puts in
+``info["episode_stats"]``) are surfaced in ``infos["episodes"]``.  This keeps
+the trainer independent of Gymnasium's autoreset mode changes across versions.
 """
 
 from __future__ import annotations
@@ -38,9 +38,16 @@ class SyncVec:
         return np.stack(obs)
 
     def step(self, actions: np.ndarray):
-        obs, rews, dones, episodes = [], [], [], []
+        obs, rews, terms, truncs, episodes = [], [], [], [], []
+        final_observations: list[np.ndarray | None] = []
+        final_infos: list[dict | None] = []
         for i, env in enumerate(self.envs):
-            o, r, term, trunc, info = env.step(int(actions[i]))
+            action = actions[i]
+            if isinstance(env.action_space, gym.spaces.Discrete):
+                action = int(action)
+            else:
+                action = np.asarray(action, dtype=env.action_space.dtype)
+            o, r, term, trunc, info = env.step(action)
             self._ret[i] += r
             self._len[i] += 1
             done = term or trunc
@@ -50,15 +57,29 @@ class SyncVec:
                 episodes.append(ep)
                 self._ret[i] = 0.0
                 self._len[i] = 0
+                final_observations.append(np.asarray(o).copy())
+                final_infos.append(info)
                 o, _ = env.reset()
+            else:
+                final_observations.append(None)
+                final_infos.append(None)
             obs.append(o)
             rews.append(r)
-            dones.append(done)
+            terms.append(term)
+            truncs.append(trunc)
+        terminations = np.asarray(terms, dtype=np.bool_)
+        truncations = np.asarray(truncs, dtype=np.bool_)
         return (
             np.stack(obs),
             np.asarray(rews, dtype=np.float32),
-            np.asarray(dones, dtype=np.bool_),
-            {"episodes": episodes},
+            terminations | truncations,
+            {
+                "episodes": episodes,
+                "terminations": terminations,
+                "truncations": truncations,
+                "final_observations": tuple(final_observations),
+                "final_infos": tuple(final_infos),
+            },
         )
 
     def close(self) -> None:
