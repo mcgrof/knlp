@@ -70,10 +70,12 @@ footer a { color: var(--text2); }
   <h1>Cartridges at Scale</h1>
   <p>An independent reproduction on a frozen Qwen3-8B over the LongHealth
   medical question-answering benchmark. The faithful isolated recipe reaches
-  0.603 across five H100-trained cartridges. Do not use the earlier
-  collapse/rescue numbers; run that comparison again on clean targets.</p>
+  0.603 across five H100-trained cartridges. The earlier collapse/rescue
+  numbers came from affected teacher targets and are outside the supported
+  result set.</p>
   <p><a href="https://arxiv.org/abs/2606.04557">Cartridges at Scale (arXiv:2606.04557)</a>
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
+  &middot; <a href="cartridge-asymmetric-quantization.html">asymmetric cartridge quantization</a>
   &middot; <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">harness</a></p>
 </header>
 
@@ -148,9 +150,9 @@ percentage points. The exact full-document KV control proves that the alternate
 cache path itself does not explain the learned-cartridge gap. The five-patient
 number is a mean over five separately trained H100 cartridges; each patient row
 is itself the mean of three generations of that one cartridge.</p>
-<div class="note red"><strong>Do not cite the old collapse/rescue table.</strong>
-It was trained on data from a defective teacher-target path. Keep it outside the
-validated result set and run the comparison again on clean targets.</div>
+<div class="note red"><strong>Evidence boundary.</strong> The old
+collapse/rescue table was trained on data from a defective teacher-target path.
+The numerical claim remains open pending a clean-target comparison.</div>
 </section>
 
 <section id="recipe">
@@ -158,8 +160,8 @@ validated result set and run the comparison again on clean targets.</div>
 <p>The optimizer regime was the missing lever in the earlier 0.50&ndash;0.55
 plateau. Holding the patient and data fixed, moving from the small-batch recipe
 to the paper's global-batch-128 schedule raised patient 02 from 0.55 to
-<strong>0.65 &plusmn; 0.05</strong>. Discard the earlier claims that learning rate
-and training length had been ruled out.</p>
+<strong>0.65 &plusmn; 0.05</strong>. The earlier small-batch experiments therefore
+did not rule out learning rate or training length.</p>
 <div class="table-wrap">
 <table>
 <tr><th>Quantity</th><th>Faithful setting</th></tr>
@@ -237,12 +239,11 @@ same faithful recipe, scored <strong>0.833 &plusmn; 0.058</strong>: 0.80, 0.80,
 and 0.90, or 50 correct answers out of 60. The H100-trained cartridge scored
 0.65, or 39 out of 60. The A100 run finished at optimizer step 1,068 with final
 training loss about 0.0153.</p>
-<div class="note amber"><strong>Do not call this an A100 advantage.</strong> The
-two runs produced different learned cartridges and evaluation is sampled. A
-matched cross-evaluation of both cartridge files with controlled generation
-seeds is required before attributing the difference to hardware or training
-trajectory. Today this is a surprising cross-hardware observation, not a causal
-result.</div>
+<div class="note amber"><strong>Cross-hardware interpretation.</strong> The
+0.833 result does not establish an A100 advantage. The two runs produced
+different learned cartridges and evaluation is sampled. Hardware and training-
+trajectory effects remain confounded without matched cross-evaluation of both
+cartridge files under controlled generation seeds.</div>
 </section>
 
 <section id="cartridge-path-lossless">
@@ -258,15 +259,15 @@ out positional offsets, RoPE handling, serialization, reconstruction, and cache
 loading as explanations for the learned-cartridge gap. It does not say that a
 632-position learned cartridge is lossless; it says the execution path can carry
 the full document KV without loss. For patient 02, the full document is 12,628
-tokens. Do not confuse this control with the 631 document-derived trainable
-positions used to initialize its learned cartridge.</div>
+tokens. This control is distinct from the 631 document-derived trainable
+positions in the learned-cartridge initialization.</div>
 </section>
 
 <section id="collapse-rescue">
 <h2>8. Collapse/rescue status</h2>
 <p>The CAS paper reports that independently trained cartridges lose accuracy when
-co-loaded and that mixed-visibility joint training prevents the collapse. Treat
-the following measurements from the earlier page as invalid historical output:</p>
+co-loaded and that mixed-visibility joint training prevents the collapse. The
+following measurements from the earlier page are affected historical output:</p>
 <div class="table-wrap">
 <table>
 <tr><th>Invalid historical arm</th><th>Alone</th><th>Co-loaded</th><th>Delta</th></tr>
@@ -274,22 +275,22 @@ the following measurements from the earlier page as invalid historical output:</
 <tr><td>Mixed-visibility joint</td><td>0.44</td><td>0.46</td><td>+0.02</td></tr>
 </table>
 </div>
-<div class="note red"><strong>Do not use those numbers.</strong> Their
-self-study data came through a vLLM teacher path that serialized the sampled
-token and then repeated it in the top-k list. Once real token IDs were added to
-an otherwise incomplete upstream path, greedy outputs turned that latent layout
-trap into live duplicate supervision. A separate earlier smoke was worse: every
-stored target ID was <code>-1</code> and could not train the intended objective.</div>
+<div class="note red"><strong>Evidence boundary.</strong> These numbers do not
+support a collapse/rescue reproduction. Their self-study data came through a
+vLLM teacher path that serialized the sampled token and then repeated it in the
+top-k list. Once real token IDs were added to an otherwise incomplete upstream
+path, greedy outputs turned that latent layout trap into live duplicate
+supervision. A separate earlier smoke was worse: every stored target ID was
+<code>-1</code> and could not train the intended objective.</div>
 <p>The affected synthesis parquet was not archived, so the classification rests
 on the generator code and run provenance rather than a row-by-row audit of that
 exact file. That uncertainty does not rescue the result: a run with unverified,
 known-affected targets cannot support the central claim.</p>
-<p><strong>Current status:</strong> keep the isolated reproduction in the clean
-result set. Mark collapse and rescue as open. Before citing a numerical result,
-run fresh deduplicated synthesis, evaluate isolated cartridges under co-load,
-and then train and evaluate the joint cartridges on those clean targets. The
-public harness already implements the paper's mixed-visibility rule with
-per-sample cache assembly.</p>
+<p><strong>Current status:</strong> the isolated reproduction is supported by
+clean data. Collapse and rescue remain open. A supported numerical result
+requires fresh deduplicated synthesis, isolated co-load evaluation, and joint
+training and evaluation on the same clean targets. The public harness already
+implements the paper's mixed-visibility rule with per-sample cache assembly.</p>
 </section>
 
 <section id="ablations">
@@ -325,15 +326,15 @@ cache-path parity control, prompt-grouped validation split, checkpoint controls,
 and meta-initialization analysis.</p>
 <p>Three rules are load-bearing:</p>
 <ul>
-<li><strong>Validate generated targets.</strong> Token IDs in every stored row
-must be real, unique within the top-k support, and checked at write time.</li>
-<li><strong>Reconstruct the right cache.</strong> An isolated checkpoint needs its
-one frozen sink plus trainable KV. A joint checkpoint's frozen region contains
-distractors, so an oracle read loads only the target's trainable region plus its
-required sink representation.</li>
-<li><strong>Validate the protocol first.</strong> No-context must land near 0.39
-and full-document inference near 0.855 before a cartridge score is interpretable.
-A single 20-question run is too noisy; use at least three.</li>
+<li><strong>Generated-target validity.</strong> The writer enforces real token IDs
+and uniqueness within each row's top-k support.</li>
+<li><strong>Cache reconstruction.</strong> An isolated checkpoint consists of one
+frozen sink plus trainable KV. A joint checkpoint's frozen region contains
+distractors; an oracle read consists of the target's trainable region and its
+sink representation.</li>
+<li><strong>Protocol calibration.</strong> Interpretable cartridge evaluations
+place no-context near 0.39 and full-document inference near 0.855. The reported
+values average at least three runs because a single 20-question run is noisy.</li>
 </ul>
 <p>Compiled FlexAttention on CUDA sm&ge;80 gives about a 16&times; training
 speedup over the raw path. The target flattener also preserves the full available
