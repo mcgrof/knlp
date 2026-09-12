@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -19,6 +20,7 @@ from rl.continuous import (
 from rl.controls.ufo import velocity_target_controller, zero_wrench
 from rl.envs import make_env
 from rl.flight.geometry import quaternion_body_to_ned
+from rl.ppo import _git_head, _sha256
 
 Policy = Callable[[np.ndarray], np.ndarray]
 
@@ -221,8 +223,14 @@ def main(argv=None) -> int:
         policy_results = evaluate(env, policies, args.seeds)
         report = {
             "schema_version": 1,
+            "knlp_commit": _git_head(Path(__file__).resolve().parents[1]),
+            "environment_source_commit": os.environ.get(
+                "XPLANE_UFO_SOURCE_COMMIT"
+            ),
             "environment": args.env,
             "contract_hash": env.contract.digest,
+            "dynamics_library": str(env.dynamics.library_path),
+            "dynamics_library_sha256": _sha256(env.dynamics.library_path),
             "max_seconds": args.max_seconds,
             "random_start": args.random_start,
             "seeds": args.seeds,

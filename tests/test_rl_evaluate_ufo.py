@@ -63,6 +63,9 @@ def test_cli_writes_strict_json_for_reference_policies(tmp_path, monkeypatch):
     assert report["schema_version"] == 1
     assert report["seeds"] == [3, 5]
     assert set(report["policies"]) == {"zero", "reference"}
+    assert report["knlp_commit"]
+    assert report["contract_hash"]
+    assert report["dynamics_library_sha256"]
 
 
 def test_maneuver_evaluation_uses_the_goal_applied_to_each_step():
