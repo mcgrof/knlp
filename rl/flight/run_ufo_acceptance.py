@@ -11,7 +11,8 @@ from rl.flight.analyze_shadow import analyze_trace
 from rl.flight.analyze_ufo_model_match import analyze_model_match
 from rl.flight.analyze_ufo_response import analyze_response
 from rl.flight.contracts import FlightContract
-from rl.flight.shadow_ufo import default_socket_path, main as capture_main
+from rl.flight.shadow_ufo import default_socket_path
+from rl.flight.shadow_ufo import main as capture_main
 
 
 def _write_json(path: Path, report: dict) -> None:
