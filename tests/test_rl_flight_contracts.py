@@ -6,6 +6,7 @@ import pytest
 
 from rl.flight.contracts import (
     ControlCommand,
+    EnemyPose,
     FlightContract,
     TelemetryFrame,
     VectorSpec,
@@ -98,6 +99,52 @@ def test_telemetry_and_control_round_trip(contract):
     decoded = ControlCommand.from_wire(command.to_wire(), contract)
     decoded.validate(contract, frame=frame, now_monotonic_ns=1_200)
     assert decoded == command
+
+
+def test_control_round_trip_with_enemy_poses(contract):
+    enemies = (
+        EnemyPose.create(
+            slot=0,
+            position_ned_m=(100.0, -20.0, -150.0),
+            quaternion_body_to_ned=(1.0, 0.0, 0.0, 0.0),
+        ),
+        EnemyPose.create(
+            slot=2,
+            position_ned_m=(200.0, 40.0, -170.0),
+            quaternion_body_to_ned=(1.0, 0.0, 0.0, 0.0),
+        ),
+    )
+    command = ControlCommand.create(
+        contract,
+        episode_id="swarm",
+        source_sequence=1,
+        issued_monotonic_ns=100,
+        valid_until_monotonic_ns=200,
+        action=(0.0, 0.0),
+        enemies=enemies,
+    )
+    assert ControlCommand.from_wire(command.to_wire(), contract) == command
+
+
+def test_control_rejects_unordered_enemy_slots(contract):
+    enemies = tuple(
+        EnemyPose.create(
+            slot=slot,
+            position_ned_m=(0.0, 0.0, -100.0),
+            quaternion_body_to_ned=(1.0, 0.0, 0.0, 0.0),
+        )
+        for slot in (1, 0)
+    )
+    with pytest.raises(ValueError, match="unique and increasing"):
+        ControlCommand.create(
+            contract,
+            episode_id="swarm",
+            source_sequence=1,
+            issued_monotonic_ns=100,
+            valid_until_monotonic_ns=200,
+            action=(0.0, 0.0),
+            enemies=enemies,
+        )
 
 
 def test_telemetry_accepts_legacy_frames_without_vehicle_diagnostics(contract):
