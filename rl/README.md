@@ -17,8 +17,19 @@ point for later RL work in knlp.
 ## Contents
 
 - [`ppo.py`](ppo.py): PPO with generalised advantage estimation for discrete
-  actions, in the CleanRL style, plus exact-resume checkpoints, a wall-clock
-  budget and the yield protocol.
+  ETR actions or bounded continuous flight actions, in the CleanRL style,
+  plus exact-resume checkpoints, a wall-clock budget and the yield protocol.
+- [`continuous.py`](continuous.py): a bounded squashed-Gaussian actor-critic
+  for flight-control environments.  It is separate from the discrete actor so
+  existing ETR checkpoints retain their original layout.
+- [`flight/`](flight/): hashed observation, goal and action-vector contracts,
+  timestamped telemetry, expiring control messages and explicit coordinate
+  transforms.
+- [`envs/ufo_env.py`](envs/ufo_env.py): a Gymnasium adapter over the shared
+  `xplane-ufo` C dynamics library.  The aircraft repository owns the physical
+  model and concrete vector schema; knlp owns the learning environment.
+- [`controls/ufo.py`](controls/ufo.py): zero-wrench, hover and velocity-target
+  reference controllers for the standalone flight environment.
 - [`vec.py`](vec.py): a minimal synchronous vector environment with
   same-step reset and per-episode statistics.
 - [`envs/`](envs/): the ETR bridge client, a pure-Python simulator that speaks
@@ -77,11 +88,90 @@ python -m rl.ppo --env etr:bunny_hill --num-envs 8 --run-name bh-s1 --seed 1
 # continue a stopped run from its checkpoint
 python -m rl.ppo --run-name bh-s1 --resume
 
+# CPU smoke for the L2 raw-wrench UFO policy
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.ppo --env ufo:hover --device cpu --num-envs 8 \
+  --num-steps 256 --num-minibatches 8 --update-epochs 5 \
+  --learning-rate 3e-4 --gamma 0.995 --run-name ufo-hover-s1
+
+# fixed-seed physical comparison against zero and reference control
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.evaluate_ufo --run-dir runs/rl/ufo-hover-s1 \
+  --random-start --output runs/rl/ufo-hover-s1/evaluation.json
+
+# clone the deterministic controller, then start a fresh PPO run from it
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.clone_ufo --run-dir runs/rl/ufo-hover-clone-s1
+XPLANE_UFO_ROOT=~/devel/xplane-ufo-ai-runtime \
+  python -m rl.ppo --env ufo:hover --init-agent \
+  runs/rl/ufo-hover-clone-s1/checkpoint.pt --run-name ufo-hover-bc-ppo-s1
+
+# clone control across changing combat-maneuver goals
+XPLANE_UFO_ROOT=~/devel/xplane-ufo \
+  python -m rl.clone_ufo --env ufo:maneuver \
+  --run-dir runs/rl/ufo-maneuver-clone-s1
+
+# read X-Plane telemetry and log policy proposals without sending controls
+python -m rl.export_ufo_actor \
+  --contract ~/devel/xplane-ufo/schemas/ufo-wrench-v1.json \
+  --checkpoint /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/checkpoint.pt \
+  --output /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/actor.npz
+python -m rl.flight.shadow_ufo \
+  --contract ~/devel/xplane-ufo/schemas/ufo-wrench-v1.json \
+  --model /data/knlp-key-results/xplane-ufo-20260906/runs/ufo-hover-dagger-s1/actor.npz \
+  --output runs/rl/xplane-shadow.jsonl
+
 # same, under the supervisor that restarts after every yield
 python -m rl.pace.ctl run --name bh-s1 -- python -m rl.ppo --env etr:bunny_hill --run-name bh-s1 --resume
 ```
 
 Environment ids are `<backend>:<course>`; `sim:sim_trees` needs no game.
+The synthetic `ufo:maneuver` task changes body velocity and yaw-rate targets
+every four simulated seconds. Its descent limit uses the current altitude so
+the sampled command does not deliberately point through the terrain safety
+margin during that interval. This trains the continuous flight actor; target
+selection, firing, and camera control remain separate mission-director
+responsibilities.
+
+`ufo:showcase` widens that task to the Hollywood demonstration envelope:
+90 m/s forward, 50 m/s laterally, 24 m/s vertically, and 1.4 rad/s yaw.
+Its reference controller permits 24 m/s² acceleration instead of the
+certified profile's 8 m/s². Keep checkpoints trained for these two profiles
+separate; passing the certified combat gate does not cover showcase control.
+
+Before exporting a maneuver actor, compare it with the reference pilot on at
+least 100 fixed seeds and gate the resulting report:
+
+```
+python -m rl.certify_ufo \
+  --evaluation runs/rl/ufo-maneuver-s1/evaluation.json \
+  --output runs/rl/ufo-maneuver-s1/certification.json
+
+# probe every corner of the combat director goal envelope
+python -m rl.stress_ufo \
+  --run-dir runs/rl/ufo-maneuver-s1 \
+  --output runs/rl/ufo-maneuver-s1/combat-stress.json
+```
+
+The gate rejects any terrain or contract-envelope termination, any episode
+that tilts past 20 degrees, mean velocity error above 1.25 times the reference,
+or mean yaw-rate error above 1.5 times the reference. Passing covers only the
+standalone dynamics; it does not authorize or arm live X-Plane control.
+The combat stress adds an adversarial gate over all 16 Cartesian corners of
+the director velocity and yaw-rate limits. It applies the same terminal,
+tilt, and relative tracking limits instead of relying only on average random
+goal coverage.
+
+The accepted maneuver actor is a DAgger behavioral clone, not a PPO result.
+Use it as an initialization checkpoint when running PPO rather than describing
+imitation training as reinforcement learning.
+
+`python -m rl.ufo_duel` runs two independent copies of one motor checkpoint
+against each other in the shared headless dynamics. A deterministic tactical
+layer supplies pursuit and firing goals to both copies. This is a gate for
+reusing one pilot on two simulated craft; it does not control X-Plane AI
+aircraft or train combat tactics.
+
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.

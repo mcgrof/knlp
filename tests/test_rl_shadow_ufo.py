@@ -1,0 +1,318 @@
+"""Read-only X-Plane shadow-policy transport tests."""
+
+import io
+import json
+import os
+import socket
+import threading
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+torch = pytest.importorskip("torch")
+
+from rl.continuous import SquashedGaussianAgent
+from rl.export_ufo_actor import export_checkpoint
+from rl.flight.contracts import FlightContract, TelemetryFrame
+from rl.flight.shadow_ufo import ShadowPolicy, connect_telemetry, process_stream
+
+
+def load_contract() -> FlightContract:
+    root = os.environ.get("XPLANE_UFO_ROOT")
+    if not root:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    return FlightContract.from_json(Path(root) / "schemas/ufo-wrench-v1.json")
+
+
+def test_shadow_stream_emits_actions_but_no_control_wire(tmp_path):
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 16}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=16,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = ShadowPolicy(contract, model)
+    frames = []
+    for sequence in (10, 11):
+        frames.append(
+            TelemetryFrame.create(
+                contract,
+                episode_id="xplane-test",
+                sequence=sequence,
+                monotonic_ns=sequence * 1_000_000,
+                dt_s=0.02,
+                observation=(
+                    0.0,
+                    0.0,
+                    -100.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ),
+                goal=(0.0, 0.0, 0.0, 0.0),
+            )
+        )
+    source = io.BytesIO(b"".join(frame.to_wire() for frame in frames))
+    output = io.StringIO()
+    stats = process_stream(source, output, policy)
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert stats.frames == 2
+    assert stats.rejected == 0
+    assert stats.rejected_by_reason == {}
+    assert stats.first_rejection is None
+    assert stats.first_sequence == 10
+    assert stats.last_sequence == 11
+    assert all(record["kind"] == "shadow_action" for record in records)
+    assert all("proposed_action" in record for record in records)
+    assert all(record["telemetry"]["kind"] == "telemetry" for record in records)
+    assert all(record["kind"] != "control" for record in records)
+    first_values = np.asarray(
+        (*frames[0].observation, *frames[0].goal), dtype=np.float32
+    )
+    with torch.no_grad():
+        expected = agent.act_deterministic(torch.as_tensor(first_values).unsqueeze(0))
+    assert np.allclose(records[0]["proposed_action"], expected[0].numpy(), atol=1e-5)
+
+
+def test_shadow_stream_rejects_replayed_sequence(tmp_path):
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 8}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = ShadowPolicy(contract, model)
+    frame = TelemetryFrame.create(
+        contract,
+        episode_id="xplane-test",
+        sequence=4,
+        monotonic_ns=4_000_000,
+        dt_s=0.02,
+        observation=(
+            0.0,
+            0.0,
+            -100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        goal=(0.0, 0.0, 0.0, 0.0),
+    )
+    output = io.StringIO()
+    stats = process_stream(io.BytesIO(frame.to_wire() * 2), output, policy)
+    assert stats.frames == 1
+    assert stats.rejected == 1
+    assert stats.rejected_by_reason == {
+        "ValueError: telemetry sequence did not increase": 1
+    }
+    assert stats.first_rejection == "ValueError: telemetry sequence did not increase"
+    assert not stats.interrupted
+
+
+def test_shadow_stream_reports_out_of_bounds_field(tmp_path):
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 8}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = ShadowPolicy(contract, model)
+    frame = TelemetryFrame.create(
+        contract,
+        episode_id="xplane-test",
+        sequence=0,
+        monotonic_ns=1,
+        dt_s=0.02,
+        observation=(
+            0.0,
+            0.0,
+            -100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ),
+        goal=(0.0, 0.0, 0.0, 0.0),
+    )
+    payload = json.loads(frame.to_wire())
+    payload["observation"][0] = 2_000_000.0
+    invalid = (json.dumps(payload) + "\n").encode()
+    stats = process_stream(io.BytesIO(invalid * 2), io.StringIO(), policy)
+    assert stats.frames == 0
+    assert stats.rejected == 2
+    assert stats.rejected_by_reason == {
+        "ValueError: observation.position_ned_x is outside bounds": 2
+    }
+    assert stats.first_rejection == (
+        "ValueError: observation.position_ned_x=2000000.0 is outside "
+        "[-1000000.0, 1000000.0]"
+    )
+
+
+def test_shadow_stream_recovers_after_policy_rejects_a_frame(tmp_path):
+    class RejectOnce:
+        def __init__(self, policy):
+            self.contract = policy.contract
+            self.policy = policy
+            self.rejected = False
+
+        def record(self, frame):
+            if not self.rejected:
+                self.rejected = True
+                raise ValueError("synthetic inference rejection")
+            return self.policy.record(frame)
+
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "args.json").write_text(json.dumps({"hidden": 8}))
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = RejectOnce(ShadowPolicy(contract, model))
+    frames = [
+        TelemetryFrame.create(
+            contract,
+            episode_id="xplane-test",
+            sequence=sequence,
+            monotonic_ns=sequence + 1,
+            dt_s=0.02,
+            observation=(
+                0.0,
+                0.0,
+                -100.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+            goal=(0.0, 0.0, 0.0, 0.0),
+        )
+        for sequence in (0, 1)
+    ]
+    output = io.StringIO()
+    stats = process_stream(
+        io.BytesIO(b"".join(frame.to_wire() for frame in frames)), output, policy
+    )
+    assert stats.frames == 1
+    assert stats.last_sequence == 1
+    assert stats.rejected_by_reason == {"ValueError: synthetic inference rejection": 1}
+
+
+def test_shadow_stream_preserves_stats_on_interrupt(tmp_path):
+    class InterruptedSource:
+        def readline(self, size):
+            raise KeyboardInterrupt
+
+    contract = load_contract()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    agent = SquashedGaussianAgent(
+        contract.observation.width + contract.goal.width,
+        contract.action.low,
+        contract.action.high,
+        hidden=8,
+    )
+    torch.save(
+        {"agent": agent.state_dict(), "state": {"action_kind": "continuous"}},
+        run_dir / "checkpoint.pt",
+    )
+    model = run_dir / "actor.npz"
+    export_checkpoint(contract, run_dir / "checkpoint.pt", model)
+    policy = ShadowPolicy(contract, model)
+    stats = process_stream(InterruptedSource(), io.StringIO(), policy)
+    assert stats.frames == 0
+    assert stats.interrupted
+
+
+def test_shadow_connect_retries_a_stale_socket(tmp_path):
+    path = tmp_path / "telemetry.sock"
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(path))
+    stale.close()
+
+    accepted = threading.Event()
+
+    def replace_with_listener():
+        time.sleep(0.1)
+        path.unlink()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(path))
+            server.listen(1)
+            connection, _ = server.accept()
+            connection.close()
+            accepted.set()
+
+    server = threading.Thread(target=replace_with_listener)
+    server.start()
+    with connect_telemetry(path, 2.0):
+        pass
+    server.join(timeout=2.0)
+    assert accepted.is_set()
