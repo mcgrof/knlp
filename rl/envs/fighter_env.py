@@ -1,0 +1,203 @@
+"""Headless fixed-wing environment for fighter motor-control policies."""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from typing import Sequence
+
+import gymnasium as gym
+import numpy as np
+from gymnasium import spaces
+
+from rl.flight.contracts import FlightContract
+from rl.flight.fighter_dynamics import FighterDynamics
+from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
+
+DEFAULT_CONTRACT = (
+    Path(__file__).resolve().parents[1] / "contracts" / ("fighter-controls-v1.json")
+)
+MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
+MANEUVER_HIGH = np.asarray((280.0, 30.0, 0.08))
+
+
+class FighterEnv(gym.Env):
+    """Track airspeed, climb rate, and turn rate in coordinated flight."""
+
+    metadata = {"render_modes": []}
+
+    def __init__(
+        self,
+        *,
+        contract_path: str | Path = DEFAULT_CONTRACT,
+        goal: Sequence[float] = (180.0, 0.0, 0.0),
+        goal_mode: str = "fixed",
+        goal_hold_seconds: float = 6.0,
+        max_seconds: float = 30.0,
+        random_start: bool = True,
+    ):
+        super().__init__()
+        self.contract = FlightContract.from_json(contract_path)
+        self.dynamics = FighterDynamics()
+        self.dt_s = self.contract.nominal_dt_s
+        if goal_mode not in {"fixed", "maneuver"}:
+            raise ValueError(f"unknown fighter goal mode {goal_mode!r}")
+        if max_seconds <= self.dt_s or not math.isfinite(max_seconds):
+            raise ValueError("max_seconds must exceed one environment step")
+        if goal_hold_seconds <= self.dt_s or not math.isfinite(goal_hold_seconds):
+            raise ValueError("goal hold time must exceed one environment step")
+        self.goal_mode = goal_mode
+        self.goal_hold_steps = int(math.ceil(goal_hold_seconds / self.dt_s))
+        self.max_steps = int(math.ceil(max_seconds / self.dt_s))
+        self.random_start = bool(random_start)
+        self.default_goal = np.asarray(
+            self.contract.goal.validate(goal, "goal"), dtype=np.float64
+        )
+        self.goal = self.default_goal.copy()
+        self._state_low = np.asarray(
+            (-1_000_000.0, -1_000_000.0, -100_000.0, *self.contract.observation.low)
+        )
+        self._state_high = np.asarray(
+            (1_000_000.0, 1_000_000.0, 10_000.0, *self.contract.observation.high)
+        )
+        self.observation_space = spaces.Box(
+            low=np.asarray(
+                (*self.contract.observation.low, *self.contract.goal.low),
+                dtype=np.float32,
+            ),
+            high=np.asarray(
+                (*self.contract.observation.high, *self.contract.goal.high),
+                dtype=np.float32,
+            ),
+            dtype=np.float32,
+        )
+        self.action_space = spaces.Box(
+            low=np.asarray(self.contract.action.low, dtype=np.float32),
+            high=np.asarray(self.contract.action.high, dtype=np.float32),
+            dtype=np.float32,
+        )
+        self._steps = 0
+        self._return = 0.0
+
+    def _sample_goal(self) -> np.ndarray:
+        return self.np_random.uniform(MANEUVER_LOW, MANEUVER_HIGH)
+
+    def tracking(self, state: np.ndarray | None = None) -> np.ndarray:
+        values = self.dynamics.state_vector() if state is None else state
+        return np.asarray(
+            (
+                float(np.linalg.norm(values[3:6])),
+                -float(values[5]),
+                float(values[12]),
+            )
+        )
+
+    def _observation(self, state: np.ndarray | None = None) -> np.ndarray:
+        values = self.dynamics.state_vector() if state is None else state
+        motor_state = values[3:]
+        self.contract.observation.validate(motor_state, "observation")
+        return np.asarray((*motor_state, *self.goal), dtype=np.float32)
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        options = options or {}
+        self.dynamics.reset()
+        self._steps = 0
+        self._return = 0.0
+        state = self.dynamics.state
+        if options.get("randomize", self.random_start):
+            state[:2] = self.np_random.uniform(-20.0, 20.0, 2)
+            state[2] = self.np_random.uniform(-1800.0, -1200.0)
+            speed = self.np_random.uniform(140.0, 230.0)
+            attitude = quaternion_from_euler(
+                *self.np_random.uniform(-math.radians(6.0), math.radians(6.0), 3)
+            )
+            state[6:10] = attitude
+            state[3:6] = quaternion_body_to_ned(attitude)[:, 0] * speed
+            state[10:13] = self.np_random.uniform(-0.04, 0.04, 3)
+        self.goal = np.asarray(
+            self.contract.goal.validate(
+                options.get(
+                    "goal",
+                    self._sample_goal()
+                    if self.goal_mode == "maneuver"
+                    else self.default_goal,
+                ),
+                "goal",
+            )
+        )
+        return self._observation(), self._info({})
+
+    def step(self, action):
+        controls = np.asarray(action, dtype=np.float64)
+        self.contract.action.validate(controls, "action")
+        applied_goal = self.goal.copy()
+        state = self.dynamics.step(controls, self.dt_s)
+        self._steps += 1
+        out_of_envelope = bool(
+            not np.isfinite(state).all()
+            or np.any(state < self._state_low)
+            or np.any(state > self._state_high)
+        )
+        ground_contact = bool(np.isfinite(state).all() and state[2] >= 0.0)
+        tracking_error = (self.tracking(state) - applied_goal) / np.asarray(
+            (35.0, 15.0, 0.04)
+        )
+        centered_action = controls.copy()
+        centered_action[0] -= (self.tracking(state)[0] / 320.0) ** 2
+        terms = {
+            "alive": 1.0,
+            "tracking": -float(np.dot(tracking_error, tracking_error)),
+            "effort": -0.01 * float(np.dot(centered_action, centered_action)),
+        }
+        if ground_contact:
+            terms["ground"] = -100.0
+        if out_of_envelope:
+            terms["out_of_envelope"] = -100.0
+        reward = float(sum(terms.values()))
+        self._return += reward
+        terminated = ground_contact or out_of_envelope
+        truncated = not terminated and self._steps >= self.max_steps
+        info = self._info(terms, applied_goal=applied_goal)
+        if terminated or truncated:
+            error = np.abs(self.tracking(state) - applied_goal)
+            info["episode_stats"] = {
+                "return": self._return,
+                "time": self._steps * self.dt_s,
+                "success": float(
+                    not terminated
+                    and error[0] < 5.0
+                    and error[1] < 3.0
+                    and error[2] < 0.015
+                ),
+                "ground_contact": float(ground_contact),
+                "out_of_envelope": float(out_of_envelope),
+            }
+        if (
+            not terminated
+            and not truncated
+            and self.goal_mode == "maneuver"
+            and self._steps % self.goal_hold_steps == 0
+        ):
+            self.goal = self._sample_goal()
+            info["goal"] = self.goal.copy()
+        return self._observation(state), reward, terminated, truncated, info
+
+    def _info(
+        self,
+        reward_terms: dict[str, float],
+        *,
+        applied_goal: np.ndarray | None = None,
+    ) -> dict:
+        info = {
+            "contract_hash": self.contract.digest,
+            "step": self._steps,
+            "dt_s": self.dt_s,
+            "goal": self.goal.copy(),
+            "state": self.dynamics.state_vector(),
+            "tracking": self.tracking(),
+            "reward_terms": reward_terms,
+        }
+        if applied_goal is not None:
+            info["applied_goal"] = applied_goal.copy()
+        return info

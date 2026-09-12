@@ -114,6 +114,7 @@ def test_control_round_trip_with_enemy_poses(contract):
             position_ned_m=(200.0, 40.0, -170.0),
             quaternion_body_to_ned=(1.0, 0.0, 0.0, 0.0),
             shield_requested=True,
+            native_visual=True,
         ),
     )
     command = ControlCommand.create(
@@ -143,6 +144,7 @@ def test_enemy_pose_accepts_legacy_wire_without_shield_request():
         }
     )
     assert not pose.shield_requested
+    assert not pose.native_visual
 
 
 def test_control_rejects_enemy_shot_without_matching_pose(contract):

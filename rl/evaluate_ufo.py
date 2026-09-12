@@ -49,7 +49,7 @@ def checkpoint_policy(env, run_dir: Path, checkpoint: Path | None = None):
     saved = torch.load(path, map_location="cpu", weights_only=False)
     state = saved.get("state", {}) if isinstance(saved, dict) else {}
     if state.get("action_kind", "continuous") != "continuous":
-        raise ValueError("UFO evaluation requires a continuous-action checkpoint")
+        raise ValueError("flight evaluation requires a continuous-action checkpoint")
     weights = saved["agent"] if isinstance(saved, dict) and "agent" in saved else saved
     load_continuous_state_dict(agent, weights)
     agent.eval()
