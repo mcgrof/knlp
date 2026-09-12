@@ -33,8 +33,10 @@ def build_verdict(
         maximum_yaw_rmse_ratio, "maximum yaw RMSE ratio"
     )
     maximum_tilt_deg = _finite_positive(maximum_tilt_deg, "maximum tilt")
-    if report.get("environment") != "ufo:maneuver":
-        raise ValueError("certification requires the ufo:maneuver environment")
+    if report.get("environment") not in {"ufo:maneuver", "ufo:showcase"}:
+        raise ValueError(
+            "certification requires a maneuver or showcase UFO environment"
+        )
     policies = report.get("policies")
     if not isinstance(policies, dict):
         raise TypeError("evaluation report has no policy results")
@@ -92,8 +94,16 @@ def build_verdict(
     return {
         "schema_version": 1,
         "kind": "ufo_closed_loop_certification",
+        "knlp_commit": report.get("knlp_commit"),
+        "environment_source_commit": report.get(
+            "environment_source_commit"
+        ),
         "environment": report["environment"],
         "contract_hash": report.get("contract_hash"),
+        "dynamics_library": report.get("dynamics_library"),
+        "dynamics_library_sha256": report.get(
+            "dynamics_library_sha256"
+        ),
         "checkpoint": report.get("checkpoint"),
         "thresholds": {
             "minimum_episodes": minimum_episodes,
