@@ -182,7 +182,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--checkpoint", type=Path)
-    parser.add_argument("--seeds", type=parse_seeds, default=parse_seeds("1000,1001,1002,1003,1004"))
+    parser.add_argument(
+        "--seeds",
+        type=parse_seeds,
+        default=parse_seeds("1000,1001,1002,1003,1004"),
+    )
     parser.add_argument("--max-seconds", type=float, default=20.0)
     parser.add_argument("--random-start", action="store_true")
     parser.add_argument(

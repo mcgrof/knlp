@@ -74,7 +74,10 @@ class SquashedGaussianAgent(nn.Module):
             raise ValueError("observation mean does not match the actor input")
         if scale_tensor.shape != self.observation_scale.shape:
             raise ValueError("observation scale does not match the actor input")
-        if not torch.isfinite(mean_tensor).all() or not torch.isfinite(scale_tensor).all():
+        if (
+            not torch.isfinite(mean_tensor).all()
+            or not torch.isfinite(scale_tensor).all()
+        ):
             raise ValueError("observation normalization must be finite")
         if not torch.all(scale_tensor > 0.0):
             raise ValueError("observation normalization scale must be positive")

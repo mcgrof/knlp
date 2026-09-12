@@ -365,7 +365,9 @@ def main(argv=None) -> int:
             "reference_episodes": episodes,
             "dagger_iterations": args.dagger_iterations,
             "dagger_rollouts": dagger_rollouts,
-            "model_parameters": sum(parameter.numel() for parameter in agent.parameters()),
+            "model_parameters": sum(
+                parameter.numel() for parameter in agent.parameters()
+            ),
             "observation_mean": mean.tolist(),
             "observation_scale": scale.tolist(),
             "action_loss_scale": action_loss_scale.tolist(),
