@@ -166,6 +166,12 @@ The accepted maneuver actor is a DAgger behavioral clone, not a PPO result.
 Use it as an initialization checkpoint when running PPO rather than describing
 imitation training as reinforcement learning.
 
+`python -m rl.ufo_duel` runs two independent copies of one motor checkpoint
+against each other in the shared headless dynamics. A deterministic tactical
+layer supplies pursuit and firing goals to both copies. This is a gate for
+reusing one pilot on two simulated craft; it does not control X-Plane AI
+aircraft or train combat tactics.
+
 With a tiny policy network the learner is often faster on CPU than on a GPU;
 `--device` selects, and the run's `sps` column in `metrics.csv` is the number
 to compare.
