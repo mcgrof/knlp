@@ -132,6 +132,45 @@ ARMS = dict(
     # landing at gdn3's parameter count with 5x its total state: the
     # partition-into-memories idea without the per-memory projections.
     gdn3w=dict(kind="stack", dim=512, layers=8, heads=8, gdn_heads=10, layout="GGGA"),
+    # Buying state with head width instead of memories.  State per head
+    # grows with the square of the head dimension while projection
+    # parameters grow linearly, so three heads of 128 hold 2.4x gdn3's
+    # state (96K against 40K, above mom3's 80K) at +3% parameters, and
+    # two heads of 128 hold 1.6x (64K) at -3%: the two bracket mom3 on
+    # parameters.  If either matches mom3's loss, a wider head buys what
+    # the routed memories buy.
+    gdn3h128x3=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        gdn_heads=3,
+        gdn_head_dim=128,
+        layout="GGGA",
+    ),
+    gdn3h128x2=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        gdn_heads=2,
+        gdn_head_dim=128,
+        layout="GGGA",
+    ),
+    # mom3 with the shared memory removed at training time, so the routed
+    # memories must carry the language-model gain if it is theirs
+    mom3_ns=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        mom_heads=2,
+        layout="MMMA",
+        num_memories=4,
+        topk=2,
+        shared_mem=False,
+        aux_loss_scale=0.01,
+    ),
     # pure linear arms, no attention layer: the configuration a recall
     # stress test needs, since in the hybrids the attention layers can
     # carry the retrieval
@@ -344,7 +383,7 @@ class Block(nn.Module):
 
             self.mixer = GatedDeltaNet(
                 hidden_size=dim,
-                head_dim=64,
+                head_dim=cfg.get("gdn_head_dim", 64),
                 num_heads=cfg.get("gdn_heads") or heads,
                 mode="chunk",
             )
