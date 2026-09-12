@@ -21,10 +21,15 @@ from rl.envs import make_env
 from rl.ppo import _git_head, _sha256
 
 
-def collect_reference(env, steps: int, seed: int):
+def collect_reference(
+    env,
+    steps: int,
+    seed: int,
+    controller_factory=velocity_target_controller,
+):
     observations = np.empty((steps, *env.observation_space.shape), dtype=np.float32)
     actions = np.empty((steps, *env.action_space.shape), dtype=np.float32)
-    controller = velocity_target_controller(env)
+    controller = controller_factory(env)
     episode_seed = seed
     observation, _ = env.reset(seed=episode_seed)
     episodes = 0
@@ -46,12 +51,13 @@ def collect_dagger(
     steps: int,
     seed: int,
     expert_probability: float,
+    controller_factory=velocity_target_controller,
 ):
     """Collect expert labels on states visited by a learner/expert mixture."""
 
     observations = np.empty((steps, *env.observation_space.shape), dtype=np.float32)
     actions = np.empty((steps, *env.action_space.shape), dtype=np.float32)
-    controller = velocity_target_controller(env)
+    controller = controller_factory(env)
     generator = np.random.default_rng(seed)
     episode_seed = seed
     observation, _ = env.reset(seed=episode_seed)

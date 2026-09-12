@@ -12,7 +12,12 @@ import gymnasium as gym
 
 from rl.envs.etr_env import EtrEnv
 
-DEFAULT_COURSE = {"etr": "bunny_hill", "sim": "sim_trees", "ufo": "hover"}
+DEFAULT_COURSE = {
+    "etr": "bunny_hill",
+    "f14": "formation",
+    "sim": "sim_trees",
+    "ufo": "hover",
+}
 
 
 def parse_env_id(env_id: str) -> tuple[str, str]:
@@ -42,6 +47,12 @@ def make_env(env_id: str, **kwargs) -> gym.Env:
         if course not in goals:
             raise ValueError(f"unknown UFO task {course!r}")
         return UfoEnv(goal=goals[course], **kwargs)
+    if backend == "f14":
+        from rl.envs.fighter_env import FighterEnv
+
+        if course != "formation":
+            raise ValueError(f"unknown F-14 task {course!r}")
+        return FighterEnv(goal_mode="maneuver", **kwargs)
     return EtrEnv(backend=backend, course=course, **kwargs)
 
 

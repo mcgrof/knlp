@@ -21,7 +21,7 @@ def export_checkpoint(contract: FlightContract, checkpoint: Path, output: Path) 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=False)
     state = saved.get("state", {}) if isinstance(saved, dict) else {}
     if state.get("action_kind", "continuous") != "continuous":
-        raise ValueError("UFO export requires a continuous checkpoint")
+        raise ValueError("flight actor export requires a continuous checkpoint")
     weights = saved["agent"] if isinstance(saved, dict) and "agent" in saved else saved
     required = {
         "observation_mean",

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable, Protocol, Sequence, TextIO
 
 from rl.flight.contracts import ControlCommand, FlightContract, TelemetryFrame
+from rl.flight.fighter_swarm import RlF14Swarm
 from rl.flight.shadow_ufo import MAXIMUM_WIRE_BYTES, ShadowPolicy, connect_telemetry
 from rl.flight.ufo_reference import UfoReferenceParameters, velocity_target_wrench
 from rl.flight.ufo_swarm import RlUfoSwarm, SWARM_BEHAVIORS
@@ -149,7 +150,7 @@ def process_stream(
     *,
     validity_ns: int,
     max_frames: int | None = None,
-    swarm: RlUfoSwarm | None = None,
+    swarm: RlUfoSwarm | RlF14Swarm | None = None,
 ) -> ControlStats:
     if validity_ns <= 0:
         raise ValueError("control validity must be positive")
@@ -235,7 +236,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--model", type=Path)
     parser.add_argument("--swarm-size", type=int, default=0)
+    parser.add_argument("--swarm-kind", choices=("ufo", "f14"), default="ufo")
     parser.add_argument("--swarm-behavior", choices=SWARM_BEHAVIORS, default="combat")
+    parser.add_argument("--fighter-contract", type=Path)
     parser.add_argument("--manual-player", action="store_true")
     parser.add_argument("--dynamics-library", type=Path)
     parser.add_argument("--mass-kg", type=float)
@@ -283,13 +286,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         if args.model is None:
             parser.error("actor control requires --model")
-        policy = ShadowPolicy(contract, args.model)
-        action_provider = actor_action(policy, envelope)
-        policy_identity = {
-            "checkpoint_sha256": policy.checkpoint_sha256,
-            "model_sha256": policy.model_sha256,
-        }
-        if args.swarm_size:
+        if args.swarm_size and args.swarm_kind == "f14":
+            if not args.manual_player:
+                parser.error("an F-14 swarm requires manual player control")
+            if args.swarm_behavior != "formation":
+                parser.error("an F-14 swarm supports formation behavior only")
+            fighter_contract = args.fighter_contract
+            if fighter_contract is None:
+                parser.error("an F-14 swarm requires --fighter-contract")
+            swarm = RlF14Swarm(
+                contract,
+                args.model,
+                args.swarm_size,
+                fighter_contract,
+            )
+            policy_identity = {
+                "checkpoint_sha256": swarm.checkpoint_sha256,
+                "model_sha256": swarm.model_sha256,
+            }
+            action_provider = zero_action(contract)
+        else:
+            policy = ShadowPolicy(contract, args.model)
+            action_provider = actor_action(policy, envelope)
+            policy_identity = {
+                "checkpoint_sha256": policy.checkpoint_sha256,
+                "model_sha256": policy.model_sha256,
+            }
+        if args.swarm_size and args.swarm_kind == "ufo":
             if args.dynamics_library is None:
                 parser.error("actor swarm requires --dynamics-library")
             swarm = RlUfoSwarm(
@@ -338,6 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "policy": policy_identity,
         "swarm_size": args.swarm_size,
+        "swarm_kind": args.swarm_kind if args.swarm_size else None,
         "swarm_behavior": args.swarm_behavior if args.swarm_size else None,
         "player_control": "manual" if args.manual_player else args.mode,
         **asdict(stats),
