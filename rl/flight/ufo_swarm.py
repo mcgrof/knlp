@@ -23,6 +23,7 @@ INITIAL_RANGE_M = 4200.0
 FORMATION_LONGITUDINAL_SPACING_M = 90.0
 FORMATION_LATERAL_SPACING_M = 60.0
 FORMATION_VERTICAL_SPACING_M = 12.0
+FORMATION_RELOCATION_THRESHOLD_M = 1000.0
 SHOT_PERIOD_S = 4.8
 SHOT_DURATION_S = 0.65
 SHOT_MINIMUM_RANGE_M = 350.0
@@ -91,6 +92,7 @@ class RlUfoSwarm:
         self.enemies: list[_Enemy] = []
         self.shots: tuple[EnemyShot, ...] = ()
         self.player_goal = np.zeros(4, dtype=np.float64)
+        self.previous_player_position_ned_m: np.ndarray | None = None
 
     @staticmethod
     def _player_heading(player_state: np.ndarray) -> float:
@@ -166,6 +168,19 @@ class RlUfoSwarm:
         self.elapsed_s = 0.0
         self.shots = ()
         self.player_goal = np.zeros(4, dtype=np.float64)
+        self.previous_player_position_ned_m = player_state[:3].copy()
+
+    def _follow_player_relocation(self, player_state: np.ndarray) -> None:
+        if self.behavior != "formation":
+            return
+        previous = self.previous_player_position_ned_m
+        if previous is None:
+            return
+        displacement = player_state[:3] - previous
+        if float(np.linalg.norm(displacement)) < FORMATION_RELOCATION_THRESHOLD_M:
+            return
+        for enemy in self.enemies:
+            enemy.origin_ned_m += displacement
 
     def _combat_goal(
         self,
@@ -357,6 +372,8 @@ class RlUfoSwarm:
         if frame.episode_id != self.episode_id:
             self._reset(frame)
         player_state = np.asarray(frame.observation, dtype=np.float64)
+        self._follow_player_relocation(player_state)
+        self.previous_player_position_ned_m = player_state[:3].copy()
         remaining = min(frame.dt_s, 0.1)
         while remaining > 1e-9:
             dt_s = min(self.contract.nominal_dt_s, remaining)

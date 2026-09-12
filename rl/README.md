@@ -186,7 +186,10 @@ configured UFO. Its formation behavior places the player at the point of a V
 and gives every follower a body-velocity and yaw-rate goal that closes its
 error from a fixed slot behind the player. The player remains manual and the
 followers do not fire. This isolates heading match, spacing, cohesion, and
-recovery before combat adds target selection and weapon timing.
+recovery before combat adds target selection and weapon timing. A large
+one-frame leader relocation, including BLINK, translates every formation
+member by the same vector so the group keeps its slots instead of crossing
+the intervening scenery at normal flight speed.
 
 Combat exposes a one-use shield request beside each enemy pose. The current
 director raises it deterministically on the first close attack. That field is
