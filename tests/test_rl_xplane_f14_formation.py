@@ -1,5 +1,6 @@
 """X-Plane bridge tests for a player-led native F-14 formation."""
 
+import json
 import math
 from io import StringIO
 from types import SimpleNamespace
@@ -90,6 +91,15 @@ class RetryReleaseClient(FakeLiveClient):
         self.close_calls += 1
 
 
+class DisconnectClient(FakeLiveClient):
+    def receive(self, timeout_s):
+        assert timeout_s == 0.3
+        self.calls += 1
+        if self.calls > 1:
+            raise ConnectionError("X-Plane closed")
+        return sample()
+
+
 class FakeSwarm:
     size = 1
     fighter_contract = SimpleNamespace(nominal_dt_s=0.02)
@@ -172,6 +182,26 @@ def test_live_formation_releases_ai_paths_without_touching_player():
     assert stats.frames == 1
     assert stats.override_releases == 1
     assert stats.interrupted
+    record = json.loads(output.getvalue())
+    assert record["schema_version"] == 2
+    assert record["player_speed_mps"] == pytest.approx(
+        math.sqrt(180.0**2 + 20.0**2 + 5.0**2)
+    )
+    assert len(record["player_state_ned"]) == 13
+
+
+def test_live_formation_treats_xplane_disconnect_as_a_clean_stop():
+    client = DisconnectClient()
+    stats = run_formation(
+        client,
+        FakeSwarm(),
+        StringIO(),
+        wait_seconds=1.0,
+        duration_seconds=None,
+    )
+    assert stats.frames == 1
+    assert stats.transport_disconnects == 1
+    assert stats.override_releases == 1
 
 
 def test_live_formation_reconnects_to_release_a_dead_socket():

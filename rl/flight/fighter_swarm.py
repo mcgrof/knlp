@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from rl.flight.contracts import EnemyPose, FlightContract, TelemetryFrame
-from rl.flight.fighter_dynamics import FighterDynamics
+from rl.flight.fighter_dynamics import FighterDynamics, fighter_envelope
 from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
 from rl.flight.shadow_ufo import ShadowPolicy
 
@@ -18,12 +18,15 @@ LONGITUDINAL_SPACING_M = 240.0
 LATERAL_SPACING_M = 120.0
 VERTICAL_SPACING_M = 35.0
 RELOCATION_THRESHOLD_M = 1000.0
-POSITION_GAIN_PER_S = 0.12
-MAXIMUM_POSITION_CORRECTION_MPS = 90.0
-MAXIMUM_FORMATION_SPEED_MPS = 280.0
+LEGACY_POSITION_GAIN_PER_S = 0.12
+FAST_POSITION_GAIN_PER_S = 0.30
+LEGACY_POSITION_CORRECTION_MPS = 90.0
+FAST_POSITION_CORRECTION_MPS = 120.0
+LEGACY_FORMATION_SPEED_MPS = 280.0
+FAST_FORMATION_SPEED_MPS = 780.0
 MAXIMUM_FORMATION_TURN_RADPS = 0.08
 DEFAULT_CONTRACT = (
-    Path(__file__).resolve().parents[1] / "contracts/fighter-controls-v1.json"
+    Path(__file__).resolve().parents[1] / "contracts/fighter-controls-v3.json"
 )
 
 
@@ -55,6 +58,17 @@ class RlF14Swarm:
             raise ValueError("F-14 swarm size must be between 1 and 19")
         self.output_contract = output_contract
         self.fighter_contract = FlightContract.from_json(fighter_contract_path)
+        self.dynamics_envelope = fighter_envelope(self.fighter_contract.revision)
+        if self.fighter_contract.revision == 3:
+            self.position_gain_per_s = FAST_POSITION_GAIN_PER_S
+            self.maximum_position_correction_mps = FAST_POSITION_CORRECTION_MPS
+            self.maximum_formation_speed_mps = FAST_FORMATION_SPEED_MPS
+        else:
+            self.position_gain_per_s = LEGACY_POSITION_GAIN_PER_S
+            self.maximum_position_correction_mps = (
+                LEGACY_POSITION_CORRECTION_MPS
+            )
+            self.maximum_formation_speed_mps = LEGACY_FORMATION_SPEED_MPS
         self.model = Path(model)
         identity = ShadowPolicy(self.fighter_contract, self.model)
         self.checkpoint_sha256 = identity.checkpoint_sha256
@@ -94,11 +108,21 @@ class RlF14Swarm:
         rotation = np.asarray(
             ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
         )
-        leader_speed = float(np.linalg.norm(player[3:5]))
-        initial_speed = _clamp(leader_speed, 140.0, 240.0)
+        leader_speed = float(np.linalg.norm(player[3:6]))
+        if self.fighter_contract.revision == 3:
+            initial_speed = _clamp(
+                leader_speed,
+                max(120.0, self.fighter_contract.goal.low[0]),
+                min(
+                    self.maximum_formation_speed_mps,
+                    self.fighter_contract.goal.high[0],
+                ),
+            )
+        else:
+            initial_speed = _clamp(leader_speed, 140.0, 240.0)
         self.fighters = []
         for slot in range(self.size):
-            dynamics = FighterDynamics()
+            dynamics = FighterDynamics(self.dynamics_envelope)
             dynamics.state[:3] = player[:3] + rotation @ self._offset(slot)
             dynamics.state[3:6] = rotation[:, 0] * initial_speed
             dynamics.state[6:10] = quaternion_from_euler(0.0, 0.0, heading)
@@ -148,11 +172,11 @@ class RlF14Swarm:
                 0.0,
             )
         )
-        position_correction = POSITION_GAIN_PER_S * position_error
+        position_correction = self.position_gain_per_s * position_error
         correction_speed = float(np.linalg.norm(position_correction))
-        if correction_speed > MAXIMUM_POSITION_CORRECTION_MPS:
+        if correction_speed > self.maximum_position_correction_mps:
             position_correction *= (
-                MAXIMUM_POSITION_CORRECTION_MPS / correction_speed
+                self.maximum_position_correction_mps / correction_speed
             )
         desired_velocity = leader_velocity + slot_velocity + position_correction
         desired_heading = math.atan2(
@@ -164,7 +188,10 @@ class RlF14Swarm:
                 _clamp(
                     float(np.linalg.norm(desired_velocity)),
                     120.0,
-                    MAXIMUM_FORMATION_SPEED_MPS,
+                    min(
+                        self.maximum_formation_speed_mps,
+                        self.fighter_contract.goal.high[0],
+                    ),
                 ),
                 _clamp(-float(desired_velocity[2]), -30.0, 30.0),
                 _clamp(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
@@ -14,6 +15,42 @@ GRAVITY_MPS2 = 9.80665
 MINIMUM_AIRSPEED_MPS = 55.0
 MAXIMUM_AIRSPEED_MPS = 380.0
 MAXIMUM_ROLL_RAD = math.radians(75.0)
+
+
+@dataclass(frozen=True)
+class FighterEnvelope:
+    """Speed terms for one version of the training surrogate."""
+
+    maximum_airspeed_mps: float
+    thrust_speed_mps: float
+    acceleration_gain_mps2: float
+    maximum_commanded_roll_rad: float
+
+
+LEGACY_ENVELOPE = FighterEnvelope(
+    maximum_airspeed_mps=MAXIMUM_AIRSPEED_MPS,
+    thrust_speed_mps=320.0,
+    acceleration_gain_mps2=35.0,
+    maximum_commanded_roll_rad=math.radians(65.0),
+)
+FORMATION_ENVELOPE = FighterEnvelope(
+    maximum_airspeed_mps=820.0,
+    thrust_speed_mps=800.0,
+    acceleration_gain_mps2=60.0,
+    maximum_commanded_roll_rad=math.radians(72.0),
+)
+
+
+def fighter_envelope(contract_revision: int) -> FighterEnvelope:
+    """Keep actors tied to the dynamics envelope they were trained on."""
+
+    if contract_revision == 3:
+        return FORMATION_ENVELOPE
+    if contract_revision in {1, 2}:
+        return LEGACY_ENVELOPE
+    raise ValueError(
+        f"unsupported fighter contract revision {contract_revision}"
+    )
 
 
 def _normalize_quaternion(quaternion: np.ndarray) -> np.ndarray:
@@ -33,7 +70,8 @@ class FighterDynamics:
 
     source_path = Path(__file__).resolve()
 
-    def __init__(self):
+    def __init__(self, envelope: FighterEnvelope = LEGACY_ENVELOPE):
+        self.envelope = envelope
         self.state = np.zeros(13, dtype=np.float64)
         self.reset()
 
@@ -95,12 +133,14 @@ class FighterDynamics:
         )
         quaternion[:] = _normalize_quaternion(quaternion + derivative * dt_s)
 
-        speed_acceleration = 35.0 * (throttle - (speed / 320.0) ** 2)
+        speed_acceleration = self.envelope.acceleration_gain_mps2 * (
+            throttle - (speed / self.envelope.thrust_speed_mps) ** 2
+        )
         new_speed = float(
             np.clip(
                 speed + speed_acceleration * dt_s,
                 MINIMUM_AIRSPEED_MPS,
-                MAXIMUM_AIRSPEED_MPS,
+                self.envelope.maximum_airspeed_mps,
             )
         )
         rotation = quaternion_body_to_ned(quaternion)

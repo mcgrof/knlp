@@ -40,6 +40,7 @@ class F14FormationStats:
     armed_transitions: int = 0
     override_releases: int = 0
     transport_disconnects: int = 0
+    maximum_leader_speed_mps: float = 0.0
     interrupted: bool = False
 
 
@@ -159,8 +160,7 @@ def run_formation(
                 values = client.receive(0.3)
             except ConnectionError:
                 stats.transport_disconnects += 1
-                release()
-                raise
+                break
             except socket.timeout:
                 stats.stale_samples += 1
                 release()
@@ -199,8 +199,13 @@ def run_formation(
                 if previous_frame_ns is None
                 else min(0.1, max(0.001, (now_ns - previous_frame_ns) / 1e9))
             )
+            player_state = f14_player_state(values)
+            leader_speed_mps = float(np.linalg.norm(player_state[3:6]))
+            stats.maximum_leader_speed_mps = max(
+                stats.maximum_leader_speed_mps, leader_speed_mps
+            )
             poses = swarm.update_state(
-                f14_player_state(values),
+                player_state,
                 episode_id=episode_id,
                 sequence=sequence,
                 monotonic_ns=now_ns,
@@ -219,10 +224,12 @@ def run_formation(
             output.write(
                 json.dumps(
                     {
-                        "schema_version": 1,
+                        "schema_version": 2,
                         "kind": "xplane_f14_formation",
                         "monotonic_ns": now_ns,
                         "sequence": sequence,
+                        "player_state_ned": player_state.tolist(),
+                        "player_speed_mps": leader_speed_mps,
                         "followers": [asdict(pose) for pose in poses],
                     },
                     separators=(",", ":"),
