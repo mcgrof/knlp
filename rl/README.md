@@ -181,6 +181,26 @@ Omit `--enemy-run-dir` for a symmetric same-checkpoint duel. This is a gate
 for composing two learned motor policies, not learned combat tactics or live
 control of an X-Plane AI aircraft.
 
+The F-14 actor has a separate live adapter for the user-selected stock
+Laminar F-14D. Start X-Plane first, load an airborne F-14, and then run:
+
+```
+F14_RESULTS=/data/knlp-key-results/xplane-f14-20260912
+python -m rl.flight.control_f14 \
+  --contract rl/contracts/fighter-controls-v1.json \
+  --model "$F14_RESULTS/runs/f14-formation-dagger-s1-v1/actor.npz" \
+  --airspeed 180 --climb-rate 0 --turn-rate 0 \
+  --output "$F14_RESULTS/live/player.jsonl"
+```
+
+The adapter uses X-Plane's local RREF/DREF protocol and never installs the
+UFO plugin into the fighter. It waits for at least 100 m/s, 150 m AGL, fresh
+telemetry, and an unpaused simulator before taking the joystick and engine
+controls. Ten consecutive safe samples are required at startup and after a
+pause. Pause, stale input, unsafe flight, interruption, and normal exit all
+drop the overrides. This first live gate holds a fixed speed, climb rate, and
+turn rate; mission choreography and learned formation tactics remain separate.
+
 The live multiplayer adapter can run the same frozen motor actor once per
 configured UFO. Its formation behavior places the player at the point of a V
 and gives every follower a body-velocity and yaw-rate goal that closes its
