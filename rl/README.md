@@ -225,6 +225,12 @@ and normal exit release every acquired AI path; aircraft zero remains manual.
 The `xplane-ufo` helper `tools/ai_f14_formation.sh` supervises this adapter in
 a named tmux session.
 
+`rl.evaluate_f14_formation` is the closed-loop formation gate. It flies the
+learned followers through sustained left and right turns, then records slot
+error and minimum pair separation after the settling window. The ordinary
+motor-policy gate is necessary but not sufficient: it can pass while small
+tracking errors accumulate into a visibly broken formation.
+
 Combat exposes a one-use shield request beside each enemy pose. The current
 director raises it deterministically on the first close attack. That field is
 an interface for a future tactical policy, not evidence that shield timing is
