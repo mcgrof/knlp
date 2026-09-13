@@ -43,7 +43,7 @@ class XPlaneWeb:
         self.opener = opener
         self.socket_factory = socket_factory
         self.socket = None
-        self.subscriptions: dict[str, tuple[int, str]] = {}
+        self.subscriptions: dict[str, tuple[int, str, int | None]] = {}
         self.ids: dict[str, int] = {}
         self.indexes: dict[str, int | None] = {}
         self.values: dict[str, float] = {}
@@ -128,16 +128,24 @@ class XPlaneWeb:
         self._resolve(list(datarefs.values()))
         self._connect()
         self.subscriptions = {
-            key: (self.ids[name], name) for key, name in datarefs.items()
+            key: (self.ids[name], name, self.indexes[name])
+            for key, name in datarefs.items()
         }
+        grouped: dict[int, list[int | None]] = {}
+        for identifier, _name, index in self.subscriptions.values():
+            grouped.setdefault(identifier, []).append(index)
+        requested = []
+        for identifier, indexes in grouped.items():
+            selected = sorted(index for index in indexes if index is not None)
+            requested.append(
+                {
+                    "id": identifier,
+                    **({"index": selected} if selected else {}),
+                }
+            )
         self._send(
             "dataref_subscribe_values",
-            {
-                "datarefs": [
-                    {"id": identifier}
-                    for identifier, _name in self.subscriptions.values()
-                ]
-            },
+            {"datarefs": requested},
         )
 
     def receive(self, timeout_s: float) -> dict[str, float]:
@@ -179,15 +187,38 @@ class XPlaneWeb:
             updates = message.get("data")
             if not isinstance(updates, dict):
                 raise RuntimeError("X-Plane returned an invalid dataref update")
-            reverse = {
-                str(identifier): key
-                for key, (identifier, _name) in self.subscriptions.items()
-            }
+            reverse: dict[str, list[tuple[str, int | None]]] = {}
+            for key, (identifier, _name, index) in self.subscriptions.items():
+                reverse.setdefault(str(identifier), []).append((key, index))
             for identifier, value in updates.items():
-                key = reverse.get(identifier)
-                if key is not None and isinstance(value, (int, float)):
+                targets = reverse.get(identifier, [])
+                indexed = sorted(
+                    (
+                        (index, key)
+                        for key, index in targets
+                        if index is not None
+                    )
+                )
+                if indexed and isinstance(value, list):
+                    if len(value) != len(indexed):
+                        raise RuntimeError(
+                            "X-Plane returned an invalid indexed update"
+                        )
+                    pairs = zip(indexed, value, strict=True)
+                    for (_index, key), item in pairs:
+                        if not isinstance(item, (int, float)) or not math.isfinite(
+                            item
+                        ):
+                            raise RuntimeError(
+                                "X-Plane returned a non-finite value"
+                            )
+                        self.values[key] = float(item)
+                elif len(targets) == 1 and isinstance(value, (int, float)):
+                    key, _index = targets[0]
                     if not math.isfinite(value):
-                        raise RuntimeError("X-Plane returned a non-finite value")
+                        raise RuntimeError(
+                            "X-Plane returned a non-finite value"
+                        )
                     self.values[key] = float(value)
             self.last_update_ns = time.monotonic_ns()
             return dict(self.values)
