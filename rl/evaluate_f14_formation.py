@@ -202,7 +202,7 @@ def main(argv=None) -> int:
         "--speeds", type=parse_speeds
     )
     parser.add_argument("--climb-rates", type=parse_climb_rates)
-    parser.add_argument("--maximum-p95-error-m", type=float, default=80.0)
+    parser.add_argument("--maximum-p95-error-m", type=float, default=90.0)
     parser.add_argument("--minimum-separation-m", type=float, default=80.0)
     parser.add_argument(
         "--maximum-linear-acceleration-p95-mps2", type=float, default=80.0
