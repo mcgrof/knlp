@@ -148,7 +148,7 @@ def test_f14_formation_goal_includes_turning_slot_velocity(tmp_path):
     assert abs(turning[2]) <= 0.08
 
 
-def test_state_adapter_measures_leader_turn_rate(tmp_path):
+def test_state_adapter_uses_leader_body_rates(tmp_path):
     root_value = os.environ.get("XPLANE_UFO_ROOT")
     if not root_value:
         pytest.skip("XPLANE_UFO_ROOT is not set")
@@ -167,7 +167,7 @@ def test_state_adapter_measures_leader_turn_rate(tmp_path):
         monotonic_ns=1,
         dt_s=0.02,
     )
-    player[6:10] = quaternion_from_euler(0.0, 0.0, 0.002)
+    player[12] = 0.05
     swarm.update_state(
         player,
         episode_id="state-test",
@@ -175,4 +175,4 @@ def test_state_adapter_measures_leader_turn_rate(tmp_path):
         monotonic_ns=20_000_001,
         dt_s=0.02,
     )
-    assert swarm.previous_player_heading_rad == pytest.approx(0.002)
+    assert swarm.previous_player_heading_rad == pytest.approx(0.0)

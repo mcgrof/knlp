@@ -28,6 +28,9 @@ FORMATION_DATAREFS = {
 }
 OVERRIDE_PLANEPATH = "sim/operation/override/override_planepath"
 MAXIMUM_SAMPLE_AGE_S = 0.25
+CONTROL_FREQUENCY_HZ = 50
+SUBSCRIPTION_FREQUENCY_HZ = 10
+TEAM_STATUS = "sim/multiplayer/combat/team_status"
 
 
 @dataclass
@@ -40,8 +43,53 @@ class F14FormationStats:
     armed_transitions: int = 0
     override_releases: int = 0
     transport_disconnects: int = 0
+    hostile_samples: int = 0
+    extrapolated_frames: int = 0
     maximum_leader_speed_mps: float = 0.0
+    maximum_leader_climb_mps: float = 0.0
     interrupted: bool = False
+
+
+def formation_datarefs(size: int) -> dict[str, str]:
+    """Include the read-only combat relationship of every follower."""
+
+    return {
+        **FORMATION_DATAREFS,
+        **{
+            f"team_status_{index}": f"{TEAM_STATUS}[{index}]"
+            for index in range(1, size + 1)
+        },
+    }
+
+
+def extrapolate_player_values(
+    values: dict[str, float], age_s: float
+) -> dict[str, float]:
+    """Project a 10 Hz X-Plane sample onto a smooth control tick."""
+
+    if not math.isfinite(age_s) or age_s < 0.0:
+        raise ValueError("sample age must be finite and non-negative")
+    age_s = min(age_s, MAXIMUM_SAMPLE_AGE_S)
+    projected = dict(values)
+    projected["local_x"] += projected["local_vx"] * age_s
+    projected["local_y"] += projected["local_vy"] * age_s
+    projected["local_z"] += projected["local_vz"] * age_s
+    roll = math.radians(projected["roll_deg"])
+    pitch = math.radians(projected["pitch_deg"])
+    p = projected["roll_rate"]
+    q = projected["pitch_rate"]
+    r = projected["yaw_rate"]
+    cosine_pitch = max(0.1, abs(math.cos(pitch)))
+    shared = q * math.sin(roll) + r * math.cos(roll)
+    roll_rate = p + math.tan(pitch) * shared
+    pitch_rate = q * math.cos(roll) - r * math.sin(roll)
+    heading_rate = shared / cosine_pitch
+    projected["roll_deg"] += math.degrees(roll_rate * age_s)
+    projected["pitch_deg"] += math.degrees(pitch_rate * age_s)
+    projected["heading_deg"] = (
+        projected["heading_deg"] + math.degrees(heading_rate * age_s)
+    ) % 360.0
+    return projected
 
 
 def f14_player_state(values: dict[str, float]) -> np.ndarray:
@@ -132,8 +180,14 @@ def run_formation(
     episode_id = ""
     first_frame_ns = None
     previous_frame_ns = None
+    latest_values = None
+    latest_update_ns = None
+    next_control_ns = None
     wait_deadline = time.monotonic() + wait_seconds
-    client.subscribe(FORMATION_DATAREFS, 20)
+    control_period_ns = round(1e9 / CONTROL_FREQUENCY_HZ)
+    client.subscribe(
+        formation_datarefs(swarm.size), SUBSCRIPTION_FREQUENCY_HZ
+    )
 
     def release() -> None:
         nonlocal armed
@@ -156,24 +210,59 @@ def run_formation(
                 >= round(duration_seconds * 1e9)
             ):
                 break
+            now_ns = time.monotonic_ns()
+            timeout_s = 0.3
+            if next_control_ns is not None:
+                timeout_s = max(
+                    0.001,
+                    min(0.3, (next_control_ns - now_ns) / 1e9),
+                )
+            received = False
             try:
-                values = client.receive(0.3)
+                latest_values = client.receive(timeout_s)
+                latest_update_ns = time.monotonic_ns()
+                received = True
             except ConnectionError:
                 stats.transport_disconnects += 1
                 break
             except socket.timeout:
-                stats.stale_samples += 1
-                release()
-                previous_frame_ns = None
-                if first_frame_ns is None and time.monotonic() >= wait_deadline:
+                if latest_values is None:
+                    stats.stale_samples += 1
+                    release()
+                    previous_frame_ns = None
+                if latest_values is None and time.monotonic() >= wait_deadline:
                     raise TimeoutError("timed out waiting for an airborne F-14")
+            if received:
+                stats.samples += 1
+            now_ns = time.monotonic_ns()
+            if latest_values is None:
                 continue
-            stats.samples += 1
+            if next_control_ns is not None and now_ns < next_control_ns:
+                continue
+            next_control_ns = now_ns + control_period_ns
             if not client.fresh(MAXIMUM_SAMPLE_AGE_S):
                 stats.stale_samples += 1
                 release()
                 previous_frame_ns = None
                 continue
+            sample_age_s = (now_ns - latest_update_ns) / 1e9
+            values = extrapolate_player_values(latest_values, sample_age_s)
+            if not received:
+                stats.extrapolated_frames += 1
+            hostile_slots = [
+                index
+                for index in range(1, swarm.size + 1)
+                if round(values[f"team_status_{index}"]) == 2
+            ]
+            if hostile_slots:
+                stats.hostile_samples += 1
+                release()
+                print(
+                    "F-14 formation refused hostile AI slots: "
+                    + ", ".join(str(index) for index in hostile_slots),
+                    flush=True,
+                )
+                break
             if values["paused"] >= 0.5:
                 stats.pauses += 1
                 release()
@@ -189,7 +278,6 @@ def run_formation(
                     )
                 continue
 
-            now_ns = time.monotonic_ns()
             if not armed:
                 generation += 1
                 episode_id = f"xplane-f14-formation-{now_ns}-{generation}"
@@ -203,6 +291,10 @@ def run_formation(
             leader_speed_mps = float(np.linalg.norm(player_state[3:6]))
             stats.maximum_leader_speed_mps = max(
                 stats.maximum_leader_speed_mps, leader_speed_mps
+            )
+            stats.maximum_leader_climb_mps = max(
+                stats.maximum_leader_climb_mps,
+                abs(float(values["local_vy"])),
             )
             poses = swarm.update_state(
                 player_state,
@@ -230,6 +322,10 @@ def run_formation(
                         "sequence": sequence,
                         "player_state_ned": player_state.tolist(),
                         "player_speed_mps": leader_speed_mps,
+                        "team_status": [
+                            round(values[f"team_status_{index}"])
+                            for index in range(1, swarm.size + 1)
+                        ],
                         "followers": [asdict(pose) for pose in poses],
                     },
                     separators=(",", ":"),

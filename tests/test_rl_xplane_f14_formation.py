@@ -12,7 +12,9 @@ from rl.flight.contracts import EnemyPose
 from rl.flight.control_f14_formation import (
     OVERRIDE_PLANEPATH,
     f14_player_state,
+    extrapolate_player_values,
     formation_pose_writes,
+    formation_datarefs,
     run_formation,
     write_formation_overrides,
 )
@@ -36,6 +38,7 @@ def sample(**updates):
         "height_agl": 1000.0,
         "on_ground": 0.0,
         "paused": 0.0,
+        "team_status_1": 1.0,
     }
     values.update(updates)
     return values
@@ -59,7 +62,7 @@ class FakeLiveClient(FakeClient):
         self.subscribed = (datarefs, frequency_hz)
 
     def receive(self, timeout_s):
-        assert timeout_s == 0.3
+        assert 0.0 < timeout_s <= 0.3
         self.calls += 1
         if self.calls > 1:
             raise KeyboardInterrupt
@@ -93,11 +96,18 @@ class RetryReleaseClient(FakeLiveClient):
 
 class DisconnectClient(FakeLiveClient):
     def receive(self, timeout_s):
-        assert timeout_s == 0.3
+        assert 0.0 < timeout_s <= 0.3
         self.calls += 1
         if self.calls > 1:
             raise ConnectionError("X-Plane closed")
         return sample()
+
+
+class HostileClient(FakeLiveClient):
+    def receive(self, timeout_s):
+        assert 0.0 < timeout_s <= 0.3
+        self.calls += 1
+        return sample(team_status_1=2.0)
 
 
 class FakeSwarm:
@@ -124,6 +134,30 @@ def test_player_state_converts_xplane_axes_to_ned():
     )
     assert np.linalg.norm(state[6:10]) == pytest.approx(1.0)
     assert state[10:] == pytest.approx((0.1, -0.2, 0.03))
+
+
+def test_player_sample_is_extrapolated_between_xplane_updates():
+    values = sample(
+        roll_deg=0.0,
+        pitch_deg=0.0,
+        heading_deg=30.0,
+        roll_rate=0.0,
+        pitch_rate=0.0,
+        yaw_rate=0.1,
+    )
+    projected = extrapolate_player_values(values, 0.05)
+    assert projected["local_x"] == pytest.approx(1201.0)
+    assert projected["local_y"] == pytest.approx(2400.25)
+    assert projected["local_z"] == pytest.approx(-3609.0)
+    assert projected["heading_deg"] == pytest.approx(
+        30.0 + math.degrees(0.005)
+    )
+
+
+def test_formation_subscribes_to_follower_team_status():
+    assert formation_datarefs(2)["team_status_2"] == (
+        "sim/multiplayer/combat/team_status[2]"
+    )
 
 
 def test_pose_writes_convert_ned_and_orientation_to_multiplayer_datarefs():
@@ -184,6 +218,7 @@ def test_live_formation_releases_ai_paths_without_touching_player():
     assert stats.interrupted
     record = json.loads(output.getvalue())
     assert record["schema_version"] == 2
+    assert record["team_status"] == [1]
     assert record["player_speed_mps"] == pytest.approx(
         math.sqrt(180.0**2 + 20.0**2 + 5.0**2)
     )
@@ -202,6 +237,22 @@ def test_live_formation_treats_xplane_disconnect_as_a_clean_stop():
     assert stats.frames == 1
     assert stats.transport_disconnects == 1
     assert stats.override_releases == 1
+
+
+def test_live_formation_refuses_hostile_ai_slots():
+    client = HostileClient()
+    stats = run_formation(
+        client,
+        FakeSwarm(),
+        StringIO(),
+        wait_seconds=1.0,
+        duration_seconds=None,
+    )
+    assert stats.frames == 0
+    assert stats.hostile_samples == 1
+    assert not any(
+        name.startswith(OVERRIDE_PLANEPATH) for name, _value in client.writes
+    )
 
 
 def test_live_formation_reconnects_to_release_a_dead_socket():

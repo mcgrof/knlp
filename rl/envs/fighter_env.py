@@ -24,8 +24,8 @@ LIVE_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v2.json"
 FORMATION_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v3.json"
 LEGACY_MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
 LEGACY_MANEUVER_HIGH = np.asarray((280.0, 30.0, 0.08))
-FAST_MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
-FAST_MANEUVER_HIGH = np.asarray((760.0, 30.0, 0.08))
+FAST_MANEUVER_LOW = np.asarray((120.0, -80.0, -0.08))
+FAST_MANEUVER_HIGH = np.asarray((760.0, 80.0, 0.08))
 
 
 class FighterEnv(gym.Env):
