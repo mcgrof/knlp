@@ -95,6 +95,26 @@ ARMS = dict(
     gdn=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=5, layout="G"),
     gdn6=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=6, layout="G"),
     gdnw=dict(kind="stack", dim=512, layers=2, heads=8, gdn_heads=10, layout="G"),
+    # wide heads: is per-head dimension the recall lever, the way head
+    # count is the loss lever?  Two heads of 128 hold 64K, three 96K.
+    gdnh128x2=dict(
+        kind="stack",
+        dim=512,
+        layers=2,
+        heads=8,
+        gdn_heads=2,
+        gdn_head_dim=128,
+        layout="G",
+    ),
+    gdnh128x3=dict(
+        kind="stack",
+        dim=512,
+        layers=2,
+        heads=8,
+        gdn_heads=3,
+        gdn_head_dim=128,
+        layout="G",
+    ),
     mom=dict(
         kind="stack", dim=512, layers=2, heads=8, mom_heads=2, layout="M", **MOM_ROUTING
     ),

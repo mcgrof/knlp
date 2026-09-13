@@ -157,6 +157,20 @@ ARMS = dict(
         gdn_head_dim=128,
         layout="GGGA",
     ),
+    # mom3 with top-1 routing: two memory updates per token instead of
+    # three, the cheapest routed configuration
+    mom3_k1=dict(
+        kind="stack",
+        dim=512,
+        layers=8,
+        heads=8,
+        mom_heads=2,
+        layout="MMMA",
+        num_memories=4,
+        topk=1,
+        shared_mem=True,
+        aux_loss_scale=0.01,
+    ),
     # mom3 with the shared memory removed at training time, so the routed
     # memories must carry the language-model gain if it is theirs
     mom3_ns=dict(
