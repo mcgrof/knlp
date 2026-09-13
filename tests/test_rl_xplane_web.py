@@ -96,6 +96,46 @@ def test_web_transport_subscribes_reads_and_batches_indexed_writes():
     assert wire.closed
 
 
+def test_web_transport_subscribes_to_multiple_array_indices():
+    def opener(url, timeout):
+        assert timeout == 2.0
+        assert "sim%2Fmultiplayer%2Fcombat%2Fteam_status" in url
+        return FakeResponse(
+            {
+                "data": [
+                    {
+                        "id": 20,
+                        "name": "sim/multiplayer/combat/team_status",
+                        "value_type": "int_array",
+                    }
+                ]
+            }
+        )
+
+    wire = FakeSocket()
+    client = XPlaneWeb(
+        opener=opener,
+        socket_factory=lambda url, timeout: wire,
+    )
+    client.subscribe(
+        {
+            "team_status_1": "sim/multiplayer/combat/team_status[1]",
+            "team_status_2": "sim/multiplayer/combat/team_status[2]",
+        },
+        10,
+    )
+    assert wire.sent[0]["params"]["datarefs"] == [
+        {"id": 20, "index": [1, 2]}
+    ]
+    wire.messages = [
+        {"type": "dataref_update_values", "data": {"20": [1, 2]}}
+    ]
+    assert client.receive(0.2) == {
+        "team_status_1": 1.0,
+        "team_status_2": 2.0,
+    }
+
+
 @pytest.mark.parametrize("payload", ("", b""))
 def test_web_transport_reports_a_closed_connection(payload):
     wire = RawFakeSocket()
