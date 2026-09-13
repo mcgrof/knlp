@@ -193,9 +193,10 @@ python -m rl.flight.control_f14 \
   --output "$F14_RESULTS/live/player.jsonl"
 ```
 
-The adapter defaults to X-Plane's local RREF/DREF UDP API and never installs
-the UFO plugin into the fighter. The Web API remains available with
-`--transport web`. It waits for at least 100 m/s, 150 m AGL, fresh telemetry,
+The adapter defaults to polling X-Plane's local REST API and never installs
+the UFO plugin into the fighter. WebSocket and legacy RREF/DREF transports
+remain diagnostic options. It waits for at least 100 m/s, 150 m AGL, fresh
+telemetry,
 and an unpaused simulator before taking the joystick and engine controls. Ten
 consecutive safe samples are required at startup and after a pause. Pause,
 stale input, unsafe flight, interruption, and normal exit all drop the
