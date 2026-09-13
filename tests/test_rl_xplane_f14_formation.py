@@ -104,7 +104,7 @@ class DisconnectClient(FakeLiveClient):
         return sample()
 
 
-class NonFriendClient(FakeLiveClient):
+class TeamStatusClient(FakeLiveClient):
     def __init__(self, team_status):
         super().__init__()
         self.team_status = team_status
@@ -112,6 +112,8 @@ class NonFriendClient(FakeLiveClient):
     def receive(self, timeout_s):
         assert 0.0 < timeout_s <= 0.3
         self.calls += 1
+        if self.calls > 1:
+            raise KeyboardInterrupt
         return sample(team_status_1=self.team_status)
 
 
@@ -258,9 +260,24 @@ def test_live_formation_treats_xplane_disconnect_as_a_clean_stop():
     assert stats.override_releases == 1
 
 
-@pytest.mark.parametrize("team_status", (0.0, 2.0))
-def test_live_formation_refuses_non_friend_ai_slots(team_status):
-    client = NonFriendClient(team_status)
+def test_live_formation_accepts_neutral_ai_slots():
+    client = TeamStatusClient(0.0)
+    output = StringIO()
+    stats = run_formation(
+        client,
+        FakeSwarm(),
+        output,
+        wait_seconds=1.0,
+        duration_seconds=None,
+    )
+    assert stats.frames == 1
+    assert stats.hostile_samples == 0
+    assert json.loads(output.getvalue())["team_status"] == [0]
+
+
+@pytest.mark.parametrize("team_status", (2.0, 3.0))
+def test_live_formation_refuses_hostile_ai_slots(team_status):
+    client = TeamStatusClient(team_status)
     stats = run_formation(
         client,
         FakeSwarm(),
@@ -269,7 +286,7 @@ def test_live_formation_refuses_non_friend_ai_slots(team_status):
         duration_seconds=None,
     )
     assert stats.frames == 0
-    assert stats.non_friend_samples == 1
+    assert stats.hostile_samples == 1
     assert not any(
         name.startswith(OVERRIDE_PLANEPATH) for name, _value in client.writes
     )

@@ -226,6 +226,9 @@ accepts continuous aerobatic attitudes instead of releasing and later
 respawning the formation. Pause, stale telemetry, landing, interruption,
 and normal exit still release every acquired AI path; aircraft zero remains
 manual.
+Neutral and friend AI slots are accepted; enemy slots are rejected before
+path ownership begins. X-Plane exposes the team-status array as read-only, so
+the adapter cannot change an enemy slot into a formation follower.
 The `xplane-ufo` helper `tools/ai_f14_formation.sh` supervises this adapter in
 a named tmux session.
 
