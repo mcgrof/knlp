@@ -42,19 +42,21 @@ ELEVATOR = "sim/joystick/yoke_pitch_ratio"
 RUDDER = "sim/joystick/yoke_heading_ratio"
 THROTTLE_0 = "sim/flightmodel/engine/ENGN_thro_use[0]"
 THROTTLE_1 = "sim/flightmodel/engine/ENGN_thro_use[1]"
-MINIMUM_HANDOFF_SPEED_MPS = 150.0
+MINIMUM_HANDOFF_SPEED_MPS = 90.0
 MINIMUM_HANDOFF_AGL_M = 150.0
-INITIAL_MINIMUM_SPEED_MPS = 170.0
-INITIAL_MAXIMUM_SPEED_MPS = 230.0
-INITIAL_MINIMUM_AGL_M = 500.0
-INITIAL_MAXIMUM_CLIMB_MPS = 5.0
-INITIAL_MAXIMUM_ATTITUDE_DEG = 10.0
-INITIAL_MAXIMUM_RATE_RADPS = 0.15
-MAXIMUM_LIVE_SPEED_MPS = 360.0
-MAXIMUM_LIVE_CLIMB_MPS = 20.0
-MAXIMUM_LIVE_ROLL_DEG = 30.0
-MAXIMUM_LIVE_PITCH_DEG = 25.0
-MAXIMUM_LIVE_RATE_RADPS = 0.7
+INITIAL_MINIMUM_SPEED_MPS = 90.0
+INITIAL_MAXIMUM_SPEED_MPS = 450.0
+INITIAL_MINIMUM_AGL_M = 200.0
+INITIAL_MAXIMUM_CLIMB_MPS = 120.0
+INITIAL_MAXIMUM_ROLL_DEG = 120.0
+INITIAL_MAXIMUM_PITCH_DEG = 70.0
+INITIAL_MAXIMUM_RATE_RADPS = 2.0
+MAXIMUM_LIVE_SPEED_MPS = 450.0
+MAXIMUM_LIVE_CLIMB_MPS = 150.0
+MAXIMUM_LIVE_ROLL_DEG = 120.0
+MAXIMUM_LIVE_PITCH_DEG = 70.0
+MAXIMUM_LIVE_RATE_RADPS = 2.5
+PROTECTIVE_THROTTLE_SPEED_MPS = 170.0
 MINIMUM_CADENCE_FRACTION = 0.8
 MAXIMUM_SAMPLE_AGE_S = 0.25
 SAFE_HANDOFF_SAMPLES = 10
@@ -149,7 +151,7 @@ class F14LiveReference:
             math.radians(8.0),
         )
         throttle = clamp(0.88 + 0.004 * (desired_speed - speed), 0.65, 1.0)
-        if speed < INITIAL_MINIMUM_SPEED_MPS:
+        if speed < PROTECTIVE_THROTTLE_SPEED_MPS:
             throttle = 1.0
         aileron = clamp(
             1.2 * (desired_roll - roll) - 0.6 * values["roll_rate"],
@@ -176,18 +178,18 @@ def clamp(value: float, low: float, high: float) -> float:
 def showcase_goal(
     base_goal: Sequence[float], elapsed_s: float
 ) -> tuple[float, ...]:
-    """Add a visible, gentle maneuver only after a stable eight-second hold."""
+    """Stabilize briefly, then fly a clearly visible repeating maneuver."""
 
     airspeed = float(base_goal[0])
-    if elapsed_s < 8.0:
+    if elapsed_s < 3.0:
         return airspeed, 0.0, 0.0
-    phase_s = (elapsed_s - 8.0) % 36.0
+    phase_s = (elapsed_s - 3.0) % 36.0
     if phase_s < 10.0:
-        return airspeed, 4.0, 0.015
+        return airspeed, 5.0, 0.020
     if phase_s < 20.0:
-        return airspeed, 0.0, -0.015
+        return airspeed, 0.0, -0.020
     if phase_s < 28.0:
-        return airspeed, -3.0, 0.0
+        return airspeed, -4.0, 0.0
     return airspeed, 0.0, 0.0
 
 
@@ -248,8 +250,8 @@ def safe_handoff(values: dict[str, float], *, initial: bool = False) -> bool:
             INITIAL_MINIMUM_SPEED_MPS <= speed <= INITIAL_MAXIMUM_SPEED_MPS
             and values["height_agl"] >= INITIAL_MINIMUM_AGL_M
             and abs(climb_rate) <= INITIAL_MAXIMUM_CLIMB_MPS
-            and abs(values["roll_deg"]) <= INITIAL_MAXIMUM_ATTITUDE_DEG
-            and abs(values["pitch_deg"]) <= INITIAL_MAXIMUM_ATTITUDE_DEG
+            and abs(values["roll_deg"]) <= INITIAL_MAXIMUM_ROLL_DEG
+            and abs(values["pitch_deg"]) <= INITIAL_MAXIMUM_PITCH_DEG
             and max(abs(value) for value in observation[7:])
             <= INITIAL_MAXIMUM_RATE_RADPS
         )
@@ -316,7 +318,9 @@ def run_controller(
     sequence = 0
     armed = False
     first_command_ns = None
+    captured_goal = None
     next_command_ns = 0
+    next_wait_report_ns = 0
     safe_samples = 0
     safe_sample_times: deque[int] = deque(maxlen=SAFE_HANDOFF_SAMPLES)
     limiter = F14LiveLimiter()
@@ -382,8 +386,25 @@ def run_controller(
                     raise RuntimeError("F-14 left the guarded live envelope")
                 if time.monotonic() >= wait_deadline:
                     raise TimeoutError(
-                        "F-14 was not trimmed at 170-230 m/s above 500 m AGL"
+                        "F-14 never entered the broad airborne handoff envelope"
                     )
+                now_ns = time.monotonic_ns()
+                if now_ns >= next_wait_report_ns:
+                    speed = math.sqrt(
+                        values["local_vx"] ** 2
+                        + values["local_vy"] ** 2
+                        + values["local_vz"] ** 2
+                    )
+                    print(
+                        "handoff wait: "
+                        f"speed={speed:.1f}m/s "
+                        f"agl={values['height_agl']:.0f}m "
+                        f"climb={values['local_vy']:.1f}m/s "
+                        f"roll={values['roll_deg']:.1f}deg "
+                        f"pitch={values['pitch_deg']:.1f}deg",
+                        flush=True,
+                    )
+                    next_wait_report_ns = now_ns + 2_000_000_000
                 continue
             safe_samples += 1
             now_ns = time.monotonic_ns()
@@ -404,10 +425,20 @@ def run_controller(
             observation = contract.observation.validate(
                 f14_observation(values, contract.revision), "F-14 observation"
             )
+            if captured_goal is None:
+                if showcase:
+                    captured_goal = (
+                        clamp(observation[0], goal[0], contract.goal.high[0]),
+                        0.0,
+                        0.0,
+                    )
+                else:
+                    captured_goal = goal
             elapsed_s = 0.0 if first_command_ns is None else (
                 now_ns - first_command_ns
             ) / 1e9
-            applied_goal = showcase_goal(goal, elapsed_s) if showcase else goal
+            applied_goal = showcase_goal(captured_goal, elapsed_s) \
+                if showcase else captured_goal
             frame = TelemetryFrame.create(
                 contract,
                 episode_id="xplane-f14-player",
@@ -424,6 +455,13 @@ def run_controller(
                 write_overrides(client, True)
                 armed = True
                 stats.armed_transitions += 1
+                print(
+                    "F-14 live pilot armed: "
+                    f"speed={observation[0]:.1f}m/s "
+                    f"goal={captured_goal[0]:.1f}m/s; "
+                    "three-second stabilization started",
+                    flush=True,
+                )
             write_action(client, action)
             record = {
                 "schema_version": 1,
