@@ -10,7 +10,11 @@ import numpy as np
 
 from rl.flight.contracts import EnemyPose, FlightContract, TelemetryFrame
 from rl.flight.fighter_dynamics import FighterDynamics, fighter_envelope
-from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
+from rl.flight.geometry import (
+    quaternion_body_to_ned,
+    quaternion_from_euler,
+    roll_pitch_yaw,
+)
 from rl.flight.shadow_ufo import ShadowPolicy
 
 MAXIMUM_FIGHTERS = 19
@@ -25,6 +29,10 @@ FAST_POSITION_CORRECTION_MPS = 120.0
 LEGACY_FORMATION_SPEED_MPS = 280.0
 FAST_FORMATION_SPEED_MPS = 780.0
 MAXIMUM_FORMATION_TURN_RADPS = 0.08
+MAXIMUM_DISPLAY_ROLL_RAD = math.radians(45.0)
+MAXIMUM_DISPLAY_ROLL_RATE_RADPS = math.radians(20.0)
+MAXIMUM_DISPLAY_PITCH_RATE_RADPS = math.radians(12.0)
+MAXIMUM_DISPLAY_HEADING_RATE_RADPS = math.radians(10.0)
 DEFAULT_CONTRACT = (
     Path(__file__).resolve().parents[1] / "contracts/fighter-controls-v3.json"
 )
@@ -42,6 +50,10 @@ def _wrap_angle(value: float) -> float:
 class _Fighter:
     dynamics: FighterDynamics
     policy: ShadowPolicy
+    display_roll_rad: float
+    display_pitch_rad: float
+    display_heading_rad: float
+    commanded_turn_radps: float = 0.0
 
 
 class RlF14Swarm:
@@ -114,6 +126,7 @@ class RlF14Swarm:
 
     def _reset(self, player: np.ndarray, episode_id: str) -> None:
         heading = self._heading(player)
+        roll, pitch, _yaw = roll_pitch_yaw(player[6:10])
         cosine = math.cos(heading)
         sine = math.sin(heading)
         rotation = np.asarray(
@@ -141,6 +154,9 @@ class RlF14Swarm:
                 _Fighter(
                     dynamics=dynamics,
                     policy=ShadowPolicy(self.fighter_contract, self.model),
+                    display_roll_rad=roll,
+                    display_pitch_rad=pitch,
+                    display_heading_rad=heading,
                 )
             )
         self.episode_id = episode_id
@@ -220,6 +236,48 @@ class RlF14Swarm:
     def control_frame(self, frame: TelemetryFrame) -> TelemetryFrame:
         return frame
 
+    @staticmethod
+    def _slew_angle(
+        current: float, target: float, maximum_rate: float, dt_s: float
+    ) -> float:
+        delta = _clamp(
+            _wrap_angle(target - current),
+            -maximum_rate * dt_s,
+            maximum_rate * dt_s,
+        )
+        return _wrap_angle(current + delta)
+
+    def _update_display(self, fighter: _Fighter, dt_s: float) -> None:
+        state = fighter.dynamics.state_vector()
+        velocity = state[3:6]
+        horizontal_speed = float(np.linalg.norm(velocity[:2]))
+        speed = float(np.linalg.norm(velocity))
+        heading = math.atan2(float(velocity[1]), float(velocity[0]))
+        pitch = math.atan2(-float(velocity[2]), max(1e-9, horizontal_speed))
+        roll = _clamp(
+            math.atan2(speed * fighter.commanded_turn_radps, 9.80665),
+            -MAXIMUM_DISPLAY_ROLL_RAD,
+            MAXIMUM_DISPLAY_ROLL_RAD,
+        )
+        fighter.display_roll_rad = self._slew_angle(
+            fighter.display_roll_rad,
+            roll,
+            MAXIMUM_DISPLAY_ROLL_RATE_RADPS,
+            dt_s,
+        )
+        fighter.display_pitch_rad = self._slew_angle(
+            fighter.display_pitch_rad,
+            pitch,
+            MAXIMUM_DISPLAY_PITCH_RATE_RADPS,
+            dt_s,
+        )
+        fighter.display_heading_rad = self._slew_angle(
+            fighter.display_heading_rad,
+            heading,
+            MAXIMUM_DISPLAY_HEADING_RATE_RADPS,
+            dt_s,
+        )
+
     def update_state(
         self,
         player_state: np.ndarray,
@@ -268,12 +326,18 @@ class RlF14Swarm:
                 )
                 action, _ = fighter.policy.infer(actor_frame)
                 fighter.dynamics.step(action, dt_s)
+                fighter.commanded_turn_radps = float(goal[2])
+                self._update_display(fighter, dt_s)
             remaining -= dt_s
         return tuple(
             EnemyPose.create(
                 slot=slot,
                 position_ned_m=fighter.dynamics.state_vector()[:3],
-                quaternion_body_to_ned=fighter.dynamics.state_vector()[6:10],
+                quaternion_body_to_ned=quaternion_from_euler(
+                    fighter.display_roll_rad,
+                    fighter.display_pitch_rad,
+                    fighter.display_heading_rad,
+                ),
                 native_visual=True,
             )
             for slot, fighter in enumerate(self.fighters)

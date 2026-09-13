@@ -1,5 +1,6 @@
 """Tests for learned fixed-wing formation flight."""
 
+import math
 import os
 from pathlib import Path
 
@@ -176,3 +177,29 @@ def test_state_adapter_uses_leader_body_rates(tmp_path):
         dt_s=0.02,
     )
     assert swarm.previous_player_heading_rad == pytest.approx(0.0)
+
+
+def test_rendered_f14_attitude_slews_smoothly(tmp_path):
+    root_value = os.environ.get("XPLANE_UFO_ROOT")
+    if not root_value:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    output_contract = FlightContract.from_json(
+        Path(root_value) / "schemas/ufo-wrench-v1.json"
+    )
+    fighter_contract = FlightContract.from_json(DEFAULT_CONTRACT)
+    model = tmp_path / "fighter.npz"
+    _actor(model, fighter_contract)
+    swarm = RlF14Swarm(output_contract, model, 1, DEFAULT_CONTRACT)
+    player = np.asarray(_player_frame(output_contract).observation)
+    swarm.update_state(
+        player,
+        episode_id="display-test",
+        sequence=0,
+        monotonic_ns=1,
+        dt_s=0.02,
+    )
+    swarm.fighters[0].commanded_turn_radps = 0.08
+    before = swarm.fighters[0].display_roll_rad
+    swarm._update_display(swarm.fighters[0], 0.02)
+    after = swarm.fighters[0].display_roll_rad
+    assert abs(after - before) <= math.radians(20.0) * 0.02
