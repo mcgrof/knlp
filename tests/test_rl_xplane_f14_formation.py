@@ -103,11 +103,15 @@ class DisconnectClient(FakeLiveClient):
         return sample()
 
 
-class HostileClient(FakeLiveClient):
+class NonFriendClient(FakeLiveClient):
+    def __init__(self, team_status):
+        super().__init__()
+        self.team_status = team_status
+
     def receive(self, timeout_s):
         assert 0.0 < timeout_s <= 0.3
         self.calls += 1
-        return sample(team_status_1=2.0)
+        return sample(team_status_1=self.team_status)
 
 
 class FakeSwarm:
@@ -239,8 +243,9 @@ def test_live_formation_treats_xplane_disconnect_as_a_clean_stop():
     assert stats.override_releases == 1
 
 
-def test_live_formation_refuses_hostile_ai_slots():
-    client = HostileClient()
+@pytest.mark.parametrize("team_status", (0.0, 2.0))
+def test_live_formation_refuses_non_friend_ai_slots(team_status):
+    client = NonFriendClient(team_status)
     stats = run_formation(
         client,
         FakeSwarm(),
@@ -249,7 +254,7 @@ def test_live_formation_refuses_hostile_ai_slots():
         duration_seconds=None,
     )
     assert stats.frames == 0
-    assert stats.hostile_samples == 1
+    assert stats.non_friend_samples == 1
     assert not any(
         name.startswith(OVERRIDE_PLANEPATH) for name, _value in client.writes
     )
