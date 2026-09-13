@@ -77,6 +77,8 @@ def test_f14_swarm_uses_native_aircraft_and_follows_relocation(tmp_path):
     assert swarm.shots == ()
     assert swarm.control_frame(frame) is frame
     assert swarm.checkpoint_sha256 == "test-checkpoint"
+    assert swarm.position_gain_per_s == 0.30
+    assert swarm.maximum_formation_speed_mps == 780.0
 
     displacement = np.asarray((8_000.0, 1_200.0, -600.0))
     blink_observation = np.asarray(frame.observation, dtype=np.float64)
@@ -97,6 +99,30 @@ def test_f14_swarm_uses_native_aircraft_and_follows_relocation(tmp_path):
         )
         # Followers continue their normal flight during the relocated frame.
         assert actual == pytest.approx(displacement, abs=5.0)
+
+
+def test_legacy_actor_keeps_its_original_formation_envelope(tmp_path):
+    root_value = os.environ.get("XPLANE_UFO_ROOT")
+    if not root_value:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    output_contract = FlightContract.from_json(
+        Path(root_value) / "schemas/ufo-wrench-v1.json"
+    )
+    legacy_contract_path = (
+        Path(__file__).parents[1] / "rl/contracts/fighter-controls-v1.json"
+    )
+    legacy_contract = FlightContract.from_json(legacy_contract_path)
+    model = tmp_path / "legacy-fighter.npz"
+    _actor(model, legacy_contract)
+    swarm = RlF14Swarm(
+        output_contract,
+        model,
+        2,
+        legacy_contract_path,
+    )
+    assert swarm.position_gain_per_s == 0.12
+    assert swarm.maximum_position_correction_mps == 90.0
+    assert swarm.maximum_formation_speed_mps == 280.0
 
 
 def test_f14_formation_goal_includes_turning_slot_velocity(tmp_path):

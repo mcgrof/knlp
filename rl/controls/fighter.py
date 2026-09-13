@@ -24,8 +24,8 @@ class FighterReferenceController:
         desired_roll = float(
             np.clip(
                 math.atan2(speed * desired_turn, GRAVITY_MPS2),
-                -math.radians(65.0),
-                math.radians(65.0),
+                -env.dynamics.envelope.maximum_commanded_roll_rad,
+                env.dynamics.envelope.maximum_commanded_roll_rad,
             )
         )
         desired_pitch = math.asin(
@@ -38,7 +38,10 @@ class FighterReferenceController:
             state[11] * math.sin(roll) + state[12] * math.cos(roll)
         )
         desired_p = 2.2 * (desired_roll - roll) - roll_cross_coupling
-        throttle = (desired_speed / 320.0) ** 2 + 0.018 * (desired_speed - speed)
+        thrust_speed = env.dynamics.envelope.thrust_speed_mps
+        throttle = (desired_speed / thrust_speed) ** 2 + 0.018 * (
+            desired_speed - speed
+        )
         aileron = (2.6 * desired_p + 4.0 * (desired_p - state[10])) / 5.0
         elevator = (2.4 * desired_q + 4.0 * (desired_q - state[11])) / 3.2
         rudder = 4.0 * (desired_turn - turn_rate)

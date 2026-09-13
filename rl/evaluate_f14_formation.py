@@ -33,6 +33,18 @@ def parse_turn_rates(value: str) -> tuple[float, ...]:
     return rates
 
 
+def parse_speeds(value: str) -> tuple[float, ...]:
+    try:
+        speeds = tuple(float(item) for item in value.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("speeds must be numbers") from error
+    if not speeds or not all(math.isfinite(speed) for speed in speeds):
+        raise argparse.ArgumentTypeError("speeds must be finite")
+    if any(speed <= 0.0 for speed in speeds):
+        raise argparse.ArgumentTypeError("speeds must be positive")
+    return speeds
+
+
 def evaluate_turn(
     swarm: RlF14Swarm,
     turn_rate: float,
@@ -95,6 +107,7 @@ def evaluate_turn(
             )
     values = np.asarray(errors)
     return {
+        "speed_mps": speed_mps,
         "turn_rate_radps": turn_rate,
         "samples": len(errors),
         "slot_error_rmse_m": float(np.sqrt(np.mean(values * values))),
@@ -116,6 +129,9 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--turn-rates", type=parse_turn_rates, default=(-0.04, 0.04)
     )
+    parser.add_argument(
+        "--speeds", type=parse_speeds
+    )
     parser.add_argument("--maximum-p95-error-m", type=float, default=80.0)
     parser.add_argument("--minimum-separation-m", type=float, default=80.0)
     parser.add_argument("--output", type=Path)
@@ -131,6 +147,14 @@ def main(argv=None) -> int:
         parser.error("formation thresholds must be positive")
 
     contract = FlightContract.from_json(args.contract)
+    speeds = args.speeds or (
+        (180.0, 400.0, 700.0) if contract.revision == 3 else (180.0,)
+    )
+    if any(
+        speed < contract.goal.low[0] or speed > contract.goal.high[0]
+        for speed in speeds
+    ):
+        parser.error("--speeds must be within the contract airspeed bounds")
     swarm = RlF14Swarm(contract, args.model, args.size, args.contract)
     scenarios = [
         evaluate_turn(
@@ -138,7 +162,9 @@ def main(argv=None) -> int:
             rate,
             seconds=args.seconds,
             settle_seconds=args.settle_seconds,
+            speed_mps=speed,
         )
+        for speed in speeds
         for rate in args.turn_rates
     ]
     passed = all(

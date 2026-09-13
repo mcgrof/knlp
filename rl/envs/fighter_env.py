@@ -11,14 +11,21 @@ import numpy as np
 from gymnasium import spaces
 
 from rl.flight.contracts import FlightContract
-from rl.flight.fighter_dynamics import FighterDynamics
+from rl.flight.fighter_dynamics import (
+    GRAVITY_MPS2,
+    FighterDynamics,
+    fighter_envelope,
+)
 from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
 
 CONTRACT_DIRECTORY = Path(__file__).resolve().parents[1] / "contracts"
 DEFAULT_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v1.json"
 LIVE_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v2.json"
-MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
-MANEUVER_HIGH = np.asarray((280.0, 30.0, 0.08))
+FORMATION_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v3.json"
+LEGACY_MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
+LEGACY_MANEUVER_HIGH = np.asarray((280.0, 30.0, 0.08))
+FAST_MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
+FAST_MANEUVER_HIGH = np.asarray((760.0, 30.0, 0.08))
 
 
 class FighterEnv(gym.Env):
@@ -38,7 +45,13 @@ class FighterEnv(gym.Env):
     ):
         super().__init__()
         self.contract = FlightContract.from_json(contract_path)
-        self.dynamics = FighterDynamics()
+        self.dynamics = FighterDynamics(fighter_envelope(self.contract.revision))
+        if self.contract.revision == 3:
+            self.maneuver_low = FAST_MANEUVER_LOW
+            self.maneuver_high = FAST_MANEUVER_HIGH
+        else:
+            self.maneuver_low = LEGACY_MANEUVER_LOW
+            self.maneuver_high = LEGACY_MANEUVER_HIGH
         self.dt_s = self.contract.nominal_dt_s
         if goal_mode not in {"fixed", "maneuver"}:
             raise ValueError(f"unknown fighter goal mode {goal_mode!r}")
@@ -54,14 +67,17 @@ class FighterEnv(gym.Env):
             self.contract.goal.validate(goal, "goal"), dtype=np.float64
         )
         self.goal = self.default_goal.copy()
+        velocity_bound = max(
+            500.0, self.dynamics.envelope.maximum_airspeed_mps + 10.0
+        )
         self._state_low = np.asarray(
             (
                 -1_000_000.0,
                 -1_000_000.0,
                 -100_000.0,
-                -500.0,
-                -500.0,
-                -500.0,
+                -velocity_bound,
+                -velocity_bound,
+                -velocity_bound,
                 -1.0,
                 -1.0,
                 -1.0,
@@ -93,7 +109,18 @@ class FighterEnv(gym.Env):
         self._return = 0.0
 
     def _sample_goal(self) -> np.ndarray:
-        return self.np_random.uniform(MANEUVER_LOW, MANEUVER_HIGH)
+        goal = self.np_random.uniform(self.maneuver_low, self.maneuver_high)
+        if self.contract.revision == 3:
+            maximum_turn = min(
+                self.maneuver_high[2],
+                GRAVITY_MPS2
+                * math.tan(
+                    self.dynamics.envelope.maximum_commanded_roll_rad
+                )
+                / goal[0],
+            )
+            goal[2] = self.np_random.uniform(-maximum_turn, maximum_turn)
+        return goal
 
     def tracking(self, state: np.ndarray | None = None) -> np.ndarray:
         values = self.dynamics.state_vector() if state is None else state
@@ -107,7 +134,7 @@ class FighterEnv(gym.Env):
 
     def _observation(self, state: np.ndarray | None = None) -> np.ndarray:
         values = self.dynamics.state_vector() if state is None else state
-        if self.contract.revision == 1:
+        if self.contract.revision in {1, 3}:
             motor_state = values[3:]
         elif self.contract.revision == 2:
             rotation = quaternion_body_to_ned(values[6:10])
@@ -140,7 +167,10 @@ class FighterEnv(gym.Env):
         if options.get("randomize", self.random_start):
             state[:2] = self.np_random.uniform(-20.0, 20.0, 2)
             state[2] = self.np_random.uniform(-1800.0, -1200.0)
-            speed = self.np_random.uniform(110.0, 330.0)
+            maximum_start_speed = (
+                780.0 if self.contract.revision == 3 else 330.0
+            )
+            speed = self.np_random.uniform(110.0, maximum_start_speed)
             attitude = quaternion_from_euler(
                 self.np_random.uniform(
                     -math.radians(10.0), math.radians(10.0)
@@ -178,11 +208,15 @@ class FighterEnv(gym.Env):
             or np.any(state > self._state_high)
         )
         ground_contact = bool(np.isfinite(state).all() and state[2] >= 0.0)
+        speed_error_scale = 80.0 if self.contract.revision == 3 else 35.0
         tracking_error = (self.tracking(state) - applied_goal) / np.asarray(
-            (35.0, 15.0, 0.04)
+            (speed_error_scale, 15.0, 0.04)
         )
         centered_action = controls.copy()
-        centered_action[0] -= (self.tracking(state)[0] / 320.0) ** 2
+        centered_action[0] -= (
+            self.tracking(state)[0]
+            / self.dynamics.envelope.thrust_speed_mps
+        ) ** 2
         terms = {
             "alive": 1.0,
             "tracking": -float(np.dot(tracking_error, tracking_error)),

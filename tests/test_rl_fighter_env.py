@@ -7,7 +7,11 @@ gym = pytest.importorskip("gymnasium")
 
 from rl.controls.fighter import FighterReferenceController  # noqa: E402
 from rl.envs import make_env  # noqa: E402
-from rl.envs.fighter_env import FighterEnv, LIVE_CONTRACT  # noqa: E402
+from rl.envs.fighter_env import (  # noqa: E402
+    FORMATION_CONTRACT,
+    FighterEnv,
+    LIVE_CONTRACT,
+)
 
 
 def rollout(env, controller, limit=3000):
@@ -80,6 +84,57 @@ def test_registry_builds_maneuver_environment():
         assert env.action_space.shape == (4,)
         assert np.all(env.goal >= np.asarray((120.0, -30.0, -0.08)))
         assert np.all(env.goal <= np.asarray((280.0, 30.0, 0.08)))
+    finally:
+        env.close()
+
+
+def test_fast_formation_contract_samples_the_supersonic_envelope():
+    env = FighterEnv(
+        contract_path=FORMATION_CONTRACT,
+        goal_mode="maneuver",
+        max_seconds=0.2,
+    )
+    try:
+        speeds = []
+        for seed in range(100):
+            env.reset(seed=seed)
+            speeds.append(env.goal[0])
+            achievable_turn = (
+                9.80665
+                * np.tan(env.dynamics.envelope.maximum_commanded_roll_rad)
+                / env.goal[0]
+            )
+            assert abs(env.goal[2]) <= achievable_turn
+        assert env.contract.revision == 3
+        assert env.observation_space.shape == (13,)
+        assert max(speeds) > 700.0
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    "goal",
+    (
+        (400.0, 0.0, 0.0),
+        (700.0, 20.0, 0.04),
+        (700.0, -20.0, -0.04),
+    ),
+)
+def test_reference_tracks_fast_formation_envelope(goal):
+    env = FighterEnv(
+        contract_path=FORMATION_CONTRACT,
+        goal=goal,
+        max_seconds=60.0,
+        random_start=False,
+    )
+    try:
+        env.reset(seed=0)
+        last = rollout(env, FighterReferenceController())
+        error = np.abs(env.tracking() - np.asarray(goal))
+        assert last[3] and not last[2]
+        assert error[0] < 6.0
+        assert error[1] < 4.0
+        assert error[2] < 0.02
     finally:
         env.close()
 
