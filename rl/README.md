@@ -187,19 +187,21 @@ Laminar F-14D. Start X-Plane first, load an airborne F-14, and then run:
 ```
 F14_RESULTS=/data/knlp-key-results/xplane-f14-20260912
 python -m rl.flight.control_f14 \
-  --contract rl/contracts/fighter-controls-v1.json \
-  --model "$F14_RESULTS/runs/f14-formation-dagger-s1-v1/actor.npz" \
+  --contract rl/contracts/fighter-controls-v2.json \
+  --model "$F14_RESULTS/runs/f14-live-dagger-s2-v1/actor.npz" \
+  --transport web \
   --airspeed 180 --climb-rate 0 --turn-rate 0 \
   --output "$F14_RESULTS/live/player.jsonl"
 ```
 
-The adapter defaults to polling X-Plane's local REST API and never installs
-the UFO plugin into the fighter. WebSocket and legacy RREF/DREF transports
-remain diagnostic options. It waits for at least 100 m/s, 150 m AGL, fresh
-telemetry,
-and an unpaused simulator before taking the joystick and engine controls. Ten
-consecutive safe samples are required at startup and after a pause. Pause,
-stale input, unsafe flight, interruption, and normal exit all drop the
+The live adapter uses X-Plane's 10 Hz WebSocket stream and never installs the
+UFO plugin into the fighter. REST polling is too slow for control and remains
+diagnostic only. Before taking over, the adapter requires ten samples at no
+less than 8 Hz, 140--230 m/s, 500 m AGL, at most 5 m/s climb or descent,
+attitude within 10 degrees, and body rates below 0.15 rad/s. Its yaw-invariant
+revision-2 actor then blends in over three seconds. Surface commands are
+bounded to 35 percent and slew limited. Pause, stale input, an unsafe live
+envelope, interruption, and normal exit all release the joystick and engine
 overrides. This first live gate holds a fixed speed, climb rate, and turn rate;
 mission choreography and learned formation tactics remain separate.
 

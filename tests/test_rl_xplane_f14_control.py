@@ -16,9 +16,11 @@ from rl.flight.control_f14 import (
     RUDDER,
     THROTTLE_0,
     THROTTLE_1,
+    F14LiveLimiter,
     f14_observation,
     run_controller,
     safe_handoff,
+    sample_rate_hz,
     write_action,
     write_overrides,
 )
@@ -135,6 +137,34 @@ def test_xplane_state_converts_to_fighter_ned_contract():
     assert observation[7:] == (0.1, -0.2, 0.03)
 
 
+def test_xplane_state_converts_to_yaw_invariant_live_contract():
+    observation = f14_observation(
+        sample(
+            local_vx=30.0,
+            local_vy=8.0,
+            local_vz=-170.0,
+            roll_deg=10.0,
+            pitch_deg=5.0,
+            heading_deg=90.0,
+            roll_rate=0.1,
+            pitch_rate=-0.2,
+            yaw_rate=0.03,
+        ),
+        revision=2,
+    )
+    assert observation == pytest.approx(
+        (
+            math.sqrt(170.0**2 + 30.0**2 + 8.0**2),
+            8.0,
+            math.radians(10.0),
+            math.radians(5.0),
+            0.1,
+            -0.2,
+            0.03,
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "updates",
     (
@@ -146,6 +176,42 @@ def test_xplane_state_converts_to_fighter_ned_contract():
 )
 def test_f14_handoff_rejects_unsafe_live_state(updates):
     assert not safe_handoff(sample(**updates))
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"local_vz": -130.0},
+        {"local_vz": -240.0},
+        {"local_vy": 6.0},
+        {"height_agl": 499.0},
+        {"roll_deg": 11.0},
+        {"pitch_rate": 0.16},
+    ),
+)
+def test_f14_initial_handoff_requires_trimmed_flight(updates):
+    assert not safe_handoff(sample(**updates), initial=True)
+
+
+def test_live_limiter_blends_bounds_and_slew_limits_actor_actions():
+    limiter = F14LiveLimiter()
+    assert limiter.apply((0.0, 1.0, -1.0, 1.0), 1_000_000_000) == (
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+    )
+    second = limiter.apply((0.0, 1.0, -1.0, 1.0), 2_000_000_000)
+    assert second == pytest.approx((0.4125, 0.2, -0.2, 0.2))
+    third = limiter.apply((1.0, 1.0, -1.0, 1.0), 3_000_000_000)
+    assert third == pytest.approx((0.5, 0.35, -0.35, 0.35))
+
+
+def test_sample_rate_reports_transport_cadence():
+    assert sample_rate_hz(tuple(range(0, 1_000_000_000, 100_000_000))) == 10.0
+    assert sample_rate_hz((0, 280_000_000, 560_000_000)) == pytest.approx(
+        3.57142857
+    )
 
 
 def test_f14_control_owns_and_releases_only_control_axes():
@@ -196,4 +262,5 @@ def test_live_controller_releases_overrides_on_unsafe_transition():
     ]
     record = json.loads(output.getvalue())
     assert record["kind"] == "xplane_f14_control"
-    assert record["action"] == [0.7, -0.2, 0.3, -0.4]
+    assert record["actor_action"] == [0.7, -0.2, 0.3, -0.4]
+    assert record["action"] == [0.5, 0.0, 0.0, 0.0]

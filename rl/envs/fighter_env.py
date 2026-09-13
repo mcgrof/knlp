@@ -14,9 +14,9 @@ from rl.flight.contracts import FlightContract
 from rl.flight.fighter_dynamics import FighterDynamics
 from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
 
-DEFAULT_CONTRACT = (
-    Path(__file__).resolve().parents[1] / "contracts" / ("fighter-controls-v1.json")
-)
+CONTRACT_DIRECTORY = Path(__file__).resolve().parents[1] / "contracts"
+DEFAULT_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v1.json"
+LIVE_CONTRACT = CONTRACT_DIRECTORY / "fighter-controls-v2.json"
 MANEUVER_LOW = np.asarray((120.0, -30.0, -0.08))
 MANEUVER_HIGH = np.asarray((280.0, 30.0, 0.08))
 
@@ -55,11 +55,24 @@ class FighterEnv(gym.Env):
         )
         self.goal = self.default_goal.copy()
         self._state_low = np.asarray(
-            (-1_000_000.0, -1_000_000.0, -100_000.0, *self.contract.observation.low)
+            (
+                -1_000_000.0,
+                -1_000_000.0,
+                -100_000.0,
+                -500.0,
+                -500.0,
+                -500.0,
+                -1.0,
+                -1.0,
+                -1.0,
+                -1.0,
+                -4.0,
+                -4.0,
+                -4.0,
+            )
         )
-        self._state_high = np.asarray(
-            (1_000_000.0, 1_000_000.0, 10_000.0, *self.contract.observation.high)
-        )
+        self._state_high = -self._state_low
+        self._state_high[2] = 10_000.0
         self.observation_space = spaces.Box(
             low=np.asarray(
                 (*self.contract.observation.low, *self.contract.goal.low),
@@ -94,7 +107,26 @@ class FighterEnv(gym.Env):
 
     def _observation(self, state: np.ndarray | None = None) -> np.ndarray:
         values = self.dynamics.state_vector() if state is None else state
-        motor_state = values[3:]
+        if self.contract.revision == 1:
+            motor_state = values[3:]
+        elif self.contract.revision == 2:
+            rotation = quaternion_body_to_ned(values[6:10])
+            roll = math.atan2(float(rotation[2, 1]), float(rotation[2, 2]))
+            pitch = math.asin(float(np.clip(-rotation[2, 0], -1.0, 1.0)))
+            motor_state = np.asarray(
+                (
+                    float(np.linalg.norm(values[3:6])),
+                    -float(values[5]),
+                    roll,
+                    pitch,
+                    *values[10:13],
+                )
+            )
+        else:
+            raise ValueError(
+                "unsupported fighter contract revision "
+                f"{self.contract.revision}"
+            )
         self.contract.observation.validate(motor_state, "observation")
         return np.asarray((*motor_state, *self.goal), dtype=np.float32)
 
@@ -108,13 +140,19 @@ class FighterEnv(gym.Env):
         if options.get("randomize", self.random_start):
             state[:2] = self.np_random.uniform(-20.0, 20.0, 2)
             state[2] = self.np_random.uniform(-1800.0, -1200.0)
-            speed = self.np_random.uniform(140.0, 230.0)
+            speed = self.np_random.uniform(110.0, 330.0)
             attitude = quaternion_from_euler(
-                *self.np_random.uniform(-math.radians(6.0), math.radians(6.0), 3)
+                self.np_random.uniform(
+                    -math.radians(10.0), math.radians(10.0)
+                ),
+                self.np_random.uniform(
+                    -math.radians(10.0), math.radians(10.0)
+                ),
+                self.np_random.uniform(-math.pi, math.pi),
             )
             state[6:10] = attitude
             state[3:6] = quaternion_body_to_ned(attitude)[:, 0] * speed
-            state[10:13] = self.np_random.uniform(-0.04, 0.04, 3)
+            state[10:13] = self.np_random.uniform(-0.08, 0.08, 3)
         self.goal = np.asarray(
             self.contract.goal.validate(
                 options.get(

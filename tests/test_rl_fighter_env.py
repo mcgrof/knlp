@@ -7,7 +7,7 @@ gym = pytest.importorskip("gymnasium")
 
 from rl.controls.fighter import FighterReferenceController  # noqa: E402
 from rl.envs import make_env  # noqa: E402
-from rl.envs.fighter_env import FighterEnv  # noqa: E402
+from rl.envs.fighter_env import FighterEnv, LIVE_CONTRACT  # noqa: E402
 
 
 def rollout(env, controller, limit=3000):
@@ -80,5 +80,19 @@ def test_registry_builds_maneuver_environment():
         assert env.action_space.shape == (4,)
         assert np.all(env.goal >= np.asarray((120.0, -30.0, -0.08)))
         assert np.all(env.goal <= np.asarray((280.0, 30.0, 0.08)))
+    finally:
+        env.close()
+
+
+def test_live_contract_is_yaw_invariant_and_runs_at_ten_hz():
+    env = FighterEnv(
+        contract_path=LIVE_CONTRACT,
+        max_seconds=0.2,
+    )
+    try:
+        observation, _ = env.reset(seed=23)
+        assert observation.shape == (10,)
+        assert env.contract.revision == 2
+        assert env.dt_s == 0.1
     finally:
         env.close()
