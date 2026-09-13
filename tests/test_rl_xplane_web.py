@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from rl.flight.xplane_web import XPlaneWeb, dataref_query
 
 
@@ -37,6 +39,11 @@ class FakeSocket:
 
     def close(self):
         self.closed = True
+
+
+class RawFakeSocket(FakeSocket):
+    def recv(self):
+        return self.messages.pop(0)
 
 
 def test_dataref_query_uses_repeated_exact_name_filters():
@@ -87,3 +94,23 @@ def test_web_transport_subscribes_reads_and_batches_indexed_writes():
     ]
     client.close()
     assert wire.closed
+
+
+@pytest.mark.parametrize("payload", ("", b""))
+def test_web_transport_reports_a_closed_connection(payload):
+    wire = RawFakeSocket()
+    wire.messages = [payload]
+    client = XPlaneWeb(socket_factory=lambda url, timeout: wire)
+    client.socket = wire
+    with pytest.raises(ConnectionError, match="closed"):
+        client.receive(0.2)
+
+
+@pytest.mark.parametrize("payload", ("not-json", "[]"))
+def test_web_transport_rejects_invalid_messages(payload):
+    wire = RawFakeSocket()
+    wire.messages = [payload]
+    client = XPlaneWeb(socket_factory=lambda url, timeout: wire)
+    client.socket = wire
+    with pytest.raises(RuntimeError, match="WebSocket message"):
+        client.receive(0.2)

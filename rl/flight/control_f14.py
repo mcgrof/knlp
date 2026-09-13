@@ -244,7 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--transport", choices=("web", "udp"), default="web")
+    parser.add_argument("--transport", choices=("web", "udp"), default="udp")
     parser.add_argument("--port", type=int)
     parser.add_argument("--airspeed", type=float, default=180.0)
     parser.add_argument("--climb-rate", type=float, default=0.0)

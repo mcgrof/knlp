@@ -148,13 +148,27 @@ class XPlaneWeb:
         self.socket.settimeout(timeout_s)
         while True:
             try:
-                message = json.loads(self.socket.recv())
+                payload = self.socket.recv()
             except TimeoutError as error:
                 raise socket.timeout from error
             except Exception as error:
                 if error.__class__.__name__ == "WebSocketTimeoutException":
                     raise socket.timeout from error
                 raise
+            if payload in ("", b""):
+                raise ConnectionError(
+                    "X-Plane closed the WebSocket connection"
+                )
+            try:
+                message = json.loads(payload)
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise RuntimeError(
+                    "X-Plane returned an invalid WebSocket message"
+                ) from error
+            if not isinstance(message, dict):
+                raise RuntimeError(
+                    "X-Plane returned a non-object WebSocket message"
+                )
             if message.get("type") == "result":
                 if not message.get("success"):
                     detail = message.get("error_message", "unknown error")
