@@ -164,9 +164,14 @@ class FighterEnv(gym.Env):
         self._steps = 0
         self._return = 0.0
         state = self.dynamics.state
+        if self.contract.revision == 3:
+            state[2] = -7000.0
         if options.get("randomize", self.random_start):
             state[:2] = self.np_random.uniform(-20.0, 20.0, 2)
-            state[2] = self.np_random.uniform(-1800.0, -1200.0)
+            state[2] = self.np_random.uniform(
+                -8000.0 if self.contract.revision == 3 else -1800.0,
+                -6000.0 if self.contract.revision == 3 else -1200.0,
+            )
             maximum_start_speed = (
                 780.0 if self.contract.revision == 3 else 330.0
             )

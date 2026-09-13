@@ -70,7 +70,7 @@ def evaluate_turn(
     steps = math.ceil(seconds / dt_s)
     settle_steps = math.ceil(settle_seconds / dt_s)
     player = np.zeros(13, dtype=np.float64)
-    player[2] = -1500.0
+    player[2] = -(1500.0 + max(0.0, -climb_rate_mps) * seconds)
     if abs(climb_rate_mps) >= speed_mps:
         raise ValueError("climb rate magnitude must be below airspeed")
     horizontal_speed_mps = math.sqrt(
