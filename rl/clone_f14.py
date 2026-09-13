@@ -18,12 +18,14 @@ from rl.clone_ufo import collect_dagger, collect_reference, train_actor
 from rl.continuous import SquashedGaussianAgent, action_bounds
 from rl.controls.fighter import fighter_reference_controller
 from rl.envs import make_env
+from rl.envs.fighter_env import DEFAULT_CONTRACT
 from rl.ppo import _git_head, _sha256
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     parser.add_argument("--steps", type=int, default=50_000)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -61,6 +63,7 @@ def main(argv=None) -> int:
     knlp_commit = args.knlp_commit or _git_head(Path(__file__).resolve().parents[1])
     env = make_env(
         "f14:formation",
+        contract_path=args.contract,
         max_seconds=args.max_seconds,
         random_start=True,
     )

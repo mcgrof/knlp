@@ -8,7 +8,8 @@ import math
 import signal
 import socket
 import time
-from dataclasses import asdict, dataclass
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -43,6 +44,18 @@ THROTTLE_0 = "sim/flightmodel/engine/ENGN_thro_use[0]"
 THROTTLE_1 = "sim/flightmodel/engine/ENGN_thro_use[1]"
 MINIMUM_HANDOFF_SPEED_MPS = 100.0
 MINIMUM_HANDOFF_AGL_M = 150.0
+INITIAL_MINIMUM_SPEED_MPS = 140.0
+INITIAL_MAXIMUM_SPEED_MPS = 230.0
+INITIAL_MINIMUM_AGL_M = 500.0
+INITIAL_MAXIMUM_CLIMB_MPS = 5.0
+INITIAL_MAXIMUM_ATTITUDE_DEG = 10.0
+INITIAL_MAXIMUM_RATE_RADPS = 0.15
+MAXIMUM_LIVE_SPEED_MPS = 360.0
+MAXIMUM_LIVE_CLIMB_MPS = 80.0
+MAXIMUM_LIVE_ROLL_DEG = 60.0
+MAXIMUM_LIVE_PITCH_DEG = 45.0
+MAXIMUM_LIVE_RATE_RADPS = 1.2
+MINIMUM_CADENCE_FRACTION = 0.8
 MAXIMUM_SAMPLE_AGE_S = 0.25
 SAFE_HANDOFF_SAMPLES = 10
 
@@ -55,10 +68,61 @@ class F14ControlStats:
     stale_samples: int = 0
     unsafe_samples: int = 0
     armed_transitions: int = 0
+    handoff_hz: float = 0.0
     interrupted: bool = False
 
 
-def f14_observation(values: dict[str, float]) -> tuple[float, ...]:
+@dataclass
+class F14LiveLimiter:
+    """Blend into bounded, slew-limited live control surface commands."""
+
+    surface_limit: float = 0.35
+    throttle_slew_per_s: float = 0.35
+    surface_slew_per_s: float = 0.8
+    blend_seconds: float = 3.0
+    previous: list[float] = field(
+        default_factory=lambda: [0.5, 0.0, 0.0, 0.0]
+    )
+    started_ns: int | None = None
+    previous_ns: int | None = None
+
+    def apply(self, action: Sequence[float], now_ns: int) -> tuple[float, ...]:
+        raw = tuple(float(value) for value in action)
+        if len(raw) != 4 or not all(math.isfinite(value) for value in raw):
+            raise ValueError(
+                "F-14 actor action must contain four finite values"
+            )
+        if self.started_ns is None:
+            self.started_ns = now_ns
+            self.previous_ns = now_ns
+        elapsed_s = max(0.0, (now_ns - self.started_ns) / 1e9)
+        dt_s = min(0.25, max(0.0, (now_ns - self.previous_ns) / 1e9))
+        blend = min(1.0, elapsed_s / self.blend_seconds)
+        target = [
+            min(1.0, max(0.0, raw[0])),
+            *(
+                min(
+                    self.surface_limit,
+                    max(-self.surface_limit, value * blend),
+                )
+                for value in raw[1:]
+            ),
+        ]
+        limits = [self.throttle_slew_per_s, *([self.surface_slew_per_s] * 3)]
+        for index, slew_per_s in enumerate(limits):
+            maximum_delta = slew_per_s * dt_s
+            delta = min(
+                maximum_delta,
+                max(-maximum_delta, target[index] - self.previous[index]),
+            )
+            self.previous[index] += delta
+        self.previous_ns = now_ns
+        return tuple(self.previous)
+
+
+def f14_observation(
+    values: dict[str, float], revision: int = 1
+) -> tuple[float, ...]:
     """Convert X-Plane local coordinates and Euler angles to fighter ABI."""
 
     missing = set(DATAREFS) - set(values)
@@ -82,18 +146,59 @@ def f14_observation(values: dict[str, float]) -> tuple[float, ...]:
         values["pitch_rate"],
         values["yaw_rate"],
     )
-    return tuple((*velocity_ned, *quaternion, *rates))
+    if revision == 1:
+        return tuple((*velocity_ned, *quaternion, *rates))
+    if revision == 2:
+        speed = math.sqrt(sum(value * value for value in velocity_ned))
+        return (
+            speed,
+            values["local_vy"],
+            math.radians(values["roll_deg"]),
+            math.radians(values["pitch_deg"]),
+            *rates,
+        )
+    raise ValueError(f"unsupported fighter contract revision {revision}")
 
 
-def safe_handoff(values: dict[str, float]) -> bool:
+def safe_handoff(values: dict[str, float], *, initial: bool = False) -> bool:
     observation = f14_observation(values)
     speed = float(np.linalg.norm(observation[:3]))
-    return bool(
+    base_safe = bool(
         values["paused"] < 0.5
         and values["on_ground"] < 0.5
         and values["height_agl"] >= MINIMUM_HANDOFF_AGL_M
         and speed >= MINIMUM_HANDOFF_SPEED_MPS
     )
+    if not base_safe:
+        return False
+    climb_rate = values["local_vy"]
+    if initial:
+        return bool(
+            INITIAL_MINIMUM_SPEED_MPS <= speed <= INITIAL_MAXIMUM_SPEED_MPS
+            and values["height_agl"] >= INITIAL_MINIMUM_AGL_M
+            and abs(climb_rate) <= INITIAL_MAXIMUM_CLIMB_MPS
+            and abs(values["roll_deg"]) <= INITIAL_MAXIMUM_ATTITUDE_DEG
+            and abs(values["pitch_deg"]) <= INITIAL_MAXIMUM_ATTITUDE_DEG
+            and max(abs(value) for value in observation[7:])
+            <= INITIAL_MAXIMUM_RATE_RADPS
+        )
+    return bool(
+        speed <= MAXIMUM_LIVE_SPEED_MPS
+        and abs(climb_rate) <= MAXIMUM_LIVE_CLIMB_MPS
+        and abs(values["roll_deg"]) <= MAXIMUM_LIVE_ROLL_DEG
+        and abs(values["pitch_deg"]) <= MAXIMUM_LIVE_PITCH_DEG
+        and max(abs(value) for value in observation[7:])
+        <= MAXIMUM_LIVE_RATE_RADPS
+    )
+
+
+def sample_rate_hz(sample_times_ns: Sequence[int]) -> float:
+    if len(sample_times_ns) < 2:
+        return 0.0
+    duration_s = (sample_times_ns[-1] - sample_times_ns[0]) / 1e9
+    if duration_s <= 0.0:
+        return 0.0
+    return (len(sample_times_ns) - 1) / duration_s
 
 
 def write_overrides(client: XPlaneUdp, enabled: bool) -> None:
@@ -141,6 +246,8 @@ def run_controller(
     first_command_ns = None
     next_command_ns = 0
     safe_samples = 0
+    safe_sample_times: deque[int] = deque(maxlen=SAFE_HANDOFF_SAMPLES)
+    limiter = F14LiveLimiter()
     wait_deadline = time.monotonic() + wait_seconds
     client.subscribe(DATAREFS, round(1.0 / contract.nominal_dt_s))
     try:
@@ -153,13 +260,14 @@ def run_controller(
             ):
                 break
             try:
-                values = client.receive(min(0.2, contract.nominal_dt_s * 2.0))
+                values = client.receive(max(0.2, contract.nominal_dt_s * 2.0))
             except socket.timeout:
                 stats.stale_samples += 1
                 safe_samples = 0
                 if armed:
                     write_overrides(client, False)
                     armed = False
+                    limiter = F14LiveLimiter()
                 if first_command_ns is None and time.monotonic() >= wait_deadline:
                     raise TimeoutError("timed out waiting for airborne F-14 data")
                 continue
@@ -171,30 +279,43 @@ def run_controller(
             if values["paused"] >= 0.5:
                 stats.pauses += 1
                 safe_samples = 0
+                safe_sample_times.clear()
                 if armed:
                     write_overrides(client, False)
                     armed = False
+                    limiter = F14LiveLimiter()
                 continue
-            if not safe_handoff(values):
+            if not safe_handoff(values, initial=not armed):
                 stats.unsafe_samples += 1
                 safe_samples = 0
+                safe_sample_times.clear()
                 if armed:
                     write_overrides(client, False)
                     armed = False
                     raise RuntimeError("F-14 left the live actor handoff envelope")
                 if time.monotonic() >= wait_deadline:
                     raise TimeoutError(
-                        "F-14 did not become airborne above 100 m/s and 150 m AGL"
+                        "F-14 was not trimmed at 140-230 m/s above 500 m AGL"
                     )
                 continue
             safe_samples += 1
-            if not armed and safe_samples < SAFE_HANDOFF_SAMPLES:
-                continue
             now_ns = time.monotonic_ns()
+            if not armed:
+                safe_sample_times.append(now_ns)
+                if safe_samples < SAFE_HANDOFF_SAMPLES:
+                    continue
+                stats.handoff_hz = sample_rate_hz(tuple(safe_sample_times))
+                required_hz = MINIMUM_CADENCE_FRACTION / contract.nominal_dt_s
+                if stats.handoff_hz < required_hz:
+                    raise RuntimeError(
+                        "F-14 telemetry cadence "
+                        f"{stats.handoff_hz:.2f} Hz is below "
+                        f"{required_hz:.2f} Hz"
+                    )
             if now_ns < next_command_ns:
                 continue
             observation = contract.observation.validate(
-                f14_observation(values), "F-14 observation"
+                f14_observation(values, contract.revision), "F-14 observation"
             )
             frame = TelemetryFrame.create(
                 contract,
@@ -205,7 +326,8 @@ def run_controller(
                 observation=observation,
                 goal=goal,
             )
-            action, latency_ns = policy.infer(frame)
+            actor_action, latency_ns = policy.infer(frame)
+            action = limiter.apply(actor_action, now_ns)
             if not armed:
                 write_overrides(client, True)
                 armed = True
@@ -219,6 +341,7 @@ def run_controller(
                 "observation": observation,
                 "goal": goal,
                 "action": action,
+                "actor_action": actor_action,
                 "inference_latency_ns": latency_ns,
             }
             output.write(json.dumps(record, separators=(",", ":")) + "\n")

@@ -10,6 +10,7 @@ import numpy as np
 
 from rl.controls.fighter import fighter_reference_controller
 from rl.envs import make_env
+from rl.envs.fighter_env import DEFAULT_CONTRACT
 from rl.evaluate_ufo import checkpoint_policy, parse_seeds
 from rl.ppo import _git_head, _sha256
 
@@ -70,6 +71,7 @@ def summarize(episodes: list[dict]) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument(
         "--seeds",
@@ -82,6 +84,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     env = make_env(
         "f14:formation",
+        contract_path=args.contract,
         max_seconds=args.max_seconds,
         random_start=True,
     )

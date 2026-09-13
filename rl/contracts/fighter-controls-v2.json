@@ -1,0 +1,31 @@
+{
+  "action": {
+    "fields": ["throttle", "aileron", "elevator", "rudder"],
+    "high": [1.0, 1.0, 1.0, 1.0],
+    "low": [0.0, -1.0, -1.0, -1.0],
+    "units": ["ratio", "ratio", "ratio", "ratio"]
+  },
+  "goal": {
+    "fields": ["airspeed", "climb_rate", "turn_rate"],
+    "high": [350.0, 80.0, 0.2],
+    "low": [80.0, -80.0, -0.2],
+    "units": ["m/s", "m/s", "rad/s"]
+  },
+  "name": "knlp-fighter-live-controls",
+  "nominal_dt_s": 0.1,
+  "observation": {
+    "fields": [
+      "airspeed",
+      "climb_rate",
+      "roll",
+      "pitch",
+      "angular_velocity_body_x",
+      "angular_velocity_body_y",
+      "angular_velocity_body_z"
+    ],
+    "high": [500.0, 200.0, 3.141593, 1.570797, 4.0, 4.0, 4.0],
+    "low": [0.0, -200.0, -3.141593, -1.570797, -4.0, -4.0, -4.0],
+    "units": ["m/s", "m/s", "rad", "rad", "rad/s", "rad/s", "rad/s"]
+  },
+  "revision": 2
+}
