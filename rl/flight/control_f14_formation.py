@@ -39,6 +39,7 @@ class F14FormationStats:
     unsafe_samples: int = 0
     armed_transitions: int = 0
     override_releases: int = 0
+    transport_disconnects: int = 0
     interrupted: bool = False
 
 
@@ -137,7 +138,11 @@ def run_formation(
         nonlocal armed
         if not armed:
             return
-        write_formation_overrides(client, swarm.size, False)
+        try:
+            write_formation_overrides(client, swarm.size, False)
+        except Exception:
+            client.close()
+            write_formation_overrides(client, swarm.size, False)
         armed = False
         stats.override_releases += 1
 
@@ -152,6 +157,10 @@ def run_formation(
                 break
             try:
                 values = client.receive(0.3)
+            except ConnectionError:
+                stats.transport_disconnects += 1
+                release()
+                raise
             except socket.timeout:
                 stats.stale_samples += 1
                 release()

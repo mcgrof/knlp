@@ -68,6 +68,27 @@ class FakeLiveClient(FakeClient):
         assert maximum_age_s == 0.25
         return True
 
+    def close(self):
+        pass
+
+
+class RetryReleaseClient(FakeLiveClient):
+    def __init__(self):
+        super().__init__()
+        self.release_failures = 0
+        self.close_calls = 0
+
+    def write_many(self, values):
+        values = tuple(values)
+        is_release = values == ((f"{OVERRIDE_PLANEPATH}[1]", 0.0),)
+        if is_release and not self.release_failures:
+            self.release_failures += 1
+            raise ConnectionError("dead formation socket")
+        self.writes.extend(values)
+
+    def close(self):
+        self.close_calls += 1
+
 
 class FakeSwarm:
     size = 1
@@ -151,3 +172,18 @@ def test_live_formation_releases_ai_paths_without_touching_player():
     assert stats.frames == 1
     assert stats.override_releases == 1
     assert stats.interrupted
+
+
+def test_live_formation_reconnects_to_release_a_dead_socket():
+    client = RetryReleaseClient()
+    stats = run_formation(
+        client,
+        FakeSwarm(),
+        StringIO(),
+        wait_seconds=1.0,
+        duration_seconds=None,
+    )
+    assert client.close_calls == 1
+    assert client.release_failures == 1
+    assert client.writes[-1] == (f"{OVERRIDE_PLANEPATH}[1]", 0.0)
+    assert stats.override_releases == 1
