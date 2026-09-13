@@ -108,6 +108,7 @@ def test_fast_formation_contract_samples_the_supersonic_envelope():
         assert env.contract.revision == 3
         assert env.observation_space.shape == (13,)
         assert max(speeds) > 700.0
+        assert env.dynamics.state[2] <= -6000.0
     finally:
         env.close()
 
