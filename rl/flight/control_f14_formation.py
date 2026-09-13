@@ -43,7 +43,7 @@ class F14FormationStats:
     armed_transitions: int = 0
     override_releases: int = 0
     transport_disconnects: int = 0
-    hostile_samples: int = 0
+    non_friend_samples: int = 0
     extrapolated_frames: int = 0
     maximum_leader_speed_mps: float = 0.0
     maximum_leader_climb_mps: float = 0.0
@@ -249,17 +249,17 @@ def run_formation(
             values = extrapolate_player_values(latest_values, sample_age_s)
             if not received:
                 stats.extrapolated_frames += 1
-            hostile_slots = [
+            non_friend_slots = [
                 index
                 for index in range(1, swarm.size + 1)
-                if round(values[f"team_status_{index}"]) == 2
+                if round(values[f"team_status_{index}"]) != 1
             ]
-            if hostile_slots:
-                stats.hostile_samples += 1
+            if non_friend_slots:
+                stats.non_friend_samples += 1
                 release()
                 print(
-                    "F-14 formation refused hostile AI slots: "
-                    + ", ".join(str(index) for index in hostile_slots),
+                    "F-14 formation requires friend AI slots; refused: "
+                    + ", ".join(str(index) for index in non_friend_slots),
                     flush=True,
                 )
                 break
