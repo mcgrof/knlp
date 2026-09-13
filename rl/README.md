@@ -215,6 +215,16 @@ one-frame leader relocation, including BLINK, translates every formation
 member by the same vector so the group keeps its slots instead of crossing
 the intervening scenery at normal flight speed.
 
+The stock F-14 can also lead configured AI F-14s without loading the UFO
+aircraft plugin. `rl.flight.control_f14_formation` reads the player pose from
+X-Plane's Web API, advances one frozen motor actor and fixed-wing dynamics
+instance per follower, and writes only multiplayer aircraft paths. Its slot
+velocity includes the rigid-formation turn term, so followers do not cut
+through the V when the leader banks. Pause, stale telemetry, interruption,
+and normal exit release every acquired AI path; aircraft zero remains manual.
+The `xplane-ufo` helper `tools/ai_f14_formation.sh` supervises this adapter in
+a named tmux session.
+
 Combat exposes a one-use shield request beside each enemy pose. The current
 director raises it deterministically on the first close attack. That field is
 an interface for a future tactical policy, not evidence that shield timing is
