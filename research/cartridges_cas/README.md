@@ -247,7 +247,8 @@ cartridges. Because the library block mask cannot express a per-sample random
 reveal, the mask is replaced with a full-length reveal-vector lookup keyed by
 cartridge slot (`kv_idx // KV_TOKENS`).
 
-The full reproduction — baselines, the lossless-path control, collapse/rescue, the
-single-cartridge gap, the deltas against the public implementation, and where the
-next gains come from — is written up at
-[docs/cas.md](../../docs/cas.md).
+The full reproduction — the faithful training recipe, five-patient result,
+lossless-path control, implementation, and measured findings — is written up at
+[docs/cas.html](../../docs/cas.html). Experiments that extend the paper's method
+are collected separately in
+[docs/cas-extensions.html](../../docs/cas-extensions.html).

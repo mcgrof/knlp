@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartridges at Scale: Extensions and R&amp;D</title>
+<link rel="canonical" href="https://knlp.io/cas-extensions.html">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&amp;family=IBM+Plex+Sans:wght@300;400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e14; --bg2: #10151c; --bg3: #161d26;
+  --surface: #1a222e; --border: #2a3444; --border2: #3a4a5c;
+  --text: #c8d6e5; --text2: #7a8ea0; --text3: #4a5e70;
+  --green: #00e87c; --green-bg: #00e87c18;
+  --cyan: #00d4c8; --amber: #f0a030; --purple: #a070e8;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; line-height: 1.7; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px; }
+header { text-align: center; padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+header h1 { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--purple); margin-bottom: 8px; }
+header p { color: var(--text2); font-size: 13px; max-width: 720px; margin: 0 auto 6px; }
+section { margin-bottom: 40px; scroll-margin-top: 20px; }
+h2 { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--cyan); margin: 22px 0 10px; }
+p { margin-bottom: 14px; color: var(--text2); }
+strong { color: var(--text); font-weight: 600; }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 0 0 32px; columns: 2; column-gap: 32px; font-family: var(--mono); font-size: 12px; }
+.toc a { color: var(--text2); display: block; padding: 3px 0; }
+.toc a:hover { color: var(--green); text-decoration: none; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+.stat .val { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--purple); }
+.stat .val.green { color: var(--green); }
+.stat .val.cyan { color: var(--cyan); }
+.stat .val.amber { color: var(--amber); }
+.stat .label { font-size: 10px; color: var(--text3); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.4; }
+.table-wrap { overflow-x: auto; margin: 16px 0; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2px solid var(--border); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; white-space: nowrap; }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text2); }
+td.hi { color: var(--green); font-weight: 600; }
+tr:hover td { background: var(--bg3); }
+.note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; color: var(--text2); }
+.note strong { color: var(--green); }
+.cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 18px 0; }
+.card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+.card:hover { border-color: var(--border2); text-decoration: none; }
+.card strong { display: block; color: var(--cyan); margin-bottom: 6px; }
+.card span { color: var(--text2); }
+code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
+footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
+footer a { color: var(--text2); }
+@media (max-width: 640px) { .toc { columns: 1; } .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>CAS Extensions and R&amp;D</h1>
+  <p>Follow-on experiments built from the Qwen3-8B LongHealth reproduction.
+  These studies change the initialization, objective, or serving format and are
+  separate from reproduction of the Cartridges at Scale paper.</p>
+  <p><a href="cas.html">CAS reproduction</a>
+  &middot; <a href="cartridge-asymmetric-quantization.html">asymmetric cartridge quantization</a>
+  &middot; <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">research harness</a></p>
+</header>
+
+<div class="stat-grid">
+  <div class="stat"><div class="val">3.3&ndash;5.6</div><div class="label">loss-curve steps gained<br>by meta-initialization</div></div>
+  <div class="stat"><div class="val green">&le;180</div><div class="label">steps until the<br>initialization is forgotten</div></div>
+  <div class="stat"><div class="val amber">42 / 60</div><div class="label">reverse-KL pilot<br>versus 39 / 60</div></div>
+  <div class="stat"><div class="val cyan">+0.033%</div><div class="label">mean K16/V8 relative<br>loss increase</div></div>
+</div>
+
+<div class="toc">
+  <a href="#scope">1. Scope</a>
+  <a href="#meta-init">2. Meta-learned initialization</a>
+  <a href="#reverse-kl">3. Reverse-KL warm start</a>
+  <a href="#quantization">4. Asymmetric cartridge quantization</a>
+  <a href="#code">5. Public implementation</a>
+</div>
+
+<section id="scope">
+<h2>1. Scope</h2>
+<p>The main <a href="cas.html">CAS reproduction page</a> reports the paper
+recipe, LongHealth evaluation, cache-path controls, implementation details, and
+observations made while running that recipe. This page collects experiments
+that begin from the reproduced cartridge and then change the method.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Work</th><th>Question</th><th>Result</th></tr>
+<tr><td>Meta-initialization</td><td>Can other trained cartridges shorten a new run?</td><td>No useful speedup</td></tr>
+<tr><td>Reverse KL</td><td>Can a different objective improve free generation?</td><td>No resolved gain</td></tr>
+<tr><td>Asymmetric quantization</td><td>Can a cartridge use FP8 without losing key fidelity?</td><td class="hi">0.029%&ndash;0.038% loss increase with K16/V8</td></tr>
+</table>
+</div>
+</section>
+
+<section id="meta-init">
+<h2>2. Meta-learned initialization</h2>
+<p>This experiment fits a shared early-training displacement from other
+documents and applies it to a new cartridge before training. On patient 02,
+the best step-60 affine initialization lowered step-zero held-out loss, but the
+ordinary training trajectory quickly absorbed the difference.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Measurement</th><th>Result</th></tr>
+<tr><td>Head start at 50% of the baseline loss drop</td><td>3.3 optimizer steps</td></tr>
+<tr><td>Head start at 75% of the baseline loss drop</td><td>5.0 optimizer steps</td></tr>
+<tr><td>Head start at 90% of the baseline loss drop</td><td>5.6 optimizer steps</td></tr>
+<tr><td>Difference by step 180</td><td>less than 0.00003 loss</td></tr>
+<tr><td>Same-seed repeat through step 110</td><td>bit-for-bit identical</td></tr>
+</table>
+</div>
+<p>The faithful run takes roughly 1,000 optimizer steps. Saving at most six
+steps, with no persistent loss difference after step 180, does not provide a
+useful training-speed improvement at this scale.</p>
+</section>
+
+<section id="reverse-kl">
+<h2>3. Reverse-KL warm start</h2>
+<p>The pilot warm-started patient 02 from the 0.65 cartridge, optimized a
+reverse Kullback&ndash;Leibler objective for 200 steps at a learning rate of
+0.005, and evaluated the resulting cartridge with three Table-15 generation
+runs.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Cartridge</th><th>Accuracy</th><th>Correct answers</th></tr>
+<tr><td>Faithful CAS starting point</td><td>0.65 &plusmn; 0.05</td><td>39 / 60</td></tr>
+<tr><td>Reverse-KL step 200</td><td>0.70 &plusmn; 0.05</td><td>42 / 60</td></tr>
+</table>
+</div>
+<p>The three-answer difference is smaller than one binomial standard deviation.
+This evaluation does not resolve an accuracy improvement.</p>
+</section>
+
+<section id="quantization">
+<h2>4. Asymmetric cartridge quantization</h2>
+<p>The quantization study treats a trained cartridge as a deployment artifact
+rather than changing how it is trained. Across three separately trained
+Qwen3-8B cartridges, FP8 values with BF16 keys increased the cartridge
+objective by 0.029%&ndash;0.038%. Quantizing both keys and values increased it by
+0.873%&ndash;1.303%.</p>
+<p>The serving implementation keeps one 632-position K16/V8 cartridge shared
+across requests and attends over it together with each request's live cache in
+one FlashInfer kernel. On one H100 SXM 80 GB, the shared path improved both
+throughput and time to first token against ordinary BF16 cartridge injection at
+batches 1, 16, and 64.</p>
+<div class="cards">
+  <a class="card" href="cartridge-asymmetric-quantization.html">
+    <strong>Asymmetric quantization for cartridges</strong>
+    <span>Full loss table, fake-quant explanation, fused kernel design,
+    BF16 and global-K16/V8 serving controls, implementation branches, and
+    measured limits.</span>
+  </a>
+  <a class="card" href="bias-aware-kv-quantization.html">
+    <strong>Model-level KV quantization policy</strong>
+    <span>Deployment guidance for choosing BF16, K16/V8, or symmetric K8/V8
+    from measured key fragility.</span>
+  </a>
+</div>
+</section>
+
+<section id="code">
+<h2>5. Public implementation</h2>
+<p>The public harness contains the checkpoint reader, held-out cartridge-loss
+evaluator, meta-initialization fitter, and paired learning-curve comparison.
+The serving work is implemented in the FlashInfer and vLLM branches linked from
+the asymmetric cartridge quantization page.</p>
+<div class="cards">
+  <a class="card" href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">
+    <strong>CAS research harness</strong>
+    <span>Training, evaluation, meta-initialization, and curve-analysis code.</span>
+  </a>
+  <a class="card" href="cartridge-asymmetric-quantization.html#implementation">
+    <strong>Fused serving implementation</strong>
+    <span>FlashInfer and vLLM branch names, commits, validation gates, and
+    runtime scope.</span>
+  </a>
+</div>
+</section>
+
+<footer>
+<a href="cas.html">&larr; CAS reproduction</a>
+&nbsp;&middot;&nbsp;
+<a href="cartridge-asymmetric-quantization.html">Asymmetric cartridge quantization</a>
+&nbsp;&middot;&nbsp;
+<a href="cartridges_visualization.html">Base Cartridges technique</a>
+</footer>
+
+</div>
+</body>
+</html>
