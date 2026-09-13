@@ -1,4 +1,4 @@
-"""Drive the user-selected X-Plane F-14 with a learned motor actor."""
+"""Drive the user-selected X-Plane F-14 through a guarded live pilot."""
 
 from __future__ import annotations
 
@@ -42,19 +42,19 @@ ELEVATOR = "sim/joystick/yoke_pitch_ratio"
 RUDDER = "sim/joystick/yoke_heading_ratio"
 THROTTLE_0 = "sim/flightmodel/engine/ENGN_thro_use[0]"
 THROTTLE_1 = "sim/flightmodel/engine/ENGN_thro_use[1]"
-MINIMUM_HANDOFF_SPEED_MPS = 100.0
+MINIMUM_HANDOFF_SPEED_MPS = 150.0
 MINIMUM_HANDOFF_AGL_M = 150.0
-INITIAL_MINIMUM_SPEED_MPS = 140.0
+INITIAL_MINIMUM_SPEED_MPS = 170.0
 INITIAL_MAXIMUM_SPEED_MPS = 230.0
 INITIAL_MINIMUM_AGL_M = 500.0
 INITIAL_MAXIMUM_CLIMB_MPS = 5.0
 INITIAL_MAXIMUM_ATTITUDE_DEG = 10.0
 INITIAL_MAXIMUM_RATE_RADPS = 0.15
 MAXIMUM_LIVE_SPEED_MPS = 360.0
-MAXIMUM_LIVE_CLIMB_MPS = 80.0
-MAXIMUM_LIVE_ROLL_DEG = 60.0
-MAXIMUM_LIVE_PITCH_DEG = 45.0
-MAXIMUM_LIVE_RATE_RADPS = 1.2
+MAXIMUM_LIVE_CLIMB_MPS = 20.0
+MAXIMUM_LIVE_ROLL_DEG = 30.0
+MAXIMUM_LIVE_PITCH_DEG = 25.0
+MAXIMUM_LIVE_RATE_RADPS = 0.7
 MINIMUM_CADENCE_FRACTION = 0.8
 MAXIMUM_SAMPLE_AGE_S = 0.25
 SAFE_HANDOFF_SAMPLES = 10
@@ -69,6 +69,7 @@ class F14ControlStats:
     unsafe_samples: int = 0
     armed_transitions: int = 0
     handoff_hz: float = 0.0
+    transport_disconnects: int = 0
     interrupted: bool = False
 
 
@@ -76,12 +77,12 @@ class F14ControlStats:
 class F14LiveLimiter:
     """Blend into bounded, slew-limited live control surface commands."""
 
-    surface_limit: float = 0.35
+    surface_limit: float = 0.25
     throttle_slew_per_s: float = 0.35
     surface_slew_per_s: float = 0.8
-    blend_seconds: float = 3.0
+    blend_seconds: float = 2.0
     previous: list[float] = field(
-        default_factory=lambda: [0.5, 0.0, 0.0, 0.0]
+        default_factory=lambda: [0.9, 0.0, 0.0, 0.0]
     )
     started_ns: int | None = None
     previous_ns: int | None = None
@@ -118,6 +119,76 @@ class F14LiveLimiter:
             self.previous[index] += delta
         self.previous_ns = now_ns
         return tuple(self.previous)
+
+
+@dataclass
+class F14LiveReference:
+    """Conservative inner loop for collecting real F-14 demonstrations."""
+
+    surface_limit: float = 0.20
+
+    def action(
+        self, values: dict[str, float], goal: Sequence[float]
+    ) -> tuple[float, ...]:
+        speed = math.sqrt(
+            values["local_vx"] ** 2
+            + values["local_vy"] ** 2
+            + values["local_vz"] ** 2
+        )
+        desired_speed, desired_climb, desired_turn = goal
+        roll = math.radians(values["roll_deg"])
+        pitch = math.radians(values["pitch_deg"])
+        desired_roll = clamp(
+            math.atan2(speed * desired_turn, 9.80665),
+            -math.radians(18.0),
+            math.radians(18.0),
+        )
+        desired_pitch = clamp(
+            0.012 * (desired_climb - values["local_vy"]),
+            -math.radians(8.0),
+            math.radians(8.0),
+        )
+        throttle = clamp(0.88 + 0.004 * (desired_speed - speed), 0.65, 1.0)
+        if speed < INITIAL_MINIMUM_SPEED_MPS:
+            throttle = 1.0
+        aileron = clamp(
+            1.2 * (desired_roll - roll) - 0.6 * values["roll_rate"],
+            -self.surface_limit,
+            self.surface_limit,
+        )
+        elevator = clamp(
+            1.8 * (desired_pitch - pitch) - 0.7 * values["pitch_rate"],
+            -self.surface_limit,
+            self.surface_limit,
+        )
+        rudder = clamp(
+            1.5 * (desired_turn - values["yaw_rate"]),
+            -0.10,
+            0.10,
+        )
+        return throttle, aileron, elevator, rudder
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return min(high, max(low, value))
+
+
+def showcase_goal(
+    base_goal: Sequence[float], elapsed_s: float
+) -> tuple[float, ...]:
+    """Add a visible, gentle maneuver only after a stable eight-second hold."""
+
+    airspeed = float(base_goal[0])
+    if elapsed_s < 8.0:
+        return airspeed, 0.0, 0.0
+    phase_s = (elapsed_s - 8.0) % 36.0
+    if phase_s < 10.0:
+        return airspeed, 4.0, 0.015
+    if phase_s < 20.0:
+        return airspeed, 0.0, -0.015
+    if phase_s < 28.0:
+        return airspeed, -3.0, 0.0
+    return airspeed, 0.0, 0.0
 
 
 def f14_observation(
@@ -238,6 +309,7 @@ def run_controller(
     *,
     wait_seconds: float,
     duration_seconds: float | None,
+    showcase: bool = False,
 ) -> F14ControlStats:
     goal = contract.goal.validate(goal, "F-14 goal")
     stats = F14ControlStats()
@@ -248,6 +320,7 @@ def run_controller(
     safe_samples = 0
     safe_sample_times: deque[int] = deque(maxlen=SAFE_HANDOFF_SAMPLES)
     limiter = F14LiveLimiter()
+    live_reference = F14LiveReference()
     wait_deadline = time.monotonic() + wait_seconds
     client.subscribe(DATAREFS, round(1.0 / contract.nominal_dt_s))
     try:
@@ -261,6 +334,20 @@ def run_controller(
                 break
             try:
                 values = client.receive(max(0.2, contract.nominal_dt_s * 2.0))
+            except ConnectionError:
+                stats.transport_disconnects += 1
+                safe_samples = 0
+                safe_sample_times.clear()
+                if armed or not isinstance(client, XPlaneWeb):
+                    raise
+                client.close()
+                if time.monotonic() >= wait_deadline:
+                    raise
+                time.sleep(0.25)
+                client.subscribe(
+                    DATAREFS, round(1.0 / contract.nominal_dt_s)
+                )
+                continue
             except socket.timeout:
                 stats.stale_samples += 1
                 safe_samples = 0
@@ -292,10 +379,10 @@ def run_controller(
                 if armed:
                     write_overrides(client, False)
                     armed = False
-                    raise RuntimeError("F-14 left the live actor handoff envelope")
+                    raise RuntimeError("F-14 left the guarded live envelope")
                 if time.monotonic() >= wait_deadline:
                     raise TimeoutError(
-                        "F-14 was not trimmed at 140-230 m/s above 500 m AGL"
+                        "F-14 was not trimmed at 170-230 m/s above 500 m AGL"
                     )
                 continue
             safe_samples += 1
@@ -317,6 +404,10 @@ def run_controller(
             observation = contract.observation.validate(
                 f14_observation(values, contract.revision), "F-14 observation"
             )
+            elapsed_s = 0.0 if first_command_ns is None else (
+                now_ns - first_command_ns
+            ) / 1e9
+            applied_goal = showcase_goal(goal, elapsed_s) if showcase else goal
             frame = TelemetryFrame.create(
                 contract,
                 episode_id="xplane-f14-player",
@@ -324,10 +415,11 @@ def run_controller(
                 monotonic_ns=now_ns,
                 dt_s=contract.nominal_dt_s,
                 observation=observation,
-                goal=goal,
+                goal=applied_goal,
             )
             actor_action, latency_ns = policy.infer(frame)
-            action = limiter.apply(actor_action, now_ns)
+            reference_action = live_reference.action(values, applied_goal)
+            action = limiter.apply(reference_action, now_ns)
             if not armed:
                 write_overrides(client, True)
                 armed = True
@@ -339,9 +431,11 @@ def run_controller(
                 "monotonic_ns": now_ns,
                 "sequence": sequence,
                 "observation": observation,
-                "goal": goal,
+                "goal": applied_goal,
                 "action": action,
                 "actor_action": actor_action,
+                "reference_action": reference_action,
+                "controller": "live_reference_actor_shadow",
                 "inference_latency_ns": latency_ns,
             }
             output.write(json.dumps(record, separators=(",", ":")) + "\n")
@@ -376,6 +470,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--turn-rate", type=float, default=0.0)
     parser.add_argument("--wait-seconds", type=float, default=300.0)
     parser.add_argument("--duration-seconds", type=float)
+    parser.add_argument("--showcase", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
@@ -412,6 +507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output,
                 wait_seconds=args.wait_seconds,
                 duration_seconds=args.duration_seconds,
+                showcase=args.showcase,
             )
     summary = {
         "schema_version": 1,

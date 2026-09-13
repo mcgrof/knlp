@@ -17,10 +17,12 @@ from rl.flight.control_f14 import (
     THROTTLE_0,
     THROTTLE_1,
     F14LiveLimiter,
+    F14LiveReference,
     f14_observation,
     run_controller,
     safe_handoff,
     sample_rate_hz,
+    showcase_goal,
     write_action,
     write_overrides,
 )
@@ -34,6 +36,7 @@ from rl.flight.xplane_udp import (
     pack_rref_request,
     unpack_rref_response,
 )
+from rl.flight.xplane_web import XPlaneWeb
 
 
 class FakeClient:
@@ -69,6 +72,35 @@ class FakePolicy:
     def infer(self, frame):
         del frame
         return [0.7, -0.2, 0.3, -0.4], 123
+
+
+class FakeReconnectClient(XPlaneWeb):
+    def __init__(self, samples):
+        self.samples = iter(samples)
+        self.writes = []
+        self.subscribe_count = 0
+        self.close_count = 0
+
+    def subscribe(self, datarefs, frequency_hz):
+        self.subscribed = (datarefs, frequency_hz)
+        self.subscribe_count += 1
+
+    def receive(self, timeout_s):
+        del timeout_s
+        value = next(self.samples)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def fresh(self, maximum_age_s):
+        del maximum_age_s
+        return True
+
+    def write_many(self, values):
+        self.writes.extend(values)
+
+    def close(self):
+        self.close_count += 1
 
 
 def sample(**updates):
@@ -196,15 +228,39 @@ def test_f14_initial_handoff_requires_trimmed_flight(updates):
 def test_live_limiter_blends_bounds_and_slew_limits_actor_actions():
     limiter = F14LiveLimiter()
     assert limiter.apply((0.0, 1.0, -1.0, 1.0), 1_000_000_000) == (
-        0.5,
+        0.9,
         0.0,
         0.0,
         0.0,
     )
     second = limiter.apply((0.0, 1.0, -1.0, 1.0), 2_000_000_000)
-    assert second == pytest.approx((0.4125, 0.2, -0.2, 0.2))
+    assert second == pytest.approx((0.8125, 0.2, -0.2, 0.2))
     third = limiter.apply((1.0, 1.0, -1.0, 1.0), 3_000_000_000)
-    assert third == pytest.approx((0.5, 0.35, -0.35, 0.35))
+    assert third == pytest.approx((0.9, 0.25, -0.25, 0.25))
+
+
+def test_live_reference_protects_speed_and_corrects_attitude():
+    controller = F14LiveReference()
+    action = controller.action(
+        sample(
+            local_vz=-160.0,
+            local_vy=-8.0,
+            roll_deg=8.0,
+            pitch_deg=-4.0,
+            roll_rate=0.1,
+            pitch_rate=-0.1,
+        ),
+        (180.0, 0.0, 0.0),
+    )
+    assert action[0] == 1.0
+    assert action[1] < 0.0
+    assert action[2] > 0.0
+
+
+def test_showcase_holds_before_gentle_maneuvers():
+    assert showcase_goal((180.0, 9.0, 0.1), 7.9) == (180.0, 0.0, 0.0)
+    assert showcase_goal((180.0, 9.0, 0.1), 8.0) == (180.0, 4.0, 0.015)
+    assert showcase_goal((180.0, 9.0, 0.1), 18.0) == (180.0, 0.0, -0.015)
 
 
 def test_sample_rate_reports_transport_cadence():
@@ -241,7 +297,7 @@ def test_live_controller_releases_overrides_on_unsafe_transition():
         [sample() for _ in range(10)] + [sample(height_agl=100.0)]
     )
     output = StringIO()
-    with pytest.raises(RuntimeError, match="left the live actor"):
+    with pytest.raises(RuntimeError, match="left the guarded live"):
         run_controller(
             client,
             contract,
@@ -263,4 +319,29 @@ def test_live_controller_releases_overrides_on_unsafe_transition():
     record = json.loads(output.getvalue())
     assert record["kind"] == "xplane_f14_control"
     assert record["actor_action"] == [0.7, -0.2, 0.3, -0.4]
-    assert record["action"] == [0.5, 0.0, 0.0, 0.0]
+    assert record["action"] == [0.9, 0.0, 0.0, 0.0]
+    assert record["controller"] == "live_reference_actor_shadow"
+
+
+def test_live_controller_reconnects_before_acquiring_overrides():
+    contract = FlightContract.from_json(
+        Path(__file__).resolve().parents[1]
+        / "rl/contracts/fighter-controls-v2.json"
+    )
+    client = FakeReconnectClient(
+        [ConnectionError("closed")]
+        + [sample() for _ in range(10)]
+        + [sample(height_agl=100.0)]
+    )
+    with pytest.raises(RuntimeError, match="left the guarded live"):
+        run_controller(
+            client,
+            contract,
+            FakePolicy(),
+            (180.0, 0.0, 0.0),
+            StringIO(),
+            wait_seconds=2.0,
+            duration_seconds=None,
+        )
+    assert client.subscribe_count == 2
+    assert client.close_count == 1
