@@ -189,17 +189,19 @@ F14_RESULTS=/data/knlp-key-results/xplane-f14-20260912
 python -m rl.flight.control_f14 \
   --contract rl/contracts/fighter-controls-v1.json \
   --model "$F14_RESULTS/runs/f14-formation-dagger-s1-v1/actor.npz" \
+  --transport web \
   --airspeed 180 --climb-rate 0 --turn-rate 0 \
   --output "$F14_RESULTS/live/player.jsonl"
 ```
 
-The adapter uses X-Plane's local RREF/DREF protocol and never installs the
-UFO plugin into the fighter. It waits for at least 100 m/s, 150 m AGL, fresh
-telemetry, and an unpaused simulator before taking the joystick and engine
-controls. Ten consecutive safe samples are required at startup and after a
-pause. Pause, stale input, unsafe flight, interruption, and normal exit all
-drop the overrides. This first live gate holds a fixed speed, climb rate, and
-turn rate; mission choreography and learned formation tactics remain separate.
+The adapter defaults to X-Plane 12's local Web API and never installs the UFO
+plugin into the fighter. Legacy RREF/DREF remains available with
+`--transport udp`. It waits for at least 100 m/s, 150 m AGL, fresh telemetry,
+and an unpaused simulator before taking the joystick and engine controls. Ten
+consecutive safe samples are required at startup and after a pause. Pause,
+stale input, unsafe flight, interruption, and normal exit all drop the
+overrides. This first live gate holds a fixed speed, climb rate, and turn rate;
+mission choreography and learned formation tactics remain separate.
 
 The live multiplayer adapter can run the same frozen motor actor once per
 configured UFO. Its formation behavior places the player at the point of a V

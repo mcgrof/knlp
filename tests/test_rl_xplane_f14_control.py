@@ -27,6 +27,7 @@ from rl.flight.contracts import FlightContract
 from rl.flight.xplane_udp import (
     DREF_HEADER,
     RREF_HEADER,
+    RREF_RESPONSE_HEADER,
     pack_dref_write,
     pack_rref_request,
     unpack_rref_response,
@@ -39,6 +40,9 @@ class FakeClient:
 
     def write(self, dataref, value):
         self.writes.append((dataref, value))
+
+    def write_many(self, values):
+        self.writes.extend(values)
 
 
 class FakeLiveClient(FakeClient):
@@ -99,14 +103,16 @@ def test_xplane_packets_have_exact_legacy_wire_layout():
 
 
 def test_rref_response_parser_rejects_invalid_samples():
-    packet = RREF_HEADER + struct.pack("<ifif", 7, 12.5, 8, -3.0)
+    packet = RREF_RESPONSE_HEADER + struct.pack("<ifif", 7, 12.5, 8, -3.0)
     assert unpack_rref_response(packet) == {7: 12.5, 8: -3.0}
     with pytest.raises(ValueError, match="not an RREF"):
         unpack_rref_response(b"DATA\0")
     with pytest.raises(ValueError, match="malformed"):
-        unpack_rref_response(RREF_HEADER + b"x")
+        unpack_rref_response(RREF_RESPONSE_HEADER + b"x")
     with pytest.raises(ValueError, match="invalid sample"):
-        unpack_rref_response(RREF_HEADER + struct.pack("<if", 9, math.nan))
+        unpack_rref_response(
+            RREF_RESPONSE_HEADER + struct.pack("<if", 9, math.nan)
+        )
 
 
 def test_xplane_state_converts_to_fighter_ned_contract():
@@ -148,15 +154,15 @@ def test_f14_control_owns_and_releases_only_control_axes():
     write_action(client, (0.7, -0.2, 0.3, -0.4))
     write_overrides(client, False)
     assert client.writes == [
-        (OVERRIDE_JOYSTICK, 1.0),
-        (OVERRIDE_THROTTLES, 1.0),
+        (OVERRIDE_JOYSTICK, 1),
+        (OVERRIDE_THROTTLES, 1),
         (THROTTLE_0, 0.7),
         (THROTTLE_1, 0.7),
         (AILERON, -0.2),
         (ELEVATOR, 0.3),
         (RUDDER, -0.4),
-        (OVERRIDE_JOYSTICK, 0.0),
-        (OVERRIDE_THROTTLES, 0.0),
+        (OVERRIDE_JOYSTICK, 0),
+        (OVERRIDE_THROTTLES, 0),
     ]
 
 
@@ -181,12 +187,12 @@ def test_live_controller_releases_overrides_on_unsafe_transition():
         )
     assert client.subscribed[1] == 50
     assert client.writes[:2] == [
-        (OVERRIDE_JOYSTICK, 1.0),
-        (OVERRIDE_THROTTLES, 1.0),
+        (OVERRIDE_JOYSTICK, 1),
+        (OVERRIDE_THROTTLES, 1),
     ]
     assert client.writes[-2:] == [
-        (OVERRIDE_JOYSTICK, 0.0),
-        (OVERRIDE_THROTTLES, 0.0),
+        (OVERRIDE_JOYSTICK, 0),
+        (OVERRIDE_THROTTLES, 0),
     ]
     record = json.loads(output.getvalue())
     assert record["kind"] == "xplane_f14_control"

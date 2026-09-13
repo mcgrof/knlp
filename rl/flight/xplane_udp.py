@@ -11,6 +11,7 @@ from collections.abc import Mapping
 RREF_NAME_BYTES = 400
 DREF_NAME_BYTES = 500
 RREF_HEADER = b"RREF\x00"
+RREF_RESPONSE_HEADER = b"RREF,"
 DREF_HEADER = b"DREF\x00"
 
 
@@ -38,9 +39,9 @@ def pack_rref_request(dataref: str, index: int, frequency_hz: int) -> bytes:
 def unpack_rref_response(packet: bytes) -> dict[int, float]:
     """Decode one X-Plane RREF response packet."""
 
-    if not packet.startswith(RREF_HEADER):
+    if not packet.startswith(RREF_RESPONSE_HEADER):
         raise ValueError("packet is not an RREF response")
-    payload = packet[len(RREF_HEADER) :]
+    payload = packet[len(RREF_RESPONSE_HEADER) :]
     if not payload or len(payload) % 8:
         raise ValueError("RREF response payload is malformed")
     values = {}
@@ -110,6 +111,10 @@ class XPlaneUdp:
 
     def write(self, dataref: str, value: float) -> None:
         self.socket.send(pack_dref_write(dataref, value))
+
+    def write_many(self, values) -> None:
+        for dataref, value in values:
+            self.write(dataref, value)
 
     def close(self) -> None:
         for index, dataref in self.subscriptions.values():
