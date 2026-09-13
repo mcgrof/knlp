@@ -85,6 +85,17 @@ class RlF14Swarm:
         rotation = quaternion_body_to_ned(state[6:10])
         return math.atan2(float(rotation[1, 0]), float(rotation[0, 0]))
 
+    @staticmethod
+    def _heading_rate(state: np.ndarray) -> float:
+        rotation = quaternion_body_to_ned(state[6:10])
+        roll = math.atan2(float(rotation[2, 1]), float(rotation[2, 2]))
+        pitch = math.asin(float(np.clip(-rotation[2, 0], -1.0, 1.0)))
+        q = float(state[11])
+        r = float(state[12])
+        return (q * math.sin(roll) + r * math.cos(roll)) / max(
+            0.1, abs(math.cos(pitch))
+        )
+
     def _offset(self, slot: int) -> np.ndarray:
         row = 1
         row_start = 0
@@ -193,7 +204,11 @@ class RlF14Swarm:
                         self.fighter_contract.goal.high[0],
                     ),
                 ),
-                _clamp(-float(desired_velocity[2]), -30.0, 30.0),
+                _clamp(
+                    -float(desired_velocity[2]),
+                    self.fighter_contract.goal.low[1],
+                    self.fighter_contract.goal.high[1],
+                ),
                 _clamp(
                     leader_turn_rate + 1.4 * heading_error,
                     -MAXIMUM_FORMATION_TURN_RADPS,
@@ -227,13 +242,11 @@ class RlF14Swarm:
             self._reset(player, episode_id)
         self._follow_relocation(player)
         heading = self._heading(player)
-        leader_turn_rate = 0.0
-        if self.previous_player_heading_rad is not None:
-            leader_turn_rate = _clamp(
-                _wrap_angle(heading - self.previous_player_heading_rad) / dt_s,
-                -MAXIMUM_FORMATION_TURN_RADPS,
-                MAXIMUM_FORMATION_TURN_RADPS,
-            )
+        leader_turn_rate = _clamp(
+            self._heading_rate(player),
+            -MAXIMUM_FORMATION_TURN_RADPS,
+            MAXIMUM_FORMATION_TURN_RADPS,
+        )
         self.previous_player_position_ned_m = player[:3].copy()
         self.previous_player_heading_rad = heading
         remaining = min(dt_s, 0.1)
