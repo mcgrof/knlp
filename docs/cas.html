@@ -71,6 +71,7 @@ footer a { color: var(--text2); }
   isolated-cartridge results and controls.</p>
   <p><a href="https://arxiv.org/abs/2606.04557">Cartridges at Scale (arXiv:2606.04557)</a>
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
+  &middot; <a href="cas-extensions.html">CAS extensions and R&amp;D</a>
   &middot; <a href="cartridge-asymmetric-quantization.html">asymmetric cartridge quantization</a>
   &middot; <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">harness</a></p>
 </header>
@@ -92,7 +93,7 @@ footer a { color: var(--text2); }
   <a href="#length">5. The remaining quality gap</a>
   <a href="#hardware">6. A100 cross-hardware control</a>
   <a href="#cartridge-path-lossless">7. The cartridge path is lossless</a>
-  <a href="#ablations">8. Closed ablations and stability</a>
+  <a href="#stability">8. Training stability</a>
   <a href="#code">9. Code and reproduction</a>
   <a href="#serving">10. Serving</a>
 </div>
@@ -253,27 +254,13 @@ tokens. This control is distinct from the 631 document-derived trainable
 positions in the learned-cartridge initialization.</div>
 </section>
 
-<section id="ablations">
-<h2>8. Closed ablations and training stability</h2>
-<h3>Meta-learned initialization: no useful speedup</h3>
-<p>A displacement fitted from other documents lowers the step-zero held-out loss,
-but training forgets it. The best step-60 affine initialization reached the
-baseline's 50%, 75%, and 90% loss-drop targets only 3.3, 5.0, and 5.6 steps
-earlier out of roughly 1,000 total steps. Remove its lower step-zero loss and it
-is slower. By step 180, baseline and fitted starts are within 0.00003. A same-seed
-repeat was bit-for-bit identical through step 110. The fitted initialization
-therefore provides no useful training-speed gain at this scale.</p>
-<h3>Reverse KL: no measurable gain</h3>
-<p>A reverse-KL warm-start pilot moved patient 02 from 0.65 &plusmn; 0.05 to
-0.70 &plusmn; 0.05 after 200 steps: 42 versus 39 correct answers out of 60,
-less than one binomial standard deviation. It did not collapse, but this
-evaluation does not resolve a gain.</p>
-<h3>The paper learning rate can spike</h3>
+<section id="stability">
+<h2>8. Training stability</h2>
+<h3>Loss spikes under the paper learning rate</h3>
 <p>The 0.1 peak learning rate uses plain Adam without gradient clipping. Three of
 five anchor-initialized H100 runs showed a loss spike after warmup; all recovered
 within about 60 steps. Whether clipping improves final accuracy is untested. This
-is a stability caveat, not evidence against the recipe that produced the quality
-gain.</p>
+is an observed property of the reproduced training recipe.</p>
 </section>
 
 <section id="code">
@@ -281,8 +268,8 @@ gain.</p>
 <p>The public
 <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">research/cartridges_cas</a>
 harness contains the synthesis, isolated and joint trainers, Table-15 evaluator,
-cache-path parity control, prompt-grouped validation split, checkpoint controls,
-and meta-initialization analysis.</p>
+cache-path parity control, prompt-grouped validation split, and checkpoint
+controls.</p>
 <p>Three rules are load-bearing:</p>
 <ul>
 <li><strong>Generated-target validity.</strong> The writer enforces real token IDs
@@ -319,6 +306,8 @@ this training reproduction.</p>
 
 <footer>
 <a href="cartridges_visualization.html">&larr; Cartridges: pre-trained KV caches</a>
+&nbsp;&middot;&nbsp;
+<a href="cas-extensions.html">CAS extensions and R&amp;D</a>
 &nbsp;&middot;&nbsp;
 <a href="learned_prefix_caches.html">Learned Prefix Caches</a>
 &nbsp;&middot;&nbsp;
