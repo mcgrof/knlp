@@ -18,6 +18,7 @@ from rl.flight.contracts import FlightContract, TelemetryFrame
 from rl.flight.geometry import quaternion_from_euler
 from rl.flight.shadow_ufo import ShadowPolicy
 from rl.flight.xplane_udp import XPlaneUdp
+from rl.flight.xplane_web import XPlaneWeb
 
 DATAREFS = {
     "local_vx": "sim/flightmodel/position/local_vx",
@@ -96,18 +97,26 @@ def safe_handoff(values: dict[str, float]) -> bool:
 
 
 def write_overrides(client: XPlaneUdp, enabled: bool) -> None:
-    value = 1.0 if enabled else 0.0
-    client.write(OVERRIDE_JOYSTICK, value)
-    client.write(OVERRIDE_THROTTLES, value)
+    value = 1 if enabled else 0
+    client.write_many(
+        (
+            (OVERRIDE_JOYSTICK, value),
+            (OVERRIDE_THROTTLES, value),
+        )
+    )
 
 
 def write_action(client: XPlaneUdp, action: Sequence[float]) -> None:
     throttle, aileron, elevator, rudder = action
-    client.write(THROTTLE_0, throttle)
-    client.write(THROTTLE_1, throttle)
-    client.write(AILERON, aileron)
-    client.write(ELEVATOR, elevator)
-    client.write(RUDDER, rudder)
+    client.write_many(
+        (
+            (THROTTLE_0, throttle),
+            (THROTTLE_1, throttle),
+            (AILERON, aileron),
+            (ELEVATOR, elevator),
+            (RUDDER, rudder),
+        )
+    )
 
 
 def _request_stop(signum, frame) -> None:
@@ -223,7 +232,10 @@ def run_controller(
         stats.interrupted = True
     finally:
         if armed:
-            write_overrides(client, False)
+            try:
+                write_overrides(client, False)
+            except Exception:
+                pass
     return stats
 
 
@@ -232,7 +244,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=49000)
+    parser.add_argument("--transport", choices=("web", "udp"), default="web")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--airspeed", type=float, default=180.0)
     parser.add_argument("--climb-rate", type=float, default=0.0)
     parser.add_argument("--turn-rate", type=float, default=0.0)
@@ -258,7 +271,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
-    with XPlaneUdp(args.host, args.port) as client:
+    port = args.port or (8086 if args.transport == "web" else 49000)
+    client_type = XPlaneWeb if args.transport == "web" else XPlaneUdp
+    with client_type(args.host, port) as client:
         with args.output.open("x", encoding="utf-8") as output:
             stats = run_controller(
                 client,
@@ -272,8 +287,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary = {
         "schema_version": 1,
         "mode": "xplane_f14_player",
+        "transport": args.transport,
         "host": args.host,
-        "port": args.port,
+        "port": port,
         "contract_hash": contract.digest,
         "model_sha256": policy.model_sha256,
         "checkpoint_sha256": policy.checkpoint_sha256,
