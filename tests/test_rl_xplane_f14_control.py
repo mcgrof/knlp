@@ -201,7 +201,7 @@ def test_xplane_state_converts_to_yaw_invariant_live_contract():
     "updates",
     (
         {"local_vz": -80.0},
-        {"height_agl": 149.0},
+        {"height_agl": 29.0},
         {"on_ground": 1.0},
         {"paused": 1.0},
     ),
@@ -214,15 +214,16 @@ def test_f14_handoff_rejects_unsafe_live_state(updates):
     "updates",
     (
         {"local_vz": -80.0},
-        {"local_vz": -460.0},
+        {"local_vz": -510.0},
         {"local_vy": 121.0},
-        {"height_agl": 199.0},
+        {"height_agl": 49.0},
+        {"height_agl": 58.0, "local_vy": -6.0},
         {"roll_deg": 121.0},
         {"pitch_deg": 71.0},
         {"pitch_rate": 2.01},
     ),
 )
-def test_f14_initial_handoff_requires_trimmed_flight(updates):
+def test_f14_initial_handoff_rejects_outside_airborne_envelope(updates):
     assert not safe_handoff(sample(**updates), initial=True)
 
 
@@ -238,6 +239,20 @@ def test_f14_initial_handoff_accepts_observed_fast_climb():
             roll_rate=0.095,
             pitch_rate=0.008,
             yaw_rate=0.009,
+        ),
+        initial=True,
+    )
+
+
+def test_f14_initial_handoff_accepts_airborne_formation_spawn():
+    assert safe_handoff(
+        sample(
+            local_vx=-80.0,
+            local_vy=19.0,
+            local_vz=-85.0,
+            height_agl=58.0,
+            roll_deg=-24.0,
+            roll_rate=0.61,
         ),
         initial=True,
     )
@@ -275,10 +290,19 @@ def test_live_reference_protects_speed_and_corrects_attitude():
     assert action[2] > 0.0
 
 
-def test_showcase_holds_before_gentle_maneuvers():
-    assert showcase_goal((180.0, 9.0, 0.1), 2.9) == (180.0, 0.0, 0.0)
-    assert showcase_goal((180.0, 9.0, 0.1), 3.0) == (180.0, 5.0, 0.020)
-    assert showcase_goal((180.0, 9.0, 0.1), 13.0) == (180.0, 0.0, -0.020)
+def test_showcase_builds_altitude_before_aggressive_maneuvers():
+    assert showcase_goal((180.0, 9.0, 0.1), 1.9, 200.0) == (
+        180.0, 0.0, 0.0
+    )
+    assert showcase_goal((180.0, 9.0, 0.1), 2.0, 200.0) == (
+        180.0, 25.0, 0.025
+    )
+    assert showcase_goal((180.0, 9.0, 0.1), 2.0, 500.0) == (
+        180.0, 15.0, 0.040
+    )
+    assert showcase_goal((180.0, 9.0, 0.1), 10.0, 500.0) == (
+        180.0, 5.0, -0.050
+    )
 
 
 def test_sample_rate_reports_transport_cadence():
@@ -312,19 +336,19 @@ def test_live_controller_releases_overrides_on_unsafe_transition():
         / "rl/contracts/fighter-controls-v1.json"
     )
     client = FakeLiveClient(
-        [sample() for _ in range(10)] + [sample(height_agl=100.0)]
+        [sample() for _ in range(10)] + [sample(height_agl=29.0)]
     )
     output = StringIO()
-    with pytest.raises(RuntimeError, match="left the guarded live"):
-        run_controller(
-            client,
-            contract,
-            FakePolicy(),
-            (180.0, 0.0, 0.0),
-            output,
-            wait_seconds=1.0,
-            duration_seconds=None,
-        )
+    stats = run_controller(
+        client,
+        contract,
+        FakePolicy(),
+        (180.0, 0.0, 0.0),
+        output,
+        wait_seconds=1.0,
+        duration_seconds=None,
+    )
+    assert stats.release_reason.startswith("guarded envelope exit:")
     assert client.subscribed[1] == 50
     assert client.writes[:2] == [
         (OVERRIDE_JOYSTICK, 1),
@@ -349,17 +373,17 @@ def test_live_controller_reconnects_before_acquiring_overrides():
     client = FakeReconnectClient(
         [ConnectionError("closed")]
         + [sample() for _ in range(10)]
-        + [sample(height_agl=100.0)]
+        + [sample(height_agl=29.0)]
     )
-    with pytest.raises(RuntimeError, match="left the guarded live"):
-        run_controller(
-            client,
-            contract,
-            FakePolicy(),
-            (180.0, 0.0, 0.0),
-            StringIO(),
-            wait_seconds=2.0,
-            duration_seconds=None,
-        )
+    stats = run_controller(
+        client,
+        contract,
+        FakePolicy(),
+        (180.0, 0.0, 0.0),
+        StringIO(),
+        wait_seconds=2.0,
+        duration_seconds=None,
+    )
+    assert stats.release_reason.startswith("guarded envelope exit:")
     assert client.subscribe_count == 2
     assert client.close_count == 1
