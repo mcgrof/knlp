@@ -219,17 +219,22 @@ The stock F-14 can also lead configured AI F-14s without loading the UFO
 aircraft plugin. `rl.flight.control_f14_formation` reads the player pose from
 X-Plane's Web API, advances one frozen motor actor and fixed-wing dynamics
 instance per follower, and writes only multiplayer aircraft paths. Its slot
-velocity includes the rigid-formation turn term, so followers do not cut
-through the V when the leader banks. Pause, stale telemetry, interruption,
-and normal exit release every acquired AI path; aircraft zero remains manual.
+velocity includes the full three-dimensional rigid-formation motion and a
+bounded position correction. Followers therefore remain in their slots while
+the leader rolls or completes a vertical loop. Once acquired, the adapter
+accepts continuous aerobatic attitudes instead of releasing and later
+respawning the formation. Pause, stale telemetry, landing, interruption,
+and normal exit still release every acquired AI path; aircraft zero remains
+manual.
 The `xplane-ufo` helper `tools/ai_f14_formation.sh` supervises this adapter in
 a named tmux session.
 
 `rl.evaluate_f14_formation` is the closed-loop formation gate. It flies the
-learned followers through sustained left and right turns, then records slot
-error and minimum pair separation after the settling window. The ordinary
-motor-policy gate is necessary but not sufficient: it can pass while small
-tracking errors accumulate into a visibly broken formation.
+learned followers through sustained left and right turns plus complete inside
+and outside vertical loops. It records slot error, minimum pair separation,
+linear acceleration, and angular speed. The ordinary motor-policy gate is
+necessary but not sufficient: it can pass while small tracking errors
+accumulate into a visibly broken formation.
 
 Combat exposes a one-use shield request beside each enemy pose. The current
 director raises it deterministically on the first close attack. That field is

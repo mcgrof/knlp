@@ -16,6 +16,7 @@ from rl.flight.control_f14_formation import (
     formation_pose_writes,
     formation_datarefs,
     run_formation,
+    safe_formation_leader,
     write_formation_overrides,
 )
 from rl.flight.geometry import quaternion_from_euler
@@ -162,6 +163,20 @@ def test_formation_subscribes_to_follower_team_status():
     assert formation_datarefs(2)["team_status_2"] == (
         "sim/multiplayer/combat/team_status[2]"
     )
+
+
+def test_acquired_formation_accepts_aerobatic_leader_state():
+    values = sample(
+        local_vx=0.0,
+        local_vy=240.0,
+        local_vz=-20.0,
+        roll_deg=179.0,
+        pitch_deg=80.0,
+        roll_rate=2.8,
+        pitch_rate=3.0,
+    )
+    assert not safe_formation_leader(values, initial=True)
+    assert safe_formation_leader(values, initial=False)
 
 
 def test_pose_writes_convert_ned_and_orientation_to_multiplayer_datarefs():

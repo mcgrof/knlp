@@ -9,7 +9,7 @@ import pytest
 
 from rl.flight.contracts import FlightContract, TelemetryFrame
 from rl.flight.fighter_swarm import DEFAULT_CONTRACT, RlF14Swarm
-from rl.flight.geometry import quaternion_from_euler
+from rl.flight.geometry import quaternion_body_to_ned, quaternion_from_euler
 
 
 def _actor(path: Path, contract: FlightContract) -> None:
@@ -142,7 +142,9 @@ def test_f14_formation_goal_includes_turning_slot_velocity(tmp_path):
     fighter = swarm.fighters[0].dynamics.state_vector()
 
     straight = swarm._goal(0, fighter, player, 0.0)
-    turning = swarm._goal(0, fighter, player, 0.05)
+    turning_player = player.copy()
+    turning_player[12] = 0.05
+    turning = swarm._goal(0, fighter, turning_player, 0.05)
 
     assert turning[0] != pytest.approx(straight[0])
     assert turning[2] != pytest.approx(straight[2])
@@ -179,7 +181,7 @@ def test_state_adapter_uses_leader_body_rates(tmp_path):
     assert swarm.previous_player_heading_rad == pytest.approx(0.0)
 
 
-def test_rendered_f14_attitude_slews_smoothly(tmp_path):
+def test_rendered_f14_attitude_matches_aerobatic_leader(tmp_path):
     root_value = os.environ.get("XPLANE_UFO_ROOT")
     if not root_value:
         pytest.skip("XPLANE_UFO_ROOT is not set")
@@ -191,15 +193,69 @@ def test_rendered_f14_attitude_slews_smoothly(tmp_path):
     _actor(model, fighter_contract)
     swarm = RlF14Swarm(output_contract, model, 1, DEFAULT_CONTRACT)
     player = np.asarray(_player_frame(output_contract).observation)
-    swarm.update_state(
+    player[6:10] = quaternion_from_euler(
+        math.radians(179.0), math.radians(70.0), math.radians(15.0)
+    )
+    poses = swarm.update_state(
         player,
         episode_id="display-test",
         sequence=0,
         monotonic_ns=1,
         dt_s=0.02,
     )
-    swarm.fighters[0].commanded_turn_radps = 0.08
-    before = swarm.fighters[0].display_roll_rad
-    swarm._update_display(swarm.fighters[0], 0.02)
-    after = swarm.fighters[0].display_roll_rad
-    assert abs(after - before) <= math.radians(20.0) * 0.02
+    assert np.asarray(poses[0].quaternion_body_to_ned) == pytest.approx(
+        player[6:10]
+    )
+
+
+def test_f14_formation_follows_a_complete_vertical_loop(tmp_path):
+    root_value = os.environ.get("XPLANE_UFO_ROOT")
+    if not root_value:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    output_contract = FlightContract.from_json(
+        Path(root_value) / "schemas/ufo-wrench-v1.json"
+    )
+    fighter_contract = FlightContract.from_json(DEFAULT_CONTRACT)
+    model = tmp_path / "fighter.npz"
+    _actor(model, fighter_contract)
+    swarm = RlF14Swarm(output_contract, model, 3, DEFAULT_CONTRACT)
+    radius_m = 800.0
+    speed_mps = 220.0
+    pitch_rate = speed_mps / radius_m
+    dt_s = 0.02
+    maximum_error_m = 0.0
+
+    for sequence in range(math.ceil(2.0 * math.pi / pitch_rate / dt_s)):
+        angle = pitch_rate * sequence * dt_s
+        player = np.zeros(13, dtype=np.float64)
+        player[:3] = (
+            radius_m * math.sin(angle),
+            0.0,
+            -3000.0 + radius_m * (math.cos(angle) - 1.0),
+        )
+        player[3:6] = (
+            speed_mps * math.cos(angle),
+            0.0,
+            -speed_mps * math.sin(angle),
+        )
+        player[6:10] = quaternion_from_euler(0.0, angle, 0.0)
+        player[11] = pitch_rate
+        poses = swarm.update_state(
+            player,
+            episode_id="loop-test",
+            sequence=sequence,
+            monotonic_ns=round(sequence * dt_s * 1e9),
+            dt_s=dt_s,
+        )
+        rotation = quaternion_body_to_ned(player[6:10])
+        for slot, pose in enumerate(poses):
+            target = player[:3] + rotation @ swarm._offset(slot)
+            maximum_error_m = max(
+                maximum_error_m,
+                float(np.linalg.norm(np.asarray(pose.position_ned_m) - target)),
+            )
+            assert np.asarray(pose.quaternion_body_to_ned) == pytest.approx(
+                player[6:10]
+            )
+
+    assert maximum_error_m < 100.0

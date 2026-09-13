@@ -10,11 +10,7 @@ import numpy as np
 
 from rl.flight.contracts import EnemyPose, FlightContract, TelemetryFrame
 from rl.flight.fighter_dynamics import FighterDynamics, fighter_envelope
-from rl.flight.geometry import (
-    quaternion_body_to_ned,
-    quaternion_from_euler,
-    roll_pitch_yaw,
-)
+from rl.flight.geometry import quaternion_body_to_ned
 from rl.flight.shadow_ufo import ShadowPolicy
 
 MAXIMUM_FIGHTERS = 19
@@ -29,10 +25,6 @@ FAST_POSITION_CORRECTION_MPS = 120.0
 LEGACY_FORMATION_SPEED_MPS = 280.0
 FAST_FORMATION_SPEED_MPS = 780.0
 MAXIMUM_FORMATION_TURN_RADPS = 0.08
-MAXIMUM_DISPLAY_ROLL_RAD = math.radians(45.0)
-MAXIMUM_DISPLAY_ROLL_RATE_RADPS = math.radians(20.0)
-MAXIMUM_DISPLAY_PITCH_RATE_RADPS = math.radians(12.0)
-MAXIMUM_DISPLAY_HEADING_RATE_RADPS = math.radians(10.0)
 DEFAULT_CONTRACT = (
     Path(__file__).resolve().parents[1] / "contracts/fighter-controls-v3.json"
 )
@@ -50,10 +42,6 @@ def _wrap_angle(value: float) -> float:
 class _Fighter:
     dynamics: FighterDynamics
     policy: ShadowPolicy
-    display_roll_rad: float
-    display_pitch_rad: float
-    display_heading_rad: float
-    commanded_turn_radps: float = 0.0
 
 
 class RlF14Swarm:
@@ -126,12 +114,7 @@ class RlF14Swarm:
 
     def _reset(self, player: np.ndarray, episode_id: str) -> None:
         heading = self._heading(player)
-        roll, pitch, _yaw = roll_pitch_yaw(player[6:10])
-        cosine = math.cos(heading)
-        sine = math.sin(heading)
-        rotation = np.asarray(
-            ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
-        )
+        rotation = quaternion_body_to_ned(player[6:10])
         leader_speed = float(np.linalg.norm(player[3:6]))
         if self.fighter_contract.revision == 3:
             initial_speed = _clamp(
@@ -147,21 +130,63 @@ class RlF14Swarm:
         self.fighters = []
         for slot in range(self.size):
             dynamics = FighterDynamics(self.dynamics_envelope)
-            dynamics.state[:3] = player[:3] + rotation @ self._offset(slot)
-            dynamics.state[3:6] = rotation[:, 0] * initial_speed
-            dynamics.state[6:10] = quaternion_from_euler(0.0, 0.0, heading)
+            offset = rotation @ self._offset(slot)
+            dynamics.state[:3] = player[:3] + offset
+            desired_velocity = self._slot_velocity(player, offset)
+            velocity_norm = float(np.linalg.norm(desired_velocity))
+            if velocity_norm > 1e-9:
+                dynamics.state[3:6] = desired_velocity * (
+                    initial_speed / velocity_norm
+                )
+            else:
+                dynamics.state[3:6] = rotation[:, 0] * initial_speed
+            dynamics.state[6:10] = player[6:10]
+            dynamics.state[10:13] = player[10:13]
             self.fighters.append(
                 _Fighter(
                     dynamics=dynamics,
                     policy=ShadowPolicy(self.fighter_contract, self.model),
-                    display_roll_rad=roll,
-                    display_pitch_rad=pitch,
-                    display_heading_rad=heading,
                 )
             )
         self.episode_id = episode_id
         self.previous_player_position_ned_m = player[:3].copy()
         self.previous_player_heading_rad = heading
+
+    @staticmethod
+    def _slot_velocity(player: np.ndarray, rotated_offset: np.ndarray) -> np.ndarray:
+        rotation = quaternion_body_to_ned(player[6:10])
+        angular_velocity_ned = rotation @ player[10:13]
+        return player[3:6] + np.cross(angular_velocity_ned, rotated_offset)
+
+    def _feed_forward_leader_motion(self, player: np.ndarray) -> None:
+        """Seed each motor actor with bounded rigid-formation guidance."""
+
+        rotation = quaternion_body_to_ned(player[6:10])
+        for slot, fighter in enumerate(self.fighters):
+            offset = self._offset(slot)
+            rotated_offset = rotation @ offset
+            desired_position = player[:3] + rotated_offset
+            position_correction = self.position_gain_per_s * (
+                desired_position - fighter.dynamics.state[:3]
+            )
+            correction_speed = float(np.linalg.norm(position_correction))
+            if correction_speed > self.maximum_position_correction_mps:
+                position_correction *= (
+                    self.maximum_position_correction_mps / correction_speed
+                )
+            desired_velocity = (
+                self._slot_velocity(player, rotated_offset)
+                + position_correction
+            )
+            desired_speed = float(np.linalg.norm(desired_velocity))
+            if desired_speed > self.dynamics_envelope.maximum_airspeed_mps:
+                desired_velocity *= (
+                    self.dynamics_envelope.maximum_airspeed_mps
+                    / desired_speed
+                )
+            fighter.dynamics.state[3:6] = desired_velocity
+            fighter.dynamics.state[6:10] = player[6:10]
+            fighter.dynamics.state[10:13] = player[10:13]
 
     def _follow_relocation(self, player: np.ndarray) -> None:
         previous = self.previous_player_position_ned_m
@@ -180,35 +205,24 @@ class RlF14Swarm:
         player: np.ndarray,
         leader_turn_rate: float,
     ) -> np.ndarray:
-        player_heading = self._heading(player)
-        cosine = math.cos(player_heading)
-        sine = math.sin(player_heading)
-        rotation = np.asarray(
-            ((cosine, -sine, 0.0), (sine, cosine, 0.0), (0.0, 0.0, 1.0))
-        )
+        rotation = quaternion_body_to_ned(player[6:10])
         desired_position = player[:3] + rotation @ self._offset(slot)
         position_error = desired_position - fighter_state[:3]
-        leader_velocity = player[3:6].copy()
-        if float(np.linalg.norm(leader_velocity[:2])) < 100.0:
-            leader_velocity = rotation[:, 0] * 180.0
         rotated_offset = rotation @ self._offset(slot)
-        slot_velocity = np.asarray(
-            (
-                -leader_turn_rate * rotated_offset[1],
-                leader_turn_rate * rotated_offset[0],
-                0.0,
-            )
-        )
+        leader_velocity = self._slot_velocity(player, rotated_offset)
         position_correction = self.position_gain_per_s * position_error
         correction_speed = float(np.linalg.norm(position_correction))
         if correction_speed > self.maximum_position_correction_mps:
             position_correction *= (
                 self.maximum_position_correction_mps / correction_speed
             )
-        desired_velocity = leader_velocity + slot_velocity + position_correction
-        desired_heading = math.atan2(
-            float(desired_velocity[1]), float(desired_velocity[0])
-        )
+        desired_velocity = leader_velocity + position_correction
+        if float(np.linalg.norm(desired_velocity[:2])) < 1e-9:
+            desired_heading = self._heading(player)
+        else:
+            desired_heading = math.atan2(
+                float(desired_velocity[1]), float(desired_velocity[0])
+            )
         heading_error = _wrap_angle(desired_heading - self._heading(fighter_state))
         return np.asarray(
             (
@@ -236,48 +250,6 @@ class RlF14Swarm:
     def control_frame(self, frame: TelemetryFrame) -> TelemetryFrame:
         return frame
 
-    @staticmethod
-    def _slew_angle(
-        current: float, target: float, maximum_rate: float, dt_s: float
-    ) -> float:
-        delta = _clamp(
-            _wrap_angle(target - current),
-            -maximum_rate * dt_s,
-            maximum_rate * dt_s,
-        )
-        return _wrap_angle(current + delta)
-
-    def _update_display(self, fighter: _Fighter, dt_s: float) -> None:
-        state = fighter.dynamics.state_vector()
-        velocity = state[3:6]
-        horizontal_speed = float(np.linalg.norm(velocity[:2]))
-        speed = float(np.linalg.norm(velocity))
-        heading = math.atan2(float(velocity[1]), float(velocity[0]))
-        pitch = math.atan2(-float(velocity[2]), max(1e-9, horizontal_speed))
-        roll = _clamp(
-            math.atan2(speed * fighter.commanded_turn_radps, 9.80665),
-            -MAXIMUM_DISPLAY_ROLL_RAD,
-            MAXIMUM_DISPLAY_ROLL_RAD,
-        )
-        fighter.display_roll_rad = self._slew_angle(
-            fighter.display_roll_rad,
-            roll,
-            MAXIMUM_DISPLAY_ROLL_RATE_RADPS,
-            dt_s,
-        )
-        fighter.display_pitch_rad = self._slew_angle(
-            fighter.display_pitch_rad,
-            pitch,
-            MAXIMUM_DISPLAY_PITCH_RATE_RADPS,
-            dt_s,
-        )
-        fighter.display_heading_rad = self._slew_angle(
-            fighter.display_heading_rad,
-            heading,
-            MAXIMUM_DISPLAY_HEADING_RATE_RADPS,
-            dt_s,
-        )
-
     def update_state(
         self,
         player_state: np.ndarray,
@@ -299,6 +271,7 @@ class RlF14Swarm:
         if episode_id != self.episode_id:
             self._reset(player, episode_id)
         self._follow_relocation(player)
+        self._feed_forward_leader_motion(player)
         heading = self._heading(player)
         leader_turn_rate = _clamp(
             self._heading_rate(player),
@@ -326,18 +299,12 @@ class RlF14Swarm:
                 )
                 action, _ = fighter.policy.infer(actor_frame)
                 fighter.dynamics.step(action, dt_s)
-                fighter.commanded_turn_radps = float(goal[2])
-                self._update_display(fighter, dt_s)
             remaining -= dt_s
         return tuple(
             EnemyPose.create(
                 slot=slot,
                 position_ned_m=fighter.dynamics.state_vector()[:3],
-                quaternion_body_to_ned=quaternion_from_euler(
-                    fighter.display_roll_rad,
-                    fighter.display_pitch_rad,
-                    fighter.display_heading_rad,
-                ),
+                quaternion_body_to_ned=player[6:10],
                 native_visual=True,
             )
             for slot, fighter in enumerate(self.fighters)
