@@ -1,4 +1,4 @@
-"""Evaluate learned F-14 followers against sustained formation turns."""
+"""Evaluate learned F-14 followers through formation maneuvers."""
 
 from __future__ import annotations
 
@@ -188,6 +188,123 @@ def evaluate_turn(
     }
 
 
+def evaluate_loop(
+    swarm: RlF14Swarm,
+    direction: int,
+    *,
+    speed_mps: float = 220.0,
+    radius_m: float = 1000.0,
+) -> dict:
+    """Fly one complete vertical loop without resetting follower state."""
+
+    if direction not in {-1, 1}:
+        raise ValueError("loop direction must be -1 or 1")
+    if speed_mps <= 0.0 or radius_m <= 0.0:
+        raise ValueError("loop speed and radius must be positive")
+    dt_s = swarm.fighter_contract.nominal_dt_s
+    pitch_rate = direction * speed_mps / radius_m
+    steps = math.ceil(2.0 * math.pi / abs(pitch_rate) / dt_s)
+    player = np.zeros(13, dtype=np.float64)
+    errors = []
+    linear_accelerations = []
+    angular_speeds = []
+    previous_positions = None
+    previous_velocities = None
+    previous_quaternions = None
+    minimum_separation = math.inf
+    episode_id = f"vertical-loop-{direction:+d}"
+    for sequence in range(steps):
+        angle = pitch_rate * sequence * dt_s
+        player[:3] = (
+            direction * radius_m * math.sin(angle),
+            0.0,
+            -3000.0 + direction * radius_m * (math.cos(angle) - 1.0),
+        )
+        player[3:6] = (
+            speed_mps * math.cos(angle),
+            0.0,
+            -speed_mps * math.sin(angle),
+        )
+        player[6:10] = quaternion_from_euler(0.0, angle, 0.0)
+        player[10:13] = (0.0, pitch_rate, 0.0)
+        poses = swarm.update_state(
+            player,
+            episode_id=episode_id,
+            sequence=sequence,
+            monotonic_ns=round(sequence * dt_s * 1e9),
+            dt_s=dt_s,
+        )
+        rotation = quaternion_body_to_ned(player[6:10])
+        positions = [np.asarray(pose.position_ned_m) for pose in poses]
+        quaternions = [
+            np.asarray(pose.quaternion_body_to_ned) for pose in poses
+        ]
+        errors.extend(
+            float(
+                np.linalg.norm(
+                    player[:3] + rotation @ swarm._offset(slot) - position
+                )
+            )
+            for slot, position in enumerate(positions)
+        )
+        if len(positions) > 1:
+            minimum_separation = min(
+                minimum_separation,
+                *(
+                    float(np.linalg.norm(first - second))
+                    for index, first in enumerate(positions)
+                    for second in positions[index + 1 :]
+                ),
+            )
+        velocities = None
+        if previous_positions is not None:
+            velocities = [
+                (position - previous) / dt_s
+                for position, previous in zip(
+                    positions, previous_positions, strict=True
+                )
+            ]
+            angular_speeds.extend(
+                2.0
+                * math.acos(
+                    float(np.clip(abs(np.dot(current, previous)), 0.0, 1.0))
+                )
+                / dt_s
+                for current, previous in zip(
+                    quaternions, previous_quaternions, strict=True
+                )
+            )
+        if velocities is not None and previous_velocities is not None:
+            linear_accelerations.extend(
+                float(np.linalg.norm((current - previous) / dt_s))
+                for current, previous in zip(
+                    velocities, previous_velocities, strict=True
+                )
+            )
+        previous_positions = positions
+        previous_velocities = velocities
+        previous_quaternions = quaternions
+    values = np.asarray(errors)
+    return {
+        "maneuver": "vertical_loop",
+        "direction": direction,
+        "speed_mps": speed_mps,
+        "radius_m": radius_m,
+        "pitch_rate_radps": pitch_rate,
+        "samples": len(errors),
+        "slot_error_rmse_m": float(np.sqrt(np.mean(values * values))),
+        "slot_error_p95_m": float(np.quantile(values, 0.95)),
+        "slot_error_max_m": float(np.max(values)),
+        "linear_acceleration_p95_mps2": float(
+            np.quantile(linear_accelerations, 0.95)
+        ),
+        "angular_speed_p95_radps": float(np.quantile(angular_speeds, 0.95)),
+        "minimum_pair_separation_m": (
+            minimum_separation if math.isfinite(minimum_separation) else None
+        ),
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
@@ -260,6 +377,9 @@ def main(argv=None) -> int:
         for climb in climb_rates
         for rate in args.turn_rates
     ]
+    aerobatic_scenarios = [
+        evaluate_loop(swarm, direction) for direction in (-1, 1)
+    ]
     passed = all(
         scenario["slot_error_p95_m"] <= args.maximum_p95_error_m
         and scenario["minimum_pair_separation_m"] >= args.minimum_separation_m
@@ -268,12 +388,20 @@ def main(argv=None) -> int:
         and scenario["angular_speed_p95_radps"]
         <= args.maximum_angular_speed_p95_radps
         for scenario in scenarios
+    ) and all(
+        scenario["slot_error_p95_m"] <= args.maximum_p95_error_m
+        and scenario["minimum_pair_separation_m"] >= args.minimum_separation_m
+        and scenario["linear_acceleration_p95_mps2"]
+        <= args.maximum_linear_acceleration_p95_mps2
+        and scenario["angular_speed_p95_radps"]
+        <= args.maximum_angular_speed_p95_radps
+        for scenario in aerobatic_scenarios
     )
     report = {
         "schema_version": 1,
         "knlp_commit": args.knlp_commit
         or _git_head(Path(__file__).resolve().parents[1]),
-        "environment": "f14:sustained-formation-turns",
+        "environment": "f14:formation-maneuvers",
         "dynamics_fidelity": "generic fixed-wing training surrogate",
         "size": args.size,
         "seconds": args.seconds,
@@ -290,6 +418,7 @@ def main(argv=None) -> int:
         ),
         "machine_gate_passed": passed,
         "scenarios": scenarios,
+        "aerobatic_scenarios": aerobatic_scenarios,
     }
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

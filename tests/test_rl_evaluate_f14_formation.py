@@ -6,13 +6,14 @@ import numpy as np
 import pytest
 
 from rl.evaluate_f14_formation import (
+    evaluate_loop,
     evaluate_turn,
     parse_climb_rates,
     parse_speeds,
     parse_turn_rates,
 )
 from rl.flight.contracts import EnemyPose
-from rl.flight.geometry import quaternion_from_euler
+from rl.flight.geometry import quaternion_body_to_ned
 
 
 class ExactSwarm:
@@ -24,19 +25,12 @@ class ExactSwarm:
         return np.asarray((-200.0, 100.0 * (slot - 1), 0.0))
 
     def update_state(self, player, **frame):
-        yaw = frame["sequence"] * frame["dt_s"] * 0.04
-        rotation = np.asarray(
-            (
-                (np.cos(yaw), -np.sin(yaw), 0.0),
-                (np.sin(yaw), np.cos(yaw), 0.0),
-                (0.0, 0.0, 1.0),
-            )
-        )
+        rotation = quaternion_body_to_ned(player[6:10])
         return tuple(
             EnemyPose.create(
                 slot=slot,
                 position_ned_m=player[:3] + rotation @ self._offset(slot),
-                quaternion_body_to_ned=quaternion_from_euler(0.0, 0.0, yaw),
+                quaternion_body_to_ned=player[6:10],
             )
             for slot in range(self.size)
         )
@@ -82,3 +76,13 @@ def test_exact_formation_tracks_a_sustained_climb():
     )
     assert result["slot_error_p95_m"] == pytest.approx(0.0, abs=1e-9)
     assert result["climb_rate_mps"] == 60.0
+
+
+@pytest.mark.parametrize("direction", (-1, 1))
+def test_exact_formation_tracks_complete_vertical_loops(direction):
+    result = evaluate_loop(
+        ExactSwarm(), direction, speed_mps=180.0, radius_m=900.0
+    )
+    assert result["slot_error_p95_m"] == pytest.approx(0.0, abs=1e-9)
+    assert result["minimum_pair_separation_m"] == pytest.approx(100.0)
+    assert result["direction"] == direction

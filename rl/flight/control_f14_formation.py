@@ -31,6 +31,8 @@ MAXIMUM_SAMPLE_AGE_S = 0.25
 CONTROL_FREQUENCY_HZ = 50
 SUBSCRIPTION_FREQUENCY_HZ = 10
 TEAM_STATUS = "sim/multiplayer/combat/team_status"
+MINIMUM_CONTINUOUS_SPEED_MPS = 50.0
+MAXIMUM_CONTINUOUS_SPEED_MPS = 900.0
 
 
 @dataclass
@@ -121,6 +123,28 @@ def f14_player_state(values: dict[str, float]) -> np.ndarray:
             values["yaw_rate"],
         ),
         dtype=np.float64,
+    )
+
+
+def safe_formation_leader(
+    values: dict[str, float], *, initial: bool
+) -> bool:
+    """Keep an acquired formation through valid aerobatic flight."""
+
+    if initial:
+        return safe_handoff(values, initial=True)
+    try:
+        observation = f14_player_state(values)
+    except ValueError:
+        return False
+    speed = float(np.linalg.norm(observation[3:6]))
+    return bool(
+        values["paused"] < 0.5
+        and values["on_ground"] < 0.5
+        and values["height_agl"] >= 10.0
+        and MINIMUM_CONTINUOUS_SPEED_MPS
+        <= speed
+        <= MAXIMUM_CONTINUOUS_SPEED_MPS
     )
 
 
@@ -268,7 +292,7 @@ def run_formation(
                 release()
                 previous_frame_ns = None
                 continue
-            if not safe_handoff(values, initial=True):
+            if not safe_formation_leader(values, initial=not armed):
                 stats.unsafe_samples += 1
                 release()
                 previous_frame_ns = None
