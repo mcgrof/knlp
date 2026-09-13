@@ -64,3 +64,15 @@ def roll_pitch(quaternion: Sequence[float]) -> tuple[float, float]:
     roll = math.atan2(rotation[2, 1], rotation[2, 2])
     pitch = math.asin(float(np.clip(-rotation[2, 0], -1.0, 1.0)))
     return roll, pitch
+
+
+def roll_pitch_yaw(
+    quaternion: Sequence[float],
+) -> tuple[float, float, float]:
+    """Extract aerospace roll, pitch, and yaw from a body-to-NED quaternion."""
+
+    rotation = quaternion_body_to_ned(quaternion)
+    roll = math.atan2(rotation[2, 1], rotation[2, 2])
+    pitch = math.asin(float(np.clip(-rotation[2, 0], -1.0, 1.0)))
+    yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+    return roll, pitch, yaw

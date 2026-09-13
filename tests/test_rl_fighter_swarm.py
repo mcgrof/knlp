@@ -6,9 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from rl.envs.fighter_env import DEFAULT_CONTRACT
 from rl.flight.contracts import FlightContract, TelemetryFrame
-from rl.flight.fighter_swarm import RlF14Swarm
+from rl.flight.fighter_swarm import DEFAULT_CONTRACT, RlF14Swarm
+from rl.flight.geometry import quaternion_from_euler
 
 
 def _actor(path: Path, contract: FlightContract) -> None:
@@ -97,3 +97,56 @@ def test_f14_swarm_uses_native_aircraft_and_follows_relocation(tmp_path):
         )
         # Followers continue their normal flight during the relocated frame.
         assert actual == pytest.approx(displacement, abs=5.0)
+
+
+def test_f14_formation_goal_includes_turning_slot_velocity(tmp_path):
+    root_value = os.environ.get("XPLANE_UFO_ROOT")
+    if not root_value:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    output_contract = FlightContract.from_json(
+        Path(root_value) / "schemas/ufo-wrench-v1.json"
+    )
+    fighter_contract = FlightContract.from_json(DEFAULT_CONTRACT)
+    model = tmp_path / "fighter.npz"
+    _actor(model, fighter_contract)
+    swarm = RlF14Swarm(output_contract, model, 2, DEFAULT_CONTRACT)
+    player = np.asarray(_player_frame(output_contract).observation)
+    swarm._reset(player, "turn-test")
+    fighter = swarm.fighters[0].dynamics.state_vector()
+
+    straight = swarm._goal(0, fighter, player, 0.0)
+    turning = swarm._goal(0, fighter, player, 0.05)
+
+    assert turning[0] != pytest.approx(straight[0])
+    assert turning[2] != pytest.approx(straight[2])
+    assert abs(turning[2]) <= 0.08
+
+
+def test_state_adapter_measures_leader_turn_rate(tmp_path):
+    root_value = os.environ.get("XPLANE_UFO_ROOT")
+    if not root_value:
+        pytest.skip("XPLANE_UFO_ROOT is not set")
+    output_contract = FlightContract.from_json(
+        Path(root_value) / "schemas/ufo-wrench-v1.json"
+    )
+    fighter_contract = FlightContract.from_json(DEFAULT_CONTRACT)
+    model = tmp_path / "fighter.npz"
+    _actor(model, fighter_contract)
+    swarm = RlF14Swarm(output_contract, model, 2, DEFAULT_CONTRACT)
+    player = np.asarray(_player_frame(output_contract).observation)
+    swarm.update_state(
+        player,
+        episode_id="state-test",
+        sequence=0,
+        monotonic_ns=1,
+        dt_s=0.02,
+    )
+    player[6:10] = quaternion_from_euler(0.0, 0.0, 0.002)
+    swarm.update_state(
+        player,
+        episode_id="state-test",
+        sequence=1,
+        monotonic_ns=20_000_001,
+        dt_s=0.02,
+    )
+    assert swarm.previous_player_heading_rad == pytest.approx(0.002)

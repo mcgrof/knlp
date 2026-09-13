@@ -18,6 +18,10 @@ LONGITUDINAL_SPACING_M = 240.0
 LATERAL_SPACING_M = 120.0
 VERTICAL_SPACING_M = 35.0
 RELOCATION_THRESHOLD_M = 1000.0
+POSITION_GAIN_PER_S = 0.12
+MAXIMUM_POSITION_CORRECTION_MPS = 90.0
+MAXIMUM_FORMATION_SPEED_MPS = 280.0
+MAXIMUM_FORMATION_TURN_RADPS = 0.08
 DEFAULT_CONTRACT = (
     Path(__file__).resolve().parents[1] / "contracts/fighter-controls-v1.json"
 )
@@ -60,6 +64,7 @@ class RlF14Swarm:
         self.fighters: list[_Fighter] = []
         self.shots = ()
         self.previous_player_position_ned_m: np.ndarray | None = None
+        self.previous_player_heading_rad: float | None = None
 
     @staticmethod
     def _heading(state: np.ndarray) -> float:
@@ -82,8 +87,7 @@ class RlF14Swarm:
             )
         )
 
-    def _reset(self, frame: TelemetryFrame) -> None:
-        player = np.asarray(frame.observation, dtype=np.float64)
+    def _reset(self, player: np.ndarray, episode_id: str) -> None:
         heading = self._heading(player)
         cosine = math.cos(heading)
         sine = math.sin(heading)
@@ -104,8 +108,9 @@ class RlF14Swarm:
                     policy=ShadowPolicy(self.fighter_contract, self.model),
                 )
             )
-        self.episode_id = frame.episode_id
+        self.episode_id = episode_id
         self.previous_player_position_ned_m = player[:3].copy()
+        self.previous_player_heading_rad = heading
 
     def _follow_relocation(self, player: np.ndarray) -> None:
         previous = self.previous_player_position_ned_m
@@ -122,6 +127,7 @@ class RlF14Swarm:
         slot: int,
         fighter_state: np.ndarray,
         player: np.ndarray,
+        leader_turn_rate: float,
     ) -> np.ndarray:
         player_heading = self._heading(player)
         cosine = math.cos(player_heading)
@@ -134,40 +140,88 @@ class RlF14Swarm:
         leader_velocity = player[3:6].copy()
         if float(np.linalg.norm(leader_velocity[:2])) < 100.0:
             leader_velocity = rotation[:, 0] * 180.0
-        desired_velocity = leader_velocity + 0.08 * position_error
+        rotated_offset = rotation @ self._offset(slot)
+        slot_velocity = np.asarray(
+            (
+                -leader_turn_rate * rotated_offset[1],
+                leader_turn_rate * rotated_offset[0],
+                0.0,
+            )
+        )
+        position_correction = POSITION_GAIN_PER_S * position_error
+        correction_speed = float(np.linalg.norm(position_correction))
+        if correction_speed > MAXIMUM_POSITION_CORRECTION_MPS:
+            position_correction *= (
+                MAXIMUM_POSITION_CORRECTION_MPS / correction_speed
+            )
+        desired_velocity = leader_velocity + slot_velocity + position_correction
         desired_heading = math.atan2(
             float(desired_velocity[1]), float(desired_velocity[0])
         )
         heading_error = _wrap_angle(desired_heading - self._heading(fighter_state))
         return np.asarray(
             (
-                _clamp(float(np.linalg.norm(desired_velocity)), 120.0, 280.0),
+                _clamp(
+                    float(np.linalg.norm(desired_velocity)),
+                    120.0,
+                    MAXIMUM_FORMATION_SPEED_MPS,
+                ),
                 _clamp(-float(desired_velocity[2]), -30.0, 30.0),
-                _clamp(1.4 * heading_error, -0.08, 0.08),
+                _clamp(
+                    leader_turn_rate + 1.4 * heading_error,
+                    -MAXIMUM_FORMATION_TURN_RADPS,
+                    MAXIMUM_FORMATION_TURN_RADPS,
+                ),
             )
         )
 
     def control_frame(self, frame: TelemetryFrame) -> TelemetryFrame:
         return frame
 
-    def update(self, frame: TelemetryFrame) -> tuple[EnemyPose, ...]:
-        frame.validate(self.output_contract)
-        if frame.episode_id != self.episode_id:
-            self._reset(frame)
-        player = np.asarray(frame.observation, dtype=np.float64)
+    def update_state(
+        self,
+        player_state: np.ndarray,
+        *,
+        episode_id: str,
+        sequence: int,
+        monotonic_ns: int,
+        dt_s: float,
+    ) -> tuple[EnemyPose, ...]:
+        """Advance followers from a full player state in local NED."""
+
+        player = np.asarray(player_state, dtype=np.float64)
+        if player.shape != (13,) or not np.isfinite(player).all():
+            raise ValueError("F-14 formation player state must have 13 values")
+        if not episode_id or sequence < 0 or monotonic_ns < 0:
+            raise ValueError("F-14 formation frame identity is invalid")
+        if not math.isfinite(dt_s) or dt_s <= 0.0:
+            raise ValueError("F-14 formation dt must be positive")
+        if episode_id != self.episode_id:
+            self._reset(player, episode_id)
         self._follow_relocation(player)
+        heading = self._heading(player)
+        leader_turn_rate = 0.0
+        if self.previous_player_heading_rad is not None:
+            leader_turn_rate = _clamp(
+                _wrap_angle(heading - self.previous_player_heading_rad) / dt_s,
+                -MAXIMUM_FORMATION_TURN_RADPS,
+                MAXIMUM_FORMATION_TURN_RADPS,
+            )
         self.previous_player_position_ned_m = player[:3].copy()
-        remaining = min(frame.dt_s, 0.1)
+        self.previous_player_heading_rad = heading
+        remaining = min(dt_s, 0.1)
         while remaining > 1e-9:
             dt_s = min(self.fighter_contract.nominal_dt_s, remaining)
             for slot, fighter in enumerate(self.fighters):
                 state = fighter.dynamics.state_vector()
-                goal = self._goal(slot, state, player)
+                goal = self._goal(
+                    slot, state, player, leader_turn_rate
+                )
                 actor_frame = TelemetryFrame.create(
                     self.fighter_contract,
-                    episode_id=f"{frame.episode_id}-f14-{slot}",
-                    sequence=frame.sequence,
-                    monotonic_ns=frame.monotonic_ns,
+                    episode_id=f"{episode_id}-f14-{slot}",
+                    sequence=sequence,
+                    monotonic_ns=monotonic_ns,
                     dt_s=dt_s,
                     observation=state[3:],
                     goal=goal,
@@ -183,4 +237,14 @@ class RlF14Swarm:
                 native_visual=True,
             )
             for slot, fighter in enumerate(self.fighters)
+        )
+
+    def update(self, frame: TelemetryFrame) -> tuple[EnemyPose, ...]:
+        frame.validate(self.output_contract)
+        return self.update_state(
+            np.asarray(frame.observation, dtype=np.float64),
+            episode_id=frame.episode_id,
+            sequence=frame.sequence,
+            monotonic_ns=frame.monotonic_ns,
+            dt_s=frame.dt_s,
         )
