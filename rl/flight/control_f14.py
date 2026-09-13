@@ -18,7 +18,7 @@ from rl.flight.contracts import FlightContract, TelemetryFrame
 from rl.flight.geometry import quaternion_from_euler
 from rl.flight.shadow_ufo import ShadowPolicy
 from rl.flight.xplane_udp import XPlaneUdp
-from rl.flight.xplane_web import XPlaneWeb
+from rl.flight.xplane_web import XPlaneRest, XPlaneWeb
 
 DATAREFS = {
     "local_vx": "sim/flightmodel/position/local_vx",
@@ -244,7 +244,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--transport", choices=("web", "udp"), default="udp")
+    parser.add_argument(
+        "--transport", choices=("rest", "web", "udp"), default="rest"
+    )
     parser.add_argument("--port", type=int)
     parser.add_argument("--airspeed", type=float, default=180.0)
     parser.add_argument("--climb-rate", type=float, default=0.0)
@@ -271,8 +273,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
-    port = args.port or (8086 if args.transport == "web" else 49000)
-    client_type = XPlaneWeb if args.transport == "web" else XPlaneUdp
+    port = args.port or (49000 if args.transport == "udp" else 8086)
+    client_type = {
+        "rest": XPlaneRest,
+        "web": XPlaneWeb,
+        "udp": XPlaneUdp,
+    }[args.transport]
     with client_type(args.host, port) as client:
         with args.output.open("x", encoding="utf-8") as output:
             stats = run_controller(

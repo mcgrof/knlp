@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from rl.flight.xplane_web import XPlaneWeb, dataref_query
+from rl.flight.xplane_web import XPlaneRest, XPlaneWeb, dataref_query
 
 
 class FakeResponse:
@@ -114,3 +114,39 @@ def test_web_transport_rejects_invalid_messages(payload):
     client.socket = wire
     with pytest.raises(RuntimeError, match="WebSocket message"):
         client.receive(0.2)
+
+
+def test_rest_transport_polls_and_writes_indexed_datarefs():
+    identifiers = {
+        "sim/time/paused": 10,
+        "sim/flightmodel/engine/ENGN_thro_use": 11,
+    }
+    calls = []
+
+    def opener(request, timeout):
+        calls.append((request, timeout))
+        url = request.full_url
+        if "/datarefs?" in url:
+            return FakeResponse(
+                {
+                    "data": [
+                        {"id": identifier, "name": name}
+                        for name, identifier in identifiers.items()
+                        if name.replace("/", "%2F") in url
+                    ]
+                }
+            )
+        if request.get_method() == "GET":
+            return FakeResponse({"data": 0})
+        assert request.get_method() == "PATCH"
+        assert json.loads(request.data) == {"data": 0.75}
+        return FakeResponse(None)
+
+    client = XPlaneRest(opener=opener)
+    client.subscribe({"paused": "sim/time/paused"}, 50)
+    assert client.receive(0.2) == {"paused": 0.0}
+    assert client.fresh(1.0)
+    client.write_many(
+        (("sim/flightmodel/engine/ENGN_thro_use[0]", 0.75),)
+    )
+    assert calls[-1][0].full_url.endswith("/datarefs/11/value?index=0")
