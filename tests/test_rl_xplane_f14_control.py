@@ -200,7 +200,7 @@ def test_xplane_state_converts_to_yaw_invariant_live_contract():
 @pytest.mark.parametrize(
     "updates",
     (
-        {"local_vz": -99.0},
+        {"local_vz": -80.0},
         {"height_agl": 149.0},
         {"on_ground": 1.0},
         {"paused": 1.0},
@@ -213,16 +213,34 @@ def test_f14_handoff_rejects_unsafe_live_state(updates):
 @pytest.mark.parametrize(
     "updates",
     (
-        {"local_vz": -130.0},
-        {"local_vz": -240.0},
-        {"local_vy": 6.0},
-        {"height_agl": 499.0},
-        {"roll_deg": 11.0},
-        {"pitch_rate": 0.16},
+        {"local_vz": -80.0},
+        {"local_vz": -460.0},
+        {"local_vy": 121.0},
+        {"height_agl": 199.0},
+        {"roll_deg": 121.0},
+        {"pitch_deg": 71.0},
+        {"pitch_rate": 2.01},
     ),
 )
 def test_f14_initial_handoff_requires_trimmed_flight(updates):
     assert not safe_handoff(sample(**updates), initial=True)
+
+
+def test_f14_initial_handoff_accepts_observed_fast_climb():
+    assert safe_handoff(
+        sample(
+            local_vx=270.08,
+            local_vy=31.96,
+            local_vz=-141.77,
+            height_agl=481.5,
+            roll_deg=16.38,
+            pitch_deg=6.12,
+            roll_rate=0.095,
+            pitch_rate=0.008,
+            yaw_rate=0.009,
+        ),
+        initial=True,
+    )
 
 
 def test_live_limiter_blends_bounds_and_slew_limits_actor_actions():
@@ -258,9 +276,9 @@ def test_live_reference_protects_speed_and_corrects_attitude():
 
 
 def test_showcase_holds_before_gentle_maneuvers():
-    assert showcase_goal((180.0, 9.0, 0.1), 7.9) == (180.0, 0.0, 0.0)
-    assert showcase_goal((180.0, 9.0, 0.1), 8.0) == (180.0, 4.0, 0.015)
-    assert showcase_goal((180.0, 9.0, 0.1), 18.0) == (180.0, 0.0, -0.015)
+    assert showcase_goal((180.0, 9.0, 0.1), 2.9) == (180.0, 0.0, 0.0)
+    assert showcase_goal((180.0, 9.0, 0.1), 3.0) == (180.0, 5.0, 0.020)
+    assert showcase_goal((180.0, 9.0, 0.1), 13.0) == (180.0, 0.0, -0.020)
 
 
 def test_sample_rate_reports_transport_cadence():
