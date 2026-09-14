@@ -425,13 +425,15 @@
     <!-- LEADERBOARD METHODS -->
     <section class="mb-12">
       <div class="card p-6">
-        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Ten methods off the leaderboard</h2>
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Eleven published methods under the prefix contract</h2>
         <p class="text-slate-300 leading-8 mb-5">
           The reference adapters prove the harness works. The real question is
-          what it says about methods people actually deploy. We took ten off the
+          what it says about methods people actually deploy. We selected eleven from
+          primary papers and the
           <a class="section-link" href="https://github.com/NVIDIA/kvpress">KVPress</a>
-          leaderboard and their papers &mdash; StreamingLLM, Knorm, SnapKV,
-          Expected Attention, TOVA, H2O, PyramidKV, plus Quest, Ada-KV, and KIVI
+          leaderboard &mdash; StreamingLLM, Knorm, SnapKV,
+          Expected Attention, TOVA, H2O, PyramidKV, SnapStream, Quest, Ada-KV,
+          and KIVI
           &mdash; and ran each through the same slot. Each method is classified by
           its <em>design</em>: whether it keeps whole blocks or scattered tokens,
           whether the kept set depends on the query, whether heads disagree, and
@@ -467,6 +469,12 @@
             <tr style="background: rgba(251,113,133,0.06);">
               <td class="text-slate-200">SnapKV</td><td class="text-slate-500 text-xs">KVPress</td>
               <td class="text-xs">token, per-head</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
+              <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
+            </tr>
+            <tr style="background: rgba(251,113,133,0.06);">
+              <td class="text-slate-200">SnapStream</td>
+              <td class="text-slate-500 text-xs"><a class="section-link" href="https://arxiv.org/abs/2511.03092">paper</a></td>
+              <td class="text-xs">token, per-head, compact ring</td><td class="bad text-xs">yes</td><td class="bad">56%</td>
               <td class="text-xs"><span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span></td>
             </tr>
             <tr style="background: rgba(251,113,133,0.06);">
@@ -510,6 +518,16 @@
           partial &mdash; so they need a custom connector, not plain block-hash
           reuse. Quest keeps the whole prefix and only routes reads, so it is
           honestly a router and labeled as one.
+        </p>
+        <p class="text-slate-300 leading-8 mt-4">
+          SnapStream inherits SnapKV-style prompt-tail selection and then packs
+          sink, selected, and recent tokens into a fixed compact layout. The
+          rolling recent region is mutable decode state, while retained logical
+          positions and padding live outside the ordinary dense cache shape.
+          A query-aware identity removes the prefix-key collision, but the
+          compact layout still needs a method-aware connector and request-local
+          ring state. This row reports the CPU contract result; it does not
+          reproduce the paper's quality or accelerator-throughput measurements.
         </p>
         <div class="mini-note-warn mt-4">
           <p class="text-slate-300 leading-7 text-sm">
