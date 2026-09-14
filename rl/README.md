@@ -220,8 +220,12 @@ aircraft plugin. `rl.flight.control_f14_formation` reads the player pose from
 X-Plane's Web API, advances one frozen motor actor and fixed-wing dynamics
 instance per follower, and writes only multiplayer aircraft paths. Its slot
 velocity includes the full three-dimensional rigid-formation motion and a
-bounded position correction. Followers therefore remain in their slots while
-the leader rolls or completes a vertical loop. Once acquired, the adapter
+bounded position correction. Each actor follows a short, distance-bounded
+leader history with slightly increasing reaction delay by slot. Velocity and
+attitude guidance also use bounded response rates. Followers react as separate
+pilots instead of snapping rigidly onto every leader input, while
+remaining in their slots when the leader rolls or completes a vertical loop.
+Once acquired, the adapter
 accepts continuous aerobatic attitudes instead of releasing and later
 respawning the formation. Pause, stale telemetry, landing, interruption,
 and normal exit still release every acquired AI path; aircraft zero remains

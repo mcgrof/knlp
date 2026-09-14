@@ -138,7 +138,7 @@ def test_f14_formation_goal_includes_turning_slot_velocity(tmp_path):
     _actor(model, fighter_contract)
     swarm = RlF14Swarm(output_contract, model, 2, DEFAULT_CONTRACT)
     player = np.asarray(_player_frame(output_contract).observation)
-    swarm._reset(player, "turn-test")
+    swarm._reset(player, "turn-test", 0)
     fighter = swarm.fighters[0].dynamics.state_vector()
 
     straight = swarm._goal(0, fighter, player, 0.0)
@@ -181,7 +181,7 @@ def test_state_adapter_uses_leader_body_rates(tmp_path):
     assert swarm.previous_player_heading_rad == pytest.approx(0.0)
 
 
-def test_rendered_f14_attitude_matches_aerobatic_leader(tmp_path):
+def test_rendered_f14_attitude_follows_aerobatic_leader_smoothly(tmp_path):
     root_value = os.environ.get("XPLANE_UFO_ROOT")
     if not root_value:
         pytest.skip("XPLANE_UFO_ROOT is not set")
@@ -193,19 +193,29 @@ def test_rendered_f14_attitude_matches_aerobatic_leader(tmp_path):
     _actor(model, fighter_contract)
     swarm = RlF14Swarm(output_contract, model, 1, DEFAULT_CONTRACT)
     player = np.asarray(_player_frame(output_contract).observation)
-    player[6:10] = quaternion_from_euler(
-        math.radians(179.0), math.radians(70.0), math.radians(15.0)
-    )
-    poses = swarm.update_state(
+    initial = swarm.update_state(
         player,
         episode_id="display-test",
         sequence=0,
         monotonic_ns=1,
         dt_s=0.02,
     )
-    assert np.asarray(poses[0].quaternion_body_to_ned) == pytest.approx(
-        player[6:10]
+    target = quaternion_from_euler(
+        math.radians(60.0), math.radians(35.0), math.radians(15.0)
     )
+    player[6:10] = target
+    for sequence in range(1, 11):
+        poses = swarm.update_state(
+            player,
+            episode_id="display-test",
+            sequence=sequence,
+            monotonic_ns=sequence * 20_000_000 + 1,
+            dt_s=0.02,
+        )
+    before = np.asarray(initial[0].quaternion_body_to_ned)
+    after = np.asarray(poses[0].quaternion_body_to_ned)
+    assert abs(float(np.dot(after, target))) > abs(float(np.dot(before, target)))
+    assert abs(float(np.dot(after, target))) < 0.9999
 
 
 def test_f14_formation_follows_a_complete_vertical_loop(tmp_path):
@@ -254,8 +264,8 @@ def test_f14_formation_follows_a_complete_vertical_loop(tmp_path):
                 maximum_error_m,
                 float(np.linalg.norm(np.asarray(pose.position_ned_m) - target)),
             )
-            assert np.asarray(pose.quaternion_body_to_ned) == pytest.approx(
-                player[6:10]
+            assert np.linalg.norm(pose.quaternion_body_to_ned) == pytest.approx(
+                1.0
             )
 
     assert maximum_error_m < 100.0
