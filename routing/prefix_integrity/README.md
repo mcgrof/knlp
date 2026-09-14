@@ -44,6 +44,14 @@ and one of five plain-language classifications: `SAFE_FOR_PREFIX_OFFLOAD`,
 `SAFE_ONLY_WITH_EXTENDED_CACHE_KEY`, `SAFE_ONLY_WITH_CUSTOM_CONNECTOR`,
 `ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE`, `DANGEROUS_FOR_PREFIX_SHARING`.
 
+The published-method adapters include SnapStream. Its prompt-tail selection
+changes the compacted object across suffixes that share an earlier prefix, and
+its per-head token layout leaves ordinary cache blocks partial. Under a
+prefix-only key it therefore fails as `DANGEROUS_FOR_PREFIX_SHARING`; adding a
+query identity still leaves the compact layout dependent on a custom connector.
+This CPU result is a cache-contract classification, not a claim about model
+quality or throughput.
+
 ## CPU path (selector mode, no model)
 
 The block-survival, determinism, and storage metrics need no model and no GPU:
