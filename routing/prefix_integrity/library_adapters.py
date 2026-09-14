@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
-"""Adapters for ten published KV-cache compression methods.
+"""Adapters for published KV-cache compression methods.
 
-These wrap methods from the KVPress leaderboard (StreamingLLM, Knorm, SnapKV,
-Expected Attention, TOVA, H2O/Observed-Attention, PyramidKV) plus three widely
-benchmarked ones from their own papers (Quest, Ada-KV, KIVI). The point is not
-to reimplement their kernels -- it is to run each through the one narrow PIA slot
-and read off where it is safe to deploy.
+These model methods from the KVPress leaderboard (StreamingLLM, Knorm, SnapKV,
+Expected Attention, TOVA, H2O/Observed-Attention, PyramidKV) plus Quest, Ada-KV,
+KIVI, and SnapStream from their papers. The point is not to reimplement their
+kernels -- it is to run each through the one narrow PIA slot and read off where
+it is safe to deploy.
 
 Each adapter models the method's *contract behavior*, which is a design fact of
 the method, not a property of any particular attention values:
@@ -33,11 +33,11 @@ import random
 
 from .datatypes import BlockManifest, Mode
 
-
 LEADERBOARD = {
     "streaming_llm": ("StreamingLLM", "Xiao et al. 2023", "KVPress"),
     "knorm": ("Knorm (key-norm)", "Devoto et al. 2024", "KVPress"),
     "snapkv": ("SnapKV", "Li et al. 2024", "KVPress"),
+    "snapstream": ("SnapStream", "Li et al. 2025", "paper"),
     "expected_attention": ("Expected Attention", "NVIDIA KVPress 2024", "KVPress"),
     "tova": ("TOVA", "Oren et al. 2024", "KVPress"),
     "h2o": ("H2O (heavy-hitter)", "Zhang et al. 2023", "KVPress"),
@@ -219,6 +219,22 @@ class SnapKV(_AdaptiveTokenMethod):
     name = "snapkv"
 
 
+class SnapStream(_AdaptiveTokenMethod):
+    """Compact prefill KV into fixed sink, selected, and recent regions.
+
+    SnapStream derives each layer/head selection from a prompt-tail observation
+    window, preserves logical positions outside the compact tensor layout, and
+    overwrites the recent region during decode.  Prefix-only identity is
+    therefore insufficient across different suffixes.  The compact layout and
+    rolling recent region also require a method-aware restore/attention path.
+    """
+
+    name = "snapstream"
+    generation_dependent = True
+    shape_preserved = False
+    has_custom_restore_path = True
+
+
 class ExpectedAttention(_AdaptiveTokenMethod):
     """Scores prefix KV by expected attention from a model of future queries,
     conditioned on the prompt. Different suffix over the same prefix gives a
@@ -291,6 +307,7 @@ LIBRARY = {
     "knorm": Knorm,
     "kivi": KIVI,
     "snapkv": SnapKV,
+    "snapstream": SnapStream,
     "expected_attention": ExpectedAttention,
     "tova": TOVA,
     "h2o": H2O,
