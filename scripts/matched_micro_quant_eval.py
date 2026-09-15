@@ -62,17 +62,38 @@ def quantize(x, fmt, scale_dims):
     if fmt == "int8":
         scale = amax / 127.0
         return torch.round(x / scale).clamp_(-127, 127) * scale
+    if fmt == "int8sr":
+        # stochastic rounding: unbiased per write, so rounding error does
+        # not accumulate as a drift in the state; no extra storage
+        scale = amax / 127.0
+        y = x / scale
+        return (torch.floor(y + torch.rand_like(y))).clamp_(-127, 127) * scale
     raise ValueError(fmt)
 
 
 def state_quantizer(spec):
     """spec = '<fmt>' (per-head scale over the whole state matrix),
-    '<fmt>:row' (one scale per state row), '<fmt>:col' (per column)."""
+    '<fmt>:row' (one scale per state row), '<fmt>:col' (per column),
+    '<fmt>:ef' (error feedback: the rounding residual is carried in
+    fp32 and added back before the next rounding; a diagnostic that
+    separates accumulated drift from per-step noise, not a storage
+    format, since the residual would cost the bits back)."""
     fmt, _, scope = spec.partition(":")
-    dims = {"": (-2, -1), "head": (-2, -1), "row": (-1,), "col": (-2,)}[scope]
+    dims = {"": (-2, -1), "head": (-2, -1), "row": (-1,), "col": (-2,), "ef": (-2, -1)}[
+        scope
+    ]
+    residual = {}
 
     def q(s):
-        return quantize(s.float(), fmt, dims).to(s.dtype)
+        x = s.float()
+        if scope == "ef":
+            r = residual.get("r")
+            if r is not None and r.shape == x.shape:
+                x = x + r
+            y = quantize(x, fmt, dims)
+            residual["r"] = x - y
+            return y.to(s.dtype)
+        return quantize(x, fmt, dims).to(s.dtype)
 
     return q
 
