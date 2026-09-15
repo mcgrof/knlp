@@ -166,6 +166,8 @@ def gdn_replay_forward(mixer, x, chunk, qstate):
 def attention_kv_forward(attn, x, kfmt, vfmt):
     b, t, d = x.shape
     q, k, v = attn.qkv(x).chunk(3, dim=-1)
+    if hasattr(attn, "convs"):  # the recall ceiling's convolution-equipped attention
+        q, k, v = (conv(z)[0] for conv, z in zip(attn.convs, (q, k, v)))
     q, k, v = (
         z.view(b, t, attn.heads, attn.dim_head).transpose(1, 2) for z in (q, k, v)
     )
@@ -281,7 +283,13 @@ def main():
         ck = torch.load(path, map_location="cpu")
         cfg = ck["config"]
         vocab = CONTRACT["vocab_size"] if args.task == "lm" else ck["args"]["vocab"]
-        model = StackLM(cfg, vocab)
+        if args.task == "lm":
+            model = StackLM(cfg, vocab)
+        else:
+            import mqar_recall as mq
+
+            mq.set_vocab(vocab)
+            model = mq.build(ck["arm"], torch.device("cpu"), 0, cfg.get("dim"))
         model.load_state_dict(ck["model"])
         model.to(device).eval()
         has_gdn = any(b.mixer_kind == "G" for b in model.blocks)
