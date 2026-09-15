@@ -31,6 +31,7 @@ import time
 import torch
 
 FP8_MAX = dict(e4m3=448.0, e5m2=57344.0)
+INT_MAX = dict(int8=127.0, int6=31.0, int4=7.0)
 
 
 # ---------------------------------------------------------------------------
@@ -49,9 +50,17 @@ def quantize(x, fmt, dims):
         scale = amax / FP8_MAX[fmt]
         dt = torch.float8_e4m3fn if fmt == "e4m3" else torch.float8_e5m2
         return ((xf / scale).to(dt).to(torch.float32) * scale).to(x.dtype)
-    if fmt == "int8":
-        scale = amax / 127.0
-        return (torch.round(xf / scale).clamp_(-127, 127) * scale).to(x.dtype)
+    if fmt in INT_MAX:
+        qmax = INT_MAX[fmt]
+        scale = amax / qmax
+        return (torch.round(xf / scale).clamp_(-qmax, qmax) * scale).to(x.dtype)
+    if fmt.startswith("zero") and "int" + fmt[4:] in INT_MAX:
+        # diagnostic: only the flush-to-zero part of the integer grid; entries
+        # below half a step are zeroed, everything else is left exact
+        qmax = INT_MAX["int" + fmt[4:]]
+        return torch.where(xf.abs() < amax / (2 * qmax), torch.zeros_like(xf), xf).to(
+            x.dtype
+        )
     raise ValueError(fmt)
 
 
@@ -71,8 +80,21 @@ def layer_selected(i, sel):
     return (i not in idx) if invert else (i in idx)
 
 
+KV_FORMATS = {
+    "v8": ("none", "e4m3"),
+    "k8v8": ("e4m3", "e4m3"),
+    "v6": ("none", "int6"),
+    "v4": ("none", "int4"),
+    "k8v4": ("e4m3", "int4"),
+    "k8v6": ("e4m3", "int6"),
+}
+
+
 class Condition:
-    """state:<fmt>[:ef][/every N][@layers]  kv:<v8|k8v8>[@layers], joined by '+'.
+    """state:<fmt>[:ef][/every N][@layers]  kv:<fmt>[@layers], joined by '+'.
+    State formats: bf16, e4m3, e5m2, int8, int6, int4, and the diagnostic
+    zero8/zero6/zero4 (only the flush-to-zero of that grid). KV formats: v8, k8v8,
+    v6, v4, k8v6, k8v4 (fp8 keys; values fp8 or integer, per-token scale).
     <layers> is a '.'-separated list of layer indices, or '!' followed by a
     list to mean every layer except those.  Examples: base | state:bf16 |
     state:e4m3/64 | state:e4m3:ef | state:e4m3+kv:k8v8 | state:e4m3@3.7 |
@@ -97,8 +119,7 @@ class Condition:
                 self.state_every = int(every) if every else 1
                 self.state_layers = layers
             elif kind == "kv":
-                self.k_fmt = "e4m3" if rest == "k8v8" else "none"
-                self.v_fmt = "e4m3" if rest in ("v8", "k8v8") else "none"
+                self.k_fmt, self.v_fmt = KV_FORMATS[rest]
                 self.kv_layers = layers
             else:
                 raise ValueError(part)
@@ -244,16 +265,46 @@ KEYS = [
     "velvet",
     "falcon",
     "cinder",
+    "juniper",
+    "saddle",
+    "quartz",
+    "willow",
+    "anchor",
+    "beacon",
+    "cobalt",
+    "dagger",
+    "ember",
+    "fjord",
+    "glacier",
+    "hazel",
+    "ivory",
+    "jasper",
+    "kestrel",
+    "lagoon",
+    "marble",
+    "nickel",
+    "otter",
+    "pepper",
+    "quiver",
+    "raven",
+    "sable",
+    "timber",
+    "umber",
+    "vortex",
+    "walnut",
+    "yarrow",
+    "zephyr",
+    "bramble",
 ]
 
 
-def build_multikey(tok, prose_ids, length, n_keys, rng):
+def build_multikey(tok, prose_ids, length, n_keys, rng, ask="random"):
     """N needles 'The secret number for <key> is <6 digits>.' spread evenly
     through prose of about `length` tokens, then one key is asked."""
     keys = rng.sample(KEYS, n_keys)
     vals = [f"{rng.randint(100000, 999999)}" for _ in keys]
     needles = [f" The secret number for {k} is {v}. " for k, v in zip(keys, vals)]
-    ask = rng.randrange(n_keys)
+    ask = {"random": rng.randrange(n_keys), "first": 0, "last": n_keys - 1}[ask]
     q = f"\n\nQuestion: What is the secret number for {keys[ask]}? Answer with the number only.\nAnswer:"
     q_ids = tok(q, add_special_tokens=False).input_ids
     n_ids = [tok(n, add_special_tokens=False).input_ids for n in needles]
@@ -301,6 +352,45 @@ def build_needle(tok, prose_ids, length, depth, rng):
     return hay[:pos] + n_ids + hay[pos:] + q_ids, v
 
 
+GSM_INSTRUCTION = (
+    " Solve the problem with at most four short lines of plain-text arithmetic"
+    " (no LaTeX, no headings), then give the final answer on the last line"
+    " in the form '#### <number>'."
+)
+
+
+def build_gsm8k(tok, n, rng):
+    """First n GSM8K test problems in a seeded order, chat-wrapped."""
+    from datasets import load_dataset
+
+    d = load_dataset("openai/gsm8k", "main", split="test")
+    idx = list(range(len(d)))
+    rng.shuffle(idx)
+    out = []
+    for i in idx[:n]:
+        q = d[i]["question"] + GSM_INSTRUCTION
+        ans = d[i]["answer"].split("####")[-1].strip().replace(",", "")
+        ids = tok(q, add_special_tokens=False).input_ids
+        out.append((chat_wrap(tok, ids), ans))
+    return out
+
+
+def gsm_match(text, ans):
+    """The number after the last '####', else the last number in the text."""
+    import re
+
+    t = text.replace(",", "")
+    m = re.findall(r"####\s*(-?\d+(?:\.\d+)?)", t)
+    if not m:
+        m = re.findall(r"-?\d+(?:\.\d+)?", t)
+    if not m:
+        return False
+    try:
+        return abs(float(m[-1]) - float(ans)) < 1e-6
+    except ValueError:
+        return False
+
+
 def chat_wrap(tok, ids):
     """Wrap a raw prompt (token ids) in the model's chat template as a user
     turn with thinking disabled, so an instruct model answers directly."""
@@ -320,7 +410,9 @@ def chat_wrap(tok, ids):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", default="Qwen/Qwen3.5-4B")
-    ap.add_argument("--task", choices=["multikey", "needle", "ppl"], required=True)
+    ap.add_argument(
+        "--task", choices=["multikey", "needle", "ppl", "gsm8k"], required=True
+    )
     ap.add_argument(
         "--conditions",
         default="base,state:bf16,state:e4m3/64,state:e4m3,state:e4m3:ef,state:int8,kv:v8,kv:k8v8",
@@ -328,6 +420,12 @@ def main():
     ap.add_argument("--lengths", default="2048,4096,8192")
     ap.add_argument("--prompts", type=int, default=20)
     ap.add_argument("--keys", type=int, default=4)
+    ap.add_argument(
+        "--ask",
+        choices=["random", "first", "last"],
+        default="random",
+        help="which needle to ask for: first = the oldest write in the state",
+    )
     ap.add_argument(
         "--chunk",
         type=int,
@@ -349,7 +447,10 @@ def main():
         .eval()
     )
     lengths = [int(x) for x in args.lengths.split(",")]
-    prose = load_prose(tok, max(lengths) * 2)
+    if args.task == "gsm8k":
+        lengths, prose = [0], None
+    else:
+        prose = load_prose(tok, max(lengths) * 2)
     conds = [Condition(c) for c in args.conditions.split(",")]
     rows = []
     manifest = dict(
@@ -365,9 +466,11 @@ def main():
     for length in lengths:
         rng = random.Random(args.seed + length)
         prompts = []
-        for _ in range(args.prompts):
+        if args.task == "gsm8k":
+            prompts = build_gsm8k(tok, args.prompts, rng)
+        for _ in range(args.prompts if args.task != "gsm8k" else 0):
             if args.task == "multikey":
-                ids, ans = build_multikey(tok, prose, length, args.keys, rng)
+                ids, ans = build_multikey(tok, prose, length, args.keys, rng, args.ask)
                 ids = chat_wrap(tok, ids)
             elif args.task == "needle":
                 ids, ans = build_needle(
@@ -381,16 +484,27 @@ def main():
         for cond in conds:
             t0 = time.time()
             hits, ppls, samples = 0, [], []
-            for ids, ans in prompts:
+            for j, (ids, ans) in enumerate(prompts):
                 x = torch.tensor([ids], device=args.device)
                 if args.task == "ppl":
                     ppls.append(perplexity(model, x, cond, args.chunk))
                 else:
-                    text = greedy(model, tok, x, cond, args.chunk, args.max_new)
-                    ok = ans in text
+                    gsm = args.task == "gsm8k"
+                    text = greedy(
+                        model,
+                        tok,
+                        x,
+                        cond,
+                        args.chunk,
+                        args.max_new,
+                        stop_newline=not gsm,
+                    )
+                    ok = gsm_match(text, ans) if gsm else ans in text
                     hits += int(ok)
-                    if len(samples) < 3:
-                        samples.append(dict(expected=ans, got=text[:60], ok=ok))
+                    # keep every miss and the first three hits
+                    if not ok or len(samples) < 3:
+                        got = text[-80:] if gsm else text[:60]
+                        samples.append(dict(i=j, expected=ans, got=got, ok=ok))
             row = dict(
                 task=args.task,
                 length=length,
@@ -400,6 +514,7 @@ def main():
             )
             if args.task == "ppl":
                 row["ppl"] = sum(ppls) / len(ppls)
+                row["ppl_windows"] = [round(v, 4) for v in ppls]
             else:
                 row["accuracy"] = hits / len(prompts)
                 row["samples"] = samples
