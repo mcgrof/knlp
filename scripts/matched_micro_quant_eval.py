@@ -40,6 +40,7 @@ from matched_micro_train import (
 )  # noqa: E402
 
 FP8_MAX = dict(e4m3=448.0, e5m2=57344.0)
+INT_MAX = dict(int8=127.0, int6=31.0, int4=7.0)
 
 
 # ---------------------------------------------------------------------------
@@ -59,9 +60,10 @@ def quantize(x, fmt, scale_dims):
         scale = amax / FP8_MAX[fmt]
         dt = torch.float8_e4m3fn if fmt == "e4m3" else torch.float8_e5m2
         return (x / scale).to(dt).to(x.dtype) * scale
-    if fmt == "int8":
-        scale = amax / 127.0
-        return torch.round(x / scale).clamp_(-127, 127) * scale
+    if fmt in INT_MAX:
+        qmax = INT_MAX[fmt]
+        scale = amax / qmax
+        return torch.round(x / scale).clamp_(-qmax, qmax) * scale
     if fmt == "int8sr":
         # stochastic rounding: unbiased per write, so rounding error does
         # not accumulate as a drift in the state; no extra storage
@@ -163,6 +165,86 @@ def gdn_replay_forward(mixer, x, chunk, qstate):
     return mixer.o_proj(rearrange(o, "b t h d -> b t (h d)")), state
 
 
+class _LayerCache:
+    """The slice of flash-linear-attention's cache protocol a layer uses:
+    indexing by layer, len(), and update(layer_idx=..., recurrent_state=...,
+    conv_state=..., offset=...). fla's own Cache class recurses in its
+    constructor against the transformers version installed here."""
+
+    def __init__(self):
+        self.states = []
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, i):
+        return self.states[i]
+
+    def update(self, layer_idx, recurrent_state=None, conv_state=None, **_):
+        while len(self.states) <= layer_idx:
+            self.states.append(dict(recurrent_state=None, conv_state=None))
+        st = self.states[layer_idx]
+        if recurrent_state is not None:
+            st["recurrent_state"] = recurrent_state
+        if conv_state is not None:
+            st["conv_state"] = conv_state
+        return st
+
+
+def mom_replay_forward(mixer, forward, x, chunk, q_shared, q_routed):
+    """Run a Mixture-of-Memories layer piece by piece through its own cache
+    path and round the two stores between pieces: the routed memories
+    (one state per memory per sequence) with q_routed and the shared
+    memory with q_shared. Routing is per token, so chunking does not
+    change which memory a token reaches."""
+    import types
+
+    if getattr(mixer, "layer_idx", None) is None:
+        mixer.layer_idx = 0
+
+    def select_active(self, state, cu_seqlens, cu_seqlen_all, reverse_indices, batch):
+        # fla's version assumes exactly top-k memories are active per sequence,
+        # which holds for one token at a time; a piece of several tokens can
+        # activate any number of (memory, sequence) slots, so select those.
+        if state is None or cu_seqlens is None:
+            return state
+        total = len(cu_seqlen_all)
+        if len(cu_seqlens) == total:
+            return state
+        active = [
+            i for i in range(total - 1) if cu_seqlen_all[i] != cu_seqlen_all[i + 1]
+        ]
+        return state[active]
+
+    saved_mode, saved_prep = mixer.mode, mixer.prepare_recurrent_state
+    # the recurrent kernel path is the one that selects and writes back the
+    # active memories per piece; the chunk path passes every slot to a kernel
+    # that only sees the active ones
+    mixer.mode = "fused_recurrent"
+    mixer.prepare_recurrent_state = types.MethodType(select_active, mixer)
+    try:
+        cache = _LayerCache()
+        b, t, _ = x.shape
+        outs, logits = [], []
+        for s in range(0, t, chunk):
+            o, _, cache, rl = forward(
+                x[:, s : s + chunk], past_key_values=cache, use_cache=True
+            )
+            outs.append(o)
+            logits.append(rl)
+            st = cache[mixer.layer_idx]["recurrent_state"]
+            if st[0] is not None:
+                st[0] = q_routed(st[0])
+            if mixer.shared_mem and st[-1] is not None:
+                st[-1] = q_shared(st[-1])
+        st = cache[mixer.layer_idx]["recurrent_state"]
+        shapes = tuple(tuple(z.shape) for z in st if z is not None)
+    finally:
+        mixer.mode = saved_mode
+        mixer.prepare_recurrent_state = saved_prep
+    return torch.cat(outs, dim=1), torch.cat(logits, dim=0), shapes
+
+
 def attention_kv_forward(attn, x, kfmt, vfmt):
     b, t, d = x.shape
     q, k, v = attn.qkv(x).chunk(3, dim=-1)
@@ -182,10 +264,14 @@ def attention_kv_forward(attn, x, kfmt, vfmt):
 class Replay:
     """Installs the replay forwards on a StackLM for one configuration."""
 
-    def __init__(self, model, chunk, state_spec, kv):
+    def __init__(self, model, chunk, state_spec, kv, mom_shared=None, mom_routed=None):
         self.model = model
         self.chunk = chunk
         self.qstate = state_quantizer(state_spec)
+        # Mixture-of-Memories layers: separate formats for the shared memory
+        # and the routed memories; both default to the GDN state format
+        self.q_shared = state_quantizer(mom_shared or state_spec)
+        self.q_routed = state_quantizer(mom_routed or state_spec)
         kfmt, vfmt = {
             "none": ("fp32", "fp32"),
             "v8": ("fp32", "e4m3"),
@@ -201,6 +287,8 @@ class Replay:
             self.saved.append((m, m.forward))
             if blk.mixer_kind == "G":
                 m.forward = self._gdn(m)
+            elif blk.mixer_kind == "M":
+                m.forward = self._mom(m)
             elif blk.mixer_kind == "A" and isinstance(m, Attention):
                 m.forward = self._attn(m)
         return self
@@ -214,6 +302,18 @@ class Replay:
             o, state = gdn_replay_forward(m, x, self.chunk, self.qstate)
             self.state_shape = tuple(state.shape)
             return o, None, None
+
+        return fwd
+
+    def _mom(self, m):
+        orig = m.forward  # the layer's own forward, before this patch
+
+        def fwd(x, **kw):
+            o, rl, shapes = mom_replay_forward(
+                m, orig, x, self.chunk, self.q_shared, self.q_routed
+            )
+            self.state_shape = shapes
+            return o, None, None, rl
 
         return fwd
 
@@ -264,6 +364,13 @@ def main():
     ap.add_argument("--state-dtypes", default="fp32,bf16,e4m3,e5m2,int8")
     ap.add_argument("--chunks", default="64,1")
     ap.add_argument("--kv", default="none", help="comma-separated: none,v8,k8v8")
+    ap.add_argument(
+        "--mom-pairs",
+        default="",
+        help="Mixture-of-Memories only: comma-separated <shared>/<routed> "
+        "state formats, e.g. fp32/e4m3,e4m3/fp32; when given, replaces "
+        "--state-dtypes for checkpoints that have MoM layers",
+    )
     ap.add_argument("--data-dir", default="matched-micro-data")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--val-batches", type=int, default=8)
@@ -293,20 +400,32 @@ def main():
         model.load_state_dict(ck["model"])
         model.to(device).eval()
         has_gdn = any(b.mixer_kind == "G" for b in model.blocks)
+        has_mom = any(b.mixer_kind == "M" for b in model.blocks)
         has_attn = any(b.mixer_kind == "A" for b in model.blocks)
+        chunks = [int(c) for c in args.chunks.split(",")]
         configs = []
         for kv in args.kv.split(","):
             if kv != "none" and not has_attn:
                 continue
+            if has_mom and args.mom_pairs:
+                for pair in args.mom_pairs.split(","):
+                    shared, _, routed = pair.partition("/")
+                    for ch in chunks:
+                        configs.append((kv, f"{shared}/{routed}", ch))
+                continue
             for sd in args.state_dtypes.split(","):
-                for ch in (int(c) for c in args.chunks.split(",")):
-                    if not has_gdn and (
-                        sd != "fp32" or ch != int(args.chunks.split(",")[0])
-                    ):
+                for ch in chunks:
+                    if not (has_gdn or has_mom) and (sd != "fp32" or ch != chunks[0]):
                         continue
                     configs.append((kv, sd, ch))
         for kv, sd, ch in configs:
-            with Replay(model, ch, sd, kv) as rp:
+            if "/" in sd:
+                shared, _, routed = sd.partition("/")
+                rp_kw = dict(mom_shared=shared, mom_routed=routed)
+                base_sd = "fp32"
+            else:
+                rp_kw, base_sd = {}, sd
+            with Replay(model, ch, base_sd, kv, **rp_kw) as rp:
                 if args.task == "lm":
                     metric = dict(val_loss=lm_loss(model, batches))
                 else:
