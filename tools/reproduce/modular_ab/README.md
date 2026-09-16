@@ -1,11 +1,11 @@
 # Modular build-system A/B reproduction
 
-This workflow builds one pinned public Modular GPU target through a reference
-builder, an externally supplied alternative builder, or both. It then runs the
-resulting executables in balanced order and checks both the workload validation
-marker and byte-for-byte stdout equality.
+This workflow builds pinned public Modular targets through a reference
+builder, an externally supplied alternative builder, or both.
+Build-time is always per target; runtime currently supports exactly one target
+per campaign for apples-to-apples execution comparisons.
 
-The pinned workload is:
+The default pinned workload is:
 
 ```text
 repository: https://github.com/modular/modular.git
@@ -33,6 +33,16 @@ make defconfig-modular-tiled-matmul-default
 make modular-repro
 ```
 
+To build multiple targets, define `MODULAR_TARGETS` and (optionally)
+`MODULAR_ARTIFACT_RELPATHS`:
+
+```bash
+make defconfig-modular-tiled-matmul-default
+MODULAR_TARGETS='//max/examples/capi:example //max/examples/capi:graph_capture' \
+  MODULAR_ARTIFACT_RELPATHS='max/examples/capi/example max/examples/capi/graph_capture' \
+  make modular-build
+```
+
 The reference adapter invokes the checkout's `./bazelw`, gives the run a fresh
 Bazel output base, records the command and artifact hash, and emits a compressed
 Bazel profile.
@@ -47,9 +57,21 @@ make defconfig-modular-tiled-matmul-ab
 MODULAR_ALT_BUILDER=/absolute/path/to/adapter make modular-campaign
 ```
 
+To avoid long shell-quoted target lists, pass a targets file:
+
+```bash
+MODULAR_TARGETS_FILE=tools/reproduce/modular_ab/targets/curated-non-test-strict-190.txt \
+  make modular-build
+```
+
+Each line in the file should be a Bazel target label.
+
 `modular-campaign` performs one clean build through each adapter, one warm-up
 per artifact, and ten measured runs per artifact. Measured pairs alternate
-reference-first and alternative-first order. The campaign fails if an
+reference-first and alternative-first order. The build stage fails on first
+build error; it does not abort remaining targets for that variant. The campaign
+fails if runtime checks fail: an executable returns nonzero, omits `Validation
+PASSED`, or produces stdout that is not byte-identical to the other runs.
 executable returns nonzero, omits `Validation PASSED`, or produces stdout that
 is not byte-identical to the other runs.
 
@@ -103,6 +125,16 @@ The adapter must perform a clean build and write a result with these fields:
 }
 ```
 
+The result also includes a `build` object that copies the selected target and its
+artifact-relative path for traceability:
+
+```json
+"build": {
+  "target": "//mojo/examples/gpu-block-and-warp:tiled_matmul",
+  "artifact_relpath": "mojo/examples/gpu-block-and-warp/tiled_matmul"
+}
+```
+
 The adapter may add fields, but it must preserve the common request hash and
 return exactly one executable as the first artifact.
 
@@ -115,6 +147,9 @@ doctor.json
 common-request.json
 build/reference/{request.json,result.json,adapter.log,build.log}
 build/alternative/{request.json,result.json,adapter.log,...}
+  # multi-target example layout:
+  build/reference/001-//max-examples-capi-example/{request.json,result.json,...}
+  build/reference/002-//max-examples-capi-graph-capture/{request.json,result.json,...}
 runtime-summary.json
 runtime/*.stdout
 runtime/*.stderr

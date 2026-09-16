@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Build and run one Modular target through interchangeable builders."""
+"""Build and run Modular targets through interchangeable builders."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import statistics
 import subprocess
@@ -19,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 from .modular_config import ModularConfig
-
 
 RESULTS_MARKER = ".knlp-modular-ab-results"
 RECORDED_ENVIRONMENT = (
@@ -40,9 +40,7 @@ def utc_now() -> str:
 
 
 def canonical_sha256(value: Any) -> str:
-    payload = json.dumps(
-        value, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -136,10 +134,13 @@ def doctor(config: ModularConfig) -> dict[str, Any]:
         raise RuntimeError(f"missing Modular source directory: {config.source_dir}")
     if not (config.source_dir / "MODULE.bazel").is_file():
         raise RuntimeError(f"not a Modular checkout: {config.source_dir}")
-    if not config.target:
-        raise RuntimeError("Modular target is empty")
-    if not config.artifact_relpath:
-        raise RuntimeError("Modular artifact relative path is empty")
+    if not config.targets:
+        raise RuntimeError("Modular target list is empty")
+    for target, artifact_relpath in config.targets:
+        if not target:
+            raise RuntimeError("Modular target is empty")
+        if not artifact_relpath:
+            raise RuntimeError(f"missing Modular artifact path for target {target}")
     if config.runtime_runs < 1 or config.runtime_warmups < 0:
         raise RuntimeError("runtime run counts are invalid")
     if not config.runtime_marker:
@@ -148,10 +149,7 @@ def doctor(config: ModularConfig) -> dict[str, Any]:
     provenance = source_provenance(config.source_dir)
     if not provenance["git_commit"]:
         raise RuntimeError("Modular source is not a Git checkout")
-    if (
-        config.source_commit
-        and provenance["git_commit"] != config.source_commit
-    ):
+    if config.source_commit and provenance["git_commit"] != config.source_commit:
         raise RuntimeError(
             "Modular source commit mismatch: "
             f"expected {config.source_commit}, got {provenance['git_commit']}"
@@ -175,9 +173,7 @@ def doctor(config: ModularConfig) -> dict[str, Any]:
     gpu_names: list[str] = []
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi:
-        output = run_text(
-            [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"]
-        )
+        output = run_text([nvidia_smi, "--query-gpu=name", "--format=csv,noheader"])
         gpu_names = output.splitlines() if output else []
 
     return {
@@ -197,27 +193,24 @@ def doctor(config: ModularConfig) -> dict[str, Any]:
     }
 
 
-def common_request(config: ModularConfig) -> dict[str, Any]:
+def target_slug(label: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", label).strip("-._")
+
+
+def campaign_request(config: ModularConfig) -> dict[str, Any]:
     environment = {
-        key: os.environ[key]
-        for key in RECORDED_ENVIRONMENT
-        if key in os.environ
+        key: os.environ[key] for key in RECORDED_ENVIRONMENT if key in os.environ
     }
     return {
         "schema_version": 1,
         "source": source_provenance(config.source_dir),
         "workload": {
-            "name": "modular-tiled-matmul",
+            "name": "modular",
+            "targets": [
+                {"target": target, "artifact_relpath": artifact_relpath}
+                for target, artifact_relpath in config.targets
+            ],
             "runtime_marker": config.runtime_marker,
-        },
-        "build": {
-            "target": config.target,
-            "artifact_relpath": config.artifact_relpath,
-            "arguments": config.build_args,
-            "jobs": config.jobs,
-            "capture_profile": config.capture_profile,
-            "clean_build": True,
-            "bazel_executable": config.bazel_bin,
         },
         "runtime": {
             "arguments": config.runtime_args,
@@ -227,6 +220,22 @@ def common_request(config: ModularConfig) -> dict[str, Any]:
         },
         "environment": environment,
     }
+
+
+def target_request(
+    config: ModularConfig, target: str, artifact_relpath: str
+) -> dict[str, Any]:
+    request = campaign_request(config)
+    request["build"] = {
+        "target": target,
+        "artifact_relpath": artifact_relpath,
+        "arguments": config.build_args,
+        "jobs": config.jobs,
+        "capture_profile": config.capture_profile,
+        "clean_build": True,
+        "bazel_executable": config.bazel_bin,
+    }
+    return request
 
 
 def cmd_doctor(config: ModularConfig, _args: argparse.Namespace) -> int:
@@ -258,9 +267,8 @@ def failed_build_result(
 def cmd_build(config: ModularConfig, _args: argparse.Namespace) -> int:
     doctor(config)
     root = ensure_results_root(config)
-    common = common_request(config)
-    request_hash = canonical_sha256(common)
-    write_json(root / "common-request.json", common)
+    campaign = campaign_request(config)
+    write_json(root / "common-request.json", campaign)
 
     failures = 0
     for variant in config.variants:
@@ -268,46 +276,57 @@ def cmd_build(config: ModularConfig, _args: argparse.Namespace) -> int:
         if output_dir.exists():
             shutil.rmtree(output_dir)
         output_dir.mkdir(parents=True)
-        request_path = output_dir / "request.json"
-        result_path = output_dir / "result.json"
-        adapter_log = output_dir / "adapter.log"
-        request = {
-            "schema_version": 1,
-            "variant": variant,
-            "common_request_sha256": request_hash,
-            "common_request": common,
-            "output_directory": str(output_dir.resolve()),
-        }
-        write_json(request_path, request)
-        if config.dry_run:
-            continue
-
-        adapter_value = (
-            config.reference_builder
-            if variant == "reference"
-            else config.alternative_builder
-        )
-        command = resolve_adapter(config, adapter_value, variant)
-        command += ["--request", str(request_path), "--result", str(result_path)]
-        completed = subprocess.run(
-            command,
-            cwd=config.top,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        adapter_log.write_text(completed.stdout, encoding="utf-8")
-        if not result_path.is_file():
-            write_json(
-                result_path,
-                failed_build_result(
-                    variant, request_hash, completed.returncode, adapter_log
-                ),
+        for index, (target, artifact_relpath) in enumerate(config.targets, start=1):
+            variant_output_dir = (
+                output_dir
+                if len(config.targets) == 1
+                else output_dir / f"{index:03d}-{target_slug(target)}"
             )
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        if completed.returncode != 0 or result.get("status") != "succeeded":
-            failures += 1
+            if variant_output_dir.exists():
+                shutil.rmtree(variant_output_dir)
+            variant_output_dir.mkdir(parents=True)
+            common = target_request(config, target, artifact_relpath)
+            request_hash = canonical_sha256(common)
+            request_path = variant_output_dir / "request.json"
+            result_path = variant_output_dir / "result.json"
+            adapter_log = variant_output_dir / "adapter.log"
+            request = {
+                "schema_version": 1,
+                "variant": variant,
+                "common_request_sha256": request_hash,
+                "common_request": common,
+                "output_directory": str(variant_output_dir.resolve()),
+            }
+            write_json(request_path, request)
+            if config.dry_run:
+                continue
+
+            adapter_value = (
+                config.reference_builder
+                if variant == "reference"
+                else config.alternative_builder
+            )
+            command = resolve_adapter(config, adapter_value, variant)
+            command += ["--request", str(request_path), "--result", str(result_path)]
+            completed = subprocess.run(
+                command,
+                cwd=config.top,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            adapter_log.write_text(completed.stdout, encoding="utf-8")
+            if not result_path.is_file():
+                write_json(
+                    result_path,
+                    failed_build_result(
+                        variant, request_hash, completed.returncode, adapter_log
+                    ),
+                )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if completed.returncode != 0 or result.get("status") != "succeeded":
+                failures += 1
 
     if config.dry_run:
         print(root / "common-request.json")
@@ -323,6 +342,11 @@ def load_artifact(
     if override:
         path = Path(override).expanduser().resolve()
     else:
+        if len(config.targets) != 1:
+            raise RuntimeError(
+                "modular runtime requires exactly one configured target; "
+                "set MODULAR_TARGETS to one target for runtime"
+            )
         result_path = config.results_root / "build" / variant / "result.json"
         if not result_path.is_file():
             raise RuntimeError(f"missing {variant} build result: {result_path}")
@@ -458,9 +482,7 @@ def cmd_runtime(config: ModularConfig, args: argparse.Namespace) -> int:
         record["returncode"] == 0 and record["validation_marker_found"]
         for record in records
     )
-    stdout_equal = len(
-        {record["stdout_sha256"] for record in measured}
-    ) == 1
+    stdout_equal = len({record["stdout_sha256"] for record in measured}) == 1
     stats = {
         variant: timing_stats(
             [
@@ -481,9 +503,7 @@ def cmd_runtime(config: ModularConfig, args: argparse.Namespace) -> int:
                 for record in measured
                 if record["pair"] == pair
             }
-            pair_ratios.append(
-                by_variant["alternative"] / by_variant["reference"]
-            )
+            pair_ratios.append(by_variant["alternative"] / by_variant["reference"])
         ratio = math.exp(statistics.mean([math.log(x) for x in pair_ratios]))
         comparison = {
             "alternative_over_reference_pair_ratios": pair_ratios,
@@ -525,14 +545,48 @@ def cmd_report(config: ModularConfig, _args: argparse.Namespace) -> int:
 
     builds: dict[str, Any] = {}
     for variant in config.variants:
-        result_path = root / "build" / variant / "result.json"
-        if not result_path.is_file():
-            raise RuntimeError(f"missing {variant} build result: {result_path}")
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        result["request_hash_matches"] = (
-            result.get("common_request_sha256") == request_hash
-        )
-        builds[variant] = result
+        variant_dir = root / "build" / variant
+        if not variant_dir.is_dir():
+            raise RuntimeError(f"missing {variant} build directory: {variant_dir}")
+
+        direct_result = variant_dir / "result.json"
+        if direct_result.is_file():
+            result_paths = [direct_result]
+        else:
+            result_paths = sorted(variant_dir.glob("*/result.json"))
+        if not result_paths:
+            raise RuntimeError(f"missing {variant} build result files in {variant_dir}")
+
+        variant_results = {}
+        for result_path in result_paths:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            request_path = result_path.with_name("request.json")
+            target = result.get("build", {}).get("target")
+            if request_path.is_file():
+                request = json.loads(request_path.read_text(encoding="utf-8"))
+                result["request_hash_matches"] = result.get(
+                    "common_request_sha256"
+                ) == canonical_sha256(request.get("common_request", {}))
+                target = target or request.get("common_request", {}).get(
+                    "build", {}
+                ).get("target")
+            else:
+                result["request_hash_matches"] = False
+            if not target:
+                target = f"target-{len(variant_results) + 1:03d}"
+            variant_results[target] = result
+        builds[variant] = variant_results
+
+        if len(variant_results) != len(config.targets):
+            raise RuntimeError(
+                f"{variant} produced {len(variant_results)} targets, expected "
+                f"{len(config.targets)}"
+            )
+        for target, _artifact in config.targets:
+            if target not in variant_results:
+                raise RuntimeError(
+                    f"{variant} missing build result for target {target}"
+                )
 
     runtime_path = root / "runtime-summary.json"
     runtime = (
@@ -541,9 +595,9 @@ def cmd_report(config: ModularConfig, _args: argparse.Namespace) -> int:
         else None
     )
     builds_passed = all(
-        result.get("status") == "succeeded"
-        and result["request_hash_matches"]
-        for result in builds.values()
+        result.get("status") == "succeeded" and result["request_hash_matches"]
+        for variant_results in builds.values()
+        for result in variant_results.values()
     )
     runtime_passed = runtime is None or runtime.get("status") == "passed"
     summary = {

@@ -29,8 +29,32 @@ def _bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "y", "yes", "true", "on"}
 
 
+def _split_items(raw: str | None) -> list[str]:
+    if raw is None:
+        return []
+    value = raw.strip()
+    if not value:
+        return []
+    if "\n" in value:
+        out: list[str] = []
+        for line in value.splitlines():
+            candidate = line.strip()
+            if not candidate or candidate.startswith("#"):
+                continue
+            out.append(candidate)
+        return out
+    return shlex.split(value)
+
+
 def _integer(value: str | None, default: int) -> int:
     return int(value) if value not in {None, ""} else default
+
+
+def _artifact_from_target(target: str) -> str:
+    if not target.startswith("//") or ":" not in target:
+        raise RuntimeError(f"invalid Bazel label: {target}")
+    package, name = target[2:].split(":", 1)
+    return f"{package}/{name}"
 
 
 def _environment(name: str, fallback: str) -> str:
@@ -43,8 +67,7 @@ class ModularConfig:
     config_path: Path
     source_dir: Path
     source_commit: str
-    target: str
-    artifact_relpath: str
+    targets: list[tuple[str, str]]
     build_args: list[str]
     jobs: int
     results_root: Path
@@ -60,6 +83,18 @@ class ModularConfig:
     runtime_marker: str
     dry_run: bool
     mode: str
+
+    @property
+    def target(self) -> str:
+        if not self.targets:
+            return ""
+        return self.targets[0][0]
+
+    @property
+    def artifact_relpath(self) -> str:
+        if not self.targets:
+            return ""
+        return self.targets[0][1]
 
     @property
     def variants(self) -> list[str]:
@@ -126,6 +161,78 @@ class ModularConfig:
             "KNLP_MODULAR_RUNTIME_ARGS",
             values.get("CONFIG_KNLP_MODULAR_RUNTIME_ARGS", ""),
         )
+        targets_file = Path(
+            _environment(
+                "KNLP_MODULAR_TARGETS_FILE",
+                values.get("CONFIG_KNLP_MODULAR_TARGETS_FILE", ""),
+            )
+        ).expanduser()
+        if not targets_file.is_absolute():
+            targets_file = top / targets_file
+        targets_file_specified = bool(
+            _environment(
+                "KNLP_MODULAR_TARGETS_FILE",
+                values.get("CONFIG_KNLP_MODULAR_TARGETS_FILE", ""),
+            ).strip()
+        )
+        if targets_file_specified and not targets_file.is_file():
+            raise RuntimeError(
+                f"CONFIG_KNLP_MODULAR_TARGETS_FILE does not exist: {targets_file}"
+            )
+        target_values = _split_items(
+            _environment(
+                "KNLP_MODULAR_TARGETS",
+                values.get("CONFIG_KNLP_MODULAR_TARGETS", ""),
+            )
+        )
+        if not target_values and targets_file.is_file():
+            file_targets = _split_items(targets_file.read_text(encoding="utf-8"))
+            target_values = file_targets
+        artifact_relpath_values = _split_items(
+            _environment(
+                "KNLP_MODULAR_ARTIFACT_RELPATHS",
+                values.get("CONFIG_KNLP_MODULAR_ARTIFACT_RELPATHS", ""),
+            )
+        )
+        legacy_target = _environment(
+            "KNLP_MODULAR_TARGET",
+            values.get("CONFIG_KNLP_MODULAR_TARGET", ""),
+        ).strip()
+        legacy_artifact = values.get("CONFIG_KNLP_MODULAR_ARTIFACT_RELPATH", "").strip()
+
+        if not target_values:
+            if legacy_target:
+                target_values = [legacy_target]
+        if not target_values:
+            raise RuntimeError(
+                "No Modular targets configured (set CONFIG_KNLP_MODULAR_TARGETS or CONFIG_KNLP_MODULAR_TARGET)"
+            )
+        if not artifact_relpath_values:
+            if legacy_artifact:
+                artifact_relpath_values = [legacy_artifact]
+        if artifact_relpath_values and len(artifact_relpath_values) != 1:
+            if len(artifact_relpath_values) != len(target_values):
+                raise RuntimeError(
+                    "CONFIG_KNLP_MODULAR_ARTIFACT_RELPATHS must be empty, one, "
+                    "or match CONFIG_KNLP_MODULAR_TARGETS length"
+                )
+        elif len(target_values) > len(artifact_relpath_values):
+            if artifact_relpath_values:
+                artifact_relpath_values = artifact_relpath_values * len(target_values)
+
+        if not artifact_relpath_values:
+            artifact_relpath_values = []
+            for target in target_values:
+                artifact_relpath_values.append(_artifact_from_target(target))
+
+        if len(target_values) != len(artifact_relpath_values):
+            raise RuntimeError(
+                "target and artifact list lengths do not match for Modular target sweep"
+            )
+
+        target_specs: list[tuple[str, str]] = []
+        for target, artifact_relpath in zip(target_values, artifact_relpath_values):
+            target_specs.append((target, artifact_relpath))
 
         return cls(
             top=top,
@@ -135,13 +242,7 @@ class ModularConfig:
                 "KNLP_MODULAR_SOURCE_COMMIT",
                 values.get("CONFIG_KNLP_MODULAR_SOURCE_COMMIT", ""),
             ),
-            target=_environment(
-                "KNLP_MODULAR_TARGET",
-                values.get("CONFIG_KNLP_MODULAR_TARGET", ""),
-            ),
-            artifact_relpath=values.get(
-                "CONFIG_KNLP_MODULAR_ARTIFACT_RELPATH", ""
-            ),
+            targets=target_specs,
             build_args=shlex.split(build_args),
             jobs=jobs,
             results_root=results_root.resolve(),
@@ -157,9 +258,7 @@ class ModularConfig:
                 "KNLP_MODULAR_BAZEL",
                 values.get("CONFIG_KNLP_MODULAR_BAZEL_BIN", "./bazelw"),
             ),
-            capture_profile=_bool(
-                values.get("CONFIG_KNLP_MODULAR_PROFILE"), True
-            ),
+            capture_profile=_bool(values.get("CONFIG_KNLP_MODULAR_PROFILE"), True),
             fail_on_dirty_source=(
                 _bool(
                     values.get("CONFIG_KNLP_MODULAR_FAIL_ON_DIRTY_SOURCE"),

@@ -51,6 +51,27 @@ config KNLP_MODULAR_TARGET
 	default "//mojo/examples/gpu-block-and-warp:tiled_matmul"
 	depends on KNLP_MODULAR_REPRO
 
+config KNLP_MODULAR_TARGETS
+	string "Modular target list"
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Space-separated Bazel labels. When empty, CONFIG_KNLP_MODULAR_TARGET is used.
+
+config KNLP_MODULAR_TARGETS_FILE
+	string "Modular targets file"
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Path to a newline-delimited target list. Each non-empty non-comment line
+	  is treated as a Bazel label.
+
+config KNLP_MODULAR_ARTIFACT_RELPATHS
+	string "Modular artifact relpaths for target list"
+	default ""
+	depends on KNLP_MODULAR_REPRO
+	help
+	  Space-separated artifact-relative paths aligned to KNLP_MODULAR_TARGETS.
+	  When empty, artifacts are inferred from each target label.
+
 config KNLP_MODULAR_ARTIFACT_RELPATH
 	string "Artifact path relative to the configured binary directory"
 	default "mojo/examples/gpu-block-and-warp/tiled_matmul"
