@@ -53,7 +53,8 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <div class="hero">
 <div class="eyebrow">Trained cartridges · asymmetric KV · fused serving</div>
 <h1>Compress the shared cartridge.<br>Keep the keys.</h1>
-<p class="lead"><strong>Cartridges are a sharper quantization stressor than ordinary inference.</strong> Symmetric FP8 barely changes the short MMLU and GSM8K scores, but it degrades the trained cartridge: its measured loss is 0.9&ndash;1.3% higher than the BF16 version of the same cartridge. Quantizing the keys causes almost all of that penalty. K16/V8 keeps keys in BF16 and quantizes only values. Its loss remains about 0.03% above BF16; the gain is a 25% smaller raw KV payload, not better-than-BF16 quality.</p>
+<p class="lead"><strong>MMLU (Massive Multitask Language Understanding) samples many academic subjects to test broad knowledge and reasoning; GSM8K (Grade School Math 8K) uses math word problems to test multi-step reasoning.</strong> Together they are useful, complementary checks of general model quality, although these benchmark runs do not by themselves certify cartridge quality.</p>
+<p class="lead"><strong>Cartridges expose a quantization penalty that those ordinary checks miss.</strong> In ordinary Qwen3-8B inference&mdash;no cartridge, unchanged model weights, and only the runtime KV cache changed&mdash;symmetric FP8 moves MMLU by +0.099 percentage points and GSM8K by &minus;1.5 points. Apply symmetric FP8 after training to an existing cartridge, however, and its evaluation loss is 0.9&ndash;1.3% <span class="no">higher</span> than the same cartridge in BF16. Lower loss is better: it means the cartridge makes predictions closer to the teacher used to train it. Quantizing the keys causes almost all of this penalty. K16/V8 keeps keys in BF16 and quantizes only values, holding the increase to about 0.03% while reducing the raw KV payload by 25%.</p>
 <p class="lead"><strong>This is post-training quantization.</strong> Start with an existing BF16 cartridge, leave its keys unchanged, and convert only its values to FP8 E4M3. The fake-quant experiment measures the numerical effect of that conversion on already-trained cartridges. The fused serving path stores the values as actual eight-bit data and converts them inside attention. Cartridge training is unchanged.</p>
 <p class="lead">The deployment path is real, not fake quantization: a shared 632-position K16/V8 cartridge stays outside every request's live cache, and one FlashInfer FA3 kernel attends over the cartridge and live suffix with one online-softmax state. With a BF16 live cache, it improves both measured throughput and TTFT against ordinary BF16 cartridge injection at batches 1, 16, and 64.</p>
 <div class="decision"><b>Deployment result</b><span>Use a shared K16/V8 cartridge over an otherwise BF16 cache. If the whole model already uses K16/V8, keep the shared path for TTFT and memory sharing, but do not claim a high-batch decode win: batch-64 throughput is 10.57% below the matching global-K16/V8 control.</span></div>
@@ -92,8 +93,9 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <section id="quality">
 <h2>Keys carry the cartridge quantization loss</h2>
 <p class="sub">Qwen3-8B has 36 layers, eight KV heads, and head dimension 128. The patient-02 cartridge has 632 positions: one frozen attention sink and 631 trainable positions. Report raw KV payloads without scale or serialization metadata.</p>
+<div class="note"><strong>What loss means here.</strong> After training, run the frozen model and saved cartridge over a fixed slice of self-study conversations. For each stored teacher target, the cartridge trainer's distillation loss penalizes the model when it assigns that target too little probability. Smaller is better. This is a separate evaluation using the training objective, not the final loss value printed during training. These cartridges trained on the full self-study file, so the slice is in-sample, not held out. The BF16-versus-quantized comparison remains paired: each row evaluates the same cartridge on the same conversations.</div>
 <div class="scroll"><table>
-<thead><tr><th>layout</th><th>bytes / token</th><th>full 12,628-token KV</th><th>632-position cartridge</th><th>capacity</th><th>measured cartridge loss increase</th></tr></thead>
+<thead><tr><th>layout</th><th>bytes / token</th><th>full 12,628-token KV</th><th>632-position cartridge</th><th>capacity</th><th>in-sample eval loss increase</th></tr></thead>
 <tbody>
 <tr><td>BF16 K16/V16</td><td>144 KiB</td><td>1.734 GiB</td><td>88.875 MiB</td><td>1.00&times;</td><td>baseline</td></tr>
 <tr><td>Asymmetric K16/V8</td><td>108 KiB</td><td>1.301 GiB</td><td>66.656 MiB</td><td class="yes">1.333&times;</td><td class="yes">+0.031%, +0.029%, +0.038%</td></tr>
@@ -108,13 +110,13 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 
 <h3>What the three loss values mean</h3>
 <div class="scroll"><table>
-<thead><tr><th>trained cartridge</th><th>BF16 loss</th><th>K16/V8 increase</th><th>K8/V8 loss</th><th>K8/V8 increase</th></tr></thead>
+<thead><tr><th>trained cartridge</th><th>BF16 eval loss</th><th>K16/V8 increase</th><th>K8/V8 eval loss</th><th>K8/V8 increase</th></tr></thead>
 <tbody>
 <tr><td>CAS cartridge run 1</td><td>0.016542</td><td>+0.031%</td><td>0.016687</td><td>+0.873%</td></tr>
 <tr><td>Half-learning-rate ablation</td><td>0.016799</td><td>+0.029%</td><td>0.017018</td><td>+1.303%</td></tr>
 <tr><td>CAS cartridge run 2</td><td>0.016932</td><td>+0.038%</td><td>0.017131</td><td>+1.177%</td></tr>
 </tbody></table></div>
-<p class="fine" style="margin-top:10px">These are three separately trained cartridge artifacts, not three samples from one inference run. The half-learning-rate arm is an ablation; run 2 is a second CAS-regime cartridge.</p>
+<p class="fine" style="margin-top:10px">These are three separately trained cartridge artifacts, not three samples from one inference run. The half-learning-rate arm is an ablation; run 2 is a second CAS-regime cartridge. All loss values in this table are post-training, in-sample evaluations.</p>
 
 <h3>Why ordinary inference did not warn us</h3>
 <div class="scroll"><table>
@@ -122,9 +124,9 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <tbody>
 <tr><td>Regular inference MMLU</td><td>77.360%</td><td>77.393% (+0.033 pp)</td><td>77.458% (+0.099 pp)</td></tr>
 <tr><td>Regular inference GSM8K (n=200)</td><td>93.0%</td><td>92.5% (&minus;0.5 pp)</td><td>91.5% (&minus;1.5 pp)</td></tr>
-<tr><td>Cartridge objective</td><td>baseline</td><td class="yes">+0.029% to +0.038%</td><td class="no">+0.873% to +1.303%</td></tr>
+<tr><td>In-sample cartridge eval loss</td><td>baseline</td><td class="yes">+0.029% to +0.038%</td><td class="no">+0.873% to +1.303%</td></tr>
 </tbody></table></div>
-<p>Short regular-inference checks show no resolved MMLU loss and only a small GSM8K drop, while the learned cartridge exposes a consistent key-precision penalty. Treat a cartridge as its own quantization qualification workload. Do not infer cartridge safety from ordinary generation scores alone.</p>
+<p>The ordinary full-model benchmarks do not reveal the cartridge-specific penalty: MMLU moves slightly upward, while GSM8K loses three correct answers out of 200. The paired cartridge evaluation consistently detects the cost of quantizing keys. Treat a cartridge as its own quantization qualification workload; ordinary generation scores alone do not establish cartridge safety.</p>
 <div class="note bad"><strong>Do not claim a full-document quantization-quality result.</strong> The 1.734, 1.301, and 0.867 GiB entries are byte accounting for a 12,628-token KV cache. Quality was not measured on the full quantized document KV. The earlier 631-token initialization control used only the document's first 631 trainable positions; it was not a full-document cache test.</div>
 
 <h3>What fake quantization does with the other eight bits</h3>
