@@ -84,7 +84,8 @@ KV_FORMATS = {
 
 
 class Condition:
-    """state:<fmt>[:ef][/every N][@layers]  kv:<fmt>[@layers], joined by '+'.
+    """state:<fmt>[:ef][/every N][@layers]  kv:<fmt>[@layers]  phase:<prefill|decode>,
+    joined by '+'.
     State formats: bf16, e4m3, e5m2, int8, int6, int4. KV formats: v8, k8v8,
     v6, v4, k8v6, k8v4 (fp8 keys; values fp8 or integer, per-token scale).
     <layers> is a '.'-separated list of layer indices, or '!' followed by a
@@ -97,6 +98,7 @@ class Condition:
         self.state_fmt, self.state_ef, self.state_every = "none", False, 1
         self.k_fmt, self.v_fmt = "none", "none"
         self.state_layers, self.kv_layers = None, None
+        self.phase = "both"
         for part in spec.split("+"):
             if part == "base":
                 continue
@@ -113,6 +115,11 @@ class Condition:
             elif kind == "kv":
                 self.k_fmt, self.v_fmt = KV_FORMATS[rest]
                 self.kv_layers = layers
+            elif kind == "phase":
+                # round only during prefill (chunk boundaries) or only during
+                # decode (after each generated token); default is both
+                assert rest in ("prefill", "decode"), part
+                self.phase = rest
             else:
                 raise ValueError(part)
         self.residual = {}
@@ -122,9 +129,11 @@ class Condition:
         self.residual = {}
         self.step = 0
 
-    def apply(self, cache, force=False):
+    def apply(self, cache, force=False, phase="prefill"):
         """Round the cache in place after a forward step."""
         self.step += 1
+        if self.phase != "both" and phase != self.phase:
+            return
         do_state = self.state_fmt != "none" and (
             force or self.step % self.state_every == 0
         )
@@ -200,7 +209,7 @@ def greedy(model, tok, ids, cond, chunk, max_new, stop_newline=True):
         o = model(input_ids=nxt.view(1, 1), past_key_values=cache, use_cache=True)
         cache = o.past_key_values
         logits = o.logits[:, -1]
-        cond.apply(cache)
+        cond.apply(cache, phase="decode")
     return tok.decode(out).strip()
 
 
