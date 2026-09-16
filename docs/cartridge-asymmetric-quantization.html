@@ -37,9 +37,10 @@ section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter
 .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
 .steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
 .map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+.explain-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:30px 0 34px}.chart-card{margin:0;padding:18px;background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px}.chart-card figcaption b{display:block;color:var(--text);font-size:16px}.chart-card figcaption span{display:block;color:var(--muted);font-size:12px;margin-top:3px}.chart-body{margin-top:18px}.delta-row,.loss-row,.retain-row{display:grid;grid-template-columns:66px 1fr 62px;gap:8px;align-items:center;margin:12px 0}.delta-row>span:first-child,.loss-row>span:first-child,.retain-row>span:first-child{font:700 11px var(--mono);color:var(--text)}.delta-row>span:last-child,.loss-row>span:last-child,.retain-row>span:last-child{text-align:right;font:700 11px var(--mono)}.delta-track,.loss-track,.retain-track{position:relative;height:14px;border-radius:3px;background:#17231c;overflow:hidden}.delta-track:before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--dim);z-index:2}.delta-fill,.loss-fill,.retain-fill{position:absolute;top:3px;height:8px;border-radius:2px;min-width:3px}.delta-fill.pos{left:50%;background:var(--green)}.delta-fill.neg{right:50%;background:var(--red)}.loss-fill{left:0}.loss-fill.good{background:var(--green)}.loss-fill.bad{background:var(--red)}.chart-axis{display:grid;grid-template-columns:1fr 1fr 1fr;color:var(--dim);font:11px var(--mono);margin:5px 62px 0 74px}.chart-axis span:nth-child(2){text-align:center}.chart-axis span:last-child{text-align:right}.chart-read{color:var(--muted);font-size:12px;margin:15px 0 0}.chart-read strong{color:var(--text)}.trade-plot{width:100%;height:auto;display:block;margin-top:8px}.trade-plot .axis{stroke:var(--dim);stroke-width:1}.trade-plot .grid{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}.trade-plot text{fill:var(--muted);font:11px var(--mono)}.trade-plot .plot-label{fill:var(--text);font-weight:700}.trade-plot .good-point{fill:var(--green)}.trade-plot .bad-point{fill:var(--red)}.trade-plot .base-point{fill:var(--cyan)}.retain-track:before,.retain-track:after{content:"";position:absolute;top:0;bottom:0;width:1px;z-index:2}.retain-track:before{left:44.4%;background:var(--amber)}.retain-track:after{left:84.4%;background:var(--violet)}.retain-fill{left:0;background:var(--cyan)}.retain-legend{display:flex;gap:15px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:12px}.retain-legend i{display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:5px}.retain-legend .standard{background:var(--amber)}.retain-legend .high{background:var(--violet)}
 code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
 footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
-@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+@media(max-width:900px){.grid2,.grid3,.flow,.map,.explain-grid{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
 </style>
 </head>
 <body>
@@ -55,6 +56,44 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <h1>Compress the shared cartridge.<br>Keep the keys.</h1>
 <p class="lead"><strong>MMLU (Massive Multitask Language Understanding) samples many academic subjects to test broad knowledge and reasoning; GSM8K (Grade School Math 8K) uses math word problems to test multi-step reasoning.</strong> Together they are useful, complementary checks of general model quality, although these benchmark runs do not by themselves certify cartridge quality.</p>
 <p class="lead"><strong>Cartridges expose a quantization penalty that those ordinary checks miss.</strong> In ordinary Qwen3-8B inference&mdash;no cartridge, unchanged model weights, and only the runtime KV cache changed&mdash;symmetric FP8 moves MMLU by +0.099 percentage points and GSM8K by &minus;1.5 points. Apply symmetric FP8 after training to an existing cartridge, however, and its evaluation loss is 0.9&ndash;1.3% <span class="no">higher</span> than the same cartridge in BF16. Lower loss is better: it means the cartridge makes predictions closer to the teacher used to train it. Quantizing the keys causes almost all of this penalty. K16/V8 keeps keys in BF16 and quantizes only values, holding the increase to about 0.03% while reducing the raw KV payload by 25%.</p>
+<div class="explain-grid">
+<figure class="chart-card">
+<figcaption><b>1 · Ordinary inference</b><span>Accuracy change from BF16 KV, in percentage points. Higher is better.</span></figcaption>
+<div class="chart-body">
+<div class="delta-row"><span>MMLU</span><div class="delta-track" role="img" aria-label="MMLU increases by 0.099 percentage points"><i class="delta-fill pos" style="width:3.3%"></i></div><span class="yes">+0.099</span></div>
+<div class="delta-row"><span>GSM8K</span><div class="delta-track" role="img" aria-label="GSM8K decreases by 1.5 percentage points"><i class="delta-fill neg" style="width:50%"></i></div><span class="no">&minus;1.500</span></div>
+<div class="chart-axis"><span>&minus;1.5</span><span>BF16</span><span>+1.5 pp</span></div>
+</div>
+<p class="chart-read"><strong>The broad checks barely move.</strong> The GSM8K difference is three fewer correct answers out of 200.</p>
+</figure>
+<figure class="chart-card">
+<figcaption><b>2 · Cartridge evaluation</b><span>Mean loss increase across three trained cartridges. Lower is better.</span></figcaption>
+<div class="chart-body">
+<div class="loss-row"><span>V8 only</span><div class="loss-track" role="img" aria-label="Quantizing values increases loss by 0.033 percent"><i class="loss-fill good" style="width:2.5%"></i></div><span class="yes">+0.033%</span></div>
+<div class="loss-row"><span>K8 only</span><div class="loss-track" role="img" aria-label="Quantizing keys increases loss by 1.083 percent"><i class="loss-fill bad" style="width:83.3%"></i></div><span class="no">+1.083%</span></div>
+<div class="loss-row"><span>K8 + V8</span><div class="loss-track" role="img" aria-label="Quantizing keys and values increases loss by 1.118 percent"><i class="loss-fill bad" style="width:86%"></i></div><span class="no">+1.118%</span></div>
+<div class="chart-axis"><span>0%</span><span>+0.65%</span><span>+1.30%</span></div>
+</div>
+<p class="chart-read"><strong>Keys cause almost all the damage.</strong> K8 alone and K8/V8 land at nearly the same loss.</p>
+</figure>
+<figure class="chart-card">
+<figcaption><b>3 · Quality versus payload</b><span>Move left to store fewer bytes; move down to preserve cartridge quality.</span></figcaption>
+<svg class="trade-plot" viewBox="0 0 340 228" role="img" aria-labelledby="trade-title trade-desc">
+<title id="trade-title">Cartridge payload against evaluation loss increase</title>
+<desc id="trade-desc">K16/V8 uses 75 percent of the BF16 payload with a 0.033 percent loss increase. Layouts that quantize keys have over one percent higher loss.</desc>
+<line class="grid" x1="54" y1="45" x2="320" y2="45"/><line class="grid" x1="54" y1="107" x2="320" y2="107"/><line class="grid" x1="54" y1="170" x2="320" y2="170"/>
+<line class="axis" x1="54" y1="22" x2="54" y2="170"/><line class="axis" x1="54" y1="170" x2="320" y2="170"/>
+<text x="20" y="48">1.2%</text><text x="20" y="110">0.6%</text><text x="34" y="173">0%</text>
+<text x="58" y="187">50%</text><text x="177" y="187">75%</text><text x="294" y="187">100%</text>
+<text x="116" y="211">raw payload versus BF16</text><text transform="translate(11 142) rotate(-90)">eval loss increase</text>
+<circle class="bad-point" cx="68" cy="41" r="5"/><text class="plot-label" x="76" y="35">K8/V8</text><text x="76" y="49">50%, +1.118%</text>
+<circle class="bad-point" cx="187" cy="45" r="5"/><text class="plot-label" x="195" y="62">K8/V16</text><text x="195" y="76">75%, +1.083%</text>
+<circle class="good-point" cx="187" cy="166" r="6"/><text class="plot-label" x="126" y="144">K16/V8</text><text x="126" y="157">75%, +0.033%</text>
+<circle class="base-point" cx="306" cy="170" r="5"/><text class="plot-label" x="257" y="151">BF16</text><text x="257" y="163">100%, baseline</text>
+</svg>
+<p class="chart-read"><strong>K16/V8 is the knee.</strong> It removes one quarter of the payload without paying the key-quantization penalty.</p>
+</figure>
+</div>
 <p class="lead"><strong>This is post-training quantization.</strong> Start with an existing BF16 cartridge, leave its keys unchanged, and convert only its values to FP8 E4M3. The fake-quant experiment measures the numerical effect of that conversion on already-trained cartridges. The fused serving path stores the values as actual eight-bit data and converts them inside attention. Cartridge training is unchanged.</p>
 <p class="lead">The deployment path is real, not fake quantization: a shared 632-position K16/V8 cartridge stays outside every request's live cache, and one FlashInfer FA3 kernel attends over the cartridge and live suffix with one online-softmax state. With a BF16 live cache, it improves both measured throughput and TTFT against ordinary BF16 cartridge injection at batches 1, 16, and 64.</p>
 <div class="decision"><b>Deployment result</b><span>Use a shared K16/V8 cartridge over an otherwise BF16 cache. If the whole model already uses K16/V8, keep the shared path for TTFT and memory sharing, but do not claim a high-batch decode win: batch-64 throughput is 10.57% below the matching global-K16/V8 control.</span></div>
@@ -127,6 +166,36 @@ footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:
 <tr><td>In-sample cartridge eval loss</td><td>baseline</td><td class="yes">+0.029% to +0.038%</td><td class="no">+0.873% to +1.303%</td></tr>
 </tbody></table></div>
 <p>The ordinary full-model benchmarks do not reveal the cartridge-specific penalty: MMLU moves slightly upward, while GSM8K loses three correct answers out of 200. The paired cartridge evaluation consistently detects the cost of quantizing keys. Treat a cartridge as its own quantization qualification workload; ordinary generation scores alone do not establish cartridge safety.</p>
+
+<h3>What counts as an acceptable accuracy tradeoff?</h3>
+<p>There is no universal point budget. Set the limit per workload, using enough samples to resolve the difference, and require the deployment benefit to justify it. Two public industry examples put the numbers in perspective.</p>
+<div class="grid2">
+<div class="card">
+<div class="kicker">Industry benchmark yardstick</div>
+<h3>MLPerf uses 99% and 99.9% accuracy gates</h3>
+<p><a href="https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc">MLPerf Inference</a> sets workload-specific floors. Its Mixtral question-answering, math, and code workload&mdash;which includes GSM8K&mdash;requires 99% of the FP16 reference. Several other workloads provide both 99% and stricter 99.9% tracks.</p>
+<p>Borrow that rule only as an illustrative bar for these Qwen3-8B results; this is not an MLPerf submission.</p>
+<div class="retain-row"><span>MMLU K8/V8</span><div class="retain-track" role="img" aria-label="MMLU retains 100.13 percent of the BF16 score"><i class="retain-fill" style="width:94.6%"></i></div><span class="yes">100.13%</span></div>
+<div class="retain-row"><span>GSM K16/V8</span><div class="retain-track" role="img" aria-label="GSM8K K16/V8 retains 99.46 percent of the BF16 score"><i class="retain-fill" style="width:65%"></i></div><span class="yes">99.46%</span></div>
+<div class="retain-row"><span>GSM K8/V8</span><div class="retain-track" role="img" aria-label="GSM8K K8/V8 retains 98.39 percent of the BF16 score"><i class="retain-fill" style="width:17.2%"></i></div><span class="no">98.39%</span></div>
+<div class="retain-legend"><span><i class="standard"></i>99% reference</span><span><i class="high"></i>99.9% reference</span></div>
+<p class="fine">Scale spans 98% to 100.25% of each BF16 score. On this borrowed yardstick, K16/V8 clears 99% on both benchmarks; symmetric K8/V8 misses it on GSM8K.</p>
+</div>
+<div class="card">
+<div class="kicker">Released mobile-model tradeoff</div>
+<h3>Meta released a mobile model with larger point drops</h3>
+<p>Meta's released Llama 3.2 3B SpinQuant model moves <a href="https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct-SpinQuant_INT4_EO8#benchmarks---english-text">MMLU from 63.4 to 62.0</a> (&minus;1.4 points) and GSM8K from 77.7 to 75.7 (&minus;2.0 points).</p>
+<div class="scroll"><table>
+<thead><tr><th>OnePlus 12 result</th><th>SpinQuant vs BF16</th></tr></thead>
+<tbody>
+<tr><td>Decode rate</td><td class="yes">2.6&times;</td></tr>
+<tr><td>Model file</td><td class="yes">60.3% smaller</td></tr>
+<tr><td>Resident memory</td><td class="yes">49.8% lower</td></tr>
+</tbody></table></div>
+<p><a href="https://ai.meta.com/blog/meta-llama-quantized-lightweight-models/">Meta reports</a> that tradeoff for constrained on-device inference. It quantizes weights and activations, so it is a concrete industry precedent, not a directly comparable KV-only result.</p>
+</div>
+</div>
+<div class="note good"><strong>Decision for this cartridge path.</strong> The symmetric-FP8 GSM8K result is only three answers out of 200 and needs a larger run before treating &minus;1.5 points as stable. Even if that ordinary-model drop proved acceptable, symmetric FP8 still raises cartridge evaluation loss by 0.9&ndash;1.3%. K16/V8 is the stronger measured trade: 25% fewer cartridge bytes, about 0.03% higher cartridge loss, and a 0.5-point GSM8K change that clears the illustrative 99% bar.</div>
 <div class="note bad"><strong>Do not claim a full-document quantization-quality result.</strong> The 1.734, 1.301, and 0.867 GiB entries are byte accounting for a 12,628-token KV cache. Quality was not measured on the full quantized document KV. The earlier 631-token initialization control used only the document's first 631 trainable positions; it was not a full-document cache test.</div>
 
 <h3>What fake quantization does with the other eight bits</h3>
