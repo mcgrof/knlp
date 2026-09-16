@@ -58,14 +58,14 @@
             <span class="text-xs bg-green-900 text-green-300 px-2 py-1 rounded ml-3 whitespace-nowrap">BPA</span>
           </div>
           <p class="text-gray-500 text-sm mb-3">
-            Asymmetric FP16-K / FP8-V KV cache quantization via a modified FlashInfer
-            matches or beats FP16 decode throughput on every tested model (1.38&times; on
-            Qwen2.5-7B) while rescuing fragile-key models where symmetric FP8 collapses.
-            Backed by a batch-driven Hill saturation model across 14 models and 5 GPU
-            architectures.
+            How much of extra KV-cache capacity becomes useful decode throughput?
+            Explore the empirical saturation model, measured K16/V8 serving results,
+            and the distinction between capacity, kernel speed, and offloading.
+            The 1.38&times; Qwen2.5-7B result includes capacity relief; other models
+            show smaller gains or regressions.
           </p>
           <div class="flex gap-3 text-xs">
-            <span class="text-green-400">9 interactive panels</span>
+            <span class="text-green-400">interactive saturation explainer</span>
             <span class="text-gray-600">&middot;</span>
             <span class="text-gray-500"><a href="https://github.com/mcgrof/flashinfer" class="hover:text-gray-300">flashinfer fork</a></span>
             <span class="text-gray-600">&middot;</span>
