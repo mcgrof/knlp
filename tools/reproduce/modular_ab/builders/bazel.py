@@ -152,6 +152,15 @@ def main() -> int:
         "command": command,
         "build_log": str(build_log),
         "profile": str(profile) if profile.is_file() else "",
+        "build": {
+            "target": build["target"],
+            "artifact_relpath": build["artifact_relpath"],
+            "arguments": build["arguments"],
+            "jobs": build["jobs"],
+            "capture_profile": build["capture_profile"],
+            "clean_build": build["clean_build"],
+            "bazel_executable": build.get("bazel_executable", ""),
+        },
         "artifacts": artifacts,
     }
     write_json(result_path, result)
