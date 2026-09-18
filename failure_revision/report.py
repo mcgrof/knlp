@@ -84,10 +84,10 @@ def mcnemar_rep0(runs, items, a, b):
     n01 = sum(1 for i in items if y.get((i, a)) == 0 and y.get((i, b)) == 1)
     n = n10 + n01
     if n == 0:
-        return {"a_only": 0, "b_only": 0, "p_exact": 1.0}
+        return {f"{a}_only": 0, f"{b}_only": 0, "p_exact": 1.0}
     k = min(n10, n01)
     p = min(1.0, 2 * sum(math.comb(n, j) for j in range(k + 1)) / 2**n)
-    return {"a_only": n10, "b_only": n01, "p_exact": p}
+    return {f"{a}_only": n10, f"{b}_only": n01, "p_exact": p}
 
 
 def holm(pvals: dict) -> dict:
