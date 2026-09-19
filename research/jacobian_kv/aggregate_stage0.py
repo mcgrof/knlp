@@ -34,14 +34,15 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from research.jacobian_kv.evaluate import benjamini_hochberg  # noqa: E402
 
-CANDIDATES = (
+DEPLOYABLE = (
     "jtfj_p8",
     "jtfj_pos_p8",
-    "jtfj_attn_p8",
+    "jtfj_prefill_p8",
+    "jtfj_rank_p8",
     "pos_energy_p8",
-    "jtfj_oracle_p8",
 )
-DEPLOYABLE = ("jtfj_p8", "jtfj_pos_p8", "jtfj_attn_p8")
+ORACLE = ("jtfj_future_p8", "jtfj_oracle_p8")
+CANDIDATES = DEPLOYABLE + ORACLE
 
 
 def load_cells(runs_dir: str):
@@ -60,15 +61,19 @@ def load_cells(runs_dir: str):
                     "source": s["context_source"],
                     "kind": kind,
                     "n": cell["n"],
-                    "pooled_rho": cell["pooled"]["rho"],
-                    "within_rho": cell["within_group"]["mean_rho"],
-                    "within_sem": cell["within_group"].get("sem_rho", {}),
+                    "n_groups": cell.get("n_groups"),
+                    "n_clusters": cell.get("n_clusters"),
+                    "blocked_rho": cell.get("blocked_rho", {}),
+                    "pooled_rho": cell.get("pooled_rho", {}),
                     "gates": {
-                        c: cell["pooled"][c] for c in CANDIDATES if c in cell["pooled"]
+                        c: g
+                        for c, g in cell.get("gates", {}).items()
+                        if c in CANDIDATES
                     },
                     "attribution": cell.get("attribution", {}),
-                    "floor_kl_max": cell["pooled"].get("floor_kl_max"),
-                    "exact_kl_median": cell["pooled"].get("exact_kl_median"),
+                    "floor_kl_max": cell.get("floor_kl_max"),
+                    "exact_kl_median": cell.get("exact_kl_median"),
+                    "exact_kl_min": cell.get("exact_kl_min"),
                 }
             )
     return cells
@@ -93,6 +98,8 @@ def main() -> int:
     for c in cells:
         for cand, g in c["gates"].items():
             family.append((c, cand, g))
+    # One-sided p-values, so an arm that is significantly *worse* cannot be
+    # counted as a discovery in the family-wise correction.
     pvals = [g["p_value"] for _, _, g in family]
     reject, qvals = benjamini_hochberg(pvals, q=args.fdr_q)
 
@@ -167,12 +174,13 @@ def main() -> int:
 
     # ---- the ranking table ------------------------------------------------
     print("\n" + "=" * 108)
-    print("WITHIN-MATCHED-NORM SPEARMAN  (error size held constant; direction only)")
+    print(
+        "BLOCKED SPEARMAN  (within matched-norm groups; size and layer held constant)"
+    )
     print("=" * 108)
-    metrics = sorted({m for c in cells for m in c["within_rho"]})
     by_kind = defaultdict(lambda: defaultdict(list))
     for c in cells:
-        for m, v in c["within_rho"].items():
+        for m, v in c["blocked_rho"].items():
             if not math.isnan(v):
                 by_kind[c["kind"]][m].append(v)
     for kind in sorted(by_kind):
@@ -186,17 +194,30 @@ def main() -> int:
             print(f"    {m:22s} {mean:+.4f}   [{min(vals):+.4f}, {max(vals):+.4f}]")
 
     # ---- numerical floor --------------------------------------------------
-    floors = [c["floor_kl_max"] for c in cells if c["floor_kl_max"] is not None]
-    medians = [c["exact_kl_median"] for c in cells if c["exact_kl_median"] is not None]
-    if floors:
+    floors = [c["floor_kl_max"] for c in cells if c.get("floor_kl_max") is not None]
+    mins = [c["exact_kl_min"] for c in cells if c.get("exact_kl_min") is not None]
+    medians = [c["exact_kl_median"] for c in cells if c.get("exact_kl_median")]
+    if floors and mins and medians:
+        worst = max(floors)
+        smallest = min(mins)
+        med = sorted(medians)[len(medians) // 2]
+        print("\n" + "=" * 108)
+        print("MEASUREMENT FLOOR  (an independent re-prefill of the same prompt)")
+        print("=" * 108)
+        print(f"  worst control divergence   {worst:.3e}")
         print(
-            f"\nzero-perturbation control: worst floor KL {max(floors):.3e}; "
-            f"median measured KL {sorted(medians)[len(medians) // 2]:.3e} "
-            f"({sorted(medians)[len(medians) // 2] / max(max(floors), 1e-30):.1f}x the floor)"
-            if max(floors) > 0
-            else f"\nzero-perturbation control: floor KL is exactly 0.0 in every cell; "
-            f"median measured KL {sorted(medians)[len(medians) // 2]:.3e}"
+            f"  smallest measured damage   {smallest:.3e}  "
+            f"({smallest / max(worst, 1e-30):.1f}x the floor)"
         )
+        print(
+            f"  median measured damage     {med:.3e}  "
+            f"({med / max(worst, 1e-30):.1f}x the floor)"
+        )
+        if smallest < 10 * worst:
+            print(
+                "  WARNING: the smallest perturbations sit within 10x the floor; "
+                "those rows are close to noise"
+            )
 
     out = {
         "n_cells": len(cells),
@@ -205,7 +226,7 @@ def main() -> int:
         "attribution_mean": {
             f"{k}:{n}": sum(v) / len(v) for (k, n), v in attrib.items()
         },
-        "within_group_mean_rho": {
+        "blocked_rho_mean": {
             kind: {m: sum(v) / len(v) for m, v in ms.items()}
             for kind, ms in by_kind.items()
         },
@@ -217,13 +238,16 @@ def main() -> int:
             json.dump(out, fh, indent=2, sort_keys=True, default=str)
         print(f"\nwrote {os.path.join(args.out, 'stage0_rollup.json')}")
 
-    promoted = [c for c, v in verdicts.items() if v["promoted"] and c in DEPLOYABLE]
+    promoted = [
+        k for k, v in verdicts.items() if v["promoted"] and v["tier"] == "deployable"
+    ]
     print(
         "\nSTAGE 0 DECISION: "
         + (
             f"promote {promoted}"
             if promoted
-            else "no deployable candidate clears the pre-registered gate -- stop"
+            else "no deployable candidate clears the pre-registered gate "
+            "on any tensor kind -- stop"
         )
     )
     return 0
