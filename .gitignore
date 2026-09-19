@@ -150,6 +150,8 @@ validate_*.py
 !**/tests/
 !**/tests/test_*.py
 !**/tests/validate_*.py
+!**/tests/**/test_*.py
+!**/tests/**/validate_*.py
 
 # Research data files
 *.npz
