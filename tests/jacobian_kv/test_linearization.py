@@ -50,8 +50,10 @@ def _data(seed=0, n=N, ds=DS, dt=DT, noise=0.4):
     C = torch.randn(n, ds, generator=g, dtype=torch.float64)
     M_true = torch.randn(ds, dt, generator=g, dtype=torch.float64)
     b_true = torch.randn(dt, generator=g, dtype=torch.float64)
-    T = C @ M_true + b_true + noise * torch.randn(
-        n, dt, generator=g, dtype=torch.float64
+    T = (
+        C @ M_true
+        + b_true
+        + noise * torch.randn(n, dt, generator=g, dtype=torch.float64)
     )
     return C, T
 
@@ -151,8 +153,11 @@ def test_per_sample_metric_does_move_the_fit():
     C, T = _data()
     g = torch.Generator().manual_seed(11)
     Gp = torch.stack(
-        [_categorical_fisher(torch.randn(DT, generator=g, dtype=torch.float64) * 2.0)
-         + 0.05 * torch.eye(DT, dtype=torch.float64) for _ in range(N)]
+        [
+            _categorical_fisher(torch.randn(DT, generator=g, dtype=torch.float64) * 2.0)
+            + 0.05 * torch.eye(DT, dtype=torch.float64)
+            for _ in range(N)
+        ]
     )
     plain = fit_affine(C, T, solver="kron")
     weighted = fit_affine(C, T, G_per_sample=Gp, solver="kron")
@@ -276,7 +281,9 @@ def test_psd_sqrt_round_trips():
     S = psd_sqrt(G)
     assert torch.allclose(S @ S, G, atol=1e-9, rtol=0)
     assert torch.allclose(S, S.transpose(0, 1), atol=1e-12, rtol=0)
-    assert torch.allclose(psd_inv_sqrt(G) @ S, torch.eye(DT, dtype=torch.float64), atol=1e-8)
+    assert torch.allclose(
+        psd_inv_sqrt(G) @ S, torch.eye(DT, dtype=torch.float64), atol=1e-8
+    )
 
 
 def test_fit_recovers_a_noiseless_affine_map():
