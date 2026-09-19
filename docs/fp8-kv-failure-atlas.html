@@ -103,12 +103,16 @@
       {alpha:2.0, qwen:3.102, phi:0.585},
     ];
     // Multi-seed bootstrap CIs (48 pooled prompts, 2000 resamples). top1 with half-width err.
+    // Intervals corrected 2026-09-19: the resampler drew indices as state % n from a linear
+    // congruential generator, reading only its low bits, so at some sizes it permuted the sample
+    // instead of drawing with replacement and returned intervals up to a third too narrow. The
+    // point estimates are taken from the sample directly, were never resampled, and are unchanged.
     const mid=(lo,hi)=>(lo+hi)/2, hw=(lo,hi)=>(hi-lo)/2;
     const MSEED = [
-      {model:'Qwen2.5-7B', k8v8:0.297, k8v8e:hw(0.284,0.310), k16v8:0.981, k16v8e:hw(0.980,0.982), k8v16:0.297, k8v16e:hw(0.284,0.311)},
-      {model:'Pythia-410M',k8v8:0.556, k8v8e:hw(0.547,0.564), k16v8:0.886, k16v8e:hw(0.882,0.889), k8v16:0.559, k8v16e:hw(0.552,0.567)},
-      {model:'Phi-2',      k8v8:0.879, k8v8e:hw(0.876,0.883), k16v8:0.954, k16v8e:hw(0.953,0.956), k8v16:0.880, k8v16e:hw(0.877,0.884)},
-      {model:'Mistral-7B', k8v8:0.982, k8v8e:hw(0.981,0.983), k16v8:0.991, k16v8e:hw(0.990,0.991), k8v16:0.983, k8v16e:hw(0.982,0.984)},
+      {model:'Qwen2.5-7B', k8v8:0.297, k8v8e:hw(0.279,0.314), k16v8:0.981, k16v8e:hw(0.980,0.983), k8v16:0.297, k8v16e:hw(0.278,0.314)},
+      {model:'Pythia-410M',k8v8:0.556, k8v8e:hw(0.544,0.566), k16v8:0.886, k16v8e:hw(0.882,0.890), k8v16:0.559, k8v16e:hw(0.551,0.568)},
+      {model:'Phi-2',      k8v8:0.879, k8v8e:hw(0.875,0.883), k16v8:0.954, k16v8e:hw(0.952,0.957), k8v16:0.880, k8v16e:hw(0.876,0.885)},
+      {model:'Mistral-7B', k8v8:0.982, k8v8e:hw(0.981,0.984), k16v8:0.991, k16v8e:hw(0.990,0.991), k8v16:0.983, k8v16e:hw(0.982,0.985)},
     ];
     // Partial-RoPE legacy fleet (all biased, 75% pass-through). k8v8 ppl_mult + classes.
     const LEGACY = [
@@ -720,15 +724,25 @@
           </Section>
 
           {/* 6. K vs V */}
-          <Section id="kvsplit" kicker="Where the damage lives" title="It&rsquo;s the keys, with tight confidence intervals">
+          <Section id="kvsplit" kicker="Where the damage lives" title="It&rsquo;s the keys, and the intervals leave no room to argue">
             <p>
               To make the K-versus-V attribution airtight, we ran the core cells across <strong>three seeds of disjoint prompts</strong>
-              (48 pooled) with a 2000-resample bootstrap. The intervals are tight and the story is unambiguous. On Qwen2.5-7B,
+              (48 pooled) with a 2000-resample bootstrap. The intervals are narrow and the gap they have to explain is enormous,
+              so the story is unambiguous. On Qwen2.5-7B,
               <span className="kbd">K8/V16</span> (FP8 keys, bf16 values) is just as broken as <span className="kbd">K8/V8</span>
               — top-1 0.297 either way — while <span className="kbd">K16/V8</span> (bf16 keys, FP8 values) recovers to
-              <strong> 0.981 [0.980, 0.982]</strong>. Quantizing the values is harmless; quantizing the keys is the whole problem.
+              <strong> 0.981 [0.980, 0.983]</strong>. Quantizing the values is harmless; quantizing the keys is the whole problem.
               Mistral is the flat negative control across all three layouts, and Pythia-410M shows the partial-RoPE failure class
               that the next section explains.
+            </p>
+            <p className="text-gray-500 text-xs">
+              <strong className="text-gray-300">Correction, 2026-09-19.</strong> The confidence intervals on this page were
+              recomputed after a defect was found in the bootstrap resampler. It drew indices by taking a linear congruential
+              generator&rsquo;s state modulo the sample size, which reads only that generator&rsquo;s low bits, so at some sizes it
+              permuted the sample instead of drawing with replacement and the interval came back too narrow &mdash; by up to a third
+              here, and to zero width at power-of-two sample sizes. The point estimates are computed from the sample directly, were
+              never resampled, and are unchanged to the last digit; the corrected K16/V8 interval above moves by one unit in the
+              third decimal place, against a K8/V8 value of 0.297. No measurement, comparison or recommendation on this page changes.
             </p>
             <ChartFrame title="Multi-seed top-1 agreement with 95% bootstrap CIs (3 seeds × 16 prompts)"
               sub="K8/V16 (FP8 keys) tracks K8/V8 — the keys carry the damage. K16/V8 (bf16 keys) recovers. Error bars are bootstrap CIs.">
