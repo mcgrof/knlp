@@ -148,6 +148,8 @@ class JKVManifest:
     rope_scaling_target: Any = None
 
     kv_split: str = ""
+    context_length: int = 0
+    continuation_length: int = 0
     selected_layers: tuple = ()
     mapper_rank: int = 0
     ridge_lambda: float = 0.0
