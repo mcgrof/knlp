@@ -3,9 +3,24 @@ leave-one-factor-out (LOFO) attribution. The atlas makes many claims ("FP8-K hur
 "prebias recovers Y%", "subspace Z is the culprit") across many cells; without multiplicity control
 and CIs those claims are noise-mining. Deterministic given a seed -- no Date/Random reliance here;
 the caller passes the seed.
+
+The resampler is an explicitly seeded `random.Random` instance. It used to be a hand-rolled linear
+congruential generator whose index draw was `state % n`, which reads only the generator's low bits;
+those have period exactly 2**k, so for a power-of-two sample size each block of n draws was a
+*permutation* of the sample rather than a draw with replacement. Every replicate then reproduced the
+original statistic and the interval collapsed to zero width -- measured at n = 8, 16, 32, 64 and 128,
+with the true mean falling inside the returned interval 0% of the time. At other sizes the interval
+was still too narrow (about 0.81x its correct width at n = 48, covering 87.5% instead of 95%).
+
+A zero-width interval "excludes zero" for any nonzero estimate, so any rule of the form "significant
+if the confidence interval excludes zero" passed automatically on pure noise. `test_statistics.py`
+now pins non-degeneracy at exactly the sizes where the old resampler collapsed, and the intervals
+this module returns are wider than the ones it returned before -- the point estimates, which are
+computed from the sample directly and never resampled, are unchanged.
 """
 
 import math
+import random
 
 
 def _quantile(sorted_vals, q):
@@ -38,17 +53,19 @@ def bootstrap_ci(values, n_boot=2000, alpha=0.05, seed=0, statistic="mean"):
         return sum(xs) / len(xs)
 
     point = stat(vals)
-    state = (seed * 2654435761 + 12345) & 0xFFFFFFFF
+    rng = random.Random(seed)
     boots = []
     for _ in range(n_boot):
-        sample = []
-        for _ in range(n):
-            state = (1103515245 * state + 12345) & 0x7FFFFFFF
-            sample.append(vals[state % n])
+        sample = [vals[rng.randrange(n)] for _ in range(n)]
         boots.append(stat(sample))
     boots.sort()
     lo = _quantile(boots, alpha / 2)
     hi = _quantile(boots, 1 - alpha / 2)
+    if hi <= lo and n > 1 and min(vals) != max(vals):
+        raise RuntimeError(
+            f"degenerate bootstrap interval at n={n} on a sample that varies; "
+            "the resampler is not resampling"
+        )
     return point, lo, hi
 
 
