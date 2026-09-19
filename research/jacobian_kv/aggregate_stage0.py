@@ -205,19 +205,25 @@ def main() -> int:
         print("MEASUREMENT FLOOR  (an independent re-prefill of the same prompt)")
         print("=" * 108)
         print(f"  worst control divergence   {worst:.3e}")
+        if worst == 0.0:
+            print("    the re-prefill is bit-reproducible on this stack, so the")
+            print("    control cannot bound the estimator's own resolution")
+        # A negative divergence is impossible in exact arithmetic, so the most
+        # negative value measured is a direct read of the float32 summation
+        # error in the divergence itself -- a better floor than a control that
+        # comes back bit-identical.
+        resolution = abs(min(0.0, smallest))
         print(
-            f"  smallest measured damage   {smallest:.3e}  "
-            f"({smallest / max(worst, 1e-30):.1f}x the floor)"
+            f"  most negative divergence   {smallest:.3e}  "
+            f"(impossible in exact arithmetic; this is the float32 floor)"
         )
-        print(
-            f"  median measured damage     {med:.3e}  "
-            f"({med / max(worst, 1e-30):.1f}x the floor)"
-        )
-        if smallest < 10 * worst:
-            print(
-                "  WARNING: the smallest perturbations sit within 10x the floor; "
-                "those rows are close to noise"
-            )
+        print(f"  median measured damage     {med:.3e}", end="")
+        if resolution > 0:
+            print(f"  ({med / resolution:,.0f}x that floor)")
+        else:
+            print()
+        if resolution > 0 and med < 100 * resolution:
+            print("  WARNING: median damage is within 100x the floor")
 
     out = {
         "n_cells": len(cells),

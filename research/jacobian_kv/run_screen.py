@@ -490,6 +490,14 @@ def main() -> int:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--run-id", default=None)
     ap.add_argument(
+        "--min-level",
+        type=float,
+        default=0.0,
+        help="drop perturbation levels below this fraction of the block norm; "
+        "a robustness check, since the smallest level carries rows whose "
+        "measured damage is near the estimator's own resolution",
+    )
+    ap.add_argument(
         "--analyse-only",
         action="store_true",
         help="recompute the gates from an existing perturbations.jsonl; "
@@ -810,10 +818,17 @@ def _analyse_only(args, log):
     args.model = man["target_model_id"]
     with open(rows_path) as fh:
         records = [json.loads(line) for line in fh if line.strip()]
+    if args.min_level > 0:
+        before = len(records)
+        records = [
+            r for r in records if float(r["params"].get("level", 0)) >= args.min_level
+        ]
+        log(f"dropped {before - len(records)} rows below level {args.min_level}")
     log(f"re-analysing {len(records)} rows from {rows_path} (seed {args.seed})")
     summary = analyse(records, args, model_name=args.model)
     summary["matched_norm_check"] = _norm_check(records)
     summary["reanalysed_from"] = rows_path
+    summary["min_level"] = args.min_level
     art.write_json(os.path.join(out_dir, "summary.json"), summary)
     _print_table(summary, log)
     return 0
