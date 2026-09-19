@@ -30,17 +30,20 @@ import torch
 from research.jacobian_kv.evaluate import (
     argmax_flip_rate,
     benjamini_hochberg,
+    blocked_spearman,
+    bootstrap_p_one_sided_positive,
     bootstrap_p_two_sided,
+    cluster_bootstrap_blocked_delta,
     delta_nll,
     evaluate_gate,
     kendall_distance,
+    method_ranking_distance,
     paired_bootstrap_spearman_delta,
     paired_bootstrap_statistic_delta,
     spearman,
     teacher_forced_kl,
 )
 from research.jacobian_kv.fit import fit_affine, weighted_sq_error
-
 
 # ---------------------------------------------------------------------------
 # the resampler regression
@@ -164,8 +167,21 @@ def test_benjamini_hochberg_worked_example():
     5/15 * 0.05 = 0.0167.
     """
     p = [
-        0.0001, 0.0004, 0.0019, 0.0095, 0.0201, 0.0278, 0.0298, 0.0344,
-        0.0459, 0.3240, 0.4262, 0.5719, 0.6528, 0.7590, 1.0000,
+        0.0001,
+        0.0004,
+        0.0019,
+        0.0095,
+        0.0201,
+        0.0278,
+        0.0298,
+        0.0344,
+        0.0459,
+        0.3240,
+        0.4262,
+        0.5719,
+        0.6528,
+        0.7590,
+        1.0000,
     ]
     reject, adj = benjamini_hochberg(p, q=0.05)
     assert sum(reject) == 4
@@ -198,87 +214,249 @@ def test_benjamini_hochberg_is_stricter_for_a_lone_marginal_result():
 # ---------------------------------------------------------------------------
 
 
-def _gate_inputs(n, candidate_noise, baseline_noise, seed):
+def _blocked_inputs(n_ctx, n_groups_per_ctx, group_size, cand_noise, base_noise, seed):
+    """Clustered, grouped synthetic data shaped like a real screen cell."""
     rng = np.random.default_rng(seed)
-    truth = np.abs(rng.normal(size=n)) + 0.1
+    truth, groups, clusters = [], [], []
+    for c in range(n_ctx):
+        for g in range(n_groups_per_ctx):
+            for _ in range(group_size):
+                truth.append(abs(rng.normal()) + 0.1)
+                groups.append(f"c{c}|g{g}")
+                clusters.append(c)
+    truth = np.asarray(truth)
+    n = truth.size
     scores = {
-        "mse": truth + baseline_noise * rng.normal(size=n),
-        "wo": truth + 2 * baseline_noise * rng.normal(size=n),
-        "attn_local": truth + 1.5 * baseline_noise * rng.normal(size=n),
-        "jtfj_p4": truth + candidate_noise * rng.normal(size=n),
-        "jtfj_p8": truth + candidate_noise * rng.normal(size=n),
+        "mse": truth + base_noise * rng.normal(size=n),
+        "wo": truth + 2 * base_noise * rng.normal(size=n),
+        "attn_prefill": truth + 1.5 * base_noise * rng.normal(size=n),
+        "meanj": truth + 2.5 * base_noise * rng.normal(size=n),
+        "jtfj_pos_p4": truth + cand_noise * rng.normal(size=n),
+        "jtfj_pos_p8": truth + cand_noise * rng.normal(size=n),
     }
-    return scores, truth
+    return scores, truth, groups, clusters
+
+
+BL = ("mse", "wo", "attn_prefill", "meanj")
+
+
+def _gate(scores, truth, groups, clusters, candidate="jtfj_pos_p8", **kw):
+    kw.setdefault("probe_stability", {"method_ranking_distance_4_to_8": 0.0})
+    return evaluate_gate(
+        scores,
+        truth,
+        groups,
+        clusters,
+        model="synthetic",
+        kind="v",
+        candidate=candidate,
+        baselines=BL,
+        n_boot=400,
+        seed=0,
+        **kw,
+    )
+
+
+# ---------------------------------------------------------------------------
+# the blocked statistic
+# ---------------------------------------------------------------------------
+
+
+def test_blocked_correlation_ignores_between_group_scale():
+    """A metric that only knows which group a row is in scores zero.
+
+    This is the whole reason the gate uses the blocked statistic. Pooled across
+    groups, a per-group constant correlates strongly with damage whenever
+    damage differs by group -- which it does by layer and by error magnitude.
+    Inside a group it carries nothing, and that is the honest reading.
+    """
+    rng = np.random.default_rng(3)
+    truth, groups, group_mean = [], [], {}
+    # enough groups that the Fisher mean of pure-noise correlations is tight:
+    # each group's rho has a standard error near 1/sqrt(13), so 60 groups puts
+    # the mean's standard error near 0.04
+    for g in range(60):
+        m = float(g)
+        group_mean[f"g{g}"] = m
+        for _ in range(14):
+            truth.append(m + 0.3 * rng.normal())
+            groups.append(f"g{g}")
+    scale_only = [group_mean[g] for g in groups]
+    assert spearman(scale_only, truth) > 0.9
+    # constant inside every group, so its blocked correlation is undefined
+    # rather than zero -- the stronger statement, and what the code returns
+    assert math.isnan(blocked_spearman(scale_only, truth, groups))
+
+    # the same metric with a little within-group jitter scores about nothing
+    jitter = rng.normal(scale=1e-3, size=len(scale_only))
+    noisy = [v + j for v, j in zip(scale_only, jitter)]
+    assert spearman(noisy, truth) > 0.9
+    assert abs(blocked_spearman(noisy, truth, groups)) < 0.12
+
+
+def test_blocked_correlation_recovers_a_within_group_signal():
+    rng = np.random.default_rng(4)
+    truth, groups, good = [], [], []
+    for g in range(12):
+        for _ in range(14):
+            t = abs(rng.normal()) + 0.1
+            truth.append(t)
+            groups.append(f"g{g}")
+            good.append(t + 0.02 * rng.normal())
+    assert blocked_spearman(good, truth, groups) > 0.9
+
+
+def test_fisher_averaging_does_not_penalise_a_spread_out_arm():
+    """Raw averaging compresses the arm with more across-group variance.
+
+    Two arms with the same Fisher-scale mean but different spread must not be
+    separated by the averaging rule, or the reported lead is an artefact of how
+    the correlations were combined.
+    """
+    tight = [0.8, 0.8, 0.8, 0.8]
+    spread = [0.2, 0.95, 0.99, 0.55]
+    z = np.arctanh(np.array(spread))
+    tight_matched = list(np.tanh(np.full(4, z.mean())))
+    from research.jacobian_kv.evaluate import _fisher_mean
+
+    assert _fisher_mean(spread) == pytest.approx(_fisher_mean(tight_matched), abs=1e-9)
+    assert np.mean(spread) < np.mean(tight_matched) - 0.05
+
+
+# ---------------------------------------------------------------------------
+# the cluster bootstrap
+# ---------------------------------------------------------------------------
+
+
+def test_cluster_bootstrap_is_wider_than_resampling_rows():
+    """Rows inside a context are not independent, and the interval must say so."""
+    scores, truth, groups, clusters = _blocked_inputs(12, 5, 14, 0.4, 0.9, seed=5)
+    _, lo_c, hi_c = cluster_bootstrap_blocked_delta(
+        scores["jtfj_pos_p8"],
+        scores["mse"],
+        truth,
+        groups,
+        clusters,
+        n_boot=600,
+        seed=0,
+    )
+    _, lo_r, hi_r = paired_bootstrap_spearman_delta(
+        scores["jtfj_pos_p8"], scores["mse"], truth, n_boot=600, seed=0
+    )
+    assert (hi_c - lo_c) > (hi_r - lo_r)
+
+
+def test_cluster_bootstrap_is_reproducible_and_non_degenerate():
+    scores, truth, groups, clusters = _blocked_inputs(10, 4, 14, 0.3, 0.8, seed=6)
+    a = cluster_bootstrap_blocked_delta(
+        scores["jtfj_pos_p8"],
+        scores["mse"],
+        truth,
+        groups,
+        clusters,
+        n_boot=300,
+        seed=1,
+    )
+    b = cluster_bootstrap_blocked_delta(
+        scores["jtfj_pos_p8"],
+        scores["mse"],
+        truth,
+        groups,
+        clusters,
+        n_boot=300,
+        seed=1,
+    )
+    assert a == b
+    assert a[2] > a[1]
+
+
+def test_one_sided_p_does_not_reward_being_worse():
+    """A two-sided p gives a badly losing arm the smallest possible value."""
+    losing = [-0.4] * 200
+    winning = [0.4] * 200
+    assert bootstrap_p_one_sided_positive(winning) == pytest.approx(1 / 200)
+    assert bootstrap_p_one_sided_positive(losing) == pytest.approx(1.0)
+    assert bootstrap_p_two_sided(losing) == pytest.approx(1 / 200)
+
+
+# ---------------------------------------------------------------------------
+# the gate
+# ---------------------------------------------------------------------------
 
 
 def test_gate_passes_a_genuinely_better_candidate():
-    scores, truth = _gate_inputs(200, candidate_noise=0.05, baseline_noise=1.2, seed=20)
-    g = evaluate_gate(
-        scores,
-        truth,
-        model="synthetic",
-        kind="v",
-        candidate="jtfj_p8",
-        baselines=("mse", "wo", "attn_local"),
-        probe_variants={4: scores["jtfj_p4"], 8: scores["jtfj_p8"]},
-        n_boot=500,
-        seed=0,
-        max_rank_change=1.0,
-    )
+    scores, truth, groups, clusters = _blocked_inputs(14, 5, 14, 0.04, 1.4, seed=20)
+    g = _gate(scores, truth, groups, clusters)
     assert g.passed, g.reasons
     assert g.delta >= 0.10 and g.ci_lo > 0
+    assert g.statistic == "blocked_spearman_fisher_mean"
 
 
 def test_gate_fails_a_candidate_that_only_ties():
-    scores, truth = _gate_inputs(200, candidate_noise=0.5, baseline_noise=0.5, seed=21)
-    g = evaluate_gate(
-        scores,
-        truth,
-        model="synthetic",
-        kind="v",
-        candidate="jtfj_p8",
-        baselines=("mse", "wo", "attn_local"),
-        n_boot=500,
-        seed=0,
-    )
+    scores, truth, groups, clusters = _blocked_inputs(14, 5, 14, 0.6, 0.6, seed=21)
+    g = _gate(scores, truth, groups, clusters)
     assert not g.passed
     assert any("below the pre-registered" in r for r in g.reasons)
 
 
+def test_gate_reports_a_losing_candidate_as_below_zero_not_as_including_it():
+    scores, truth, groups, clusters = _blocked_inputs(14, 5, 14, 3.0, 0.1, seed=24)
+    g = _gate(scores, truth, groups, clusters)
+    assert not g.passed
+    assert any("entirely below zero" in r for r in g.reasons)
+
+
 def test_gate_fails_an_unstable_candidate_even_when_it_is_better():
-    """Probe instability is disqualifying on its own, by design."""
-    scores, truth = _gate_inputs(200, candidate_noise=0.05, baseline_noise=1.2, seed=22)
-    rng = np.random.default_rng(99)
-    shuffled = rng.permutation(scores["jtfj_p4"])
-    g = evaluate_gate(
+    scores, truth, groups, clusters = _blocked_inputs(14, 5, 14, 0.04, 1.4, seed=22)
+    g = _gate(
         scores,
         truth,
-        model="synthetic",
-        kind="v",
-        candidate="jtfj_p8",
-        baselines=("mse", "wo", "attn_local"),
-        probe_variants={4: shuffled, 8: scores["jtfj_p8"]},
-        n_boot=500,
-        seed=0,
+        groups,
+        clusters,
+        probe_stability={"method_ranking_distance_4_to_8": 0.4},
     )
     assert not g.passed
-    assert any("ordering moves" in r for r in g.reasons)
+    assert any("method ordering moves" in r for r in g.reasons)
+
+
+def test_gate_fails_when_probe_stability_was_never_measured():
+    scores, truth, groups, clusters = _blocked_inputs(14, 5, 14, 0.04, 1.4, seed=25)
+    g = _gate(scores, truth, groups, clusters, probe_stability={})
+    assert not g.passed
+    assert any("not measured" in r for r in g.reasons)
 
 
 def test_gate_picks_the_strongest_baseline_not_a_convenient_one():
-    scores, truth = _gate_inputs(150, candidate_noise=0.3, baseline_noise=1.0, seed=23)
-    scores["attn_local"] = truth + 0.05 * np.random.default_rng(1).normal(size=150)
-    g = evaluate_gate(
-        scores,
-        truth,
-        model="synthetic",
-        kind="k",
-        candidate="jtfj_p8",
-        baselines=("mse", "wo", "attn_local"),
-        n_boot=300,
-        seed=0,
+    scores, truth, groups, clusters = _blocked_inputs(12, 5, 14, 0.5, 1.2, seed=23)
+    scores["attn_prefill"] = np.asarray(truth) + 0.03 * np.random.default_rng(1).normal(
+        size=len(truth)
     )
-    assert g.best_baseline == "attn_local"
+    g = _gate(scores, truth, groups, clusters)
+    assert g.best_baseline == "attn_prefill"
+
+
+def test_gate_requires_a_baseline_from_the_named_tier():
+    scores, truth, groups, clusters = _blocked_inputs(8, 4, 14, 0.2, 0.8, seed=26)
+    with pytest.raises(ValueError):
+        evaluate_gate(
+            scores,
+            truth,
+            groups,
+            clusters,
+            model="synthetic",
+            kind="v",
+            candidate="jtfj_pos_p8",
+            baselines=("not_scored_here",),
+            n_boot=100,
+            seed=0,
+        )
+
+
+def test_method_ranking_distance_is_zero_when_probes_change_nothing():
+    scores, truth, groups, clusters = _blocked_inputs(8, 4, 14, 0.2, 0.8, seed=27)
+    fam = {"jtfj_pos_p8": scores["jtfj_pos_p8"]}
+    d = method_ranking_distance(scores, truth, groups, fam, fam)
+    assert d == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +555,7 @@ def test_alternating_low_rank_decreases_the_weighted_objective():
     unweighted = fit_affine(C, T, rank=r, solver="whiten")
     als = fit_affine(C, T, G_per_sample=Gp, rank=r, solver="als")
     assert torch.linalg.matrix_rank(als.M, tol=1e-8).item() <= r
-    assert weighted_sq_error(C, T, als, G_per_sample=Gp) <= weighted_sq_error(
-        C, T, unweighted, G_per_sample=Gp
-    ) + 1e-9
+    assert (
+        weighted_sq_error(C, T, als, G_per_sample=Gp)
+        <= weighted_sq_error(C, T, unweighted, G_per_sample=Gp) + 1e-9
+    )
