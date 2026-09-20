@@ -263,12 +263,16 @@ def main() -> int:
                 models["target"], tp.keys_post, tp.values, cont, args.ctx
             ).float()
             ref_lp = torch.log_softmax(ref, -1).half().cpu()
+        # Held in half precision. These are activations, the correction they
+        # train is small, and the storage is what caps how many prompts the
+        # correction can see -- which the overfitting measured at twenty
+        # prompts says is the binding constraint.
         train_cache.append(
             {
-                "Xk": Xk.detach().cpu(),
-                "Xv": Xv.detach().cpu(),
-                "Yk": [k.detach().cpu() for k in to_content_keys(tp)],
-                "Yv": [v.detach().float().cpu() for v in tp.values],
+                "Xk": Xk.detach().half().cpu(),
+                "Xv": Xv.detach().half().cpu(),
+                "Yk": [k.detach().half().cpu() for k in to_content_keys(tp)],
+                "Yv": [v.detach().half().cpu() for v in tp.values],
                 "cont": cont.cpu(),
                 "ref_lp": ref_lp,
             }
@@ -289,12 +293,12 @@ def main() -> int:
         tot = []
         with torch.no_grad():
             for item in items:
-                Xk, Xv = item["Xk"].to(dev), item["Xv"].to(dev)
+                Xk, Xv = item["Xk"].to(dev).float(), item["Xv"].to(dev).float()
                 pk, pv = rk(Xk), rv(Xv)
                 if objective == "kv":
                     val = kv_error_loss(
-                        pk, [y.to(dev) for y in item["Yk"]]
-                    ) + kv_error_loss(pv, [y.to(dev) for y in item["Yv"]])
+                        pk, [y.to(dev).float() for y in item["Yk"]]
+                    ) + kv_error_loss(pv, [y.to(dev).float() for y in item["Yv"]])
                 else:
                     keys = [rerot(k.float(), pos, tg.rope_theta).to(dtype) for k in pk]
                     lg = continuation_logits(
@@ -322,13 +326,13 @@ def main() -> int:
         g = torch.Generator().manual_seed(args.seed)
         for step in range(steps):
             item = fit_cache[int(torch.randint(len(fit_cache), (1,), generator=g))]
-            Xk = item["Xk"].to(dev)
-            Xv = item["Xv"].to(dev)
+            Xk = item["Xk"].to(dev).float()
+            Xv = item["Xv"].to(dev).float()
             pk, pv = rk(Xk), rv(Xv)
             if objective == "kv":
                 loss = kv_error_loss(
-                    pk, [y.to(dev) for y in item["Yk"]]
-                ) + kv_error_loss(pv, [y.to(dev) for y in item["Yv"]])
+                    pk, [y.to(dev).float() for y in item["Yk"]]
+                ) + kv_error_loss(pv, [y.to(dev).float() for y in item["Yv"]])
             else:
                 keys = [rerot(k.float(), pos, tg.rope_theta).to(dtype) for k in pk]
                 vals = [v.to(dtype) for v in pv]
