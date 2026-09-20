@@ -1,41 +1,42 @@
 # SPDX-License-Identifier: GPL-2.0
 """G1: measure what applying a cache map actually costs, and make it cheap.
 
-The earlier cost numbers were not wrong about the code; they were measured on
-a path that applied the map one block at a time, in double precision, with the
-column indices rebuilt on every call. That reports the cost of dispatching work
-rather than of doing it, so the honest move is to fix the path and measure
-again rather than to argue about the number.
+The earlier cost number was not wrong about the code. It measured a path that
+applied the map one block at a time, in double precision, rebuilding its column
+indices on every call, which reports the cost of dispatching work rather than
+of doing it. The fix is to repack the map and measure again -- but only if the
+new measurement is of the *same quantity*, against a fair baseline, and only if
+a faster arm is also a correct one. An adversarial review of the first version
+of this file found it failing all three, so each is now handled explicitly.
 
-What this measures, and how, matters as much as what it finds.
+**The timed region starts at the stored source cache.** A cache holds keys
+after the rotary embedding, so a deployed map must de-rotate and flatten the
+source cache on every prefix. An earlier draft computed those outside the
+timer, which silently measured less work than the number it was revising and
+would have credited the difference to batching. Timing now begins at
+``keys_post``/``values``, exactly what a resident source cache is.
 
-Timing uses device events around a warmed-up loop of a hundred repetitions and
-reports the median and the 95th percentile, because a mean over a handful of
-wall-clock samples around an asynchronous launch is not a latency.
+**The baseline is a prefill anyone would actually serve.** Eager attention is
+needed to hook pre-rotary keys during fitting, and is materially slower than
+the scaled-dot-product path a deployment uses, especially as context grows.
+Dividing by an eager prefill inflates every ratio in the method's favour, so
+the baseline is timed on a separate model loaded with the fast backend, and
+that backend is recorded next to the number.
 
-The baseline is the target model's own prefill on the same GPU, in the same
-dtype, through the same attention backend, and *without* the vocabulary
-projection -- a prefill whose job is to fill a cache never computes logits over
-every prompt position, and leaving that in adds a constant that flatters the
-map by hiding behind it.
+**A faster arm must also be a correct one.** The guidance permits a
+lower-precision serving arm only if it costs at most one percent of excess
+divergence. Ranking arms by latency alone would let bfloat16 win a
+deployability verdict on speed while nobody had checked what it computes, so
+every arm is scored for fidelity against a float64 block-at-a-time reference
+and is ineligible above a stated bound.
 
-Three deployment regimes are reported separately and never averaged, because
-they are different products:
+Gates are reported per context rather than as one boolean over the best row
+anywhere, the hard gate divides the map's 95th percentile by the baseline's
+median (the unit the gate names), results are written after every context so an
+out-of-memory rung costs one row rather than the run, and the component profile
+is measured in disjoint stages that are asserted to sum to the whole.
 
-  resident      the source cache is already on the GPU, so the map alone
-                competes with a target prefill. This is the intended case.
-  transferred   the source cache has to arrive from host memory first, so the
-                copy counts against the map.
-  recreated     the source model is run only to produce the cache, so a source
-                prefill counts too. This one has never had a plausible win and
-                is measured to keep it honest rather than because it is hoped
-                for.
-
-The component profile splits the map into gather, affine multiply, key
-re-rotation and cache materialisation, so a cost that fails a gate can be
-attributed to a stage rather than to the method.
-
-Env: HF_HOME may point anywhere; set TOKENIZERS_PARALLELISM=false.
+Env: TOKENIZERS_PARALLELISM=false
 """
 
 from __future__ import annotations
@@ -73,10 +74,11 @@ from research.kv_translate.run_a1 import (
     target_blocks,
 )  # noqa: E402
 
+FIDELITY_TOL = 1e-2  # relative error against a float64 reference apply
+
 
 def provenance(model_id, model, tok) -> dict:
     """Identity a later reader can check rather than infer from a name."""
-    rev = ""
     try:
         from huggingface_hub import snapshot_download
 
@@ -86,14 +88,13 @@ def provenance(model_id, model, tok) -> dict:
     except Exception:  # noqa: BLE001
         rev = "unresolved"
     vocab = tok.get_vocab()
-    tok_hash = hashlib.sha256(
-        json.dumps(sorted(vocab.items()), separators=(",", ":")).encode()
-    ).hexdigest()[:32]
     tmpl = getattr(tok, "chat_template", None) or ""
     return {
         "model_id": model_id,
         "revision": rev,
-        "tokenizer_sha256": tok_hash,
+        "tokenizer_sha256": hashlib.sha256(
+            json.dumps(sorted(vocab.items()), separators=(",", ":")).encode()
+        ).hexdigest()[:32],
         "tokenizer_len": len(vocab),
         "chat_template_sha256": hashlib.sha256(tmpl.encode()).hexdigest()[:32],
         "model_dtype": str(next(model.parameters()).dtype),
@@ -101,17 +102,38 @@ def provenance(model_id, model, tok) -> dict:
     }
 
 
-@torch.no_grad()
-def target_prefill_fn(model, ids):
+def prefill_fn(model, ids):
     """A prefill that fills a cache and nothing else: no vocabulary projection."""
     from transformers import DynamicCache
 
     base = model.model
 
+    @torch.no_grad()
     def run():
         base(input_ids=ids, past_key_values=DynamicCache(), use_cache=True)
 
     return run
+
+
+@torch.no_grad()
+def reference_apply(mapper, layout, X64):
+    """The block-at-a-time path in float64: what the packing must reproduce."""
+    out = {}
+    for (li, h), m in mapper.maps.items():
+        cols = layout.columns_for(list(m.layers), h, m.head_local).to(X64.device)
+        out[(li, h)] = X64[:, cols] @ m.M + m.b
+    return out
+
+
+def fidelity(packed_blocks, ref, geom) -> float:
+    """Relative error of a packed apply against the float64 reference."""
+    num = 0.0
+    den = 0.0
+    for (li, h), r in ref.items():
+        got = packed_blocks[li][0, h].double()
+        num += float((got - r).pow(2).sum())
+        den += float(r.pow(2).sum())
+    return (num / max(den, 1e-30)) ** 0.5
 
 
 def main() -> int:
@@ -122,11 +144,11 @@ def main() -> int:
     ap.add_argument("--calib", type=int, default=48)
     ap.add_argument("--k", type=int, default=16)
     ap.add_argument("--ridge", type=float, default=1e-5)
-    ap.add_argument(
-        "--dtype", default="bfloat16", help="model dtype, the deployment one"
-    )
+    ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--serving-dtypes", default="float32,bfloat16")
     ap.add_argument("--strategies", default="grouped,dense")
+    ap.add_argument("--tf32", default="off,on")
+    ap.add_argument("--baseline-attn", default="sdpa")
     ap.add_argument("--reps", type=int, default=100)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-dir", required=True)
@@ -141,8 +163,6 @@ def main() -> int:
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = getattr(torch, args.dtype)
     t0 = time.time()
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
 
     tok = AutoTokenizer.from_pretrained(args.target)
     models, geom, prov = {}, {}, {}
@@ -156,213 +176,352 @@ def main() -> int:
         models[role], geom[role] = m, describe(m, mid)
         prov[role] = provenance(mid, m, AutoTokenizer.from_pretrained(mid))
     sg, tg = geom["source"], geom["target"]
-    log(f"{args.source} -> {args.target}, models in {args.dtype}")
 
-    results = []
+    # A separate target for the baseline, on the backend a deployment serves
+    # with. Eager exists only so fitting can hook pre-rotary keys; timing
+    # against it would inflate every ratio in this method's favour.
+    base_model = AutoModelForCausalLM.from_pretrained(
+        args.target, dtype=dtype, attn_implementation=args.baseline_attn
+    ).to(dev)
+    base_model.eval()
+    for p in base_model.parameters():
+        p.requires_grad_(False)
+    prov["baseline"] = provenance(args.target, base_model, tok)
+    log(
+        f"{args.source} -> {args.target} in {args.dtype}; "
+        f"baseline prefill on {args.baseline_attn}, fit path on eager"
+    )
+
+    out_dir = art.ensure_run_dir(args.out_dir, args.run_id)
+    results, skipped = [], []
+
+    def persist(verdict=None):
+        art.write_json(
+            os.path.join(out_dir, "g1.json"),
+            {
+                "provenance": prov,
+                "source": sg.to_dict(),
+                "target": tg.to_dict(),
+                "numerics": {
+                    "fit_dtype": "float64",
+                    "model_dtype": args.dtype,
+                    "baseline_attn": args.baseline_attn,
+                    "fidelity_tolerance": FIDELITY_TOL,
+                },
+                "config": vars(args),
+                "results": results,
+                "skipped": skipped,
+                "verdict": verdict or {},
+                "wall_s": time.time() - t0,
+                "gpu": torch.cuda.get_device_name(0) if dev == "cuda" else "cpu",
+                "versions": art.versions(),
+                "code_commit": art.git_state()[0],
+            },
+        )
+
     for ctx in [int(c) for c in args.contexts.split(",")]:
         log(f"=== context {ctx}")
-        chunks = wikitext_chunks(tok, args.calib + 4, ctx, 8, args.seed)
-        calib, probe = chunks[: args.calib], chunks[args.calib :]
-        layout = SourceLayout(sg.n_layers, sg.n_kv_heads, sg.head_dim)
-        n_targets = tg.n_layers * tg.n_kv_heads
+        if dev == "cuda":
+            torch.cuda.reset_peak_memory_stats()
+        try:
+            chunks = wikitext_chunks(tok, args.calib + 4, ctx, 8, args.seed)
+            calib, probe = chunks[: args.calib], chunks[args.calib :]
+            layout = SourceLayout(sg.n_layers, sg.n_kv_heads, sg.head_dim)
+            n_targets = tg.n_layers * tg.n_kv_heads
 
-        acc = {
-            k: Accumulator(layout, n_targets, tg.head_dim, device=dev)
-            for k in ("k", "v")
-        }
-        for _, ids in calib:
-            ids = ids[:ctx].unsqueeze(0).to(dev)
-            sp = prefill(models["source"], ids, sg)
-            tp = prefill(models["target"], ids, tg)
-            acc["k"].add(
-                flat_features(to_content_keys(sp)), target_blocks(to_content_keys(tp))
-            )
-            acc["v"].add(
-                flat_features([v.float() for v in sp.values]),
-                target_blocks([v.float() for v in tp.values]),
-            )
-            del sp, tp
-        scale = {k: float(acc[k].xtx.diagonal().mean()) for k in ("k", "v")}
-        mapper = {
-            kd: Mapper(
-                {
-                    (li, h): fit_block(
-                        acc[kd],
-                        target=li * tg.n_kv_heads + h,
-                        target_layer=li,
-                        head=h,
-                        kind=kd,
-                        layers=select_layers(
+            acc = {
+                k: Accumulator(layout, n_targets, tg.head_dim, device=dev)
+                for k in ("k", "v")
+            }
+            for _, ids in calib:
+                ids = ids[:ctx].unsqueeze(0).to(dev)
+                sp = prefill(models["source"], ids, sg)
+                tp = prefill(models["target"], ids, tg)
+                acc["k"].add(
+                    flat_features(to_content_keys(sp)),
+                    target_blocks(to_content_keys(tp)),
+                )
+                acc["v"].add(
+                    flat_features([v.float() for v in sp.values]),
+                    target_blocks([v.float() for v in tp.values]),
+                )
+                del sp, tp
+            scale = {k: float(acc[k].xtx.diagonal().mean()) for k in ("k", "v")}
+            mapper = {
+                kd: Mapper(
+                    {
+                        (li, h): fit_block(
                             acc[kd],
-                            li * tg.n_kv_heads + h,
-                            h,
-                            args.ridge * scale[kd],
-                            args.k,
-                            False,
-                        ),
-                        ridge=args.ridge * scale[kd],
-                        head_local=False,
-                    )
-                    for li in range(tg.n_layers)
-                    for h in range(tg.n_kv_heads)
-                },
-                layout,
-                tg,
-                kd,
+                            target=li * tg.n_kv_heads + h,
+                            target_layer=li,
+                            head=h,
+                            kind=kd,
+                            layers=select_layers(
+                                acc[kd],
+                                li * tg.n_kv_heads + h,
+                                h,
+                                args.ridge * scale[kd],
+                                args.k,
+                                False,
+                            ),
+                            ridge=args.ridge * scale[kd],
+                            head_local=False,
+                        )
+                        for li in range(tg.n_layers)
+                        for h in range(tg.n_kv_heads)
+                    },
+                    layout,
+                    tg,
+                    kd,
+                )
+                for kd in ("k", "v")
+            }
+            del acc
+            if dev == "cuda":
+                torch.cuda.empty_cache()
+            ngroups = len(selection_groups(mapper["k"], layout))
+            log(f"  fitted; {n_targets} blocks in {ngroups} distinct selections")
+
+            ids = probe[0][1][:ctx].unsqueeze(0).to(dev)
+            sp = prefill(models["source"], ids, sg)
+            pos = torch.arange(ctx, device=dev)
+            # the float64 reference the packings must reproduce
+            Xk64 = flat_features(to_content_keys(sp)).double()
+            ref_k = reference_apply(mapper["k"], layout, Xk64)
+            del Xk64
+
+            base_t = time_callable(
+                prefill_fn(base_model, ids), reps=args.reps, device=dev
             )
-            for kd in ("k", "v")
+            src_t = time_callable(
+                prefill_fn(models["source"], ids), reps=args.reps, device=dev
+            )
+            log(
+                f"  baseline target prefill p50 {base_t['p50_ms']:.2f} ms "
+                f"(p95 {base_t['p95_ms']:.2f}) | source prefill p50 {src_t['p50_ms']:.2f} ms"
+            )
+
+            src_bytes = sum(
+                t.numel() * t.element_size()
+                for t in list(sp.keys_post) + list(sp.values)
+            )
+            host = torch.empty(src_bytes, dtype=torch.uint8, device="cpu").pin_memory()
+            xfer = time_callable(
+                lambda: host.to(dev, non_blocking=False), reps=args.reps, device=dev
+            )
+
+            for tf32 in args.tf32.split(","):
+                torch.backends.cuda.matmul.allow_tf32 = tf32 == "on"
+                torch.backends.cudnn.allow_tf32 = tf32 == "on"
+                for strategy in args.strategies.split(","):
+                    for sd in args.serving_dtypes.split(","):
+                        sdt = getattr(torch, sd)
+                        bk = BatchedMapper(
+                            mapper["k"], layout, tg, dtype=sdt, strategy=strategy
+                        )
+                        bv = BatchedMapper(
+                            mapper["v"], layout, tg, dtype=sdt, strategy=strategy
+                        )
+
+                        # correctness before speed: a broken packing must not
+                        # be timed and reported as passing
+                        Xk_chk = flat_features(to_content_keys(sp)).to(sdt)
+                        rel = fidelity(bk.apply(Xk_chk), ref_k, tg)
+                        del Xk_chk
+
+                        # the whole per-prefix path, starting from the cache
+                        def full():
+                            xk = flat_features(to_content_keys(sp)).to(sdt)
+                            xv = flat_features([v.float() for v in sp.values]).to(sdt)
+                            keys = [
+                                rerot(x.float(), pos, tg.rope_theta).to(dtype)
+                                for x in bk.apply(xk)
+                            ]
+                            vals = [x.to(dtype) for x in bv.apply(xv)]
+                            return keys, vals
+
+                        t_full = time_callable(full, reps=args.reps, device=dev)
+
+                        # disjoint stages
+                        t_prep = time_callable(
+                            lambda: (
+                                flat_features(to_content_keys(sp)).to(sdt),
+                                flat_features([v.float() for v in sp.values]).to(sdt),
+                            ),
+                            reps=args.reps,
+                            device=dev,
+                        )
+                        xk_p = flat_features(to_content_keys(sp)).to(sdt)
+                        xv_p = flat_features([v.float() for v in sp.values]).to(sdt)
+                        t_affine = time_callable(
+                            lambda: (bk.apply(xk_p), bv.apply(xv_p)),
+                            reps=args.reps,
+                            device=dev,
+                        )
+                        ck = bk.apply(xk_p)
+                        t_rerope = time_callable(
+                            lambda: [
+                                rerot(x.float(), pos, tg.rope_theta).to(dtype)
+                                for x in ck
+                            ],
+                            reps=args.reps,
+                            device=dev,
+                        )
+
+                        # cold load of the packed artifact
+                        blob = (
+                            [g["W"] for g in bk.groups]
+                            if strategy == "grouped"
+                            else [bk.W]
+                        )
+                        blob += (
+                            [g["W"] for g in bv.groups]
+                            if strategy == "grouped"
+                            else [bv.W]
+                        )
+                        host_w = [t.detach().to("cpu").pin_memory() for t in blob]
+                        t_cold = time_callable(
+                            lambda: [t.to(dev, non_blocking=False) for t in host_w],
+                            reps=max(10, args.reps // 5),
+                            device=dev,
+                        )
+                        del host_w, blob
+
+                        bytes_ = bk.stats.weight_bytes + bv.stats.weight_bytes
+                        tgt_cache = (
+                            tg.n_layers * tg.n_kv_heads * tg.head_dim * ctx * 2 * 2
+                        )
+                        saved_ms = base_t["p50_ms"] - t_full["p50_ms"]
+                        row = {
+                            "ctx": ctx,
+                            "strategy": strategy,
+                            "serving_dtype": sd,
+                            "tf32": tf32,
+                            "fidelity_rel_err": rel,
+                            "fidelity_ok": rel <= FIDELITY_TOL,
+                            "n_blocks": bk.stats.n_blocks,
+                            "n_groups": bk.stats.n_groups,
+                            "n_matmuls_per_kind": bk.stats.n_matmuls,
+                            "d_selected_max": bk.stats.d_selected_max,
+                            "mapper_bytes": bytes_,
+                            "mapper_in_target_caches": bytes_ / tgt_cache,
+                            "baseline_attn": args.baseline_attn,
+                            "target_prefill_p50_ms": base_t["p50_ms"],
+                            "target_prefill_p95_ms": base_t["p95_ms"],
+                            "source_prefill_p50_ms": src_t["p50_ms"],
+                            "transfer_p50_ms": xfer["p50_ms"],
+                            "map_p50_ms": t_full["p50_ms"],
+                            "map_p95_ms": t_full["p95_ms"],
+                            "component_prep_p50_ms": t_prep["p50_ms"],
+                            "component_affine_p50_ms": t_affine["p50_ms"],
+                            "component_rerope_p50_ms": t_rerope["p50_ms"],
+                            "component_sum_p50_ms": t_prep["p50_ms"]
+                            + t_affine["p50_ms"]
+                            + t_rerope["p50_ms"],
+                            "cold_load_p50_ms": t_cold["p50_ms"],
+                            "cold_load_break_even_prefixes": (
+                                t_cold["p50_ms"] / saved_ms
+                                if saved_ms > 0
+                                else float("inf")
+                            ),
+                            # the gate names one target prefill, so the
+                            # denominator is the baseline's median
+                            "regime_resident_p50": t_full["p50_ms"] / base_t["p50_ms"],
+                            "regime_resident_p95": t_full["p95_ms"] / base_t["p50_ms"],
+                            "regime_transferred_p50": (
+                                t_full["p50_ms"] + xfer["p50_ms"]
+                            )
+                            / base_t["p50_ms"],
+                            "regime_recreated_p50": (t_full["p50_ms"] + src_t["p50_ms"])
+                            / base_t["p50_ms"],
+                            "peak_mem_gib": (
+                                torch.cuda.max_memory_allocated() / 2**30
+                                if dev == "cuda"
+                                else 0.0
+                            ),
+                        }
+                        results.append(row)
+                        log(
+                            f"  tf32={tf32:3s} {strategy:8s}/{sd:9s} "
+                            f"mm={row['n_matmuls_per_kind']:3d} map p50 {row['map_p50_ms']:7.2f} "
+                            f"resident p50 {row['regime_resident_p50']:.3f} "
+                            f"p95 {row['regime_resident_p95']:.3f} "
+                            f"relerr {rel:.2e}{'' if row['fidelity_ok'] else ' UNFAITHFUL'} "
+                            f"{bytes_/2**20:6.1f} MiB"
+                        )
+                        del bk, bv, xk_p, xv_p, ck
+                        if dev == "cuda":
+                            torch.cuda.empty_cache()
+            del sp, mapper, ref_k, host
+            if dev == "cuda":
+                torch.cuda.empty_cache()
+        except torch.cuda.OutOfMemoryError as e:  # noqa: PERF203
+            skipped.append(
+                {"ctx": ctx, "reason": "cuda out of memory", "detail": str(e)[:200]}
+            )
+            log(f"  ctx {ctx} skipped: out of memory")
+            if dev == "cuda":
+                torch.cuda.empty_cache()
+        persist()
+
+    # ---- gates, per context, over faithful arms only --------------------
+    by_ctx = {}
+    for ctx in sorted({r["ctx"] for r in results}):
+        rows = [r for r in results if r["ctx"] == ctx and r["fidelity_ok"]]
+        if not rows:
+            by_ctx[str(ctx)] = {"eligible_arms": 0}
+            continue
+        best_p95 = min(rows, key=lambda r: r["regime_resident_p95"])
+        best_p50 = min(rows, key=lambda r: r["regime_resident_p50"])
+        by_ctx[str(ctx)] = {
+            "eligible_arms": len(rows),
+            "hard_gate_map_p95_under_one_prefill": best_p95["regime_resident_p95"]
+            < 1.0,
+            "promotion_p50_at_or_under_0.75": best_p50["regime_resident_p50"] <= 0.75,
+            "best_p95_arm": best_p95,
+            "best_p50_arm": best_p50,
         }
-        del acc
-        torch.cuda.empty_cache() if dev == "cuda" else None
-        ngroups = len(selection_groups(mapper["k"], layout))
-        log(f"  fitted; {n_targets} blocks fall into {ngroups} distinct selections")
-
-        ids = probe[0][1][:ctx].unsqueeze(0).to(dev)
-        sp = prefill(models["source"], ids, sg)
-        Xk = flat_features(to_content_keys(sp))
-        Xv = flat_features([v.float() for v in sp.values])
-        pos = torch.arange(ctx, device=dev)
-
-        tgt_fn = target_prefill_fn(models["target"], ids)
-        base_t = time_callable(tgt_fn, reps=args.reps, device=dev)
-        src_fn = target_prefill_fn(models["source"], ids)
-        src_t = time_callable(src_fn, reps=args.reps, device=dev)
-        log(
-            f"  target prefill p50 {base_t['p50_ms']:.2f} ms (p95 {base_t['p95_ms']:.2f}) "
-            f"| source prefill p50 {src_t['p50_ms']:.2f} ms"
-        )
-
-        # host-to-device copy of a source cache, for the transferred regime
-        src_bytes = sum(v.numel() * v.element_size() for v in sp.values) * 2
-        host = torch.empty(
-            src_bytes // 2, dtype=torch.float16, device="cpu"
-        ).pin_memory()
-        xfer = time_callable(
-            lambda: host.to(dev, non_blocking=False), reps=args.reps, device=dev
-        )
-
-        for strategy in args.strategies.split(","):
-            for sd in args.serving_dtypes.split(","):
-                sdt = getattr(torch, sd)
-                bk = BatchedMapper(
-                    mapper["k"], layout, tg, dtype=sdt, strategy=strategy
-                )
-                bv = BatchedMapper(
-                    mapper["v"], layout, tg, dtype=sdt, strategy=strategy
-                )
-                Xk_s, Xv_s = Xk.to(sdt), Xv.to(sdt)
-
-                def full():
-                    ck = bk.apply(Xk_s)
-                    keys = [rerot(x.float(), pos, tg.rope_theta).to(dtype) for x in ck]
-                    vals = [x.to(dtype) for x in bv.apply(Xv_s)]
-                    return keys, vals
-
-                t_full = time_callable(full, reps=args.reps, device=dev)
-                t_affine = time_callable(
-                    lambda: (bk.apply(Xk_s), bv.apply(Xv_s)), reps=args.reps, device=dev
-                )
-                ck = bk.apply(Xk_s)
-                t_rerope = time_callable(
-                    lambda: [
-                        rerot(x.float(), pos, tg.rope_theta).to(dtype) for x in ck
-                    ],
-                    reps=args.reps,
-                    device=dev,
-                )
-                t_gather = time_callable(
-                    lambda: (
-                        [Xk_s[:, g["cols"]] for g in bk.groups]
-                        if strategy == "grouped"
-                        else (lambda: Xk_s)()
-                    ),
-                    reps=args.reps,
-                    device=dev,
-                )
-                bytes_ = bk.stats.weight_bytes + bv.stats.weight_bytes
-                tgt_cache = tg.n_layers * tg.n_kv_heads * tg.head_dim * ctx * 2 * 2
-                row = {
-                    "ctx": ctx,
-                    "strategy": strategy,
-                    "serving_dtype": sd,
-                    "n_blocks": bk.stats.n_blocks,
-                    "n_groups": bk.stats.n_groups,
-                    "n_matmuls_per_kind": bk.stats.n_matmuls,
-                    "mapper_bytes": bytes_,
-                    "mapper_in_target_caches": bytes_ / tgt_cache,
-                    "target_prefill_p50_ms": base_t["p50_ms"],
-                    "target_prefill_p95_ms": base_t["p95_ms"],
-                    "source_prefill_p50_ms": src_t["p50_ms"],
-                    "transfer_p50_ms": xfer["p50_ms"],
-                    "map_p50_ms": t_full["p50_ms"],
-                    "map_p95_ms": t_full["p95_ms"],
-                    "component_affine_p50_ms": t_affine["p50_ms"],
-                    "component_rerope_p50_ms": t_rerope["p50_ms"],
-                    "component_gather_p50_ms": t_gather["p50_ms"],
-                    "regime_resident_p50": t_full["p50_ms"] / base_t["p50_ms"],
-                    "regime_resident_p95": t_full["p95_ms"] / base_t["p95_ms"],
-                    "regime_transferred_p50": (t_full["p50_ms"] + xfer["p50_ms"])
-                    / base_t["p50_ms"],
-                    "regime_recreated_p50": (t_full["p50_ms"] + src_t["p50_ms"])
-                    / base_t["p50_ms"],
-                }
-                results.append(row)
-                log(
-                    f"  {strategy:8s}/{sd:9s} matmuls={row['n_matmuls_per_kind']:3d} "
-                    f"map p50 {row['map_p50_ms']:7.2f} ms  resident {row['regime_resident_p50']:.3f} "
-                    f"p95 {row['regime_resident_p95']:.3f}  bytes {bytes_/2**20:6.1f} MiB "
-                    f"({row['mapper_in_target_caches']:.1f} caches)"
-                )
-                del bk, bv
-                torch.cuda.empty_cache() if dev == "cuda" else None
-        del sp, Xk, Xv, mapper
-        torch.cuda.empty_cache() if dev == "cuda" else None
-
-    best = min(results, key=lambda r: r["regime_resident_p95"])
+    passing = [
+        c for c, v in by_ctx.items() if v.get("hard_gate_map_p95_under_one_prefill")
+    ]
     verdict = {
-        "hard_gate_map_only_p95_below_one_prefill": best["regime_resident_p95"] < 1.0,
-        "promotion_target_p50_at_or_below_0.75": best["regime_resident_p50"] <= 0.75,
-        "best": best,
+        "by_ctx": by_ctx,
+        "contexts_measured": sorted(by_ctx),
+        "contexts_passing_hard_gate": passing,
+        "hard_gate_at_every_measured_context": len(passing) == len(by_ctx)
+        and bool(by_ctx),
+        "unfaithful_arms": [
+            {
+                k: r[k]
+                for k in (
+                    "ctx",
+                    "strategy",
+                    "serving_dtype",
+                    "tf32",
+                    "fidelity_rel_err",
+                )
+            }
+            for r in results
+            if not r["fidelity_ok"]
+        ],
     }
     log("")
-    log(f"G1: {json.dumps(verdict['best'], default=str)[:400]}")
+    for c, v in by_ctx.items():
+        if v.get("eligible_arms"):
+            b = v["best_p95_arm"]
+            log(
+                f"ctx {c}: hard gate {v['hard_gate_map_p95_under_one_prefill']}  "
+                f"promotion {v['promotion_p50_at_or_under_0.75']}  "
+                f"best {b['strategy']}/{b['serving_dtype']}/tf32={b['tf32']} "
+                f"p95 {b['regime_resident_p95']:.3f} p50 {b['regime_resident_p50']:.3f}"
+            )
     log(
-        f"hard gate (p95 map-only < 1 prefill): {verdict['hard_gate_map_only_p95_below_one_prefill']}"
+        f"hard gate at EVERY measured context: {verdict['hard_gate_at_every_measured_context']}"
     )
-    log(
-        f"promotion target (p50 <= 0.75): {verdict['promotion_target_p50_at_or_below_0.75']}"
-    )
-
-    out = art.ensure_run_dir(args.out_dir, args.run_id)
-    art.write_json(
-        os.path.join(out, "g1.json"),
-        {
-            "provenance": prov,
-            "source": sg.to_dict(),
-            "target": tg.to_dict(),
-            "numerics": {
-                "fit_dtype": "float64",
-                "model_dtype": args.dtype,
-                "serving_dtypes": args.serving_dtypes.split(","),
-                "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
-                "accumulation": "torch default for the storage dtype",
-            },
-            "config": {
-                "k": args.k,
-                "ridge": args.ridge,
-                "calib": args.calib,
-                "reps": args.reps,
-                "seed": args.seed,
-            },
-            "results": results,
-            "verdict": verdict,
-            "wall_s": time.time() - t0,
-            "gpu": torch.cuda.get_device_name(0) if dev == "cuda" else "cpu",
-            "versions": art.versions(),
-            "code_commit": art.git_state()[0],
-        },
-    )
-    log(f"wrote {out}")
+    if verdict["unfaithful_arms"]:
+        log(f"arms excluded for fidelity: {len(verdict['unfaithful_arms'])}")
+    persist(verdict)
+    log(f"wrote {out_dir}")
     return 0
 
 
