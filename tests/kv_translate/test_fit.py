@@ -255,3 +255,19 @@ def test_attention_over_a_cache_ignores_slot_order():
     # permuting the keys alone is *not* a no-op, which is what makes the
     # substituted control meaningful
     assert not torch.allclose(attend(k, v), attend(k[:, perm], v), atol=1e-6)
+
+
+def test_head_local_refuses_an_undefined_correspondence():
+    """Pairing target head h with source head h needs both to have head h.
+
+    Model families do not guarantee it: Qwen2.5 carries two key/value heads up
+    to 1.5B and four at 7B. Silently taking the wrong columns produced an
+    out-of-bounds index that surfaced as a device-side assert several frames
+    away, at the start of a paid run.
+    """
+    lay = _layout()  # two kv heads
+    lay.columns_for([0], head=1, head_local=True)  # defined
+    with pytest.raises(ValueError, match="only 2 key/value heads"):
+        lay.columns_for([0], head=3, head_local=True)
+    # full fan-in does not use the head index and stays defined
+    assert lay.columns_for([0], head=3, head_local=False).numel() == H * D

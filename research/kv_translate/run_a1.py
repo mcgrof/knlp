@@ -238,9 +238,19 @@ def main() -> int:
 
     ridges = [float(x) for x in args.ridge_grid.split(",")]
     ks = [int(x) for x in args.k_grid.split(",")]
+    # Head-local support pairs target head h with source head h, which is only
+    # defined when both models carry the same number of key/value heads. They
+    # often do not: Qwen2.5 uses two up to 1.5B and four at 7B. Where the
+    # correspondence is undefined the arm is skipped rather than guessed at.
+    head_arms = (True, False) if sg.n_kv_heads == tg.n_kv_heads else (False,)
+    if len(head_arms) == 1:
+        log(
+            f"kv heads differ ({sg.n_kv_heads} source, {tg.n_kv_heads} target); "
+            "head-local support is undefined for this pair, using full fan-in"
+        )
     trials = []
     best = None
-    for head_local in (True, False):
+    for head_local in head_arms:
         for k in ks:
             for r in ridges:
                 scale = float(acc["k"].xtx.diagonal().mean())
