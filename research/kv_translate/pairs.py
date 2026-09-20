@@ -85,22 +85,36 @@ def describe(model, model_id: str, revision: str = "") -> ModelGeometry:
     )
 
 
-def check_pair(src: ModelGeometry, tgt: ModelGeometry) -> dict:
+def check_pair(
+    src: ModelGeometry, tgt: ModelGeometry, tokenizers_match: Optional[bool] = None
+) -> dict:
     """What a mapper between these two has to handle, and what would block it.
 
     Blockers are returned rather than raised so the audit can report all of
     them at once instead of stopping at the first.
+
+    What must match is the *tokenizer*, so that a prompt becomes the same token
+    sequence at the same positions on both sides. The configured vocabulary
+    size is a different thing: it is the width of the embedding matrix, which
+    model families pad differently at different scales -- Qwen2.5 uses 151936
+    up to 1.5B and 152064 at 7B while tokenising identically. Treating that
+    padding as a blocker rejects pairs that translate perfectly well, since
+    nothing here maps the embedding or the output head. It is reported as a
+    note instead, and ``tokenizers_match`` carries the check that actually
+    matters when the caller has compared the tokenizers.
     """
     blockers = []
-    if src.vocab != tgt.vocab:
-        blockers.append(f"vocab differs: {src.vocab} vs {tgt.vocab}")
+    if tokenizers_match is False:
+        blockers.append("tokenizers differ, so token positions do not align")
     if src.rope_scaling is not None or tgt.rope_scaling is not None:
         blockers.append(
             "a non-default rope scaling is present; the de-rotation helper "
             "implements the default schedule only"
         )
     return {
-        "shared_tokenizer_vocab": src.vocab == tgt.vocab,
+        "tokenizers_match": tokenizers_match,
+        "embedding_width": [src.vocab, tgt.vocab],
+        "embedding_width_differs_padding_only": src.vocab != tgt.vocab,
         "head_dim_changes": src.head_dim != tgt.head_dim,
         "head_dim": [src.head_dim, tgt.head_dim],
         "kv_heads_match": src.n_kv_heads == tgt.n_kv_heads,

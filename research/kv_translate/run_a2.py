@@ -105,6 +105,13 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=8, help="source layers, fixed from A1")
     ap.add_argument("--head-local", action="store_true")
     ap.add_argument("--ridge-grid", default="1e-5,1e-3,1e-1,1e0")
+    ap.add_argument(
+        "--exponents",
+        default="1,2",
+        help="attention-weight exponents to score; each one costs a full set "
+        "of per-block weighted Gram matrices, which is what bounds memory on "
+        "a large target",
+    )
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--run-id", default="a2")
     args = ap.parse_args()
@@ -140,7 +147,7 @@ def main() -> int:
     layout = SourceLayout(sg.n_layers, sg.n_kv_heads, sg.head_dim)
     n_targets = tg.n_layers * tg.n_kv_heads
     ridges = [float(x) for x in args.ridge_grid.split(",")]
-    exponents = [1.0, 2.0]
+    exponents = [float(x) for x in args.exponents.split(",")]
 
     # ---- pass one: unweighted statistics, which also fix the support -----
     acc = {
@@ -364,6 +371,7 @@ def main() -> int:
             "source": sg.to_dict(),
             "target": tg.to_dict(),
             "fixed_support": {"k": args.k, "head_local": args.head_local},
+            "exponents": exponents,
             "trials": trials,
             "arms": summary,
             "verdict": verdict,

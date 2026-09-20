@@ -167,7 +167,8 @@ def main() -> int:
     log(
         f"source {sg.n_layers}L D={sg.head_dim} -> target {tg.n_layers}L D={tg.head_dim}"
     )
-    compat = check_pair(sg, tg)
+    same_tok = tok.get_vocab() == AutoTokenizer.from_pretrained(args.source).get_vocab()
+    compat = check_pair(sg, tg, tokenizers_match=same_tok)
     assert not compat["blockers"], compat["blockers"]
 
     total = args.calib + args.dev + args.eval
