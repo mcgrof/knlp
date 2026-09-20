@@ -174,7 +174,7 @@ def main() -> int:
         log(
             f"{r}: {g.n_layers}L n_kv={g.n_kv_heads} D={g.head_dim} theta={g.rope_theta:g}"
         )
-    compat = check_pair(geom["source"], geom["target"])
+    compat = check_pair(geom["source"], geom["target"], tokenizers_match=same_tok)
     log(f"pair: {json.dumps(compat, default=str)}")
 
     chunks = wikitext_chunks(tok, args.n_prompts, args.ctx, args.cont_len, args.seed)
