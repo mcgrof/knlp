@@ -96,7 +96,13 @@ class Mapper:
 
     @torch.no_grad()
     def apply(self, X: torch.Tensor) -> list:
-        """``[T, d_full]`` source features -> ``[L][1, H, T, D]`` target blocks."""
+        """``[T, d_full]`` source features -> ``[L][1, H, T, D]`` target blocks.
+
+        Runs at ``X``'s precision. The maps are solved in double and would
+        otherwise be applied in double on every prefix, which is what a
+        deployment would never do and what made an early cost measurement
+        report this method as slower than the prefill it replaces.
+        """
         out = []
         for li in range(self.geom.n_layers):
             heads = []
@@ -106,6 +112,12 @@ class Mapper:
                 heads.append(m.apply(X[:, cols]))
             out.append(torch.stack(heads, 0).unsqueeze(0))
         return out
+
+    def cast(self, dtype: torch.dtype) -> "Mapper":
+        """Store the maps at the precision they will be applied at."""
+        for m in self.maps.values():
+            m.to(dtype)
+        return self
 
 
 def build(acc, layout, tgt_geom, kind, ridge, k, head_local):
@@ -285,6 +297,11 @@ def main() -> int:
                     del mk, mv
     _, bl_head_local, bl_k, bl_ridge, mk, mv = best
     log(f"selected: head_local={bl_head_local} k={bl_k} ridge={bl_ridge:g}")
+    # Keep and apply the selected map in single precision. Double is the right
+    # precision to solve an ill-conditioned Gram matrix in, and the wrong one
+    # to multiply by on every prefix.
+    mk.cast(torch.float32)
+    mv.cast(torch.float32)
 
     # ---- held-out evaluation --------------------------------------------
     rows = []
