@@ -92,6 +92,14 @@ def main() -> int:
     ap.add_argument("--cont-len", type=int, default=64)
     ap.add_argument("--calib", type=int, default=96)
     ap.add_argument("--train", type=int, default=24, help="prompts for the correction")
+    ap.add_argument(
+        "--train-pool",
+        type=int,
+        default=0,
+        help="reserve this many correction slots regardless of --train, so the "
+        "held-out split is the same chunks at every training size; 0 means "
+        "reserve exactly --train",
+    )
     ap.add_argument("--eval", type=int, default=16)
     ap.add_argument("--steps", type=int, default=400)
     ap.add_argument("--hidden", type=int, default=32)
@@ -127,12 +135,19 @@ def main() -> int:
         models[role], geom[role] = m, describe(m, mid)
     sg, tg = geom["source"], geom["target"]
 
-    total = args.calib + args.train + args.eval
+    # The correction slots are reserved from a pool of fixed size, so varying
+    # --train changes only how many of them are used and never which chunks
+    # land in the held-out split. Without this the evaluation set moves with
+    # the training size and divergences are not comparable across a sweep --
+    # an earlier sweep had its affine baseline wander between 0.264 and 0.390
+    # for that reason alone.
+    pool = max(args.train_pool, args.train)
+    total = args.calib + pool + args.eval
     chunks = wikitext_chunks(tok, total, args.ctx, args.cont_len, args.seed)
     calib = chunks[: args.calib]
     trainset = chunks[args.calib : args.calib + args.train]
     n_dev = max(2, len(trainset) // 5)
-    held = chunks[args.calib + args.train :]
+    held = chunks[args.calib + pool :]
     assert not ({c for c, _ in calib} & {c for c, _ in held})
     assert not ({c for c, _ in trainset} & {c for c, _ in held})
     log(
@@ -484,6 +499,7 @@ def main() -> int:
             "calib_indices": [c for c, _ in calib],
             "train_indices": [c for c, _ in trainset],
             "eval_indices": [c for c, _ in held],
+            "train_pool": pool,
             "ctx": args.ctx,
             "seed": args.seed,
             "dtype": args.dtype,
