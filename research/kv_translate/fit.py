@@ -61,6 +61,13 @@ class SourceLayout:
         well defined here because both models carry the same number of key/value
         heads. ``full fan-in`` takes every source head.
         """
+        if head_local and head >= self.n_kv_heads:
+            raise ValueError(
+                f"head-local support asked for source head {head}, but the "
+                f"source has only {self.n_kv_heads} key/value heads. Head "
+                "correspondence is only defined when both models carry the "
+                "same number; use full fan-in for a pair that does not."
+            )
         idx = []
         heads = [head] if head_local else list(range(self.n_kv_heads))
         for li in layers:
