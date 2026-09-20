@@ -75,32 +75,38 @@ from research.kv_translate.weighted import (  # noqa: E402
 def prefix_prefill_cost(model, ids, n_layers_native, reps=3):
     """Wall time for a prefill truncated after ``n_layers_native`` layers.
 
-    Measured rather than assumed proportional: attention is quadratic in
-    context while the rest of a layer is linear, and the embedding and norm
-    sit outside the loop, so a simple fraction of depth is only approximately
-    the fraction of cost.
+    Two things this is careful about.
+
+    It times the base transformer, not the causal-language-model wrapper. A
+    prefill whose purpose is to fill a cache never needs a vocabulary
+    projection over every prompt position, and that projection does not shrink
+    when layers are removed, so including it would add a large constant to
+    every depth and flatten the cost curve into uselessness.
+
+    And it measures rather than assuming cost is proportional to depth:
+    attention is quadratic in context while the rest of a layer is linear, and
+    the embedding and final norm sit outside the loop.
     """
     if n_layers_native <= 0:
         return 0.0
-    layers = model.model.layers
-    kept = layers[:n_layers_native]
-    original = model.model.layers
-    model.model.layers = torch.nn.ModuleList(list(kept))
+    base = model.model
+    original = base.layers
+    base.layers = torch.nn.ModuleList(list(original[:n_layers_native]))
     try:
         from transformers import DynamicCache
 
         for _ in range(2):
-            model(input_ids=ids, past_key_values=DynamicCache(), use_cache=True)
+            base(input_ids=ids, past_key_values=DynamicCache(), use_cache=True)
         if ids.device.type == "cuda":
             torch.cuda.synchronize()
         t0 = time.time()
         for _ in range(reps):
-            model(input_ids=ids, past_key_values=DynamicCache(), use_cache=True)
+            base(input_ids=ids, past_key_values=DynamicCache(), use_cache=True)
         if ids.device.type == "cuda":
             torch.cuda.synchronize()
         return (time.time() - t0) / reps
     finally:
-        model.model.layers = original
+        base.layers = original
 
 
 def main() -> int:
