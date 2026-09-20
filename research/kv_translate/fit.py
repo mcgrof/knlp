@@ -143,7 +143,25 @@ class AffineMap:
     info: dict = field(default_factory=dict)
 
     def apply(self, X: torch.Tensor) -> torch.Tensor:
-        return X.to(self.M.dtype) @ self.M + self.b
+        """Apply the map at the *input's* precision, not the solver's.
+
+        The fit is solved in float64 because a Gram matrix is ill-conditioned
+        and the solve happens once. Applying the result is an ordinary matrix
+        multiply that happens on every prefix, and doing it in float64 costs
+        roughly thirty times a float32 one on hardware that deprioritises
+        double precision. Measured on an A6000 with a 28-layer 4-head target,
+        a float64 apply took 3.15 times a native prefill -- turning a method
+        that beats re-prefilling into one that loses to it, for no numerical
+        benefit at all.
+        """
+        w = self.M.to(X.dtype)
+        return X @ w + self.b.to(X.dtype)
+
+    def to(self, dtype: torch.dtype) -> "AffineMap":
+        """Cast the stored map, so the precision it is kept at is explicit."""
+        self.M = self.M.to(dtype)
+        self.b = self.b.to(dtype)
+        return self
 
     @property
     def n_params(self) -> int:
