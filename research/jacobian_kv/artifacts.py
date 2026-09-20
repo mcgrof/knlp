@@ -52,7 +52,18 @@ def repo_root() -> str:
 
 
 def git_state(repo: Optional[str] = None):
-    """``(commit, dirty)``, raising rather than degrading to ``"unknown"``."""
+    """``(commit, dirty)``, raising rather than degrading to ``"unknown"``.
+
+    ``JKV_CODE_COMMIT`` overrides the git query, for runs on a machine that has
+    the code but not its history -- a rented pod given a tarball, say. That is
+    a *better* provenance record than a git call would be there, because it
+    pins the commit the payload was actually built from rather than whatever
+    happens to be checked out. ``JKV_CODE_DIRTY`` carries whether that payload
+    included uncommitted edits, which must not be silently dropped.
+    """
+    env = os.environ.get("JKV_CODE_COMMIT")
+    if env:
+        return env, os.environ.get("JKV_CODE_DIRTY", "0") not in ("0", "", "false")
     repo = repo or repo_root()
     commit = subprocess.check_output(
         ["git", "-C", repo, "rev-parse", "HEAD"], text=True
