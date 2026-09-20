@@ -68,13 +68,18 @@ def make_cache(keys, values):
     return c
 
 
-@torch.no_grad()
-def continuation_logits(model, keys, values, cont_ids, prompt_len):
-    """Teacher-forced continuation on top of a supplied cache.
+def continuation_logits_grad(model, keys, values, cont_ids, prompt_len):
+    """Teacher-forced continuation on top of a supplied cache, differentiably.
 
     ``keys``/``values`` may be ``None`` for the no-cache control, in which case
     the continuation is scored unconditioned and its positions start at zero --
     otherwise the model would be told a prefix exists that it cannot see.
+
+    Gradients flow back into the supplied cache tensors, which is what lets a
+    translator be trained against the target's behaviour rather than against
+    its tensors. Callers that only need a number should use
+    :func:`continuation_logits`, which is this wrapped in ``no_grad``; building
+    a graph for an evaluation would cost memory for nothing.
     """
     if keys is None:
         n = cont_ids.shape[1]
@@ -91,6 +96,12 @@ def continuation_logits(model, keys, values, cont_ids, prompt_len):
         past_key_values=make_cache(keys, values),
         use_cache=True,
     ).logits
+
+
+@torch.no_grad()
+def continuation_logits(model, keys, values, cont_ids, prompt_len):
+    """:func:`continuation_logits_grad` for evaluation: no graph, no gradient."""
+    return continuation_logits_grad(model, keys, values, cont_ids, prompt_len)
 
 
 def score(ref_logits, logits, cont_ids):
