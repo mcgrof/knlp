@@ -49,6 +49,7 @@ th { text-align: left; padding: 10px 12px; color: var(--text3); border-bottom: 2
 td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text2); }
 td.hi { color: var(--green); font-weight: 600; }
 td.warn { color: var(--amber); font-weight: 600; }
+td.bad { color: var(--red); font-weight: 600; }
 tr:hover td { background: var(--bg3); }
 .note { background: var(--green-bg); border-left: 3px solid var(--green); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 13px; }
 .note strong { color: var(--green); }
@@ -66,8 +67,9 @@ footer a { color: var(--text2); }
 <header>
   <h1>Cartridges at Scale</h1>
   <p>An independent reproduction on a frozen Qwen3-8B over the LongHealth
-  medical question-answering benchmark. The faithful isolated recipe reaches
-  0.603 across five H100-trained cartridges. This page reports the validated
+  medical question-answering benchmark. With Qwen3's shipped sampler restored,
+  the faithful isolated recipe averages 0.580 across five H100-trained
+  cartridges at the paper's 2,048-token completion cap. This page reports the
   isolated-cartridge results and controls.</p>
   <p><a href="https://arxiv.org/abs/2606.04557">Cartridges at Scale (arXiv:2606.04557)</a>
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
@@ -80,9 +82,9 @@ footer a { color: var(--text2); }
   <div class="stat"><div class="val">0.39</div><div class="label">No context<br>(paper 0.375)</div></div>
   <div class="stat"><div class="val">0.855</div><div class="label">Full document<br>(paper 0.874)</div></div>
   <div class="stat"><div class="val cyan">0.86</div><div class="label">Cartridge-path<br>ceiling</div></div>
-  <div class="stat"><div class="val amber">0.603</div><div class="label">Five cartridges<br>H100 mean</div></div>
-  <div class="stat"><div class="val">0.650</div><div class="label">Patient 02<br>H100</div></div>
-  <div class="stat"><div class="val cyan">0.833</div><div class="label">Patient 02<br>A100 control</div></div>
+  <div class="stat"><div class="val amber">0.580</div><div class="label">Five cartridges<br>paper cap</div></div>
+  <div class="stat"><div class="val">0.683</div><div class="label">Patient 02<br>paper cap</div></div>
+  <div class="stat"><div class="val cyan">0.617</div><div class="label">Five cartridges<br>8,192-token diagnostic</div></div>
 </div>
 
 <div class="toc">
@@ -90,8 +92,8 @@ footer a { color: var(--text2); }
   <a href="#validated">2. What is validated</a>
   <a href="#recipe">3. The faithful isolated recipe</a>
   <a href="#five-patient">4. Five-patient result</a>
-  <a href="#length">5. The remaining quality gap</a>
-  <a href="#hardware">6. A100 cross-hardware control</a>
+  <a href="#length">5. Completion-cap diagnostic</a>
+  <a href="#hardware">6. Training-run variation</a>
   <a href="#cartridge-path-lossless">7. The cartridge path is lossless</a>
   <a href="#stability">8. Training stability</a>
   <a href="#code">9. Code and reproduction</a>
@@ -134,16 +136,17 @@ questions for each patient, and three generation runs per trained cartridge.</p>
 <tr><td>No-context baseline (question only)</td><td class="hi">0.390</td><td>0.375</td><td>matched anchor</td></tr>
 <tr><td>Full document in context</td><td class="hi">0.855</td><td>0.874</td><td>matched anchor</td></tr>
 <tr><td>Full-document KV through cartridge execution</td><td class="hi">0.860</td><td>&mdash;</td><td>path control</td></tr>
-<tr><td>Isolated cartridges, five-patient H100 mean</td><td class="warn">0.603</td><td>0.736</td><td>clean result</td></tr>
-<tr><td>Patient 02, H100-trained cartridge</td><td>0.650 &plusmn; 0.050</td><td>&mdash;</td><td>three generation runs</td></tr>
-<tr><td>Patient 02, A100-trained cartridge</td><td class="hi">0.833 &plusmn; 0.058</td><td>&mdash;</td><td>cross-hardware control</td></tr>
+<tr><td>Isolated cartridges, five-patient H100 mean</td><td class="warn">0.580</td><td>0.736</td><td>corrected sampler</td></tr>
+<tr><td>Patient 02, H100-trained cartridge</td><td>0.683 &plusmn; 0.029</td><td>&mdash;</td><td>corrected sampler, three runs</td></tr>
+<tr><td>Five-patient mean with an 8,192-token cap</td><td>0.617</td><td>&mdash;</td><td>length diagnostic</td></tr>
 </table>
 </div>
 <p>The no-context and full-document anchors reproduce the paper within about two
 percentage points. The exact full-document KV control proves that the alternate
 cache path itself does not explain the learned-cartridge gap. The five-patient
-number is a mean over five separately trained H100 cartridges; each patient row
-is itself the mean of three generations of that one cartridge.</p>
+number is a mean over five separately trained H100 cartridges. Each patient
+score averages three sampled generations of the same trained cartridge; those
+three generations do not measure training-to-training variation.</p>
 <p>This reproduction measures isolated-cartridge training only. It does not
 include cartridge co-loading or mixed-visibility joint-training results.</p>
 </section>
@@ -184,57 +187,89 @@ it; dropping it produces degenerate results.</div>
 <section id="five-patient">
 <h2>4. Five-patient isolated result</h2>
 <p>Five separate cartridges were trained with the faithful H100 recipe. The
-&ldquo;per run&rdquo; entries below are repeated generation runs of the same trained
-cartridge, not independent training replicas.</p>
+2,048-token column follows the paper's completion limit. The 8,192-token column
+re-evaluates the same cartridge and questions with enough room for every answer
+to finish. Both columns use Qwen3's shipped top-k 20 and top-p 0.95 sampler.</p>
 <div class="table-wrap">
 <table>
-<tr><th>Patient</th><th>Accuracy, 3 runs</th><th>Per run</th><th>Hit 2,048 cap</th><th>Accuracy if completed</th></tr>
-<tr><td>01</td><td>0.450 &plusmn; 0.000</td><td>0.45 / 0.45 / 0.45</td><td>17 / 60</td><td>0.512 (n=43)</td></tr>
-<tr><td>02</td><td class="hi">0.650 &plusmn; 0.050</td><td>0.70 / 0.65 / 0.60</td><td>not retained</td><td>&mdash;</td></tr>
-<tr><td>03</td><td class="hi">0.650 &plusmn; 0.087</td><td>0.60 / 0.75 / 0.60</td><td>18 / 60</td><td>0.857 (n=42)</td></tr>
-<tr><td>05</td><td class="hi">0.650 &plusmn; 0.050</td><td>0.70 / 0.65 / 0.60</td><td>17 / 60</td><td>0.814 (n=43)</td></tr>
-<tr><td>06</td><td>0.617 &plusmn; 0.161</td><td>0.50 / 0.80 / 0.55</td><td>8 / 60</td><td>0.673 (n=52)</td></tr>
-<tr><td><strong>Mean</strong></td><td class="warn"><strong>0.603</strong></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><th>Patient</th><th>2,048-token accuracy</th><th>Cap hits</th><th>8,192-token accuracy</th><th>Change</th></tr>
+<tr><td>01</td><td>0.450</td><td>0 / 60</td><td>0.450</td><td>+0.000</td></tr>
+<tr><td>02</td><td class="hi">0.683</td><td>4 / 60</td><td>0.667</td><td>&minus;0.017</td></tr>
+<tr><td>03</td><td>0.600</td><td>21 / 60</td><td class="hi">0.783</td><td class="hi">+0.183</td></tr>
+<tr><td>05</td><td>0.617</td><td>6 / 60</td><td>0.617</td><td>+0.000</td></tr>
+<tr><td>06</td><td>0.550</td><td>5 / 60</td><td>0.567</td><td>+0.017</td></tr>
+<tr><td><strong>Mean</strong></td><td class="warn"><strong>0.580</strong></td><td>36 / 300</td><td><strong>0.617</strong></td><td>+0.037</td></tr>
 </table>
 </div>
-<p>The mean remains below the paper's isolated aggregate of 0.736, but a single
-mean hides two different output patterns. Completed responses score 0.81&ndash;0.86
-for patients 03 and 05. Patient 01 usually finishes quickly and scores 0.51 among
-completed responses.</p>
+<p>The five-patient mean remains below the paper's isolated aggregate of 0.736.
+The comparison also shows that completion length is not one general explanation
+for the gap: patient 03 improves sharply, while the other four patients move by
+at most one answer across their 60 sampled generations.</p>
 </section>
 
 <section id="length">
-<h2>5. The remaining quality gap</h2>
-<p>The paper's 2,048-token generation cap contributes substantially to the
-measured residual for patients 03 and 05. About 28% of their generations hit the
-cap. Their completed answers score 0.81&ndash;0.86, above the paper's aggregate,
-while truncated answers score 0.17&ndash;0.29 because the scorer sees the tail of
-unfinished reasoning. Patient 06 shows a smaller length effect.</p>
+<h2>5. Completion-cap diagnostic</h2>
+<p>A completion counts as capped only when re-tokenizing its stored text reaches
+the configured token limit. The evaluator's older <code>truncated</code> field
+instead recorded whether the model closed its thinking block; treating that
+field as a cap counter incorrectly marked 17 patient-01 answers even though none
+reached 2,048 tokens.</p>
 <div class="table-wrap">
 <table>
 <tr><th>Observed behavior</th><th>Measured consequence</th></tr>
-<tr><td>Patients 03 and 05: 28% capped</td><td>0.81&ndash;0.86 completed accuracy; 0.17&ndash;0.29 truncated accuracy</td></tr>
-<tr><td>Patient 06: 13% capped</td><td>0.67 completed accuracy</td></tr>
-<tr><td>Patient 01: median output 77 characters</td><td>0.51 completed accuracy</td></tr>
+<tr><td>Patient 03: 21 of 60 answers capped</td><td>Accuracy rises from 0.600 to 0.783 at 8,192 tokens</td></tr>
+<tr><td>Patients 02, 05, and 06: 4&ndash;6 capped</td><td>Each score moves by at most 0.017</td></tr>
+<tr><td>Patient 01: no answers capped</td><td>Accuracy remains 0.450</td></tr>
+<tr><td>Five-patient mean</td><td>Accuracy rises from 0.580 to 0.617</td></tr>
 </table>
 </div>
-<p>No larger-cap evaluation isolates the length effect. The paper synthesizes
-roughly 40,000 conversations per cartridge versus about 4,400 here; these
-measurements do not isolate the effect of that data-scale difference.</p>
+<p>The longer cap recovers eleven answers for patient 03 and one for patient 06,
+while patient 02 loses one through ordinary sampling variation. It raises the
+five-patient mean by 0.037, leaving most of the distance to 0.736 unexplained.
+The paper synthesizes roughly 40,000 conversations per cartridge versus about
+4,400 here; these measurements do not isolate that data-scale difference.</p>
 </section>
 
 <section id="hardware">
-<h2>6. A100 cross-hardware control</h2>
-<p>A separately trained patient-02 cartridge on one A100 PCIe 40 GB, using the
-same faithful recipe, scored <strong>0.833 &plusmn; 0.058</strong>: 0.80, 0.80,
-and 0.90, or 50 correct answers out of 60. The H100-trained cartridge scored
-0.65, or 39 out of 60. The A100 run finished at optimizer step 1,068 with final
-training loss about 0.0153.</p>
-<div class="note amber"><strong>The hardware comparison is unmatched.</strong>
-The 0.833 result does not establish an A100 advantage. The two runs produced
-different learned cartridges and evaluation is sampled. Hardware and training-
-trajectory effects remain confounded without matched cross-evaluation of both
-cartridge files under controlled generation seeds.</div>
+<h2>6. Training-run variation</h2>
+<p>Eight new patient-02 trainings isolate reproducibility from generation noise:
+two fixed-seed controls and six additional seeds. Every cartridge was evaluated
+in the same session with three 20-question runs and the corrected sampler.</p>
+<div class="table-wrap">
+<table>
+<tr><th>Training</th><th>Seed</th><th>Final reported loss</th><th>Accuracy</th><th>Per generation run</th></tr>
+<tr><td>New run 1</td><td>42</td><td>0.3028</td><td class="hi">0.783</td><td>0.70 / 0.80 / 0.85</td></tr>
+<tr><td>New run 2</td><td>42</td><td>0.3028</td><td class="hi">0.783</td><td>0.70 / 0.80 / 0.85</td></tr>
+<tr><td>New run 3</td><td>43</td><td>0.3118</td><td class="hi">0.750</td><td>0.70 / 0.75 / 0.80</td></tr>
+<tr><td>New run 4</td><td>44</td><td>0.3038</td><td class="hi">0.767</td><td>0.80 / 0.80 / 0.70</td></tr>
+<tr><td>New run 5</td><td>45</td><td class="bad">0.4333</td><td class="bad">0.400</td><td>0.45 / 0.35 / 0.40</td></tr>
+<tr><td>New run 6</td><td>46</td><td>0.2993</td><td class="hi">0.767</td><td>0.70 / 0.80 / 0.80</td></tr>
+<tr><td>New run 7</td><td>47</td><td>0.3044</td><td class="hi">0.800</td><td>0.80 / 0.85 / 0.75</td></tr>
+<tr><td>New run 8</td><td>48</td><td class="bad">0.4788</td><td class="bad">0.400</td><td>0.35 / 0.60 / 0.25</td></tr>
+</table>
+</div>
+<p>The two seed-42 runs produce byte-identical cartridge files and identical
+generations. Fixed-seed training is deterministic on this stack. Across the
+seven distinct seeds, however, five cartridges score 0.750&ndash;0.800 and two
+score 0.400, close to the paper's 0.375 no-context result. The mean is 0.667
+with a sample standard deviation of about 0.2. The two low-scoring runs also
+have clearly higher final training loss, identifying a failed training outcome
+rather than evaluation noise alone.</p>
+<h3>Common-session checks of existing cartridges</h3>
+<div class="table-wrap">
+<table>
+<tr><th>Existing cartridge</th><th>Training hardware</th><th>Accuracy</th><th>Per generation run</th></tr>
+<tr><td>Reference</td><td>H100</td><td>0.700</td><td>0.75 / 0.70 / 0.65</td></tr>
+<tr><td>Half learning rate</td><td>H100</td><td>0.717</td><td>0.75 / 0.60 / 0.80</td></tr>
+<tr><td>Prior same-recipe run</td><td>H100</td><td>0.750</td><td>0.65 / 0.80 / 0.80</td></tr>
+<tr><td>A100 run</td><td>A100</td><td>0.733</td><td>0.65 / 0.75 / 0.80</td></tr>
+</table>
+</div>
+<p>All four existing cartridges fall inside the observed seed range. The A100
+cartridge exceeds the reference by two correct answers out of 60 in this
+session, with overlapping generation spread. The earlier 0.833 score therefore
+does not establish a hardware effect. Likewise, the learning-rate and prior
+same-recipe differences are smaller than training-seed variation.</p>
 </section>
 
 <section id="cartridge-path-lossless">
@@ -256,11 +291,19 @@ positions in the learned-cartridge initialization.</div>
 
 <section id="stability">
 <h2>8. Training stability</h2>
-<h3>Loss spikes under the paper learning rate</h3>
-<p>The 0.1 peak learning rate uses plain Adam without gradient clipping. Three of
-five anchor-initialized H100 runs showed a loss spike after warmup; all recovered
-within about 60 steps. Whether clipping improves final accuracy is untested. This
-is an observed property of the reproduced training recipe.</p>
+<h3>Training seed controls the failure mode</h3>
+<p>The seven-seed run finds two distinct outcomes. Five seeds finish near loss
+0.30 and score 0.75&ndash;0.80; two finish above loss 0.43 and score 0.40. Small
+single-cartridge ablations cannot be interpreted against that spread. Future
+comparisons need repeated trainings and a training-loss acceptance check; more
+documents are required to set a general threshold.</p>
+<h3>The clipping probe produced an unclipped replicate</h3>
+<p>The 0.1 peak learning rate uses plain Adam without gradient clipping. A
+210-step patient-02 probe logged every gradient norm but did not reproduce the
+loss excursion that motivated a clipping test. The resulting guard threshold
+never activated, so the completed run is an ordinary same-recipe replicate, not
+evidence for or against clipping. That replicate's 0.750 score instead exposed
+the larger training-run variation described above.</p>
 </section>
 
 <section id="code">
