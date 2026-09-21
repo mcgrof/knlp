@@ -226,17 +226,35 @@ def normalise_text(s: str) -> str:
 
 
 def grade_retrieval(answer: str, produced: str) -> dict:
-    """Exact code match, plus whether the model produced any code at all.
+    """Did the response contain the code, as a whole token?
 
-    The second number separates a wrong answer from a refusal, which matters
-    because a cache that destroys the fact and a cache that destroys the
-    ability to answer are different failures.
+    The first version of this asked whether the code occurred anywhere in the
+    response, which accepts it embedded in something longer: a model that says
+    ``AWJG3EPU3EPU`` when the code is ``AWJG3EPU`` has not returned the code.
+    Three responses were scored correct that way, one of them the target
+    model's own, which moved the ceiling every arm was measured against.
+
+    A candidate answer is a maximal alphanumeric run of the code's own length
+    spelled from the code's own alphabet. Length is what does the work:
+    restricting to the alphabet alone is not enough, because that alphabet
+    omits I and O and ordinary words avoid them often enough to qualify.
+
+    The substring result is still reported, under a name that says what it is,
+    so a comparison against the historical scoring stays possible.
     """
-    found = re.findall(r"\b[A-Z0-9]{6,12}\b", produced.upper())
+    g = answer.upper()
+    runs = re.findall(r"[A-Za-z0-9]+", produced.upper())
+    cands = [x for x in runs if len(x) == len(g) and set(x) <= set(CODE_ALPHABET)]
+    long_runs = [x for x in runs if len(x) >= 6]
     return {
-        "correct": float(answer.upper() in produced.upper()),
-        "emitted_code": float(bool(found)),
-        "first_code": found[0] if found else "",
+        "correct": float(g in runs),
+        "exact_any_run": float(g in runs),
+        "exact_first_run": float(bool(cands) and cands[0] == g),
+        "substring": float(g in produced.upper()),
+        "emitted_code": float(bool(cands)),
+        "n_code_like_runs": len(cands),
+        "extra_text": float(len(long_runs) > 1),
+        "first_code": long_runs[0] if long_runs else "",
     }
 
 

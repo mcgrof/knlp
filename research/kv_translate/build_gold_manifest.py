@@ -102,6 +102,11 @@ def main() -> int:
             rec["prompt_ids_sha256"] = hashlib.sha256(
                 json.dumps(pid).encode()
             ).hexdigest()
+            # Stored, not merely hashed. A hash proves a later reconstruction
+            # matches; it does not let anything be scored without rebuilding
+            # the corpus first, and a manifest that cannot be used without the
+            # machinery that made it is not much of a record.
+            rec["prompt_ids"] = pid
         if it.kind == "retrieval":
             rec["retrieval_gold"] = it.answer
             rec["retrieval_query"] = it.query
@@ -110,6 +115,8 @@ def main() -> int:
             rec["cloze_gold"] = it.answer
             rec["cloze_query"] = it.query
             rec["cloze_stem_words"] = it.meta.get("stem_words")
+        elif it.kind == "free":
+            rec["free_query"] = it.query
     docs_out = [manifest[d] for d in order[: args.docs]]
 
     check = {
@@ -118,6 +125,8 @@ def main() -> int:
         "candidates_too_short": too_short,
         "all_have_retrieval_gold": all("retrieval_gold" in r for r in docs_out),
         "all_have_cloze_gold": all("cloze_gold" in r for r in docs_out),
+        "all_have_free_query": all("free_query" in r for r in docs_out),
+        "all_have_prompt_ids": all("prompt_ids" in r for r in docs_out),
         "gold_codes_unique": len({r["retrieval_gold"] for r in docs_out})
         == len(docs_out),
         "gold_code_lengths": sorted({len(r["retrieval_gold"]) for r in docs_out}),
@@ -130,8 +139,21 @@ def main() -> int:
         check["missing_from_reconstruction"] = sorted(set(want) - set(got))[:5]
         check["extra_in_reconstruction"] = sorted(set(got) - set(want))[:5]
 
+    import datasets as _ds
+    import transformers as _tf
+
     out = {
         "config": vars(args),
+        "versions": {
+            "datasets": _ds.__version__,
+            "transformers": _tf.__version__,
+            "tokenizer": args.target,
+            "tokenizer_vocab_sha256": hashlib.sha256(
+                json.dumps(tok.get_vocab(), sort_keys=True).encode()
+            ).hexdigest()[:32],
+            "dataset": "wikitext/wikitext-103-raw-v1",
+            "fitting_corpus": "wikitext/wikitext-2-raw-v1:test",
+        },
         "check": check,
         "documents": docs_out,
     }

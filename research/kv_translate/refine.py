@@ -126,6 +126,81 @@ class ResidualMapper(nn.Module):
             out.append(torch.stack(heads, 0).unsqueeze(0))
         return out
 
+    def save_init(self, path: str) -> str:
+        """Serialise the untrained correction so other arms can start from it.
+
+        Zeroing the last layer makes every arm's *initial prediction* equal,
+        which is why an unmatched first layer is easy to miss: the arms agree
+        at step zero and diverge afterwards. They are drawing their first-layer
+        weights from the global generator, so two arms built in sequence begin
+        optimisation from different points and a comparison between them
+        carries that difference along with whatever was meant to be varied.
+
+        Writing one initialisation and loading it into every matched arm makes
+        the starting point an input with a hash rather than a side effect of
+        construction order.
+        """
+        import hashlib
+
+        state = {k: v.detach().cpu() for k, v in self.blocks.state_dict().items()}
+        torch.save({"kind": self.kind, "linear": self.linear, "blocks": state}, path)
+        h = hashlib.sha256()
+        for k in sorted(state):
+            h.update(k.encode())
+            h.update(state[k].to(torch.float64).numpy().tobytes())
+        return h.hexdigest()[:32]
+
+    def load_init(self, path: str) -> str:
+        """Start from a serialised initialisation, refusing a mismatched one."""
+        import hashlib
+
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        if blob.get("linear") != self.linear:
+            raise ValueError(
+                f"initialisation is linear={blob.get('linear')} but this "
+                f"correction is linear={self.linear}"
+            )
+        self.blocks.load_state_dict(blob["blocks"])
+        h = hashlib.sha256()
+        for k in sorted(blob["blocks"]):
+            h.update(k.encode())
+            h.update(blob["blocks"][k].to(torch.float64).numpy().tobytes())
+        return h.hexdigest()[:32]
+
+    @torch.no_grad()
+    def fold_parity(self, X: torch.Tensor) -> dict:
+        """Compare every block against its folded self, and say so numerically.
+
+        The earlier check looked at one key block of one layer and printed a
+        number without asserting on it. One block agreeing is consistent with
+        the fold being wrong everywhere else, and a printed number that nothing
+        reads is not a check.
+        """
+        if not self.linear:
+            raise ValueError("only a linear correction folds")
+        worst, worst_block, n = 0.0, None, 0
+        for (li, h), m in self.affine.maps.items():
+            cols = self.cols[(li, h)].to(X.device)
+            x = X[:, cols]
+            before = x.to(m.M.dtype) @ m.M + m.b
+            before = before + self.blocks[f"{li}_{h}"](x.float()).to(before.dtype)
+            dM, db = self.blocks[f"{li}_{h}"].merged_delta()
+            after = x.to(m.M.dtype) @ (m.M + dM.to(m.M.dtype)) + (
+                m.b + db.to(m.b.dtype)
+            )
+            gap = float((before - after).abs().max())
+            scale = float(before.abs().max().clamp(min=1e-30))
+            rel = gap / scale
+            n += 1
+            if rel > worst:
+                worst, worst_block = rel, (li, h, self.kind)
+        return {
+            "kind": self.kind,
+            "blocks_checked": n,
+            "worst_relative_gap": worst,
+            "worst_block": worst_block,
+        }
+
     def cast(self, dtype: torch.dtype) -> "ResidualMapper":
         """Apply the frozen map at serving precision, as the plain map does.
 
