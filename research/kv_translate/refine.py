@@ -45,34 +45,65 @@ class BlockResidual(nn.Module):
     step zero. Any improvement is then attributable to training rather than to
     a lucky initialisation, and a failed run degrades to the baseline instead
     of to noise.
+
+    Setting ``linear=True`` removes the activation and nothing else. The two
+    variants then have identical parameter counts, identical shapes and
+    identical initialisation, so a comparison between them isolates the
+    nonlinearity rather than capacity. The linear form is also mergeable: a
+    composition of two affine maps is one affine map, so a trained linear
+    correction folds into the frozen map it corrects and costs nothing at all
+    online. :meth:`merged_delta` returns that fold.
     """
 
-    def __init__(self, d_in: int, d_out: int, hidden: int = 32):
+    def __init__(self, d_in: int, d_out: int, hidden: int = 32, linear: bool = False):
         super().__init__()
         self.fc1 = nn.Linear(d_in, hidden)
         self.fc2 = nn.Linear(hidden, d_out)
+        self.linear = linear
         nn.init.zeros_(self.fc2.weight)
         nn.init.zeros_(self.fc2.bias)
 
     def forward(self, x):
-        return self.fc2(torch.nn.functional.gelu(self.fc1(x)))
+        h = self.fc1(x)
+        if not self.linear:
+            h = torch.nn.functional.gelu(h)
+        return self.fc2(h)
+
+    @torch.no_grad()
+    def merged_delta(self):
+        """``(dM, db)`` such that ``x @ (M + dM) + (b + db)`` is the corrected map.
+
+        Only defined without the activation. Raises otherwise rather than
+        returning a silently wrong linearisation, which would understate the
+        nonlinear arm's online cost by making it look free.
+        """
+        if not self.linear:
+            raise ValueError("a nonlinear correction does not fold into an affine map")
+        W1, b1 = self.fc1.weight, self.fc1.bias  # [h, d_in], [h]
+        W2, b2 = self.fc2.weight, self.fc2.bias  # [d_out, h], [d_out]
+        return (W1.t() @ W2.t()), (b1 @ W2.t() + b2)
 
 
 class ResidualMapper(nn.Module):
     """A frozen affine mapper plus a trainable per-block correction."""
 
-    def __init__(self, affine, layout, geom, kind: str, hidden: int = 32):
+    def __init__(
+        self, affine, layout, geom, kind: str, hidden: int = 32, linear: bool = False
+    ):
         super().__init__()
         self.affine = affine
         self.layout = layout
         self.geom = geom
         self.kind = kind
+        self.linear = linear
         self.cols = {}
         mods = {}
         for (li, h), m in affine.maps.items():
-            cols = layout.columns_for(m.layers, h, m.head_local)
+            cols = layout.columns_for(m.layers, m.head, m.head_local)
             self.cols[(li, h)] = cols
-            mods[f"{li}_{h}"] = BlockResidual(int(cols.numel()), m.M.shape[1], hidden)
+            mods[f"{li}_{h}"] = BlockResidual(
+                int(cols.numel()), m.M.shape[1], hidden, linear=linear
+            )
         self.blocks = nn.ModuleDict(mods)
         for p in self.parameters():
             p.requires_grad_(True)
@@ -95,10 +126,41 @@ class ResidualMapper(nn.Module):
             out.append(torch.stack(heads, 0).unsqueeze(0))
         return out
 
+    def cast(self, dtype: torch.dtype) -> "ResidualMapper":
+        """Apply the frozen map at serving precision, as the plain map does.
+
+        The ridge fit is solved in double because a Gram matrix is
+        ill-conditioned, and the solution is stored at the precision it was
+        solved in. :meth:`Mapper.cast` exists so a plain map is never applied
+        there; without the same call here a corrected arm runs its dominant
+        matmul in double while the arm it is being compared against runs it in
+        float32, and on hardware with no double-precision matrix path that
+        difference is most of the measured cost. It then looks like the
+        correction is expensive when what is expensive is the precision.
+        """
+        for m in self.affine.maps.values():
+            m.to(dtype)
+        return self
+
     def freeze_affine(self) -> None:
         for m in self.affine.maps.values():
             m.M = m.M.detach()
             m.b = m.b.detach()
+
+    @torch.no_grad()
+    def merge(self):
+        """Fold a trained linear correction into the affine map it corrects.
+
+        After this the mapper is an ordinary affine map again: same shapes,
+        same byte count, same online operator, no residual to evaluate. That
+        is the whole argument for the linear variant, so it is exercised here
+        rather than asserted in a report.
+        """
+        for (li, h), m in self.affine.maps.items():
+            dM, db = self.blocks[f"{li}_{h}"].merged_delta()
+            m.M = m.M + dM.to(m.M.dtype)
+            m.b = m.b + db.to(m.b.dtype)
+        return self.affine
 
 
 @dataclass
