@@ -121,9 +121,9 @@ def main() -> int:
     print()
     print(
         "| arm | prompt-specific | recovers gain | within 5 pts | no pathology "
-        "| keeps latency | verdict |"
+        "| beats recent window | keeps latency | verdict |"
     )
-    print("|---|:--:|:--:|:--:|:--:|:--:|:--:|")
+    print("|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|")
     for a, g in sorted(sm["gates"].items()):
 
         def y(v):
@@ -132,7 +132,9 @@ def main() -> int:
         print(
             f"| `{a}` | {y(g['prompt_specific'])} | "
             f"{y(g['recovers_incremental_gain'])} | {y(g['within_absolute_points'])} | "
-            f"{y(g['no_pathology_regression'])} | {y(g['retains_h0_latency_gates'])} | "
+            f"{y(g['no_pathology_regression'])} | "
+            f"{y(g.get('beats_latency_matched_native'))} | "
+            f"{y(g['retains_h0_latency_gates'])} | "
             f"**{'PASS' if g['passes'] else 'FAIL'}** |"
         )
     print()
@@ -155,6 +157,23 @@ def main() -> int:
                 f"{'agrees' if f['argmax_agrees'] else 'differs'} |"
             )
         print()
+    print()
+    print("### Margins against the controls (paired over documents)")
+    print()
+    print("| arm | vs empty cache | vs its wrong-prompt | vs recent window |")
+    print("|---|---|---|---|")
+
+    def band(d):
+        if not d:
+            return "-"
+        return f"{d['point']:+.3f} [{d['lo']:+.3f}, {d['hi']:+.3f}]"
+
+    for a, g in sorted(sm["gates"].items()):
+        print(
+            f"| `{a}` | {band(g.get('vs_empty_cache'))} | "
+            f"{band(g.get('vs_wrong_prompt'))} | {band(g.get('vs_recent_window'))} |"
+        )
+    print()
     print(f"Passing arms: {sm['passing_arms'] or 'none'}")
     return 0
 

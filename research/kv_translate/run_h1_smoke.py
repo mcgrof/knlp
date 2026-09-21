@@ -680,7 +680,7 @@ def main() -> int:
         g["retrieval_point"] = summary["retrieval"][cond]["point"]
         for name, ctrl in (
             ("empty_cache", "empty_cache"),
-            ("wrong_prompt", "wrong_prompt"),
+            ("wrong_prompt", cond + WRONG),
         ):
             d = paired_delta("retrieval", cond, ctrl, args.n_boot, args.seed)
             g["vs_" + name] = d
