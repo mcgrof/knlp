@@ -85,6 +85,7 @@ class Mapper:
 
     def __init__(self, maps, layout, tgt_geom, kind):
         self.maps = maps  # {(layer, head): AffineMap}
+        self._cols_cache: dict = {}
         self.layout = layout
         self.geom = tgt_geom
         self.kind = kind
@@ -93,6 +94,20 @@ class Mapper:
     def n_bytes(self) -> float:
         """Stored at half precision, which is what a deployed mapper would use."""
         return sum(m.n_params for m in self.maps.values()) * 2.0
+
+    def _columns(self, m, device):
+        """Column indices for one block, built once and kept on the device.
+
+        This used to be recomputed inside the per-block loop, which put a host
+        round trip and a host-to-device copy inside every timed region and
+        charged the map latency it would never pay twice.
+        """
+        key = (m.target_layer, m.head, m.kind, str(device))
+        c = self._cols_cache.get(key)
+        if c is None:
+            c = self.layout.columns_for(m.layers, m.head, m.head_local).to(device)
+            self._cols_cache[key] = c
+        return c
 
     @torch.no_grad()
     def apply(self, X: torch.Tensor) -> list:
@@ -108,8 +123,7 @@ class Mapper:
             heads = []
             for h in range(self.geom.n_kv_heads):
                 m = self.maps[(li, h)]
-                cols = self.layout.columns_for(m.layers, h, m.head_local).to(X.device)
-                heads.append(m.apply(X[:, cols]))
+                heads.append(m.apply(X[:, self._columns(m, X.device)]))
             out.append(torch.stack(heads, 0).unsqueeze(0))
         return out
 

@@ -386,7 +386,11 @@ def main() -> int:
 
         @torch.no_grad()
         def native_first_token():
-            return models["target"](input_ids=full_ids).logits[:, -1]
+            # Only the last position's logits are wanted, and only the last
+            # position's are computed. Letting the head run over all L
+            # positions charges the native arm work no serving stack does on
+            # a prefill, which inflates the denominator of every ratio here.
+            return models["target"](input_ids=full_ids, logits_to_keep=1).logits[:, -1]
 
         @torch.no_grad()
         def translated_first_token():
