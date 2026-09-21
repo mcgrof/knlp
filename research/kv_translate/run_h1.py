@@ -533,7 +533,18 @@ def main() -> int:
 
     arms, reports = {}, {}
     for name, base in inits.items():
-        arms[name] = {"k": base["k"], "v": base["v"], "corrected": False}
+        # Stored at serving precision, like every other arm. A map left at the
+        # double precision it was solved in is converted on each apply --
+        # AffineMap.apply casts to the input's dtype every call -- so an
+        # uncorrected arm would pay a conversion of its whole weight set that
+        # a corrected arm, whose weights were cast once when it was built,
+        # does not. That asymmetry is the mirror image of the one that made
+        # the corrected arms look slow, and it flatters them just as much.
+        arms[name] = {
+            "k": base["k"].cast(sdtype),
+            "v": base["v"].cast(sdtype),
+            "corrected": False,
+        }
     promoted = [f"unw_k{args.k_best}", f"wtd_k{kb}"]
     for base_name in promoted:
         for linear in (True, False):
