@@ -92,8 +92,33 @@ class Mapper:
 
     @property
     def n_bytes(self) -> float:
-        """Stored at half precision, which is what a deployed mapper would use."""
-        return sum(m.n_params for m in self.maps.values()) * 2.0
+        """Bytes these tensors actually occupy, at the precision they are in.
+
+        This used to multiply the parameter count by two on the assumption
+        that a deployment would store the map at half precision. Nothing ever
+        did: the maps are solved and stored in double and applied in float32,
+        so every figure derived from that property was half the truth or less.
+        An assumption about a hypothetical deployment is not a measurement of
+        an artifact, and only one of those belongs in a byte ledger.
+        """
+        return float(
+            sum(
+                m.M.numel() * m.M.element_size() + m.b.numel() * m.b.element_size()
+                for m in self.maps.values()
+            )
+        )
+
+    @property
+    def n_bytes_at(self) -> callable:
+        """Bytes the same tensors would occupy at a chosen precision."""
+
+        def at(dtype: torch.dtype) -> float:
+            size = torch.empty(0, dtype=dtype).element_size()
+            return float(
+                sum(m.M.numel() + m.b.numel() for m in self.maps.values()) * size
+            )
+
+        return at
 
     def _columns(self, m, device):
         """Column indices for one block, built once and kept on the device.
