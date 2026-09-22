@@ -156,6 +156,14 @@ def main() -> int:
         help="a sentinel.json that must record passed=true before training; "
         "a run whose device did not qualify is not evidence about the method",
     )
+    ap.add_argument(
+        "--no-supervise-eos",
+        action="store_true",
+        help="supervise the answer tokens but not the end of the answer. The "
+        "matched off arm of the termination ablation: everything else, "
+        "including the example set, the schedule, the initialisation and the "
+        "seed, is identical to the on arm.",
+    )
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
 
@@ -296,14 +304,22 @@ def main() -> int:
         ex = build_objective_examples(
             ordered, tok, args.ctx, seed=args.seed, forbid_codes=forbid
         )
-        problems = verify_examples(tok, ex, eos_id, gold_answers=forbid)
+        problems = verify_examples(
+            tok,
+            ex,
+            eos_id,
+            gold_answers=forbid,
+            supervise_eos=not args.no_supervise_eos,
+        )
         if problems:
             raise SystemExit(
                 f"INVALID: {len(problems)} objective examples are unusable, "
                 f"first: {problems[:3]}"
             )
         for e in ex:
-            q, lab = supervised_targets(tok, e, eos_id)
+            q, lab = supervised_targets(
+                tok, e, eos_id, supervise_eos=not args.no_supervise_eos
+            )
             obj_set.append(
                 {
                     "doc": e.doc_id,
@@ -320,8 +336,13 @@ def main() -> int:
         log_now(
             f"{len(obj_set)} objective examples over "
             f"{len({o['doc'] for o in obj_set})} training documents: {kinds}; "
-            f"all answers verified present in their prompt, all label "
-            f"sequences end at EOS, no training code collides with a "
+            f"all answers verified present in their prompt, "
+            + (
+                "all label sequences end at EOS"
+                if not args.no_supervise_eos
+                else "no label sequence carries EOS (termination not supervised)"
+            )
+            + f", no training code collides with a "
             f"held-out answer ({len(forbid)} checked)"
         )
 

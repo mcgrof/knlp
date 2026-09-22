@@ -347,3 +347,78 @@ def test_near_miss_analysis_counts_deletions():
     assert same_length_only == [], "the scoring filter hides this answer"
     unfiltered = [x for x in runs(dropped)]
     assert min(edit_distance(x, gold) for x in unfiltered) == 1
+
+
+def _example(prompt="the code is ABCD1234 here", answer="ABCD1234"):
+    class E:
+        doc_id = "d0"
+        kind = "code"
+        query = "What is the code?"
+        meta = {"code": answer}
+
+    e = E()
+    e.answer = answer
+    e.prompt_ids = list(range(8))
+    return e
+
+
+class _Tok:
+    """Whitespace tokeniser: one id per character, so lengths are checkable."""
+
+    eos_token_id = 999
+
+    def __call__(self, s, return_tensors=None, add_special_tokens=None):
+        import torch
+
+        class R:
+            input_ids = torch.tensor([[ord(c) for c in s]])
+
+        return R()
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "the code is ABCD1234 here"
+
+
+def test_eos_switch_changes_only_the_end_label():
+    """The termination ablation must differ by exactly one label.
+
+    If the off arm differs by anything else -- a dropped answer token, a
+    different example, a shifted offset -- it is not an ablation of
+    termination and whatever it measures is not attributable to it.
+    """
+    from research.kv_translate.objective_examples import supervised_targets
+
+    tok, e = _Tok(), _example()
+    q_on, lab_on = supervised_targets(tok, e, tok.eos_token_id, supervise_eos=True)
+    q_off, lab_off = supervised_targets(tok, e, tok.eos_token_id, supervise_eos=False)
+    assert q_on.tolist() == q_off.tolist()
+    assert lab_on == lab_off + [tok.eos_token_id]
+    assert len(lab_on) - len(lab_off) == 1
+
+
+def test_off_arm_is_not_validated_against_the_on_arm_invariant():
+    """Each arm is checked against its own end-of-sequence invariant.
+
+    Validating the off arm against "labels end at EOS" would abort every run;
+    reporting that check as passed would be worse.
+    """
+    from research.kv_translate.objective_examples import verify_examples
+
+    tok, e = _Tok(), _example()
+    assert verify_examples(tok, [e], tok.eos_token_id, supervise_eos=True) == []
+    assert verify_examples(tok, [e], tok.eos_token_id, supervise_eos=False) == []
+
+
+def test_reference_limit_is_above_the_float32_accumulation_floor():
+    """A tolerance below the arithmetic's own floor is a broken check.
+
+    The first version of the operator qualification fixed this at 1e-6 for a
+    4096-wide float32 dot product, which no correct implementation could meet.
+    """
+    from research.kv_translate.qualify_operator import reference_limit
+
+    assert reference_limit(4096, "float32") > 3e-6
+    assert reference_limit(4096, "float32") < 1e-5
+    # Wider support tolerates more error; a tighter precision tolerates less.
+    assert reference_limit(16384, "float32") > reference_limit(4096, "float32")
+    assert reference_limit(4096, "float64") < reference_limit(4096, "float32")

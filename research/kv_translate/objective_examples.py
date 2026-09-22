@@ -165,32 +165,43 @@ def build_objective_examples(
     return out
 
 
-def supervised_targets(tok, example, eos_id):
-    """Token ids for the question, and the labels for the answer plus its end.
+def supervised_targets(tok, example, eos_id, supervise_eos=True):
+    """Token ids for the question, and the labels for the answer.
 
-    Returns ``(query_ids, label_ids)`` where the labels are the answer tokens
-    followed by end-of-sequence. The first answer token is predicted from the
-    query's final position, which is what makes the answer supervised at all:
-    shifting the labels by one the other way trains the model to predict the
-    second answer token from the first and never to produce the first.
+    Returns ``(query_ids, label_ids)``. The first answer token is predicted
+    from the query's final position, which is what makes the answer supervised
+    at all: shifting the labels by one the other way trains the model to
+    predict the second answer token from the first and never to produce the
+    first.
 
-    Nothing after end-of-sequence is supervised. Padding an answer to match a
-    token count would be training the model to keep talking after it has
-    finished, which is the behaviour the probe exists to correct.
+    With ``supervise_eos`` the labels end with end-of-sequence, so the schedule
+    teaches both what to answer and when to stop. Without it the labels are the
+    answer alone. That switch is the whole content of the termination ablation:
+    the first run of this objective supervised both halves together and could
+    not say which one cost it its free-generation health, because a single run
+    cannot separate two things it changed at once.
+
+    Nothing after end-of-sequence is supervised either way. Padding an answer
+    to match a token count would be training the model to keep talking after it
+    has finished.
     """
     q = tok(example.query, return_tensors="pt", add_special_tokens=False).input_ids
     a = tok(example.answer, return_tensors="pt", add_special_tokens=False).input_ids
-    labels = a[0].tolist() + [eos_id]
+    labels = a[0].tolist() + ([eos_id] if supervise_eos else [])
     return q, labels
 
 
-def verify_examples(tok, examples, eos_id, gold_answers=None):
+def verify_examples(tok, examples, eos_id, gold_answers=None, supervise_eos=True):
     """Refuse a schedule that cannot teach what it claims to.
 
     Three ways an example set can be quietly useless: the answer is not
     actually in the prompt the cache will hold, so the model is being asked to
     invent it; the answer tokenises to nothing; or a training code is also a
     held-out answer.
+
+    The end-of-sequence invariant is checked in whichever direction the arm
+    declares. An ablation whose off arm is validated against the on arm's
+    invariant either refuses to run or, worse, reports a check it never made.
     """
     problems = []
     forbid = {c.upper() for c in (gold_answers or set())}
@@ -203,11 +214,13 @@ def verify_examples(tok, examples, eos_id, gold_answers=None):
         ans = normalise(e.answer)
         if ans not in prompt:
             problems.append(f"{e.doc_id}/{e.kind}: answer {ans!r} is not in the prompt")
-        _, labels = supervised_targets(tok, e, eos_id)
-        if len(labels) < 2:
+        _, labels = supervised_targets(tok, e, eos_id, supervise_eos=supervise_eos)
+        if len(labels) < (2 if supervise_eos else 1):
             problems.append(f"{e.doc_id}/{e.kind}: answer tokenises to nothing")
-        if labels[-1] != eos_id:
+        if supervise_eos and labels[-1] != eos_id:
             problems.append(f"{e.doc_id}/{e.kind}: labels do not end at EOS")
+        if not supervise_eos and eos_id in labels:
+            problems.append(f"{e.doc_id}/{e.kind}: labels carry EOS in the off arm")
         if e.kind == "code" and e.meta["code"].upper() in forbid:
             problems.append(f"{e.doc_id}: training code is a held-out answer")
     return problems
