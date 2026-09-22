@@ -373,20 +373,23 @@ def main() -> int:
             f"{'pass' if first_token[name]['gate_p95_under_native'] and first_token[name]['gate_p50_at_or_under_075'] else 'FAIL'}"
         )
     budget = float(np.percentile(timed(lambda: translated_first(candidate)), 50))
-    window, win_ms = 0, 0.0
+    # Every declared size is measured. The previous version stopped at the
+    # first size over budget, which assumes native prefill time is monotone in
+    # tokens; kernel selection thresholds and timing noise both break that,
+    # and the assumption silently shrinks the baseline the method must beat.
+    window, win_ms, ladder = 0, 0.0, []
     for w in (16, 32, 48, 64, 96, 128, 192, 256, 384, 512):
         if w > args.ctx:
-            break
+            continue
 
         @torch.no_grad()
         def nat_w(w=w):
             models["target"](input_ids=probe[:, -w:], use_cache=True, logits_to_keep=1)
 
         t = float(np.percentile(timed(nat_w, reps=6), 50))
-        if t <= budget:
+        ladder.append({"tokens": w, "ms": t, "within_budget": bool(t <= budget)})
+        if t <= budget and w > window:
             window, win_ms = w, t
-        else:
-            break
     log_now(
         f"candidate {candidate} costs {budget:.1f} ms end to end, which buys a "
         f"native window of {window} tokens ({win_ms:.1f} ms)"
@@ -404,7 +407,14 @@ def main() -> int:
     for i, d in enumerate(doc_ids):
         sp = prefill(models["source"], ids_of[d], sg)
         xk, xv = source_features(sp)
-        feats[d] = (xk.half().cpu(), xv.half().cpu())
+        # Host staging at the solver precision, not half. Scoring used to
+        # cache these as float16 and upcast on use while the timed path built
+        # them in float32 and never rounded, so the numbers being scored and
+        # the numbers being timed came from different features. If reduced
+        # precision staging is ever the product contract it must apply to both
+        # paths and its cost must appear in the timing; until then both are
+        # float32.
+        feats[d] = (xk.to(sdtype).cpu(), xv.to(sdtype).cpu())
         del sp, xk, xv
         if (i + 1) % 16 == 0:
             log_now(f"  source side {i + 1}/{len(doc_ids)}")
@@ -432,8 +442,8 @@ def main() -> int:
                 wrong = cond.endswith(WRONG)
                 name = cond[: -len(WRONG)] if wrong else cond
                 src = shift[it.doc_id] if wrong else it.doc_id
-                xk = feats[src][0].to(dev).to(sdtype)
-                xv = feats[src][1].to(dev).to(sdtype)
+                xk = feats[src][0].to(dev)
+                xv = feats[src][1].to(dev)
                 keys, vals = translate(name, xk, xv)
                 del xk, xv
             plen = keys[0].shape[2] if keys is not None else 0
@@ -560,7 +570,10 @@ def main() -> int:
             "ms": win_ms,
             "budget_ms": budget,
             "matched_to": candidate,
+            "ladder": ladder,
+            "note": "every declared size measured; largest within budget wins",
         },
+        "source_feature_dtype": args.solve_dtype,
         "summary": summary,
         "recovery": recovery,
         "gates": gates,
