@@ -35,6 +35,7 @@ FILES = [
     "research/kv_translate/measure_latency.sh",
     "research/kv_translate/closure_receipt.py",
     "research/kv_translate/update_ledger.py",
+    "research/kv_translate/render_latency_result.py",
     "research/kv_translate/freeze.py",
     "research/kv_translate/fit.py",
     "research/kv_translate/pairs.py",
