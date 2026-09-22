@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LMCache + SnapKV: make transformed KV safe to share</title>
+<meta name="description" content="A prefix-integrity case study of LMCache's SnapKV token-dropping path: what the API enables, why token IDs do not identify transformed KV, and how transform-aware cache keys make mixed deployments safe.">
+<link rel="canonical" href="https://knlp.io/lmcache-snapkv-prefix-integrity.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(240,182,92,.42);border-left:4px solid var(--amber);border-radius:10px;background:linear-gradient(110deg,rgba(240,182,92,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--amber);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}.red{color:var(--red);border-color:rgba(241,120,120,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p,.card li{color:var(--muted)}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(24px,4vw,39px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#demo">what runs</a><a href="#sharing">mixed instances</a><a href="#fix">proposed fix</a><a href="#reproduce">reproduce</a>
+<a href="prefix-integrity-analysis.html">prefix integrity</a><a href="kri.html">cartridges</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">Prefix-integrity case study · LMCache + vLLM + SnapKV · September 2026</div>
+<h1>The data path works.<br>The cache key is incomplete.</h1>
+<p class="lead"><strong>LMCache can run SnapKV against KV produced by a real vLLM engine.</strong> Its SDK retrieves KV and query tensors, lets SnapKV select tokens and rerotate keys, stores the compacted result, and sends it back to vLLM for decode. That proves execution—not safe reuse.</p>
+<p class="lead">A SnapKV tensor depends on the complete source prefix, recent queries, selected original positions, and their new dense positions. Today the multiprocess cache path names model, token chunks, rank, and tenant salt. It does not name that transformation.</p>
+<div class="decision"><b>Deployment boundary</b><span>Keep transformed KV request-local, or isolate it in a separate namespace, until LMCache carries a transform manifest through lookup, storage, and every L2 backend.</span></div>
+<div class="badges"><span class="badge green">REAL VLLM DECODE</span><span class="badge green">SDK REMAP WORKS</span><span class="badge red">MIXED REUSE UNSAFE</span><span class="badge amber">KEY EXTENSION REQUIRED</span></div>
+</div>
+
+<section id="demo">
+<h2>What the notebook actually demonstrates</h2>
+<p class="sub">The public LMCache example is an end-to-end inference experiment, not an offline tensor simulation. It intentionally clears the cache between the two arms, so it does not test a plain and a SnapKV-enabled vLLM instance sharing transformed entries.</p>
+<div class="flow">
+<div><b>1 · Prefill</b><span>vLLM builds the ordinary prompt KV and exposes query tensors through the LMCache connector patch.</span></div>
+<div><b>2 · Retrieve</b><span>The SDK retrieves chunk-aligned KV plus query tensors from the running LMCache service.</span></div>
+<div><b>3 · Transform</b><span><code>drop_tokens_fn()</code> scores past positions, retains selected tokens, and rerotates keys into dense positions.</span></div>
+<div><b>4 · Decode</b><span>The SDK stores the shorter KV and vLLM generates from it; accuracy and output throughput are measured.</span></div>
+</div>
+<div class="grid3" style="margin-top:20px">
+<div class="card"><div class="kicker">Execution</div><div class="metric good">YES</div><p>Real LMCache shared memory, real vLLM prefill/decode, and the engine's real KV tensors.</p></div>
+<div class="card"><div class="kicker">Geometry</div><div class="metric good">YES</div><p>Logical token count, stored tensor length, retained positions, and RoPE rerotation are updated together.</p></div>
+<div class="card"><div class="kicker">Mixed sharing</div><div class="metric bad">NOT TESTED</div><p>Baseline and SnapKV run sequentially with a cache clear between them.</p></div>
+</div>
+<div class="note"><strong>Answer:</strong> yes—the notebook explains how to use and test LMCache with vLLM and SnapKV. It validates the token-dropping data path and measures generation. It does not establish that transformed KV is safe to share.</div>
+</section>
+
+<section id="sharing">
+<h2>What happens when one vLLM uses SnapKV and another does not</h2>
+<p class="sub">They share entries only if both connect to the same LMCache namespace or shared L2. Separate LMCache services with separate storage do not share. In the shared case, LMCache does not currently encode “ordinary” versus “SnapKV” in this SDK key path.</p>
+<div class="scroll"><table>
+<thead><tr><th>lookup</th><th>likely result today</th><th>safe?</th><th>reason</th></tr></thead>
+<tbody>
+<tr><td>Original full prompt after SnapKV modification</td><td>Ordinary full-prefix entry, if retained</td><td class="yes">usually</td><td>The compacted artifact is stored under its shorter returned token sequence.</td></tr>
+<tr><td>Literal prompt equal to retained token IDs</td><td>May address transformed entry</td><td class="no">no</td><td>Its ordinary KV is not the KV computed from the longer source and then selected.</td></tr>
+<tr><td>Same retained IDs from another source prefix</td><td>May address transformed entry</td><td class="no">no</td><td>Retained vectors still encode the omitted source context.</td></tr>
+<tr><td>Same source with another query</td><td>May address transformed entry</td><td class="no">no</td><td>SnapKV selection is query-dependent.</td></tr>
+<tr><td>Same transform, source, query, parameters and format</td><td>Potential reusable hit</td><td class="conditional">only with identity</td><td>Every input that defines the payload must match and be verified.</td></tr>
+</tbody></table></div>
+<div class="grid2" style="margin-top:20px">
+<div class="card rule good"><strong>WHAT drop_tokens_fn() FIXES</strong><p>It gives the SDK a shorter KV tensor and matching logical token list. The example also rerotates retained keys so dense decode positions are internally consistent.</p></div>
+<div class="card rule bad"><strong>WHAT IT DOES NOT FIX</strong><p>It does not return a transform identity, source-prefix digest, query digest, retained-position manifest, sharing scope, or compatibility contract.</p></div>
+</div>
+<div class="note"><strong>Temporary isolation:</strong> a distinct LMCache service or <code>cache_salt</code> prevents cross-mode hits. Treat that as containment, not the final design: <code>cache_salt</code> represents tenant isolation and quota identity, not artifact compatibility.</div>
+</section>
+
+<section id="why">
+<h2>Token IDs cannot identify transformed KV</h2>
+<p class="sub">The same logical token sequence can describe different tensors. Prefix integrity requires the cache key to name every input that changes those tensors.</p>
+<div class="grid3">
+<div class="card"><div class="kicker">Source history</div><h3>KV remembers omitted tokens</h3><p>A retained position was computed while attending over the full original prefix. Removing token IDs from the name does not remove their effect from the vector.</p></div>
+<div class="card"><div class="kicker">Selection</div><h3>The query chooses the artifact</h3><p>SnapKV scores past keys with recent-window queries. Change the query and the selected positions can change while model and source remain the same.</p></div>
+<div class="card"><div class="kicker">Position</div><h3>Rerotation changes keys</h3><p>The example maps retained original positions onto new dense positions. That map and the RoPE contract are part of artifact identity.</p></div>
+</div>
+</section>
+
+<section id="fix">
+<h2>Add transform identity, not a special SnapKV exception</h2>
+<p class="sub">Make the API general enough for token dropping, codecs, cartridges, and future KV transforms. Keep tenant isolation separate from compatibility.</p>
+<div class="steps">
+<div class="step"><strong>Return a structured artifact.</strong><span>Let a modifier return KV, logical token IDs, and a canonical transform manifest. Keep the existing tuple temporarily, but default legacy transformed results to request-local.</span></div>
+<div class="step"><strong>Bind every payload-defining input.</strong><span>Include algorithm and version, parameters, complete source-prefix digest, retained original positions, old-to-new position map, query digest when required, model/layout/dtype/RoPE format, and sharing scope.</span></div>
+<div class="step"><strong>Derive a transform digest.</strong><span>Carry it through SDK request update, <code>IPCCacheServerKey</code>, <code>ObjectKey</code>, coordinators, events, serializers, directory state, and every L2 adapter.</span></div>
+<div class="step"><strong>Require an exact variant at lookup.</strong><span>Ordinary KV uses the empty variant for compatibility. Ordinary lookup never falls back to transformed KV. SnapKV lookup requests the exact manifest digest.</span></div>
+<div class="step"><strong>Enforce sharing scope.</strong><span>Use request-local by default; permit query-scoped sharing only when the query digest matches; permit prefix/global sharing only for transforms that prove those narrower inputs fully determine the payload.</span></div>
+</div>
+<div class="scroll" style="margin-top:22px"><table>
+<thead><tr><th>producer</th><th>consumer</th><th>required result</th></tr></thead>
+<tbody>
+<tr><td>Ordinary KV</td><td>Ordinary, same prefix</td><td class="yes">hit</td></tr>
+<tr><td>SnapKV</td><td>Ordinary literal retained-token prompt</td><td class="no">miss</td></tr>
+<tr><td>SnapKV query A</td><td>SnapKV query A, identical manifest</td><td class="yes">hit</td></tr>
+<tr><td>SnapKV query A</td><td>SnapKV query B</td><td class="no">miss</td></tr>
+<tr><td>SnapKV source A</td><td>Source B with identical retained IDs</td><td class="no">miss</td></tr>
+<tr><td>SnapKV ratio 0.5</td><td>SnapKV ratio 0.25</td><td class="no">miss</td></tr>
+</tbody></table></div>
+<p class="fine" style="margin-top:12px">Run the negative matrix through process-local L1, multiprocess shared memory, and each enabled L2 backend. Repeat after restart to prove serialized identity survives reload.</p>
+</section>
+
+<section id="reproduce">
+<h2>Reproduce the real data path from KNLP</h2>
+<p class="sub">KNLP converts the interactive notebook into an unattended, revision-recorded run and exposes it through the kdevops plugin. It measures the current path; it does not label that path safe for mixed reuse.</p>
+<div class="grid2">
+<div class="card rule good"><strong>LOCAL OR PROVISIONED NODE</strong><p><code>make defconfig-lmcache-snapkv</code><br><code>make</code></p><p>The harness checks NVIDIA/CUDA prerequisites, fetches LMCache, installs the selected vLLM, applies LMCache's query-tensor patch, and writes a JSON result plus service logs.</p></div>
+<div class="card rule good"><strong>KDEVOPS PLUGIN</strong><p>Enable <code>WORKFLOW_KNLP_LMCACHE_SNAPKV</code> to provision the environment. Enable the separate <code>..._RUN</code> option to execute the comparison during provisioning.</p><p>The default remains build-only so GPU scheduling stays explicit.</p></div>
+</div>
+<div class="map" style="margin-top:20px">
+<a href="https://github.com/LMCache/LMCache/tree/dev/examples/token_dropping"><b>LMCache token-dropping examples</b><span>Upstream notebooks, vLLM patch, SDK setup, and SnapKV reference flow.</span></a>
+<a href="https://github.com/mcgrof/knlp/tree/main/tools/reproduce/lmcache_snapkv"><b>KNLP reproduction harness</b><span>Non-interactive orchestration, Kconfig profile, JSON result, and cleanup.</span></a>
+<a href="prefix-integrity-analysis.html"><b>Prefix Integrity Analysis</b><span>The general contract gate for query-dependent KV transforms and shared prefixes.</span></a>
+<a href="kri.html"><b>Cartridges</b><span>The learned KV artifacts that make reusable cache identity an explicit serving concern.</span></a>
+</div>
+</section>
+</main>
+<footer>KNLP · LMCache + SnapKV prefix-integrity case study · public implementation and design boundary</footer>
+</body>
+</html>

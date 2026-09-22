@@ -72,6 +72,7 @@
       <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
         <a href="index.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 transition-colors">knlp docs</a>
         <a href="prefix-integrity-analysis-scaling.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 transition-colors">scaling PIA</a>
+        <a href="lmcache-snapkv-prefix-integrity.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">LMCache + SnapKV case study</a>
         <a href="routing.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-green-300 transition-colors">routing</a>
         <a href="kri.html" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 transition-colors">KRI</a>
         <a href="https://github.com/mcgrof/knlp/tree/main/routing/prefix_integrity" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 transition-colors">source</a>
@@ -529,6 +530,17 @@
           ring state. This row reports the CPU contract result; it does not
           reproduce the paper's quality or accelerator-throughput measurements.
         </p>
+        <div class="mini-note-warn mt-4">
+          <p class="text-slate-300 leading-7 text-sm">
+            <strong>LMCache case study.</strong> LMCache's token-dropping SDK can
+            execute SnapKV against real vLLM KV, but the current multiprocess
+            cache identity does not name the transform, source-prefix digest,
+            query digest, or position map. Read the
+            <a href="lmcache-snapkv-prefix-integrity.html" class="section-link">LMCache + SnapKV prefix-integrity case study</a>
+            for the mixed-instance failure mode, reproduction harness, and a
+            transform-aware key design.
+          </p>
+        </div>
         <div class="mini-note-warn mt-4">
           <p class="text-slate-300 leading-7 text-sm">
             <strong>Scope.</strong> This is the contract axis, which follows from
