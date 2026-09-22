@@ -186,6 +186,17 @@ def main() -> int:
         "so both arms and every control pin this explicitly.",
     )
     ap.add_argument("--target-revision", default="main")
+    ap.add_argument(
+        "--verdict-scope",
+        default="deployment",
+        choices=("deployment", "quality_health"),
+        help="which conjunction decides 'passes'. 'deployment' is the parent "
+        "plan's, including the first-token criteria and the comparison against "
+        "a latency-matched native suffix. 'quality_health' drops those two, "
+        "for a stage told to test quality and health at this length and not "
+        "deployment at it. Both scopes measure the same things and report the "
+        "same numbers; they differ only in what is allowed to decide.",
+    )
     ap.add_argument("--gold", required=True, help="dev manifest with prompt ids")
     ap.add_argument(
         "--arm",

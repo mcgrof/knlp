@@ -184,6 +184,22 @@ def main() -> int:
         "to reproduce that run, not to test termination, and its output is "
         "stamped confounded.",
     )
+    ap.add_argument(
+        "--require-init",
+        action="store_true",
+        help="refuse to mint a fresh residual initialisation. Set for any "
+        "matched comparison: an arm that starts somewhere else is not a "
+        "control, and nothing in the recorded fields would show it.",
+    )
+    ap.add_argument(
+        "--expect-train-documents",
+        type=int,
+        default=0,
+        help="assert the contract's declared training-document count once it "
+        "is knowable, rather than trusting that staging delivered it.",
+    )
+    ap.add_argument("--expect-examples", type=int, default=0)
+    ap.add_argument("--expect-example-documents", type=int, default=0)
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
 
