@@ -47,14 +47,40 @@ from research.kv_translate.fit import SourceLayout  # noqa: E402
 from research.kv_translate.pairs import describe  # noqa: E402
 
 CONTRACT = "saved_operator_v1"
+
+# Machine epsilon by operator precision.
+EPS = {"float32": 2.0**-24, "float64": 2.0**-53, "bfloat16": 2.0**-8}
+
+
+def reference_limit(support_width: int, operator_dtype: str) -> float:
+    """How far a correct implementation may sit from an exact reference.
+
+    Derived rather than chosen. Each output element is a dot product of
+    `support_width` terms accumulated at the operator's own precision, so its
+    relative error grows like the square root of that width times machine
+    epsilon. For the wide map at float32 that is sqrt(4096) * 2^-24, about
+    3.8e-6.
+
+    This matters because the first version of this file fixed the limit at
+    1e-6, which is below that floor: no correct float32 implementation could
+    have passed it, so the check was broken rather than the artifact failing
+    it. The limit was changed after seeing it fail, which is exactly the move
+    this program treats as suspect, so the justification has to stand on its
+    own: the bound is computed from the declared precision and the measured
+    support width, it is not fitted to the observation, and the observation
+    (2.99e-6) sits below the prediction (3.81e-6) rather than the prediction
+    having been raised to cover it.
+    """
+    return (support_width**0.5) * EPS[operator_dtype]
+
+
 LIMITS = {
-    # Relative to the tensor's own scale, on the reference comparison.
-    "operator_matches_reference_fp32": 1e-6,
     # Two calls with identical inputs must agree bit for bit.
     "operator_is_deterministic": 0.0,
     # The serving cast must not move a value by more than one step of the
     # dtype it is cast to, measured at the tensor's scale.
     "serving_cast_within_one_step": 1.001,
+    # operator_matches_reference is derived per artifact; see reference_limit.
 }
 
 
@@ -173,12 +199,27 @@ def main() -> int:
             worst_ref = max(
                 worst_ref, float((a.to(torch.float64) - b).abs().max() / scale)
             )
+    support = int(
+        layout.columns_for(
+            next(iter(mk.maps.values())).layers,
+            next(iter(mk.maps.values())).head,
+            next(iter(mk.maps.values())).head_local,
+        ).numel()
+    )
+    ref_limit = reference_limit(support, args.solve_dtype)
+    checks["reference_limit_derivation"] = {
+        "support_width": support,
+        "operator_dtype": args.solve_dtype,
+        "eps": EPS[args.solve_dtype],
+        "limit": ref_limit,
+        "formula": "sqrt(support_width) * eps(operator_dtype)",
+    }
     require(
-        "operator_matches_reference_fp32",
+        "operator_matches_reference",
         worst_ref,
-        LIMITS["operator_matches_reference_fp32"],
+        ref_limit,
         "the saved operator must equal an independent implementation of its "
-        "own definition on the same inputs",
+        "own definition, to the accumulation floor of its declared precision",
     )
 
     worst_det = 0.0
@@ -239,13 +280,16 @@ def main() -> int:
         "operator_dtype": args.solve_dtype,
         "checks": checks,
         "failures": failures,
-        "required": [k for k in LIMITS],
+        "required": list(LIMITS) + ["operator_matches_reference"],
         "passed": bool(not failures)
-        and all(checks.get(k, {}).get("passed") for k in LIMITS),
+        and all(
+            checks.get(k, {}).get("passed")
+            for k in list(LIMITS) + ["operator_matches_reference"]
+        ),
     }
     with open(args.out, "w") as f:
         json.dump(out, f, indent=2, sort_keys=True, default=str)
-    for k in LIMITS:
+    for k in list(LIMITS) + ["operator_matches_reference"]:
         c = checks.get(k, {})
         log_now(
             f"  {k:<34s} {c.get('measured', float('nan')):.3e} <= "
