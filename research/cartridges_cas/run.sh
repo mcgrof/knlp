@@ -175,6 +175,10 @@ if [ "$(jq_get phase_paper_regime)" = "True" ]; then
   PAPER_PATIENTS=$(jq_get paper_patients)
   PAPER_KV_DIVISOR=$(jq_get paper_kv_divisor)
   PAPER_EVAL_RUNS=$(jq_get paper_eval_runs)
+  PAPER_EVAL_CAPS=$(jq_get paper_eval_caps)
+  PAPER_FULLDOC_CONTROL=$(jq_get paper_fulldoc_control)
+  [ "$PAPER_EVAL_CAPS" != "None" ] || PAPER_EVAL_CAPS=2048
+  [ "$PAPER_FULLDOC_CONTROL" != "None" ] || PAPER_FULLDOC_CONTROL=False
   mkdir -p "$PAPER_OUT"
 
   [ "$GB" = "128" ] || { echo "paper regime requires global batch 128, got $GB"; exit 1; }
@@ -211,12 +215,6 @@ if [ "$(jq_get phase_paper_regime)" = "True" ]; then
     mkdir -p "$PD"
     PAPER_ACTIVE="$PD"
     rm -f "$PD/FAILED"
-    if [ -f "$PD/DONE" ]; then
-      echo "  skip $P: $PD/DONE exists"
-      PAPER_ACTIVE=""
-      continue
-    fi
-
     sha256sum "$PARQ" "$RECORD" > "$PD/inputs.new.sha256"
     {
       echo "patient=$P"
@@ -231,15 +229,20 @@ if [ "$(jq_get phase_paper_regime)" = "True" ]; then
       echo "warmup_steps=200"
       echo "warmup_min_lr=2e-3"
       echo "alpha_f=0.02"
-      echo "eval_runs=$PAPER_EVAL_RUNS"
     } > "$PD/recipe.new.env"
+    {
+      echo "eval_runs=$PAPER_EVAL_RUNS"
+      echo "eval_caps=$PAPER_EVAL_CAPS"
+      echo "fulldoc_control=$PAPER_FULLDOC_CONTROL"
+    } > "$PD/evaluation.env"
 
     if [ -f "$PD/TRAIN_DONE" ]; then
       cmp -s "$PD/inputs.sha256" "$PD/inputs.new.sha256" || {
         echo "refusing to resume $P: input hashes changed"
         exit 1
       }
-      cmp -s "$PD/recipe.env" "$PD/recipe.new.env" || {
+      sed '/^eval_runs=/d; /^eval_caps=/d; /^fulldoc_control=/d' \
+        "$PD/recipe.env" | cmp -s - "$PD/recipe.new.env" || {
         echo "refusing to resume $P: recipe changed"
         exit 1
       }
@@ -267,31 +270,95 @@ if [ "$(jq_get phase_paper_regime)" = "True" ]; then
     [ -s "$CART" ] || { echo "training produced no cartridge: $CART"; exit 1; }
 
     EVAL_CARTS="$PD/eval_carts"
-    if [ ! -f "$PD/EVAL_DONE" ]; then
-      echo "  evaluate $P ($PAPER_EVAL_RUNS runs)"
-      mkdir -p "$EVAL_CARTS"
-      cp "$CART" "$EVAL_CARTS/$P.pt"
-      CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} MODE=cart \
-        CART_DIR="$EVAL_CARTS" PATIENTS="$P" MAX_Q=20 RUNS="$PAPER_EVAL_RUNS" \
-        DEVICE=cuda MODEL="$MODEL" SAVE_RAW=1 \
-        OUT_JSON="$PD/table15_runs${PAPER_EVAL_RUNS}.json" \
-        "$PYTHON" "$HERE/scripts/cas_eval_table15.py" 2>&1 | tee "$PD/eval.log"
-      grep -q "CAS_EVAL_T15_DONE mode=cart" "$PD/eval.log" || {
-        echo "evaluation did not complete for $P"
-        exit 1
-      }
-      date -Is > "$PD/EVAL_DONE"
-    else
-      echo "  skip $P evaluation: $PD/EVAL_DONE exists"
-    fi
+    mkdir -p "$EVAL_CARTS"
+    cp "$CART" "$EVAL_CARTS/$P.pt"
+    for CAP in $PAPER_EVAL_CAPS; do
+      EVAL_MARK="$PD/EVAL_CAP_${CAP}_DONE"
+      if [ "$CAP" = "2048" ] && [ -f "$PD/EVAL_DONE" ] && [ ! -f "$EVAL_MARK" ]; then
+        cp "$PD/EVAL_DONE" "$EVAL_MARK"
+        [ ! -f "$PD/table15_runs${PAPER_EVAL_RUNS}.json" ] || \
+          cp "$PD/table15_runs${PAPER_EVAL_RUNS}.json" \
+          "$PD/table15_cap2048_runs${PAPER_EVAL_RUNS}.json"
+      fi
+      if [ ! -f "$EVAL_MARK" ]; then
+        echo "  evaluate $P at cap $CAP ($PAPER_EVAL_RUNS runs)"
+        CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} MODE=cart \
+          CART_DIR="$EVAL_CARTS" PATIENTS="$P" MAX_Q=20 RUNS="$PAPER_EVAL_RUNS" \
+          MAX_COMPLETION="$CAP" TOP_K=20 TOP_P=0.95 \
+          DEVICE=cuda MODEL="$MODEL" SAVE_RAW=1 \
+          OUT_JSON="$PD/table15_cap${CAP}_runs${PAPER_EVAL_RUNS}.json" \
+          "$PYTHON" "$HERE/scripts/cas_eval_table15.py" 2>&1 | \
+          tee "$PD/eval_cap${CAP}.log"
+        grep -q "CAS_EVAL_T15_DONE mode=cart" "$PD/eval_cap${CAP}.log" || {
+          echo "evaluation did not complete for $P at cap $CAP"
+          exit 1
+        }
+        date -Is > "$EVAL_MARK"
+      else
+        echo "  skip $P cap-$CAP evaluation: $EVAL_MARK exists"
+      fi
+    done
 
     find "$PD" -type f ! -name SHA256SUMS ! -name DONE ! -name FAILED -print0 | \
       sort -z | xargs -0 sha256sum > "$PD/SHA256SUMS"
     date -Is > "$PD/DONE"
     PAPER_ACTIVE=""
   done
+
+  if [ "$PAPER_FULLDOC_CONTROL" = "True" ]; then
+    FULLDOC_DIR="$PAPER_OUT/fulldoc_carts"
+    FULLDOC_LOG="$PAPER_OUT/fulldoc_build.log"
+    if [ ! -f "$PAPER_OUT/FULLDOC_BUILD_DONE" ]; then
+      echo "  build exact full-document KV cartridges"
+      CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} \
+        PATIENTS="$PAPER_PATIENTS" OUT="$FULLDOC_DIR" DEVICE=cuda:0 \
+        MODEL="$MODEL" \
+        "$PYTHON" "$HERE/scripts/cas_build_fulldoc_cart.py" 2>&1 | \
+        tee "$FULLDOC_LOG"
+      grep -q "FULLDOC_CARTS_DONE" "$FULLDOC_LOG" || {
+        echo "full-document cartridge build did not complete"
+        exit 1
+      }
+      date -Is > "$PAPER_OUT/FULLDOC_BUILD_DONE"
+    fi
+    if [ ! -f "$PAPER_OUT/FULLDOC_EVAL_DONE" ]; then
+      echo "  evaluate exact full-document KV through cartridge path"
+      CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} MODE=cart \
+        CART_DIR="$FULLDOC_DIR" PATIENTS="$PAPER_PATIENTS" MAX_Q=20 \
+        RUNS="$PAPER_EVAL_RUNS" MAX_COMPLETION=2048 TOP_K=20 TOP_P=0.95 \
+        DEVICE=cuda:0 MODEL="$MODEL" SAVE_RAW=1 \
+        OUT_JSON="$PAPER_OUT/fulldoc_path_cap2048.json" \
+        "$PYTHON" "$HERE/scripts/cas_eval_table15.py" 2>&1 | \
+        tee "$PAPER_OUT/fulldoc_eval.log"
+      grep -q "CAS_EVAL_T15_DONE mode=cart" "$PAPER_OUT/fulldoc_eval.log" || {
+        echo "full-document cartridge evaluation did not complete"
+        exit 1
+      }
+      date -Is > "$PAPER_OUT/FULLDOC_EVAL_DONE"
+    fi
+    find "$FULLDOC_DIR" -type f -print0 | sort -z | xargs -0 sha256sum > \
+      "$PAPER_OUT/FULLDOC_SHA256SUMS"
+  fi
   trap - EXIT
   date -Is > "$PAPER_OUT/DONE"
   echo "PAPER_REGIME_DONE $PAPER_OUT"
+fi
+
+if [ "$(jq_get phase_training_spread)" = "True" ]; then
+  echo "== ISOLATED-TRAINING SEED SPREAD =="
+  : "${PAPER_DATA_DIR:?training-spread phase needs PAPER_DATA_DIR}"
+  SPREAD_PATIENT=$(jq_get spread_patient)
+  SPREAD_DATA="$PAPER_DATA_DIR/$SPREAD_PATIENT.parquet"
+  SPREAD_OUT="$OUT_DIR/training_spread"
+  mkdir -p "$SPREAD_OUT"
+  "$PYTHON" "$HERE/scripts/cas_training_spread.py" \
+    --model "$MODEL" --patient "$SPREAD_PATIENT" \
+    --data "$SPREAD_DATA" --records "$RECORDS_DIR" --out "$SPREAD_OUT" \
+    --seeds $(jq_get spread_seeds) --gpus $(jq_get spread_gpus) \
+    --eval-runs $(jq_get spread_eval_runs) \
+    --save-every $(jq_get spread_save_every) \
+    --kv-divisor 20 --global-batch "$GB" --epochs "$EPOCHS" \
+    --steps "$STEPS" --lr "$LR"
+  echo "CAS_TRAINING_SPREAD_DONE $SPREAD_OUT/results.json"
 fi
 echo "CAS_RUN_DONE results in $RESULTS_DIR"

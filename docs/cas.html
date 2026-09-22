@@ -56,6 +56,7 @@ tr:hover td { background: var(--bg3); }
 .note.amber { background: #f0a03018; border-left-color: var(--amber); }
 .note.amber strong { color: var(--amber); }
 code { font-family: var(--mono); font-size: 12px; color: var(--cyan); background: var(--bg2); padding: 1px 5px; border-radius: 3px; }
+pre { overflow-x: auto; margin: 14px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--cyan); font: 12px/1.65 var(--mono); }
 footer { text-align: center; padding: 32px 0; border-top: 1px solid var(--border); margin-top: 40px; color: var(--text3); font-size: 12px; }
 footer a { color: var(--text2); }
 @media (max-width: 640px) { .toc { columns: 1; } }
@@ -75,6 +76,7 @@ footer a { color: var(--text2); }
   &middot; <a href="cartridges_visualization.html">the base Cartridges technique</a>
   &middot; <a href="cas-extensions.html">CAS extensions and R&amp;D</a>
   &middot; <a href="cartridge-asymmetric-quantization.html">asymmetric cartridge quantization</a>
+  &middot; <a href="cartridges-ecosystem.html">deployment ecosystem roadmap</a>
   &middot; <a href="https://github.com/mcgrof/knlp/tree/main/research/cartridges_cas">harness</a></p>
 </header>
 
@@ -329,6 +331,34 @@ values average at least three runs because a single 20-question run is noisy.</l
 speedup over the raw path. The target flattener also preserves the full available
 top-k when cumulative probability does not reach its threshold, instead of
 silently falling back to top-1.</p>
+<h3>Five-patient H100 reproduction</h3>
+<p><code>cas-paper</code> is the profile for the result on this page. It trains
+patients 01, 02, 03, 05, and 06, evaluates each cartridge at the 2,048- and
+8,192-token caps, and runs exact full-document KV through the cartridge path.</p>
+<pre>make defconfig-cas-paper
+CUDA_VISIBLE_DEVICES=0 \
+PAPER_DATA_DIR=/path/to/per_patient \
+RECORDS_DIR=/path/to/records \
+OUT_DIR=/path/to/cas-output \
+CART_ROOT=/path/to/cartridges \
+PYTHON=/path/to/python \
+HF_HUB_OFFLINE=1 make</pre>
+<h3>Eight-training seed spread</h3>
+<p><code>cas-training-spread-h100</code> launches the two seed-42 controls and
+seeds 43 through 48 across eight H100s, evaluates all eight artifacts in the
+same software session, checks repeated-seed byte identity, and writes the
+summary to <code>OUT_DIR/training_spread/results.json</code>.</p>
+<pre>make defconfig-cas-training-spread-h100
+PAPER_DATA_DIR=/path/to/per_patient \
+RECORDS_DIR=/path/to/records \
+OUT_DIR=/path/to/cas-output \
+CART_ROOT=/path/to/cartridges \
+PYTHON=/path/to/python \
+HF_HUB_OFFLINE=1 make</pre>
+<p>The spread profile regenerates the eight new training rows above. The
+reference, half-learning-rate, prior-run, and A100 comparison rows require their
+separately archived cartridges. Use <code>cas-paper-regime-a100</code> for a new
+single-patient A100 control.</p>
 </section>
 
 <section id="serving">
@@ -351,6 +381,8 @@ this training reproduction.</p>
 <a href="cartridges_visualization.html">&larr; Cartridges: pre-trained KV caches</a>
 &nbsp;&middot;&nbsp;
 <a href="cas-extensions.html">CAS extensions and R&amp;D</a>
+&nbsp;&middot;&nbsp;
+<a href="cartridges-ecosystem.html">Deployment ecosystem roadmap</a>
 &nbsp;&middot;&nbsp;
 <a href="learned_prefix_caches.html">Learned Prefix Caches</a>
 &nbsp;&middot;&nbsp;
