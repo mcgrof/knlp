@@ -135,6 +135,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="Qwen/Qwen2.5-1.5B-Instruct")
     ap.add_argument("--target", default="Qwen/Qwen2.5-7B-Instruct")
+    ap.add_argument("--source-revision", default="main")
+    ap.add_argument("--target-revision", default="main")
     ap.add_argument("--artifact", required=True, help="the saved folded map")
     ap.add_argument(
         "--premerge",
@@ -172,13 +174,18 @@ def main() -> int:
             failures.append(f"{name}: {measured:.3e} exceeds {limit:.3e}")
         return ok
 
-    tok = AutoTokenizer.from_pretrained(args.target)
+    tok = AutoTokenizer.from_pretrained(args.target, revision=args.target_revision)
     cfg = AutoModelForCausalLM.from_pretrained(
-        args.target, dtype=dtype, attn_implementation="sdpa"
+        args.target,
+        revision=args.target_revision,
+        dtype=dtype,
+        attn_implementation="sdpa",
     )
     tg = describe(cfg, args.target)
     del cfg
-    src = AutoModelForCausalLM.from_pretrained(args.source, dtype=dtype)
+    src = AutoModelForCausalLM.from_pretrained(
+        args.source, revision=args.source_revision, dtype=dtype
+    )
     sg = describe(src, args.source)
     del src
     layout = SourceLayout(sg.n_layers, sg.n_kv_heads, sg.head_dim)
