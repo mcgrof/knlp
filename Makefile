@@ -22,6 +22,10 @@ include Makefile.decode
 # When CONFIG_KNLP_REPRODUCE_CARTRIDGES=y this overrides .DEFAULT_GOAL.
 include Makefile.cartridges
 
+# Include the LMCache SDK SnapKV reproduction. This runs the real vLLM
+# prefill/modify/decode path demonstrated by LMCache's token-dropping example.
+include Makefile.lmcache_snapkv
+
 # Include the Cartridges-at-Scale research harness. When
 # CONFIG_CARTRIDGES_CAS=y this makes the selected CAS phase the default goal.
 include Makefile.cas

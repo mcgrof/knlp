@@ -1,0 +1,60 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+
+- name: Install LMCache SnapKV host dependencies
+  become: yes
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - patch
+      - pipx
+      - python3-dev
+      - python3-venv
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install uv for the pinned Python environment
+  ansible.builtin.command: pipx install uv
+  args:
+    creates: "{{ ansible_env.HOME }}/.local/bin/uv"
+
+- name: Refuse a SnapKV build without NVIDIA userspace
+  ansible.builtin.command: nvidia-smi
+  changed_when: false
+
+- name: Refuse a SnapKV build without the CUDA compiler
+  ansible.builtin.command: nvcc --version
+  changed_when: false
+
+- name: Select the LMCache SnapKV defconfig
+  ansible.builtin.command:
+    cmd: make defconfig-lmcache-snapkv
+    chdir: "{{ workflow_knlp_data | default(knlp_data_path) }}"
+  changed_when: true
+
+- name: Select CUDA devices for the LMCache SnapKV run
+  ansible.builtin.lineinfile:
+    path: "{{ workflow_knlp_data | default(knlp_data_path) }}/.config"
+    regexp: '^CONFIG_KNLP_SNAPKV_CUDA_VISIBLE_DEVICES='
+    line: >-
+      CONFIG_KNLP_SNAPKV_CUDA_VISIBLE_DEVICES="{{
+      workflow_knlp_lmcache_snapkv_cuda_devices }}"
+
+- name: Build the LMCache SnapKV environment
+  ansible.builtin.command:
+    cmd: make lmcache-snapkv-doctor lmcache-snapkv-fetch lmcache-snapkv-build
+    chdir: "{{ workflow_knlp_data | default(knlp_data_path) }}"
+  changed_when: true
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.local/bin:{{ ansible_env.PATH }}"
+
+- name: Run the LMCache SnapKV comparison
+  ansible.builtin.command:
+    cmd: make lmcache-snapkv-run lmcache-snapkv-report
+    chdir: "{{ workflow_knlp_data | default(knlp_data_path) }}"
+  when: workflow_knlp_lmcache_snapkv_run | default(false) | bool
+  changed_when: true
+  environment:
+    PATH: "{{ ansible_env.HOME }}/.local/bin:{{ ansible_env.PATH }}"

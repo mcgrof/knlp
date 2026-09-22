@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: MIT
+# LMCache SDK SnapKV reproduction configuration.
+
+menu "LMCache SnapKV token-dropping reproduction"
+
+config KNLP_LMCACHE_SNAPKV
+	bool "Enable the LMCache SDK SnapKV reproduction"
+	default n
+	help
+	  Run a baseline and a SnapKV-compacted workload through a real vLLM
+	  server and LMCache's multiprocess SDK connector. The workload records
+	  answer accuracy, decode throughput, and the exact software revisions.
+
+if KNLP_LMCACHE_SNAPKV
+
+config KNLP_SNAPKV_WORK_ROOT
+	string "Build and source directory"
+	default "./build/lmcache-snapkv"
+
+config KNLP_SNAPKV_RESULTS_ROOT
+	string "Results directory"
+	default "./results/lmcache-snapkv"
+
+config KNLP_SNAPKV_LMCACHE_REPO
+	string "LMCache repository"
+	default "https://github.com/LMCache/LMCache.git"
+
+config KNLP_SNAPKV_LMCACHE_REF
+	string "LMCache reference"
+	default "dev"
+
+config KNLP_SNAPKV_VLLM_VERSION
+	string "vLLM version"
+	default "0.23.0"
+
+config KNLP_SNAPKV_PYTHON
+	string "Python interpreter used to create the environment"
+	default "python3.12"
+
+config KNLP_SNAPKV_MODEL
+	string "Model"
+	default "Qwen/Qwen3-1.7B"
+
+config KNLP_SNAPKV_DATASET
+	string "Evaluation dataset"
+	default "raniayu/token-dropping-demo-short"
+
+config KNLP_SNAPKV_NUM_PROMPTS
+	int "Number of prompts"
+	default 10
+	range 1 1000
+
+config KNLP_SNAPKV_MAX_TOKENS
+	int "Decode tokens per prompt"
+	default 256
+	range 1 4096
+
+config KNLP_SNAPKV_DROP_RATIO
+	string "Fraction of prompt tokens to drop"
+	default "0.5"
+
+config KNLP_SNAPKV_WINDOW_SIZE
+	int "Recent-token window"
+	default 64
+	range 1 4096
+
+config KNLP_SNAPKV_GPU_MEMORY_UTILIZATION
+	string "vLLM GPU memory utilization"
+	default "0.35"
+
+config KNLP_SNAPKV_L1_SIZE_GB
+	string "LMCache L1 size in GiB"
+	default "3"
+
+config KNLP_SNAPKV_CUDA_VISIBLE_DEVICES
+	string "CUDA devices visible to the run"
+	default "0"
+
+endif # KNLP_LMCACHE_SNAPKV
+
+endmenu

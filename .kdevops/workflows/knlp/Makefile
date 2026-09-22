@@ -10,6 +10,9 @@ KNLP_ARGS :=
 export KNLP_DATA := $(subst ",,$(CONFIG_WORKFLOW_KNLP_DATA_PATH))
 
 WORKFLOW_ARGS += workflow_knlp_data='$(KNLP_DATA)'
+WORKFLOW_ARGS += workflow_knlp_lmcache_snapkv=$(CONFIG_WORKFLOW_KNLP_LMCACHE_SNAPKV)
+WORKFLOW_ARGS += workflow_knlp_lmcache_snapkv_run=$(CONFIG_WORKFLOW_KNLP_LMCACHE_SNAPKV_RUN)
+WORKFLOW_ARGS += workflow_knlp_lmcache_snapkv_cuda_devices='$(subst ",,$(CONFIG_WORKFLOW_KNLP_LMCACHE_SNAPKV_CUDA_DEVICES))'
 
 knlp:
 	$(Q)ansible-playbook $(ANSIBLE_VERBOSE) \
