@@ -144,9 +144,30 @@ def main() -> int:
                 r.get("correct") is not None
                 and float(r["correct"]) != s["exact_any_run"]
             )
-            if s["first_run"]:
-                rec["edit_distance_to_gold"] = edit_distance(
-                    s["first_run"], g["retrieval_gold"].upper()
+            # Near-miss analysis deliberately does NOT use the candidate
+            # filter above. That filter requires a run of the gold's exact
+            # length, which is right for deciding whether an answer IS the
+            # code and wrong for asking how close a wrong answer came: a
+            # dropped character produces a seven-character run and the filter
+            # discards it. Counting only what survives the filter counts
+            # substitutions and misses every deletion, which is where almost
+            # all of the near misses turned out to be.
+            gg = g["retrieval_gold"].upper()
+            all_runs = runs(r.get("produced", ""))
+            if all_runs:
+                dists = [(edit_distance(x, gg), x) for x in all_runs]
+                dmin, closest = min(dists)
+                rec["edit_distance_to_gold"] = dmin
+                rec["closest_run"] = closest
+                rec["one_edit_from_gold"] = float(dmin == 1)
+                rec["edit_kind"] = (
+                    "exact"
+                    if dmin == 0
+                    else (
+                        "deletion"
+                        if len(closest) < len(gg)
+                        else "insertion" if len(closest) > len(gg) else "substitution"
+                    )
                 )
         elif r["kind"] == "cloze":
             s = score_cloze(r.get("produced", ""), g["cloze_gold"])
@@ -161,8 +182,8 @@ def main() -> int:
     # Per-condition comparison of the two retrieval metrics.
     conds = sorted({r["condition"] for r in out_rows if r["kind"] == "retrieval"})
     print(
-        "%-22s %7s %7s %7s  %s"
-        % ("condition", "subst", "exact", "first", "changed rows")
+        "%-22s %7s %7s %7s %7s  %s"
+        % ("condition", "subst", "exact", "first", "1-edit", "edit kinds")
     )
     summary = {}
     for c in conds:
@@ -172,6 +193,11 @@ def main() -> int:
         ex = sum(r["exact_any_run"] for r in sel)
         fi = sum(r["exact_first_run"] for r in sel)
         chg = [r["doc"] for r in sel if r["substring"] != r["exact_any_run"]]
+        fails = [r for r in sel if r["exact_any_run"] == 0.0]
+        one_edit = [r for r in fails if r.get("one_edit_from_gold")]
+        kinds = {}
+        for r in one_edit:
+            kinds[r["edit_kind"]] = kinds.get(r["edit_kind"], 0) + 1
         summary[c] = {
             "n": n,
             "substring": sub / n,
@@ -180,10 +206,24 @@ def main() -> int:
             "substring_count": int(sub),
             "exact_count": int(ex),
             "changed_docs": chg,
+            "failures": len(fails),
+            "one_edit_failures": len(one_edit),
+            "one_edit_kinds": kinds,
         }
         print(
-            "%-22s %3d/%-3d %3d/%-3d %3d/%-3d  %s"
-            % (c, sub, n, ex, n, fi, n, ", ".join(chg) if chg else "-")
+            "%-22s %3d/%-3d %3d/%-3d %3d/%-3d %3d/%-3d  %s"
+            % (
+                c,
+                sub,
+                n,
+                ex,
+                n,
+                fi,
+                n,
+                len(one_edit),
+                len(fails),
+                ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) or "-",
+            )
         )
 
     cl = {}

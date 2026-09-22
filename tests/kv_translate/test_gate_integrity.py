@@ -267,3 +267,83 @@ def test_rescoring_refuses_a_document_with_no_gold_entry(tmp_path):
     )
     assert r.returncode != 0
     assert "INVALID" in (r.stdout + r.stderr)
+
+
+# ---- a required check that fails must fail the run -------------------
+
+
+def _recorder():
+    """The sentinel's required-check bookkeeping, isolated for testing.
+
+    Mirrors run_sentinel.require and its final verdict. The defect this
+    guards against is a run reporting an unqualified pass while carrying a
+    numerical check it did not honour: the committed sentinel recorded a
+    tolerance of 1e-4 beside a measured 7.8e-4 and still said passed, because
+    the boolean came from a different quantity than the field name implied.
+    """
+    checks = {"required_checks": {}}
+    failures = []
+
+    def require(name, measured, limit, why=""):
+        ok = bool(measured <= limit)
+        checks["required_checks"][name] = {
+            "measured": float(measured),
+            "limit": float(limit),
+            "passed": ok,
+            "why": why,
+        }
+        if not ok:
+            failures.append(f"{name}: {measured:.3e} exceeds {limit:.3e}")
+        return ok
+
+    def verdict():
+        req = checks["required_checks"]
+        return bool(req) and all(c["passed"] for c in req.values()) and not failures
+
+    return checks, failures, require, verdict
+
+
+def test_a_failed_required_check_forces_a_failed_run():
+    checks, failures, require, verdict = _recorder()
+    require("fold_exact_in_float32", 1.4e-5, 1e-4)
+    assert verdict(), "a run whose checks all hold must pass"
+    require("fold_preserves_argmax", 0.03, 0.0)
+    assert not verdict(), "one failed required check must fail the whole run"
+    assert failures and "fold_preserves_argmax" in failures[0]
+
+
+def test_a_recorded_limit_is_the_one_that_is_enforced():
+    """The exact shape of the defect: measured above limit, still 'passed'."""
+    checks, _, require, verdict = _recorder()
+    require("fold_kl", 7.842e-4, 1e-4)
+    rec = checks["required_checks"]["fold_kl"]
+    assert rec["measured"] > rec["limit"]
+    assert rec["passed"] is False
+    assert verdict() is False, (
+        "a limit that appears in the record must gate the verdict; if it is "
+        "not meant to gate, it must not be recorded as a limit"
+    )
+
+
+def test_a_run_with_no_required_checks_does_not_pass_by_default():
+    _, _, _, verdict = _recorder()
+    assert verdict() is False, "an empty check set is not evidence of anything"
+
+
+def test_near_miss_analysis_counts_deletions():
+    """The diagnostic defect that closed a branch it should not have.
+
+    Scoring requires a run of the code's exact length, which is right. Reusing
+    that filter to ask how close a wrong answer came discards every dropped
+    character, and dropped characters were fourteen of the sixteen near misses.
+    """
+    from research.kv_translate.rescore_gold import edit_distance, runs
+
+    gold = "XYFJ3KLN"
+    dropped = "XYJ3KLN"
+    assert len(dropped) != len(gold)
+    assert edit_distance(dropped, gold) == 1
+    same_length_only = [x for x in runs(dropped) if len(x) == len(gold)]
+    assert same_length_only == [], "the scoring filter hides this answer"
+    unfiltered = [x for x in runs(dropped)]
+    assert min(edit_distance(x, gold) for x in unfiltered) == 1
