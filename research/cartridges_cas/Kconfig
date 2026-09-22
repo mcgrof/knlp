@@ -1,18 +1,16 @@
-# Cartridges-at-Scale (CAS) collapse->rescue replication.
+# Cartridges-at-Scale (CAS) reproduction.
 # Sourced from the top-level knlp Kconfig. Every experimental knob lives here so
 # nothing is buried in Python constants; the driver reads a JSON generated from
 # .config (scripts/gen_config_json.py) and never hard-codes experiment policy.
 #
-# CAS (arXiv:2606.04557) trains one KV-cache "cartridge" per document. Loading N
-# independently-trained cartridges at inference collapses accuracy toward chance;
-# mixed-visibility (joint) training rescues it. This harness reproduces that
-# split on Qwen3-8B / LongHealth. It depends on the HazyResearch cartridges
-# package (pinned + patched by bootstrap.sh) and a GPU + vLLM for synthesis.
+# CAS (arXiv:2606.04557) trains one KV-cache "cartridge" per document. This
+# harness reproduces the validated isolated-cartridge result on Qwen3-8B /
+# LongHealth. Joint mixed-visibility composition remains experimental here.
 
 menu "Cartridges-at-Scale (CAS) replication"
 
 config CARTRIDGES_CAS
-	bool "Enable the CAS collapse->rescue replication harness"
+	bool "Enable the CAS reproduction harness"
 	default n
 	help
 	  Master switch. Off by default so it never perturbs existing knlp
@@ -33,10 +31,10 @@ config CARTRIDGES_CAS_SMOKE
 	  single cartridge oracle beats its no-context floor.
 
 config CARTRIDGES_CAS_PAPER
-	bool "Paper-faithful (full panel, collapse + rescue)"
+	bool "Validated five-patient isolated reproduction"
 	help
-	  The headline replication: train the full patient panel, show the
-	  isolated collapse, then the mixed-visibility rescue.
+	  Train and evaluate the five LongHealth patients reported on the public
+	  CAS reproduction page with the faithful isolated-cartridge recipe.
 
 endchoice
 
@@ -50,15 +48,15 @@ config CARTRIDGES_CAS_MODEL
 config CARTRIDGES_CAS_NUM_PATIENTS
 	int "Number of LongHealth patients (cartridges)"
 	default 5 if CARTRIDGES_CAS_SMOKE
-	default 20 if CARTRIDGES_CAS_PAPER
+	default 5 if CARTRIDGES_CAS_PAPER
 	help
-	  One cartridge per patient. More co-loaded cartridges give a stronger
-	  collapse signal.
+	  One cartridge per patient. The validated paper profile uses the five
+	  patients reported on the public reproduction page.
 
 config CARTRIDGES_CAS_CONVOS_PER_PATIENT
 	int "Self-study convos synthesized per patient"
 	default 8000 if CARTRIDGES_CAS_SMOKE
-	default 8000 if CARTRIDGES_CAS_PAPER
+	default 4420 if CARTRIDGES_CAS_PAPER
 	help
 	  The dominant quality lever, and the binding constraint. 400 is far too
 	  few (cartridge stays below its floor). 8000 makes some cartridges beat
@@ -85,21 +83,23 @@ config CARTRIDGES_CAS_KV_TOKENS
 
 config CARTRIDGES_CAS_LR
 	string "Learning rate"
+	default "0.1" if CARTRIDGES_CAS_PAPER
 	default "1e-3"
 
 config CARTRIDGES_CAS_GLOBAL_BATCH
 	int "Global batch size (small -> more optimizer steps/epoch)"
+	default 128 if CARTRIDGES_CAS_PAPER
 	default 4
 
 config CARTRIDGES_CAS_STEPS
 	int "Max optimizer steps per cartridge"
 	default 2000 if CARTRIDGES_CAS_SMOKE
-	default 6000 if CARTRIDGES_CAS_PAPER
+	default 5000 if CARTRIDGES_CAS_PAPER
 
 config CARTRIDGES_CAS_EPOCHS
 	int "Epochs (upper bound; STEPS usually binds first)"
 	default 4 if CARTRIDGES_CAS_SMOKE
-	default 14 if CARTRIDGES_CAS_PAPER
+	default 80 if CARTRIDGES_CAS_PAPER
 
 config CARTRIDGES_CAS_COMPILE_FLEX
 	bool "Compile FlexAttention (CUDA sm>=80; ~16x faster)"
@@ -115,20 +115,22 @@ menu "Phases"
 
 config CARTRIDGES_CAS_PHASE_SYNTH
 	bool "Synthesize self-study corpora"
+	default n if CARTRIDGES_CAS_PAPER
 	default y
 
 config CARTRIDGES_CAS_PHASE_TRAIN_ISOLATED
 	bool "Train isolated cartridges"
+	default n if CARTRIDGES_CAS_PAPER
 	default y
 
 config CARTRIDGES_CAS_PHASE_COLLAPSE
 	bool "Combine-at-inference collapse eval"
+	default n if CARTRIDGES_CAS_PAPER
 	default y
 
 config CARTRIDGES_CAS_PHASE_TRAIN_JOINT
 	bool "Mixed-visibility (joint) training"
-	default y if CARTRIDGES_CAS_PAPER
-	default n if CARTRIDGES_CAS_SMOKE
+	default n
 	help
 	  KNOWN-LIMITED. The current joint trainer uses a fixed-distractor,
 	  always-joint approximation of CAS's per-sample P_iso, and the combined
@@ -138,8 +140,7 @@ config CARTRIDGES_CAS_PHASE_TRAIN_JOINT
 
 config CARTRIDGES_CAS_PHASE_RESCUE
 	bool "Rescue eval on joint cartridges"
-	default y if CARTRIDGES_CAS_PAPER
-	default n if CARTRIDGES_CAS_SMOKE
+	default n
 
 config CARTRIDGES_CAS_PHASE_CONTROL_SCREEN
 	bool "Control-aware fixed-trajectory objective screen"
@@ -178,6 +179,7 @@ config CARTRIDGES_CAS_PHASE_OPT_ABLATION
 
 config CARTRIDGES_CAS_PHASE_PAPER_REGIME
 	bool "Paper-regime isolated-cartridge confirmation"
+	default y if CARTRIDGES_CAS_PAPER
 	default n
 	help
 	  Train and evaluate a named patient list with the isolated recipe used
@@ -187,6 +189,15 @@ config CARTRIDGES_CAS_PHASE_PAPER_REGIME
 	  and fails instead of silently changing the recipe if a GPU cannot hold
 	  it. It records the source commit, config, hardware, input hashes,
 	  logs, raw evaluation rows, and output hashes for audit and resumption.
+
+config CARTRIDGES_CAS_PHASE_TRAINING_SPREAD
+	bool "Multi-GPU isolated-training seed spread"
+	default n
+	help
+	  Reproduce the eight-training H100 study reported on the CAS page.
+	  Two seed-42 jobs test determinism; seeds 43 through 48 measure the
+	  training-to-training spread. Each completed cartridge is evaluated
+	  for three Table-15 runs in the same software session.
 
 endmenu
 
@@ -204,6 +215,42 @@ config CARTRIDGES_CAS_PAPER_KV_DIVISOR
 config CARTRIDGES_CAS_PAPER_EVAL_RUNS
 	int "Independent Table-15 evaluation runs"
 	default 3
+
+config CARTRIDGES_CAS_PAPER_EVAL_CAPS
+	string "Completion caps to evaluate (space-separated)"
+	default "2048 8192"
+
+config CARTRIDGES_CAS_PAPER_FULLDOC_CONTROL
+	bool "Build and evaluate exact full-document KV cartridges"
+	default y
+	help
+	  Build the frozen model's exact full-document KV in cartridge format
+	  and evaluate it through the same local cartridge execution path.
+
+endmenu
+
+menu "Training-spread reproduction"
+	depends on CARTRIDGES_CAS_PHASE_TRAINING_SPREAD
+
+config CARTRIDGES_CAS_SPREAD_PATIENT
+	string "LongHealth patient"
+	default "patient_02"
+
+config CARTRIDGES_CAS_SPREAD_SEEDS
+	string "Training seeds (space-separated; repeats are controls)"
+	default "42 42 43 44 45 46 47 48"
+
+config CARTRIDGES_CAS_SPREAD_GPUS
+	string "GPU IDs used concurrently"
+	default "0 1 2 3 4 5 6 7"
+
+config CARTRIDGES_CAS_SPREAD_EVAL_RUNS
+	int "Table-15 runs per trained cartridge"
+	default 3
+
+config CARTRIDGES_CAS_SPREAD_SAVE_EVERY
+	int "Checkpoint interval in optimizer steps"
+	default 120
 
 endmenu
 

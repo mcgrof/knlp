@@ -1,12 +1,11 @@
 # Cartridges-at-Scale (CAS) replication harness
 
-This reproduces the core result of *Cartridges at Scale* (arXiv:2606.04557):
-you can split a document collection into one trainable KV-cache "cartridge" per
-document, but naively combining independently-trained cartridges at inference
-collapses accuracy toward chance — and a change in the training rule
-(mixed-visibility joint training with distractor cartridges) rescues it to near
-the uncompressed oracle. The target is that split → combine → training-rule
-story, on Qwen3-8B / LongHealth, reproducible from a knlp defconfig.
+This reproduces the validated isolated-cartridge result from *Cartridges at
+Scale* (arXiv:2606.04557) on Qwen3-8B / LongHealth. The primary defconfig trains
+the five reported patients with the faithful optimizer regime, evaluates the
+paper's 2,048-token protocol and an 8,192-token diagnostic, and runs the exact
+full-document KV through the same cartridge execution path. Joint
+mixed-visibility composition remains an experimental extension in this harness.
 
 The harness wraps the HazyResearch `cartridges` package (pinned and patched by
 `bootstrap.sh`) with knlp's Kconfig workflow, so every experimental knob lives in
@@ -25,18 +24,21 @@ research/cartridges_cas/run.sh
 
 `bootstrap.sh` clones `HazyResearch/cartridges@8cb6823`, installs it (leaving the
 CUDA torch untouched), applies the two knlp patches, and drops the CAS scripts in
-place. `gen_config_json.py` turns `.config` into `config.json`. `run.sh` runs the
-phases the defconfig selected: synthesize self-study corpora, train isolated
-cartridges, the combine-at-inference collapse eval, then (paper defconfig only)
-mixed-visibility joint training and the rescue eval. Results land as
-`collapse.json` / `rescue.json`.
+place. `gen_config_json.py` turns `.config` into `config.json`. `run.sh` runs only
+the phases selected by the defconfig. See `PAPER_REGIME.md` for the exact public
+reproduction commands and output contract.
 
 ## Defconfigs
 
-- `cas-smoke` — few patients, single-cartridge oracle check, collapse only. Runs
-  end to end on one H100 to validate the recipe.
-- `cas-paper` — full patient panel, isolated collapse plus mixed-visibility
-  rescue.
+- `cas-smoke` — a small legacy end-to-end development path for the synthesis and
+  experimental composition code.
+- `cas-paper` — the validated five-patient H100 isolated reproduction, including
+  both completion caps and the exact full-document KV path control.
+- `cas-paper-regime-a100` — a one-patient A100 control using the same faithful
+  training regime and the 2,048-token evaluation.
+- `cas-training-spread-h100` — eight concurrent patient-02 trainings: two seed-42
+  determinism controls and seeds 43 through 48, followed by three evaluation
+  runs per cartridge in one software session.
 - `cartridge-control-screen` — the control-aware fixed-trajectory objective
   screen. The stored synthesis path serializes each target row as
   [sampled token] + [top-k], so under greedy synthesis nearly half the rows
@@ -100,49 +102,33 @@ The eval is `cas_combine_eval.py`, and two mistakes silently produce garbage:
 
 ## Status — what reproduces and what does not
 
-Validated and correct: the pipeline, compiled FlexAttention (~16× training
-speedup on CUDA sm≥80), the richer-target flatten fix, the reconstruction/eval
-above, the training-contract alignments (per-token distillation reduction,
-learning-rate warmup before the first optimizer step, an enlarged packing window),
-and **both the collapse and the rescue**.
+Validated and correct: the isolated-training pipeline, compiled FlexAttention
+(~16× training speedup on CUDA sm≥80), the richer-target flatten fix, the
+reconstruction/evaluation path, the paper optimizer regime, the five-patient
+evaluation, the exact full-document KV path control, and the eight-training seed
+spread. The five faithful H100 cartridges average 0.580 at the paper's
+2,048-token cap and 0.617 at an 8,192-token diagnostic cap. The full-document KV
+scores 0.860 through the cartridge path, matching ordinary full-document
+inference at 0.855.
 
-**Collapse and rescue reproduce.** With five per-document cartridges on Qwen3-8B /
-LongHealth, an isolated cartridge that scores 0.58 alone drops to 0.38 (the
-no-context floor) when co-loaded, while a mixed-visibility cartridge holds — 0.44
-alone, 0.46 co-loaded. The co-load delta flips sign (−0.20 → +0.02); that sign
-flip is the rescue, mirroring the paper's larger-N result. Getting this right
-requires per-sample cache assembly (most samples present the target alone, a
-minority alongside sampled distractors) and a matched per-cartridge budget; a
-naive always-resident joint trainer instead teaches only the co-loaded geometry
-and inverts the result.
+The harness still contains experimental collapse and joint-training phases, but
+the public reproduction does not claim a validated composition result. The
+current joint trainer is an approximation of the paper's per-sample visibility
+rule and is disabled in `cas-paper`.
 
-**Open item: the single-cartridge quality gap.** A single isolated cartridge
-reaches about 0.50 (best 0.58) against the paper's 0.736. The baselines land on
-the paper (no-context 0.39, full document 0.855), and an untrained cartridge
-holding the full document KV scores 0.86 through the same path — so the path is
-lossless and the ceiling is 0.86. The gap survives every controlled variable:
-evaluation protocol, sampler, execution path, training length (loss reaches 0.017
-at 80 epochs), data volume, cartridge capacity, initialization, and every
-synthetic-distribution reshaping tried (hard question forms, hard-negative entity
-binding, direct question-distribution alignment). The load-bearing observation is
-a gap between the training objective and free generation: a cartridge minimizes
-the teacher-forced distillation loss (~0.035) yet free-generates the correct
-answer only ~0.4–0.5 of the time, even on questions it was trained on. The
-remaining distance is an objective-to-generation transfer problem, and the levers
-left are the paper's exact self-study distribution and its faithful batch-128 /
-linear-schedule optimizer regime.
+**Open item: the isolated-cartridge quality gap.** The five-patient mean is
+0.580 against the paper's 0.736. The no-context and full-document anchors match
+the paper, and exact full-document KV scores 0.860 through the cartridge path,
+so cache reconstruction and execution do not explain the gap. Raising the
+completion cap to 8,192 moves the mean to 0.617. The remaining measured
+differences include self-study data scale (about 4,400 conversations here versus
+roughly 40,000 in the paper) and substantial seed-to-seed training variation.
 
-**The optimizer regime closes half of it.** Every number above came from a
-small-batch regime (effective batch about 8, peak learning rate 0.02, a few
-hundred steps). Training the same patient_02 cartridge at the paper's isolated
-recipe instead lifts it from 0.55 to **0.65 ± 0.05** (three evaluation runs of
-the same cartridge; the paper reports 0.736). No other single change moved
-this number, so the training regime is a major part of the gap, and the earlier
-"learning rate ruled out" and "training length ruled out" readings were
-small-batch artifacts: a peak rate of 0.1 diverges at batch 8 and is right at
-batch 128. The residual 0.09 is left to data scale (the paper synthesizes about
-40k self-study conversations per cartridge, this harness about 4.4k) and to the
-objective-to-generation transfer.
+**The optimizer regime matters.** Holding patient 02 and its data fixed, moving
+from the earlier small-batch recipe to the complete paper regime raised its
+score from 0.55 to **0.65 ± 0.05**. Batch size, peak learning rate, warmup, and
+schedule changed together, so this comparison supports the complete regime and
+does not attribute the improvement to one knob.
 
 ### The frozen single-cartridge baseline
 

@@ -21,7 +21,7 @@ format as a trained cart, so the evaluator loads it identically. The document is
 "\n\n".join(patient.texts) — the exact text the vLLM full-doc baseline used.
 
 Env: PATIENTS, OUT (cart dir), MAXTOK (cap on doc tokens; default 16384 covers
-the longest LongHealth record), DEVICE.
+the longest LongHealth record), DEVICE, MODEL.
 """
 
 import os
@@ -48,7 +48,7 @@ PATIENTS = os.environ.get(
 OUT = os.environ.get("OUT", os.path.expanduser("~/cas_out/fulldoc_carts"))
 MAXTOK = int(os.environ.get("MAXTOK", "16384"))
 DEVICE = os.environ.get("DEVICE", "cuda:0")
-MODEL = "Qwen/Qwen3-8B"
+MODEL = os.environ.get("MODEL", "Qwen/Qwen3-8B")
 
 os.makedirs(OUT, exist_ok=True)
 di = int(DEVICE.split(":")[1]) if ":" in DEVICE else 0
