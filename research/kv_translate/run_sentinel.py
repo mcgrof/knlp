@@ -44,7 +44,6 @@ from research.kv_translate.tasks import grade_retrieval  # noqa: E402
 
 GIB = float(2**30)
 FOLD_TOL_REL = 1e-4
-FOLD_KL_TOL = 1e-4  # nats, on the target's next-token distribution
 ZERO_TOL_ABS = 0.0
 
 
@@ -72,6 +71,20 @@ def main() -> int:
     sdtype = getattr(torch, args.solve_dtype)
     t0 = time.time()
     checks, failures = {}, []
+    checks["required_checks"] = {}
+
+    def require(name, measured, limit, why):
+        """Record a gating check and fail the run if it does not hold."""
+        ok = bool(measured <= limit)
+        checks["required_checks"][name] = {
+            "measured": float(measured),
+            "limit": float(limit),
+            "passed": ok,
+            "why": why,
+        }
+        if not ok:
+            failures.append(f"{name}: {measured:.3e} exceeds {limit:.3e} ({why})")
+        return ok
 
     # Strict float32 is a property of the backend, not of the tensor dtype:
     # an A100 will silently run a float32 matmul in TF32 unless told not to,
@@ -249,21 +262,43 @@ def main() -> int:
     checks["folded_vs_unfolded_logits"] = fold
     checks["folded_vs_unfolded_cache"] = cache_cmp
     checks["identical_call_floor"] = rerun
-    checks["fold_kl_tolerance_nats"] = FOLD_KL_TOL
     # The assertion is the declared float32 tolerance, and only that. What
     # the cast then costs is measured and published rather than gated: a
     # threshold on it would be a threshold on bfloat16's resolution, which is
     # not something folding can be held to, and picking one after seeing the
     # number is how a test gets tuned until it passes.
-    ok = cache_cmp["fp32_worst_relative_to_tensor_scale"] <= FOLD_TOL_REL
-    checks["fold_exact_in_float32"] = ok
-    checks["folded_logits_agree"] = ok
-    if not ok:
-        failures.append(
-            f"folding is not exact: the two caches differ by "
-            f"{cache_cmp['fp32_worst_relative_to_tensor_scale']:.2e} relative to "
-            f"tensor scale in float32, against a declared {FOLD_TOL_REL:.0e}"
-        )
+    # Two separate questions, and the earlier version conflated them. Whether
+    # the fold is arithmetically exact is a property of the map and is
+    # required. Whether the target's next-token distribution is unchanged is a
+    # property of the map *and* the precision the cache is stored at, and it
+    # is reported without a threshold because bfloat16's resolution is not
+    # something folding can be held to.
+    #
+    # What must not happen again is a tolerance sitting in the record with
+    # nothing enforcing it, under a field named for a quantity it did not
+    # measure: the previous output carried `fold_kl_tolerance_nats` of 1e-4
+    # beside a measured 7.8e-4 and a field called `folded_logits_agree` set
+    # from the cache check, and reported an unqualified pass.
+    require(
+        "fold_exact_in_float32",
+        cache_cmp["fp32_worst_relative_to_tensor_scale"],
+        FOLD_TOL_REL,
+        "the folded and unfolded maps must agree in float32 relative to "
+        "tensor scale",
+    )
+    require(
+        "fold_preserves_argmax",
+        1.0 - fold["argmax_agreement"],
+        0.0,
+        "folding must not change which token the target would emit",
+    )
+    checks["diagnostics_no_threshold"] = {
+        "folded_vs_unfolded_mean_kl_nats": fold["mean_kl_nats"],
+        "note": (
+            "reported, not gated: this is the cost of storing the cache in "
+            "the serving dtype, which folding is not accountable for"
+        ),
+    }
     log_now(
         f"folded vs unfolded cache: float32 worst "
         f"{cache_cmp['fp32_worst_relative_to_tensor_scale']:.2e} relative to "
@@ -419,7 +454,12 @@ def main() -> int:
 
     checks["seconds"] = time.time() - t0
     checks["failures"] = failures
-    checks["passed"] = not failures
+    req = checks["required_checks"]
+    checks["passed"] = (
+        bool(req) and all(c["passed"] for c in req.values()) and not failures
+    )
+    checks["required_checks_passed"] = sum(1 for c in req.values() if c["passed"])
+    checks["required_checks_total"] = len(req)
     with open(args.out, "w") as f:
         json.dump(checks, f, indent=2, sort_keys=True, default=str)
     log_now(
