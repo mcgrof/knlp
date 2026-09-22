@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cartridges in the inference ecosystem</title>
+<meta name="description" content="A deployment roadmap for trained Cartridge KV artifacts across routers, vLLM, LMCache, KVCR, CAS composition, and asymmetric K/V formats.">
+<link rel="canonical" href="https://knlp.io/cartridges-ecosystem.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}h3{font-size:18px;margin:4px 0 9px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.warn{border-left-color:var(--amber)}.rule.open{border-left-color:var(--violet)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.warn strong{color:var(--amber)}.rule.open strong{color:var(--violet)}
+.lane{display:grid;grid-template-columns:1fr 54px 1fr;gap:10px;align-items:stretch}.lane-mid{display:grid;place-items:center;color:var(--dim);font:700 18px var(--mono)}
+.lane-card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:24px}.lane-card:first-child{border-top:3px solid var(--cyan)}.lane-card:last-child{border-top:3px solid var(--green)}.lane-card ol{padding-left:20px;color:var(--muted)}.lane-card li{margin:8px 0}.lane-tag{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}.lane-card:first-child .lane-tag{color:var(--cyan)}.lane-card:last-child .lane-tag{color:var(--green)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}.note.good{border-left-color:var(--green);background:rgba(42,230,163,.06)}
+.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+.contract{background:#090e0b;border:1px solid var(--line);border-radius:10px;padding:19px;overflow:auto;color:#c8b6ff;font:13px/1.7 var(--mono);white-space:pre}.fine{font-size:12px;color:var(--dim)}code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.map,.flow{grid-template-columns:1fr}.lane{grid-template-columns:1fr}.lane-mid{height:34px}.lane-mid:after{content:"two contracts";font-size:10px;letter-spacing:.08em}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#paradigms">two paradigms</a><a href="#plumbing">plumbing</a><a href="#tested">tested</a><a href="#lmcache">LMCache</a><a href="#roadmap">roadmap</a><a href="#gaps">gaps</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">Cartridge deployment · ecosystem roadmap · September 2026</div>
+<h1>Route the artifact.<br>Keep the engine in control.</h1>
+<p class="lead"><strong>Cartridge support can begin with an orchestrated cache transform and grow into direct loading of trained artifacts.</strong> A <a href="cartridges.html">Cartridge</a> is a learned KV prefix that carries document knowledge. LMCache can prefill an ordinary prompt, pass its real KV through <code>drop_tokens_fn()</code>, and replay the transformed cache through vLLM. A complementary path loads an offline-trained Cartridge by stable artifact ID and skips document prefill.</p>
+<p class="lead">Both paths can share routing, storage, residency, and inference infrastructure. The transformation path is a practical first ecosystem integration; direct loading adds artifact identity, virtual positions, and ordered composition for <a href="cas.html">Cartridges at Scale (CAS)</a>.</p>
+<div class="decision"><b>Recommended sequence</b><span>Start with LMCache's <code>drop_tokens_fn()</code> orchestration for prompt-derived Cartridge experiments. Extend the same data plane with opaque artifact IDs, router hints, virtual-prefix allocation, and a portable manifest for direct trained-artifact loading and CAS composition.</span></div>
+<div class="badges"><span class="badge green">TRAIN ONCE</span><span class="badge cyan">ROUTE BY ARTIFACT ID</span><span class="badge green">K16/V8 READY</span><span class="badge amber">CAS COMPOSITION OPEN</span></div>
+</div>
+
+<section id="paradigms">
+<h2>Two complementary paths into the same serving ecosystem</h2>
+<p class="sub">Both paths move KV through a real inference engine. They differ in where the object comes from, whether document prefill is avoided, and what must be present in the cache key.</p>
+<div class="lane">
+<article class="lane-card">
+<div class="lane-tag">Orchestrated cache transform</div>
+<h3>Prefill, transform, replay</h3>
+<ol>
+<li>vLLM prefills the original prompt.</li>
+<li>LMCache retrieves its KV and token IDs.</li>
+<li><code>drop_tokens_fn()</code> returns edited KV and a matching token sequence.</li>
+<li>LMCache stores the result and vLLM decodes from it.</li>
+</ol>
+<p>This is the LMCache path proposed as the first outlet for Cartridge implementations. The transform may be query-aware, as in SnapKV, or query-independent. It can change the number of positions and rerotate retained keys into a dense sequence.</p>
+<div class="note"><strong>Cost shape.</strong> This route reduces later decode memory, but it does not eliminate the first prefill that produced the cache.</div>
+</article>
+<div class="lane-mid" aria-hidden="true">↔</div>
+<article class="lane-card">
+<div class="lane-tag">Direct trained-artifact load</div>
+<h3>Select, fetch, attach</h3>
+<ol>
+<li>A router resolves the request to one Cartridge ID or an ordered set.</li>
+<li>A registry validates the immutable artifact manifest.</li>
+<li>The data plane makes the payload resident.</li>
+<li>vLLM allocates virtual prefix positions and the attention backend reads them.</li>
+</ol>
+<p>The source document never needs to appear in the request. The artifact has its own identity, length, position map, model compatibility, and K/V representation.</p>
+<div class="note good"><strong>Cost shape.</strong> Reuse skips source-document prefill and amortizes offline training over every request that loads the Cartridge.</div>
+</article>
+</div>
+<div class="note"><strong>The cache key is not just the returned token list.</strong> A transformed KV vector still encodes its original prefix. Query-aware selection also encodes the query. Safe reuse must bind the source-prefix digest, query dependency, transform version and parameters, retained positions, RoPE mapping, model layout, and payload digest.</div>
+</section>
+
+<section id="plumbing">
+<h2>Give each layer one job</h2>
+<p class="sub">The router chooses meaning. The data plane moves bytes. vLLM owns execution state. FlashInfer turns the representation into one attention result.</p>
+<div class="flow">
+<div><b>Router</b><span>Map the request to an ordered Cartridge set and placement hints.</span></div>
+<div><b>Registry</b><span>Resolve immutable IDs to manifests, versions, digests, and locations.</span></div>
+<div><b>Data plane</b><span>Fetch, prefetch, tier, pin, verify, and report residency.</span></div>
+<div><b>vLLM</b><span>Allocate exact virtual positions, schedule the request, and offset live tokens.</span></div>
+<div><b>Attention</b><span>Read Cartridge plus live KV with the correct dtype and one softmax state.</span></div>
+</div>
+<div class="grid3" style="margin-top:20px">
+<div class="card rule good"><strong>ROUTER SELECTS IDs</strong><p>The request can name an artifact explicitly or let a semantic router select it. File paths and GPU pages stay below this interface.</p></div>
+<div class="card rule good"><strong>ENGINE OWNS MEMORY</strong><p>The connector fills blocks allocated by vLLM. It does not compete with the scheduler for GPU pages or invent a second allocation model.</p></div>
+<div class="card rule good"><strong>KERNEL OWNS MIXED DTYPE</strong><p>K16/V8 is an artifact representation. FlashInfer loads BF16 keys and FP8 values while the request's live cache may remain BF16.</p></div>
+</div>
+</section>
+
+<section id="tested">
+<h2>The components exist; the complete ecosystem does not yet</h2>
+<p class="sub"><a href="cartridges.html">Base Cartridges</a> compile one document into one learned KV prefix. <a href="cas.html">Cartridges at Scale (CAS)</a> extends the design toward collections and jointly compatible composition; the current reproduction validates isolated training, not co-loaded serving. <a href="cartridge-asymmetric-quantization.html">Asymmetric Cartridge KV</a> is a post-training representation that keeps keys in BF16 and stores values in FP8. The table separates those measured pieces from the joins that still need end-to-end proof.</p>
+<div class="scroll"><table>
+<thead><tr><th>component</th><th>tested result</th><th>current limit</th></tr></thead>
+<tbody>
+<tr><td><a href="cartridges.html">Base Cartridges</a></td><td class="yes">Training, quality, direct KV injection, per-request dispatch, isolation, residency, eviction, and tensor-parallel sharding</td><td>Existing connector replaces prompt positions; a portable virtual-prefix contract remains to be standardized.</td></tr>
+<tr><td><a href="cas.html">CAS reproduction</a></td><td class="yes">Faithful isolated training, five-document evaluation, full-document cache-path control, and training-stability measurements</td><td>Ordered multi-Cartridge composition and joint mixed-visibility serving are not yet a production result.</td></tr>
+<tr><td><a href="cartridge-asymmetric-quantization.html">Asymmetric Cartridge KV</a></td><td class="yes">K16/V8 quality, physical FP8 value storage, exact-length prefill and decode, and fused H100 serving against BF16 Cartridge injection</td><td>One homogeneous Cartridge per request group; broader GPUs, workloads, graph execution, and multi-artifact fusion remain open.</td></tr>
+<tr><td>LMCache transformation</td><td class="yes">Variable-length edited KV, matching token IDs, query transfer, SnapKV/R-KV examples, and real-engine replay</td><td>Examples use offline batched orchestration and begin from an ordinary prefill.</td></tr>
+<tr><td>LMCache Cartridge storage</td><td class="yes">Read-only storage-plugin integration and connector-side tests</td><td>The storage plugin is not a complete standard for trained-artifact routing and virtual-prefix semantics.</td></tr>
+<tr><td><a href="https://github.com/ai-dynamo/kvcr">KVCR</a></td><td class="conditional">Experimental vLLM support, router hints, cross-node DRAM sharing, local disk caching, resiliency, and NIXL transfers</td><td>No native Cartridge manifest, composition contract, or LMCache protocol compatibility.</td></tr>
+</tbody>
+</table></div>
+<p class="fine" style="margin-top:10px">Measured scope and detailed numbers live on the linked result pages below. “Tested” here describes a component, not an assertion that every row has been integrated with every other row.</p>
+</section>
+
+<section id="lmcache">
+<h2>LMCache offers the shortest first outlet</h2>
+<p class="sub">The token-dropping SDK already connects a custom KV transformation to actual decoding. That makes it a practical way to test Cartridge-like compacted caches while the native artifact contract matures.</p>
+<div class="grid2">
+<div class="card">
+<div class="kicker">What the API provides</div>
+<h3>Real cache surgery</h3>
+<p>The callback receives cached tensors and token IDs, then returns a new KV tensor and the IDs for its new sequence. The SDK checks that the token count matches the KV length, retains the unaligned tail, and stores the edited prefix for inference.</p>
+<p><a href="https://github.com/LMCache/LMCache/tree/dev/examples/token_dropping">Review the LMCache token-dropping examples →</a></p>
+</div>
+<div class="card">
+<div class="kicker">What remains outside the API</div>
+<h3>Artifact identity and native loading</h3>
+<p>A trained Cartridge has no required source-token sequence. It needs an opaque identity, virtual positions, model and layout compatibility, separate K/V dtypes, ordered composition, and a route that can load it before any document prefill.</p>
+<p><a href="https://github.com/LMCache/LMCache/blob/dev/examples/token_dropping/snapkv_token_dropping.ipynb">Inspect the SnapKV implementation →</a></p>
+</div>
+</div>
+<div class="note"><strong>SnapKV demonstrates the identity problem clearly.</strong> The retained positions depend on the query tensor. Reusing that edited cache for another query under a prefix-only key can serve the wrong selection. Either include the query and transformation manifest in the identity, or keep the full shared prefix immutable and perform query-aware selection at request time.</div>
+</section>
+
+<section id="storage">
+<h2>LMCache and KVCR are data-plane choices, not the router</h2>
+<p class="sub">Both can sit below request-to-Cartridge selection. They overlap in placement and movement, but expose different APIs and do not become interoperable merely because both can use NIXL.</p>
+<div class="grid2">
+<div class="card rule good"><strong>LMCACHE</strong><p>Already supplies KV storage, tiering, engine connectors, a Cartridge storage-plugin path, and the transformation SDK. A native Cartridge API would add opaque artifact lookup and virtual-prefix metadata beside ordinary token-keyed caches.</p></div>
+<div class="card rule open"><strong><a href="https://github.com/ai-dynamo/kvcr">KV CACHE RUNNER (KVCR)</a></strong><p>Pairs naturally with a KV-aware router: the router holds global placement, KVCR manages local DRAM and disk, vLLM owns framework memory, and NIXL executes transfers. Its public release is experimental and currently defines blocks, not trained Cartridge objects.</p></div>
+</div>
+<div class="note"><strong>NIXL is transport, not the object model.</strong> KVCR's current G3 tier uses bounded files, fixed slots, and NIXL <code>FILE</code> registrations. A conventional-NVMe backend can extend that path, but raw block storage needs an explicit descriptor adapter, bounded device regions, durable recovery metadata, and device-identity checks. NIXL alone does not define Cartridge selection, ordering, or compatibility.</div>
+<p class="fine" style="margin-top:12px"><a href="https://github.com/ai-dynamo/kvcr">KV Cache Runner source and design</a></p>
+</section>
+
+<section id="contract">
+<h2>Make the artifact portable before making it clever</h2>
+<p class="sub">A serving request should name an ordered set of immutable artifacts. Locations and residency can change without changing what the request means.</p>
+<div class="contract" role="img" aria-label="Example Cartridge request and manifest contract">request
+  cartridge_ids: [medical-2026-09, dosage-rules-v3]
+  composition: ordered
+  miss_policy: prefill_or_fail
+
+manifest
+  artifact_id + version + payload_digest
+  model + tokenizer + RoPE + attention layout
+  logical positions + sink positions + ordering constraints
+  key dtype + value dtype + scales + packing
+  tensor-parallel layout + compatible engine/kernel versions
+  storage locations + current residency</div>
+<div class="grid3" style="margin-top:20px">
+<div class="card"><div class="kicker">Semantic identity</div><h3>Stable</h3><p>Artifact, version, ordered composition, model geometry, and payload digest define what the request means.</p></div>
+<div class="card"><div class="kicker">Physical placement</div><h3>Mutable</h3><p>HBM, host DRAM, local NVMe, and remote replicas can change while the artifact ID remains stable.</p></div>
+<div class="card"><div class="kicker">Execution policy</div><h3>Explicit</h3><p>Fallback, load deadline, quantization support, and incompatibility behavior must be visible rather than silently guessed.</p></div>
+</div>
+</section>
+
+<section id="roadmap">
+<h2>A narrow path to ecosystem support</h2>
+<p class="sub">Each step produces a useful deployable slice and an observable acceptance test.</p>
+<div class="steps">
+<div class="step"><strong>Ship the prompt-derived LMCache prototype.</strong><span>Use the existing transformation SDK and real-engine replay to validate orchestration, variable lengths, rerotation, and derived-cache identity on one query-independent Cartridge-like transform.</span></div>
+<div class="step"><strong>Freeze a native Cartridge manifest.</strong><span>Represent opaque IDs, exact virtual lengths, model geometry, separate K/V dtypes, checksums, and immutable versions independently of LMCache or KVCR.</span></div>
+<div class="step"><strong>Carry an artifact hint through the router and vLLM.</strong><span>Resolve one Cartridge ID first. Require correct allocation, position offsets, concurrent isolation, fallback, and warm/cold accounting.</span></div>
+<div class="step"><strong>Attach LMCache or KVCR below the same engine contract.</strong><span>Prove that changing the data plane does not change request semantics. Measure cold fetch, warm residency, eviction, and failure recovery.</span></div>
+<div class="step"><strong>Promote K16/V8 to a manifest-level representation.</strong><span>Serialize and transfer BF16 keys and FP8 values separately, then validate quality and the fused prefill/decode path across every tier.</span></div>
+<div class="step"><strong>Add ordered CAS composition.</strong><span>Route two or more jointly compatible Cartridges, preserve exact boundaries and visibility, and compare one fused attention computation with ordinary document prefill.</span></div>
+<div class="step"><strong>Qualify economics under real reuse.</strong><span>Combine measured training, storage, load, residency, and inference costs with observed popularity and reuse distributions instead of assuming every artifact stays hot.</span></div>
+</div>
+</section>
+
+<section id="gaps">
+<h2>The remaining gaps are contracts and joins</h2>
+<div class="grid3">
+<div class="card rule warn"><strong>PORTABLE FORMAT</strong><p>No shared manifest yet binds logical positions, model geometry, K/V dtype, packing, provenance, and checksums across engines and stores.</p></div>
+<div class="card rule warn"><strong>VIRTUAL PREFIX API</strong><p>Prompt-token replacement proves injection, but a trained artifact needs first-class positions that are not claimed to be the request's source tokens.</p></div>
+<div class="card rule warn"><strong>ORDERED COMPOSITION</strong><p>Dispatching different requests to different Cartridges is tested. Loading an ordered CAS set into one request is a separate operation.</p></div>
+<div class="card rule warn"><strong>HETEROGENEOUS FUSION</strong><p>The current fused kernel handles one shared K16/V8 Cartridge. Multiple lengths, representations, and visibility regions need one online-softmax plan.</p></div>
+<div class="card rule warn"><strong>INTEROPERABLE STORAGE</strong><p>LMCache and KVCR have useful but different object and control contracts. An adapter needs explicit ownership, compatibility, and failure semantics.</p></div>
+<div class="card rule warn"><strong>DEPLOYMENT EVIDENCE</strong><p>Cold starts, broad workload quality, CUDA graphs, more GPU families, multi-tenant isolation, upgrade compatibility, and full CAS economics remain to be measured.</p></div>
+</div>
+</section>
+
+<section id="related">
+<h2>Read the measured pieces</h2>
+<div class="map">
+<a href="cartridges.html"><b>Cartridges</b><span>The base technique, training results, vLLM connector, routing, residency, and serving validation.</span></a>
+<a href="cas.html"><b>Cartridges at Scale reproduction</b><span>The isolated recipe, five-document LongHealth result, full-document control, and training findings.</span></a>
+<a href="cartridge-asymmetric-quantization.html"><b>Asymmetric Cartridge quantization</b><span>K16/V8 quality, physical payload savings, fused FlashInfer path, vLLM integration, and measured H100 result.</span></a>
+<a href="https://kvcache.io/cartridge-economics.html"><b>Cartridge economics</b><span>Reuse, storage, training, and deployment projections for compiled KV artifacts.</span></a>
+<a href="https://github.com/LMCache/LMCache/tree/dev/examples/token_dropping"><b>LMCache token dropping</b><span>The SDK examples for retrieving, editing, storing, and decoding from variable-length KV caches.</span></a>
+<a href="lmcache-snapkv-prefix-integrity.html"><b>LMCache SnapKV identity case study</b><span>Why query-dependent cache transforms need identity metadata before two engines can safely share their results.</span></a>
+<a href="https://github.com/ai-dynamo/kvcr"><b>KV Cache Runner</b><span>An experimental router-guided data plane for distributed memory and storage tiers.</span></a>
+</div>
+</section>
+</main>
+<footer>knlp · Cartridges ecosystem roadmap · measured components and open integration contracts</footer>
+</body>
+</html>
