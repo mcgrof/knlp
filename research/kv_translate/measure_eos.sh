@@ -51,6 +51,17 @@ train_arm () {
 stage verify_contract python3 research/kv_translate/verify_contract.py \
     --contract "$A/CONTRACT.json" --staged "$A" --out "$O/contract_verified.json"
 
+# The whole processor side of training, walked before any of it costs GPU
+# time: imports including the ones made lazily, offline weight resolution,
+# input hashes, the corpus, the role windows, the examples and both arms'
+# masks. Two attempts died seconds into training on things this reaches.
+stamp preflight_start
+stage preflight python3 research/kv_translate/preflight_eos.py \
+    --artifacts "$A" --contract "$A/CONTRACT.json" \
+    --source-revision "$SRC_REV" --target-revision "$TGT_REV" \
+    --out "$O/preflight.json"
+stamp preflight_done
+
 train_arm on
 if over_cap; then
     echo "STOP: stage cap reached after the on arm" | tee -a "$O/drive.log"

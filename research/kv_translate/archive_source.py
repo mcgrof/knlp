@@ -35,6 +35,8 @@ FILES = [
     "research/kv_translate/drive_remote.sh",
     "research/kv_translate/measure_eos.sh",
     "research/kv_translate/verify_contract.py",
+    "research/kv_translate/eos_receipt.py",
+    "research/kv_translate/preflight_eos.py",
     "research/kv_translate/acquire_eos.sh",
     "research/kv_translate/eos_objective.py",
     "research/kv_translate/eos_gate.py",
