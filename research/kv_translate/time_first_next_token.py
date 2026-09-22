@@ -499,6 +499,140 @@ def main() -> int:
             )
         return checks
 
+    raw_path = args.out.replace(".json", ".raw.jsonl")
+
+    def cfg_hash(model_id, revision):
+        c = AutoConfig.from_pretrained(model_id, revision=revision)
+        return hashlib.sha256(c.to_json_string().encode()).hexdigest()
+
+    def base_record():
+        """Everything about the run that does not depend on the samples.
+
+        Written with every partial flush, so a run that stops early still
+        carries its identity, its pinning and its provenance rather than
+        leaving a bag of numbers nobody can attribute.
+        """
+        return {
+            "contract": CONTRACT + ("_DRY_RUN" if args.dry_run else ""),
+            "dry_run": bool(args.dry_run),
+            "dry_run_note": (
+                "Plumbing validation only. Timings from a dry run are discarded "
+                "and never reported as a measurement."
+                if args.dry_run
+                else None
+            ),
+            "identity": {
+                "experiment_id": args.experiment_id or "unset",
+                "attempt_id": args.attempt_id or "unset",
+                "clock_origin_unix": clock_origin,
+                "clock_origin_is": (
+                    "the allocation request"
+                    if args.started_at > 0
+                    else "this process start; the allocation clock was not passed in"
+                ),
+                "deadline_seconds_from_origin": args.deadline_seconds or None,
+            },
+            "code": {
+                "revision": REVISION,
+                "tree_dirty": DIRTY,
+                "runner_sha256": sha_file(__file__),
+                "qualifier_sha256": sha_file(
+                    os.path.join(os.path.dirname(__file__), "qualify_operator.py")
+                ),
+            },
+            "analysis_policy": {
+                **ANALYSIS,
+                # Bound to what this invocation actually did, not to the
+                # constants above. A policy that cannot disagree with the run
+                # records an intention, not a method.
+                "warmups_per_fixture_path": args.warmups,
+                "measured_repetitions_per_fixture_path": args.reps,
+                "n_fixtures": len(fx["fixtures"]),
+                "declared_defaults_match_run": bool(
+                    args.warmups == ANALYSIS["warmups_per_fixture_path"]
+                    and args.reps == ANALYSIS["measured_repetitions_per_fixture_path"]
+                ),
+            },
+            "boundary": BOUNDARY,
+            "device": {
+                "gpu": (
+                    torch.cuda.get_device_name(0) if dev == "cuda" else "cpu (dry run)"
+                ),
+                "capability": (
+                    list(torch.cuda.get_device_capability(0)) if dev == "cuda" else None
+                ),
+                "total_bytes": (
+                    torch.cuda.get_device_properties(0).total_memory
+                    if dev == "cuda"
+                    else None
+                ),
+                "peak_alloc_bytes": (
+                    int(torch.cuda.max_memory_allocated()) if dev == "cuda" else None
+                ),
+                "torch": torch.__version__,
+                "tf32_allowed": bool(torch.backends.cuda.matmul.allow_tf32),
+            },
+            "pinning": {
+                "source": args.source,
+                "target": args.target,
+                "source_revision": args.source_revision,
+                "target_revision": args.target_revision,
+                "source_config_sha256": cfg_hash(args.source, args.source_revision),
+                "target_config_sha256": cfg_hash(args.target, args.target_revision),
+                "tokenizer": fx.get("tokenizer"),
+                "batch_size": 1,
+                "attn_implementation": "sdpa",
+                "model_and_cache_dtype": args.dtype,
+                "mapper_and_feature_dtype": args.solve_dtype,
+                "cache_layout": "B,n_kv_heads,T,head_dim",
+                "key_frame": "content; re-rotated at the target position on apply",
+                "positions": "native 0..L-1; switch installs L-1 and feeds L-1",
+                "output_policy": "final-position logits, argmax, left on device",
+            },
+            "artifact": {
+                "path": os.path.abspath(args.artifact),
+                "joint_weight_sha256": man["joint_weight_sha256"],
+                "n_blocks": man["n_blocks"],
+                "required_sha256": args.require_artifact_sha256 or None,
+                "matches_required": (
+                    man["joint_weight_sha256"] == args.require_artifact_sha256
+                    if args.require_artifact_sha256
+                    else None
+                ),
+            },
+            "fixtures": {
+                "joint_sha256": fx["joint_sha256"],
+                "role": fx["role"],
+                "split": fx["split"],
+                "per_fixture": [
+                    {
+                        "index": f["index"],
+                        "sha256": f["sha256"],
+                        "n_tokens": f["n_tokens"],
+                    }
+                    for f in fx["fixtures"]
+                ],
+            },
+            "qualification_receipt": {
+                "path": os.path.abspath(args.qualification),
+                "sha256": sha_file(args.qualification),
+                "passed": q["passed"],
+                "limits": q.get("contract_limits"),
+                "measurements": {
+                    k: v.get("measured")
+                    for k, v in q.get("checks", {}).items()
+                    if isinstance(v, dict) and "measured" in v
+                },
+                "qualified_on_gpu": q.get("gpu"),
+                "operator_dtype": q.get("operator_dtype"),
+                "serving_dtype": q.get("serving_dtype"),
+                "tf32_allowed": q.get("tf32_allowed"),
+                "limits_are": "a declared diagnostic acceptance policy, not a "
+                "mathematical error bound",
+            },
+            "stages_seconds": stages,
+        }
+
     results, raw, stopped_after = {}, [], None
 
     def _flush(results, raw):

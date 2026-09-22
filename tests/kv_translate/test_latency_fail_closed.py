@@ -15,6 +15,7 @@ lets it be tested at all.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -218,3 +219,54 @@ def test_driver_failure_is_recorded_wherever_it_lands(tmp_path, failing):
     script.write_text(f'O="{tmp_path}"\nsource "{DRIVER}"\n{body}\n')
     subprocess.run(["bash", str(script)], capture_output=True, text=True)
     assert (tmp_path / "FAILED").read_text().strip() == failing
+
+
+def test_the_runner_completes_end_to_end_on_tiny_models(tmp_path):
+    """The whole path runs, and its exit status is asserted here.
+
+    This exists because the check it replaces was performed by eye. The dry
+    run was invoked in the same shell command as the test suite, its output
+    was piped through `tail`, and the reader saw the suite's "81 passed" and
+    concluded the run had also succeeded. It had not: a helper the writer had
+    deleted raised on the first flush, and the defect reached a rented A100,
+    where it cost an allocation after the first of three lengths had already
+    been measured.
+
+    A failure that has to be noticed in a log is a failure that will be
+    missed. Asserting the exit status is the whole point.
+    """
+    import shutil
+    import sys
+
+    if shutil.which("nvidia-smi") is None and not _has_torch():
+        pytest.skip("needs torch")
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "research" / "kv_translate" / "dry_run_latency.py"),
+            "--out-dir",
+            str(tmp_path / "dry"),
+            "--ctx",
+            "32",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "HIP_VISIBLE_DEVICES": ""},
+    )
+    assert r.returncode == 0, f"dry run failed:\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}"
+    d = json.loads((tmp_path / "dry" / "tiny_timing.json").read_text())
+    assert d["complete"] is True
+    assert d["contract"].endswith("_DRY_RUN")
+    # The record every partial flush must also carry.
+    for key in ("identity", "code", "pinning", "artifact", "fixtures", "boundary"):
+        assert key in d, f"{key} missing from the record"
+
+
+def _has_torch():
+    try:
+        import torch  # noqa: F401
+
+        return True
+    except Exception:
+        return False
