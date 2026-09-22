@@ -132,6 +132,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="Qwen/Qwen2.5-1.5B-Instruct")
     ap.add_argument("--target", default="Qwen/Qwen2.5-7B-Instruct")
+    ap.add_argument(
+        "--source-revision",
+        default="main",
+        help="immutable snapshot id for the source weights. A config hash "
+        "identifies a configuration, not the weight files, and 'main' moves, "
+        "so both arms and every control pin this explicitly.",
+    )
+    ap.add_argument("--target-revision", default="main")
     ap.add_argument("--manifests", required=True)
     ap.add_argument("--role", required=True, help="train77 | train154 | train308")
     ap.add_argument("--val-role", default="val19")
@@ -208,7 +216,7 @@ def main() -> int:
         log_now(f"sentinel {args.require_sentinel} passed; proceeding")
 
     manifests = json.load(open(args.manifests))
-    tok = AutoTokenizer.from_pretrained(args.target)
+    tok = AutoTokenizer.from_pretrained(args.target, revision=args.target_revision)
     eos_id = tok.eos_token_id
     for t in ("<|im_end|>",):
         i = tok.convert_tokens_to_ids(t)
@@ -216,9 +224,10 @@ def main() -> int:
             eos_id = i
 
     models, geom = {}, {}
+    revs = {"source": args.source_revision, "target": args.target_revision}
     for role, mid in (("source", args.source), ("target", args.target)):
         m = AutoModelForCausalLM.from_pretrained(
-            mid, dtype=dtype, attn_implementation="sdpa"
+            mid, revision=revs[role], dtype=dtype, attn_implementation="sdpa"
         ).to(dev)
         m.eval()
         for p in m.parameters():
@@ -241,9 +250,19 @@ def main() -> int:
     rk.freeze_affine()
     rv.freeze_affine()
     init_k, init_v = args.init + ".k.pt", args.init + ".v.pt"
-    if os.path.exists(init_k):
+    if os.path.exists(init_k) and os.path.exists(init_v):
         hk, hv = rk.load_init(init_k), rv.load_init(init_v)
         log_now(f"residual initialisation loaded, hashes {hk[:12]} / {hv[:12]}")
+    elif args.require_init:
+        # Two arms that start from different weights are not a matched pair,
+        # and an absent initialisation is the one way that happens silently.
+        # Minting a replacement here would produce a comparison that looks
+        # identical in every recorded field and is not one.
+        raise SystemExit(
+            f"BLOCKED_INPUTS: the frozen initialisation {init_k} / {init_v} is "
+            "absent. It is not created here, because an arm started from a "
+            "fresh initialisation is not matched to one that was not."
+        )
     else:
         hk, hv = rk.save_init(init_k), rv.save_init(init_v)
         log_now(f"residual initialisation created, hashes {hk[:12]} / {hv[:12]}")
@@ -256,6 +275,11 @@ def main() -> int:
         manifests, args.val_role, tok, args.ctx, args.cont_len, split_cache
     )
     log_now(f"{len(train)} training documents, {len(val)} validation documents")
+    if args.expect_train_documents and len(train) != args.expect_train_documents:
+        raise SystemExit(
+            f"BLOCKED_INPUTS: {len(train)} training documents, the contract "
+            f"declares {args.expect_train_documents}"
+        )
 
     def prepare(items, tag):
         """One reference distribution per document, computed once.
@@ -350,6 +374,21 @@ def main() -> int:
                     "denominator": float(valid.sum()),
                     "supervised_terms": float(contribute.sum()),
                 }
+            )
+        if args.expect_examples and len(obj_set) != args.expect_examples:
+            raise SystemExit(
+                f"BLOCKED_INPUTS: built {len(obj_set)} objective examples, the "
+                f"contract declares {args.expect_examples}. The arms are only "
+                "matched if they see the same examples."
+            )
+        n_docs_with = len({o["doc"] for o in obj_set})
+        if (
+            args.expect_example_documents
+            and n_docs_with != args.expect_example_documents
+        ):
+            raise SystemExit(
+                f"BLOCKED_INPUTS: examples span {n_docs_with} documents, the "
+                f"contract declares {args.expect_example_documents}"
             )
         kinds = {}
         for o in obj_set:
@@ -528,6 +567,8 @@ def main() -> int:
         {
             "contract": "premerge_residual_v1",
             "eos_arm": args.eos_arm,
+            "source_revision": args.source_revision,
+            "target_revision": args.target_revision,
             "k": {k: v.detach().cpu() for k, v in rk.blocks.state_dict().items()},
             "v": {k: v.detach().cpu() for k, v in rv.blocks.state_dict().items()},
         },
@@ -566,6 +607,8 @@ def main() -> int:
         "affine_joint_hash": man["joint_weight_sha256"],
         "valid_supervised_tokens": valid_tokens,
         "eos_arm": args.eos_arm,
+        "source_revision": args.source_revision,
+        "target_revision": args.target_revision,
         "eos_arm_contract": (
             "labels, fed sequence and denominator are identical across the on "
             "and off arms; the arm masks the terminal term in the numerator "
@@ -590,6 +633,21 @@ def main() -> int:
             torch.cuda.max_memory_allocated() / GIB if dev == "cuda" else 0.0
         ),
         "fold_parity": parity,
+        # Retained rather than summarised: a per-update trace and the exact
+        # order are what let two arms be compared update by update, and a mean
+        # over the last hundred cannot be recovered from afterwards.
+        "update_order": order,
+        "loss_trace": losses,
+        "per_example_denominators": [
+            {
+                "doc": o["doc"],
+                "kind": o["kind"],
+                "n_labels": o["n_labels"],
+                "denominator": o.get("denominator"),
+                "supervised_terms": o.get("supervised_terms"),
+            }
+            for o in obj_set
+        ],
         "premerge_residual": premerge,
         "fold_tolerance_relative": TOL,
         "folded_arm": out_arm,

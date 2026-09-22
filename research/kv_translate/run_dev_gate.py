@@ -178,6 +178,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default="Qwen/Qwen2.5-1.5B-Instruct")
     ap.add_argument("--target", default="Qwen/Qwen2.5-7B-Instruct")
+    ap.add_argument(
+        "--source-revision",
+        default="main",
+        help="immutable snapshot id for the source weights. A config hash "
+        "identifies a configuration, not the weight files, and 'main' moves, "
+        "so both arms and every control pin this explicitly.",
+    )
+    ap.add_argument("--target-revision", default="main")
     ap.add_argument("--gold", required=True, help="dev manifest with prompt ids")
     ap.add_argument(
         "--arm",
@@ -206,11 +214,12 @@ def main() -> int:
     if dev == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = False
 
-    tok = AutoTokenizer.from_pretrained(args.target)
+    tok = AutoTokenizer.from_pretrained(args.target, revision=args.target_revision)
     models, geom = {}, {}
+    revs = {"source": args.source_revision, "target": args.target_revision}
     for role, mid in (("source", args.source), ("target", args.target)):
         m = AutoModelForCausalLM.from_pretrained(
-            mid, dtype=dtype, attn_implementation="sdpa"
+            mid, revision=revs[role], dtype=dtype, attn_implementation="sdpa"
         ).to(dev)
         m.eval()
         for p in m.parameters():
