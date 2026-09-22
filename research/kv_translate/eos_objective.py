@@ -25,6 +25,10 @@ from __future__ import annotations
 import torch
 
 ARMS = ("on", "off")
+# The historical arm is dispatchable but not one of the corrected pair: it
+# shortened its own denominator, so it cannot be compared with either.
+LEGACY_ARM = "legacy_off"
+ALL_ARMS = ARMS + (LEGACY_ARM,)
 
 
 def build_labels(tok, example, eos_id):
@@ -47,8 +51,19 @@ def masks_for_arm(terminal, arm, pad=None):
     not depend on the arm. ``contribute`` drops the terminal position in the
     off arm and nothing else.
     """
-    if arm not in ARMS:
-        raise ValueError(f"unknown arm {arm!r}, expected one of {ARMS}")
+    if arm not in ALL_ARMS:
+        raise ValueError(f"unknown arm {arm!r}, expected one of {ALL_ARMS}")
+    if arm == LEGACY_ARM:
+        # Reproduced, not repaired. Its labels were already truncated upstream,
+        # so every remaining position contributes and the denominator is
+        # whatever survived -- which is the defect, faithfully.
+        t = torch.as_tensor(terminal, dtype=torch.float32)
+        v = (
+            torch.ones_like(t)
+            if pad is None
+            else torch.as_tensor(pad, dtype=torch.float32)
+        )
+        return v, v.clone()
     t = torch.as_tensor(terminal, dtype=torch.float32)
     valid = (
         torch.ones_like(t) if pad is None else torch.as_tensor(pad, dtype=torch.float32)
