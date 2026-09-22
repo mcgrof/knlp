@@ -372,8 +372,6 @@ def main() -> int:
             f"  first token {name}: {p50:.1f} ms, p50 {p50 / nat_p50:.3f}, "
             f"{'pass' if first_token[name]['gate_p95_under_native'] and first_token[name]['gate_p50_at_or_under_075'] else 'FAIL'}"
         )
-    del sp_head
-
     budget = float(np.percentile(timed(lambda: translated_first(candidate)), 50))
     window, win_ms = 0, 0.0
     for w in (16, 32, 48, 64, 96, 128, 192, 256, 384, 512):
@@ -393,6 +391,7 @@ def main() -> int:
         f"candidate {candidate} costs {budget:.1f} ms end to end, which buys a "
         f"native window of {window} tokens ({win_ms:.1f} ms)"
     )
+    del sp_head
 
     # ---- score every condition -------------------------------------------
     refs = ["target_native", "empty_cache"] + ([f"recent_{window}"] if window else [])
