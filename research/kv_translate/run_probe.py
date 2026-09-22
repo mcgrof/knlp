@@ -150,6 +150,12 @@ def main() -> int:
         default="",
         help="a gold manifest whose answers may never appear in training",
     )
+    ap.add_argument(
+        "--require-sentinel",
+        default="",
+        help="a sentinel.json that must record passed=true before training; "
+        "a run whose device did not qualify is not evidence about the method",
+    )
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
 
@@ -165,6 +171,21 @@ def main() -> int:
     if dev == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
+
+    if args.require_sentinel:
+        sent = json.load(open(args.require_sentinel))
+        if not sent.get("passed"):
+            bad = [
+                f"{k} measured {v['measured']:.3e} against {v['limit']:.0e}"
+                for k, v in sent.get("required_checks", {}).items()
+                if not v.get("passed")
+            ]
+            raise SystemExit(
+                "INVALID: the sentinel for this device did not pass, so any "
+                "result trained here is a measurement of an unqualified "
+                "configuration. Failing checks: " + "; ".join(bad or ["unknown"])
+            )
+        log_now(f"sentinel {args.require_sentinel} passed; proceeding")
 
     manifests = json.load(open(args.manifests))
     tok = AutoTokenizer.from_pretrained(args.target)
