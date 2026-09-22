@@ -80,6 +80,13 @@ from research.kv_translate.run_a0 import (  # noqa: E402
     make_cache,
 )
 from research.kv_translate.run_a1 import Mapper, flat_features  # noqa: E402
+from research.kv_translate.eos_objective import (  # noqa: E402
+    answer_logits,
+    answer_loss_from_logits,
+    build_labels,
+    legacy_answer_loss_from_logits,
+    masks_for_arm,
+)
 from research.kv_translate.objective_examples import (  # noqa: E402
     build_objective_examples,
     supervised_targets,
@@ -157,12 +164,17 @@ def main() -> int:
         "a run whose device did not qualify is not evidence about the method",
     )
     ap.add_argument(
-        "--no-supervise-eos",
-        action="store_true",
-        help="supervise the answer tokens but not the end of the answer. The "
-        "matched off arm of the termination ablation: everything else, "
-        "including the example set, the schedule, the initialisation and the "
-        "seed, is identical to the on arm.",
+        "--eos-arm",
+        default="on",
+        choices=("on", "off", "legacy_off"),
+        help="which terminal-supervision arm to train. 'on' supervises the "
+        "answer and its end. 'off' supervises the answer and masks the end, "
+        "keeping the same labels, the same fed sequence and the same "
+        "denominator, so the two arms differ by that one term and nothing "
+        "else. 'legacy_off' reproduces the earlier arm, which deleted the "
+        "terminal label and so also shrank the mean it divided by; it exists "
+        "to reproduce that run, not to test termination, and its output is "
+        "stamped confounded.",
     )
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
@@ -309,7 +321,7 @@ def main() -> int:
             ex,
             eos_id,
             gold_answers=forbid,
-            supervise_eos=not args.no_supervise_eos,
+            supervise_eos=args.eos_arm != "legacy_off",
         )
         if problems:
             raise SystemExit(
@@ -317,9 +329,12 @@ def main() -> int:
                 f"first: {problems[:3]}"
             )
         for e in ex:
-            q, lab = supervised_targets(
-                tok, e, eos_id, supervise_eos=not args.no_supervise_eos
-            )
+            if args.eos_arm == "legacy_off":
+                q, lab = supervised_targets(tok, e, eos_id, supervise_eos=False)
+                terminal = [0] * len(lab)
+            else:
+                q, lab, terminal = build_labels(tok, e, eos_id)
+            valid, contribute = masks_for_arm(terminal, args.eos_arm)
             obj_set.append(
                 {
                     "doc": e.doc_id,
@@ -328,6 +343,12 @@ def main() -> int:
                     "query_ids": q,
                     "labels": torch.tensor(lab).unsqueeze(0),
                     "n_labels": len(lab),
+                    "valid": valid.unsqueeze(0),
+                    "contribute": contribute.unsqueeze(0),
+                    # The denominator is the same in both arms by construction;
+                    # recorded per example so the receipt can show it.
+                    "denominator": float(valid.sum()),
+                    "supervised_terms": float(contribute.sum()),
                 }
             )
         kinds = {}
@@ -339,15 +360,16 @@ def main() -> int:
             f"all answers verified present in their prompt, "
             + (
                 "all label sequences end at EOS"
-                if not args.no_supervise_eos
-                else "no label sequence carries EOS (termination not supervised)"
+                if args.eos_arm != "legacy_off"
+                else "no label sequence carries EOS (the earlier arm, which also "
+                "shortened its denominator)"
             )
             + f", no training code collides with a "
             f"held-out answer ({len(forbid)} checked)"
         )
 
     def answer_loss(item, grad):
-        """Cross-entropy on the answer tokens and the end of the answer.
+        """Cross-entropy on the answer tokens, and on its end in the on arm.
 
         The first answer token is predicted from the query's last position,
         so the logits used are those at positions [len(query)-1 .. ]. Getting
@@ -377,9 +399,11 @@ def main() -> int:
             use_cache=True,
         ).logits
         # positions q_len-1 .. end predict label[0] .. label[-1]
-        pred = out[:, q.shape[1] - 1 :, :]
-        return torch.nn.functional.cross_entropy(
-            pred.reshape(-1, pred.shape[-1]).float(), lab.reshape(-1)
+        pred = answer_logits(out, q.shape[1])
+        if args.eos_arm == "legacy_off":
+            return legacy_answer_loss_from_logits(pred, lab)
+        return answer_loss_from_logits(
+            pred, lab, item["valid"].to(dev), item["contribute"].to(dev)
         )
 
     def loss_on(item, grad):
@@ -497,6 +521,20 @@ def main() -> int:
     if bad:
         raise SystemExit(f"INVALID: folding is not parity-preserving: {bad}")
 
+    # The residual before folding, kept so fold equivalence can be checked on
+    # this artifact rather than recorded unavailable as it was for the probe.
+    premerge = os.path.join(args.out_dir, f"{args.role}_premerge.pt")
+    torch.save(
+        {
+            "contract": "premerge_residual_v1",
+            "eos_arm": args.eos_arm,
+            "k": {k: v.detach().cpu() for k, v in rk.blocks.state_dict().items()},
+            "v": {k: v.detach().cpu() for k, v in rv.blocks.state_dict().items()},
+        },
+        premerge,
+    )
+    log_now(f"saved premerge residual {premerge}")
+
     folded_k, folded_v = rk.merge(), rv.merge()
     out_arm = os.path.join(args.out_dir, f"{args.role}_lin.pt")
     src_id = freeze.model_identity(args.source, models["source"], tok)
@@ -527,6 +565,17 @@ def main() -> int:
         "init_hashes": {"k": hk, "v": hv},
         "affine_joint_hash": man["joint_weight_sha256"],
         "valid_supervised_tokens": valid_tokens,
+        "eos_arm": args.eos_arm,
+        "eos_arm_contract": (
+            "labels, fed sequence and denominator are identical across the on "
+            "and off arms; the arm masks the terminal term in the numerator "
+            "only. legacy_off reproduces the earlier arm, which deleted the "
+            "terminal label and shrank the denominator with it, and is "
+            "confounded by construction."
+        ),
+        "eos_arm_confounded": args.eos_arm == "legacy_off",
+        "denominator_total": float(sum(o["denominator"] for o in obj_set)),
+        "supervised_terms_total": float(sum(o["supervised_terms"] for o in obj_set)),
         "objective_mix": args.objective_mix,
         "objective_updates": n_obj_steps,
         "objective_examples": len(obj_set),
@@ -541,6 +590,7 @@ def main() -> int:
             torch.cuda.max_memory_allocated() / GIB if dev == "cuda" else 0.0
         ),
         "fold_parity": parity,
+        "premerge_residual": premerge,
         "fold_tolerance_relative": TOL,
         "folded_arm": out_arm,
         "folded_joint_hash": saved["joint_weight_sha256"],
