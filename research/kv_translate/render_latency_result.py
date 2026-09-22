@@ -138,8 +138,8 @@ def main() -> int:
         ):
             e = d["results"][length]["conditions"][c]
             w(
-                f"| {length} | {NAMES[c]} | {e['meets_inherited_p50_0_75']} | "
-                f"{e['meets_inherited_tail_under_1']} | {e['blocks_taken']} |\n"
+                f"| {length} | {NAMES[c]} | {e['meets_inherited_p50']} | "
+                f"{e['meets_inherited_tail']} | {e['blocks_taken']} |\n"
             )
 
     if rec:
