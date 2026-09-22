@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+# LMCache SDK SnapKV reproduction targets.
+
+SNAPKV_ORCH := python3 -m tools.reproduce.lmcache_snapkv.run
+
+.PHONY: lmcache-snapkv-doctor lmcache-snapkv-fetch \
+	lmcache-snapkv-build lmcache-snapkv-run lmcache-snapkv-report \
+	lmcache-snapkv
+
+ifeq ($(CONFIG_KNLP_LMCACHE_SNAPKV),y)
+.DEFAULT_GOAL := lmcache-snapkv
+endif
+
+lmcache-snapkv: lmcache-snapkv-doctor lmcache-snapkv-fetch \
+	lmcache-snapkv-build lmcache-snapkv-run lmcache-snapkv-report
+
+lmcache-snapkv-doctor:
+	@$(SNAPKV_ORCH) doctor --config .config
+
+lmcache-snapkv-fetch:
+	@$(SNAPKV_ORCH) fetch --config .config
+
+lmcache-snapkv-build:
+	@$(SNAPKV_ORCH) build --config .config
+
+lmcache-snapkv-run:
+	@$(SNAPKV_ORCH) run --config .config
+
+lmcache-snapkv-report:
+	@$(SNAPKV_ORCH) report --config .config

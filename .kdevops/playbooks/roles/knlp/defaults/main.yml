@@ -6,3 +6,6 @@
 knlp_git_url: "https://github.com/mcgrof/knlp.git"
 knlp_git_ref: "main"
 knlp_data_path: "/data/knlp"
+workflow_knlp_lmcache_snapkv: false
+workflow_knlp_lmcache_snapkv_run: false
+workflow_knlp_lmcache_snapkv_cuda_devices: "0"

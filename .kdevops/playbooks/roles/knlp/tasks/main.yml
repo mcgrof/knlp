@@ -34,6 +34,13 @@
   tags:
     - knlp
 
+- name: Provision the LMCache SnapKV reproduction
+  ansible.builtin.include_tasks: lmcache-snapkv.yml
+  when: workflow_knlp_lmcache_snapkv | default(false) | bool
+  tags:
+    - knlp
+    - lmcache-snapkv
+
 - name: Install knlp Python requirements using uv or pip fallback
   ansible.builtin.shell: |
     cd {{ workflow_knlp_data | default(knlp_data_path) }}

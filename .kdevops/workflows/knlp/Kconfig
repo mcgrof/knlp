@@ -76,6 +76,31 @@ config WORKFLOW_KNLP_KVTIDE_UPCIE_DKMS_VERSION
 	default "0.2.0"
 	output yaml
 
+config WORKFLOW_KNLP_LMCACHE_SNAPKV
+	bool "Provision the LMCache SnapKV reproduction"
+	default n
+	output yaml
+	help
+	  Build the KNLP LMCache SDK token-dropping environment. This installs
+	  the selected vLLM wheel, applies LMCache's query-tensor export patch,
+	  and builds LMCache from source. An NVIDIA GPU and matching CUDA toolkit
+	  must already be present on the target.
+
+config WORKFLOW_KNLP_LMCACHE_SNAPKV_RUN
+	bool "Run the SnapKV comparison during provisioning"
+	depends on WORKFLOW_KNLP_LMCACHE_SNAPKV
+	default n
+	output yaml
+	help
+	  Run the ten-prompt baseline-versus-SnapKV comparison after building.
+	  Leave disabled when provisioning an image for a later scheduled run.
+
+config WORKFLOW_KNLP_LMCACHE_SNAPKV_CUDA_DEVICES
+	string "CUDA devices for the SnapKV run"
+	depends on WORKFLOW_KNLP_LMCACHE_SNAPKV
+	default "0"
+	output yaml
+
 endmenu
 
 endif # KDEVOPS_USER_WORKFLOW_KNLP
