@@ -409,16 +409,27 @@ def test_off_arm_is_not_validated_against_the_on_arm_invariant():
     assert verify_examples(tok, [e], tok.eos_token_id, supervise_eos=False) == []
 
 
-def test_reference_limit_is_above_the_float32_accumulation_floor():
-    """A tolerance below the arithmetic's own floor is a broken check.
+def test_acceptance_limit_is_declared_not_derived():
+    """The limit must not move to meet a measurement.
 
-    The first version of the operator qualification fixed this at 1e-6 for a
-    4096-wide float32 dot product, which no correct implementation could meet.
+    This check was briefly rewired to accept whatever a square-root-of-width
+    heuristic predicted, on the argument that 1e-6 was unreachable for a
+    4096-wide float32 dot product. The A100 receipts refute that argument:
+    the same artifact agrees to 2.8e-7 there. The heuristic is kept as a
+    reported diagnostic, and the acceptance limit stays where it was declared,
+    so that a device or implementation change fails the check instead of
+    being absorbed by it.
     """
-    from research.kv_translate.qualify_operator import reference_limit
+    from research.kv_translate.qualify_operator import (
+        LIMITS,
+        heuristic_error_scale,
+    )
 
-    assert reference_limit(4096, "float32") > 3e-6
-    assert reference_limit(4096, "float32") < 1e-5
-    # Wider support tolerates more error; a tighter precision tolerates less.
-    assert reference_limit(16384, "float32") > reference_limit(4096, "float32")
-    assert reference_limit(4096, "float64") < reference_limit(4096, "float32")
+    assert LIMITS["operator_matches_reference"] == 1e-6
+    assert LIMITS["operator_is_deterministic"] == 0.0
+    assert LIMITS["serving_cast_within_one_step"] == 1.001
+    # The heuristic survives as a number to report, and is not the limit.
+    assert heuristic_error_scale(4096, "float32") > LIMITS["operator_matches_reference"]
+    assert heuristic_error_scale(4096, "float64") < heuristic_error_scale(
+        4096, "float32"
+    )
