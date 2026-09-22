@@ -99,6 +99,13 @@ def log_now(m):
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def sha_file(p):
+    try:
+        return hashlib.sha256(open(p, "rb").read()).hexdigest()
+    except Exception:
+        return None
+
+
 def fixture_hash(t: torch.Tensor) -> str:
     x = t.detach().to("cpu").contiguous().to(torch.float64)
     return hashlib.sha256(x.numpy().tobytes()).hexdigest()[:32]
@@ -268,7 +275,33 @@ def main() -> int:
 
     # Folding is a separate claim about a separate pair of objects.
     if args.premerge and os.path.exists(args.premerge):
-        checks["fold_equivalence"] = {"status": "checked", "note": "premerge present"}
+        # Saying "checked" because a file exists is the vacuous-status pattern
+        # this program keeps being caught by. What is recorded is what is
+        # actually known: the residual was retained, and the tensor-level fold
+        # parity was measured by the trainer that folded it, at the declared
+        # 1e-4 relative tolerance. Recomputing it here would need the mapper
+        # rebuilt; the training receipt carries the measurement.
+        blob = torch.load(args.premerge, map_location="cpu", weights_only=False)
+        train_json = os.path.join(
+            os.path.dirname(args.premerge),
+            os.path.basename(args.premerge).replace("_premerge.pt", "_train.json"),
+        )
+        parity = None
+        if os.path.exists(train_json):
+            parity = json.load(open(train_json)).get("fold_parity")
+        checks["fold_equivalence"] = {
+            "status": "residual retained",
+            "premerge_path": os.path.abspath(args.premerge),
+            "premerge_sha256": sha_file(args.premerge),
+            "premerge_arm": blob.get("eos_arm"),
+            "fold_parity_from_training": parity,
+            "fold_tolerance_relative": 1e-4,
+            "note": (
+                "the residual before folding is retained for this artifact, and "
+                "the tensor-level parity above was measured when it was folded. "
+                "This is not a fresh recomputation and is not claimed as one."
+            ),
+        }
     else:
         checks["fold_equivalence"] = {
             "status": "unavailable",

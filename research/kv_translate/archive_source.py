@@ -32,6 +32,9 @@ FILES = [
     "research/kv_translate/archive_source.py",
     "research/kv_translate/audit_eos_denominator.py",
     "research/kv_translate/drive_latency.sh",
+    "research/kv_translate/drive_remote.sh",
+    "research/kv_translate/measure_eos.sh",
+    "research/kv_translate/eos_objective.py",
     "research/kv_translate/measure_latency.sh",
     "research/kv_translate/closure_receipt.py",
     "research/kv_translate/update_ledger.py",
@@ -51,6 +54,8 @@ FILES = [
     "research/cartridges_cas/scripts/cas_kv_rope.py",
     "tests/kv_translate/test_latency_fail_closed.py",
     "tests/kv_translate/test_gate_integrity.py",
+    "tests/kv_translate/test_eos_objective.py",
+    "tests/kv_translate/test_drive_remote.sh",
 ]
 
 

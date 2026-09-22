@@ -98,7 +98,11 @@ def classify(timing):
                 any_source = True
             if crosses and not saving:
                 any_uncertain = True
-        row["all_finite"] = r.get("all_finite")
+        # The measurement writes model_logits_all_finite. Reading a name it
+        # does not write returns null, and a null validity field reads as
+        # "not checked" when the check in fact passed.
+        row["model_logits_all_finite"] = r.get("model_logits_all_finite")
+        row["nonfinite_occurrences"] = r.get("nonfinite_occurrences")
         per[length] = row
     if any_source:
         state = "SOURCE_INCLUSIVE_TIMING_OPPORTUNITY"
