@@ -214,7 +214,20 @@ def verify_examples(tok, examples, eos_id, gold_answers=None, supervise_eos=True
         ans = normalise(e.answer)
         if ans not in prompt:
             problems.append(f"{e.doc_id}/{e.kind}: answer {ans!r} is not in the prompt")
-        _, labels = supervised_targets(tok, e, eos_id, supervise_eos=supervise_eos)
+        # Rebuilt from the answer rather than from supervised_targets, whose
+        # own appended terminal this used to be compared against -- which is a
+        # value compared with itself, so the check could never fire.
+        answer_ids = (
+            tok(e.answer, return_tensors="pt", add_special_tokens=False)
+            .input_ids[0]
+            .tolist()
+        )
+        labels = answer_ids + ([eos_id] if supervise_eos else [])
+        if supervise_eos and eos_id in answer_ids:
+            problems.append(
+                f"{e.doc_id}/{e.kind}: the answer itself contains the terminal "
+                "id, so the terminal position is not distinguishable"
+            )
         if len(labels) < (2 if supervise_eos else 1):
             problems.append(f"{e.doc_id}/{e.kind}: answer tokenises to nothing")
         if supervise_eos and labels[-1] != eos_id:

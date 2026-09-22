@@ -542,13 +542,26 @@ def main() -> int:
         g["retains_h0_latency_gates"] = bool(
             ft.get("gate_p95_under_native") and ft.get("gate_p50_at_or_under_075")
         )
-        g["passes"] = bool(
+        behavioural = bool(
             g["prompt_specific"]
             and g["recovers_incremental_gain"]
             and g["within_absolute_points"]
             and g["no_pathology_regression"] is True
-            and g["beats_latency_matched_native"] is True
-            and g["retains_h0_latency_gates"]
+        )
+        deployment = bool(
+            g["beats_latency_matched_native"] is True and g["retains_h0_latency_gates"]
+        )
+        g["behavioural_requirements"] = behavioural
+        g["deployment_requirements"] = deployment
+        g["verdict_scope"] = args.verdict_scope
+        # The cost criteria are always measured and always reported. The scope
+        # decides only whether they are allowed to settle the verdict, because
+        # a stage asked about quality at this length should not be answered by
+        # a cost failure already known at it.
+        g["passes"] = (
+            behavioural
+            if args.verdict_scope == "quality_health"
+            else (behavioural and deployment)
         )
         gates[cond] = g
 

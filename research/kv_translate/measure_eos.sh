@@ -79,6 +79,7 @@ stage gate python3 research/kv_translate/run_dev_gate.py \
     --arm eos_off="$O/eos_off/train154_lin.pt" \
     --arm anchor77="$A/train77_lin.pt" \
     --source-revision "$SRC_REV" --target-revision "$TGT_REV" \
+    --verdict-scope quality_health \
     --out-dir "$O/gate"
 stamp gate_done
 
