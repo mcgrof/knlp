@@ -633,3 +633,63 @@ def test_a_condition_naming_an_unsupplied_arm_is_refused_up_front(world, tmp_pat
     assert r.returncode != 0
     assert "arms that were not supplied" in (r.stdout + r.stderr)
     assert not os.path.exists(os.path.join(out, "rows.jsonl"))
+
+
+def test_the_run_declares_the_documents_it_covers(world, complete):
+    """A stage narrower than the fixture must be scorable.
+
+    The scorer demands a cell for every document in the manifest it is given,
+    which is correct, so a sixteen-document screen handed the whole fixture
+    reads as a complete stage that is missing most of its cells. The scope is
+    written from the frozen fixture and the declared selection before any
+    score exists, so a run cannot narrow it by failing.
+    """
+    from research.kv_translate.recovery_gate import load_rows
+
+    sc = json.load(open(os.path.join(complete, "scope.json")))
+    assert sc["docs_scope"] == "all"
+    assert [d["doc"] for d in sc["documents"]] == [
+        d["doc"] for d in world["man"]["documents"]
+    ]
+    assert sc["version"] == world["man"]["version"]
+    assert sc["task_joint_sha256"] == world["man"]["task_joint_sha256"]
+    rows, docs = load_rows(
+        os.path.join(complete, "rows.jsonl"),
+        sc,
+        json.load(open(os.path.join(complete, "matrix.json"))),
+        "screen",
+    )
+    assert len(docs) == NDOC
+
+
+def test_a_narrowed_scope_names_only_the_documents_that_stage_ran(world, tmp_path):
+    out = str(tmp_path / "screenonly")
+    os.makedirs(out)
+    r = run_cli(world, out, "--docs", "screen")
+    assert r.returncode == 0, r.stdout + r.stderr
+    sc = json.load(open(os.path.join(out, "scope.json")))
+    want = [d["doc"] for d in world["man"]["documents"] if d["in_screen"]]
+    assert [d["doc"] for d in sc["documents"]] == want
+    assert 0 < len(want) < len(world["man"]["documents"])
+    got = {c[2] for c in cells(os.path.join(out, "rows.jsonl"))}
+    assert got == set(want)
+
+
+def test_the_cost_of_a_plain_native_prefill_is_quotable(world):
+    """It is the baseline, not an oracle: a serving system can always prefill.
+
+    Marking it unquotable left the timing comparison with no denominator and
+    no ratio was produced at all.
+    """
+    from research.kv_translate.recovery_runner import is_cost_oracle, is_oracle
+
+    native = {"repair": "native"}
+    assert is_oracle(native), "it is still the quality ceiling"
+    assert not is_cost_oracle(native), "but its cost is ordinary"
+    donor = {"repair": "oracle", "selector": "uniform", "blocks": 4}
+    assert is_cost_oracle(donor)
+    assert is_cost_oracle({"repair": "replay", "selector": "native_attn", "blocks": 4})
+    assert not is_cost_oracle(
+        {"repair": "replay", "selector": "mapped_attn", "blocks": 4}
+    )
+    assert not is_cost_oracle({"repair": "span", "selector": "lexical", "blocks": 4})
