@@ -476,6 +476,16 @@ def test_the_strict_gate_accepts_the_runner_s_own_output(world, complete):
     assert len(rows) == len(expected_cells(world["man"]))
 
 
+def test_the_run_writes_the_matrix_the_scorer_will_demand(world, complete):
+    """The scorer is told which cells must exist by a file; the run writes it,
+    so the set demanded is the set the run was configured to produce."""
+    from research.kv_translate.recovery_gate import load_rows
+
+    m = json.load(open(os.path.join(complete, "matrix.json")))
+    assert m == SMALL["matrix"]
+    load_rows(os.path.join(complete, "rows.jsonl"), world["man"], m, "screen")
+
+
 def test_a_run_records_the_pins_a_later_reader_needs(complete):
     r = json.load(open(os.path.join(complete, "RECEIPT.json")))
     for f in ("manifest_version", "arms", "models", "block_tokens", "definitions"):
