@@ -91,6 +91,106 @@ def rank_blocks_by_attention(attn, n_positions: int, k: int, block: int = BLOCK)
     return sorted(order[:k])
 
 
+class CacheContract:
+    """What a cache pair must satisfy before anything is copied into it.
+
+    Checked once, against the receiver's own geometry, and before allocation
+    rather than after. A shape check alone does not establish that axis -2 is
+    positions: the serving path this mirrors passes a tensor whose head axis
+    lands where the helper expects tokens, and every shape in it is valid.
+    """
+
+    def __init__(self, n_layers, n_kv_heads, head_dim, n_positions, dtype, device):
+        self.n_layers = int(n_layers)
+        self.n_kv_heads = int(n_kv_heads)
+        self.head_dim = int(head_dim)
+        self.n_positions = int(n_positions)
+        self.dtype = dtype
+        self.device = torch.device(device)
+
+    def expected(self):
+        return (1, self.n_kv_heads, self.n_positions, self.head_dim)
+
+    def check_cache(self, cache, name):
+        if len(cache) != self.n_layers:
+            raise ValueError(
+                f"{name}: {len(cache)} layers, receiver has {self.n_layers}"
+            )
+        want = self.expected()
+        for li, t in enumerate(cache):
+            if tuple(t.shape) != want:
+                raise ValueError(
+                    f"{name} layer {li}: shape {tuple(t.shape)} != {want}. Axis "
+                    "order is batch, kv-head, position, channel; a permuted "
+                    "tensor of the same volume is not the same cache."
+                )
+            if t.dtype != self.dtype:
+                raise ValueError(f"{name} layer {li}: dtype {t.dtype} != {self.dtype}")
+            if t.device.type != self.device.type:
+                raise ValueError(
+                    f"{name} layer {li}: device {t.device} != {self.device}"
+                )
+
+    def check_pair(self, keys, values, name):
+        self.check_cache(keys, f"{name} keys")
+        self.check_cache(values, f"{name} values")
+
+    def check_mask(self, mask):
+        if not isinstance(mask, torch.Tensor):
+            raise ValueError("mask must be a tensor")
+        if mask.dtype != torch.bool:
+            raise ValueError(f"mask dtype {mask.dtype} is not bool")
+        if mask.dim() != 1:
+            raise ValueError(f"mask has {mask.dim()} dimensions, expected 1")
+        if mask.shape[0] != self.n_positions:
+            raise ValueError(
+                f"mask covers {mask.shape[0]} positions, cache holds "
+                f"{self.n_positions}"
+            )
+
+    def check_blocks(self, blocks, block=BLOCK):
+        total = n_blocks(self.n_positions, block)
+        if len(set(blocks)) != len(blocks):
+            raise ValueError(f"block indices repeat: {blocks}")
+        bad = [b for b in blocks if not (0 <= b < total)]
+        if bad:
+            raise ValueError(f"block indices out of range 0..{total - 1}: {bad}")
+
+    def check_fraction(self, frac):
+        if not (0.0 <= float(frac) <= 1.0):
+            raise ValueError(f"budget fraction {frac} is outside 0..1")
+
+    def check_scores(self, scores):
+        if scores.shape[0] != self.n_positions:
+            raise ValueError(
+                f"scores cover {scores.shape[0]} positions, cache holds "
+                f"{self.n_positions}"
+            )
+        if not bool(torch.isfinite(scores).all()):
+            raise ValueError("selection scores contain non-finite values")
+
+
+def rank_blocks_on_device(attn, n_positions: int, k: int, block: int = BLOCK):
+    """Block ranking without a synchronisation per block.
+
+    The readable version indexes a device tensor once per block, and each of
+    those is a synchronisation. Here the whole reduction happens on device and
+    exactly one transfer follows. Ties are broken by block index, which is
+    reproducible, rather than by whatever order a sort kernel produced.
+    """
+    total = n_blocks(n_positions, block)
+    if k <= 0 or total <= 0:
+        return []
+    a = attn[: total * block].reshape(total, block).sum(dim=1)
+    idx = torch.arange(total, device=a.device, dtype=a.dtype)
+    # Subtract a strictly increasing tiebreak smaller than any real gap, so a
+    # descending sort puts the lower index first among equals.
+    span = (a.max() - a.min()).clamp(min=1.0)
+    keyed = a - idx * (span * 1e-9)
+    sel = torch.topk(keyed, k=min(k, total)).indices
+    return sorted(int(x) for x in sel.cpu().tolist())
+
+
 def repair_cache(mapped, native, mask):
     """Replace masked positions of every layer with the donor's values.
 
