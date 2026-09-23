@@ -771,6 +771,10 @@ def main() -> int:
             + (", retrying failures" if args.retry_failed else "")
         )
     out = open(rows_path, "a")
+    # The scorer is told which cells must exist, and it is told by a file.
+    # Writing it here rather than extracting it by hand later means the set
+    # the scorer demands is the set this run was configured to produce.
+    json.dump(matrix, open(os.path.join(args.out_dir, "matrix.json"), "w"), indent=1)
 
     def emit(row):
         out.write(json.dumps(row) + "\n")
