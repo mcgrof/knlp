@@ -41,6 +41,7 @@ FILES = [
     "research/kv_translate/eos_objective.py",
     "research/kv_translate/eos_gate.py",
     "research/kv_translate/build_recovery_manifest.py",
+    "research/kv_translate/build_recovery_manifest_v2.py",
     "research/kv_translate/recovery.py",
     "research/kv_translate/recovery_gate.py",
     "research/kv_translate/analyse_arm_traces.py",
