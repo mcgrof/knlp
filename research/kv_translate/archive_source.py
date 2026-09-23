@@ -74,6 +74,7 @@ FILES = [
     "research/kv_translate/replay.py",
     "research/kv_translate/recovery_runner.py",
     "research/kv_translate/pick_candidate.py",
+    "research/kv_translate/summarise_recovery.py",
     "research/kv_translate/make_cpu_fixture.py",
     "tests/kv_translate/test_replay_integration.py",
     "tests/kv_translate/test_recovery_runner.py",
