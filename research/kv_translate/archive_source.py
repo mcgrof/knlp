@@ -83,6 +83,13 @@ FILES = [
     "research/jacobian_kv/artifacts.py",
     "research/jacobian_kv/accounting.py",
     "research/jacobian_kv/evaluate.py",
+    "research/jacobian_kv/__init__.py",
+    "research/kv_translate/__init__.py",
+    # reached from jacobian_kv.evaluate, under a different top-level package;
+    # the closure walker found it only after it stopped assuming one
+    "tools/kv/fp8_failure/statistics.py",
+    "tools/__init__.py",
+    "tools/kv/fp8_failure/__init__.py",
 ]
 
 # Entry points whose import closure the archive must cover. The list above is
@@ -123,11 +130,23 @@ def local_imports(rel, seen):
             names.add(node.module)
             names.update(f"{node.module}.{a.name}" for a in node.names)
     for name in names:
-        if not name.startswith("research."):
+        # Any dotted name that resolves to a file in this tree is in the
+        # closure. Restricting this to one top-level package was the bug it
+        # was written to prevent: a module under `research` imports one under
+        # `tools`, the walker skipped it, the archive reported success, and
+        # the rented card stopped on a missing module.
+        parts = name.split(".")
+        if not parts or not os.path.isdir(os.path.join(ROOT, parts[0])):
             continue
-        cand = os.path.join(*name.split(".")) + ".py"
-        if os.path.exists(os.path.join(ROOT, cand)):
-            local_imports(cand, seen)
+        # Importing a.b.c executes every package __init__ along the way, so
+        # each one is part of what has to be present, not just the leaf.
+        cands = []
+        for i in range(1, len(parts) + 1):
+            cands.append(os.path.join(*parts[:i], "__init__.py"))
+        cands.append(os.path.join(*parts) + ".py")
+        for cand in cands:
+            if os.path.exists(os.path.join(ROOT, cand)):
+                local_imports(cand, seen)
     return seen
 
 
