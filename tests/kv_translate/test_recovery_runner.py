@@ -581,3 +581,45 @@ def test_the_budget_a_condition_declares_is_the_budget_it_spends(world):
         )
         assert info["replayed_positions"] == k * BLOCK
         assert len(info["selected_blocks"]) == k
+
+
+def test_a_condition_naming_an_unsupplied_arm_is_refused_up_front(world, tmp_path):
+    cfg = str(tmp_path / "armless.json")
+    json.dump(
+        {
+            "definitions": {
+                "target_native": {"repair": "native"},
+                "other": {"repair": "none", "arm": "nobody_passed_this"},
+            },
+            "matrix": {"retrieval": ["target_native", "other"]},
+        },
+        open(cfg, "w"),
+    )
+    out = str(tmp_path / "armless-out")
+    os.makedirs(out)
+    cmd = [
+        sys.executable,
+        "-m",
+        "research.kv_translate.recovery_runner",
+        "--source",
+        world["paths"]["source"],
+        "--target",
+        world["paths"]["target"],
+        "--manifest",
+        os.path.join(world["dir"], "manifest.json"),
+        "--conditions",
+        cfg,
+        "--arm",
+        f"tiny={world['arm']}",
+        "--ctx",
+        str(CTX),
+        "--dtype",
+        "float32",
+        "--out-dir",
+        out,
+    ]
+    env = dict(os.environ, PYTHONPATH=ROOT, CUDA_VISIBLE_DEVICES="", HF_HUB_OFFLINE="1")
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=ROOT)
+    assert r.returncode != 0
+    assert "arms that were not supplied" in (r.stdout + r.stderr)
+    assert not os.path.exists(os.path.join(out, "rows.jsonl"))

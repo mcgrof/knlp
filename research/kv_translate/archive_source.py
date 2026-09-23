@@ -71,7 +71,68 @@ FILES = [
     "tests/kv_translate/test_recovery_gate.py",
     "tests/kv_translate/test_driver_flags.py",
     "tests/kv_translate/test_drive_remote.sh",
+    "research/kv_translate/replay.py",
+    "research/kv_translate/recovery_runner.py",
+    "research/kv_translate/make_cpu_fixture.py",
+    "tests/kv_translate/test_replay_integration.py",
+    "tests/kv_translate/test_recovery_runner.py",
+    # reached through run_a1, which the runner imports for its feature
+    # layout; found by the closure check below, not by inspection
+    "research/jacobian_kv/artifacts.py",
+    "research/jacobian_kv/accounting.py",
+    "research/jacobian_kv/evaluate.py",
 ]
+
+# Entry points whose import closure the archive must cover. The list above is
+# written by hand and has drifted before: a runner was added, the archive kept
+# passing, and the snapshot beside the results was missing the file that
+# produced them. So the closure is now derived from the imports themselves and
+# the hand-written list is checked against it.
+ENTRY_POINTS = [
+    "research/kv_translate/recovery_runner.py",
+    "research/kv_translate/recovery_gate.py",
+    "research/kv_translate/build_recovery_manifest_v2.py",
+    "research/kv_translate/make_cpu_fixture.py",
+    "research/kv_translate/time_first_next_token.py",
+    "research/kv_translate/qualify_operator.py",
+]
+
+
+def local_imports(rel, seen):
+    """Every in-tree module ``rel`` reaches, by reading its imports.
+
+    Import statements are read from the syntax tree rather than executed, so
+    this works without the run's dependencies installed and cannot be fooled
+    by a module that imports something only on one branch.
+    """
+    import ast
+
+    path = os.path.join(ROOT, rel)
+    if rel in seen or not os.path.exists(path):
+        return seen
+    seen.add(rel)
+    tree = ast.parse(open(path).read(), filename=path)
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module)
+            names.update(f"{node.module}.{a.name}" for a in node.names)
+    for name in names:
+        if not name.startswith("research."):
+            continue
+        cand = os.path.join(*name.split(".")) + ".py"
+        if os.path.exists(os.path.join(ROOT, cand)):
+            local_imports(cand, seen)
+    return seen
+
+
+def closure():
+    seen = set()
+    for e in ENTRY_POINTS:
+        local_imports(e, seen)
+    return seen
 
 
 def sha(p):
@@ -90,6 +151,8 @@ def main() -> int:
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
+    reached = closure()
+    unlisted = sorted(reached - set(FILES))
     entries, missing = [], []
     for rel in FILES:
         src = os.path.join(ROOT, rel)
@@ -115,6 +178,9 @@ def main() -> int:
         "uncommitted_patch_bytes": len(patch),
         "files": sorted(entries, key=lambda e: e["path"]),
         "missing": missing,
+        "entry_points": ENTRY_POINTS,
+        "import_closure_size": len(reached),
+        "unlisted_imports": unlisted,
         "note": (
             "The import closure of the timing path, each file hashed as copied. "
             "A snapshot that records a revision without the runners cannot "
@@ -124,10 +190,16 @@ def main() -> int:
     }
     if missing:
         print(f"WARNING: {len(missing)} declared files absent: {missing}")
+    if unlisted:
+        print(
+            f"WARNING: {len(unlisted)} modules the entry points import are not "
+            f"archived: {unlisted}"
+        )
     json.dump(man, open(os.path.join(args.out, "MANIFEST.json"), "w"), indent=2)
     print(f"archived {len(entries)} files at {man['revision'][:12]}")
+    print(f"import closure: {len(reached)} modules, {len(unlisted)} unlisted")
     print(f"uncommitted patch: {len(patch)} bytes")
-    return 1 if missing else 0
+    return 1 if (missing or unlisted) else 0
 
 
 if __name__ == "__main__":
