@@ -30,7 +30,11 @@ import numpy as np
 
 TASKS = ("retrieval", "cloze")
 ABSOLUTE_POINTS = 0.05  # within five absolute points of native
-UNHEALTHY_POINTS = 2.0 / 64.0  # at most two absolute points of excess
+# Two absolute percentage points, which is 0.02 -- not two examples out of
+# sixty-four, which is 3.125 points and a looser bar. Expressing an absolute
+# allowance as a count over the development set silently rescales it with the
+# set, and on this set it admits an arm the policy excludes.
+UNHEALTHY_POINTS = 0.02
 RECOVERY_POINT = 0.75
 RECOVERY_FLOOR = 0.50
 NATIVE_RETRIEVAL_MIN = 0.90
@@ -62,6 +66,69 @@ def paired(by, kind, a, b, field="primary", docs=None):
         "point": float(d.mean()),
         "lo": float(np.percentile(bs, 2.5)),
         "hi": float(np.percentile(bs, 97.5)),
+    }
+
+
+def recovery_interval(by, kind, arm, field="primary"):
+    """Resample the candidate, native and empty cells together, by document.
+
+    Recovery is a ratio, and its numerator and denominator are measured on the
+    same documents. Resampling only the numerator and dividing by the fixed
+    observed denominator describes a different quantity: it holds constant the
+    very term whose uncertainty the ratio inherits. So a draw selects documents
+    once and recomputes the whole ratio from that draw.
+
+    A non-positive denominator means native did not beat an empty cache on this
+    task, in which case recovery of an incremental gain is undefined. That is
+    reported as undefined. Substituting a small constant to keep the arithmetic
+    alive would manufacture a finite ratio out of a benchmark with nothing to
+    recover.
+    """
+    cand, nat, emp = (
+        by.get((kind, arm)),
+        by.get((kind, "target_native")),
+        by.get((kind, "empty_cache")),
+    )
+    if not cand or not nat or not emp:
+        return None
+    docs = sorted(set(cand) & set(nat) & set(emp))
+    if not docs:
+        return None
+    c = np.array([float(cand[d][field]) for d in docs])
+    n = np.array([float(nat[d][field]) for d in docs])
+    e = np.array([float(emp[d][field]) for d in docs])
+    denom = float(n.mean() - e.mean())
+    if denom <= 0:
+        return {
+            "n_docs": len(docs),
+            "point": None,
+            "denominator": denom,
+            "undefined": True,
+            "why": "native does not exceed an empty cache on this task, so "
+            "there is no incremental gain to recover",
+        }
+    rng = np.random.default_rng(SEED)
+    idx = rng.integers(0, len(docs), size=(N_BOOT, len(docs)))
+    dn = n[idx].mean(axis=1) - e[idx].mean(axis=1)
+    ok = dn > 0
+    ratios = (c[idx].mean(axis=1) - e[idx].mean(axis=1))[ok] / dn[ok]
+    if ratios.size == 0:
+        return {
+            "n_docs": len(docs),
+            "point": None,
+            "undefined": True,
+            "why": "every draw had a non-positive denominator",
+        }
+    return {
+        "n_docs": len(docs),
+        "point": float((c.mean() - e.mean()) / denom),
+        "lo": float(np.percentile(ratios, 2.5)),
+        "hi": float(np.percentile(ratios, 97.5)),
+        "denominator": denom,
+        "draws": int(N_BOOT),
+        "draws_kept": int(ok.sum()),
+        "joint": "candidate, native and empty resampled together by document; "
+        "the ratio is recomputed in each draw",
     }
 
 
@@ -150,11 +217,7 @@ def main() -> int:
             vs_wrong = paired(by, t, arm, f"{arm}|wrong")
             vs_empty = paired(by, t, arm, "empty_cache")
             vs_native = paired(by, t, arm, "target_native")
-            rec_int = None
-            if vs_empty and nat[t] is not None and emp[t] is not None:
-                denom = nat[t] - emp[t]
-                if abs(denom) > 1e-12:
-                    rec_int = {k: vs_empty[k] / denom for k in ("point", "lo", "hi")}
+            rec_int = recovery_interval(by, t, arm)
             r["tasks"][t] = {
                 "score": got,
                 "absolute_points_behind_native": (
@@ -171,6 +234,8 @@ def main() -> int:
                     gain is not None
                     and gain >= RECOVERY_POINT
                     and rec_int is not None
+                    and not rec_int.get("undefined")
+                    and rec_int.get("lo") is not None
                     and rec_int["lo"] > RECOVERY_FLOOR
                 ),
                 "vs_own_wrong_prompt": vs_wrong,
@@ -191,12 +256,27 @@ def main() -> int:
             "within_two_points": bool(
                 excess is not None and excess <= UNHEALTHY_POINTS
             ),
-            "repetition_vs_anchor": rep_up,
-            "no_repetition_increase": bool(rep_up is not None and rep_up <= 0.0),
+            "repetition_vs_anchor_mean": rep_up,
+            # The inherited comparison is on gross-repetition failures, not on
+            # the mean. Both are reported: the mean is a summary and the
+            # failure count is the criterion.
+            "gross_repetition_failures": None if not f else f.get("degenerate"),
+            "gross_repetition_failures_anchor": (
+                None if not anchor_free else anchor_free.get("degenerate")
+            ),
+            "no_gross_repetition_increase": bool(
+                f
+                and anchor_free
+                and f.get("degenerate") is not None
+                and anchor_free.get("degenerate") is not None
+                and f["degenerate"] <= anchor_free["degenerate"]
+            ),
+            "no_mean_repetition_increase": bool(rep_up is not None and rep_up <= 0.0),
             "anchor": args.anchor,
         }
         r["health"]["passed"] = bool(
-            r["health"]["within_two_points"] and r["health"]["no_repetition_increase"]
+            r["health"]["within_two_points"]
+            and r["health"]["no_gross_repetition_increase"]
         )
         # Every requirement stands on its own. Averaging the two tasks would
         # let a passing one carry a failing one.
