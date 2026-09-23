@@ -705,6 +705,14 @@ def main() -> int:
         arms[name] = (mk.cast(sdtype), mv.cast(sdtype), amn)
         log(f"arm {name}: joint {amn['joint_weight_sha256'][:16]} from {path}")
     default_arm = args.arm[0].split("=", 1)[0]
+    # A condition naming an arm nobody passed fails deep inside the document
+    # loop, after a card has already prefilled a document for it.
+    want_arms = {defs[c].get("arm", default_arm) for cs in matrix.values() for c in cs}
+    absent = sorted(want_arms - set(arms))
+    if absent:
+        raise SystemExit(
+            f"INVALID: the matrix names arms that were not supplied: {absent}"
+        )
 
     contract = CacheContract(
         n_layers=tg.n_layers,

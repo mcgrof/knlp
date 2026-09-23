@@ -83,3 +83,26 @@ def test_no_runner_uses_an_argument_it_never_defines():
         if missing:
             problems.append(f"{runner.name}: uses {missing} with no add_argument")
     assert not problems, problems
+
+
+def test_the_source_archive_covers_what_the_entry_points_import():
+    """A hand-written archive list drifts; this is what catches it.
+
+    The list used to be maintained by inspection, and a runner added without
+    a matching entry left the snapshot beside the results missing the file
+    that produced them. Reading the imports found three such modules the
+    first time it ran.
+    """
+    import importlib.util
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    spec = importlib.util.spec_from_file_location(
+        "archive_source", os.path.join(root, "research/kv_translate/archive_source.py")
+    )
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    unlisted = sorted(m.closure() - set(m.FILES))
+    assert not unlisted, f"entry points import unarchived modules: {unlisted}"
+    for rel in m.ENTRY_POINTS:
+        assert os.path.exists(os.path.join(root, rel)), rel
