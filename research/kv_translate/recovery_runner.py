@@ -264,9 +264,33 @@ def check_conditions(defs, matrix):
 
 
 def is_oracle(spec):
-    """Does this condition use something a serving system cannot have?"""
+    """Does this condition's *score* borrow something unavailable at serving?
+
+    A full native prefill is in here because it is the quality ceiling, not
+    because it is unobtainable: a serving system can always just prefill the
+    document. That distinction is the whole point of :func:`is_cost_oracle`.
+    """
     return (
         spec["repair"] in ("oracle", "native")
+        or spec.get("selector") == "native_attn"
+        or bool(spec.get("oracle"))
+    )
+
+
+def is_cost_oracle(spec):
+    """Is this condition's *cost* unquotable?
+
+    Narrower than :func:`is_oracle`, and deliberately. Donor substitution
+    installs a cache the receiver would have had to prefill anyway, so its
+    cost is the native prefill plus the repair and quoting it as a saving
+    would be quoting an operation nobody can perform. Ranking on the
+    receiver's own cache has the same problem. But a plain native prefill is
+    exactly what a serving system does today: it is the baseline every other
+    condition is measured against, so it must be timed, not skipped. Treating
+    it as a cost oracle left the comparison with no denominator at all.
+    """
+    return (
+        spec["repair"] == "oracle"
         or spec.get("selector") == "native_attn"
         or bool(spec.get("oracle"))
     )
@@ -483,10 +507,14 @@ def time_conditions(
 
     for name in names:
         spec = defs[name]
-        if is_oracle(spec):
+        if is_cost_oracle(spec):
             out["conditions"][name] = {
                 "timed": False,
-                "reason": "oracle condition; its cost is not available at serving time",
+                "reason": (
+                    "the cost of this condition is not available at serving "
+                    "time: it installs or ranks on a cache the receiver would "
+                    "have had to prefill anyway"
+                ),
             }
             continue
         samples = []
@@ -775,6 +803,24 @@ def main() -> int:
     # Writing it here rather than extracting it by hand later means the set
     # the scorer demands is the set this run was configured to produce.
     json.dump(matrix, open(os.path.join(args.out_dir, "matrix.json"), "w"), indent=1)
+    # And which documents. The scorer demands a cell for every document in the
+    # manifest it is handed, which is right, so handing it the whole fixture
+    # for a sixteen-document screen makes a complete stage look incomplete.
+    # The scope is decided here, from the frozen fixture and the declared
+    # selection, before a single score exists -- it is a declaration of what
+    # this stage will cover, not a record of what it managed to finish.
+    json.dump(
+        {
+            "contract": "recovery_stage_scope_v1",
+            "derived_from": os.path.abspath(args.manifest),
+            "version": man["version"],
+            "ctx": man["ctx"],
+            "docs_scope": args.docs,
+            "task_joint_sha256": man.get("task_joint_sha256"),
+            "documents": docs,
+        },
+        open(os.path.join(args.out_dir, "scope.json"), "w"),
+    )
 
     def emit(row):
         out.write(json.dumps(row) + "\n")
