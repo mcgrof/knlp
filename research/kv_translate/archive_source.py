@@ -42,6 +42,7 @@ FILES = [
     "research/kv_translate/eos_gate.py",
     "research/kv_translate/build_recovery_manifest.py",
     "research/kv_translate/recovery.py",
+    "research/kv_translate/recovery_gate.py",
     "research/kv_translate/analyse_arm_traces.py",
     "research/kv_translate/cartridge_preflight.py",
     "research/kv_translate/measure_latency.sh",
@@ -66,6 +67,7 @@ FILES = [
     "tests/kv_translate/test_eos_objective.py",
     "tests/kv_translate/test_eos_gate_policy.py",
     "tests/kv_translate/test_recovery.py",
+    "tests/kv_translate/test_recovery_gate.py",
     "tests/kv_translate/test_driver_flags.py",
     "tests/kv_translate/test_drive_remote.sh",
 ]
