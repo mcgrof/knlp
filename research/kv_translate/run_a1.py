@@ -127,7 +127,13 @@ class Mapper:
         round trip and a host-to-device copy inside every timed region and
         charged the map latency it would never pay twice.
         """
-        key = (m.target_layer, m.head, m.kind, str(device))
+        # The key must identify the COLUMNS, and the columns are a function of
+        # the support, the source head and whether the block is head-local --
+        # not of where the block sits in the receiver. Keying on the block's
+        # position worked only because every block happened to have a distinct
+        # position and one support each; a map whose blocks share a position
+        # key but differ in support silently gets another block's columns.
+        key = (tuple(m.layers), m.head, bool(m.head_local), str(device))
         c = self._cols_cache.get(key)
         if c is None:
             c = self.layout.columns_for(m.layers, m.head, m.head_local).to(device)

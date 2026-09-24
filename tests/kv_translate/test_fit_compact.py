@@ -246,3 +246,62 @@ def test_an_artifact_without_the_field_still_loads(tmp_path):
     rec = loaded["blocks"]["k.0.1"]
     assert "source_head" not in rec
     assert int(rec.get("source_head", 1)) == 1, "the fallback must use the name"
+
+
+def test_two_blocks_at_one_position_do_not_share_a_column_cache():
+    """The cache key used to be the block's position, not its columns.
+
+    Every map before this one had exactly one support per position, so the
+    position identified the columns by accident. A compact map does not: its
+    blocks are fitted per receiver head with a source head recorded separately,
+    so several blocks can share a position key while reading different source
+    layers. The second one through the cache then silently got the first one's
+    columns, and the map produced a confidently wrong cache rather than an
+    error.
+    """
+    import torch
+
+    from research.kv_translate.fit import AffineMap
+    from research.kv_translate.pairs import ModelGeometry
+    from research.kv_translate.run_a1 import Mapper
+
+    layout = SourceLayout(L, H, D)
+    geom = ModelGeometry(
+        model_id="fake",
+        revision="none",
+        n_layers=1,
+        n_q_heads=4,
+        n_kv_heads=2,
+        head_dim=D,
+        hidden=D * 4,
+        rope_theta=1e4,
+        rope_scaling=None,
+        vocab=32,
+    )
+    # Two blocks at layer 0, both recording source head 0 -- as a full fan-in
+    # fit does -- but reading different supports.
+    supports = {0: (0, 1), 1: (20, 21)}
+    torch.manual_seed(0)
+    maps = {}
+    for h, sup in supports.items():
+        n = layout.columns_for(list(sup), 0, False).numel()
+        maps[(0, h)] = AffineMap(
+            M=torch.randn(n, D),
+            b=torch.zeros(D),
+            layers=sup,
+            head=0,
+            kind="k",
+            target_layer=0,
+            ridge=1.0,
+            head_local=False,
+            n_calib_tokens=1,
+        )
+    mapper = Mapper(maps, layout, geom, "k")
+    x = torch.randn(4, layout.n_features)
+    got = mapper.apply(x)[0]
+    for h, sup in supports.items():
+        cols = layout.columns_for(list(sup), 0, False)
+        want = x[:, cols] @ maps[(0, h)].M + maps[(0, h)].b
+        assert torch.allclose(
+            got[0, h], want, atol=1e-5
+        ), f"block at head {h} did not read its own support {sup}"
