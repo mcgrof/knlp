@@ -1,0 +1,17 @@
+# Storage-mediated P/D: LMCache raw_block talking to the device directly,
+# writing to a file on XFS.
+#
+# Needs CONFIG_KNLP_PD_DEVICE_SERIAL to name a drive this host may write
+# to; pd-doctor refuses to start without it and checks the drive is not a
+# multipath head or a device-mapper target, both of which advertise a
+# dma-buf ceiling they will not honour.
+CONFIG_KNLP_REPRODUCE_PD=y
+CONFIG_KNLP_PD_RUNGS="matrix"
+CONFIG_KNLP_PD_PATH="lmcache"
+CONFIG_KNLP_PD_NIXL_BACKEND=""
+CONFIG_KNLP_PD_TARGET="xfs"
+CONFIG_KNLP_PD_BLOCK_PARTITION=1
+CONFIG_KNLP_PD_DEVICE_SERIAL=""
+CONFIG_KNLP_PD_STAGING="host"
+CONFIG_KNLP_PD_BUFFER_MODE="host"
+CONFIG_KNLP_PD_ITERATIONS=5

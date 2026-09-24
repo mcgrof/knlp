@@ -51,6 +51,57 @@ config KNLP_PD_RANGE_LEN
 	int "Bytes from the offset the rungs may write"
 	default 1073741824
 
+config KNLP_PD_PATH
+	string "Which P/D implementation: nixl or lmcache"
+	default "nixl"
+	help
+	  nixl     the vLLM storage handoff connector over a NIXL backend
+	  lmcache  LMCache raw_block talking to the device directly
+
+config KNLP_PD_NIXL_BACKEND
+	string "NIXL backend when KNLP_PD_PATH is nixl"
+	default "XNVME_NVM"
+	help
+	  XNVME_NVM  io_uring, O_DIRECT, optionally dma-buf registered
+	  GDS        cuFile/GPUDirect Storage, the baseline to beat
+
+	  GDS silently falls back to a host-staged compatibility mode when
+	  the IOMMU is translating, which gdscheck reports as
+	  "NVMe : compat".  A GDS number taken in that state is a
+	  host-staged number and must be labelled as one.
+
+config KNLP_PD_TARGET
+	string "Where the KV lands: block, xfs or ext4"
+	default "block"
+	help
+	  block  the raw namespace or a partition of it
+	  xfs    a file on an XFS filesystem
+	  ext4   a file on an ext4 filesystem
+
+config KNLP_PD_BLOCK_PARTITION
+	int "Partition number to use for the block target (0 = whole namespace)"
+	default 0
+	help
+	  Writing at offset 0 of a partitioned namespace destroys its
+	  partition table, so a run that shares a drive with filesystems
+	  must name a partition here.
+
+config KNLP_PD_XFS_MOUNT
+	string "Mount point of the XFS target"
+	default "/mnt/pd-xfs"
+
+config KNLP_PD_EXT4_MOUNT
+	string "Mount point of the ext4 target"
+	default "/mnt/pd-ext4"
+
+config KNLP_PD_ITERATIONS
+	int "Repeats per arm"
+	default 5
+	help
+	  A single run of anything is a number without an error bar.  The
+	  arms are interleaved across iterations so that drift in the device
+	  cannot be mistaken for a difference between them.
+
 config KNLP_PD_STAGING
 	string "Staging exporter: host, system_heap, udmabuf, udmabuf_hugetlb, cuda"
 	default "host"
