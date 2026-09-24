@@ -69,7 +69,14 @@ def selection_groups(mapper, layout) -> dict:
     """
     groups: dict = {}
     for (li, h), m in mapper.maps.items():
-        key = (tuple(m.layers), bool(m.head_local), h if m.head_local else -1)
+        # The head that matters here is the SOURCE head the block reads, which
+        # the fit stored, not the receiver head it writes, which is the key.
+        # Those coincide only when the two models carry the same number of
+        # key/value heads. They do not for every pair, and a map fitted with a
+        # receiver-to-source head assignment would otherwise be applied by
+        # gathering the receiver's head index out of the source -- which is
+        # either the wrong columns or, past the source's head count, an error.
+        key = (tuple(m.layers), bool(m.head_local), m.head if m.head_local else -1)
         groups.setdefault(key, []).append((li, h))
     return groups
 
@@ -163,7 +170,7 @@ class BatchedMapper:
         for i, key in enumerate(order):
             m = mapper.maps[key]
             cols = layout.columns_for(
-                list(m.layers), key[1] if m.head_local else 0, m.head_local
+                list(m.layers), m.head if m.head_local else 0, m.head_local
             ).to(dev)
             sl = slice(i * self.head_dim, (i + 1) * self.head_dim)
             W[cols, sl] = m.M.to(self.dtype)

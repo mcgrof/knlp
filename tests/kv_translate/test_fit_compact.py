@@ -100,3 +100,52 @@ def test_narrowing_the_support_narrows_the_input(acc):
     k4_local = layout.columns_for(list(TRUE), 0, head_local=True).numel()
     assert wide / k4_full == len(SUPPORT) / 4
     assert wide / k4_local == len(SUPPORT) / 4 * H
+
+
+def test_the_apply_path_gathers_the_source_head_the_fit_recorded():
+    """A receiver head is not a source head when the counts differ.
+
+    A head-local map fitted with a receiver-to-source assignment stores the
+    source head it reads. Two places in the batched apply path used to derive
+    the head from the block's dictionary key instead, which is the receiver
+    head; for a pair whose counts match that is the same number and nothing
+    goes wrong, and for a pair like this one it gathers the wrong columns or
+    runs off the end of the source. This asserts the grouping key and the
+    dense packing both use the recorded head.
+    """
+    import torch
+
+    from research.kv_translate.apply import selection_groups
+    from research.kv_translate.fit import AffineMap
+
+    layout = SourceLayout(L, H, D)
+
+    class FakeMapper:
+        pass
+
+    m = FakeMapper()
+    # four receiver heads, two source heads, assigned as the fitter assigns them
+    m.maps = {
+        (0, h): AffineMap(
+            M=torch.zeros(len(TRUE) * D, D),
+            b=torch.zeros(D),
+            layers=TRUE,
+            head=HEAD_ASSIGNMENT[h],
+            kind="k",
+            target_layer=0,
+            ridge=1.0,
+            head_local=True,
+            n_calib_tokens=1,
+        )
+        for h in range(4)
+    }
+    groups = selection_groups(m, layout)
+    heads_in_keys = sorted({key[2] for key in groups})
+    assert heads_in_keys == [0, 1], (
+        f"grouping keyed on {heads_in_keys}; it must key on the two source "
+        "heads, not on the four receiver heads"
+    )
+    # receiver heads 0,1 share a source head, and so must share a group
+    assert len(groups) == 2
+    for key, blocks in groups.items():
+        assert len(blocks) == 2
