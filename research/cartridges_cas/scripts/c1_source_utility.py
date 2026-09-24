@@ -99,33 +99,6 @@ def faithful_score(response, options, gold):
 # ---------------------------------------------------------------------------
 
 
-def select_questions(ds, per_patient=2):
-    """Two questions per patient, chosen the same way every run.
-
-    The library's dataset pools every patient's questions and shuffles them,
-    so truncating it would give an uneven number per patient and a different
-    set for a different seed. Here the pool is grouped by the patient its
-    question id names and the first two by sorted question id are taken, which
-    depends on nothing but the frozen dataset.
-    """
-    by_patient = {}
-    for idx, q in enumerate(ds.questions):
-        pid = "_".join(q.question_id.split("_")[:2])
-        by_patient.setdefault(pid, []).append((q.question_id, idx))
-    picked = []
-    for pid in sorted(by_patient):
-        rows = sorted(by_patient[pid])[:per_patient]
-        if len(rows) < per_patient:
-            raise SystemExit(f"INVALID: {pid} has only {len(rows)} questions")
-        picked.extend((pid, qid, idx) for qid, idx in rows)
-    return picked
-
-
-# ---------------------------------------------------------------------------
-# the three arms
-# ---------------------------------------------------------------------------
-
-
 def build_record_text(patient):
     """The gold patient's record, as the ceiling arm sees it."""
     from cartridges.data.longhealth.resources import FULL_STRING_TEMPLATE
@@ -167,6 +140,15 @@ def main() -> int:
     )
     ap.add_argument("--num-frozen-tokens", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--prefill-chunk",
+        type=int,
+        default=0,
+        help="fill the cache this many prompt tokens at a time instead of in "
+        "one forward. Attention's working set scales with the query positions "
+        "in a single call, so a record-length prompt needs this on a card "
+        "running the uncompiled kernel. 0 disables it.",
+    )
     ap.add_argument("--arms", default=",".join(ARMS))
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--experiment-id", default="cartridge-source-utility")
@@ -183,9 +165,6 @@ def main() -> int:
     from transformers import AutoTokenizer
 
     from cartridges.cache import AttnConfig, TrainableCache
-    from cartridges.data.longhealth.evals import (
-        LongHealthMultipleChoiceGenerateDataset as DS,
-    )
     from cartridges.data.longhealth.utils import load_longhealth_dataset
     from cartridges.generation import flex_generate
     from cartridges.initialization.tokenization_utils import MODELS_WITH_THINKING
@@ -233,14 +212,26 @@ def main() -> int:
     from cartridges.models import attention as _att
 
     compiled = hasattr(_att.flex_attention_generate, "_torchdynamo_orig_callable")
-    if dev == "cuda" and not compiled:
+    # A ROCm device reports itself as cuda, and is the one card that genuinely
+    # cannot compile the kernel, so it is exempt -- with the consequence
+    # recorded in the result rather than waved through: its numerics are not
+    # the compiled kernel's, so a score from it is not comparable with one
+    # from a machine that compiled.
+    is_rocm = torch.version.hip is not None
+    if dev == "cuda" and not is_rocm and not compiled:
         raise SystemExit(
             "INVALID: flex attention is not compiled on this device. The "
             "eager path materialises the full score matrix and changes the "
             "numerics; set CARTRIDGES_FLEX_COMPILE=1 or restore the compiled "
             "aliases in cartridges/models/attention.py before running."
         )
-    log(f"flex attention compiled: {compiled} (device {dev})")
+    log(f"flex attention compiled: {compiled} (device {dev}, rocm={is_rocm})")
+    if not compiled:
+        log(
+            "  NOTE: the eager attention path is in use; its numerics differ "
+            "from the compiled kernel, so these scores are not comparable "
+            "with a run that compiled"
+        )
 
     bench_sha, patients = load_patients_pinned(
         args.dataset_json, PATIENTS, args.dataset_sha256
@@ -280,6 +271,7 @@ def main() -> int:
             max_new_tokens=args.max_new_tokens,
             device=dev,
             budget=args.total_token_budget - spent_total,
+            prefill_chunk=args.prefill_chunk,
         )
         rows_by_arm[arm] = rows
         spent_total += spent
@@ -318,6 +310,13 @@ def main() -> int:
             "generated_tokens_total": spent_total,
             "generated_token_budget": args.total_token_budget,
             "flex_attention_compiled": compiled,
+            "rocm": is_rocm,
+            "comparability_note": (
+                None
+                if compiled
+                else "eager attention path: numerics differ from the compiled "
+                "kernel, not comparable across devices"
+            ),
             "device": torch.cuda.get_device_name(0) if dev == "cuda" else "cpu",
             "torch": torch.__version__,
             "elapsed_s": round(time.time() - t0, 1),
@@ -365,10 +364,6 @@ def make_wrapper(tok):
     return wrap
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def load_patients_pinned(path, patient_ids, want_sha256=""):
     """Read the benchmark from a file instead of from a branch.
 
@@ -381,6 +376,9 @@ def load_patients_pinned(path, patient_ids, want_sha256=""):
     """
     import json as _json
 
+    # Only the record type, not the loader: importing the loader's module
+    # drags in the library's dataset and plotting stack, none of which this
+    # needs, and one of which fetches the benchmark over the network.
     from cartridges.data.longhealth.utils import LongHealthPatient
 
     h = hashlib.sha256()
@@ -497,6 +495,37 @@ def load_cartridge(path, model, device, dtype):
     return cache, n_frozen
 
 
+def prefill_in_chunks(model, ids, cache, chunk, device):
+    """Fill the cache with all but the last token, a slice at a time.
+
+    Attention on this path materialises a score matrix proportional to the
+    number of query positions in the forward, so putting a whole record-length
+    prompt through at once needs tens of gigabytes while putting it through in
+    slices needs a fraction of that. It is a memory choice and nothing else:
+    the keys and values a token produces depend on the tokens before it and
+    not on how many came with it in the same call, so the cache this leaves is
+    the cache one forward would have left.
+
+    Positions are absolute across slices. A slice numbered from zero would
+    rotate its keys as if the record started there.
+    """
+    import torch
+
+    n = int(ids.shape[0])
+    for a in range(0, n - 1, chunk):
+        b = min(a + chunk, n - 1)
+        with torch.no_grad():
+            model(
+                input_ids=ids[a:b],
+                seq_ids=torch.zeros(b - a, dtype=torch.long, device=device),
+                position_ids=torch.arange(a, b, dtype=torch.long, device=device),
+                past_key_values=cache,
+                use_cache=True,
+                mode="generate",
+            )
+    return n - 1
+
+
 def run_arm(
     arm,
     questions,
@@ -509,6 +538,7 @@ def run_arm(
     max_new_tokens,
     device,
     budget,
+    prefill_chunk=0,
 ):
     """Answer every question once, under one arm."""
     import torch
@@ -546,13 +576,34 @@ def run_arm(
         if cache is not None:
             cache.clear()
         t0 = time.time()
+        n_prompt = int(ids.shape[0])
+        if prefill_chunk and n_prompt > prefill_chunk:
+            from cartridges.cache import AttnConfig, TrainableCache
+
+            if cache is None:
+                cache = TrainableCache(
+                    config=AttnConfig(
+                        n_layers=model.config.num_hidden_layers,
+                        n_heads=model.config.num_key_value_heads,
+                        head_dim=getattr(
+                            model.config,
+                            "head_dim",
+                            model.config.hidden_size
+                            // model.config.num_attention_heads,
+                        ),
+                    )
+                ).to(device)
+            last = prefill_in_chunks(model, ids, cache, prefill_chunk, device)
+            gen_ids, gen_pos = ids[last:], torch.arange(last, n_prompt, device=device)
+        else:
+            gen_ids, gen_pos = ids, torch.arange(n_prompt, device=device)
         with torch.no_grad():
             out = flex_generate(
                 model,
                 tok,
-                ids,
-                seq_ids=torch.zeros(ids.shape[0], dtype=torch.long, device=device),
-                position_ids=torch.arange(ids.shape[0], device=device),
+                gen_ids,
+                seq_ids=torch.zeros(gen_ids.shape[0], dtype=torch.long, device=device),
+                position_ids=gen_pos,
                 cache=cache,
                 stop_token_ids=stop_ids,
                 max_new_tokens=max_new_tokens,
@@ -754,3 +805,7 @@ def finish(args, rows_by_arm, extra):
     if g.get("benchmark_uninformative"):
         log(f"  NOTE: {g['note']}")
     return report
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
