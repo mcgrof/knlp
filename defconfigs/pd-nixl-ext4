@@ -1,0 +1,17 @@
+# Storage-mediated P/D: the vLLM storage handoff connector over NIXL XNVME_NVM,
+# writing to a file on ext4.
+#
+# Needs CONFIG_KNLP_PD_DEVICE_SERIAL to name a drive this host may write
+# to; pd-doctor refuses to start without it and checks the drive is not a
+# multipath head or a device-mapper target, both of which advertise a
+# dma-buf ceiling they will not honour.
+CONFIG_KNLP_REPRODUCE_PD=y
+CONFIG_KNLP_PD_RUNGS="matrix"
+CONFIG_KNLP_PD_PATH="nixl"
+CONFIG_KNLP_PD_NIXL_BACKEND="XNVME_NVM"
+CONFIG_KNLP_PD_TARGET="ext4"
+CONFIG_KNLP_PD_BLOCK_PARTITION=1
+CONFIG_KNLP_PD_DEVICE_SERIAL=""
+CONFIG_KNLP_PD_STAGING="host"
+CONFIG_KNLP_PD_BUFFER_MODE="host"
+CONFIG_KNLP_PD_ITERATIONS=5
