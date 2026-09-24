@@ -74,12 +74,14 @@ FILES = [
     "research/kv_translate/replay.py",
     "research/kv_translate/recovery_runner.py",
     "research/kv_translate/pick_candidate.py",
+    "research/kv_translate/stage_control.py",
     "research/kv_translate/summarise_recovery.py",
     "research/kv_translate/decompose_recovery_cost.py",
     "research/kv_translate/make_cpu_fixture.py",
     "tests/kv_translate/test_replay_integration.py",
     "tests/kv_translate/test_recovery_runner.py",
     "tests/kv_translate/test_pick_candidate.py",
+    "tests/kv_translate/test_stage_control.py",
     # reached through run_a1, which the runner imports for its feature
     # layout; found by the closure check below, not by inspection
     "research/jacobian_kv/artifacts.py",
