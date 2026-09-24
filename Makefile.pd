@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Make targets for the storage-mediated prefill/decode reproduction.
+#
+# Selecting:
+#   make defconfig-pd-smoke      CPU/file rungs, no GPU and no NVMe
+# writes .config and enables CONFIG_KNLP_REPRODUCE_PD.  Plain `make` after
+# that runs pd-doctor then the configured rungs.
+#
+# pd-doctor is worth running on its own before anything else:
+#   make pd-doctor
+# It refuses hosts that cannot produce a valid result, and names why.  The
+# checks that matter are not "is it installed" but the cases where something
+# is present and still wrong: an extension that exists but will not import, a
+# driver that reports success for a mapping it never made, a namespace that
+# advertises a dma-buf ceiling and then refuses the registration.
+
+PD_PY ?= $(PYTHON)
+PD_DIR := tools/reproduce/pd
+PD_SERIAL := $(patsubst "%",%,$(CONFIG_KNLP_PD_DEVICE_SERIAL))
+PD_RUNGS := $(patsubst "%",%,$(CONFIG_KNLP_PD_RUNGS))
+
+.PHONY: pd-doctor pd-run pd-all
+
+pd-doctor:
+	@$(PD_PY) $(PD_DIR)/doctor.py --rungs "$(PD_RUNGS)" --serial "$(PD_SERIAL)"
+
+pd-run:
+	@$(PD_PY) $(PD_DIR)/run.py --rungs "$(PD_RUNGS)" --serial "$(PD_SERIAL)" \
+		--results "$(RESULTS_ROOT)/pd"
+
+pd-all: pd-doctor pd-run
+
+ifeq ($(CONFIG_KNLP_REPRODUCE_PD),y)
+.DEFAULT_GOAL := pd-all
+endif

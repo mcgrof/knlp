@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: MIT
+# Configuration for the storage-mediated prefill/decode reproduction.
+#
+# Selecting one of the pd-* defconfigs sets these values.  After defconfig
+# selection, plain `make` runs the configured rungs via Makefile.pd.  All
+# symbols are namespaced CONFIG_KNLP_PD_* so this profile is self-contained
+# and never collides with another reproduce profile.
+
+menu "Storage-mediated prefill/decode reproduction"
+
+config KNLP_REPRODUCE_PD
+	bool "Enable storage-mediated prefill/decode reproduction"
+	default n
+	help
+	  Set by defconfig-pd-smoke and its device/GPU siblings.  When set,
+	  plain `make` runs the acceptance ladder that decides whether a KV
+	  cache can be handed from a prefill node to a decode node through
+	  NVMe instead of over the network.
+
+	  The ladder is ten rungs.  pd-smoke runs the two that need neither a
+	  GPU nor a claimed NVMe namespace, so it is safe in CI.
+
+if KNLP_REPRODUCE_PD
+
+config KNLP_PD_RUNGS
+	string "Rungs to run (comma separated, or 'smoke')"
+	default "smoke"
+	help
+	  smoke     rungs 1-2, CPU and file only
+	  device    rungs 3,4,8 -- needs KNLP_PD_DEVICE_SERIAL
+	  2gpu      rung 5
+	  inference rungs 6,7,9 -- needs vLLM and a model
+
+config KNLP_PD_DEVICE_SERIAL
+	string "NVMe namespace serial the rungs may write to"
+	default ""
+	help
+	  The drive is named by SERIAL, never by kernel name: names such as
+	  nvme1n1 are not stable across reboots and have already moved once
+	  on the reference host.  The runner resolves the serial through
+	  /dev/disk/by-id, reads it back from sysfs, and refuses to run if it
+	  does not match or if anything is mounted on the device.
+
+	  Empty means no rung may touch a block device.
+
+config KNLP_PD_RANGE_OFFSET
+	int "First byte of the device the rungs may write"
+	default 0
+
+config KNLP_PD_RANGE_LEN
+	int "Bytes from the offset the rungs may write"
+	default 1073741824
+
+config KNLP_PD_STAGING
+	string "Staging exporter: host, system_heap, udmabuf, udmabuf_hugetlb, cuda"
+	default "host"
+	help
+	  Where the KV is staged before it reaches the device.  Only cuda
+	  keeps the payload in GPU memory; the others are host memory even
+	  when they hand out a dma-buf, so a result from them is not a
+	  GPU-direct result.
+
+config KNLP_PD_BUFFER_MODE
+	string "Buffer mode: host, fixed or dmabuf"
+	default "host"
+	help
+	  dmabuf requires a staging exporter that produces one, and the
+	  connector refuses the mismatch rather than falling back quietly.
+
+config KNLP_PD_GPU_PRODUCER
+	int "GPU ordinal for the producer"
+	default 0
+
+config KNLP_PD_GPU_CONSUMER
+	int "GPU ordinal for the consumer"
+	default 1
+
+config KNLP_PD_MODEL
+	string "Model for the inference rungs"
+	default "meta-llama/Llama-3.2-1B-Instruct"
+	help
+	  These rungs prove correctness, not throughput, so the smallest
+	  model that exercises the path is the right one.
+
+endif # KNLP_REPRODUCE_PD
+
+endmenu

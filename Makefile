@@ -40,6 +40,10 @@ include Makefile.kv_lingo
 # this overrides .DEFAULT_GOAL.
 include Makefile.kvio
 
+# Storage-mediated prefill/decode ladder (pd-doctor, pd-run).  When
+# CONFIG_KNLP_REPRODUCE_PD=y this overrides .DEFAULT_GOAL.
+include Makefile.pd
+
 # Include KVTide NVMe-KV target + initiator bench targets (kvtide-doctor,
 # kvtide-fetch, kvtide-build, kvtide-target-up, kvtide-bench,
 # kvtide-report).  When CONFIG_KVTIDE=y this overrides .DEFAULT_GOAL.
