@@ -75,6 +75,8 @@ FILES = [
     "research/kv_translate/recovery_runner.py",
     "research/kv_translate/pick_candidate.py",
     "research/kv_translate/stage_control.py",
+    "research/kv_translate/qualify_replay.py",
+    "research/kv_translate/profile_paths.py",
     "research/kv_translate/summarise_recovery.py",
     "research/kv_translate/decompose_recovery_cost.py",
     "research/kv_translate/make_cpu_fixture.py",
@@ -103,6 +105,8 @@ FILES = [
 # the hand-written list is checked against it.
 ENTRY_POINTS = [
     "research/kv_translate/recovery_runner.py",
+    "research/kv_translate/qualify_replay.py",
+    "research/kv_translate/profile_paths.py",
     "research/kv_translate/pick_candidate.py",
     "research/kv_translate/recovery_gate.py",
     "research/kv_translate/build_recovery_manifest_v2.py",
