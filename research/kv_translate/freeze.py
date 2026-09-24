@@ -102,6 +102,15 @@ def save(
                 "b": m.b.detach().cpu(),
                 "layers": list(m.layers),
                 "head_local": bool(m.head_local),
+                # The SOURCE head this block reads, which is not the receiver
+                # head the block is named for. They are the same number only
+                # when both models carry the same count of key/value heads,
+                # and this format previously reconstructed the source head
+                # from the name -- so a map fitted with a receiver-to-source
+                # assignment came back pointing at a head the source may not
+                # have. Written explicitly now; absent in older artifacts,
+                # where the name-derived value was correct.
+                "source_head": int(m.head),
                 "ridge": float(m.ridge),
                 "n_calib_tokens": int(m.n_calib_tokens),
             }
@@ -174,7 +183,9 @@ def load(path: str, layout, geom, device="cpu", verify: bool = True):
             M=rec["M"].to(device),
             b=rec["b"].to(device),
             layers=tuple(rec["layers"]),
-            head=h,
+            # Older artifacts predate the field; for those the receiver head
+            # is the source head, which is what they were fitted with.
+            head=int(rec.get("source_head", h)),
             kind=kind,
             target_layer=li,
             ridge=rec["ridge"],
