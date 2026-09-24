@@ -145,12 +145,12 @@ PAGE = """<!doctype html><html lang="en"><head>
 <div class="hero">
 <div class="eyebrow">Storage-mediated prefill/decode · measured · September 2026</div>
 <h1>The filesystem<br>is not the tax.</h1>
-<p class="lead"><strong>Moving a KV cache between GPUs through NVMe does not require giving up a filesystem.</strong> On the same drive, the same payload and the same io_uring path, writing to a file on XFS or ext4 lands within a few percent of writing to the raw namespace. The cost that does show up is elsewhere.</p>
+<p class="lead"><strong>Moving a KV cache between GPUs through NVMe does not require giving up a filesystem.</strong> On the same drive, with the payload in GPU memory and reaching the device as a registered dma-buf, writing to a file on XFS or ext4 lands within a few percent of writing to the raw namespace — and it holds for both implementations independently. The cost that does show up is elsewhere.</p>
 <p class="lead">The comparison covers two implementations that both reach storage — the vLLM storage handoff connector over NIXL, and LMCache <code>raw_block</code> driving the device itself — against three targets each, with NIXL GDS as the baseline.</p>
 <div class="badges">
 <span class="badge green">{iters} interleaved iterations</span>
 <span class="badge cyan">{n} × {obj} MiB per run</span>
-<span class="badge amber">GDS in compat mode</span>
+<span class="badge amber">GDS cannot batch here</span>
 </div>
 </div>
 
@@ -165,14 +165,15 @@ PAGE = """<!doctype html><html lang="en"><head>
 <h2>Every arm, with its spread</h2>
 <p class="sub">A median without a range is a number nobody can check. Read the range first.</p>
 {table}
-<div class="note"><strong>The GDS baseline is host-staged here.</strong> With the IOMMU translating, <code>gdscheck</code> reports <code>NVMe : compat</code> and warns that GDS is not guaranteed to work functionally or performantly with <code>iommu=on/pt</code>. cuFile therefore falls back to staging through host memory rather than doing peer-to-peer DMA. The number is real and worth having as a baseline, but it is not a GPU-direct number, and labelling it as one would be wrong.</div>
+<div class="note"><strong>The GDS baseline cannot queue on this host, and that is most of the gap.</strong> <code>cuFileBatchIOSubmit</code> fails with more than one descriptor here — <code>internal error (err=5030)</code> — so the GDS arm is forced to a single whole-range transfer per direction. It runs at a queue depth of one by constraint, not by choice, while every other arm submits {n} requests and waits once. <code>gdscheck</code> reports <code>NVMe : compat</code> and warns that GDS is not guaranteed to work functionally or performantly with <code>iommu=on/pt</code>, which is the likely cause. The payload is registered VRAM, so this is not a host-staging artefact — but it is also not the number GDS would produce on a host booted for it.</div>
+<div class="note" style="border-left-color:var(--violet)"><strong>One more trap, for anyone reproducing this.</strong> cuFile must initialise before torch establishes a CUDA context. Import torch first and registration still succeeds while every transfer then fails with the same <code>err=5030</code>, which reads like a device problem and is not one. Create the NIXL agent and its GDS backend before importing torch.</div>
 </section>
 
 <section>
 <h2>What this does and does not establish</h2>
 <div class="grid2">
-<div class="card rule good"><strong>ESTABLISHED</strong><p>A file on XFS or ext4 carries the KV cache at essentially the raw-device rate on this drive, through the same io_uring path, with the dma-buf command-size ceiling applied. Keeping a filesystem is not what costs throughput.</p></div>
-<div class="card rule warn"><strong>NOT ESTABLISHED</strong><p>Nothing here says what GDS would do with the IOMMU in passthrough, where cuFile could use peer-to-peer DMA. That is a different measurement on a differently booted host, and it is the honest comparison to make next.</p></div>
+<div class="card rule good"><strong>ESTABLISHED</strong><p>A file on XFS or ext4 carries the KV cache at essentially the raw-device rate on this drive, through the same io_uring path, with a GPU dma-buf as the payload. Both implementations show it independently, which is what makes it a property of the path rather than of one codebase. Keeping a filesystem is not what costs throughput.</p></div>
+<div class="card rule warn"><strong>NOT ESTABLISHED</strong><p>Nothing here says what GDS would do on a host booted for it, where <code>cuFileBatchIOSubmit</code> works and the arm could queue like the others. Until that runs, the GDS column measures a path operating under a constraint the others do not have, and the gap should not be read as a verdict on GDS itself.</p></div>
 </div>
 <div class="note" style="border-left-color:var(--muted)"><strong>Measured on</strong> {host}, kernel <code>{kernel}</code>, {when}. Every run addressed the drive through <code>/dev/disk/by-id</code> and verified device identity before writing. Reproduce with <code>make defconfig-pd-nixl-xfs</code> and its siblings in knlp.</div>
 </section>

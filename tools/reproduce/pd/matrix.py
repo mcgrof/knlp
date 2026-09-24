@@ -74,44 +74,90 @@ def run_nixl(arm: dict, path: str, size: int, objects: int) -> dict:
             "error": None if ok else out.strip().splitlines()[-1][:160]}
 
 
+CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD = 1
+
+
+def export_dmabuf(ptr: int, nbytes: int) -> int:
+    """Export a CUDA allocation as a dma-buf.
+
+    flags stays 0 deliberately.  The PCIE mapping flag makes the driver skip
+    the IOMMU and hand the NVMe raw BAR addresses, which faults on every
+    command while the IOMMU is translating.
+    """
+    import ctypes
+    cuda = ctypes.CDLL("libcuda.so.1")
+    fd = ctypes.c_int(-1)
+    rc = cuda.cuMemGetHandleForAddressRange(
+        ctypes.byref(fd), ctypes.c_ulonglong(ptr), ctypes.c_size_t(nbytes),
+        ctypes.c_uint(CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD), ctypes.c_ulonglong(0))
+    if rc != 0 or fd.value < 0:
+        raise RuntimeError(f"cuMemGetHandleForAddressRange failed: {rc}")
+    return fd.value
+
+
+def vram(nbytes: int, device: int):
+    """An LBA-aligned VRAM region and its base, for dma-buf export."""
+    import torch
+    torch.cuda.set_device(device)
+    raw = torch.empty(nbytes + 4096, dtype=torch.uint8, device=f"cuda:{device}")
+    base = raw.data_ptr()
+    ptr = (base + 4095) & ~4095
+    return raw, base, ptr
+
+
 def run_gds(arm: dict, path: str, size: int, objects: int) -> dict:
     """Drive the NIXL GDS backend through its python API.
 
-    The device harness speaks only XNVME_NVM and POSIX, so the baseline has
-    to be driven directly.  Note what this measures: when the IOMMU is
-    translating, cuFile reports "NVMe : compat" and stages through host
-    memory, so a number from that state is a host-staged number and is
-    labelled as one in the record.
+    Two constraints come from the platform rather than from choice, and both
+    are why this arm looks different from the others:
+
+    GPUDirect Storage exists to move GPU memory, so the payload is VRAM.
+    Staging through host DRAM would measure a different path and flatter the
+    baseline.
+
+    The transfer is one descriptor for the whole range because
+    cuFileBatchIOSubmit fails here with more than one entry ("internal error
+    (err=5030)") while the IOMMU is translating and cuFile reports the device
+    as compat.  This arm therefore runs at a queue depth of one: a property
+    of the path on this host, not a decision in the harness.
     """
-    import nixl._utils as nixl_utils
     from nixl._api import nixl_agent, nixl_agent_config
 
-    agent = nixl_agent("pd-matrix-gds", nixl_agent_config(backends=[]))
+    total = objects * size
+    dev = arm["gpu"]
+    name = f"pd-matrix-gds-{os.getpid()}"
+    # Create the agent and the GDS backend before torch establishes a CUDA
+    # context.  Importing torch first leaves cuFile unable to submit:
+    # cuFileBatchIOSubmit then fails with "internal error (err=5030)" even
+    # though registration succeeds.
+    agent = nixl_agent(name, nixl_agent_config(backends=[]))
     if "GDS" not in agent.get_plugin_list():
         return {"ok": False, "write_mibs": None, "read_mibs": None,
                 "error": "GDS plugin not present"}
     agent.create_backend("GDS")
 
-    total = objects * size
-    src = nixl_utils.malloc_passthru(total)
-    dst = nixl_utils.malloc_passthru(total)
-    nixl_utils.ba_buf(src, total)
-    reg = agent.get_reg_descs([(src, total, 0, "s"), (dst, total, 0, "d")], "DRAM")
-    assert agent.register_memory(reg) is not None
+    import torch
+    torch.cuda.set_device(dev)
+    buf_t = torch.empty(total, dtype=torch.uint8, device=f"cuda:{dev}")
+    addr = buf_t.data_ptr()
+
+    reg = agent.get_reg_descs([(addr, total, dev, "s")], "VRAM")
+    if agent.register_memory(reg) is None:
+        return {"ok": False, "write_mibs": None, "read_mibs": None,
+                "error": "GDS refused the VRAM registration"}
 
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
     os.ftruncate(fd, total)
     files = agent.register_memory([(0, total, fd, "f")], "FILE")
     xfer_files = files.trim()
 
-    def one(direction: str, buf: int) -> float:
-        descs = agent.get_xfer_descs([(buf, total, 0)], "DRAM")
-        h = agent.initialize_xfer(direction, descs, xfer_files, "pd-matrix-gds")
+    def one(direction: str) -> float:
+        d = agent.get_xfer_descs([(addr, total, dev)], "VRAM")
+        h = agent.initialize_xfer(direction, d, xfer_files, name)
         if not h:
             raise RuntimeError(f"{direction}: initialize_xfer failed")
         t0 = time.monotonic()
-        state = agent.transfer(h)
-        if state == "ERR":
+        if agent.transfer(h) == "ERR":
             raise RuntimeError(f"{direction}: transfer failed")
         while agent.check_xfer_state(h) != "DONE":
             pass
@@ -120,10 +166,13 @@ def run_gds(arm: dict, path: str, size: int, objects: int) -> dict:
         return dt
 
     try:
-        wr = one("WRITE", src)
-        rd = one("READ", dst)
+        one("WRITE")               # warm: allocate the file's extents
+        wr = one("WRITE")
+        one("READ")                # warm
+        rd = one("READ")
     except Exception as e:
-        return {"ok": False, "write_mibs": None, "read_mibs": None, "error": str(e)[:160]}
+        return {"ok": False, "write_mibs": None, "read_mibs": None,
+                "error": str(e)[:160]}
     finally:
         os.close(fd)
 
@@ -132,38 +181,71 @@ def run_gds(arm: dict, path: str, size: int, objects: int) -> dict:
 
 
 def run_lmcache(arm: dict, path: str, size: int, objects: int) -> dict:
-    """Drive LMCache's own device layer over the same geometry."""
+    """Drive LMCache's device layer with a GPU dma-buf, not host memory.
+
+    The payload is CUDA device memory exported as a dma-buf and registered
+    with io_uring, so the drive DMAs into and out of VRAM.  Staging through
+    a host bytearray would measure a different path and would not be the
+    thing this comparison exists to test.
+    """
+    import torch
     import lmcache_rust_raw_block_io as rb
-    is_file = arm["target"] != "block"
-    if is_file and not os.path.exists(path):
+
+    total = objects * size
+    gpu = arm["gpu"]
+    if arm["target"] != "block" and not os.path.exists(path):
         with open(path, "wb") as f:
-            f.truncate(objects * size * 4)
-    lba = 4096
-    dev = rb.RawBlockDevice(path, writable=True, use_odirect=True, alignment=lba,
-                            io_engine="io_uring", iouring_queue_depth=32)
+            f.truncate(total * 2)
+
+    src_raw, src_base, src_ptr = vram(total, gpu)
+    dst_raw, dst_base, dst_ptr = vram(total, gpu)
+    torch.cuda.synchronize()
+    src_fd = export_dmabuf(src_base, total + 4096)
+    dst_fd = export_dmabuf(dst_base, total + 4096)
+
+    dev = rb.RawBlockDevice(path, writable=True, use_odirect=True, alignment=4096,
+                            io_engine="io_uring", iouring_queue_depth=64)
     try:
-        # Submit the whole set and wait once.  Issuing write_uring per object
-        # and waiting each time is a queue depth of one, which measures the
-        # harness rather than the device, and would make this arm look several
-        # times slower than a queued one for no reason but how it was driven.
-        buffers = [bytearray(os.urandom(size)) for _ in range(objects)]
-        backs = [bytearray(size) for _ in range(objects)]
+        # One registration slot per object, all carved from the same dma-buf.
+        ptrs, sizes, fds, bases = [], [], [], []
+        for i in range(objects):
+            for ptr, base, fd in ((src_ptr, src_base, src_fd),
+                                  (dst_ptr, dst_base, dst_fd)):
+                ptrs.append(ptr + i * size)
+                sizes.append(size)
+                fds.append(fd)
+                bases.append(base)
+        dev.register_fixed_dmabufs(ptrs, sizes, fds, bases)
+
+        # Device tensors, not host buffers: the engine resolves the pointer
+        # through the registration and never dereferences it.
+        srcs = [src_raw[src_ptr - src_base + i * size:
+                        src_ptr - src_base + (i + 1) * size] for i in range(objects)]
+        dsts = [dst_raw[dst_ptr - dst_base + i * size:
+                        dst_ptr - dst_base + (i + 1) * size] for i in range(objects)]
         offsets = [i * size for i in range(objects)]
         lens = [size] * objects
 
+        # Submit the whole set and wait once: per-object waits would be a
+        # queue depth of one and would measure the harness, not the device.
+        dev.wait_iouring(dev.batched_write(offsets, srcs, lens))   # warm
         t0 = time.monotonic()
-        batch = dev.batched_write(offsets, buffers, lens)
-        dev.wait_iouring(batch)
+        dev.wait_iouring(dev.batched_write(offsets, srcs, lens))
         wr = time.monotonic() - t0
 
+        dev.wait_iouring(dev.batched_read(offsets, dsts, lens))    # warm
         t0 = time.monotonic()
-        batch = dev.batched_read(offsets, backs, lens)
-        dev.wait_iouring(batch)
+        dev.wait_iouring(dev.batched_read(offsets, dsts, lens))
         rd = time.monotonic() - t0
+    except Exception as e:
+        return {"ok": False, "write_mibs": None, "read_mibs": None, "error": str(e)[:160]}
     finally:
         dev.close()
-    total = objects * size / MiB
-    return {"ok": True, "write_mibs": total / wr, "read_mibs": total / rd, "error": None}
+        os.close(src_fd)
+        os.close(dst_fd)
+
+    mib = total / MiB
+    return {"ok": True, "write_mibs": mib / wr, "read_mibs": mib / rd, "error": None}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--target", required=True, choices=("block", "xfs", "ext4"))
     ap.add_argument("--partition", type=int, default=1)
     ap.add_argument("--serial", required=True)
-    ap.add_argument("--buffer-mode", default="host")
+    ap.add_argument("--buffer-mode", default="dmabuf")
     ap.add_argument("--xfs-mount", default="/mnt/pd-xfs")
     ap.add_argument("--ext4-mount", default="/mnt/pd-ext4")
     ap.add_argument("--harness", default="")
@@ -182,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ld-path", default="")
     ap.add_argument("--object-size", type=int, default=2 * MiB)
     ap.add_argument("--objects", type=int, default=64)
+    ap.add_argument("--gpu", type=int, default=0)
     ap.add_argument("--iteration", type=int, default=0)
     ap.add_argument("--out", default="")
     a = ap.parse_args(argv)
@@ -189,7 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     arm = {"name": a.name, "target": a.target, "partition": a.partition,
            "nixl_backend": a.nixl_backend, "buffer_mode": a.buffer_mode,
            "xfs_mount": a.xfs_mount, "ext4_mount": a.ext4_mount,
-           "harness": a.harness, "plugin_dir": a.plugin_dir, "ld_path": a.ld_path}
+           "harness": a.harness, "plugin_dir": a.plugin_dir, "ld_path": a.ld_path,
+           "gpu": a.gpu}
     path = target_path(arm, a.serial)
     if a.path == "nixl" and a.nixl_backend == "GDS":
         res = run_gds(arm, path, a.object_size, a.objects)
