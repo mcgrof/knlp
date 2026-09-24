@@ -106,3 +106,76 @@ def test_the_source_archive_covers_what_the_entry_points_import():
     assert not unlisted, f"entry points import unarchived modules: {unlisted}"
     for rel in m.ENTRY_POINTS:
         assert os.path.exists(os.path.join(root, rel)), rel
+
+
+def test_the_new_qualifier_and_profiler_define_every_name_they_use():
+    """Same defect class as the runner's: a name resolved at call time.
+
+    Both of these run on a rented card after models have loaded, so a missing
+    global costs an allocation rather than a traceback on a laptop.
+    """
+    import ast
+    import builtins
+    import os
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for rel in (
+        "research/kv_translate/qualify_replay.py",
+        "research/kv_translate/profile_paths.py",
+    ):
+        tree = ast.parse(open(os.path.join(root, rel)).read())
+        last = tree.body[-1]
+        assert isinstance(last, ast.If), f"{rel}: entry point is not last"
+
+        defined = set()
+        for n in tree.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                defined.add(n.name)
+            elif isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        defined.add(t.id)
+            elif isinstance(n, (ast.Import, ast.ImportFrom)):
+                for a in n.names:
+                    defined.add((a.asname or a.name).split(".")[0])
+
+        fn = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"
+        )
+        local = {a.arg for a in fn.args.args}
+        for sub in ast.walk(fn):
+            if isinstance(sub, ast.Assign):
+                for t in sub.targets:
+                    for nn in ast.walk(t):
+                        if isinstance(nn, ast.Name):
+                            local.add(nn.id)
+            elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+                for a in sub.names:
+                    local.add((a.asname or a.name).split(".")[0])
+            elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                local.add(sub.name)
+                local.update(a.arg for a in sub.args.args)
+            elif isinstance(sub, ast.Lambda):
+                # a lambda's parameters, including its defaults, are
+                # bound names inside it
+                local.update(a.arg for a in sub.args.args)
+            elif isinstance(sub, (ast.For, ast.comprehension)):
+                tgt = getattr(sub, "target", None)
+                if tgt is not None:
+                    for nn in ast.walk(tgt):
+                        if isinstance(nn, ast.Name):
+                            local.add(nn.id)
+            elif isinstance(sub, ast.withitem) and sub.optional_vars is not None:
+                for nn in ast.walk(sub.optional_vars):
+                    if isinstance(nn, ast.Name):
+                        local.add(nn.id)
+
+        known = defined | local | set(dir(builtins))
+        missing = sorted(
+            n.id
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Name)
+            and isinstance(n.ctx, ast.Load)
+            and n.id not in known
+        )
+        assert not missing, f"{rel}: main() uses undefined names {missing}"

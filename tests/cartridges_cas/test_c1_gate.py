@@ -132,3 +132,74 @@ def test_the_verdict_carries_its_own_resolution_caveat():
 def test_the_bar_is_an_absolute_count_not_a_ratio(floor, src, expect):
     g = c1.gate({"nocart": rows(floor), "source": rows(src), "fulldoc": rows(20)})
     assert g["arms"]["source"]["meets_net_gain"] is expect
+
+
+def test_every_name_the_runner_uses_is_defined_before_it_runs():
+    """The entry point once sat above half the definitions.
+
+    Python resolves a module-level name when the call executes, so a script
+    whose ``__main__`` block is not last calls functions that do not exist
+    yet. It survives ``--help``, which exits first, and fails on a rented
+    machine after the model has loaded. This reads the file rather than
+    importing it, so it holds regardless of what is installed.
+    """
+    import ast
+
+    path = os.path.join(ROOT, "research/cartridges_cas/scripts/c1_source_utility.py")
+    src = open(path).read()
+    tree = ast.parse(src)
+
+    # the entry point must be the last statement in the file
+    last = tree.body[-1]
+    assert isinstance(last, ast.If), "the last statement is not the entry point guard"
+    assert ast.unparse(last.test) == "__name__ == '__main__'"
+
+    defined = {
+        n.name
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    for n in tree.body:
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    defined.add(t.id)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                defined.add((a.asname or a.name).split(".")[0])
+
+    fn = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    local = {a.arg for a in fn.args.args}
+    for sub in ast.walk(fn):
+        if isinstance(sub, ast.Assign):
+            for t in sub.targets:
+                for nn in ast.walk(t):
+                    if isinstance(nn, ast.Name):
+                        local.add(nn.id)
+        elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+            for a in sub.names:
+                local.add((a.asname or a.name).split(".")[0])
+        elif isinstance(sub, (ast.For, ast.comprehension)):
+            tgt = getattr(sub, "target", None)
+            if tgt is not None:
+                for nn in ast.walk(tgt):
+                    if isinstance(nn, ast.Name):
+                        local.add(nn.id)
+        elif isinstance(sub, ast.Lambda):
+            local.update(a.arg for a in sub.args.args)
+        elif isinstance(sub, ast.withitem) and sub.optional_vars is not None:
+            for nn in ast.walk(sub.optional_vars):
+                if isinstance(nn, ast.Name):
+                    local.add(nn.id)
+
+    import builtins
+
+    known = defined | local | set(dir(builtins))
+    missing = sorted(
+        n.id
+        for n in ast.walk(fn)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in known
+    )
+    assert not missing, f"main() uses names that are never defined: {missing}"
