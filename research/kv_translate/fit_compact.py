@@ -161,7 +161,10 @@ def main() -> int:
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
 
-    models, geom = {}, {}
+    tok_for_identity = AutoTokenizer.from_pretrained(
+        args.target, revision=args.target_revision
+    )
+    models, geom, identity = {}, {}, {}
     for role, mid, rev in (
         ("source", args.source, args.source_revision),
         ("target", args.target, args.target_revision),
@@ -173,6 +176,12 @@ def main() -> int:
         for p in m.parameters():
             p.requires_grad_(False)
         models[role], geom[role] = m, describe(m, mid)
+        # The full identity the freeze format records -- geometry, tokenizer
+        # and template hashes -- rather than a name and a revision string. A
+        # reader can check the former.
+        ident = freeze.model_identity(mid, m, tok_for_identity)
+        ident["revision_requested"] = rev
+        identity[role] = ident
     sg, tg = geom["source"], geom["target"]
     layout = SourceLayout(sg.n_layers, sg.n_kv_heads, sg.head_dim)
     if "head_local" in variants and tg.n_kv_heads != len(HEAD_ASSIGNMENT):
@@ -311,8 +320,8 @@ def main() -> int:
             out_path,
             mk,
             mv,
-            source={"id": args.source, "revision": args.source_revision},
-            target={"id": args.target, "revision": args.target_revision},
+            source=identity["source"],
+            target=identity["target"],
             fit_context=args.tokens_each,
             calib_doc_ids=docs,
             dev_doc_ids=[],
