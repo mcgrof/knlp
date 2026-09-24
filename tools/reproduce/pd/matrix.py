@@ -142,15 +142,23 @@ def run_lmcache(arm: dict, path: str, size: int, objects: int) -> dict:
     dev = rb.RawBlockDevice(path, writable=True, use_odirect=True, alignment=lba,
                             io_engine="io_uring", iouring_queue_depth=32)
     try:
-        payload = bytearray(os.urandom(size))
-        back = bytearray(size)
+        # Submit the whole set and wait once.  Issuing write_uring per object
+        # and waiting each time is a queue depth of one, which measures the
+        # harness rather than the device, and would make this arm look several
+        # times slower than a queued one for no reason but how it was driven.
+        buffers = [bytearray(os.urandom(size)) for _ in range(objects)]
+        backs = [bytearray(size) for _ in range(objects)]
+        offsets = [i * size for i in range(objects)]
+        lens = [size] * objects
+
         t0 = time.monotonic()
-        for i in range(objects):
-            dev.write_uring(i * size, payload, size, size)
+        batch = dev.batched_write(offsets, buffers, lens)
+        dev.wait_iouring(batch)
         wr = time.monotonic() - t0
+
         t0 = time.monotonic()
-        for i in range(objects):
-            dev.read_uring(i * size, back, size, size)
+        batch = dev.batched_read(offsets, backs, lens)
+        dev.wait_iouring(batch)
         rd = time.monotonic() - t0
     finally:
         dev.close()
