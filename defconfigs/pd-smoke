@@ -1,0 +1,14 @@
+# Storage-mediated prefill/decode: the rungs that need no hardware.
+#
+# Rung 1 is the CPU/file state machine and rung 2 is the two-process proof:
+# a writer publishes and exits, then a fresh reader adopts the exact
+# generation and verifies the bytes.  Neither needs a GPU or a claimed NVMe
+# namespace, so this profile is safe to run anywhere, including CI.
+#
+# The device, two-GPU and inference rungs live in sibling defconfigs and
+# require CONFIG_KNLP_PD_DEVICE_SERIAL to name a drive they may write to.
+CONFIG_KNLP_REPRODUCE_PD=y
+CONFIG_KNLP_PD_RUNGS="smoke"
+CONFIG_KNLP_PD_DEVICE_SERIAL=""
+CONFIG_KNLP_PD_STAGING="host"
+CONFIG_KNLP_PD_BUFFER_MODE="host"
