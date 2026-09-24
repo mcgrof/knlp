@@ -165,8 +165,9 @@ PAGE = """<!doctype html><html lang="en"><head>
 <h2>Every arm, with its spread</h2>
 <p class="sub">A median without a range is a number nobody can check. Read the range first.</p>
 {table}
-<div class="note"><strong>The GDS baseline cannot queue on this host, and that is most of the gap.</strong> <code>cuFileBatchIOSubmit</code> fails with more than one descriptor here — <code>internal error (err=5030)</code> — so the GDS arm is forced to a single whole-range transfer per direction. It runs at a queue depth of one by constraint, not by choice, while every other arm submits {n} requests and waits once. <code>gdscheck</code> reports <code>NVMe : compat</code> and warns that GDS is not guaranteed to work functionally or performantly with <code>iommu=on/pt</code>, which is the likely cause. The payload is registered VRAM, so this is not a host-staging artefact — but it is also not the number GDS would produce on a host booted for it.</div>
-<div class="note" style="border-left-color:var(--violet)"><strong>One more trap, for anyone reproducing this.</strong> cuFile must initialise before torch establishes a CUDA context. Import torch first and registration still succeeds while every transfer then fails with the same <code>err=5030</code>, which reads like a device problem and is not one. Create the NIXL agent and its GDS backend before importing torch.</div>
+<div class="note"><strong>The GDS column is cuFile POSIX, not GPUDirect.</strong> With cuFile logging on, every transfer in this sweep recorded <code>NVMe Driver not registered with nvidia-fs!!!</code> followed by <code>using cuFile posix read/write with compat mode enabled</code>. <code>/proc/driver/nvidia-fs/modules</code> lists only <code>wekafsio</code>: no block driver ever registered, and an upstream <code>nvme</code> has no nvidia-fs hooks to register with. So this column is ordinary POSIX read/write with a host bounce — not peer-to-peer, not dma-buf, not <code>nvidia_peermem</code>. It is a useful floor for "what you get if GDS does not engage", and it is not a measurement of GDS.</div>
+<div class="note" style="border-left-color:var(--cyan)"><strong>cuFile and dma-buf are not alternatives for local NVMe.</strong> cuFile does carry dma-buf support — <code>CUFILE_DMABUF_ENABLE</code>, <code>rdma_buffer_dmabuf_reg</code> — but those paths are for its RDMA transport. For a local NVMe device its GPU-direct route is nvidia-fs. The io_uring column reaches the same drive through the in-tree <code>nvme-pci</code> driver with a dma-buf attached to it, which is a different mechanism rather than a faster setting of the same one.</div>
+<div class="note" style="border-left-color:var(--violet)"><strong>One trap for anyone reproducing this.</strong> cuFile must initialise before torch establishes a CUDA context. Import torch first and registration still succeeds while every transfer then fails with <code>internal error (err=5030)</code>, which reads like a device problem and is not one. Create the NIXL agent and its GDS backend before importing torch. Separately, <code>cuFileBatchIOSubmit</code> refuses more than one descriptor here, so the GDS column runs at a queue depth of one.</div>
 </section>
 
 <section>
@@ -175,6 +176,15 @@ PAGE = """<!doctype html><html lang="en"><head>
 <div class="card rule good"><strong>ESTABLISHED</strong><p>A file on XFS or ext4 carries the KV cache at essentially the raw-device rate on this drive, through the same io_uring path, with a GPU dma-buf as the payload. Both implementations show it independently, which is what makes it a property of the path rather than of one codebase. Keeping a filesystem is not what costs throughput.</p></div>
 <div class="card rule warn"><strong>NOT ESTABLISHED</strong><p>Nothing here says what GDS would do on a host booted for it, where <code>cuFileBatchIOSubmit</code> works and the arm could queue like the others. Until that runs, the GDS column measures a path operating under a constraint the others do not have, and the gap should not be read as a verdict on GDS itself.</p></div>
 </div>
+<h2 style="margin-top:44px">The drive geometry</h2>
+<p class="sub">A throughput number without its device geometry is not reproducible. This is one drive and one namespace geometry, described by geometry rather than by part number, firmware revision or serial.</p>
+<div class="scroll"><table><tbody>
+<tr><td>class</td><td>datacenter NVMe SSD, 3.84 TB, PCIe 5.0 x4</td></tr>
+<tr><td>block size</td><td>4096 logical / 4096 physical — a <strong>4Kn</strong> drive</td></tr>
+<tr><td>MDTS</td><td><code>mdts=6</code> → 256 KiB, and <code>max_hw_dmabuf_sectors_kb</code> matches at 256 KiB</td></tr>
+<tr><td>max_segments</td><td>65</td></tr>
+<tr><td>layout</td><td>p1 raw (256 GiB), p2 XFS (256 GiB), p3 ext4 (256 GiB) — all three targets on one drive so media cannot explain a difference between them</td></tr>
+</tbody></table></div>
 <div class="note" style="border-left-color:var(--muted)"><strong>Measured on</strong> {host}, kernel <code>{kernel}</code>, {when}. Every run addressed the drive through <code>/dev/disk/by-id</code> and verified device identity before writing. Reproduce with <code>make defconfig-pd-nixl-xfs</code> and its siblings in knlp.</div>
 </section>
 </main>
