@@ -187,3 +187,97 @@ def test_a_malformed_cache_fails_cleanly(tiny):
         replay_selected(model, ids, torch.ones(T - 1, dtype=torch.bool), ak, av)
     with pytest.raises(ValueError, match="layer count"):
         replay_selected(model, ids, torch.ones(T, dtype=torch.bool), ak, av[:-1])
+
+
+def test_asking_for_one_logit_does_not_change_the_repaired_cache(tiny):
+    """The repair wants keys and values; the vocabulary projection is waste.
+
+    Dropping it is only an optimization if the cache it leaves is the same
+    cache. Checked bit-for-bit rather than approximately: the change removes
+    work after the layers, so anything but equality would mean it removed
+    something else too.
+    """
+    from transformers import DynamicCache
+
+    import research.kv_translate.replay as R
+
+    model, ids, T = tiny
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    m = mask_from_blocks(T, [1, 4])
+
+    seen = {}
+    orig = model.forward
+
+    def spy(*a, **kw):
+        seen["logits_to_keep"] = kw.get("logits_to_keep")
+        return orig(*a, **kw)
+
+    model.forward = spy
+    try:
+        k1, v1, _ = R.replay_selected(model, ids, m, ak, av)
+    finally:
+        model.forward = orig
+    assert seen["logits_to_keep"] == 1, "replay still asks for every position"
+
+    # and the result is what the unrestricted call produces
+    src = R.replay_selected.__doc__
+    assert src is not None
+    k2, v2, _ = _replay_without_logit_limit(model, ids, m, ak, av)
+    for a, b in zip(k1, k2):
+        assert torch.equal(a, b), "restricting the logits changed the keys"
+    for a, b in zip(v1, v2):
+        assert torch.equal(a, b), "restricting the logits changed the values"
+
+
+def _replay_without_logit_limit(model, input_ids, mask, keys, values):
+    """The previous behaviour, kept only so the change can be compared to it."""
+    from research.kv_translate.replay import ScatterCache, absolute_causal_mask
+
+    device = keys[0].device
+    T = keys[0].shape[2]
+    slots = torch.nonzero(mask, as_tuple=False).flatten().to(device)
+    cache = ScatterCache(keys, values, slots)
+    with torch.no_grad():
+        model(
+            input_ids=input_ids[0, slots].reshape(1, -1).to(device),
+            attention_mask=absolute_causal_mask(slots, T, keys[0].dtype, device),
+            position_ids=slots.reshape(1, -1),
+            past_key_values=cache,
+            use_cache=True,
+        )
+    return cache.keys, cache.values, None
+
+
+def test_repairing_in_place_gives_the_same_cache_as_repairing_a_copy(tiny):
+    """The copy is a safety property for one caller, not part of the result."""
+    model, ids, T = tiny
+    nk, nv = _native(model, ids)
+    m = mask_from_blocks(T, [2, 5])
+
+    a_k, a_v = _approx((nk, nv))
+    copied_k, copied_v, _ = replay_selected(model, ids, m, a_k, a_v)
+
+    b_k, b_v = _approx((nk, nv))
+    before = [t.clone() for t in b_k]
+    inplace_k, inplace_v, _ = replay_selected(model, ids, m, b_k, b_v, in_place=True)
+    for x, y in zip(copied_k, inplace_k):
+        assert torch.equal(x, y)
+    for x, y in zip(copied_v, inplace_v):
+        assert torch.equal(x, y)
+    # and in-place really did write through, which is the point of the flag
+    assert any(not torch.equal(x, y) for x, y in zip(before, b_k))
+
+
+def test_the_default_still_leaves_the_caller_s_cache_untouched(tiny):
+    """Scoring reuses one mapped cache across conditions and depends on this."""
+    model, ids, T = tiny
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    before_k = [t.clone() for t in ak]
+    before_v = [t.clone() for t in av]
+    replay_selected(model, ids, mask_from_blocks(T, [0, 3]), ak, av)
+    for x, y in zip(before_k, ak):
+        assert torch.equal(x, y), "the default path mutated its input"
+    for x, y in zip(before_v, av):
+        assert torch.equal(x, y)

@@ -37,11 +37,16 @@ class ScatterCache:
     and unrepaired positions together, which is what a real repair would face.
     """
 
-    def __init__(self, keys, values, slots):
+    def __init__(self, keys, values, slots, in_place=False):
         if len(keys) != len(values):
             raise ValueError("key and value caches differ in layer count")
-        self.keys = [k.clone() for k in keys]
-        self.values = [v.clone() for v in values]
+        # The copy is not ceremony by default: one mapped cache is read by
+        # several conditions for the same document, so repairing it in place
+        # for one would hand the next a cache that had already been repaired.
+        # It is waste only where the caller owns the cache and discards it,
+        # which is the timing path, and that is what the flag is for.
+        self.keys = list(keys) if in_place else [k.clone() for k in keys]
+        self.values = list(values) if in_place else [v.clone() for v in values]
         self.slots = slots
         self._seen = set()
 
@@ -91,7 +96,7 @@ def absolute_causal_mask(positions, n_positions, dtype, device):
 
 
 @torch.no_grad()
-def replay_selected(model, input_ids, mask, keys, values, dtype=None):
+def replay_selected(model, input_ids, mask, keys, values, dtype=None, in_place=False):
     """Recompute the masked positions and scatter them into the cache.
 
     ``input_ids`` is the whole prompt; only the masked positions are fed. The
@@ -110,14 +115,20 @@ def replay_selected(model, input_ids, mask, keys, values, dtype=None):
 
     sel_ids = input_ids[0, slots].reshape(1, -1).to(device)
     dt = dtype or keys[0].dtype
-    cache = ScatterCache(keys, values, slots)
+    cache = ScatterCache(keys, values, slots, in_place=in_place)
     attn = absolute_causal_mask(slots, T, dt, device)
+    # A repair wants keys and values, never a prediction, so the vocabulary
+    # projection over every recomputed position is work whose output is
+    # discarded. At a four-thousand-token context and a vocabulary of a
+    # hundred and fifty thousand that tensor is gigabytes. Asking for one
+    # position is the smallest request the interface allows.
     model(
         input_ids=sel_ids,
         attention_mask=attn,
         position_ids=slots.reshape(1, -1),
         past_key_values=cache,
         use_cache=True,
+        logits_to_keep=1,
     )
     return (
         cache.keys,

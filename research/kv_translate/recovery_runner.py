@@ -63,11 +63,22 @@ def log(m):
 
 
 def fingerprint(keys, values):
-    """A cheap witness that a cache was not modified behind our back."""
+    """A witness that a cache was not modified behind our back.
+
+    One reduction on the device and one transfer, rather than a slice copied
+    to the host per tensor per layer. The earlier version issued one copy for
+    each of seventy-two tensors, twice per selector pass, on the critical path
+    of a step whose whole justification is that it is cheap.
+    """
+    import torch
+
+    with torch.no_grad():
+        parts = [t[..., :1, :4].reshape(-1).float() for t in list(keys) + list(values)]
+        flat = torch.cat(parts).cpu().numpy()
     h = hashlib.sha256()
-    for t in list(keys) + list(values):
-        h.update(str(tuple(t.shape)).encode())
-        h.update(t[..., :1, :4].float().cpu().numpy().tobytes())
+    shapes = [tuple(t.shape) for t in keys] + [tuple(t.shape) for t in values]
+    h.update(str(shapes).encode())
+    h.update(flat.tobytes())
     return h.hexdigest()[:16]
 
 
@@ -126,7 +137,9 @@ def question_attention(model, keys, values, query_ids, n_positions):
             ).unsqueeze(0),
             past_key_values=make_cache(keys, values),
             use_cache=True,
-            output_attentions=True,
+            output_attentions=True,  # Only the attention weights are read; the vocabulary
+            # projection over the question is computed and discarded.
+            logits_to_keep=1,
         )
     if out.attentions is None or out.attentions[0] is None:
         raise SystemExit(
@@ -615,7 +628,11 @@ def _path_for(
                 n_positions=ctx,
             )
             mask = mask_from_blocks(ctx, blocks).to(keys[0].device)
-            keys, values, _ = replay_selected(tgt, ids, mask, keys, values)
+            # This closure owns its cache and throws it away, so the copy
+            # the scoring path needs would be charged for nothing here.
+            keys, values, _ = replay_selected(
+                tgt, ids, mask, keys, values, in_place=True
+            )
         n = qids.shape[1]
         return tgt(
             input_ids=qids,
@@ -623,6 +640,10 @@ def _path_for(
             position_ids=torch.arange(ctx, ctx + n, device=dev).unsqueeze(0),
             past_key_values=make_cache(keys, values),
             use_cache=True,
+            # The native arm this is timed against asks for one position; a
+            # mapped arm asking for every one is charged for a tensor its
+            # comparator never built.
+            logits_to_keep=1,
         ).logits
 
     return {"native": native, "empty": empty, "span": span}.get(repair, mapped_path)
