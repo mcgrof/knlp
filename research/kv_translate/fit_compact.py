@@ -117,6 +117,14 @@ def main() -> int:
         help="the fitted map whose per-block supports the compact one narrows",
     )
     ap.add_argument("--manifests", required=True)
+    ap.add_argument(
+        "--documents-json",
+        default="",
+        help="calibration text extracted beforehand, as {title: text}. The "
+        "corpus loader pulls a multi-gigabyte dataset over the network, which "
+        "is a dependency a rented machine does not need and a way for a run "
+        "to fail after the weights are already paid for.",
+    )
     ap.add_argument("--role", default="train154")
     ap.add_argument("--docs", type=int, default=64)
     ap.add_argument("--tokens-each", type=int, default=1024)
@@ -144,7 +152,8 @@ def main() -> int:
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    from research.kv_translate.tasks import wikitext_documents
+    if not args.documents_json:
+        from research.kv_translate.tasks import wikitext_documents
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = getattr(torch, args.dtype)
@@ -205,7 +214,11 @@ def main() -> int:
     # ---- calibration, from the training role only -------------------------
     docs, split = calibration_documents(args.manifests, args.role, args.docs)
     tok = AutoTokenizer.from_pretrained(args.target, revision=args.target_revision)
-    by_title = dict(wikitext_documents(split=split, max_docs=100000))
+    if args.documents_json:
+        by_title = json.load(open(args.documents_json))
+        log(f"calibration text read from {args.documents_json}")
+    else:
+        by_title = dict(wikitext_documents(split=split, max_docs=100000))
     missing = [d for d in docs if d not in by_title]
     if missing:
         raise SystemExit(f"INVALID: {len(missing)} calibration documents not found")
