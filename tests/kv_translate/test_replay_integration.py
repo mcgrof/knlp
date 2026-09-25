@@ -281,3 +281,82 @@ def test_the_default_still_leaves_the_caller_s_cache_untouched(tiny):
         assert torch.equal(x, y), "the default path mutated its input"
     for x, y in zip(before_v, av):
         assert torch.equal(x, y)
+
+
+def test_the_qualification_checks_compose_against_a_real_replay(tiny):
+    """The RQ contract's checks, run together through an actual model.
+
+    The unit tests show each check rejecting its own defect on constructed
+    tensors. This shows them all passing on a replay that is genuinely
+    correct, which is the other half: a suite that only ever fails is as
+    useless as one that only ever passes.
+
+    The independence control is the one to watch. A full replay recomputes
+    every position, so the cache it started from must leave no trace, and here
+    the translated cache, a cache of zeros and a deliberately wrong cache all
+    produce the same result exactly.
+    """
+    from research.kv_translate.replay_checks import (
+        check_initial_cache_independence,
+        check_layer0_exact,
+        check_native_repeat,
+        check_ownership_modes,
+        check_partial_mask_per_layer,
+        per_layer_profile,
+    )
+
+    model, ids, T = tiny
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    full = torch.ones(T, dtype=torch.bool)
+
+    assert check_native_repeat(lambda: _native(model, ids))["bitwise_identical"]
+
+    def replay_from(initial):
+        k, v = initial
+        rk, rv, _ = replay_selected(
+            model, ids, full, [t.clone() for t in k], [t.clone() for t in v]
+        )
+        return rk, rv
+
+    rk, rv = replay_from((ak, av))
+    l0 = check_layer0_exact(rk, rv, nk, nv)
+    assert l0["keys_exact"] and l0["values_exact"]
+
+    g = torch.Generator().manual_seed(7)
+    ind = check_initial_cache_independence(
+        replay_from,
+        (ak, av),
+        ([torch.zeros_like(t) for t in ak], [torch.zeros_like(t) for t in av]),
+        (
+            [torch.randn(t.shape, generator=g) for t in ak],
+            [torch.randn(t.shape, generator=g) for t in av],
+        ),
+        tol=1e-6,
+    )
+    assert ind["passed"], ind
+    assert ind["worst"] == 0.0, "a full replay should leave nothing of its input"
+
+    mask = mask_from_blocks(T, [1, 4])
+    pk, pv, _ = replay_selected(model, ids, mask, ak, av)
+    pm = check_partial_mask_per_layer(ak, av, pk, pv, mask)
+    assert pm["all_unselected_preserved"] and pm["all_selected_written"]
+
+    own = check_ownership_modes(
+        lambda: replay_selected(model, ids, mask, ak, av)[:2],
+        lambda: replay_selected(
+            model,
+            ids,
+            mask,
+            [t.clone() for t in ak],
+            [t.clone() for t in av],
+            in_place=True,
+        )[:2],
+        ak,
+        av,
+    )
+    assert own["passed"], own
+
+    prof = per_layer_profile(rk, rv, nk, nv)
+    assert len(prof) == len(nk)
+    assert all("values_rel_frobenius" in p for p in prof)
