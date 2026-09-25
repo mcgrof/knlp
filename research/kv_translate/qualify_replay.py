@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""Establish on the real card that the repair computes what it claims to.
+"""Check what the replay does, on the card, against the things it could do wrong.
 
-The archive holds two qualifications and neither is this one. The mapper was
-qualified on the card, which says the fitted operator reproduces its reference
-and is deterministic; it says nothing about replay. Replay was qualified on the
-processor against a tiny random pair, which says the scatter, the positions and
-the masking are right at that scale; it says nothing about the card, the
-precision, the kernel or the real models. A review looked for a real-card
-full-replay parity receipt and did not find one, which is correct: there was
-none.
+An earlier version of this called its result a proof. It was not one, and the
+ways it fell short are worth stating at the top because they shaped every check
+below.
 
-So this is that receipt. Recomputing every position of an approximate cache
-must reproduce what a native prefill of the same tokens produces, on this card,
-in this precision, through this kernel. If that fails, every score and every
-timing measured through the replay path describes something other than the
-operation they are attributed to, and the run stops here rather than spending
-its remaining budget.
+It compared the first layer's keys and not its values, and the first layer
+reads no cache, so it cannot see a wrong attention mask or a wrong later layer
+at all. It reported an improvement ratio over the cache being repaired as
+though a ratio needed no threshold, when the contract carries one and the
+ratio's size is set by how poor the starting map is rather than by how correct
+the replay is. It compared the whole cache against native without archiving the
+per-layer trend or the error quantiles it then described in prose. It asserted
+that this card's prefill is deterministic without ever running a second prefill
+to find out. Its partial-mask check folded every layer into one vector of
+moved positions and never looked at values. And -- the one that matters most --
+it qualified the cloning code path while every latency figure was produced by
+the in-place one, so the implementation that was timed was never the
+implementation that was checked.
 
-Four things are checked, in the order that makes a failure interpretable.
-Whether the fitted map still matches its frozen hash and its reference. Whether
-the selector picks the same positions twice. Whether full replay reproduces
-native. And whether the repaired cache carries the same continuation
-distribution as the native one it should equal, which is the property the task
-scores actually depend on and the one a tensor comparison can miss.
+What follows is the same idea done properly: agreement measured inside a
+declared envelope, with the envelope's limits fixed before the run and its
+chronology visible, plus negative controls that a wrong implementation would
+fail. It is a diagnostic. Agreement on a handful of documents under thresholds
+chosen by people is evidence that the operation is the one intended; it is not
+a proof that it always is.
 """
 
 from __future__ import annotations
