@@ -31,6 +31,21 @@ ADVANCING = {
     "SCREEN_SIGNAL_MAPPED_RANKING",
     "RECOVERY_DEVELOPMENT_SIGNAL",
     "SOURCE_UTILITY_ESTABLISHED",
+    "HANDOFF_DEVELOPMENT_SIGNAL",
+    "COLD_DEVELOPMENT_SIGNAL",
+}
+
+# Fields a stage must actually have written for its verdict to be readable.
+# A receipt that records a verdict and not the evidence behind it is a claim,
+# and a driver that advances on one is advancing on a claim.
+REQUIRED_RECEIPT_FIELDS = {
+    "qualification": (
+        "passed",
+        "envelope_checks",
+        "exact_checks",
+        "native_prefill_repeats_identically",
+    ),
+    "gate": ("verdict", "advances", "valid_evidence"),
 }
 
 
@@ -96,6 +111,52 @@ def read_verdict(path):
     return {"verdict": v, "advances": bool(adv), "source": path}
 
 
+def read_qualification(path, required=REQUIRED_RECEIPT_FIELDS["qualification"]):
+    """A qualification receipt, checked for the fields that make it one.
+
+    A driver that reads only ``passed`` will advance on a receipt whose
+    exactness checks were never run, because an absent check is not a failing
+    one. Every field the contract names must be present, and every exact check
+    inside must be true -- those admit no tolerance, so a false one is a
+    failure whatever the envelope says.
+    """
+    if not os.path.exists(path):
+        return {"passed": False, "reason": f"absent: {path}"}
+    try:
+        d = json.load(open(path))
+    except (json.JSONDecodeError, OSError) as e:
+        return {"passed": False, "reason": f"unreadable: {e}"}
+    missing = [f for f in required if f not in d]
+    if missing:
+        return {
+            "passed": False,
+            "reason": f"receipt lacks {missing}",
+            "fields_present": sorted(d),
+        }
+    exact = d.get("exact_checks") or {}
+    failed_exact = sorted(k for k, v in exact.items() if not v)
+    envelope = d.get("envelope_checks") or {}
+    failed_env = sorted(
+        k for k, v in envelope.items() if isinstance(v, dict) and not v.get("passed")
+    )
+    ok = bool(d.get("passed")) and not failed_exact and not failed_env
+    return {
+        "passed": ok,
+        "declared_passed": bool(d.get("passed")),
+        "failed_exact_checks": failed_exact,
+        "failed_envelope_checks": failed_env,
+        "native_prefill_repeats_identically": d.get(
+            "native_prefill_repeats_identically"
+        ),
+        "source": path,
+        "rule": (
+            "a qualification advances only if it declares a pass AND every "
+            "exact check is true AND every envelope check passed; an "
+            "absent check is not a passing one"
+        ),
+    }
+
+
 def may_advance(gate_paths):
     """Every named gate must have written an advancing verdict."""
     checks = [read_verdict(p) for p in gate_paths]
@@ -110,6 +171,64 @@ def may_advance(gate_paths):
             "rule advances on exactly the results that should stop the queue"
         ),
     }
+
+
+def inclusive_forecast(
+    stage_seconds,
+    *,
+    setup,
+    transfers,
+    diagnosis,
+    export,
+    already_used,
+    cap,
+    occupancy_multiplier=None,
+):
+    """What an allocation costs, against what is actually left of the cap.
+
+    The previous forecast counted setup and export and still understated,
+    because it forecast stage time and compared it against a cap measured in
+    occupied time. Reconciled against the filesystem record, the enablement
+    stages so far occupied roughly nineteen hundred seconds per thousand
+    seconds of stage work: provisioning, weight downloads, transfers,
+    diagnosis between stages and the allocations that never produced an
+    address are all real and none of them appear in a stage timer.
+
+    So this takes the stage plan, adds the overheads by name, optionally
+    applies a measured occupancy multiplier to the stage part, and subtracts
+    what has already been used. A forecast that does not fit says so.
+    """
+    stages = float(sum(stage_seconds.values()))
+    charged_stages = stages * float(occupancy_multiplier or 1.0)
+    overhead = float(setup) + float(transfers) + float(diagnosis) + float(export)
+    total = charged_stages + overhead
+    remaining = float(cap) - float(already_used)
+    out = {
+        "stage_seconds": dict(stage_seconds),
+        "stage_total_s": stages,
+        "occupancy_multiplier": occupancy_multiplier,
+        "stage_seconds_as_occupied": charged_stages,
+        "overheads_s": {
+            "setup": float(setup),
+            "transfers": float(transfers),
+            "diagnosis": float(diagnosis),
+            "export": float(export),
+        },
+        "forecast_occupied_s": total,
+        "cap_s": float(cap),
+        "already_used_s": float(already_used),
+        "remaining_s": remaining,
+        "fits": bool(total <= remaining),
+        "headroom_s": remaining - total,
+        "rule": (
+            "a cap measured in occupied time must be compared against a "
+            "forecast in occupied time; summing stage timers understates "
+            "it by everything that happens outside a stage"
+        ),
+    }
+    if not out["fits"]:
+        out["shortfall_s"] = total - remaining
+    return out
 
 
 def forecast(stage_seconds, *, setup=0.0, export=0.0, cap=None):

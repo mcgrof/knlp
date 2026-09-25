@@ -111,3 +111,137 @@ def test_a_forecast_that_does_not_fit_says_so():
 )
 def test_no_negative_verdict_name_is_treated_as_advancing(v, tmp_path):
     assert read_verdict(gate(tmp_path, v, verdict=v))["advances"] is False
+
+
+# -- reading a qualification receipt, not just its verdict -------------------
+
+
+def qual(tmp_path, name, **body):
+    p = tmp_path / f"{name}.json"
+    p.write_text(json.dumps(body))
+    return str(p)
+
+
+FULL = {
+    "passed": True,
+    "envelope_checks": {"relative_frobenius": {"measured": 0.01, "passed": True}},
+    "exact_checks": {
+        "layer0_keys": True,
+        "layer0_values": True,
+        "ownership_modes_agree": True,
+    },
+    "native_prefill_repeats_identically": True,
+}
+
+
+def test_a_complete_passing_receipt_advances(tmp_path):
+    from research.kv_translate.stage_control import read_qualification
+
+    assert read_qualification(qual(tmp_path, "ok", **FULL))["passed"] is True
+
+
+def test_a_receipt_missing_its_exact_checks_does_not_advance(tmp_path):
+    """An absent check is not a passing one."""
+    from research.kv_translate.stage_control import read_qualification
+
+    body = {k: v for k, v in FULL.items() if k != "exact_checks"}
+    r = read_qualification(qual(tmp_path, "thin", **body))
+    assert r["passed"] is False and "exact_checks" in r["reason"]
+
+
+def test_a_declared_pass_with_a_failing_exact_check_does_not_advance(tmp_path):
+    """The case the ownership gap would have produced."""
+    from research.kv_translate.stage_control import read_qualification
+
+    body = dict(FULL)
+    body["exact_checks"] = dict(FULL["exact_checks"], ownership_modes_agree=False)
+    r = read_qualification(qual(tmp_path, "own", **body))
+    assert r["passed"] is False
+    assert r["declared_passed"] is True
+    assert r["failed_exact_checks"] == ["ownership_modes_agree"]
+
+
+def test_a_declared_pass_with_a_failing_envelope_check_does_not_advance(tmp_path):
+    from research.kv_translate.stage_control import read_qualification
+
+    body = dict(FULL)
+    body["envelope_checks"] = {"continuation_KL": {"measured": 1.0, "passed": False}}
+    r = read_qualification(qual(tmp_path, "env", **body))
+    assert r["passed"] is False and r["failed_envelope_checks"] == ["continuation_KL"]
+
+
+def test_an_absent_or_unreadable_receipt_does_not_advance(tmp_path):
+    from research.kv_translate.stage_control import read_qualification
+
+    assert read_qualification(str(tmp_path / "nope.json"))["passed"] is False
+    torn = tmp_path / "torn.json"
+    torn.write_text('{"passed": tr')
+    assert read_qualification(str(torn))["passed"] is False
+
+
+def test_the_native_repeat_answer_is_carried_through(tmp_path):
+    from research.kv_translate.stage_control import read_qualification
+
+    body = dict(FULL, native_prefill_repeats_identically=False)
+    r = read_qualification(qual(tmp_path, "nr", **body))
+    assert r["native_prefill_repeats_identically"] is False
+
+
+# -- forecasting against occupied time, not stage time -----------------------
+
+
+def test_a_forecast_in_stage_time_understates_a_cap_in_occupied_time():
+    """The error the previous accounting made, shown both ways."""
+    from research.kv_translate.stage_control import forecast, inclusive_forecast
+
+    plan = {"RQ": 900, "E3": 3600}
+    naive = forecast(plan, setup=0, export=0, cap=14400)
+    assert naive["total_occupied_s"] == 4500
+
+    real = inclusive_forecast(
+        plan,
+        setup=600,
+        transfers=400,
+        diagnosis=300,
+        export=200,
+        already_used=7031,
+        cap=14400,
+        occupancy_multiplier=1.0,
+    )
+    # 4500 of stage work plus 1500 of overheads nobody times
+    assert real["forecast_occupied_s"] == 6000
+    assert real["remaining_s"] == 14400 - 7031
+    assert real["fits"] is True
+
+
+def test_an_occupancy_multiplier_can_make_a_plan_stop_fitting():
+    from research.kv_translate.stage_control import inclusive_forecast
+
+    plan = {"RQ": 900, "E3": 3600}
+    r = inclusive_forecast(
+        plan,
+        setup=600,
+        transfers=400,
+        diagnosis=300,
+        export=200,
+        already_used=7031,
+        cap=14400,
+        occupancy_multiplier=1.9,
+    )
+    assert r["fits"] is False
+    assert r["shortfall_s"] > 0
+
+
+def test_a_forecast_that_does_not_fit_reports_the_shortfall():
+    from research.kv_translate.stage_control import inclusive_forecast
+
+    r = inclusive_forecast(
+        {"E3": 3600},
+        setup=600,
+        transfers=400,
+        diagnosis=300,
+        export=200,
+        already_used=14000,
+        cap=14400,
+    )
+    assert r["fits"] is False and r["shortfall_s"] == pytest.approx(4700.0)
