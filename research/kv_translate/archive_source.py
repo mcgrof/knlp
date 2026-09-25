@@ -76,6 +76,10 @@ FILES = [
     "research/kv_translate/pick_candidate.py",
     "research/kv_translate/stage_control.py",
     "research/kv_translate/qualify_replay.py",
+    "research/kv_translate/qualify_rq.py",
+    "research/kv_translate/replay_checks.py",
+    "tests/kv_translate/test_replay_checks.py",
+    "research/cartridges_cas/scripts/rescore_c1.py",
     "research/kv_translate/profile_paths.py",
     "research/kv_translate/fit_compact.py",
     "research/kv_translate/summarise_recovery.py",
@@ -97,6 +101,17 @@ FILES = [
     "tools/kv/fp8_failure/statistics.py",
     "tools/__init__.py",
     "tools/kv/fp8_failure/__init__.py",
+    # The Cartridge screen's own harness and scorer. A review looked for these
+    # beside the results they produced and did not find them: the archive's
+    # entry points were the translation runners, and nothing pulled in a
+    # sibling experiment that shares the tree. A result whose scorer is not
+    # archived cannot be re-scored, which is exactly what was then asked for.
+    "research/cartridges_cas/scripts/c1_source_utility.py",
+    "research/cartridges_cas/scripts/rescore_c1.py",
+    "research/kv_translate/qualify_rq.py",
+    "research/cartridges_cas/scripts/score_longhealth.py",
+    "tests/cartridges_cas/test_score_longhealth.py",
+    "tests/cartridges_cas/test_c1_gate.py",
 ]
 
 # Entry points whose import closure the archive must cover. The list above is
@@ -105,6 +120,7 @@ FILES = [
 # produced them. So the closure is now derived from the imports themselves and
 # the hand-written list is checked against it.
 ENTRY_POINTS = [
+    "research/cartridges_cas/scripts/c1_source_utility.py",
     "research/kv_translate/recovery_runner.py",
     "research/kv_translate/qualify_replay.py",
     "research/kv_translate/profile_paths.py",
