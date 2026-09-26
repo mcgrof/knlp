@@ -65,8 +65,10 @@ from research.cartridges_cas.scripts.score_longhealth import UNRESOLVED  # noqa:
 
 TARGET_FILENAME = "TARGET.json"
 PREPARATION_MANIFEST = "UNSCORED_PREPARATION.json"
-FLOOR_ROWS = "rows.floor.jsonl"
-NATIVE200_ROWS = "rows.native_first_p.step200.jsonl"
+FLOOR_ARM = "receiver_no_cartridge"
+FLOOR_ROWS = f"rows.{FLOOR_ARM}.jsonl"
+NATIVE_ARM = "native_first_p"
+NATIVE200_ROWS = f"rows.{NATIVE_ARM}.step200.jsonl"
 
 # Arm identity is declared, not inferred from a name. A guard that decides
 # whether an arm is a candidate by reading the start of its filename is
