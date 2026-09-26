@@ -99,6 +99,12 @@ from cartridges.models.qwen.modeling_qwen3 import FlexQwen3ForCausalLM
 from cartridges.utils.wandb import WandBConfig
 from cartridges.train import CosWithWarmup, LinearWithWarmup
 
+# The library dispatches its chat-template and thinking-mode handling on the
+# tokenizer's reported name, and that table spells the model with a lowercase
+# b. Two spellings also mean two Hugging Face cache directories and a second
+# sixteen-gigabyte download of the same weights, so the name is a knob with the
+# historical default rather than a literal in two places.
+MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen3-8B")
 PATIENT = os.environ["PATIENT"]
 DATA_PARQUET = os.environ["DATA_PARQUET"]
 STEPS = int(os.environ.get("STEPS", "300"))
@@ -134,7 +140,7 @@ if _kv_raw.lower() == "auto":
     _div = int(os.environ.get("KV_DIVISOR", "20"))
     _lo = int(os.environ.get("KV_MIN", "256"))
     _hi = int(os.environ.get("KV_MAX", "2048"))
-    _tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+    _tok = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     with open(REC) as _f:
         _doc_toks = len(_tok(_f.read())["input_ids"])
     KV_TOKENS = max(_lo, min(_hi, -(-_doc_toks // _div)))  # ceil div, clamped
@@ -315,7 +321,7 @@ _ct.logger.addFilter(_EvalLossToCsv())
 
 config = TrainConfig(
     model=HFModelConfig(
-        pretrained_model_name_or_path="Qwen/Qwen3-8B",
+        pretrained_model_name_or_path=MODEL_NAME,
         model_cls=FlexQwen3ForCausalLM,
     ),
     kv_cache_initializer=_initializer,
