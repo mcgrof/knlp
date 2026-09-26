@@ -234,7 +234,7 @@ def main() -> int:
     from transformers import AutoTokenizer
 
     from cartridges.initialization.tokenization_utils import MODELS_WITH_THINKING
-    from cartridges.models.flex_qwen3 import FlexQwen3ForCausalLM
+    from cartridges.models.qwen.modeling_qwen3 import FlexQwen3ForCausalLM
 
     tok = AutoTokenizer.from_pretrained(args.model)
     if args.expected_model_name and tok.name_or_path != args.expected_model_name:
@@ -257,9 +257,11 @@ def main() -> int:
     wrap = make_wrapper(tok)
 
     device = "cuda"
-    model = FlexQwen3ForCausalLM.from_pretrained(
-        args.model, torch_dtype=torch.bfloat16
-    ).to(device)
+    # Same construction as the screen that produced the reference numbers:
+    # load, then move, then cast. Changing the order changes the numerics.
+    model = (
+        FlexQwen3ForCausalLM.from_pretrained(args.model).to(device).to(torch.bfloat16)
+    )
     model.eval()
     for p in model.parameters():
         p.requires_grad_(False)
