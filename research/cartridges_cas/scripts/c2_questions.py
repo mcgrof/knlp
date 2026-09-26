@@ -91,7 +91,13 @@ def load_patients_plain(path, patient_ids, want_sha256=""):
             SimpleNamespace(question_id=f"{pid}_{q['No']}", **q)
             for q in row["questions"]
         ]
-        out.append(SimpleNamespace(patient_id=pid, questions=questions, raw=row))
+        # The library's prompt wrapper reads name, birthday and diagnosis off
+        # the patient, so carry every scalar field the record has rather than
+        # only the ones this module happens to use.
+        scalars = {k: v for k, v in row.items() if k != "questions"}
+        out.append(
+            SimpleNamespace(patient_id=pid, questions=questions, raw=row, **scalars)
+        )
     if patient_ids is not None:
         missing = sorted(set(patient_ids) - {p.patient_id for p in out})
         if missing:
