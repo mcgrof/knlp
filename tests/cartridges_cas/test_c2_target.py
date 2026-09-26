@@ -74,7 +74,7 @@ def questions(tmp_path, run_dir):
     "floor,native,expected",
     [
         (2, 11, 11),
-        (0, 10, 9),  # exact: 0.90*10 == 9.0 and must NOT become 10
+        (0, 10, 9),  # 0.90*10 is exactly 9.0; the bar is nine, not ten
         (2, 20, 19),
         (5, 4, None),  # the native reference did not beat the floor
         (7, 7, None),  # a tie leaves no headroom either
@@ -89,15 +89,35 @@ def test_threshold_table(floor, native, expected):
 def test_threshold_matches_the_specified_formula_everywhere():
     """The integer form must equal ceil(F + 0.90*(N-F)) for every pair in range.
 
-    The float form is what the spec says; the integer form is what is
-    implemented, because floating point puts an exact case one ulp high and
-    rounds the bar up by a whole answer.
+    Note what this does and does not show. It shows the two agree on counts out
+    of twenty -- all 441 pairs, no exceptions. It does not show the float form
+    is unsafe in general, and an earlier version of this file wrongly claimed
+    that it rounds an exact nine up to ten. It does not: 0 + 0.90*10 is exactly
+    9.0. Integers are used because exactness by construction does not depend on
+    the input range, not because a counterexample was found in it.
     """
     for floor in range(N_QUESTIONS + 1):
         for native in range(floor + 1, N_QUESTIONS + 1):
             assert c2_target.threshold_from(floor, native) == math.ceil(
                 floor + 0.90 * (native - floor)
             ), (floor, native)
+
+
+def test_the_specifications_own_integer_expression_is_what_is_computed():
+    """The queue writes the bar as (F + 9N + 9) // 10; compute exactly that."""
+    for floor in range(N_QUESTIONS + 1):
+        for native in range(floor + 1, N_QUESTIONS + 1):
+            assert (
+                c2_target.threshold_from(floor, native)
+                == (floor + 9 * native + 9) // 10
+            ), (floor, native)
+
+
+def test_the_float_form_is_not_actually_wrong_on_these_inputs():
+    """Pin the corrected fact so the false justification cannot come back."""
+    assert 0 + 0.90 * (10 - 0) == 9.0
+    assert math.ceil(0 + 0.90 * (10 - 0)) == 9
+    assert c2_target.threshold_from(0, 10) == 9
 
 
 def test_the_no_headroom_case_yields_the_named_verdict(tmp_path, questions):
@@ -127,10 +147,62 @@ def test_freezing_refuses_once_a_mapped_arm_has_rows(run_dir, questions):
         c2_target.do_freeze(str(run_dir), questions)
 
 
-def test_freezing_refuses_once_a_mapped_cache_exists(run_dir, questions):
+def test_freezing_refuses_an_undeclared_mapped_cache(run_dir, questions):
+    """Preparation is allowed, but only when it is declared, not assumed."""
     carts = run_dir / "carts"
     carts.mkdir()
     (carts / "mapped_learned_source.pt").write_bytes(b"\0")
+    with pytest.raises(SystemExit, match="undeclared"):
+        c2_target.do_freeze(str(run_dir), questions)
+
+
+def test_freezing_allows_a_declared_mapped_cache(run_dir, questions):
+    """Building a map before the bar is fixed is legitimate; scoring is not."""
+    carts = run_dir / "carts"
+    carts.mkdir()
+    blob = carts / "mapped_learned_source.pt"
+    blob.write_bytes(b"a fitted map")
+    manifest = {
+        "why": "the map has to exist before the arm can run at all",
+        "artifacts": [
+            {
+                "path": "carts/mapped_learned_source.pt",
+                "sha256": c2_target.sha256_file(str(blob)),
+            }
+        ],
+    }
+    (run_dir / c2_target.PREPARATION_MANIFEST).write_text(json.dumps(manifest))
+    t = c2_target.do_freeze(str(run_dir), questions)
+    assert t["threshold"] == 11
+    assert "carts/mapped_learned_source.pt" in t["declared_unscored_preparation"]
+
+
+def test_a_declaration_that_does_not_match_the_disk_is_refused(run_dir, questions):
+    carts = run_dir / "carts"
+    carts.mkdir()
+    blob = carts / "mapped_learned_source.pt"
+    blob.write_bytes(b"a fitted map")
+    manifest = {
+        "artifacts": [{"path": "carts/mapped_learned_source.pt", "sha256": "0" * 64}]
+    }
+    (run_dir / c2_target.PREPARATION_MANIFEST).write_text(json.dumps(manifest))
+    with pytest.raises(SystemExit, match="hashes to"):
+        c2_target.do_freeze(str(run_dir), questions)
+
+
+def test_a_declared_score_is_still_refused(run_dir, questions):
+    """Declaring a row file as preparation must not launder it into one."""
+    rowfile = run_dir / "rows.mapped_learned_source.step25.jsonl"
+    write_rows(rowfile, rows(9))
+    manifest = {
+        "artifacts": [
+            {
+                "path": "rows.mapped_learned_source.step25.jsonl",
+                "sha256": c2_target.sha256_file(str(rowfile)),
+            }
+        ]
+    }
+    (run_dir / c2_target.PREPARATION_MANIFEST).write_text(json.dumps(manifest))
     with pytest.raises(SystemExit, match="REFUSING"):
         c2_target.do_freeze(str(run_dir), questions)
 
@@ -218,7 +290,7 @@ def test_check_fails_against_a_different_question_set(run_dir, tmp_path, questio
 def test_the_guard_is_inert_when_no_arm_is_mapped(run_dir, questions):
     assert (
         c2_target.require_target_for_mapped(
-            str(run_dir), questions, ["floor", "native_first_p"]
+            str(run_dir), questions, ["receiver_no_cartridge", "native_first_p"]
         )
         is None
     )
@@ -247,7 +319,7 @@ def test_the_guard_blocks_a_mapped_arm_when_there_was_no_headroom(tmp_path, ques
     c2_target.do_freeze(str(d), questions)
     with pytest.raises(SystemExit, match=c2_target.NO_HEADROOM):
         c2_target.require_target_for_mapped(
-            str(d), questions, ["mapped_qualified_untrained_source"]
+            str(d), questions, ["mapped_fresh_first_p_source"]
         )
 
 
@@ -274,3 +346,52 @@ def test_the_comparator_choice_is_written_into_the_frozen_file(run_dir, question
 
 def test_the_entry_point_can_actually_be_executed():
     assert_entry_point_is_sound(c2_target)
+
+
+# ---- arm identity is declared, not spelled -------------------------------
+
+
+def test_an_undeclared_arm_name_stops_the_run(run_dir, questions):
+    """Not silently classified as a reference, which would bypass the guard."""
+    with pytest.raises(SystemExit, match="is not a declared arm"):
+        c2_target.require_target_for_mapped(
+            str(run_dir), questions, ["native_first_p", "mapped_somethign_else"]
+        )
+
+
+def test_a_typo_in_a_mapped_arm_name_stops_the_run(run_dir, questions):
+    """The failure mode the filename-prefix guard had.
+
+    A guard that asks whether a name starts with "mapped_" lets a misspelled
+    reference arm through as a reference and a misspelled mapped arm through
+    as mapped-but-unrecognised. Declaring the set makes either one an error.
+    """
+    with pytest.raises(SystemExit, match="is not a declared arm"):
+        c2_target.classify_arm("mapped_learned_sauce")
+    with pytest.raises(SystemExit, match="is not a declared arm"):
+        c2_target.classify_arm("native_first_q")
+
+
+def test_renaming_a_mapped_arm_does_not_get_past_the_guard(run_dir, questions):
+    """A name outside the registry is refused rather than treated as safe."""
+    with pytest.raises(SystemExit, match="is not a declared arm"):
+        c2_target.require_target_for_mapped(
+            str(run_dir), questions, ["totally_innocent_arm"]
+        )
+
+
+def test_every_declared_arm_classifies(run_dir, questions):
+    for a in c2_target.REFERENCE_ARMS:
+        assert c2_target.classify_arm(a) == "reference"
+    for a in c2_target.MAPPED_ARMS:
+        assert c2_target.classify_arm(a) == "mapped"
+
+
+def test_the_registry_matches_the_queues_arm_names():
+    """The three arms the execution queue names, plus the floor."""
+    assert set(c2_target.MAPPED_ARMS) == {
+        "mapped_learned_source",
+        "mapped_fresh_first_p_source",
+    }
+    assert "native_first_p" in c2_target.REFERENCE_ARMS
+    assert "receiver_no_cartridge" in c2_target.REFERENCE_ARMS

@@ -24,10 +24,22 @@ unless a target file exists, passes ``check``, and was frozen against the same
 question set the runner is using. So the mapped arms cannot start before a
 target exists, and a target cannot be quietly recomputed after they do.
 
-The arithmetic is integer throughout. ``ceil(F + 0.90*(N-F))`` is exactly
-``ceil((F + 9N)/10)``, and doing it in floating point puts an exact case such
-as F=0, N=10 -- which should be nine -- one ulp above nine and rounds it to
-ten. An off-by-one in the bar is an off-by-one in the verdict.
+The arithmetic is integer throughout, written the way the specification
+writes it: ``(F + 9N + 9) // 10``. That is exact by construction, which is the
+whole reason to prefer it -- not because the floating-point form is observed to
+be wrong here. It is not: over all 441 count pairs in range,
+``ceil(F + 0.90*(N-F))`` in double precision agrees with the integer result
+every time, and the case that looks most dangerous, F=0 and N=10, evaluates to
+exactly 9.0 and ceils to nine. An earlier version of this file claimed
+otherwise and was wrong.
+
+The reason to keep integers anyway is that the agreement is a property of these
+particular inputs rather than of the method. Counts out of twenty are small and
+exactly representable; the same formula applied in the percentage domain, or to
+a larger question set, is a different computation whose error has to be checked
+on its own terms rather than inherited from this one. An off-by-one in the bar
+is an off-by-one in the verdict, so the bar should not depend on an argument
+about representability at all.
 
 The spec also forbids a parser or termination regression without saying against
 what. Leaving that to be decided later means deciding it once the numbers are
@@ -52,9 +64,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from research.cartridges_cas.scripts.score_longhealth import UNRESOLVED  # noqa: E402
 
 TARGET_FILENAME = "TARGET.json"
+PREPARATION_MANIFEST = "UNSCORED_PREPARATION.json"
 FLOOR_ROWS = "rows.floor.jsonl"
 NATIVE200_ROWS = "rows.native_first_p.step200.jsonl"
-MAPPED_PREFIX = "mapped_"
+
+# Arm identity is declared, not inferred from a name. A guard that decides
+# whether an arm is a candidate by reading the start of its filename is
+# bypassed by spelling it differently, and a typo in an arm name would sail
+# past it as "not mapped" rather than stopping the run. So the registry below
+# is the only source of that classification, and a name that is not in it is
+# an error rather than a default.
+REFERENCE_ARMS = {
+    "receiver_no_cartridge": "the frozen receiver with no trainable prefix",
+    "native_first_p": "the receiver's own natural keys and values over the "
+    "first p positions",
+}
+MAPPED_ARMS = {
+    "mapped_learned_source": "the saved source cartridge, translated",
+    "mapped_fresh_first_p_source": "a freshly built untrained source cache, "
+    "translated; an authorised substitute for a step-zero state that was "
+    "never saved, and not a reconstruction of it",
+}
+DECLARED_ARMS = {**REFERENCE_ARMS, **MAPPED_ARMS}
 FRACTION_NUMERATOR = 9
 FRACTION_DENOMINATOR = 10
 NO_HEADROOM = "RECEIVER_INITIALIZER_NO_INFORMATIVE_REFERENCE"
@@ -77,14 +108,16 @@ def sha256_file(path):
 def threshold_from(floor_correct, native200_correct):
     """The bar, in whole answers, or None when the references leave no room.
 
-    ``-(-x // d)`` is ceiling division on integers. The identity being used is
+    Written as the specification writes it, ``(F + 9N + 9) // 10``, which is
+    ceiling division on non-negative integers. The identity being used is
     ``ceil(F + 0.90*(N-F)) == ceil((F + 9N)/10)``; it holds for every pair in
-    range, and unlike the float form it cannot round an exact value up.
+    range. Integers are used because the result is then exact by construction,
+    not because the float form misbehaves on these inputs -- it does not.
     """
     if native200_correct <= floor_correct:
         return None
     total = floor_correct + FRACTION_NUMERATOR * native200_correct
-    return -(-total // FRACTION_DENOMINATOR)
+    return (total + FRACTION_DENOMINATOR - 1) // FRACTION_DENOMINATOR
 
 
 def read_rows(path):
@@ -115,19 +148,84 @@ def listing_sha256(run_dir):
     return hashlib.sha256(blob.encode("utf-8")).hexdigest(), names
 
 
-def mapped_artifacts(run_dir):
-    """Anything that would mean a mapped arm has already produced something."""
+def classify_arm(arm):
+    """ "reference", "mapped", or a hard failure for a name nobody declared."""
+    if arm in MAPPED_ARMS:
+        return "mapped"
+    if arm in REFERENCE_ARMS:
+        return "reference"
+    raise SystemExit(
+        f"INVALID: {arm!r} is not a declared arm. Declared arms are "
+        f"{', '.join(sorted(DECLARED_ARMS))}. An undeclared name is refused "
+        "rather than assumed to be a reference, because assuming it would let "
+        "a typo or a rename walk past the target guard."
+    )
+
+
+def declared_preparation(run_dir):
+    """Unscored preparation the operator has declared, by hash.
+
+    Building a map or a cache before the target is frozen is legitimate and
+    sometimes unavoidable; scoring a candidate before it is frozen is not. The
+    difference cannot be read off a filename, so it has to be declared: an
+    artifact listed here with a matching hash is preparation, and anything else
+    that looks like a mapped arm's output is a candidate outcome.
+    """
+    path = os.path.join(run_dir, PREPARATION_MANIFEST)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        manifest = json.load(f)
+    out = {}
+    for entry in manifest.get("artifacts", []):
+        rel, want = entry["path"], entry["sha256"]
+        full = os.path.join(run_dir, rel)
+        if not os.path.exists(full):
+            raise SystemExit(
+                f"INVALID: {PREPARATION_MANIFEST} declares {rel}, which is not "
+                "there. A declaration that does not match the disk is not a "
+                "declaration."
+            )
+        got = sha256_file(full)
+        if got != want:
+            raise SystemExit(
+                f"INVALID: declared preparation {rel} hashes to {got}, not "
+                f"{want}. Re-declare it deliberately rather than letting the "
+                "manifest drift."
+            )
+        out[rel] = got
+    return out
+
+
+def mapped_outcomes(run_dir):
+    """What must not exist yet if a freeze is to mean anything.
+
+    Two kinds of thing carry a mapped arm's name before a freeze. Scores are
+    never allowed: a bar chosen with the candidate's score on disk is not a
+    bar. Caches and fitted maps are allowed, because building them before
+    freezing is often unavoidable -- but only when the operator has declared
+    them in the hashed manifest. An undeclared one is reported here too, so the
+    permission has to be taken deliberately rather than inferred from the fact
+    that a file happens to be a cache and not a score.
+    """
+    prepared = declared_preparation(run_dir)
     found = []
     for name in sorted(os.listdir(run_dir)):
-        if name.startswith(f"rows.{MAPPED_PREFIX}") and name.endswith(".jsonl"):
-            found.append(name)
+        if not (name.startswith("rows.") and name.endswith(".jsonl")):
+            continue
+        arm = name[len("rows.") :].rsplit(".jsonl", 1)[0].split(".")[0]
+        if arm in MAPPED_ARMS:
+            found.append(name)  # a score is never preparation
     carts = os.path.join(run_dir, "carts")
     if os.path.isdir(carts):
-        found.extend(
-            f"carts/{n}"
-            for n in sorted(os.listdir(carts))
-            if n.startswith(MAPPED_PREFIX)
-        )
+        for n in sorted(os.listdir(carts)):
+            rel = f"carts/{n}"
+            arm = n.split(".")[0]
+            if arm in MAPPED_ARMS and rel not in prepared:
+                found.append(
+                    f"{rel} (undeclared; declare it in "
+                    f"{PREPARATION_MANIFEST} to allow it)"
+                )
     return found
 
 
@@ -151,12 +249,14 @@ def do_freeze(run_dir, questions_path, force_question_sha=""):
             "recomputing it after the fact is the thing this file prevents."
         )
 
-    already = mapped_artifacts(run_dir)
+    already = mapped_outcomes(run_dir)
     if already:
         raise SystemExit(
-            "REFUSING: mapped arms have already produced artifacts "
+            "REFUSING: a mapped arm has already been scored "
             f"({', '.join(already)}). A target frozen now would be chosen with "
-            "the candidate's outcome already on disk, which is not a freeze."
+            "the candidate's outcome already on disk, which is not a freeze. "
+            f"Unscored preparation is allowed, but it must be declared in "
+            f"{PREPARATION_MANIFEST} with its hash."
         )
 
     with open(questions_path, encoding="utf-8") as f:
@@ -221,6 +321,13 @@ def do_freeze(run_dir, questions_path, force_question_sha=""):
         },
         "directory_listing_sha256": lsha,
         "directory_listing": names,
+        "declared_unscored_preparation": declared_preparation(run_dir),
+        "declared_arms": {
+            "reference": sorted(REFERENCE_ARMS),
+            "mapped": sorted(MAPPED_ARMS),
+            "rule": "arm identity comes from this registry, never from how a "
+            "file happens to be named; an undeclared name is refused",
+        },
         "scope": (
             "the threshold is a function of these two reference numbers and "
             "nothing else, and both were measured on this device in this run; "
@@ -267,13 +374,16 @@ def do_check(run_dir, questions_path=""):
 
 
 def require_target_for_mapped(run_dir, questions_path, arms):
-    """The guard the runner calls before it evaluates anything mapped.
+    """The guard the evaluation entry point must call before it scores an arm.
 
-    Kept here rather than in the runner so that the rule and its enforcement
-    live in one file and are tested together.
+    Two limits worth stating rather than implying. This function only enforces
+    anything when the real driver calls it -- a guard nothing reaches is
+    documentation -- so the driver test exercises the call path, not just this
+    function. And the classification comes from the declared registry, so an
+    arm nobody declared stops the run instead of being waved through.
     """
-    mapped = [a for a in arms if a.startswith(MAPPED_PREFIX)]
-    if not mapped:
+    kinds = [classify_arm(a) for a in arms]
+    if "mapped" not in kinds:
         return None
     target = do_check(run_dir, questions_path)
     if target.get("threshold") is None:

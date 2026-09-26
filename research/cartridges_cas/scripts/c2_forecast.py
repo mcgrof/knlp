@@ -37,10 +37,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from research.kv_translate.stage_control import inclusive_forecast  # noqa: E402
 
 RESERVE_TOTAL_S = 14400.0
-RECORDED_USED_S = 2914.6
+# Two debits, not one. The local screen recorded 2,914.6 s, and the failed
+# acquisition before it recorded about 1,020 s; a failed allocation is occupied
+# time like any other and belongs to this lane. An earlier version of this file
+# charged only the screen and overstated the residual by that much.
+C1_SCREEN_S = 2914.6
+C1_FAILED_ACQUISITION_S = 1020.0
+RECORDED_USED_S = C1_SCREEN_S + C1_FAILED_ACQUISITION_S
+# The stage carries its own cap as well as its share of the reserve, and the
+# binding limit is whichever is smaller.
+STAGE_CAP_S = 10800.0
 EVAL_GENERATIONS = 320
 EVAL_TOKEN_CEILING = 163840
+OPTIMIZER_UPDATES = 600
 BLOCKED = "CARTRIDGE_RESOURCE_BLOCKED"
+UNRESOLVED_DEBITS = (
+    "the second acquisition's occupancy",
+    "the local smoke and chunked-prefill qualification",
+    "other setup, export or worker occupancy",
+)
 
 
 def generation_seconds(tokens_per_second, generations, mean_tokens, ceiling_tokens):
@@ -107,20 +122,44 @@ def build(
         cap=cap,
         occupancy_multiplier=occupancy_multiplier,
     )
+    binding = min(cap - already_used, STAGE_CAP_S)
     return {
-        "contract": "c2_forecast_v1",
+        "contract": "c2_forecast_v2",
         "generation": gen,
+        "optimizer_updates": OPTIMIZER_UPDATES,
+        "binding_limit_s": binding,
+        "binding_limit_is": (
+            "the stage cap"
+            if STAGE_CAP_S < cap - already_used
+            else "the reserve residual"
+        ),
         "forecast_at_token_ceiling": fc,
         "forecast_at_mean_length": optimistic,
-        "fits": bool(fc["fits"]),
-        "fits_only_at_mean_length": bool(optimistic["fits"] and not fc["fits"]),
+        "fits": bool(fc["fits"] and fc["forecast_occupied_s"] <= binding),
+        "fits_reserve": bool(fc["fits"]),
+        "fits_stage_cap": bool(fc["forecast_occupied_s"] <= STAGE_CAP_S),
+        "fits_only_at_mean_length": bool(
+            optimistic["fits"]
+            and optimistic["forecast_occupied_s"] <= binding
+            and not (fc["fits"] and fc["forecast_occupied_s"] <= binding)
+        ),
         "remaining_is_an_upper_bound": True,
         "remaining_note": (
-            "the reserve records no exact remaining figure and does not yet "
-            "account for failed acquisitions or setup, so the headroom here can "
-            "only shrink"
+            "an upper bound only: these debits are still unresolved and none "
+            "of them may be treated as zero -- " + "; ".join(UNRESOLVED_DEBITS)
         ),
-        "verdict": None if fc["fits"] else BLOCKED,
+        "recorded_debits_s": {
+            "c1_local_screen": C1_SCREEN_S,
+            "c1_failed_acquisition": C1_FAILED_ACQUISITION_S,
+        },
+        "not_a_device_measurement": (
+            "the rate passed in prices the plan; it is not a qualification of "
+            "any device, and a rate borrowed from a different model or a "
+            "different path is an assumption, not a measurement"
+        ),
+        "verdict": (
+            None if (fc["fits"] and fc["forecast_occupied_s"] <= binding) else BLOCKED
+        ),
     }
 
 

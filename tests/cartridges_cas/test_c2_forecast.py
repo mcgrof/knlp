@@ -52,20 +52,42 @@ def test_the_evaluation_leg_is_priced_from_a_measured_rate():
     assert g["seconds_at_mean_length"] == pytest.approx(12800.0)
 
 
-def test_at_the_only_rate_this_lane_has_measured_the_stage_does_not_fit():
-    """Evaluation alone exceeds the remaining reserve on the previous hardware.
+def test_the_borrowed_rate_does_not_fit_but_proves_nothing_about_a_device():
+    """A sensitivity, not a benchmark.
 
-    This is the finding, not a fixture: three hundred and twenty generations at
-    the earlier screen's decode rate costs more than the whole reserve has left,
-    before any training, fitting or setup, and the receiver here is twice the
-    size of the model that produced that rate.
+    Priced at the earlier screen's effective output rate the plan does not fit.
+    That rate is NOT a decode rate for this receiver: it came from a model half
+    the size, it mixes prompt and prefill work into the token count, and it
+    contains no backward pass at all. So this says the plan is expensive at that
+    price, and says nothing about whether any particular card can meet it. Only
+    a qualification on the actual receiver can say that.
     """
     out = c2_forecast.build(MEASURED_4B_TOKENS_PER_SECOND, 1.0)
     assert out["fits"] is False
     assert out["verdict"] == c2_forecast.BLOCKED
-    fc = out["forecast_at_token_ceiling"]
-    assert fc["remaining_s"] == pytest.approx(11485.4)
-    assert fc["shortfall_s"] > 6000
+    assert "not a qualification of any device" in out["not_a_device_measurement"]
+
+
+def test_the_reserve_charges_the_failed_acquisition_too():
+    """A failed allocation is occupied time and belongs to this lane."""
+    out = c2_forecast.build(60.0, 1.0)
+    assert out["recorded_debits_s"] == {
+        "c1_local_screen": 2914.6,
+        "c1_failed_acquisition": 1020.0,
+    }
+    assert out["forecast_at_token_ceiling"]["remaining_s"] == pytest.approx(10465.4)
+
+
+def test_the_stage_cap_binds_when_it_is_smaller_than_the_residual():
+    """C2 is limited by min(its own cap, what the reserve actually has left)."""
+    out = c2_forecast.build(60.0, 1.0, cap=99999.0, already_used=0.0)
+    assert out["binding_limit_s"] == c2_forecast.STAGE_CAP_S
+    assert out["binding_limit_is"] == "the stage cap"
+    # 163,840 / 10 = 16,384 s: over the 10,800 s stage cap, well under the
+    # inflated reserve, so only the cap can be what refuses it.
+    huge = c2_forecast.build(10.0, 1.0, cap=99999.0, already_used=0.0)
+    assert huge["fits_reserve"] is True and huge["fits_stage_cap"] is False
+    assert huge["fits"] is False and huge["verdict"] == c2_forecast.BLOCKED
 
 
 def test_a_fast_enough_receiver_makes_it_fit():
@@ -91,7 +113,9 @@ def test_fitting_only_at_the_mean_length_is_flagged_rather_than_claimed():
 def test_the_remaining_figure_is_labelled_an_upper_bound():
     out = c2_forecast.build(60.0, 1.0)
     assert out["remaining_is_an_upper_bound"] is True
-    assert "can only shrink" in out["remaining_note"]
+    assert "may be treated as zero" in out["remaining_note"]
+    for debt in c2_forecast.UNRESOLVED_DEBITS:
+        assert debt in out["remaining_note"]
 
 
 def run_cli(*args):
