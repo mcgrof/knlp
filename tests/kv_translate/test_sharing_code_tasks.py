@@ -127,6 +127,8 @@ def test_the_parser_finds_the_function_or_says_why_not(output, outcome, has_body
         assert "return a + b" in body and "def target" not in body
 
 
+INTERPRETER = sorted({sys.prefix, sys.base_prefix})
+
 needs_sandbox = pytest.mark.skipif(
     not sandbox.available(), reason="bubblewrap is not installed"
 )
@@ -137,7 +139,7 @@ def run_in(repo, body):
     scratch = os.path.join(os.path.dirname(root), "scratch")
     os.makedirs(scratch, exist_ok=True)
     return code_tasks.score(
-        task, body, root, sys.executable, scratch=scratch, readable=[]
+        task, body, root, sys.executable, scratch=scratch, readable=INTERPRETER
     )
 
 
@@ -157,7 +159,7 @@ def test_a_task_whose_tests_cannot_fail_is_not_eligible(repo):
     root, task = repo
     scratch = os.path.join(os.path.dirname(root), "scratch")
     os.makedirs(scratch, exist_ok=True)
-    kw = dict(scratch=scratch, readable=[])
+    kw = dict(scratch=scratch, readable=INTERPRETER)
     assert code_tasks.eligibility(task, root, sys.executable, **kw)["eligible"] is True
     blind = dict(task, tests=["tests/test_core.py::test_other"])
     got = code_tasks.eligibility(blind, root, sys.executable, **kw)
