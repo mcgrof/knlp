@@ -241,6 +241,11 @@ def serve(cfg, records, ledger, out_dir, ident):
         max(r["actual_prefix_tokens"] for r in records),
         geom["head_dim"],
     )
+    # the staging buffer holds whichever cache is read, and the source's is
+    # the larger one when the source is the larger model
+    for r in todo:
+        head = cache_store.header(cache_path(cfg, "source", r["context_id"]))
+        largest = max(largest, head["payload_bytes"])
     t0 = time.time()
     rx = Receiver(model, largest_payload=largest, source_theta=cfg["source_rope_theta"])
     rx.mappers = {}
