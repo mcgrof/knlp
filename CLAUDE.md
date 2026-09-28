@@ -122,6 +122,24 @@ Signed-off-by: Luis Chamberlain <mcgrof@do-not-panic.com>
   is not. Before committing, reread the message as an outsider: if any
   token would send them to results-archive to decode it, replace it.
 
+- **NO DEVICE OR HOST IDENTITY**: knlp is public, so nothing that
+  identifies a specific piece of hardware belongs in it — not in a commit
+  message, not in a generated page, not in a script that emits one. That
+  means no drive serial numbers, no firmware revisions, no vendor part
+  numbers or marketing model names, no PCI vendor/device IDs, no
+  controller feature registers that pin down a part, no wear or
+  temperature readings, and no internal host names. A reproducibility
+  claim needs the device's *geometry*, not its identity: logical and
+  physical block size, MDTS and the resulting maximum transfer,
+  `max_segments`, `max_hw_dmabuf_sectors_kb`, link speed and width,
+  capacity class, and the partition layout. Write "a 4Kn datacenter NVMe
+  SSD, mdts 6 giving 256 KiB, 65 segments"; never the part number and
+  firmware string. Device identity belongs in external private experiment
+  records, where serial verification before a destructive write is required
+  practice. When in doubt, ask whether a competitor reading the page
+  would learn which product was tested — if yes, it is identity, not
+  geometry.
+
 **Enforcement.** knlp ships an MACP-lite `commit-msg` validator at
 `scripts/commit-msg-hook` (the lighter profile of the agents protocol: it
 checks the model-explicit `Generated-by` → `Signed-off-by` pair, bans the
