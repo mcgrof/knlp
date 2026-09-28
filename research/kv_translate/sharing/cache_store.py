@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mmap
 import os
 import subprocess
 
@@ -147,10 +148,18 @@ class Reader:
 
     def __init__(self, largest_payload, device="cuda"):
         self.device = torch.device(device)
-        pin = self.device.type == "cuda"
         size = -(-largest_payload // BLOCK) * BLOCK
-        self.buf = torch.empty(size, dtype=torch.uint8, pin_memory=pin)
-        self.view = memoryview(self.buf.numpy())
+        if self.device.type == "cuda":
+            self.buf = torch.empty(size, dtype=torch.uint8, pin_memory=True)
+            self.view = memoryview(self.buf.numpy())
+        else:
+            # direct reads need a buffer that starts on a block boundary,
+            # which an ordinary allocation does not promise
+            self.map = mmap.mmap(-1, size)
+            self.buf = torch.frombuffer(self.map, dtype=torch.uint8)
+            self.view = memoryview(self.map)
+        if self.buf.data_ptr() % BLOCK:
+            raise OSError("the staging buffer is not aligned for direct reads")
 
     def read(self, path, *, direct, expect=None):
         """Payload bytes into the buffer. Returns the header and the I/O record."""
