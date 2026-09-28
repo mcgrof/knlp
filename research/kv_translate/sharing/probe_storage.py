@@ -48,7 +48,9 @@ def main() -> int:
         "allocated_bytes": rec["allocated_bytes"],
         "seconds": round(time.perf_counter() - t0, 3),
     }
-    reader = cache_store.Reader(rec["payload_bytes"], "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    reader = cache_store.Reader(rec["payload_bytes"], device)
+    out["staging_buffer"] = "pinned" if device == "cuda" else "page-aligned"
     out["reads"] = []
     for label, direct in (
         ("page_cache", False),
