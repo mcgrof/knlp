@@ -183,6 +183,92 @@ def test_prevalidated_policy_attests_immutable_file(tmp_path):
         reader.read(path, direct=False, expect=meta)
 
 
+def test_validation_rejects_path_replacement_race(tmp_path):
+    checkout = os.environ.get("LMCACHE_CODEC_CHECKOUT")
+    if not checkout:
+        pytest.skip("set LMCACHE_CODEC_CHECKOUT for pinned codec qualification")
+    key = torch.zeros((1, 1, 8, 4), dtype=torch.bfloat16)
+    meta = {
+        "model": "unit/model",
+        "revision": "frozen-revision",
+        "prefix_tokens_sha256": "34" * 32,
+    }
+    path = tmp_path / "attested.kv"
+    replacement = tmp_path / "replacement.kv"
+    for target, value in ((path, torch.ones_like(key)), (replacement, key.clone())):
+        asym_cache_store.write(
+            target,
+            [(key, value)],
+            meta,
+            codec_checkout=checkout,
+            codec_revision="b1339f7606f7241402312e988c3e730d8f66a52b",
+        )
+    head = asym_cache_store.header(path)
+    reader = asym_cache_store.Reader(
+        head["segments"][0]["padded_length"],
+        device="cpu",
+        codec_checkout=checkout,
+        integrity_policy="prevalidated",
+    )
+    original_check = reader._check_encoded
+    replaced = False
+
+    def replace_after_check(encoded, parsed_head, layer):
+        nonlocal replaced
+        original_check(encoded, parsed_head, layer)
+        if not replaced:
+            os.replace(replacement, path)
+            replaced = True
+
+    reader._check_encoded = replace_after_check
+    with pytest.raises(asym_cache_store.WrongCache, match="changed during"):
+        reader.validate(path, expect=meta)
+
+
+def test_restore_rejects_path_replacement_race(tmp_path):
+    checkout = os.environ.get("LMCACHE_CODEC_CHECKOUT")
+    if not checkout:
+        pytest.skip("set LMCACHE_CODEC_CHECKOUT for pinned codec qualification")
+    key = torch.zeros((1, 1, 8, 4), dtype=torch.bfloat16)
+    meta = {
+        "model": "unit/model",
+        "revision": "frozen-revision",
+        "prefix_tokens_sha256": "56" * 32,
+    }
+    path = tmp_path / "attested.kv"
+    replacement = tmp_path / "replacement.kv"
+    for target, value in ((path, torch.ones_like(key)), (replacement, key.clone())):
+        asym_cache_store.write(
+            target,
+            [(key, value)],
+            meta,
+            codec_checkout=checkout,
+            codec_revision="b1339f7606f7241402312e988c3e730d8f66a52b",
+        )
+    head = asym_cache_store.header(path)
+    reader = asym_cache_store.Reader(
+        head["segments"][0]["padded_length"],
+        device="cpu",
+        codec_checkout=checkout,
+        integrity_policy="prevalidated",
+    )
+    reader.validate(path, expect=meta)
+    original_read = reader._read_segment
+    replaced = False
+
+    def replace_after_read(fd, segment, index):
+        nonlocal replaced
+        source = original_read(fd, segment, index)
+        if not replaced:
+            os.replace(replacement, path)
+            replaced = True
+        return source
+
+    reader._read_segment = replace_after_read
+    with pytest.raises(asym_cache_store.WrongCache, match="changed during"):
+        reader.read(path, direct=False, expect=meta)
+
+
 def test_per_read_crc_rejects_payload_corruption(tmp_path):
     checkout = os.environ.get("LMCACHE_CODEC_CHECKOUT")
     if not checkout:
