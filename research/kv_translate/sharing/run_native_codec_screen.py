@@ -38,9 +38,19 @@ ARMS = ("native_recompute", "native_bf16_restore", "native_k16_v8_restore")
 
 def choose_qualification_contexts(records, lengths):
     """Choose the first frozen document and code group at each length."""
+    return choose_screen_contexts(records, lengths, {})
+
+
+def choose_screen_contexts(records, lengths, contexts_per_domain_by_length):
+    """Choose a frozen number of independent groups for each length/domain."""
     chosen = []
     for length in lengths:
-        chosen.extend(choose_contexts(records, int(length), 1))
+        count = int(
+            contexts_per_domain_by_length.get(
+                str(length), contexts_per_domain_by_length.get(int(length), 1)
+            )
+        )
+        chosen.extend(choose_contexts(records, int(length), count))
     return chosen
 
 
@@ -139,7 +149,9 @@ def request(rx, asym_reader, cfg, record, prefix, suffix, arm, *, direct):
     }
 
 
-def run_context(rx, asym_reader, tokenizer, stop_ids, cfg, record, identity, ledger, rng):
+def run_context(
+    rx, asym_reader, tokenizer, stop_ids, cfg, record, identity, ledger, rng
+):
     cid = record["context_id"]
     out_dir = os.path.join(cfg["out"], "contexts", cid)
     done = os.path.join(out_dir, "DONE.json")
@@ -155,9 +167,16 @@ def run_context(rx, asym_reader, tokenizer, stop_ids, cfg, record, identity, led
     if len(prefix) != int(record["length_bucket"]):
         raise ValueError(f"{cid}: prefix has {len(prefix)} tokens")
     _, asym_head = prepare_caches(rx, cfg, record, prefix, ledger)
-    reduction = 1 - os.stat(cache_path(cfg, "k16v8", cid)).st_size / os.stat(
-        cache_path(cfg, "bf16", cid)
-    ).st_size
+    if cfg["integrity_policy"] == "prevalidated":
+        asym_reader.validate(
+            cache_path(cfg, "k16v8", cid),
+            expect=expected(cfg["model"], cfg["model_revision"], record),
+        )
+    reduction = (
+        1
+        - os.stat(cache_path(cfg, "k16v8", cid)).st_size
+        / os.stat(cache_path(cfg, "bf16", cid)).st_size
+    )
     if reduction < cfg["serialized_reduction_min"]:
         raise RuntimeError(f"serialized byte reduction is only {reduction:.6f}")
     torch.cuda.reset_peak_memory_stats()
@@ -215,7 +234,9 @@ def run_context(rx, asym_reader, tokenizer, stop_ids, cfg, record, identity, led
                         "query_id": query["query_id"],
                         "route": arm,
                         "mapper": None,
-                        "read_state": "none" if arm == "native_recompute" else cfg["read_state"],
+                        "read_state": "none"
+                        if arm == "native_recompute"
+                        else cfg["read_state"],
                         "round": round_id,
                         "position_in_round": position,
                         "suffix_tokens": len(suffix),
@@ -234,7 +255,9 @@ def run_context(rx, asym_reader, tokenizer, stop_ids, cfg, record, identity, led
         "k16v8_serialized_bytes": os.stat(cache_path(cfg, "k16v8", cid)).st_size,
         "codec_payload_bytes": asym_head["asym_payload_bytes"],
         "peak_gpu_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2),
-        "peak_host_rss_gib": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2),
+        "peak_host_rss_gib": round(
+            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2
+        ),
         "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     tmp = done + ".tmp"
@@ -266,20 +289,25 @@ def main():
         "rounds": 3,
         "seed": 0,
         "read_state": "direct",
+        "integrity_policy": "prevalidated",
         "keep_caches": False,
         "serialized_reduction_min": 0.24,
         **cfg,
     }
     if cfg["read_state"] not in ("direct", "page_cache"):
         raise ValueError("read_state must be direct or page_cache")
+    if cfg["integrity_policy"] not in asym_cache_store.Reader.INTEGRITY_POLICIES:
+        raise ValueError("unsupported integrity_policy")
     threads = min(usable_processors(), 16)
     torch.set_num_threads(threads)
     os.makedirs(cfg["out"], exist_ok=True)
     os.makedirs(cfg["cache_dir"], exist_ok=True)
     os.makedirs(os.path.join(cfg["out"], "contexts"), exist_ok=True)
     records_path = os.path.join(cfg["workload"], "records.jsonl")
-    records = choose_qualification_contexts(
-        load_jsonl(records_path), cfg["qualification_lengths"]
+    records = choose_screen_contexts(
+        load_jsonl(records_path),
+        cfg["qualification_lengths"],
+        cfg.get("contexts_per_domain_by_length", {}),
     )
     identity_blob = {
         "source_digest": source_digest(),
@@ -287,10 +315,12 @@ def main():
         "model": [cfg["model"], cfg["model_revision"]],
         "contexts": [record["context_id"] for record in records],
         "qualification_lengths": cfg["qualification_lengths"],
+        "contexts_per_domain_by_length": cfg.get("contexts_per_domain_by_length", {}),
         "arms": ARMS,
         "rounds": cfg["rounds"],
         "seed": cfg["seed"],
         "read_state": cfg["read_state"],
+        "integrity_policy": cfg["integrity_policy"],
         "codec_revision": cfg["codec_revision"],
         "codec_source_sha256": cfg["codec_source_sha256"],
         "codec_contract": {
@@ -305,6 +335,7 @@ def main():
             "outer_header_bytes": asym_cache_store.OUTER_HEADER,
             "padding_bytes": cache_store.BLOCK,
             "expansion": "target device before ordinary attention",
+            "integrity_policy": cfg["integrity_policy"],
         },
     }
     identity = hashlib.sha256(
@@ -348,8 +379,11 @@ def main():
         largest_segment,
         device=rx.device,
         codec_checkout=cfg["codec_checkout"],
+        integrity_policy=cfg["integrity_policy"],
     )
-    tokenizer = AutoTokenizer.from_pretrained(cfg["model"], revision=cfg["model_revision"])
+    tokenizer = AutoTokenizer.from_pretrained(
+        cfg["model"], revision=cfg["model_revision"]
+    )
     stop_ids = {tokenizer.convert_tokens_to_ids(token) for token in STOP}
     ledger = os.path.join(cfg["out"], "CACHE_BYTES.jsonl")
     rng = random.Random(f"{cfg['seed']}|native-codec-order")
