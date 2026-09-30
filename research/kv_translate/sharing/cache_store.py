@@ -217,6 +217,169 @@ class Reader:
         )
 
 
+class StreamingReader:
+    """Bit-exact BF16 control with bounded, reusable per-layer staging.
+
+    This is deliberately separate from :class:`Reader`: the original whole-
+    payload reader remains the historical comparator, while this adapter
+    isolates the reader-implementation gain from any K16/V8 format gain.
+    Each read verifies the serializer's payload SHA-256.
+    """
+
+    def __init__(self, largest_layer_payload, device="cuda", staging_buffers=2):
+        if int(staging_buffers) < 1:
+            raise ValueError("at least one staging buffer is required")
+        self.device = torch.device(device)
+        size = -(-max(int(largest_layer_payload), HEADER) // BLOCK) * BLOCK
+        self.buffers = []
+        self._maps = []
+        self._events = [None] * int(staging_buffers)
+        for _ in range(int(staging_buffers)):
+            if self.device.type == "cuda":
+                buf = torch.empty(size, dtype=torch.uint8, pin_memory=True)
+                view = memoryview(buf.numpy())
+            else:
+                mapping = mmap.mmap(-1, size)
+                self._maps.append(mapping)
+                buf = torch.frombuffer(mapping, dtype=torch.uint8)
+                view = memoryview(mapping)
+            if buf.data_ptr() % BLOCK:
+                raise OSError("the streaming staging buffer is not block aligned")
+            self.buffers.append((buf, view))
+
+    @property
+    def staging_bytes(self):
+        return sum(len(view) for _, view in self.buffers)
+
+    @staticmethod
+    def _identity(fd):
+        status = os.fstat(fd)
+        return (
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _path_identity(path):
+        status = os.stat(path)
+        return (
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+        )
+
+    def _wait(self, index):
+        event = self._events[index]
+        if event is not None:
+            event.synchronize()
+            self._events[index] = None
+
+    def read(self, path, *, direct, expect=None):
+        """Restore owning per-layer tensors without staging the full payload."""
+        path = os.path.abspath(os.fspath(path))
+        before = storage_counters()
+        flags = os.O_RDONLY | (os.O_DIRECT if direct else 0)
+        fd = os.open(path, flags)
+        pairs = []
+        digest = hashlib.sha256()
+        try:
+            identity_before = self._identity(fd)
+            self._wait(0)
+            _, header_view = self.buffers[0]
+            got = os.preadv(fd, [header_view[:HEADER]], 0)
+            if got != HEADER:
+                raise OSError(f"short cache header read: {got} of {HEADER} bytes")
+            blob = bytes(header_view[:HEADER])
+            if not blob.startswith(MAGIC):
+                raise WrongCache(f"{path} is not a prefix cache file")
+            head = json.loads(blob[len(MAGIC) :].rstrip(b"\0"))
+            if expect:
+                check(head, expect)
+            if head.get("serializer") != SERIALIZER:
+                raise WrongCache(f"unsupported serializer {head.get('serializer')!r}")
+            if head.get("dtype") != "bfloat16":
+                raise WrongCache("the BF16 streaming control requires bfloat16")
+
+            elements = head["kv_heads"] * head["tokens"] * head["head_dim"]
+            layer_bytes = 2 * elements * torch.bfloat16.itemsize
+            expected_payload = head["layers"] * layer_bytes
+            if head["payload_bytes"] != expected_payload:
+                raise WrongCache("payload size does not match the declared BF16 geometry")
+            if layer_bytes > len(self.buffers[0][1]):
+                raise ValueError("a cache layer exceeds the warm staging buffer")
+            if direct and layer_bytes % BLOCK:
+                raise ValueError("direct BF16 streaming requires block-aligned layers")
+
+            for layer in range(head["layers"]):
+                index = layer % len(self.buffers)
+                self._wait(index)
+                _, view = self.buffers[index]
+                offset = HEADER + layer * layer_bytes
+                got = os.preadv(fd, [view[:layer_bytes]], offset)
+                if got != layer_bytes:
+                    raise OSError(
+                        f"short BF16 layer read: {got} of {layer_bytes} bytes"
+                    )
+                digest.update(view[:layer_bytes])
+                host = torch.frombuffer(
+                    view,
+                    dtype=torch.bfloat16,
+                    count=2 * elements,
+                ).reshape(2, head["kv_heads"], head["tokens"], head["head_dim"])
+                if self.device.type == "cuda":
+                    stacked = host.to(self.device, non_blocking=True)
+                    event = torch.cuda.Event()
+                    event.record(torch.cuda.current_stream(self.device))
+                    self._events[index] = event
+                else:
+                    # The returned tensors must outlive reuse of the staging slot.
+                    stacked = host.clone()
+                pairs.append((stacked[0].unsqueeze(0), stacked[1].unsqueeze(0)))
+
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+                self._events = [None] * len(self.buffers)
+            identity_after = self._identity(fd)
+            if identity_after != identity_before:
+                raise WrongCache(f"{path} changed during restore")
+            try:
+                path_identity = self._path_identity(path)
+            except FileNotFoundError as error:
+                raise WrongCache(f"{path} changed during restore") from error
+            if path_identity != identity_after:
+                raise WrongCache(f"{path} changed during restore")
+            if digest.hexdigest() != head["payload_sha256"]:
+                raise WrongCache(f"{path} payload SHA-256 mismatch")
+        finally:
+            os.close(fd)
+
+        after = storage_counters()
+        io = {
+            "direct": bool(direct),
+            "bytes": head["payload_bytes"],
+            "serialized_bytes": identity_after[2],
+            "h2d_bytes": head["payload_bytes"],
+            "staging_bytes": self.staging_bytes,
+            "integrity_policy": "per_read_sha256",
+            "requested": (
+                None
+                if before["requested"] is None
+                else after["requested"] - before["requested"]
+            ),
+            "from_storage": (
+                None
+                if before["from_storage"] is None
+                else after["from_storage"] - before["from_storage"]
+            ),
+        }
+        return head, pairs, io
+
+
 def as_pairs(stacked):
     """[layers, 2, heads, tokens, width] as the per-layer pairs a model takes."""
     return [

@@ -259,6 +259,10 @@ def header(path):
     path = os.fspath(path)
     with open(path, "rb") as f:
         blob = f.read(OUTER_HEADER)
+    return _decode_outer_header(blob, path)
+
+
+def _decode_outer_header(blob, path):
     if not blob.startswith(MAGIC):
         raise WrongCache(f"{path} is not an asymmetric prefix cache")
     return json.loads(blob[len(MAGIC) :].rstrip(b"\0"))
@@ -307,7 +311,7 @@ class Reader:
             scale_dtype=torch.float32,
             scale_scope=ScaleScope.PER_TENSOR,
         )
-        size = _align(largest_segment)
+        size = _align(max(largest_segment, OUTER_HEADER))
         self.buffers = []
         self._maps = []
         for _ in range(int(staging_buffers)):
@@ -326,8 +330,7 @@ class Reader:
         self._validated = {}
 
     @staticmethod
-    def _file_identity(path):
-        status = os.stat(path)
+    def _status_identity(status):
         return (
             status.st_dev,
             status.st_ino,
@@ -335,6 +338,14 @@ class Reader:
             status.st_mtime_ns,
             status.st_ctime_ns,
         )
+
+    @classmethod
+    def _file_identity(cls, path):
+        return cls._status_identity(os.stat(path))
+
+    @classmethod
+    def _descriptor_identity(cls, fd):
+        return cls._status_identity(os.fstat(fd))
 
     @staticmethod
     def _unpack_string(view, offset):
@@ -482,6 +493,17 @@ class Reader:
             raise OSError(f"short codec read: {got} of {padded} bytes")
         return view[: segment["length"]]
 
+    def _read_header(self, fd, path):
+        """Read the outer header through the descriptor used for the payload."""
+        self._wait_for_buffer(0)
+        _, view = self.buffers[0]
+        if OUTER_HEADER > len(view):
+            raise ValueError("outer header exceeds the warm staging buffer")
+        got = os.preadv(fd, [view[:OUTER_HEADER]], 0)
+        if got != OUTER_HEADER:
+            raise OSError(f"short cache header read: {got} of {OUTER_HEADER} bytes")
+        return _decode_outer_header(bytes(view[:OUTER_HEADER]), path)
+
     def _decode_view(self, encoded, payload_offset, index):
         _, view = self.buffers[index]
         k_offset = payload_offset
@@ -533,14 +555,15 @@ class Reader:
     def validate(self, path, *, expect=None):
         """Verify every payload CRC and attest the file for fast reads."""
         path = os.path.abspath(os.fspath(path))
-        head = header(path)
-        if expect:
-            check(head, expect)
-        if head["serializer"] != SERIALIZER:
-            raise WrongCache(f"unsupported serializer {head['serializer']!r}")
-        hashes = _hashes(self.api, head)
         fd = os.open(path, os.O_RDONLY)
         try:
+            identity_before = self._descriptor_identity(fd)
+            head = self._read_header(fd, path)
+            if expect:
+                check(head, expect)
+            if head["serializer"] != SERIALIZER:
+                raise WrongCache(f"unsupported serializer {head['serializer']!r}")
+            hashes = _hashes(self.api, head)
             for layer, segment in enumerate(head["segments"]):
                 index = layer % len(self.buffers)
                 source = self._read_segment(fd, segment, index)
@@ -550,37 +573,46 @@ class Reader:
                     verify_payload=True,
                 )
                 self._check_encoded(encoded, head, layer)
+            identity_after = self._descriptor_identity(fd)
+            if identity_after != identity_before:
+                raise WrongCache(f"{path} changed during payload validation")
+            try:
+                path_identity = self._file_identity(path)
+            except FileNotFoundError as error:
+                raise WrongCache(f"{path} changed during payload validation") from error
+            if path_identity != identity_after:
+                raise WrongCache(f"{path} changed during payload validation")
         finally:
             os.close(fd)
-        identity = self._file_identity(path)
-        self._validated[path] = identity
-        return head, {"payload_crc": "verified", "file_identity": identity}
+        self._validated[path] = identity_after
+        return head, {"payload_crc": "verified", "file_identity": identity_after}
 
-    def _require_prevalidated(self, path):
+    def _require_prevalidated(self, path, descriptor_identity):
         expected = self._validated.get(path)
         if expected is None:
             raise WrongCache(f"{path} has not been payload-validated")
-        if self._file_identity(path) != expected:
+        if descriptor_identity != expected:
             raise WrongCache(f"{path} changed after payload validation")
         return expected
 
     def read(self, path, *, direct, expect=None):
         path = os.path.abspath(os.fspath(path))
-        head = header(path)
-        if expect:
-            check(head, expect)
-        if head["serializer"] != SERIALIZER:
-            raise WrongCache(f"unsupported serializer {head['serializer']!r}")
-        attested = None
-        if self.integrity_policy == "prevalidated":
-            attested = self._require_prevalidated(path)
-        hashes = _hashes(self.api, head)
         before = storage_counters()
         flags = os.O_RDONLY | (os.O_DIRECT if direct else 0)
         fd = os.open(path, flags)
         pairs = []
         h2d_bytes = 0
         try:
+            identity_before = self._descriptor_identity(fd)
+            attested = None
+            if self.integrity_policy == "prevalidated":
+                attested = self._require_prevalidated(path, identity_before)
+            head = self._read_header(fd, path)
+            if expect:
+                check(head, expect)
+            if head["serializer"] != SERIALIZER:
+                raise WrongCache(f"unsupported serializer {head['serializer']!r}")
+            hashes = _hashes(self.api, head)
             for layer, segment in enumerate(head["segments"]):
                 index = layer % len(self.buffers)
                 source = self._read_segment(fd, segment, index)
@@ -603,18 +635,27 @@ class Reader:
                     + encoded.v_payload_len
                     + encoded.scale_payload_len
                 )
+            if self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
+                self._events = [None] * len(self.buffers)
+            identity_after = self._descriptor_identity(fd)
+            if identity_after != identity_before:
+                raise WrongCache(f"{path} changed during restore")
+            if attested is not None and identity_after != attested:
+                raise WrongCache(f"{path} changed during restore")
+            try:
+                path_identity = self._file_identity(path)
+            except FileNotFoundError as error:
+                raise WrongCache(f"{path} changed during restore") from error
+            if path_identity != identity_after:
+                raise WrongCache(f"{path} changed during restore")
         finally:
             os.close(fd)
-        if self.device.type == "cuda":
-            torch.cuda.synchronize(self.device)
-            self._events = [None] * len(self.buffers)
-        if attested is not None and self._file_identity(path) != attested:
-            raise WrongCache(f"{path} changed during restore")
         after = storage_counters()
         io = {
             "direct": bool(direct),
             "bytes": sum(s["padded_length"] for s in head["segments"]),
-            "serialized_bytes": os.stat(path).st_size,
+            "serialized_bytes": identity_after[2],
             "codec_payload_bytes": head["asym_payload_bytes"],
             "h2d_bytes": h2d_bytes,
             "expansion_device": self.device.type,
