@@ -12,6 +12,7 @@ torch = pytest.importorskip("torch")
 from research.kv_translate.sharing import asym_cache_store  # noqa: E402
 from research.kv_translate.sharing.run_native_codec_screen import (  # noqa: E402
     choose_qualification_contexts,
+    choose_screen_contexts,
 )
 
 
@@ -41,6 +42,41 @@ def test_qualification_uses_one_group_per_domain_and_length():
         (16384, "document"),
         (16384, "code"),
         (32768, "document"),
+        (32768, "code"),
+    ]
+
+
+def test_development_selection_uses_frozen_count_at_each_length():
+    rows = []
+    for length, count in ((4096, 2), (16384, 3), (32768, 2)):
+        for domain in ("document", "code"):
+            for group in range(count + 1):
+                rows.append(
+                    {
+                        "domain": domain,
+                        "length_bucket": length,
+                        "source_group_id": f"{domain}-{length}-{group}",
+                        "context_id": f"{domain}-{length}-{group}",
+                    }
+                )
+    selected = choose_screen_contexts(
+        rows, [4096, 16384, 32768], {"4096": 2, "16384": 3, "32768": 2}
+    )
+    assert len(selected) == 14
+    assert [(row["length_bucket"], row["domain"]) for row in selected] == [
+        (4096, "document"),
+        (4096, "document"),
+        (4096, "code"),
+        (4096, "code"),
+        (16384, "document"),
+        (16384, "document"),
+        (16384, "document"),
+        (16384, "code"),
+        (16384, "code"),
+        (16384, "code"),
+        (32768, "document"),
+        (32768, "document"),
+        (32768, "code"),
         (32768, "code"),
     ]
 
@@ -80,7 +116,10 @@ def test_pinned_codec_round_trip_preserves_key_bits_and_reference_values(tmp_pat
     assert head["outer_header_bytes"] == 8 * 4096
     largest = max(segment["padded_length"] for segment in head["segments"])
     reader = asym_cache_store.Reader(
-        largest, device="cpu", codec_checkout=checkout
+        largest,
+        device="cpu",
+        codec_checkout=checkout,
+        staging_buffers=1,
     )
     _, restored, io = reader.read(path, direct=False, expect=meta)
     # This deliberately partial, small tensor pays proportionally large
@@ -95,6 +134,90 @@ def test_pinned_codec_round_trip_preserves_key_bits_and_reference_values(tmp_pat
         _, reference, _ = codec.decode(encoded, out_v_dtype=torch.bfloat16)
         assert torch.equal(got_value, reference.reshape(value.shape))
     assert torch.count_nonzero(restored[0][1]) == 0
+
+
+def test_prevalidated_policy_attests_immutable_file(tmp_path):
+    checkout = os.environ.get("LMCACHE_CODEC_CHECKOUT")
+    if not checkout:
+        pytest.skip("set LMCACHE_CODEC_CHECKOUT for pinned codec qualification")
+    key = torch.arange(24, dtype=torch.float32).reshape(1, 2, 3, 4).to(torch.bfloat16)
+    value = (key.float() / 7).to(torch.bfloat16)
+    path = tmp_path / "attested.kv"
+    meta = {
+        "model": "unit/model",
+        "revision": "frozen-revision",
+        "prefix_tokens_sha256": "ef" * 32,
+        "role": "native",
+        "attention_backend": "sdpa",
+    }
+    asym_cache_store.write(
+        path,
+        [(key, value)],
+        meta,
+        codec_checkout=checkout,
+        codec_revision="b1339f7606f7241402312e988c3e730d8f66a52b",
+    )
+    head = asym_cache_store.header(path)
+    reader = asym_cache_store.Reader(
+        head["segments"][0]["padded_length"],
+        device="cpu",
+        codec_checkout=checkout,
+        integrity_policy="prevalidated",
+    )
+    with pytest.raises(asym_cache_store.WrongCache, match="not been"):
+        reader.read(path, direct=False, expect=meta)
+    reader.validate(path, expect=meta)
+    _, restored, io = reader.read(path, direct=False, expect=meta)
+    assert torch.equal(restored[0][0].view(torch.int16), key.view(torch.int16))
+    assert io["payload_crc"] == "prevalidated_immutable"
+
+    segment = head["segments"][0]
+    with open(path, "r+b") as output:
+        output.seek(segment["offset"] + segment["length"] - 1)
+        byte = output.read(1)
+        output.seek(-1, os.SEEK_CUR)
+        output.write(bytes([byte[0] ^ 1]))
+        output.flush()
+        os.fsync(output.fileno())
+    with pytest.raises(asym_cache_store.WrongCache, match="changed"):
+        reader.read(path, direct=False, expect=meta)
+
+
+def test_per_read_crc_rejects_payload_corruption(tmp_path):
+    checkout = os.environ.get("LMCACHE_CODEC_CHECKOUT")
+    if not checkout:
+        pytest.skip("set LMCACHE_CODEC_CHECKOUT for pinned codec qualification")
+    key = torch.zeros((1, 1, 8, 4), dtype=torch.bfloat16)
+    value = torch.ones_like(key)
+    path = tmp_path / "corrupt.kv"
+    meta = {
+        "model": "unit/model",
+        "revision": "frozen-revision",
+        "prefix_tokens_sha256": "12" * 32,
+    }
+    asym_cache_store.write(
+        path,
+        [(key, value)],
+        meta,
+        codec_checkout=checkout,
+        codec_revision="b1339f7606f7241402312e988c3e730d8f66a52b",
+    )
+    head = asym_cache_store.header(path)
+    segment = head["segments"][0]
+    with open(path, "r+b") as output:
+        output.seek(segment["offset"] + segment["length"] - 1)
+        byte = output.read(1)
+        output.seek(-1, os.SEEK_CUR)
+        output.write(bytes([byte[0] ^ 1]))
+        output.flush()
+        os.fsync(output.fileno())
+    reader = asym_cache_store.Reader(
+        segment["padded_length"],
+        device="cpu",
+        codec_checkout=checkout,
+    )
+    with pytest.raises(asym_cache_store.WrongCache, match="CRC mismatch"):
+        reader.read(path, direct=False, expect=meta)
 
 
 def test_nonfinite_values_are_rejected(tmp_path):

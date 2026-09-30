@@ -15,10 +15,12 @@ import json
 import importlib.util
 import mmap
 import os
+import struct
 import subprocess
 import sys
 import time
 import types
+import zlib
 
 import torch
 
@@ -103,11 +105,19 @@ def _codec_api(checkout):
 
     load("lmcache.v1.kv_codec.errors", "errors.py")
     encoded = load("lmcache.v1.kv_codec.encoded_kv", "encoded_kv.py")
-    implementation = load(
-        "lmcache.v1.kv_codec.asym_k16_v8", "asym_k16_v8.py"
-    )
+    implementation = load("lmcache.v1.kv_codec.asym_k16_v8", "asym_k16_v8.py")
     implementation._knlp_codec_root = root
     return implementation.AsymK16V8Codec, encoded.CodecHashes, encoded.ScaleScope
+
+
+def _codec_modules(checkout):
+    """Return the pinned codec API together with its two source modules."""
+    api = _codec_api(checkout)
+    return (
+        api,
+        sys.modules["lmcache.v1.kv_codec.asym_k16_v8"],
+        sys.modules["lmcache.v1.kv_codec.encoded_kv"],
+    )
 
 
 def _hashes(api, meta):
@@ -214,9 +224,7 @@ def write(path, pairs, meta, *, codec_checkout, codec_revision):
                 2 * k.numel() * k.element_size() for k, _ in pairs
             ),
             "asym_payload_bytes": sum(
-                s["k_payload_bytes"]
-                + s["v_payload_bytes"]
-                + s["scale_payload_bytes"]
+                s["k_payload_bytes"] + s["v_payload_bytes"] + s["scale_payload_bytes"]
                 for s in segments
             ),
             "diagnostics": diagnostics,
@@ -263,11 +271,36 @@ def check(head, expect):
 
 
 class Reader:
-    """Read block-aligned codec blobs and expand V on the target device."""
+    """Restore codec blobs without materializing pageable payload copies.
 
-    def __init__(self, largest_segment, *, device, codec_checkout):
+    ``payload_crc`` preserves the codec's original per-read verification.
+    ``prevalidated`` verifies an immutable file once, then retains format,
+    shape, and identity checks while omitting the repeated payload CRC.  That
+    is the measured BF16 reader's integrity policy made explicit.
+    """
+
+    INTEGRITY_POLICIES = ("payload_crc", "prevalidated")
+
+    def __init__(
+        self,
+        largest_segment,
+        *,
+        device,
+        codec_checkout,
+        integrity_policy="payload_crc",
+        staging_buffers=2,
+    ):
         self.device = torch.device(device)
-        self.api = _codec_api(codec_checkout)
+        if integrity_policy not in self.INTEGRITY_POLICIES:
+            raise ValueError(
+                f"integrity_policy must be one of {self.INTEGRITY_POLICIES}"
+            )
+        if int(staging_buffers) < 1:
+            raise ValueError("at least one staging buffer is required")
+        self.integrity_policy = integrity_policy
+        self.api, self.implementation, self.encoded_module = _codec_modules(
+            codec_checkout
+        )
         AsymK16V8Codec, _, ScaleScope = self.api
         self.codec = AsymK16V8Codec(
             fp8_dtype=torch.float8_e4m3fn,
@@ -275,22 +308,272 @@ class Reader:
             scale_scope=ScaleScope.PER_TENSOR,
         )
         size = _align(largest_segment)
-        if self.device.type == "cuda":
-            self.buf = torch.empty(size, dtype=torch.uint8, pin_memory=True)
-            self.view = memoryview(self.buf.numpy())
-        else:
-            self.map = mmap.mmap(-1, size)
-            self.buf = torch.frombuffer(self.map, dtype=torch.uint8)
-            self.view = memoryview(self.map)
-        if self.buf.data_ptr() % BLOCK:
-            raise OSError("the asymmetric staging buffer is not block aligned")
+        self.buffers = []
+        self._maps = []
+        for _ in range(int(staging_buffers)):
+            if self.device.type == "cuda":
+                buf = torch.empty(size, dtype=torch.uint8, pin_memory=True)
+                view = memoryview(buf.numpy())
+            else:
+                mapping = mmap.mmap(-1, size)
+                self._maps.append(mapping)
+                buf = torch.frombuffer(mapping, dtype=torch.uint8)
+                view = memoryview(mapping)
+            if buf.data_ptr() % BLOCK:
+                raise OSError("the asymmetric staging buffer is not block aligned")
+            self.buffers.append((buf, view))
+        self._events = [None] * len(self.buffers)
+        self._validated = {}
 
-    def read(self, path, *, direct, expect=None):
+    @staticmethod
+    def _file_identity(path):
+        status = os.stat(path)
+        return (
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+            status.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _unpack_string(view, offset):
+        if offset + 2 > len(view):
+            raise WrongCache("truncated codec string length")
+        (length,) = struct.unpack_from("<H", view, offset)
+        offset += 2
+        if offset + length > len(view):
+            raise WrongCache("truncated codec string")
+        try:
+            value = bytes(view[offset : offset + length]).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise WrongCache("non-UTF-8 codec string") from error
+        return value, offset + length
+
+    def _parse(self, source, *, expected_hashes, verify_payload):
+        """Parse the pinned V1 format while retaining a payload view."""
+        view = memoryview(source)
+        module = self.encoded_module
+        fixed_format = "<8sHHHHHH" + "qqqqqqq"
+        fixed_length = struct.calcsize(fixed_format)
+        if len(view) < fixed_length:
+            raise WrongCache("codec segment is shorter than its fixed header")
+        (
+            magic,
+            version,
+            scale_scope,
+            k_dtype_id,
+            v_dtype_id,
+            scale_dtype_id,
+            _reserved,
+            layer_id,
+            chunk_id,
+            chunk_size,
+            page_size,
+            kv_head_count,
+            head_dim,
+            scale_shape_n,
+        ) = struct.unpack_from(fixed_format, view, 0)
+        if magic != module.CODEC_MAGIC:
+            raise WrongCache(f"bad codec magic {magic!r}")
+        if version != int(module.CodecVersion.V1):
+            raise WrongCache(f"unsupported codec version {version}")
+        if scale_shape_n < 0 or scale_shape_n > 8:
+            raise WrongCache(f"implausible scale rank {scale_shape_n}")
+        offset = fixed_length
+        shape_bytes = 8 * scale_shape_n
+        if offset + shape_bytes > len(view):
+            raise WrongCache("truncated codec scale shape")
+        scale_shape = tuple(struct.unpack_from(f"<{scale_shape_n}q", view, offset))
+        offset += shape_bytes
+        if any(dimension < 0 for dimension in scale_shape):
+            raise WrongCache("negative codec scale dimension")
+        if offset + 24 > len(view):
+            raise WrongCache("truncated codec payload lengths")
+        k_length, v_length, scale_length = struct.unpack_from("<qqq", view, offset)
+        offset += 24
+        if min(k_length, v_length, scale_length) < 0:
+            raise WrongCache("negative codec payload length")
+        if offset + 2 > len(view):
+            raise WrongCache("truncated codec hash count")
+        (hash_count,) = struct.unpack_from("<H", view, offset)
+        offset += 2
+        hashes = module.CodecHashes()
+        known_hashes = set(module.CodecHashes._CHECK_ORDER)
+        for _ in range(hash_count):
+            key, offset = self._unpack_string(view, offset)
+            value, offset = self._unpack_string(view, offset)
+            if key in known_hashes:
+                setattr(hashes, key, value)
+        if offset + 4 > len(view):
+            raise WrongCache("truncated codec checksum")
+        (declared_crc,) = struct.unpack_from("<I", view, offset)
+        offset += 4
+        payload_length = k_length + v_length + scale_length
+        if offset + payload_length != len(view):
+            raise WrongCache("codec segment length does not match its declared payload")
+        payload = view[offset:]
+        if verify_payload:
+            computed_crc = zlib.crc32(payload) & 0xFFFFFFFF
+            if computed_crc != declared_crc:
+                raise WrongCache(
+                    f"payload CRC mismatch: declared {declared_crc:#x}, "
+                    f"computed {computed_crc:#x}"
+                )
+        encoded = module.EncodedKV(
+            k_dtype=module._int_to_dtype(k_dtype_id),
+            v_dtype=module._int_to_dtype(v_dtype_id),
+            scale_dtype=module._int_to_dtype(scale_dtype_id),
+            scale_scope=module.ScaleScope(scale_scope),
+            hashes=hashes,
+            layer_id=layer_id,
+            chunk_id=chunk_id,
+            chunk_size=chunk_size,
+            page_size=page_size,
+            kv_head_count=kv_head_count,
+            head_dim=head_dim,
+            scale_shape=scale_shape,
+            k_payload_len=k_length,
+            v_payload_len=v_length,
+            scale_payload_len=scale_length,
+            payload=payload,
+            header_bytes=bytes(view[:offset]),
+        )
+        self.codec._check_hash_match(encoded.hashes, expected_hashes)
+        return encoded, offset
+
+    def _check_encoded(self, encoded, head, layer):
+        elements = head["kv_heads"] * head["tokens"] * head["head_dim"]
+        expected = {
+            "layer_id": layer,
+            "chunk_id": 0,
+            "chunk_size": head["tokens"],
+            "page_size": -1,
+            "kv_head_count": head["kv_heads"],
+            "head_dim": head["head_dim"],
+            "k_dtype": torch.bfloat16,
+            "v_dtype": torch.float8_e4m3fn,
+            "scale_dtype": torch.float32,
+            "scale_scope": self.api[2].PER_TENSOR,
+            "scale_shape": (),
+            "k_payload_len": elements * 2,
+            "v_payload_len": elements,
+            "scale_payload_len": 4,
+        }
+        for field, wanted in expected.items():
+            got = getattr(encoded, field)
+            if got != wanted:
+                raise WrongCache(f"codec {field} is {got!r}, expected {wanted!r}")
+
+    def _wait_for_buffer(self, index):
+        event = self._events[index]
+        if event is not None:
+            event.synchronize()
+            self._events[index] = None
+
+    def _read_segment(self, fd, segment, index):
+        self._wait_for_buffer(index)
+        _, view = self.buffers[index]
+        padded = segment["padded_length"]
+        if padded > len(view):
+            raise ValueError("codec segment exceeds the warm staging buffer")
+        got = os.preadv(fd, [view[:padded]], segment["offset"])
+        if got != padded:
+            raise OSError(f"short codec read: {got} of {padded} bytes")
+        return view[: segment["length"]]
+
+    def _decode_view(self, encoded, payload_offset, index):
+        _, view = self.buffers[index]
+        k_offset = payload_offset
+        v_offset = k_offset + encoded.k_payload_len
+        scale_offset = v_offset + encoded.v_payload_len
+        k_host = torch.frombuffer(
+            view,
+            dtype=encoded.k_dtype,
+            count=encoded.k_payload_len // 2,
+            offset=k_offset,
+        )
+        v_host = torch.frombuffer(
+            view,
+            dtype=encoded.v_dtype,
+            count=encoded.v_payload_len,
+            offset=v_offset,
+        )
+        scales_host = torch.frombuffer(
+            view,
+            dtype=encoded.scale_dtype,
+            count=encoded.scale_payload_len // 4,
+            offset=scale_offset,
+        ).reshape(encoded.scale_shape)
+        if self.device.type == "cuda":
+            k = k_host.to(self.device, non_blocking=True)
+            v_quant = v_host.to(self.device, non_blocking=True)
+            scales = scales_host.to(self.device, non_blocking=True)
+            v = self.implementation.dequantize_v_fp8(
+                v_quant,
+                scales,
+                encoded.scale_scope,
+                out_dtype=torch.bfloat16,
+            )
+            event = torch.cuda.Event()
+            event.record(torch.cuda.current_stream(self.device))
+            self._events[index] = event
+        else:
+            # CPU results must own their bytes before this buffer is reused.
+            # Dequantization already gives V independent storage.
+            k = k_host.clone()
+            v = self.implementation.dequantize_v_fp8(
+                v_host,
+                scales_host,
+                encoded.scale_scope,
+                out_dtype=torch.bfloat16,
+            )
+        return k, v
+
+    def validate(self, path, *, expect=None):
+        """Verify every payload CRC and attest the file for fast reads."""
+        path = os.path.abspath(os.fspath(path))
         head = header(path)
         if expect:
             check(head, expect)
         if head["serializer"] != SERIALIZER:
             raise WrongCache(f"unsupported serializer {head['serializer']!r}")
+        hashes = _hashes(self.api, head)
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            for layer, segment in enumerate(head["segments"]):
+                index = layer % len(self.buffers)
+                source = self._read_segment(fd, segment, index)
+                encoded, _ = self._parse(
+                    source,
+                    expected_hashes=hashes,
+                    verify_payload=True,
+                )
+                self._check_encoded(encoded, head, layer)
+        finally:
+            os.close(fd)
+        identity = self._file_identity(path)
+        self._validated[path] = identity
+        return head, {"payload_crc": "verified", "file_identity": identity}
+
+    def _require_prevalidated(self, path):
+        expected = self._validated.get(path)
+        if expected is None:
+            raise WrongCache(f"{path} has not been payload-validated")
+        if self._file_identity(path) != expected:
+            raise WrongCache(f"{path} changed after payload validation")
+        return expected
+
+    def read(self, path, *, direct, expect=None):
+        path = os.path.abspath(os.fspath(path))
+        head = header(path)
+        if expect:
+            check(head, expect)
+        if head["serializer"] != SERIALIZER:
+            raise WrongCache(f"unsupported serializer {head['serializer']!r}")
+        attested = None
+        if self.integrity_policy == "prevalidated":
+            attested = self._require_prevalidated(path)
         hashes = _hashes(self.api, head)
         before = storage_counters()
         flags = os.O_RDONLY | (os.O_DIRECT if direct else 0)
@@ -299,32 +582,15 @@ class Reader:
         h2d_bytes = 0
         try:
             for layer, segment in enumerate(head["segments"]):
-                padded = segment["padded_length"]
-                if padded > len(self.view):
-                    raise ValueError("codec segment exceeds the warm staging buffer")
-                got = os.preadv(fd, [self.view[:padded]], segment["offset"])
-                if got != padded:
-                    raise OSError(f"short codec read: {got} of {padded} bytes")
-                encoded = self.codec.from_bytes(
-                    bytes(self.view[: segment["length"]]),
+                index = layer % len(self.buffers)
+                source = self._read_segment(fd, segment, index)
+                encoded, payload_offset = self._parse(
+                    source,
                     expected_hashes=hashes,
+                    verify_payload=self.integrity_policy == "payload_crc",
                 )
-                if encoded.layer_id != layer:
-                    raise WrongCache(
-                        f"codec layer is {encoded.layer_id}, expected {layer}"
-                    )
-                if (
-                    encoded.chunk_size != head["tokens"]
-                    or encoded.kv_head_count != head["kv_heads"]
-                    or encoded.head_dim != head["head_dim"]
-                ):
-                    raise WrongCache("codec shape metadata does not match outer header")
-                k, v, scales = self.codec.decode(
-                    encoded,
-                    out_k_dtype=torch.bfloat16,
-                    out_v_dtype=torch.bfloat16,
-                    device=self.device,
-                )
+                self._check_encoded(encoded, head, layer)
+                k, v = self._decode_view(encoded, payload_offset, index)
                 shape = (
                     1,
                     head["kv_heads"],
@@ -337,11 +603,13 @@ class Reader:
                     + encoded.v_payload_len
                     + encoded.scale_payload_len
                 )
-                del scales
         finally:
             os.close(fd)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+            self._events = [None] * len(self.buffers)
+        if attested is not None and self._file_identity(path) != attested:
+            raise WrongCache(f"{path} changed during restore")
         after = storage_counters()
         io = {
             "direct": bool(direct),
@@ -350,6 +618,12 @@ class Reader:
             "codec_payload_bytes": head["asym_payload_bytes"],
             "h2d_bytes": h2d_bytes,
             "expansion_device": self.device.type,
+            "integrity_policy": self.integrity_policy,
+            "payload_crc": (
+                "per_read"
+                if self.integrity_policy == "payload_crc"
+                else "prevalidated_immutable"
+            ),
             "requested": (
                 None
                 if before["requested"] is None
