@@ -18,6 +18,12 @@ from __future__ import annotations
 import pytest
 import torch
 
+from research.kv_translate.blend_select import (
+    qwen3_layer0_keys,
+    rank_tokens_by_key_deviation,
+    select_qwen3_layer0_key_deviation,
+)
+from research.kv_translate.kri_cost import measure_kri_d_kv_blocks
 from research.kv_translate.recovery import BLOCK, mask_from_blocks
 from research.kv_translate.replay import absolute_causal_mask, replay_selected
 
@@ -45,13 +51,46 @@ def tiny():
     return m, ids, T
 
 
+@pytest.fixture(scope="module")
+def tiny_qwen3():
+    """The receiving architecture in the 14B -> 32B recovery run.
+
+    Unlike Qwen2, Qwen3 normalises projected queries and keys before RoPE and
+    may use a head width that is not hidden_size / attention_heads.  A replay
+    that reconstructs either detail outside the model can pass the Qwen2
+    fixture and still write the wrong cache for the actual receiver.
+    """
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+
+    torch.manual_seed(1)
+    cfg = Qwen3Config(
+        vocab_size=256,
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=3,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=16,
+        max_position_embeddings=1024,
+        rope_theta=1_000_000.0,
+        tie_word_embeddings=False,
+    )
+    m = Qwen3ForCausalLM(cfg).eval().to(torch.float32)
+    T = 128
+    ids = torch.randint(0, 200, (1, T))
+    return m, ids, T
+
+
 def _native(model, ids):
     from transformers import DynamicCache
 
     c = DynamicCache()
     with torch.no_grad():
         model(input_ids=ids, past_key_values=c, use_cache=True)
-    return ([l.keys for l in c.layers], [l.values for l in c.layers])
+    return (
+        [layer.keys for layer in c.layers],
+        [layer.values for layer in c.layers],
+    )
 
 
 def _approx(native, scale=0.6, shift=0.05):
@@ -79,6 +118,153 @@ def test_full_replay_reproduces_native_computation(tiny):
     for li in range(len(nk)):
         assert torch.allclose(rk[li], nk[li], atol=TOL), f"keys layer {li}"
         assert torch.allclose(rv[li], nv[li], atol=TOL), f"values layer {li}"
+
+
+def test_qwen3_full_replay_includes_qk_norm_and_rope(tiny_qwen3):
+    """The real receiver's attention path, not a hand-built approximation.
+
+    Calling the model for replay makes Qwen3 apply q_norm, k_norm and RoPE in
+    their native order.  Full replay must therefore reproduce its native cache
+    in both components and every layer.
+    """
+    model, ids, T = tiny_qwen3
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    rk, rv, info = replay_selected(model, ids, torch.ones(T, dtype=torch.bool), ak, av)
+    assert info == {"replayed": T, "layers_written": [0, 1, 2]}
+    for li in range(len(nk)):
+        assert torch.allclose(rk[li], nk[li], atol=TOL), f"keys layer {li}"
+        assert torch.allclose(rv[li], nv[li], atol=TOL), f"values layer {li}"
+
+
+def test_qwen3_sparse_replay_uses_absolute_cache_slots(tiny_qwen3):
+    """Position ids, cache positions and scatter slots name the same tokens."""
+    model, ids, T = tiny_qwen3
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    mask = mask_from_blocks(T, [1, 5])
+    slots = torch.nonzero(mask, as_tuple=False).flatten()
+    seen = {}
+    orig = model.forward
+
+    def spy(*args, **kwargs):
+        seen["position_ids"] = kwargs["position_ids"].detach().clone()
+        seen["cache_position"] = kwargs["cache_position"].detach().clone()
+        return orig(*args, **kwargs)
+
+    model.forward = spy
+    try:
+        rk, rv, info = replay_selected(model, ids, mask, ak, av)
+    finally:
+        model.forward = orig
+
+    assert torch.equal(seen["position_ids"], slots.reshape(1, -1))
+    assert torch.equal(seen["cache_position"], slots)
+    assert info["replayed"] == int(mask.sum())
+    keep = ~mask
+    for li in range(len(nk)):
+        assert torch.equal(rk[li][:, :, keep], ak[li][:, :, keep])
+        assert torch.equal(rv[li][:, :, keep], av[li][:, :, keep])
+    # Layer zero reads no cache: exact equality isolates Q/K normalisation,
+    # RoPE, token order and the destination slots from mixed-cache effects.
+    assert torch.equal(rk[0][:, :, mask], nk[0][:, :, mask])
+    assert torch.equal(rv[0][:, :, mask], nv[0][:, :, mask])
+
+
+def test_qwen3_zero_replay_bypasses_the_model(tiny_qwen3):
+    model, ids, T = tiny_qwen3
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    called = False
+    orig = model.forward
+
+    def spy(*args, **kwargs):
+        nonlocal called
+        called = True
+        return orig(*args, **kwargs)
+
+    model.forward = spy
+    try:
+        rk, rv, info = replay_selected(
+            model, ids, torch.zeros(T, dtype=torch.bool), ak, av
+        )
+    finally:
+        model.forward = orig
+    assert not called
+    assert rk is ak and rv is av
+    assert info == {"replayed": 0, "layers_written": []}
+
+
+def test_qwen3_selector_keys_match_the_model_cache(tiny_qwen3):
+    """The selector applies Qwen3 K normalisation and RoPE exactly once."""
+    model, ids, _ = tiny_qwen3
+    nk, _ = _native(model, ids)
+    fresh = qwen3_layer0_keys(model, ids)
+    assert torch.equal(fresh, nk[0])
+
+
+def test_key_deviation_ranks_tokens_not_heads(tiny_qwen3):
+    """A planted change identifies one token regardless of its head."""
+    model, ids, T = tiny_qwen3
+    nk, _ = _native(model, ids)
+    mapped = nk[0].clone()
+    mapped[:, 1, 73, 4] += 10
+    selected, scores = rank_tokens_by_key_deviation(nk[0], mapped, 1)
+    assert selected.tolist() == [73]
+    assert scores.shape == (T,)
+    assert int(scores.argmax()) == 73
+
+
+def test_qwen3_deviation_selection_replays_exact_budget(tiny_qwen3):
+    model, ids, T = tiny_qwen3
+    nk, nv = _native(model, ids)
+    ak, av = _approx((nk, nv))
+    count = T // 4
+    selected, scores, fresh = select_qwen3_layer0_key_deviation(
+        model, ids, ak[0], count
+    )
+    assert selected.numel() == count
+    assert selected.tolist() == sorted(selected.tolist())
+    assert scores.shape == (T,)
+    assert torch.equal(fresh, nk[0])
+
+    mask = torch.zeros(T, dtype=torch.bool)
+    mask[selected.cpu()] = True
+    rk, rv, info = replay_selected(model, ids, mask, ak, av)
+    assert info["replayed"] == count
+    assert torch.equal(rk[0][:, :, mask], nk[0][:, :, mask])
+    assert torch.equal(rv[0][:, :, mask], nv[0][:, :, mask])
+    assert torch.equal(rk[0][:, :, ~mask], ak[0][:, :, ~mask])
+    assert torch.equal(rv[0][:, :, ~mask], av[0][:, :, ~mask])
+
+
+def test_kri_cost_probe_ablates_the_token_axis_without_mutating_input(tiny_qwen3):
+    model, ids, T = tiny_qwen3
+    nk, nv = _native(model, ids)
+    before_k = [tensor.clone() for tensor in nk]
+    before_v = [tensor.clone() for tensor in nv]
+    probe = torch.tensor([[3, 7, 11]])
+    result = measure_kri_d_kv_blocks(
+        model,
+        nk,
+        nv,
+        probe,
+        prefix_tokens=T,
+        block_size=BLOCK,
+        blocks=[0, T // BLOCK - 1],
+    )
+    assert result["total_blocks"] == T // BLOCK
+    assert result["sampled_blocks"] == [0, T // BLOCK - 1]
+    assert result["reference_seconds"] > 0
+    assert len(result["samples"]) == 2
+    for sample in result["samples"]:
+        assert sample["seconds"] > 0
+        assert sample["hidden_l2_sum"] >= 0
+        assert sample["retained_cache_tokens"] == T + probe.shape[1] - BLOCK - 1
+    for before, after in zip(before_k, nk):
+        assert torch.equal(before, after)
+    for before, after in zip(before_v, nv):
+        assert torch.equal(before, after)
 
 
 def test_zero_replay_is_a_true_no_op_not_a_copy(tiny):
@@ -197,8 +383,6 @@ def test_asking_for_one_logit_does_not_change_the_repaired_cache(tiny):
     work after the layers, so anything but equality would mean it removed
     something else too.
     """
-    from transformers import DynamicCache
-
     import research.kv_translate.replay as R
 
     model, ids, T = tiny

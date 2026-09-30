@@ -126,6 +126,14 @@ def replay_selected(model, input_ids, mask, keys, values, dtype=None, in_place=F
         input_ids=sel_ids,
         attention_mask=attn,
         position_ids=slots.reshape(1, -1),
+        # The cache already has T entries, so leaving this implicit would make
+        # transformers infer T..T+n rather than the absolute slots being
+        # repaired.  The explicit 4-D mask currently keeps that bad inferred
+        # range from changing the result, but cache_position is part of the
+        # cache-write contract and newer attention paths are allowed to read
+        # it.  Keep it identical to position_ids rather than relying on that
+        # implementation accident.
+        cache_position=slots,
         past_key_values=cache,
         use_cache=True,
         logits_to_keep=1,
