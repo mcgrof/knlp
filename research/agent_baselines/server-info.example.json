@@ -1,0 +1,16 @@
+{
+  "model_id": "REPLACE with the actual model repository",
+  "model_revision": "REPLACE with the immutable weights commit",
+  "tokenizer_revision": "REPLACE with the immutable tokenizer commit",
+  "kv_cache_dtype": "bfloat16",
+  "prefix_caching": true,
+  "server_version": "REPLACE with vLLM version and source commit",
+  "hardware": "REPLACE with GPU, VRAM, driver and ROCm/CUDA versions",
+  "gpu_memory_utilization": 0.8,
+  "max_model_len": 16384,
+  "tensor_parallel_size": 1,
+  "cache_start_state": "unknown",
+  "chat_template_sha256": "REPLACE with the effective chat template digest",
+  "tool_call_parser": "REPLACE with the parser for the selected model",
+  "server_command": "REPLACE with exact sanitized launch argv; never store credentials"
+}
