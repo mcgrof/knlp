@@ -48,6 +48,9 @@ def write_jsonl(path: Path, rows):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(tmp, path)
+
+
+def checkpoint():
     if ON_CHECKPOINT is not None:
         ON_CHECKPOINT()
 
