@@ -97,6 +97,20 @@ def execute(stage: str, asset_dir: str, run_name: str, submitted: float):
         "assets": mirror(remote_assets, local_assets),
         "partial_outputs": mirror(remote_out, local_out),
     }
+    checkpoint_state = {"last": 0.0, "commits": 0, "bytes": 0, "files": 0}
+
+    def checkpoint():
+        now = time.monotonic()
+        if now - checkpoint_state["last"] < 5.0:
+            return
+        copied = mirror(local_out, remote_out)
+        runs.commit()
+        checkpoint_state["last"] = now
+        checkpoint_state["commits"] += 1
+        checkpoint_state["bytes"] += copied["bytes"]
+        checkpoint_state["files"] += copied["files"]
+
+    coqa_runner.ON_CHECKPOINT = checkpoint
     args = [
         "--stage",
         stage,
@@ -143,6 +157,7 @@ def execute(stage: str, asset_dir: str, run_name: str, submitted: float):
             "seconds_submit_to_start": started - submitted,
             "seconds_in_container": time.time() - started,
             "restore": restore,
+            "durable_checkpoints": checkpoint_state,
         }
         with open(
             os.path.join(local_out, f"MODAL_{stage.upper()}.json"), "w"
