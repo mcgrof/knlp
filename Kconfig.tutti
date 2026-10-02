@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: MIT
+menu "Tutti GPU-initiated NVMe evaluation"
+
+config TUTTI
+	bool "Enable the Tutti storage evaluation workflow"
+	default n
+	help
+	  Fetch and build a pinned public Tutti runtime and a byte-verified
+	  GPU/NVMe transfer probe. No io_uring DMA-BUF kernel changes are
+	  needed for this arm. Device provisioning remains a separate step.
+
+if TUTTI
+
+config TUTTI_RUN
+	bool "Run the storage matrix after building"
+	default n
+	help
+	  Requires an already provisioned Tutti daemon and an explicit
+	  disposable file directory. The default workflow only builds.
+
+config TUTTI_GIT
+	string "Tutti source repository"
+	default "https://github.com/xPU-IO/Tutti.git"
+
+config TUTTI_REV
+	string "Exact Tutti commit (40 hexadecimal digits)"
+	default "5e48c2ab6deea2ec9972a5f1beb56854f62bf149"
+
+config TUTTI_WORK_DIR
+	string "Source and build workspace"
+	default "./work/tutti"
+
+config TUTTI_OUTPUT_DIR
+	string "Run receipts and raw logs"
+	default "./results/tutti"
+
+config TUTTI_CUDA_ARCH
+	string "CUDA architecture (90 for H100)"
+	default "90"
+
+config TUTTI_JOBS
+	int "Parallel build jobs"
+	default 8
+	range 1 256
+
+config TUTTI_BUILD_MODULE
+	bool "Build the SNVMe kernel modules (never load them automatically)"
+	default y
+
+config TUTTI_RUNTIME_CONFIG
+	string "Single-device Tutti runtime YAML"
+	default ""
+	help
+	  Supply a CUDA/local-nvme runtime config for the daemon's granted
+	  device and GPU. An example lives in tools/reproduce/tutti/.
+
+config TUTTI_DIRECTORY
+	string "Disposable directory within a daemon-published view"
+	default ""
+	help
+	  Must already exist. Each run creates an exclusive child directory.
+	  No raw device name, reformatting or device rebinding is inferred.
+
+config TUTTI_ALLOW_FILE_WRITES
+	bool "Permit test files in the configured disposable directory"
+	default n
+
+config TUTTI_IO_KIB
+	string "Synthetic transfer sizes in KiB"
+	default "64 256 1024 4096"
+
+config TUTTI_BATCH_DEPTHS
+	string "Requests per submit-and-drain batch"
+	default "1 8 32"
+	help
+	  This is application batch depth, not measured NVMe queue depth.
+	  Compare to an identically batched CPU arm for mechanism attribution.
+
+config TUTTI_SPAN_MIB
+	int "GPU buffer and backing-file span in MiB"
+	default 256
+	range 1 1048576
+
+config TUTTI_WARMUPS
+	int "Untimed warmup round trips per cell"
+	default 1
+	range 0 100
+
+config TUTTI_REPEATS
+	int "Measured round trips per cell"
+	default 5
+	range 1 1000
+
+config TUTTI_SEED
+	int "Offset-order and cell-order seed"
+	default 42
+	range 0 2147483647
+
+config TUTTI_RANDOM
+	bool "Permute object offsets without replacement"
+	default n
+
+config TUTTI_OVERLAP_LAYERS
+	int "Layers in the upstream synthetic overlap workload"
+	default 4
+	range 1 1000
+
+config TUTTI_OVERLAP_CHUNKS
+	int "Chunks in the upstream synthetic overlap workload"
+	default 16
+	range 2 4096
+
+config TUTTI_OVERLAP_TENSOR_KIB
+	int "K or V tensor size in KiB for overlap"
+	default 512
+	range 4 1048576
+
+config TUTTI_OVERLAP_COMPUTE_US
+	int "Fixed compute duration per synthetic layer in microseconds"
+	default 1000
+	range 1 1000000
+	help
+	  Fixed across arms. Do not use per-backend auto-calibration when
+	  comparing overlap: it changes the workload with storage speed.
+
+endif
+endmenu

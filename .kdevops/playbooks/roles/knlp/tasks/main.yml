@@ -16,6 +16,13 @@
     - knlp
     - kvtide
 
+- name: Install Tutti build dependencies
+  ansible.builtin.include_tasks: tutti.yml
+  when: workflow_knlp_tutti | default(false) | bool
+  tags:
+    - knlp
+    - tutti
+
 - name: Ensure parent directory exists for knlp
   ansible.builtin.file:
     path: "{{ knlp_data_path | dirname }}"

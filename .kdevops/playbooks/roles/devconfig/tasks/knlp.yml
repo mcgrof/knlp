@@ -29,3 +29,7 @@
 - name: Install KVTide bench dependencies
   ansible.builtin.include_tasks: kvtide.yml
   when: workflow_knlp_kvtide | default(false) | bool
+
+- name: Install Tutti build dependencies
+  ansible.builtin.include_tasks: tutti.yml
+  when: workflow_knlp_tutti | default(false) | bool

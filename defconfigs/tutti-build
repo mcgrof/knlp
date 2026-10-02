@@ -1,0 +1,8 @@
+# Fetch and build only. Device setup and file writes are separate.
+CONFIG_TUTTI=y
+# CONFIG_TUTTI_RUN is not set
+CONFIG_TUTTI_REV="5e48c2ab6deea2ec9972a5f1beb56854f62bf149"
+CONFIG_TUTTI_WORK_DIR="./work/tutti"
+CONFIG_TUTTI_OUTPUT_DIR="./results/tutti"
+CONFIG_TUTTI_CUDA_ARCH="90"
+CONFIG_TUTTI_BUILD_MODULE=y

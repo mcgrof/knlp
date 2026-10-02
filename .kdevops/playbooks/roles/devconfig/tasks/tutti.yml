@@ -1,0 +1,36 @@
+---
+# SPDX-License-Identifier: copyleft-next-0.3.1
+# Build dependencies only. Preserve the installed CUDA/driver/kernel stack.
+
+- name: Install Tutti build dependencies (Debian family)
+  become: true
+  ansible.builtin.apt:
+    name:
+      - git
+      - build-essential
+      - cmake
+      - pkg-config
+      - libyaml-cpp-dev
+      - libgrpc++-dev
+      - libprotobuf-dev
+      - protobuf-compiler
+      - protobuf-compiler-grpc
+      - uuid-dev
+      - libnuma-dev
+      - libssl-dev
+      - python3-yaml
+      - python3-kconfiglib
+      - pciutils
+      - nvme-cli
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Describe remaining Tutti provisioning
+  ansible.builtin.debug:
+    msg: >
+      Install CUDA >= 12.6 and headers for the running kernel separately.
+      Run make tutti-doctor in knlp. Review the pinned upstream SNVMe
+      kernel support and daemon deployment before assigning a test device.
+      This role does not load modules, bind devices, or run benchmarks.
+      On non-Debian systems install equivalent development packages manually.
