@@ -56,7 +56,13 @@ PINS = (
 )
 
 
-@app.function(image=image, cpu=2.0, memory=4096, timeout=10 * 60)
+@app.function(
+    image=image,
+    cpu=2.0,
+    memory=4096,
+    timeout=10 * 60,
+    scaledown_window=1,
+)
 def unit_checks():
     completed = subprocess.run(
         [
@@ -77,7 +83,14 @@ def unit_checks():
     }
 
 
-@app.function(image=image, volumes={"/hf": hf}, cpu=4.0, memory=8192, timeout=3 * 3600)
+@app.function(
+    image=image,
+    volumes={"/hf": hf},
+    cpu=4.0,
+    memory=8192,
+    timeout=3 * 3600,
+    scaledown_window=1,
+)
 def fetch_models():
     from huggingface_hub import snapshot_download
 
@@ -110,6 +123,7 @@ def fetch_models():
     memory=65536,
     timeout=2 * 3600,
     retries=0,
+    scaledown_window=1,
 )
 def preflight(run_name: str, direction: str, cases: str, submitted: float):
     import torch
