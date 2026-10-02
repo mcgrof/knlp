@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT
+# Application config only. Match these explicit IDs to the daemon's grants.
+# This does not configure PCI devices, mount filesystems, or start the daemon.
+accelerator:
+  profile: CUDA
+runtime:
+  accel_id: 0
+storage:
+  resources:
+    - id: nvme-local
+      type: nvme
+      provider:
+        type: nvme-service
+        endpoint: "127.0.0.1:50051"
+      allocation:
+        selection: explicit
+        device_ids: [0]
+        queues_per_controller: 16
+  resolvers:
+    - id: file-resolver
+      type: local-file
+      scheme: file
+      config: {}
+  datapaths:
+    - id: local-nvme
+      type: local-nvme
+      config:
+        handle_cache_capacity: 64
+        prp_cache_capacity: 4096
+        handle_cache_l2_capacity: 256
+        threads_per_block: 16
+        max_in_flight_operations: 4
+        max_batch_entries: 4096
+        io_granularity: 0
+  backends:
+    - id: file-storage
+      contract: ext4-local-nvme
+      resolver: file-resolver
+      datapath: local-nvme
+      resource: nvme-local
+      config: {}

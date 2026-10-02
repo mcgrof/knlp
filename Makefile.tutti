@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+TUTTI_RUNNER := $(PYTHON) tools/reproduce/tutti/workflow.py
+.PHONY: tutti tutti-doctor tutti-fetch tutti-build tutti-smoke tutti-bench \
+        tutti-overlap tutti-report tutti-plan tutti-check
+
+ifeq ($(CONFIG_TUTTI),y)
+.DEFAULT_GOAL := tutti
+endif
+
+# A single recipe orders dependent stages even under make -j.
+tutti:
+	@$(TUTTI_RUNNER) pipeline
+
+tutti-doctor tutti-fetch tutti-build tutti-smoke tutti-bench tutti-overlap tutti-plan:
+	@$(TUTTI_RUNNER) $(patsubst tutti-%,%,$@)
+
+tutti-report:
+	@$(TUTTI_RUNNER) report --run "$(RUN)"
+
+tutti-check:
+	@$(PYTHON) -m unittest discover -s tools/reproduce/tutti/tests -v

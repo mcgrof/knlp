@@ -86,6 +86,17 @@ config WORKFLOW_KNLP_LMCACHE_SNAPKV
 	  and builds LMCache from source. An NVIDIA GPU and matching CUDA toolkit
 	  must already be present on the target.
 
+config WORKFLOW_KNLP_TUTTI
+	bool "Provision Tutti storage evaluation build dependencies"
+	default n
+	output yaml
+	help
+	  Install Debian-family user-space development dependencies for
+	  knlp's pinned Tutti workflow. CUDA, the GPU driver and matching
+	  kernel headers must already be installed. This does not load
+	  modules, bind devices, start daemons, or run storage experiments.
+	  Then use make defconfig-tutti-build and make in the knlp tree.
+
 config WORKFLOW_KNLP_LMCACHE_SNAPKV_RUN
 	bool "Run the SnapKV comparison during provisioning"
 	depends on WORKFLOW_KNLP_LMCACHE_SNAPKV
