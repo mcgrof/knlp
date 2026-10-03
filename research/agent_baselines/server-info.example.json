@@ -1,4 +1,5 @@
 {
+  "backend": "vllm",
   "model_id": "REPLACE with the actual model repository",
   "model_revision": "REPLACE with the immutable weights commit",
   "tokenizer_revision": "REPLACE with the immutable tokenizer commit",

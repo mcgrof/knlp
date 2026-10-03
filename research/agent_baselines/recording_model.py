@@ -6,10 +6,11 @@ and call ``recorder.finish`` in the task's finally block. The instance hook
 leaves mini's retries and parsing intact. Logs contain token IDs and timing,
 not configuration, request headers, API keys, or exception messages.
 
-vLLM must return ``prompt_token_ids`` and ``choices[0].token_ids`` when
-``return_token_ids`` is requested. Missing IDs abort capture; decoded text
-is never retokenized and presented as an exact engine trace. Captured token
-IDs still contain the task content, so treat logs as sensitive workload data.
+vLLM must return ``prompt_token_ids`` and ``choices[0].token_ids``. SGLang
+must return ``sglext.input_ids`` and one sequence in ``sglext.output_ids``.
+Missing or conflicting IDs abort capture; decoded text is never retokenized
+and presented as an exact engine trace. Captured token IDs still contain the
+task content, so treat logs as sensitive workload data.
 """
 
 from __future__ import annotations
@@ -46,14 +47,37 @@ def _token_ids(value: Any, name: str) -> list[int]:
     return value
 
 
-def extract_token_ids(response: Any) -> tuple[list[int], list[int]]:
-    """Read only server-supplied IDs and check them against API usage."""
+def _sglang_extension(data: dict, choice: dict) -> dict | None:
+    candidates = []
+    for container in (
+        data,
+        data.get("provider_specific_fields"),
+        choice.get("provider_specific_fields"),
+    ):
+        if container is None:
+            continue
+        mapped = _mapping(container)
+        if mapped.get("sglext") is not None:
+            candidates.append(_mapping(mapped["sglext"]))
+    if not candidates:
+        return None
+    if any(candidate != candidates[0] for candidate in candidates[1:]):
+        raise TokenCaptureError("Conflicting SGLang extension fields")
+    return candidates[0]
+
+
+def _extract_token_ids_with_source(
+    response: Any, protocol: str = "auto"
+) -> tuple[list[int], list[int], str]:
+    if protocol not in {"auto", "vllm", "sglang"}:
+        raise ValueError("token protocol must be auto, vllm, or sglang")
     data = _mapping(response)
-    prompt = _token_ids(data.get("prompt_token_ids"), "prompt_token_ids")
     choices = data.get("choices")
     if not isinstance(choices, list) or len(choices) != 1:
         raise TokenCaptureError("Exact capture requires one response choice")
     choice = _mapping(choices[0])
+
+    vllm_pair = None
     # LiteLLM relocates unknown choice fields here during API conversion.
     # These are still server-returned IDs, not a text-tokenization fallback.
     extra = choice.get("provider_specific_fields") or {}
@@ -61,9 +85,41 @@ def extract_token_ids(response: Any) -> tuple[list[int], list[int]]:
     direct_ids = choice.get("token_ids")
     if direct_ids is not None and nested_ids is not None and direct_ids != nested_ids:
         raise TokenCaptureError("Conflicting engine completion token IDs")
-    output = _token_ids(
-        direct_ids if direct_ids is not None else nested_ids, "completion token_ids"
-    )
+    if (
+        data.get("prompt_token_ids") is not None
+        or direct_ids is not None
+        or nested_ids is not None
+    ):
+        vllm_pair = (
+            _token_ids(data.get("prompt_token_ids"), "prompt_token_ids"),
+            _token_ids(
+                direct_ids if direct_ids is not None else nested_ids,
+                "completion token_ids",
+            ),
+        )
+
+    extension = _sglang_extension(data, choice)
+    sglang_pair = None
+    if extension is not None:
+        prompt = _token_ids(extension.get("input_ids"), "sglext input_ids")
+        outputs = extension.get("output_ids")
+        if not isinstance(outputs, list) or len(outputs) != 1:
+            raise TokenCaptureError("Exact SGLang capture requires one output sequence")
+        sglang_pair = (prompt, _token_ids(outputs[0], "sglext output_ids"))
+
+    if vllm_pair is not None and sglang_pair is not None and vllm_pair != sglang_pair:
+        raise TokenCaptureError("vLLM and SGLang token identities disagree")
+    if protocol == "vllm":
+        selected, source = vllm_pair, "vllm_engine_response"
+    elif protocol == "sglang":
+        selected, source = sglang_pair, "sglang_sglext_response"
+    elif sglang_pair is not None:
+        selected, source = sglang_pair, "sglang_sglext_response"
+    else:
+        selected, source = vllm_pair, "vllm_engine_response"
+    if selected is None:
+        raise TokenCaptureError(f"Missing exact {protocol} engine token IDs")
+    prompt, output = selected
     usage = _mapping(data.get("usage"))
     for key, expected in (
         ("prompt_tokens", len(prompt)),
@@ -71,6 +127,14 @@ def extract_token_ids(response: Any) -> tuple[list[int], list[int]]:
     ):
         if type(usage.get(key)) is not int or usage[key] != expected:
             raise TokenCaptureError(f"Engine IDs disagree with {key}")
+    return prompt, output, source
+
+
+def extract_token_ids(
+    response: Any, protocol: str = "auto"
+) -> tuple[list[int], list[int]]:
+    """Read only server-supplied IDs and check them against API usage."""
+    prompt, output, _ = _extract_token_ids_with_source(response, protocol)
     return prompt, output
 
 
@@ -85,6 +149,33 @@ def _usage_record(response: Any, prompt: list[int], output: list[int]) -> dict:
     return usage
 
 
+def _sglang_cache_sources(response: Any, prompt_count: int) -> dict | None:
+    data = _mapping(response)
+    choices = data.get("choices")
+    if not isinstance(choices, list) or len(choices) != 1:
+        return None
+    extension = _sglang_extension(data, _mapping(choices[0]))
+    if extension is None or extension.get("cached_tokens_details") is None:
+        return None
+    details = _mapping(extension["cached_tokens_details"])
+    result = {}
+    for tier in ("device", "host", "storage"):
+        if tier not in details:
+            continue
+        count = details[tier]
+        if type(count) is not int or count < 0:
+            raise TokenCaptureError(f"Invalid SGLang {tier} cache token count")
+        result[tier] = count
+    if not result or sum(result.values()) > prompt_count:
+        raise TokenCaptureError("Invalid SGLang cache-source token total")
+    backend = details.get("storage_backend")
+    if backend is not None:
+        if not isinstance(backend, str) or not backend:
+            raise TokenCaptureError("Invalid SGLang storage backend identity")
+        result["storage_backend"] = backend
+    return result
+
+
 class CallRecorder:
     """Write one task's exact call records in EfficientAgent input format."""
 
@@ -95,11 +186,34 @@ class CallRecorder:
         *,
         trial_id: str | None = None,
         assigned_ns: int | None = None,
+        token_protocol: str = "vllm",
+        sglang_receipt: dict | None = None,
+        cache_scope: str | None = None,
     ):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", task_id):
             raise ValueError("task_id must be a safe filename component")
         self.task_id = task_id
         self.trial_id = trial_id or uuid.uuid4().hex
+        if token_protocol not in {"vllm", "sglang"}:
+            raise ValueError("token_protocol must be vllm or sglang")
+        if token_protocol == "sglang":
+            from .sglang_adapter import (
+                validate_cache_scope,
+                validate_capability_receipt,
+            )
+
+            self.sglang_receipt = validate_capability_receipt(
+                sglang_receipt, require_live=True
+            )
+            self.cache_scope = validate_cache_scope(cache_scope)
+        elif sglang_receipt is not None:
+            raise ValueError("sglang_receipt is only valid for the sglang protocol")
+        elif cache_scope is not None:
+            raise ValueError("cache_scope is only valid for the sglang protocol")
+        else:
+            self.sglang_receipt = None
+            self.cache_scope = None
+        self.token_protocol = token_protocol
         self.assigned_ns = assigned_ns if assigned_ns is not None else time.time_ns()
         self.sequence = 0
         self.verified_calls = 0
@@ -127,6 +241,7 @@ class CallRecorder:
         return {
             "attempt_index": 0,
             "trial_id": self.trial_id,
+            "cache_scope": self.cache_scope,
             "task_timing": {
                 "assigned_ns": self.assigned_ns,
                 "finished_ns": finished_ns,
@@ -156,11 +271,23 @@ class CallRecorder:
         parameters = config_kwargs | kwargs
         if parameters.get("stream", False) or parameters.get("n", 1) != 1:
             raise TokenCaptureError("Exact capture requires nonstreaming n=1")
+        self.sequence += 1
         extra = dict(config_kwargs.get("extra_body") or {})
         extra.update(kwargs.get("extra_body") or {})
-        extra["return_token_ids"] = True
+        request_id = f"{self.trial_id}:{self.sequence}"
+        if self.token_protocol == "vllm":
+            extra["return_token_ids"] = True
+        else:
+            from .sglang_adapter import request_extensions
+
+            extra.update(
+                request_extensions(
+                    self.sglang_receipt,
+                    request_id=request_id,
+                    cache_scope=self.cache_scope,
+                )
+            )
         kwargs["extra_body"] = extra
-        self.sequence += 1
         started = time.time_ns()
         monotonic_start = time.monotonic_ns()
         row = {
@@ -169,18 +296,28 @@ class CallRecorder:
             "start_wall_ns": started,
             "error": None,
             "token_identity_verified": False,
-            "token_source": "vllm_engine_response",
+            "token_source": f"{self.token_protocol}_engine_response",
+            "workflow_id": self.trial_id,
+            "request_id": request_id,
+            "cache_scope": self.cache_scope,
         }
         try:
             response = transport(messages, **kwargs)
             data = _mapping(response)
-            prompt, output = extract_token_ids(data)
+            prompt, output, source = _extract_token_ids_with_source(
+                data, self.token_protocol
+            )
             row.update(
                 token_identity_verified=True,
+                token_source=source,
                 prompt_token_ids=prompt,
                 generated_token_ids=[output],
                 usage=_usage_record(data, prompt, output),
             )
+            if self.token_protocol == "sglang":
+                cache_sources = _sglang_cache_sources(data, len(prompt))
+                if cache_sources is not None:
+                    row["cache_source_tokens"] = cache_sources
             self.verified_calls += 1
             return response
         except BaseException as error:
@@ -203,6 +340,9 @@ def attach_recorder(
     *,
     trial_id: str | None = None,
     assigned_ns: int | None = None,
+    token_protocol: str = "vllm",
+    sglang_receipt: dict | None = None,
+    cache_scope: str | None = None,
 ) -> CallRecorder:
     """Attach to a fresh mini LitellmModel instance owned by one task.
 
@@ -220,7 +360,13 @@ def attach_recorder(
     if not isinstance(getattr(model, "abort_exceptions", None), list):
         raise TypeError("Recording requires mini's retry abort_exceptions list")
     recorder = CallRecorder(
-        run_dir, task_id, trial_id=trial_id, assigned_ns=assigned_ns
+        run_dir,
+        task_id,
+        trial_id=trial_id,
+        assigned_ns=assigned_ns,
+        token_protocol=token_protocol,
+        sglang_receipt=sglang_receipt,
+        cache_scope=cache_scope,
     )
     transport = model._query
 
@@ -251,10 +397,19 @@ def summarize_calls(run_dir: Path | str) -> dict:
         "completion_tokens": 0,
         "reported_cached_tokens": None,
         "cached_token_reporting_calls": 0,
+        "cache_source_tokens": None,
+        "cache_source_reporting_calls": 0,
+        "cache_source_tier_reporting_calls": {
+            "device": 0,
+            "host": 0,
+            "storage": 0,
+        },
         "latency_measurement": "full_nonstreaming_call",
     }
     durations = []
     cached_total = 0
+    cache_source_totals = {"device": 0, "host": 0, "storage": 0}
+    storage_backends = set()
     for path in sorted(
         Path(run_dir).glob("attempts/*/attempt_*/telemetry/llm_requests.jsonl")
     ):
@@ -290,12 +445,51 @@ def summarize_calls(run_dir: Path | str) -> dict:
                 if type(cached) is int and 0 <= cached <= len(prompt):
                     result["cached_token_reporting_calls"] += 1
                     cached_total += cached
+                sources = row.get("cache_source_tokens")
+                if sources is not None:
+                    if not isinstance(sources, dict):
+                        raise TokenCaptureError("Invalid cache-source record")
+                    call_total = 0
+                    for tier in cache_source_totals:
+                        if tier not in sources:
+                            continue
+                        count = sources[tier]
+                        if type(count) is not int or count < 0:
+                            raise TokenCaptureError("Invalid cache-source token count")
+                        cache_source_totals[tier] += count
+                        call_total += count
+                        result["cache_source_tier_reporting_calls"][tier] += 1
+                    if call_total > len(prompt):
+                        raise TokenCaptureError("Cache-source total exceeds prompt")
+                    backend = sources.get("storage_backend")
+                    if backend is not None:
+                        if not isinstance(backend, str) or not backend:
+                            raise TokenCaptureError("Invalid storage backend identity")
+                        storage_backends.add(backend)
+                    result["cache_source_reporting_calls"] += 1
     if (
         result["successful_captured_calls"] > 0
         and result["cached_token_reporting_calls"]
         == result["successful_captured_calls"]
     ):
         result["reported_cached_tokens"] = cached_total
+    if (
+        result["successful_captured_calls"] > 0
+        and result["cache_source_reporting_calls"]
+        == result["successful_captured_calls"]
+    ):
+        result["cache_source_tokens"] = {
+            **{
+                tier: (
+                    count
+                    if result["cache_source_tier_reporting_calls"][tier]
+                    == result["successful_captured_calls"]
+                    else None
+                )
+                for tier, count in cache_source_totals.items()
+            },
+            "storage_backends": sorted(storage_backends),
+        }
     durations.sort()
 
     def percentile(fraction):

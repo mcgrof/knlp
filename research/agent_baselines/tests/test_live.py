@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 
 from research.agent_baselines import live
 from research.agent_baselines.recording_model import CallRecorder
+from research.agent_baselines.sglang_adapter import SGLANG_REVISION
 
 
 def row(iid="repo__issue-1"):
@@ -41,6 +42,7 @@ def selection(rows=None):
 
 def server_info():
     return {
+        "backend": "vllm",
         "model_id": "test/model",
         "model_revision": "a" * 40,
         "tokenizer_revision": "a" * 40,
@@ -110,9 +112,80 @@ class LiveTests(unittest.TestCase):
             {"model_revision": "REPLACE_ME"},
             {"chat_template_sha256": "abc"},
             {"prefix_caching": "true"},
+            {"backend": "other"},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 live.server_provenance(self.write("server.json", {**info, **change}))
+
+    def test_sglang_provenance_is_pinned_and_builds_capability_receipt(self):
+        info = {
+            **server_info(),
+            "backend": "sglang",
+            "server_revision": SGLANG_REVISION,
+            "cache_scope": "test:model:no-adapter:campaign",
+            "enabled_capabilities": [
+                "openai_chat",
+                "sglext_token_ids",
+                "cache_source_report",
+            ],
+        }
+        provenance = live.server_provenance(self.write("sglang.json", info))
+        self.assertEqual(
+            provenance["capability_receipt"]["source_revision"], SGLANG_REVISION
+        )
+        self.assertTrue(
+            provenance["capability_receipt"]["features"]["sglext_token_ids"]["enabled"]
+        )
+        for change in (
+            {"server_revision": "a" * 40},
+            {"enabled_capabilities": ["openai_chat"]},
+            {"cache_scope": None},
+            {"cache_scope": "has spaces"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                live.server_provenance(self.write("invalid.json", {**info, **change}))
+
+    def test_vllm_rejects_an_inapplicable_cache_scope(self):
+        with self.assertRaisesRegex(ValueError, "only valid for the sglang"):
+            live.server_provenance(
+                self.write("vllm.json", {**server_info(), "cache_scope": "scope"})
+            )
+
+    def test_sglang_config_requests_exact_ids_and_cache_sources(self):
+        info = {
+            **server_info(),
+            "backend": "sglang",
+            "server_revision": SGLANG_REVISION,
+            "cache_scope": "test:model:no-adapter:campaign",
+            "enabled_capabilities": [
+                "openai_chat",
+                "sglext_token_ids",
+                "cache_source_report",
+            ],
+        }
+        provenance = live.server_provenance(self.write("sglang.json", info))
+        args = types.SimpleNamespace(
+            arm="stock",
+            steps=2,
+            task_seconds=10,
+            model="openai/test",
+            endpoint="http://localhost:30000/v1",
+            seed=0,
+            max_tokens=32,
+            request_seconds=5,
+        )
+        checkout = self.root / "mini"
+        template = checkout / "src/minisweagent/config/benchmarks"
+        template.mkdir(parents=True)
+        (template / "swebench.yaml").write_text(
+            "agent:\n  instance_template: task\nmodel:\n  model_kwargs: {}\n"
+        )
+        config = live.make_config(args, checkout, provenance)
+        extra = config["model"]["model_kwargs"]["extra_body"]
+        self.assertTrue(extra["return_input_ids_in_sglext"])
+        self.assertTrue(extra["return_output_ids_in_sglext"])
+        self.assertTrue(extra["return_cached_tokens_details"])
+        self.assertNotIn("return_token_ids", extra)
 
     def test_checkout_rejects_untracked_code(self):
         checkout = self.root / "checkout"
