@@ -72,16 +72,9 @@ def code_provenance() -> dict:
 
 def stable_prefix(template: str) -> str:
     """Move intact stable instructions ahead of the varying task block."""
-    match = re.fullmatch(
-        r"(<pr_description>.*?</pr_description>)(\s+)(<instructions>.*?</instructions>)(\s*)",
-        template,
-        re.DOTALL,
-    )
-    if not match or match[1].count("{{task}}") != 1 or "{{task}}" in match[3]:
-        raise ValueError(
-            "Unsupported instance template; expected pinned SWE-bench form"
-        )
-    return match[3] + match[2] + match[1] + match[4]
+    from .quality_profiles import render_instance_template
+
+    return render_instance_template(template, "stable-prefix")
 
 
 def endpoint(value: str) -> str:
@@ -188,13 +181,14 @@ def select(args) -> int:
 def make_config(args, checkout: Path, server: dict | None = None) -> dict:
     import yaml
 
+    from .quality_profiles import render_instance_template
+
     config = yaml.safe_load(
         (checkout / "src/minisweagent/config/benchmarks/swebench.yaml").read_text()
     )
-    if args.arm == "stable-prefix":
-        config["agent"]["instance_template"] = stable_prefix(
-            config["agent"]["instance_template"]
-        )
+    config["agent"]["instance_template"] = render_instance_template(
+        config["agent"]["instance_template"], args.arm
+    )
     config["agent"].update(
         step_limit=args.steps, wall_time_limit_seconds=args.task_seconds, cost_limit=0
     )
@@ -351,6 +345,7 @@ def run_task(
 
 def run(args) -> int:
     from .metrics import compare_snapshots, snapshot
+    from .quality_profiles import quality_profile_receipt
     from .recording_model import summarize_calls
 
     checkout = check_checkout(args.checkout, MINI_REVISION)
@@ -361,6 +356,9 @@ def run(args) -> int:
             "Use openai/<served-model-name> for this local-server baseline"
         )
     config = make_config(args, checkout, provenance)
+    quality_profile = quality_profile_receipt(
+        config["agent"]["instance_template"], args.arm
+    )
     if args.out.exists():
         raise FileExistsError(args.out)
     if args.metrics_url:
@@ -372,6 +370,18 @@ def run(args) -> int:
         "model": args.model,
         "endpoint": endpoint(args.endpoint),
         "arm": args.arm,
+        "quality_experiment": {
+            "primary_objective": "official tasks resolved within fixed budgets",
+            "instruction_profile": quality_profile["instruction_profile"],
+            "layout": quality_profile["layout"],
+            "profile_receipt": quality_profile,
+            "budgets": {
+                "steps_per_task": args.steps,
+                "wall_seconds_per_task": args.task_seconds,
+                "request_seconds": args.request_seconds,
+                "max_output_tokens_per_call": args.max_tokens,
+            },
+        },
         "server_provenance": provenance,
         "dataset": metadata,
         "instances_sha256": digest(args.instances),
@@ -559,7 +569,16 @@ def parser() -> argparse.ArgumentParser:
     run_p.add_argument("--model", required=True)
     run_p.add_argument("--endpoint", required=True)
     run_p.add_argument("--metrics-url")
-    run_p.add_argument("--arm", choices=["stock", "stable-prefix"], default="stock")
+    run_p.add_argument(
+        "--arm",
+        choices=[
+            "stock",
+            "stable-prefix",
+            "clear",
+            "clear-stable-prefix",
+        ],
+        default="stock",
+    )
     run_p.add_argument("--workers", type=positive, default=1)
     run_p.add_argument("--steps", type=positive, default=30)
     run_p.add_argument("--task-seconds", type=positive, default=1800)
