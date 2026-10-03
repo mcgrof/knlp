@@ -464,6 +464,28 @@ class PinnedTemplateTests(unittest.TestCase):
             Template(stable_template).render(task="UNIQUE TASK").count("UNIQUE TASK"), 1
         )
         self.assertEqual(stock["model"], stable["model"])
+        arguments.arm = "clear"
+        clear = live.make_config(arguments, checkout)
+        arguments.arm = "clear-stable-prefix"
+        clear_stable = live.make_config(arguments, checkout)
+        clear_template = clear["agent"]["instance_template"]
+        clear_stable_template = clear_stable["agent"]["instance_template"]
+        self.assertLess(
+            clear_template.index("<pr_description>"),
+            clear_template.index("<instructions>"),
+        )
+        self.assertLess(
+            clear_stable_template.index("<instructions>"),
+            clear_stable_template.index("<pr_description>"),
+        )
+        for template in (clear_template, clear_stable_template):
+            self.assertEqual(template.count("{{task}}"), 1)
+            self.assertIn(
+                "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt",
+                template,
+            )
+        self.assertEqual(clear["model"], clear_stable["model"])
+        arguments.arm = "stable-prefix"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             arguments.instances = root / "instances.json"

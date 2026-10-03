@@ -317,6 +317,35 @@ increase cross-task shared prefix length; it can also change model behavior.
 Only live grading can assess the latter. Nothing removes, summarizes, or
 rewrites task content.
 
+### Quality and layout matrix
+
+PrefixPlan treats official tasks resolved within fixed budgets as the primary
+objective. Reuse, prefill, decode, latency and residency are measured costs and
+mechanisms; a cache-hit ratio is not a quality result. The live runner exposes
+a frozen two-by-two pilot:
+
+| Arm | Instruction profile | Layout |
+| --- | --- | --- |
+| `stock` | pinned upstream wording | task first |
+| `stable-prefix` | pinned upstream wording | instructions first |
+| `clear` | `clear-technical-v1` | task first |
+| `clear-stable-prefix` | `clear-technical-v1` | instructions first |
+
+`clear-technical-v1` preserves the operational information, technical names,
+boundaries and exact submission command while removing repetition and using
+shorter, explicit instructions. It is an STE-inspired experimental profile,
+not a claim of ASD-STE100 compliance. Each manifest records the wording and
+layout independently, hashes the complete template and instruction block, and
+records the task step, wall-time, request-time and output-token budgets.
+
+Hold the selected tasks, model, tools, decoding settings and budgets constant.
+Use unforced generation and official grading. Start every arm with a fresh
+serving process and an isolated cache scope, counterbalance arm order across
+repetitions, and count all selected tasks in the denominator. Compare wording
+with layout held fixed and layout with wording held fixed. Add rationales,
+worked examples or explicit generated state only in later ablations; otherwise
+the first matrix cannot separate clearer wording from additional information.
+
 For a useful first matrix, compare stock with prefix caching disabled, stock
 with prefix caching enabled, and stable-prefix with prefix caching enabled.
 Run each from a fresh server, use the same model, seeds, task set and budgets,
