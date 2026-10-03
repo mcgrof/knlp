@@ -1,0 +1,67 @@
+diff --git a/efficientagent/kvtier/connector.py b/efficientagent/kvtier/connector.py
+index a3f998a..9ff9a01 100644
+--- a/efficientagent/kvtier/connector.py
++++ b/efficientagent/kvtier/connector.py
+@@ -70,5 +70,6 @@ from __future__ import annotations
+
+ import atexit
++import itertools
+ import json
+ import logging
+ import os
+@@ -97,5 +98,6 @@ CHUNK = int(os.environ.get('LMCACHE_CHUNK_SIZE', '1024'))
+ TELEMETRY_FILE = os.environ.get('EA_KVTIER_TELEMETRY_FILE')
+ DECISION_CACHE = 65536   # bound on remembered per-request decisions (oldest dropped first)
++STATS_INSTANCES = itertools.count()
+
+
+ def capacity_chunks(gib: float) -> int:
+@@ -108,21 +110,23 @@ class Stats:
+
+     def __init__(self, role: str):
+         self.c = Counter(); self.first = set(); self.role = role; self.lock = threading.Lock(); self.last = 0.0
+-        d = os.environ.get('EA_KVTIER_STATS_DIR'); self.path = Path(d) / f'{role}-{os.getpid()}.json' if d else None
++        self.instance = next(STATS_INSTANCES)
++        d = os.environ.get('EA_KVTIER_STATS_DIR')
++        self.path = Path(d) / f'{role}-{os.getpid()}-{self.instance}.json' if d else None
+         atexit.register(self.flush)
+
+     def hit(self, event, **counts):
+         with self.lock:
+             for k, v in counts.items(): self.c[k] += v
+             if event and event not in self.first:
+                 self.first.add(event); log.warning('EA_KVTIER first-hit %s role=%s pid=%d counts=%s', event, self.role, os.getpid(), dict(counts))
+-        if time.monotonic() - self.last > 30: self.flush()
++        self.flush()
+
+     def flush(self):
+         if not self.path: return
+         with self.lock:
+             self.last = time.monotonic()
+-            data = dict(role=self.role, pid=os.getpid(), admission=ADMISSION, write_threshold=KAPPA, counters=dict(self.c),
++            data = dict(role=self.role, pid=os.getpid(), instance=self.instance, admission=ADMISSION, write_threshold=KAPPA, counters=dict(self.c),
+                         first_hits=sorted(self.first), time=time.time())
+         try:
+             self.path.parent.mkdir(parents=True, exist_ok=True); tmp = self.path.with_suffix('.tmp'); tmp.write_text(json.dumps(data)); tmp.replace(self.path)
+diff --git a/tests/test_connector.py b/tests/test_connector.py
+index 9d852a2..e3fe81e 100644
+--- a/tests/test_connector.py
++++ b/tests/test_connector.py
+@@ -194,6 +194,17 @@ def test_stats_flush(connector, tmp_path):
+     assert data['counters'] == {'decisions': 2} and data['first_hits'] == ['X'] and data['role'] == 'scheduler'
+
+
++def test_stats_instances_do_not_overwrite(connector, tmp_path):
++    first = connector.Stats('scheduler'); second = connector.Stats('scheduler')
++    first.hit(None, decisions=2); second.hit(None, connector_init=1)
++    paths = sorted((tmp_path / 'stats').glob('scheduler-*.json'))
++    assert len(paths) == 2
++    rows = [json.loads(path.read_text()) for path in paths]
++    assert {row['instance'] for row in rows} == {first.instance, second.instance}
++    assert sorted((row['counters'] for row in rows), key=lambda row: sorted(row)) == [
++        {'connector_init': 1}, {'decisions': 2}]
++
++
+ def test_skip_save_is_not_part_of_the_cache_key():
+     pytest.importorskip('lmcache')
+     torch = pytest.importorskip('torch')
