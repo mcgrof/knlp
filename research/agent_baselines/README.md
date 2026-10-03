@@ -7,9 +7,19 @@ Together they measure both useful task completion and the serving cost of a
 controlled sequence of calls.
 
 This directory is a standalone research harness; it does not change knlp's
-training or serving paths. All commands print a plan unless `--execute` is
-supplied. Each run requires a new output directory. Python 3.10+ is required;
-run commands from the knlp repository root.
+training or serving paths. The local bootstrap, selection, live, grading and
+replay commands print a plan unless `--execute` is supplied. The documented
+`modal run` and `modal deploy` commands execute directly, can allocate cloud
+resources, and do not have this dry-run contract. Each local run requires a
+new output directory. Python 3.10+ is required; run commands from the knlp
+repository root.
+
+PrefixPlan's first backend-neutral contracts are in `workflow.py`: prompt
+segments, ordered layout hashes, request dependencies, tool-state effects and
+cache-event provenance. They deliberately distinguish offline reuse potential,
+client-requested actions and engine-observed physical events. The SGLang
+adapter and its exact source boundaries are documented in
+[`BASELINE_AUDIT.md`](BASELINE_AUDIT.md).
 
 | Track | What it answers | What it cannot establish |
 |---|---|---|
@@ -66,18 +76,227 @@ record their resolved digests on the test host because image tags can move.
 
 Start a dedicated inference server and copy `server-info.example.json` outside
 the source tree. Replace every placeholder with the actual configuration.
-Use a model that fits the target GPU with room left for KV state. The server
-must support native bash tool calls and the `return_token_ids` extension:
+Use a model that fits the target GPU with room left for KV state. Set the
+server-info `backend` to `vllm` or `sglang`. A vLLM server must support native
+bash tool calls and the `return_token_ids` extension:
 top-level `prompt_token_ids` and output `choices[0].token_ids`, including correct
 usage counts. vLLM 0.13 is the reference for this token-ID contract. The recorder
 also handles LiteLLM's relocation of output IDs into `provider_specific_fields`.
 Missing IDs fail capture; text is never retokenized and labeled exact.
 
+The initial SGLang adapter is pinned to
+`cbe070b6bfce18936620f406b9b0d71bdc17452b`. Its server-info must also include
+that value as `server_revision` and list `openai_chat` and `sglext_token_ids`
+in `enabled_capabilities`; add `cache_source_report` when requesting tiered
+device/host/storage counts. Exact IDs come from response-level `sglext`, and
+missing or conflicting identities abort the call. Capability declarations do
+not establish cache hits: only returned engine details count as observations.
+SGLang server-info must also set an explicit `cache_scope`. All tasks in the
+same authorized experiment share that value so reusable prefixes have one
+identity; workflow and request IDs remain task-local receipts. Use a different
+scope whenever the tenant, model, adapter, or experiment changes. The adapter
+passes this scope as SGLang's `extra_key` and never derives it from a task ID.
+
+`modal_sglang_cache_scope.py` is the bounded live mechanism check for this
+contract. This command executes immediately on Modal. It sends the same token
+prefix under two task-local request IDs in one shared scope, then under a
+different scope. A pass requires a positive live cache hit only for the shared
+scope and identical freely generated output IDs.
+
+```bash
+modal run research/agent_baselines/modal_sglang_cache_scope.py \
+  --run-name prefixplan-YYYYMMDD-sglang-cache-scope \
+  --knlp-commit "$(git rev-parse HEAD)"
+```
+
+For Modal, `modal_live_server.py` provides the pinned vLLM endpoint used by the
+bounded live pilot. Create the named secret with a random `VLLM_API_KEY`, fetch
+the exact model revision into `knlp-hf`, and deploy the app. Export the same
+value as `OPENAI_API_KEY` only in the client process; do not put it in a URL or
+archive it. Stop the deployed app after each arm and redeploy it before the next
+arm so every comparison starts with a fresh serving process.
+
+```bash
+modal secret create knlp-prefixplan-live-api VLLM_API_KEY="$RANDOM_API_KEY"
+modal run research/agent_baselines/modal_live_server.py --fetch
+modal deploy research/agent_baselines/modal_live_server.py
+```
+
+The deployed URL ends immediately before `/v1`; copy it into the live command's
+`--endpoint` with `/v1` appended. The public endpoint still requires the vLLM
+API key. Delete the temporary Modal secret after the campaign.
+
+## Qualify SGLang host restoration
+
+`modal_host_restore.py` is a bounded Modal H100 mechanism test for the physical
+host-cache gate. It uses an immutable SGLang image, overlays the exact pinned
+source revision, downloads an exact model revision, constrains device KV to
+8,192 tokens, and retains a 1 GiB HiCache host pool. It inserts four unrelated
+3,000-token prompts between two visits to a 3,000-token target, then flushes
+the caches and recomputes the target cold.
+
+```bash
+modal run research/agent_baselines/modal_host_restore.py \
+  --run-name prefixplan-YYYYMMDD-modal-h100-cbe070b \
+  --knlp-commit "$(git rev-parse HEAD)"
+```
+
+The gate requires positive engine-reported host retrieval, no host retrieval
+in the post-flush cold control, and exact equality of the freely generated
+greedy output token IDs. Chosen-token logprobs are retained as a stricter
+diagnostic with both `1e-5` and `5e-3` thresholds. Three independently
+cache-flushed cold recomputations also provide a cold-vs-cold repeatability
+baseline for interpreting the restore-vs-cold delta. The harness writes
+`result.json`, `server.log`, and `REPORT.md` to the `knlp-runs` Modal volume,
+and preserves `failure.json` on errors.
+
+The 2026-10-02 H100 qualification restored 2,994 host tokens and produced the
+same 16 output token IDs as cold recomputation. Its maximum chosen-token
+logprob delta was 0.00193237, so the `1e-5` diagnostic did not pass. This is a
+synthetic forced-eviction check, not evidence of agent quality, throughput
+benefit, or conditioned admission under concurrent pressure.
+
+A follow-up run repeated the cache-flushed cold control three times. All three
+cold generations had identical output IDs and chosen-token logprobs, for a
+maximum cold-to-cold delta of zero. The restored generation again matched the
+output IDs but differed from every cold control by `0.0019323714`. The relaxed
+`5e-3` threshold therefore describes a narrow continuation check; it is not a
+numerical-equivalence tolerance justified by ordinary cold-run variability.
+
+## Qualify conditioned admission under pressure
+
+`modal_conditioned_pressure.py` is the corresponding bounded mechanism test
+for EfficientAgent's conditioned-admission path. It pins EfficientAgent,
+vLLM, LMCache, the container digest, and the model revision. Four concurrent
+three-step synthetic tasks share a 2,048-token prefix while a 0.1 GiB host
+tier is driven to capacity. Its threshold is measured in new chunks that a
+request would write, not in prior reuses.
+
+```bash
+modal run research/agent_baselines/modal_conditioned_pressure.py \
+  --run-name prefixplan-YYYYMMDD-conditioned-pressure \
+  --knlp-commit "$(git rev-parse HEAD)"
+```
+
+The 2026-10-02 Modal H100 run completed all 12 forced-output requests exactly.
+At 14/14 host entries with active eviction, the scheduler's first-hit receipt
+recorded one pressure decision and skipped the write of 11 new chunks; final
+telemetry recorded 28 host evictions in the observation window. This closes
+the narrow mechanism gate that conditioned admission encounters real pressure
+and takes its skip-write branch. It does not establish a performance or
+quality benefit.
+
+The pinned upstream stack has a reporting defect: its shutdown aggregate
+counter files retain only connector-initialization counters even though the
+same run's first-hit receipts and final telemetry preserve the pressure event,
+decision counts, and evictions. The qualification therefore checks those
+authoritative receipts and archives `server.log` as well as `run.json`. Fix the
+aggregate-counter lifecycle before using it for comparative storage-traffic
+claims.
+
+`efficientagent_stats_instances.patch` supplies that experimental reporting
+repair for short comparative runs. It gives each connector instance a unique
+role/PID/instance file and flushes after every counter update, so SIGTERM at
+server shutdown cannot erase the final decision totals. The Modal image tests
+the patch against the pinned EfficientAgent checkout before launching a GPU.
+
+## Compare pressure decisions with later restoration
+
+`modal_policy_restore_compare.py` connects admission, pressure, eviction, and
+later host restoration in the same pinned EfficientAgent/vLLM/LMCache stack.
+Every arm uses the same connector and copy-time deduplication. A 4,096-token
+GPU pool and 0.16 GiB host tier receive a sacrificial prefix, the target,
+three pressure prefixes, and a target revisit. The arm order is rotated over
+three repetitions.
+
+```bash
+modal run research/agent_baselines/modal_policy_restore_compare.py \
+  --campaign prefixplan-YYYYMMDD-policy-restore \
+  --knlp-commit "$(git rev-parse HEAD)" --repetitions 3
+```
+
+The unfiltered arm writes every request. The fixed arm rejects requests above
+the two-new-chunk threshold without consulting pressure. The conditioned arm
+writes above-threshold requests until fresh telemetry reports a full, evicting
+host tier, then skips later writes. No post-replay probe is issued, so serving
+counters and LMCache transfer logs cover the same request window. The summary
+reports computed prefill tokens, host transfer tokens, target-revisit latency,
+makespan, and preserved policy counters. This remains a synthetic mechanism
+comparison, not evidence of live-agent quality or a general PrefixPlan win.
+
+The 2026-10-02 Modal H100 campaign completed all nine arms and all 54 forced
+requests exactly. In each of three counterbalanced repetitions, conditioned
+admission stored 6,144 tokens, skipped three later pressure writes, physically
+restored all 3,072 target tokens, and computed 15,361 prefill tokens.
+Unfiltered admission stored 18,432 tokens, restored none, and computed 18,432;
+the fixed threshold stored and restored none and also computed 18,432. Median
+makespans were 8.670, 8.739, and 8.639 seconds for conditioned, unfiltered,
+and fixed respectively. Those timings are descriptive for this gap-paced
+micro-workload; the result establishes the intended traffic/recomputation
+mechanism, not a general task-completion-time benefit.
+
+## Compare fixed layouts with bounded joint selection
+
+`prefix_plan.py` enumerates only layouts supplied by the caller. It scores the
+prefix tokens each candidate could reuse while accounting for the KV bytes its
+reusable prefixes would occupy in the declared host tier. Its receipt contains
+every fixed and per-family assignment, the strongest fixed candidate, the
+selected joint candidate, and the capacity calculation. These are structural
+estimates; they never become physical cache events without engine telemetry.
+
+`modal_joint_layout_compare.py` gives that contract a bounded mechanism test.
+One synthetic request family shares repository context while another shares
+tool instructions. The two uniform arms place the same segment type first for
+both families. The planner arm selects from those same approved layouts per
+family. A static per-family control makes the same selection without consulting
+the planner; the harness requires its rendered replay inputs to match the
+planner arm exactly. All arms use the identical pressure-conditioned connector,
+copy-time deduplication, GPU pool, host tier, logical requests, and forced
+outputs. Unique pressure requests evict device KV between revisits, so saved
+prefill must be backed by observed host restoration rather than device hits.
+
+```bash
+modal run research/agent_baselines/modal_joint_layout_compare.py \
+  --campaign prefixplan-YYYYMMDD-joint-layout \
+  --knlp-commit "$(git rev-parse HEAD)" --repetitions 3
+```
+
+The counterbalanced repetitions are a synthetic systems gate. The planner and
+static per-family control are expected to have equal replay inputs, restoration,
+and computed prefill. Any improvement over the uniform arms therefore supports
+the selected static layout, not the compiler that selected it. The constructed
+workload establishes neither end-to-end latency benefit nor task quality. The
+next separate gate is freely generated live SWE-bench work with official grading.
+
+The 2026-10-02 Modal H100 campaign predated the static per-family control. It
+passed all nine arms and all 180 forced
+outputs. In every repetition, each fixed layout physically restored 4,096
+tokens and computed 57,344 prefill tokens, while the selected per-family
+layout restored 8,192 and computed 53,248. The observed 4,096-token reduction
+exactly matched the planner's incremental estimate (7.14 percent of the fixed
+arm's computed prefill). Median makespans were 28.718, 28.730, and 28.731
+seconds for fixed-repository, fixed-tool, and joint respectively, so this run
+does not establish a latency benefit or a compiler advantage over a fixed
+per-family rule.
+
+A separate two-task live pilot used fresh vLLM 0.13 servers, the exact
+`Qwen/Qwen3-Coder-30B-A3B-Instruct` revision, native prefix caching, one
+sequence at a time, and official SWE-bench grading. Stock ordering made 56
+successful calls and submitted one incorrect patch; stable-prefix ordering
+made 60 successful calls and submitted no patches. Both scored 0/2. Stock's
+cold-server absolute counters reported 585,360 hits from 605,517 queried
+prefix tokens (96.67 percent); stable-prefix's interval counters reported
+600,800 from 616,908 (97.39 percent). Mean client latencies were 4.432 and
+2.611 seconds, but the call counts, completions, and generated trajectories
+differ, so the pilot is neither a matched performance comparison nor evidence
+of a quality improvement. Larger predeclared campaigns remain necessary.
+
 Set `OPENAI_API_KEY` in the process environment if the endpoint needs one; do
 not put credentials in URLs or provenance. The endpoint is explicit and uses
 the `openai/<served-name>` provider prefix. Docker runs the generated commands
-inside SWE-bench containers. The harness does not provision a GPU or launch
-a serving process.
+inside SWE-bench containers. The live-agent harness does not provision a GPU
+or launch a serving process; the bounded Modal qualification above is the
+explicit exception.
 
 ```bash
 build/agent-mini/venv/bin/python -m research.agent_baselines.live run \
