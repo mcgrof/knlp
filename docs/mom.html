@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mixture of Memories versus Gated DeltaNet</title>
+<meta name="description" content="Measured Mixture of Memories and Gated DeltaNet results on synthetic latest-value recall and small language-model training, with the published MoM results shown separately.">
+<link rel="canonical" href="https://knlp.io/mom.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;
+  --line:#203128;--text:#e2ece5;--muted:#93a59a;--dim:#62736a;
+  --green:#2ae6a3;--cyan:#62dce5;--amber:#f0b65c;--red:#f17878;
+  --violet:#ae94ff;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}
+.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:950px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(240,182,92,.42);border-left:4px solid var(--amber);border-radius:10px;background:linear-gradient(110deg,rgba(240,182,92,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--amber);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:960px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(25px,4vw,40px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.warn{color:var(--amber)}.metric.bad{color:var(--red)}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}.note.bad{border-left-color:var(--red);background:rgba(241,120,120,.06)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}caption{text-align:left;color:var(--muted);padding:0 0 10px}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.warn{color:var(--amber)!important}
+.diagram{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:stretch}.diagram-box{border:1px solid var(--line);border-radius:10px;padding:20px;background:var(--card)}.diagram-box h3{margin-top:0}.arrow{display:grid;place-items:center;color:var(--dim);font:700 24px var(--mono)}.banks{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:15px 0}.bank{height:54px;border:1px solid rgba(174,148,255,.5);border-radius:5px;display:grid;place-items:center;color:var(--violet);font:700 10px var(--mono)}.bank.shared{border-color:rgba(42,230,163,.6);color:var(--green)}
+.charts{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}.chart{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:19px}.chart h3{margin:0 0 5px}.chart p{color:var(--muted);font-size:12px;min-height:60px}.bar-row{display:grid;grid-template-columns:72px 1fr 66px;gap:8px;align-items:center;margin:10px 0}.bar-row span{font:700 10px var(--mono)}.bar-row span:last-child{text-align:right}.track{height:12px;background:#17231c;border-radius:3px;overflow:hidden}.fill{display:block;height:100%;min-width:2px}.fill.gdn{background:var(--cyan)}.fill.mom{background:var(--violet)}.fill.bad{background:var(--red)}.fill.good{background:var(--green)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:14px}.legend i{display:inline-block;width:12px;height:3px;margin-right:5px;vertical-align:middle}.legend .gdn{background:var(--cyan)}.legend .mom{background:var(--violet)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.charts,.flow,.diagram{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}.chart p{min-height:auto}}
+</style>
+</head>
+<body>
+<header><nav aria-label="Page sections">
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#paper">paper</a><a href="#recall">recall</a>
+<a href="#cost">training cost</a><a href="#methods">methods</a>
+<a href="#limits">limits</a><a href="linear_attention.html">linear attention</a>
+</nav></header>
+<main>
+<div class="hero">
+<div class="eyebrow">Bounded recurrent memory · routed banks · measured results</div>
+<h1>Mixture of Memories versus Gated DeltaNet</h1>
+<p class="lead"><strong>We did not find a reliable Mixture of Memories advantage over Gated DeltaNet in our tested recipes.</strong> One original-MoM run reached 84.29% on the primary recall test, near its paired GDN result of 85.85%. The other two MoM runs reached 8.06% and 0.74%. A separate language-model profile measured MoM training updates about 38% longer.</p>
+<p class="lead">The published MoM paper reports higher recall scores than GDN after much larger language-pretraining runs. Our work uses small models and a synthetic overwrite-recall task. It is not a reproduction of that campaign and does not disprove its result.</p>
+<div class="decision"><b>Measured conclusion</b><span>Gated DeltaNet is the working baseline for these local recipes. MoM can learn the recall task well, but it did not do so consistently across the three paired runs.</span></div>
+<div class="badges"><span class="badge amber">THREE RECALL SEEDS</span><span class="badge cyan">FIXED 8,000 UPDATES</span><span class="badge green">ALL ENDPOINTS RETAINED</span><span class="badge amber">ONE FILTER CONTROL FAILED</span></div>
+</div>
+
+<section id="architecture">
+<h2>What changes when memory is split into banks</h2>
+<p class="sub"><strong>Gated DeltaNet (GDN)</strong> stores associations in recurrent matrix state and uses a learned gate to control retention. <strong>Mixture of Memories (MoM)</strong> routes each token to a subset of several memory banks and also updates an always-active shared bank. A router chooses where each token writes and reads.</p>
+<div class="diagram">
+<div class="diagram-box"><h3>Gated DeltaNet</h3><p class="sub">Every token updates the same multi-head recurrent memory. The model does not need to learn a bank assignment before it can use the state.</p><div class="banks"><div class="bank shared" style="grid-column:1/-1">shared recurrent state</div></div></div>
+<div class="arrow" aria-hidden="true">↔</div>
+<div class="diagram-box"><h3>Mixture of Memories</h3><p class="sub">The tested MoM uses four routed banks, activates the top two for each token, and keeps one shared bank active for every token.</p><div class="banks"><div class="bank">bank 1</div><div class="bank">bank 2</div><div class="bank">bank 3</div><div class="bank">bank 4</div><div class="bank shared">shared</div></div></div>
+</div>
+<div class="note"><strong>Stored state is not active state.</strong> MoM stores several banks but updates only selected routed banks plus the shared bank for a token. More stored state does not by itself prove more useful recall.</div>
+</section>
+
+<section id="paper">
+<h2>The paper reports a positive result at larger scale</h2>
+<p class="sub">The <a href="https://arxiv.org/html/2502.13685v4">MoM paper</a> trains 24-layer models on SlimPajama and averages six recall tasks with inputs up to 2,048 tokens. Its models use four routed memories, top-2 activation, a shared memory, and GDN updates. These scores are not percentages from our task.</p>
+<div class="charts">
+<div class="chart"><h3>380M label · 15B tokens</h3><p>Paper Table 2. Nominal scale labels are not exact equal-parameter matches.</p><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:68.8%"></i></div><span>24.78</span></div><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:78.2%"></i></div><span class="yes">28.16</span></div></div>
+<div class="chart"><h3>1.3B label · 100B tokens</h3><p>Paper Table 2. MoM leads GDN by 3.74 score points.</p><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:89.6%"></i></div><span>32.30</span></div><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:100%"></i></div><span class="yes">36.04</span></div></div>
+<div class="chart"><h3>Expanded GDN control</h3><p>Paper Table 4 changes value width and reports 550M versus 444M parameters.</p><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:73.1%"></i></div><span>26.32</span></div><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:78.2%"></i></div><span class="yes">28.16</span></div></div>
+</div>
+<div class="scroll" style="margin-top:22px"><table>
+<caption>Paper-reported recall averages. Higher is better.</caption>
+<thead><tr><th>paper setting</th><th>GDN</th><th>MoM</th><th>MoM minus GDN</th></tr></thead><tbody>
+<tr><td>nominal 380M, 15B training tokens</td><td>24.78</td><td>28.16</td><td class="yes">+3.38</td></tr>
+<tr><td>nominal 1.3B, 100B training tokens</td><td>32.30</td><td>36.04</td><td class="yes">+3.74</td></tr>
+<tr><td>400M activated parameters</td><td>24.78</td><td>26.51</td><td class="yes">+1.73</td></tr>
+<tr><td>expanded GDN versus MoM</td><td>26.32</td><td>28.16</td><td class="yes">+1.84</td></tr>
+</tbody></table></div>
+<p class="fine">Source: paper Tables 2, 4, and 9. The expanded control matches activated memory capacity, not our total stored-state comparison. The paper's main efficiency comparison is against Transformer inference, not GDN training-update time.</p>
+</section>
+
+<section id="recall">
+<h2>Local latest-value recall varies sharply by seed</h2>
+<p class="sub">The synthetic task writes key/value pairs, can overwrite a value, inserts unrelated tokens, and asks for the latest value of a queried key. Recall accuracy is the fraction of exact answer tokens. Each model has two layers and width 256. Each job runs 8,000 optimizer updates and scores 8,192 answers in the primary 64-key cell.</p>
+<div class="charts">
+<div class="chart"><h3>Seed 912011</h3><p>Original MoM does not acquire the primary task. Original GDN reaches 77.14%.</p><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:8.06%"></i></div><span>8.06%</span></div><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:77.14%"></i></div><span>77.14%</span></div></div>
+<div class="chart"><h3>Seed 912013</h3><p>Original MoM reaches 84.29%, 1.56 percentage points below paired GDN.</p><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:84.29%"></i></div><span class="yes">84.29%</span></div><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:85.85%"></i></div><span>85.85%</span></div></div>
+<div class="chart"><h3>Seed 913019</h3><p>Original MoM remains near chance while paired GDN reaches 93.44%.</p><div class="bar-row"><span>MoM</span><div class="track"><i class="fill mom" style="width:.74%"></i></div><span>0.74%</span></div><div class="bar-row"><span>GDN</span><div class="track"><i class="fill gdn" style="width:93.44%"></i></div><span>93.44%</span></div></div>
+</div>
+<div class="legend"><span><i class="mom"></i>original MoM</span><span><i class="gdn"></i>original GDN</span></div>
+<div class="scroll" style="margin-top:22px"><table>
+<caption>Primary 64-key recall. Exact counts out of 8,192 answers.</caption>
+<thead><tr><th>seed</th><th>original MoM</th><th>MoM + causal filter</th><th>original GDN</th><th>GDN + causal filter</th></tr></thead><tbody>
+<tr><td>912011</td><td>660 / 8192 · 8.06%</td><td class="no">43 / 8192 · 0.52%</td><td>6319 / 8192 · 77.14%</td><td>1182 / 8192 · 14.43%</td></tr>
+<tr><td>912013</td><td>6905 / 8192 · 84.29%</td><td class="no">59 / 8192 · 0.72%</td><td>7033 / 8192 · 85.85%</td><td>7602 / 8192 · 92.80%</td></tr>
+<tr><td>913019</td><td>61 / 8192 · 0.74%</td><td class="no">1380 / 8192 · 16.85%</td><td>7655 / 8192 · 93.44%</td><td>7036 / 8192 · 85.89%</td></tr>
+</tbody></table></div>
+<div class="scroll" style="margin-top:22px"><table>
+<caption>Easy 8-key acquisition check. Exact counts out of 1,024 answers.</caption>
+<thead><tr><th>seed</th><th>original MoM</th><th>MoM + causal filter</th><th>original GDN</th><th>GDN + causal filter</th></tr></thead><tbody>
+<tr><td>912011</td><td>649 / 1024</td><td class="no">14 / 1024</td><td>1024 / 1024</td><td class="no">882 / 1024</td></tr>
+<tr><td>912013</td><td>1024 / 1024</td><td class="no">27 / 1024</td><td>1024 / 1024</td><td>1024 / 1024</td></tr>
+<tr><td>913019</td><td class="no">27 / 1024</td><td>908 / 1024</td><td>1024 / 1024</td><td>1024 / 1024</td></tr>
+</tbody></table></div>
+<div class="note bad"><strong>The causal-filter comparison failed its control requirement.</strong> GDN with the filter scored 882/1024 on the easy test for seed 912011. The required floor was 973/1024. The formal comparison is therefore unassessed. The endpoints still describe the completed runs, but they are not a qualified negative mechanism result.</div>
+<p class="sub" style="margin-top:22px">The filter is a learned residual causal convolution. It lets each token use its current input and two previous inputs before routing. It starts at zero. It adds 1,536 parameters and 4,096 logical FP32 history bytes per sequence. The original models use 716,800 logical state bytes; the filter variants use 720,896. These are state-size calculations, not measured memory traffic.</p>
+</section>
+
+<section id="cost">
+<h2>A separate profile measures slower MoM training updates</h2>
+<p class="sub">This profile uses a small language-model workload on one AMD Radeon Pro W7900 GPU. It is not timing from the H100 recall cohort. The metric is profiler-off median time for a complete training update. Lower is better.</p>
+<div class="grid2">
+<div class="card"><div class="kicker">Seed 41011</div><div class="metric bad">1.3778×</div><p>GDN: 295.66 ms. Normalized top-2 MoM: 407.35 ms.</p></div>
+<div class="card"><div class="kicker">Seed 41013</div><div class="metric bad">1.3745×</div><p>GDN: 297.93 ms. Normalized top-2 MoM: 409.50 ms.</p></div>
+</div>
+<div class="scroll" style="margin-top:22px"><table>
+<caption>Profiler-off complete-update timing.</caption>
+<thead><tr><th>seed</th><th>GDN median update</th><th>top-2 MoM median update</th><th>MoM / GDN</th></tr></thead><tbody>
+<tr><td>41011</td><td>295.66 ms</td><td>407.35 ms</td><td class="no">1.3778×</td></tr>
+<tr><td>41013</td><td>297.93 ms</td><td>409.50 ms</td><td class="no">1.3745×</td></tr>
+</tbody></table></div>
+<div class="note"><strong>What the profile does not show.</strong> The padded projection layout held about 1.90 times as many rows as the valid routed set, but recurrence runs after compaction. The profile did not isolate backward traffic or prove an HBM bottleneck. It does not support an inference-speed claim.</div>
+</section>
+
+<section id="development">
+<h2>Small repairs did not produce a reliable challenger</h2>
+<p class="sub">These development studies test different interventions and often reuse development seeds. They are not one pooled statistical experiment.</p>
+<div class="scroll"><table>
+<thead><tr><th>intervention</th><th>supported observation</th></tr></thead><tbody>
+<tr><td>Normalize selected top-2 weights</td><td>Routing engages, but the development screen does not pass.</td></tr>
+<tr><td>Change routed convolution spans</td><td>No nominated variant; one favorable five-seed mean remains exploratory.</td></tr>
+<tr><td>Put queries on the original timeline</td><td>MoM loss remains above GDN by +0.0145, +0.0023, and +0.0328.</td></tr>
+<tr><td>Change the output gate</td><td>No qualifying gain; MoM remains above its GDN control.</td></tr>
+<tr><td>Use two active banks plus a shared bank</td><td>Beats a tied sparse reference, but does not reliably beat GDN.</td></tr>
+<tr><td>Bank-specific output maps</td><td>No consistent mechanism or challenger signal across seeds.</td></tr>
+<tr><td>Causal context filter</td><td>Poor MoM endpoints; one required GDN filter control fails.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="methods">
+<h2>Methods and evidence scope</h2>
+<div class="flow">
+<div><b>Generate</b><span>Sample feasible latest-value recall worlds with overwrites, interference, and controlled query distance.</span></div>
+<div><b>Train</b><span>Run 8,000 fixed updates, 32 prefix pairs and 64 query rows per update, with paired data inside each seed.</span></div>
+<div><b>Score</b><span>Use exact answer-token accuracy on 128 prefixes for each terminal in-distribution cell.</span></div>
+<div><b>Audit</b><span>Retain every endpoint and independently reconstruct 675,840 prediction rows and 228 cell summaries.</span></div>
+</div>
+<div class="grid2" style="margin-top:22px">
+<div class="card"><h3>Recall runtime</h3><p>One NVIDIA H100 80 GB GPU; Python 3.11.12; PyTorch 2.9.1 with CUDA 12.8; Triton 3.8.0; Flash Linear Attention 0.5.2; FP32 with TF32 disabled. AdamW uses peak LR 0.001, 200 warmup updates, betas 0.9/0.95, weight decay 0.1, and gradient clipping at 1.0. MoM adds a 0.01 balance objective.</p></div>
+<div class="card"><h3>Public evidence</h3><p>The <a href="data/mom-gdn-results.json">machine-readable aggregate bundle</a> contains exact counts, configs, paper anchors, and timing rows. No W&amp;B tracker was used for the recall cohort. The exact runtime source snapshot, checkpoints, and row-level predictions remain outside this public repository, so the original runs cannot yet be reproduced from the public tree alone.</p></div>
+</div>
+</section>
+
+<section id="limits">
+<h2>What these experiments establish—and what they do not</h2>
+<div class="grid3">
+<div class="card"><div class="kicker">Established here</div><h3>Learning is inconsistent</h3><p>Original MoM can acquire the 64-key task, but only one of three paired runs reaches GDN-like recall at the fixed endpoint.</p></div>
+<div class="card"><div class="kicker">Not established</div><h3>The cause of weak runs</h3><p>Initialization, sampled training examples, evaluation examples, routing, normalization, and optimization all vary or remain plausible. Endpoint scores do not isolate a cause.</p></div>
+<div class="card"><div class="kicker">Different regime</div><h3>The paper's scale result</h3><p>The published models, data, objectives, and training budgets differ substantially. Our result neither reproduces nor disproves the paper's positive finding.</p></div>
+</div>
+<p class="lead" style="margin-top:30px"><strong>Supported conclusion:</strong> the tested MoM recipes have not produced a reliable advantage over GDN. Recall varies sharply across seeds, and the measured language-model implementation has slower updates. This result is limited to the tested configurations.</p>
+</section>
+</main>
+<footer><div style="max-width:1180px;margin:auto">Related: <a href="linear_attention.html">linear attention and bounded memory</a> · <a href="https://arxiv.org/abs/2502.13685">MoM paper</a> · <a href="https://github.com/OpenSparseLLMs/MoM">official MoM code</a> · <a href="data/mom-gdn-results.json">data</a> · <a href="index.html">knlp</a></div></footer>
+</body>
+</html>
