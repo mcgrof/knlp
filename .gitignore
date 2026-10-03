@@ -17,6 +17,7 @@ results/
 *.pth
 *.pt
 *.patch
+!research/agent_baselines/efficientagent_stats_instances.patch
 # ...but vendored patches under tools/reproduce are part of the
 # reproduce pipeline (kvtide-fetch applies them) and must ship.
 !tools/reproduce/**/patches/*.patch
