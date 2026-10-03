@@ -269,7 +269,14 @@ class LiveTests(unittest.TestCase):
             live.select(self.select_args("--ids", "repo__missing-3", "--execute"))
         self.assertFalse((self.root / "frozen.json").exists())
 
-    def task(self, *, fail=False, cleanup_fail=False, finalize_fail=False):
+    def task(
+        self,
+        *,
+        fail=False,
+        cleanup_fail=False,
+        finalize_fail=False,
+        environment_fatal=False,
+    ):
         response = {
             "prompt_token_ids": [1, 2],
             "choices": [{"token_ids": [3]}],
@@ -288,6 +295,7 @@ class LiveTests(unittest.TestCase):
         class Agent:
             def __init__(self, model, env, **kwargs):
                 self.model = model
+                self.messages = []
                 received["config"] = kwargs
 
             def run(self, task):
@@ -295,6 +303,17 @@ class LiveTests(unittest.TestCase):
                 self.model._query([{"role": "user", "content": task}])
                 if fail:
                     raise RuntimeError("private exception details")
+                if environment_fatal:
+                    self.messages.append(
+                        {
+                            "role": "tool",
+                            "content": (
+                                "<returncode>128</returncode>\n"
+                                "OCI runtime exec failed: write /tmp/runc-process1: "
+                                "no space left on device"
+                            ),
+                        }
+                    )
                 return {"exit_status": "Submitted", "submission": "diff --git a/f b/f"}
 
         config = {"model": {"model_name": "openai/test"}, "agent": {"step_limit": 2}}
@@ -337,6 +356,20 @@ class LiveTests(unittest.TestCase):
         self.assertNotIn("private", json.dumps(result))
         task = json.loads((self.root / "tasks/repo__issue-1.json").read_text())
         self.assertTrue(task["recording_complete"])
+
+    def test_fatal_container_observation_invalidates_task(self):
+        result = self.task(environment_fatal=True)
+        self.assertEqual(result["exit_status"], "InfrastructureError")
+        self.assertEqual(result["error_type"], "FatalEnvironmentError")
+        self.assertEqual(result["infrastructure_reason"], "container_runtime_no_space")
+        self.assertEqual(result["model_patch"], "")
+
+    def test_normal_command_failure_is_not_infrastructure_failure(self):
+        self.assertIsNone(
+            live.fatal_environment_error(
+                [{"role": "tool", "content": "<returncode>1</returncode>\nfailed"}]
+            )
+        )
 
     def test_cleanup_failure_does_not_skip_recorder_finish(self):
         result = self.task(cleanup_fail=True)

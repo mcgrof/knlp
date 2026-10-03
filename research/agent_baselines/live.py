@@ -22,6 +22,16 @@ from urllib.parse import urlsplit
 MINI_REVISION = "04d809ceab9df28f9adaed044884180159172930"
 SWEBENCH_REVISION = "726c5461e2ef52d83cf1ea2107870a8bb3328d57"
 
+FATAL_ENVIRONMENT_ERRORS = (
+    (
+        "container_runtime_no_space",
+        re.compile(
+            r"OCI runtime exec failed:.*(?:no space left on device|runc-process)",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+)
+
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -93,6 +103,20 @@ def endpoint(value: str) -> str:
 
 def read_instances(path: Path) -> tuple[dict, list[dict]]:
     return _validate_selection(json.loads(path.read_text()))
+
+
+def fatal_environment_error(messages: list[dict]) -> str | None:
+    """Return a stable reason for a fatal tool-environment observation."""
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            continue
+        for reason, pattern in FATAL_ENVIRONMENT_ERRORS:
+            if pattern.search(content):
+                return reason
+    return None
 
 
 def _validate_selection(data: dict) -> tuple[dict, list[dict]]:
@@ -326,6 +350,14 @@ def run_task(
             exit_status=info.get("exit_status", "Unknown"),
             model_patch=info.get("submission") or "",
         )
+        fatal_reason = fatal_environment_error(getattr(agent, "messages", []))
+        if fatal_reason is not None:
+            result.update(
+                exit_status="InfrastructureError",
+                model_patch="",
+                error_type="FatalEnvironmentError",
+                infrastructure_reason=fatal_reason,
+            )
     except Exception as exc:
         # Provider exceptions can carry credentials; retain only the type here.
         result["error_type"] = type(exc).__name__
