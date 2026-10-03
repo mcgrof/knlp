@@ -20,6 +20,7 @@ from research.agent_baselines.recording_model import (
     extract_token_ids,
     summarize_calls,
 )
+from research.agent_baselines.sglang_adapter import capability_receipt
 
 
 def response(prompt=None, output=None, *, tool=True):
@@ -54,6 +55,18 @@ def response(prompt=None, output=None, *, tool=True):
             "total_tokens": len(prompt) + len(output),
         },
     }
+
+
+def sglang_response(prompt=None, output=None):
+    data = response(prompt=prompt, output=output)
+    prompt_ids = data.pop("prompt_token_ids")
+    output_ids = data["choices"][0].pop("token_ids")
+    data["sglext"] = {
+        "input_ids": prompt_ids,
+        "output_ids": [output_ids],
+        "cached_tokens_details": {"device": 1, "host": 2, "storage": 0},
+    }
+    return data
 
 
 class TestRecording(unittest.TestCase):
@@ -152,6 +165,95 @@ class TestRecording(unittest.TestCase):
         data["choices"][0]["provider_specific_fields"] = {"token_ids": [99]}
         with self.assertRaises(TokenCaptureError):
             extract_token_ids(data)
+
+    def test_sglang_extension_ids_are_exact_and_fail_closed(self):
+        data = sglang_response()
+        self.assertEqual(extract_token_ids(data, "sglang"), ([1, 2, 3], [4, 5]))
+        data["sglext"]["output_ids"] = [[4, 5], [6]]
+        with self.assertRaises(TokenCaptureError):
+            extract_token_ids(data, "sglang")
+
+    def test_conflicting_vllm_and_sglang_ids_are_rejected(self):
+        data = response()
+        data["sglext"] = {"input_ids": [1, 2, 99], "output_ids": [[4, 5]]}
+        with self.assertRaisesRegex(TokenCaptureError, "disagree"):
+            extract_token_ids(data)
+
+    def test_sglang_recorder_requests_and_attributes_extensions(self):
+        sent = []
+
+        def transport(messages, **kwargs):
+            sent.append(kwargs)
+            return sglang_response()
+
+        receipt = capability_receipt(
+            ["openai_chat", "sglext_token_ids", "cache_source_report"]
+        )
+        model = self.model(transport)
+        recorder = attach_recorder(
+            model,
+            self.root,
+            "sglang-task",
+            trial_id="workflow-1",
+            token_protocol="sglang",
+            sglang_receipt=receipt,
+            cache_scope="shared-experiment",
+        )
+        model._query([])
+        recorder.finish()
+        extra = sent[0]["extra_body"]
+        self.assertEqual(extra["rid"], "workflow-1:1")
+        self.assertEqual(extra["extra_key"], "shared-experiment")
+        self.assertTrue(extra["return_input_ids_in_sglext"])
+        self.assertTrue(extra["return_output_ids_in_sglext"])
+        self.assertTrue(extra["return_cached_tokens_details"])
+        self.assertNotIn("return_token_ids", extra)
+        row = self.rows(recorder)[0]
+        self.assertEqual(row["token_source"], "sglang_sglext_response")
+        self.assertEqual(row["request_id"], "workflow-1:1")
+        self.assertEqual(row["workflow_id"], "workflow-1")
+        self.assertEqual(row["cache_scope"], "shared-experiment")
+        self.assertEqual(
+            row["cache_source_tokens"], {"device": 1, "host": 2, "storage": 0}
+        )
+        summary = summarize_calls(self.root)
+        self.assertEqual(summary["cache_source_reporting_calls"], 1)
+        self.assertEqual(summary["cache_source_tokens"]["host"], 2)
+        self.assertEqual(summary["cache_source_tier_reporting_calls"]["storage"], 1)
+
+    def test_sglang_recorder_requires_valid_live_receipt(self):
+        model = self.model(lambda messages, **kwargs: sglang_response())
+        with self.assertRaises(ValueError):
+            attach_recorder(
+                model,
+                self.root,
+                "sglang-task",
+                token_protocol="sglang",
+                sglang_receipt=capability_receipt(["openai_chat"]),
+                cache_scope="shared-experiment",
+            )
+
+    def test_sglang_tasks_share_only_an_explicit_cache_scope(self):
+        sent = []
+        receipt = capability_receipt(["openai_chat", "sglext_token_ids"])
+        for task_id in ("task-a", "task-b"):
+            model = self.model(
+                lambda messages, **kwargs: (sent.append(kwargs) or sglang_response())
+            )
+            recorder = attach_recorder(
+                model,
+                self.root,
+                task_id,
+                trial_id=f"workflow-{task_id}",
+                token_protocol="sglang",
+                sglang_receipt=receipt,
+                cache_scope="shared-experiment",
+            )
+            model._query([])
+            recorder.finish()
+        first, second = (request["extra_body"] for request in sent)
+        self.assertNotEqual(first["rid"], second["rid"])
+        self.assertEqual(first["extra_key"], second["extra_key"])
 
     def test_two_task_models_remain_isolated(self):
         barrier = threading.Barrier(2)
@@ -266,7 +368,7 @@ class TestMiniContract(unittest.TestCase):
     setUp = TestRecording.setUp
     rows = TestRecording.rows
 
-    def _exercise_http_transport(self, *, fail_first):
+    def _exercise_http_transport(self, *, fail_first, backend="vllm"):
         # Exercise the real model and LiteLLM conversion against an HTTP fixture.
         # No model/server is needed, and the fixture never calls an external API.
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
@@ -287,7 +389,7 @@ class TestMiniContract(unittest.TestCase):
                 body = (
                     {"error": {"message": "fixture failure", "type": "server_error"}}
                     if status == 500
-                    else response()
+                    else (sglang_response() if backend == "sglang" else response())
                 )
                 payload = json.dumps(body).encode()
                 self.send_response(status)
@@ -329,15 +431,38 @@ class TestMiniContract(unittest.TestCase):
                 "unused-output",
             ]
         )
-        model_config = live.make_config(arguments, checkout)["model"]
+        receipt = None
+        server = None
+        if backend == "sglang":
+            receipt = capability_receipt(
+                ["openai_chat", "sglext_token_ids", "cache_source_report"]
+            )
+            server = {
+                "backend": "sglang",
+                "capability_receipt": receipt,
+                "cache_scope": "transport-test",
+            }
+        model_config = live.make_config(arguments, checkout, server)["model"]
         model_config.pop("model_class")
         model_config["model_kwargs"]["client"] = client
         model = LitellmModel(**model_config)
-        recorder = attach_recorder(model, self.root, "real-mini")
+        recorder = attach_recorder(
+            model,
+            self.root,
+            "real-mini",
+            token_protocol=backend,
+            sglang_receipt=receipt,
+            cache_scope="transport-test" if backend == "sglang" else None,
+        )
         result = model.query([{"role": "user", "content": "test"}])
         recorder.finish()
         self.assertEqual(result["extra"]["actions"][0]["command"], "ls")
-        self.assertTrue(requests[0]["return_token_ids"])
+        if backend == "vllm":
+            self.assertTrue(requests[0]["return_token_ids"])
+        else:
+            self.assertTrue(requests[0]["return_input_ids_in_sglext"])
+            self.assertTrue(requests[0]["return_output_ids_in_sglext"])
+            self.assertTrue(requests[0]["return_cached_tokens_details"])
         self.assertEqual(self.rows(recorder)[-1]["generated_token_ids"], [[4, 5]])
         return requests, self.rows(recorder)
 
@@ -346,6 +471,15 @@ class TestMiniContract(unittest.TestCase):
         self.assertEqual(len(requests), 1)
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]["error"])
+
+    def test_actual_mini_transport_and_litellm_preserve_sglext_ids(self):
+        requests, rows = self._exercise_http_transport(
+            fail_first=False, backend="sglang"
+        )
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(rows[0]["token_source"], "sglang_sglext_response")
+        self.assertEqual(rows[0]["prompt_token_ids"], [1, 2, 3])
+        self.assertEqual(rows[0]["cache_source_tokens"]["host"], 2)
 
     def test_production_config_records_each_http_retry(self):
         requests, rows = self._exercise_http_transport(fail_first=True)

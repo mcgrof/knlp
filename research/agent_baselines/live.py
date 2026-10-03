@@ -185,7 +185,7 @@ def select(args) -> int:
     return 0
 
 
-def make_config(args, checkout: Path) -> dict:
+def make_config(args, checkout: Path, server: dict | None = None) -> dict:
     import yaml
 
     config = yaml.safe_load(
@@ -204,6 +204,20 @@ def make_config(args, checkout: Path) -> dict:
         cost_tracking="ignore_errors",
         set_cache_control=None,
     )
+    backend = "vllm" if server is None else server["backend"]
+    extra_body = (
+        {"return_token_ids": True}
+        if backend == "vllm"
+        else {
+            "return_input_ids_in_sglext": True,
+            "return_output_ids_in_sglext": True,
+            "return_cached_tokens_details": bool(
+                server["capability_receipt"]["features"]["cache_source_report"][
+                    "enabled"
+                ]
+            ),
+        }
+    )
     config["model"]["model_kwargs"].update(
         api_base=endpoint(args.endpoint),
         temperature=0,
@@ -212,7 +226,7 @@ def make_config(args, checkout: Path) -> dict:
         # Let mini's recorded retry loop own each HTTP attempt.
         max_retries=0,
         timeout=args.request_seconds,
-        extra_body={"return_token_ids": True},
+        extra_body=extra_body,
         stream=False,
         n=1,
     )
@@ -222,6 +236,7 @@ def make_config(args, checkout: Path) -> dict:
 def server_provenance(path: Path) -> dict:
     data = json.loads(path.read_text())
     required = {
+        "backend",
         "model_id",
         "model_revision",
         "tokenizer_revision",
@@ -250,10 +265,44 @@ def server_provenance(path: Path) -> dict:
         raise ValueError("prefix_caching must be a JSON boolean")
     if data["cache_start_state"] not in {"cold", "warm", "unknown"}:
         raise ValueError("cache_start_state must be cold, warm, or unknown")
+    if data["backend"] not in {"vllm", "sglang"}:
+        raise ValueError("backend must be vllm or sglang")
+    if data["backend"] == "sglang":
+        from .sglang_adapter import (
+            SGLANG_REVISION,
+            capability_receipt,
+            validate_cache_scope,
+            validate_capability_receipt,
+        )
+
+        if data.get("server_revision") != SGLANG_REVISION:
+            raise ValueError("SGLang server_revision must match the audited source pin")
+        enabled = data.get("enabled_capabilities")
+        if not isinstance(enabled, list) or any(
+            not isinstance(item, str) for item in enabled
+        ):
+            raise ValueError("SGLang enabled_capabilities must be a list of names")
+        data["capability_receipt"] = validate_capability_receipt(
+            capability_receipt(enabled), require_live=True
+        )
+        data["cache_scope"] = validate_cache_scope(data.get("cache_scope"))
+    elif "cache_scope" in data:
+        raise ValueError("cache_scope is only valid for the sglang backend")
     return data
 
 
-def run_task(row, config, out, model_factory, environment_factory, agent_class):
+def run_task(
+    row,
+    config,
+    out,
+    model_factory,
+    environment_factory,
+    agent_class,
+    *,
+    token_protocol="vllm",
+    sglang_receipt=None,
+    cache_scope=None,
+):
     from .recording_model import attach_recorder
 
     iid = row["instance_id"]
@@ -266,7 +315,14 @@ def run_task(row, config, out, model_factory, environment_factory, agent_class):
     env = recorder = None
     try:
         model = model_factory(config=copy.deepcopy(config["model"]))
-        recorder = attach_recorder(model, out, iid)
+        recorder = attach_recorder(
+            model,
+            out,
+            iid,
+            token_protocol=token_protocol,
+            sglang_receipt=sglang_receipt,
+            cache_scope=cache_scope,
+        )
         env = environment_factory(copy.deepcopy(config), row)
         agent_config = copy.deepcopy(config["agent"])
         agent_config["output_path"] = out / "trajectories" / f"{iid}.json"
@@ -304,7 +360,7 @@ def run(args) -> int:
         raise ValueError(
             "Use openai/<served-model-name> for this local-server baseline"
         )
-    config = make_config(args, checkout)
+    config = make_config(args, checkout, provenance)
     if args.out.exists():
         raise FileExistsError(args.out)
     if args.metrics_url:
@@ -369,6 +425,9 @@ def run(args) -> int:
                 get_model,
                 get_sb_environment,
                 DefaultAgent,
+                token_protocol=provenance["backend"],
+                sglang_receipt=provenance.get("capability_receipt"),
+                cache_scope=provenance.get("cache_scope"),
             )
             for row in rows
         ]
