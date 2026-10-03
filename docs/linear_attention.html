@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Linear Attention &amp; Bounded Memory — DeltaNet, Gated DeltaNet, DeltaProduct, Trellis</title>
-  <meta name="description" content="Measured comparisons of bounded-memory sequence models: DeltaNet, Gated DeltaNet, GatedDeltaProduct and Trellis. Defines the memory updates, training semantics, datasets and metrics before reporting matched A100, C4, PG19 and throughput results.">
+  <title>Linear Attention &amp; Bounded Memory — DeltaNet, MoM, DeltaProduct, Trellis</title>
+  <meta name="description" content="Measured comparisons of bounded-memory sequence models: DeltaNet, Gated DeltaNet, Mixture of Memories, GatedDeltaProduct and Trellis.">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root { --bg:#0f172a; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b;
@@ -34,6 +34,7 @@
     <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-center gap-2">
       <a href="index.html" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm text-gray-300">&larr; Home</a>
       <a href="linear_attention.html" class="px-3 py-1.5 bg-violet-600 rounded text-sm text-white">Linear Attn</a>
+      <a href="mom.html" class="px-3 py-1.5 bg-gray-800 hover:bg-emerald-700 rounded text-sm text-gray-300">MoM</a>
       <a href="least_squares_lineage.html" class="px-3 py-1.5 bg-gray-800 hover:bg-cyan-700 rounded text-sm text-gray-300">Least Squares</a>
       <a href="wy_ut.html" class="px-3 py-1.5 bg-gray-800 hover:bg-indigo-600 rounded text-sm text-gray-300">WY/UT</a>
       <a href="fp8-kv-failure-atlas.html" class="px-3 py-1.5 bg-gray-800 hover:bg-amber-600 rounded text-sm text-gray-300">FP8 Atlas</a>
@@ -45,7 +46,7 @@
 
   <main class="max-w-5xl mx-auto px-5 py-12">
     <header class="mb-10">
-      <div class="eyebrow mb-3">DeltaNet · Gated DeltaNet · GatedDeltaProduct · Trellis</div>
+      <div class="eyebrow mb-3">DeltaNet · Gated DeltaNet · MoM · GatedDeltaProduct · Trellis</div>
       <h1 class="text-4xl md:text-6xl font-bold tracking-tight leading-tight">Linear attention and bounded memory</h1>
       <p class="text-lg text-slate-400 mt-5 max-w-4xl leading-relaxed">
         Standard causal attention keeps past keys and values in a KV cache, so the stored history grows with context length.
@@ -54,6 +55,7 @@
       </p>
       <p class="text-slate-400 mt-4 max-w-4xl leading-relaxed">
         Across the matched experiments reported here, <strong class="text-slate-200">Gated DeltaNet is the strongest bounded-state baseline</strong>.
+        Mixture of Memories does not reliably beat it on the tested latest-value recall task.
         Trellis beats the matched dense Transformer on long-document experiments, but does not beat Gated DeltaNet at the scales tested.
         Trellis results published at 125M parameters and above were not reproduced here.
       </p>
@@ -102,7 +104,7 @@
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="models">
       <div class="eyebrow">3. Model differences</div>
-      <h2 class="text-2xl font-bold mt-2">Four ways to update a bounded state</h2>
+      <h2 class="text-2xl font-bold mt-2">Five ways to update or organize bounded state</h2>
       <div class="grid md:grid-cols-2 gap-4 mt-5">
         <div class="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
           <div class="text-emerald-300 font-semibold">DeltaNet</div>
@@ -117,6 +119,10 @@
         <div class="rounded-xl border border-blue-900/60 bg-blue-950/20 p-5">
           <div class="text-blue-300 font-semibold">GatedDeltaProduct</div>
           <p class="text-sm text-slate-400 mt-2">Uses several structured Householder-like updates per token. This increases overwrite capacity while keeping the transition affine in the recurrent state.</p>
+        </div>
+        <div class="rounded-xl border border-cyan-900/60 bg-cyan-950/20 p-5">
+          <div class="text-cyan-300 font-semibold">Mixture of Memories</div>
+          <p class="text-sm text-slate-400 mt-2">Routes each token to selected Gated DeltaNet memory banks while also using an always-active shared bank. The tested model uses four routed banks and activates two.</p>
         </div>
         <div class="rounded-xl border border-violet-900/60 bg-violet-950/20 p-5">
           <div class="text-violet-300 font-semibold">Trellis</div>
@@ -299,8 +305,19 @@
       <p>Gated DeltaNet leads GatedDeltaProduct-2 by about 0.039 nat/token in this early-training pilot. This result is specific to this scale and training budget.</p>
     </section>
 
+    <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="mom-results">
+      <div class="eyebrow">12. Mixture of Memories</div>
+      <h2 class="text-2xl font-bold mt-2">MoM does not reliably beat Gated DeltaNet in the tested recipe</h2>
+      <p>On a synthetic latest-value recall task, original MoM reaches <strong>8.06%, 84.29%, and 0.74%</strong> across three paired runs. Original Gated DeltaNet reaches <strong>77.14%, 85.85%, and 93.44%</strong>. Each result uses 8,192 exact answer tokens after 8,000 optimizer updates.</p>
+      <p>One MoM run learns the task well, but the other two do not. A separate small language-model profile on an AMD Radeon Pro W7900 measures complete MoM training updates at 1.3778× and 1.3745× the paired Gated DeltaNet times. Those measurements are training timings, not inference or memory-traffic results.</p>
+      <div class="callout mt-5" style="border-left-color:var(--amber)">
+        <strong>Control limit.</strong> A causal-filter follow-up fails a required easy-task floor in one Gated DeltaNet run, so that mechanism comparison is formally unassessed.
+      </div>
+      <p><a href="mom.html">The detailed MoM report</a> gives the exact counts, paper results, architecture, methods, timing rows, machine-readable data, and limitations.</p>
+    </section>
+
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="paper-results">
-      <div class="eyebrow">12. Published Trellis results</div>
+      <div class="eyebrow">13. Published Trellis results</div>
       <h2 class="text-2xl font-bold mt-2">The paper reports Trellis wins at larger scales</h2>
       <p>The <a href="https://arxiv.org/html/2512.23852">Trellis paper</a> reports results well above the model and token budgets used in this study.</p>
       <div class="overflow-x-auto mt-5">
@@ -320,12 +337,13 @@
     </section>
 
     <section class="card rounded-2xl p-6 md:p-8 mb-8 proseish anchor" id="conclusion">
-      <div class="eyebrow">13. Result</div>
+      <div class="eyebrow">14. Result</div>
       <h2 class="text-2xl font-bold mt-2">Gated DeltaNet is the practical baseline for the measured regime</h2>
-      <p>The experiments support four separate conclusions:</p>
+      <p>The experiments support five separate conclusions:</p>
       <ul class="list-disc pl-6 text-slate-400 space-y-2">
         <li>Bounded recurrent memory can beat the matched dense Transformer on long-document language modeling; the clean PG19 signal appears at longer contexts, not at 512 tokens.</li>
         <li>Within the bounded-state family tested here, Gated DeltaNet has the strongest language-model results and the fastest measured training mixer.</li>
+        <li>Mixture of Memories can learn the local recall task, but does not do so reliably across the three tested runs and has slower measured training updates.</li>
         <li>Trellis's nonlinear write changes both chunking and training-gradient behavior. Full-bilevel gradients help the linear identity write at 20M tokens but destabilize full-strength SiLU; tempering the higher-order path restores stability with a small gain.</li>
         <li>The published Trellis advantage at 125M parameters and above remains an untested scaling result, not a result contradicted by these smaller experiments.</li>
       </ul>
@@ -334,6 +352,7 @@
     <footer class="text-center text-slate-600 text-sm border-t border-slate-800 pt-8 mt-4">
       <p><a href="https://github.com/mcgrof/knlp/tree/main/trellis_lm" class="hover:text-slate-400">trellis_lm/ code</a> ·
          <a href="https://arxiv.org/abs/2512.23852" class="hover:text-slate-400">Trellis paper</a> ·
+         <a href="mom.html" class="hover:text-slate-400">MoM results</a> ·
          <a href="least_squares_lineage.html" class="hover:text-slate-400">least-squares lineage</a> ·
          <a href="wy_ut.html" class="hover:text-slate-400">WY/UT background</a> ·
          <a href="index.html" class="hover:text-slate-400">knlp</a></p>

@@ -1,0 +1,113 @@
+{
+  "schema": "knlp.mom_gdn_results.v1",
+  "title": "Mixture of Memories versus Gated DeltaNet",
+  "scope": "Aggregate results for the public knlp MoM comparison page",
+  "paper_results": {
+    "source": "https://arxiv.org/html/2502.13685v4",
+    "official_code": "https://github.com/OpenSparseLLMs/MoM",
+    "metric": "mean score across six recall tasks with inputs up to 2048 tokens",
+    "rows": [
+      {"setting": "nominal 380M, 15B training tokens", "gdn": 24.78, "mom": 28.16},
+      {"setting": "nominal 1.3B, 100B training tokens", "gdn": 32.30, "mom": 36.04},
+      {"setting": "400M activated parameters", "gdn": 24.78, "mom": 26.51},
+      {"setting": "expanded GDN versus MoM", "gdn": 26.32, "mom": 28.16}
+    ]
+  },
+  "latest_value_recall": {
+    "task": "Write key/value pairs, optionally overwrite values, add intervening tokens, and query the latest value for a key",
+    "model": {"layers": 2, "width": 256},
+    "training": {
+      "updates": 8000,
+      "prefix_pairs_per_update": 32,
+      "query_rows_per_update": 64,
+      "optimizer": "AdamW",
+      "peak_learning_rate": 0.001,
+      "warmup_updates": 200,
+      "betas": [0.9, 0.95],
+      "weight_decay": 0.1,
+      "gradient_clip_norm": 1.0,
+      "schedule": "cosine to 0.1 times peak at update 8000",
+      "precision": "FP32 with TF32 disabled",
+      "mom_balance_coefficient": 0.01
+    },
+    "runtime": {
+      "gpu": "NVIDIA H100 80 GB",
+      "python": "3.11.12",
+      "pytorch": "2.9.1+cu128",
+      "cuda": "12.8",
+      "triton": "3.8.0",
+      "flash_linear_attention": "0.5.2",
+      "tracker": null
+    },
+    "primary_cell": {
+      "length": 512,
+      "live_keys": 64,
+      "overwrites": 1,
+      "answer_distance": 64,
+      "interference": 8,
+      "answers_per_arm_seed": 8192
+    },
+    "easy_cell": {
+      "length": 256,
+      "live_keys": 8,
+      "overwrites": 0,
+      "answer_distance": 16,
+      "interference": 0,
+      "answers_per_arm_seed": 1024
+    },
+    "rows": [
+      {
+        "seed": 912011,
+        "mom_original": {"primary_correct": 660, "easy_correct": 649},
+        "mom_causal_filter": {"primary_correct": 43, "easy_correct": 14},
+        "gdn_original": {"primary_correct": 6319, "easy_correct": 1024},
+        "gdn_causal_filter": {"primary_correct": 1182, "easy_correct": 882}
+      },
+      {
+        "seed": 912013,
+        "mom_original": {"primary_correct": 6905, "easy_correct": 1024},
+        "mom_causal_filter": {"primary_correct": 59, "easy_correct": 27},
+        "gdn_original": {"primary_correct": 7033, "easy_correct": 1024},
+        "gdn_causal_filter": {"primary_correct": 7602, "easy_correct": 1024}
+      },
+      {
+        "seed": 913019,
+        "mom_original": {"primary_correct": 61, "easy_correct": 27},
+        "mom_causal_filter": {"primary_correct": 1380, "easy_correct": 908},
+        "gdn_original": {"primary_correct": 7655, "easy_correct": 1024},
+        "gdn_causal_filter": {"primary_correct": 7036, "easy_correct": 1024}
+      }
+    ],
+    "control_requirement": {
+      "arm": "gdn_causal_filter",
+      "seed": 912011,
+      "easy_correct_required": 973,
+      "easy_correct_observed": 882,
+      "denominator": 1024,
+      "effect": "The causal-filter comparison is formally unassessed"
+    },
+    "logical_state_bytes_per_sequence": {
+      "original": 716800,
+      "causal_filter": 720896
+    },
+    "causal_filter_parameters_added": 1536
+  },
+  "training_update_profile": {
+    "scope": "Separate small language-model experiment on one AMD Radeon Pro W7900 GPU",
+    "metric": "profiler-off median complete training-update time",
+    "rows": [
+      {"seed": 41011, "gdn_ms": 295.66, "mom_top2_ms": 407.35, "ratio": 1.3778},
+      {"seed": 41013, "gdn_ms": 297.93, "mom_top2_ms": 409.50, "ratio": 1.3745}
+    ],
+    "padded_rows_per_valid_routed_row": [1.9016, 1.8991],
+    "limits": [
+      "This is not inference timing.",
+      "The profile does not measure HBM traffic.",
+      "The recall cohort used different hardware and a different workload."
+    ]
+  },
+  "public_reproduction_limit": {
+    "statement": "The aggregate data and recipe are public. The exact runtime source snapshot, checkpoints, and row-level predictions used for these runs are retained outside this public repository, so the original runs cannot yet be reproduced from the public tree alone.",
+    "wandb_used_for_recall_cohort": false
+  }
+}
