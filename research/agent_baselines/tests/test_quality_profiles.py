@@ -16,20 +16,22 @@ Current instructions.
 
 
 class QualityProfileTests(unittest.TestCase):
-    def test_two_by_two_arm_map_is_explicit(self):
+    def test_two_by_two_arm_map_and_finish_protocol_are_explicit(self):
         self.assertEqual(
             {
                 (
                     spec["instruction_profile"],
                     spec["layout"],
+                    spec["execution_protocol"],
                 )
                 for spec in quality_profiles.ARM_SPECS.values()
             },
             {
-                ("current", "current"),
-                ("current", "stable-prefix"),
-                ("clear-technical-v1", "current"),
-                ("clear-technical-v1", "stable-prefix"),
+                ("current", "current", "current"),
+                ("current", "stable-prefix", "current"),
+                ("clear-technical-v1", "current", "current"),
+                ("clear-technical-v1", "stable-prefix", "current"),
+                ("current", "current", "finish-protocol-v1"),
             },
         )
 
@@ -70,8 +72,11 @@ class QualityProfileTests(unittest.TestCase):
         receipts = {}
         for arm in quality_profiles.ARM_SPECS:
             rendered = quality_profiles.render_instance_template(TEMPLATE, arm)
-            receipts[arm] = quality_profiles.quality_profile_receipt(rendered, arm)
-        self.assertEqual(len({row["template_sha256"] for row in receipts.values()}), 4)
+            observation = quality_profiles.apply_observation_protocol("result", arm)
+            receipts[arm] = quality_profiles.quality_profile_receipt(
+                rendered, arm, observation
+            )
+        self.assertEqual(len({row["template_sha256"] for row in receipts.values()}), 5)
         self.assertEqual(
             receipts["clear"]["instructions_sha256"],
             receipts["clear-stable-prefix"]["instructions_sha256"],
@@ -80,6 +85,27 @@ class QualityProfileTests(unittest.TestCase):
             receipts["stock"]["instructions_sha256"],
             receipts["clear"]["instructions_sha256"],
         )
+
+    def test_finish_protocol_preserves_current_text_and_reports_live_budget(self):
+        from jinja2 import Template
+
+        stock = quality_profiles.render_instance_template(TEMPLATE, "stock")
+        finish = quality_profiles.render_instance_template(TEMPLATE, "finish-protocol")
+        self.assertIn("Current instructions.", finish)
+        self.assertIn("Observed facts", finish)
+        self.assertIn("Reserve the final three", finish)
+        self.assertIn("calls, in order", finish)
+        self.assertNotEqual(stock, finish)
+        observation = quality_profiles.apply_observation_protocol(
+            "<output>result</output>", "finish-protocol"
+        )
+        rendered = Template(observation).render(step_limit=30, n_model_calls=25)
+        self.assertIn("model_calls_remaining=5", rendered)
+        self.assertIn("checkpoint=decide_essential_verification", rendered)
+        rendered = Template(observation).render(step_limit=30, n_model_calls=27)
+        self.assertIn("required=Create patch.txt in this call.", rendered)
+        with self.assertRaisesRegex(ValueError, "live observation state"):
+            quality_profiles.quality_profile_receipt(finish, "finish-protocol")
 
     def test_malformed_template_and_receipt_drift_fail_closed(self):
         with self.assertRaises(ValueError):

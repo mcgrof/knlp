@@ -346,6 +346,28 @@ with layout held fixed and layout with wording held fixed. Add rationales,
 worked examples or explicit generated state only in later ablations; otherwise
 the first matrix cannot separate clearer wording from additional information.
 
+The follow-up completion diagnostic keeps stock wording and task-first layout
+fixed. Compare stock at 30 calls, stock at 60 calls, and `finish-protocol` at
+30 calls. The 60-call arm measures additional opportunity and is not an
+equal-cost treatment. `finish-protocol` appends the exact remaining-call count
+to every tool observation, requires a verification decision with five calls
+left, and reserves the last three calls for creating, inspecting and submitting
+`patch.txt`. It also requires short observed-fact, unresolved-check and
+next-action state. Freeze those thresholds before running; do not tune them per
+task.
+
+Every live task writes `terminal_captures/<instance>.json` before its container
+is removed. This read-only capture records separate unstaged and staged tracked
+diffs, changed and untracked path lists, exit reason, submission identity, last
+command result and the last command selected by an explicit
+verification-command heuristic. Untracked contents are not captured. The
+capture is never added to model context or the submitted patch. Missing,
+nonzero, timeout-shaped or malformed capture-command results retain the partial
+receipt, fail the run as infrastructure, and do not replace the original patch
+or submission status. Treat grading a captured but unsubmitted worktree as a
+separate diagnostic protocol; it does not change the explicit-submission
+benchmark score.
+
 For a useful first matrix, compare stock with prefix caching disabled, stock
 with prefix caching enabled, and stable-prefix with prefix caching enabled.
 Run each from a fresh server, use the same model, seeds, task set and budgets,

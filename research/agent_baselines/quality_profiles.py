@@ -12,24 +12,87 @@ import hashlib
 import re
 from copy import deepcopy
 
-QUALITY_PROFILE_SCHEMA = "knlp.agent_baselines.quality_profile.v1"
+QUALITY_PROFILE_SCHEMA = "knlp.agent_baselines.quality_profile.v2"
 CLEAR_TECHNICAL_PROFILE = "clear-technical-v1"
+FINISH_PROTOCOL_PROFILE = "finish-protocol-v1"
 
 ARM_SPECS = {
-    "stock": {"instruction_profile": "current", "layout": "current"},
+    "stock": {
+        "instruction_profile": "current",
+        "layout": "current",
+        "execution_protocol": "current",
+    },
     "stable-prefix": {
         "instruction_profile": "current",
         "layout": "stable-prefix",
+        "execution_protocol": "current",
     },
     "clear": {
         "instruction_profile": CLEAR_TECHNICAL_PROFILE,
         "layout": "current",
+        "execution_protocol": "current",
     },
     "clear-stable-prefix": {
         "instruction_profile": CLEAR_TECHNICAL_PROFILE,
         "layout": "stable-prefix",
+        "execution_protocol": "current",
+    },
+    "finish-protocol": {
+        "instruction_profile": "current",
+        "layout": "current",
+        "execution_protocol": FINISH_PROTOCOL_PROFILE,
     },
 }
+
+FINISH_PROTOCOL_INSTRUCTIONS = """
+
+## Budget, evidence, and finish protocol
+
+After each command, the runner reports the exact model-call budget. Keep a
+short state in your reasoning with these headings:
+
+- `Observed facts`: results established by commands that used the real code.
+- `Unresolved checks`: hypotheses, failures, or acceptance criteria not yet
+  established.
+- `Next action`: the single most useful next command.
+
+Do not describe a hypothesis as verified. An edit is not established until
+you inspect the real diff and exercise the changed code. Use executable
+assertions for properties that support correctness; a print-only script or a
+mock that manually implements the proposed fix is not acceptance evidence.
+
+When five calls remain, decide which unresolved checks are essential. Do not
+start optional exploration after that checkpoint. Reserve the final three
+calls, in order, to create `patch.txt`, inspect it, and submit it with the
+exact required command. If an earlier check failed, keep that failure visible
+and make the safest justified submission decision within the remaining
+budget.
+"""
+
+FINISH_PROTOCOL_OBSERVATION = """
+{% set calls_remaining = step_limit - n_model_calls %}
+<finish_protocol_state>
+model_calls_used={{ n_model_calls }}
+model_calls_remaining={{ calls_remaining }}
+{% if calls_remaining == 5 -%}
+checkpoint=decide_essential_verification
+required=List essential unresolved checks and stop optional exploration.
+{% elif calls_remaining == 3 -%}
+phase=finish_window
+required=Create patch.txt in this call.
+{% elif calls_remaining == 2 -%}
+phase=finish_window
+required=Inspect patch.txt in this call. Do not modify it without reinspecting.
+{% elif calls_remaining == 1 -%}
+phase=finish_window
+required=Submit with the exact required command in this call.
+{% elif calls_remaining <= 0 -%}
+phase=budget_exhausted
+{% else -%}
+phase=work_and_verify
+{% endif -%}
+</finish_protocol_state>
+"""
 
 CLEAR_TECHNICAL_INSTRUCTIONS = """<instructions>
 # Task instructions
@@ -117,7 +180,7 @@ def arm_spec(arm: str) -> dict[str, str]:
 def render_instance_template(template: str, arm: str) -> str:
     """Apply one frozen wording profile and one layout to the pinned template."""
     spec = arm_spec(arm)
-    if spec == {"instruction_profile": "current", "layout": "current"}:
+    if spec == ARM_SPECS["stock"]:
         return template
     task, separator, current_instructions, trailing = _blocks(template)
     instructions = (
@@ -125,12 +188,26 @@ def render_instance_template(template: str, arm: str) -> str:
         if spec["instruction_profile"] == "current"
         else CLEAR_TECHNICAL_INSTRUCTIONS
     )
+    if spec["execution_protocol"] == FINISH_PROTOCOL_PROFILE:
+        instructions = instructions.replace(
+            "</instructions>", FINISH_PROTOCOL_INSTRUCTIONS + "\n</instructions>"
+        )
     if spec["layout"] == "stable-prefix":
         return instructions + separator + task + trailing
     return task + separator + instructions + trailing
 
 
-def quality_profile_receipt(template: str, arm: str) -> dict:
+def apply_observation_protocol(observation_template: str, arm: str) -> str:
+    """Append live budget facts only for the frozen finish protocol."""
+    spec = arm_spec(arm)
+    if spec["execution_protocol"] != FINISH_PROTOCOL_PROFILE:
+        return observation_template
+    return observation_template.rstrip() + "\n" + FINISH_PROTOCOL_OBSERVATION
+
+
+def quality_profile_receipt(
+    template: str, arm: str, observation_template: str | None = None
+) -> dict:
     """Bind a rendered arm to its immutable wording and layout identities."""
     spec = arm_spec(arm)
     task_position = template.index("<pr_description>")
@@ -141,7 +218,7 @@ def quality_profile_receipt(template: str, arm: str) -> dict:
     instruction_start = instruction_position
     instruction_end = template.index("</instructions>") + len("</instructions>")
     instructions = template[instruction_start:instruction_end]
-    return {
+    receipt = {
         "schema": QUALITY_PROFILE_SCHEMA,
         "arm": arm,
         **spec,
@@ -150,3 +227,17 @@ def quality_profile_receipt(template: str, arm: str) -> dict:
         "template_characters": len(template),
         "instruction_characters": len(instructions),
     }
+    if spec["execution_protocol"] == FINISH_PROTOCOL_PROFILE:
+        if (
+            observation_template is None
+            or "<finish_protocol_state>" not in observation_template
+        ):
+            raise ValueError("Finish protocol requires live observation state")
+        receipt.update(
+            observation_template_sha256=hashlib.sha256(
+                observation_template.encode()
+            ).hexdigest(),
+            decision_checkpoint_calls_remaining=5,
+            finish_window_calls=3,
+        )
+    return receipt

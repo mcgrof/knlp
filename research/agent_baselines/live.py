@@ -32,6 +32,27 @@ FATAL_ENVIRONMENT_ERRORS = (
     ),
 )
 
+TERMINAL_CAPTURE_SCHEMA = "knlp.agent_baselines.terminal_capture.v2"
+TERMINAL_CAPTURE_COMMANDS = {
+    "status": "git status --short --untracked-files=all",
+    "changed_paths": "git diff --name-only -- .",
+    "untracked_paths": "git ls-files --others --exclude-standard",
+    "source_diff": "git diff --no-ext-diff --binary -- .",
+    "staged_paths": "git diff --cached --name-only -- .",
+    "staged_diff": "git diff --cached --no-ext-diff --binary -- .",
+}
+VERIFICATION_COMMAND = re.compile(
+    r"(?:^|[;&|\n]\s*|\b)(?:pytest|tox|nox|make\s+(?:test|check)|"
+    r"python\S*\s+-m\s+(?:pytest|unittest|compileall)|"
+    r"(?:npm|pnpm|yarn)\s+test|cargo\s+test|go\s+test|assert\b|"
+    r"git\s+diff\s+--check)",
+    re.IGNORECASE,
+)
+
+
+class TerminalCaptureError(RuntimeError):
+    """A terminal-state receipt is present but incomplete or invalid."""
+
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -119,6 +140,126 @@ def fatal_environment_error(messages: list[dict]) -> str | None:
     return None
 
 
+def command_observations(messages: list[dict]) -> list[dict]:
+    """Pair recorded tool observations with their originating commands."""
+    commands = {}
+    observations = []
+    for index, message in enumerate(messages):
+        if message.get("role") == "assistant":
+            for action in message.get("extra", {}).get("actions", []):
+                tool_call_id = action.get("tool_call_id")
+                command = action.get("command")
+                if isinstance(tool_call_id, str) and isinstance(command, str):
+                    commands[tool_call_id] = command
+        elif message.get("role") == "tool":
+            content = message.get("content", "")
+            if not isinstance(content, str):
+                content = ""
+            tool_call_id = message.get("tool_call_id")
+            observations.append(
+                {
+                    "message_index": index,
+                    "tool_call_id": tool_call_id,
+                    "command": commands.get(tool_call_id),
+                    "content": content,
+                }
+            )
+    return observations
+
+
+def capture_terminal_state(env, out: Path, iid: str, result: dict, messages) -> None:
+    """Capture final worktree evidence without returning it to the model."""
+    observations = command_observations(messages)
+    verification = next(
+        (
+            item
+            for item in reversed(observations)
+            if isinstance(item["command"], str)
+            and VERIFICATION_COMMAND.search(item["command"])
+        ),
+        None,
+    )
+    capture = {
+        "schema": TERMINAL_CAPTURE_SCHEMA,
+        "instance_id": iid,
+        "exit_status": result["exit_status"],
+        "submitted": result["exit_status"] == "Submitted",
+        "submission_characters": len(result["model_patch"]),
+        "submission_sha256": (
+            hashlib.sha256(result["model_patch"].encode()).hexdigest()
+            if result["model_patch"]
+            else None
+        ),
+        "last_command_result": observations[-1] if observations else None,
+        "last_verification_result": verification,
+        "verification_selector": VERIFICATION_COMMAND.pattern,
+        "command_scopes": {
+            "changed_paths": "unstaged tracked paths",
+            "source_diff": "unstaged tracked changes",
+            "staged_paths": "staged tracked paths",
+            "staged_diff": "staged tracked changes",
+            "untracked_paths": "untracked path names only; contents are not captured",
+        },
+        "commands": {},
+        "failures": [],
+    }
+    for name, command in TERMINAL_CAPTURE_COMMANDS.items():
+        try:
+            output = env.execute({"command": command}, timeout=60)
+        except Exception as exc:
+            capture["commands"][name] = {
+                "returncode": None,
+                "output": None,
+                "exception_info": None,
+                "error_type": type(exc).__name__,
+            }
+            capture["failures"].append(
+                {"command": name, "reasons": ["execute_exception"]}
+            )
+            continue
+        if not isinstance(output, dict):
+            capture["commands"][name] = {
+                "returncode": None,
+                "output": None,
+                "exception_info": None,
+            }
+            capture["failures"].append({"command": name, "reasons": ["invalid_result"]})
+            continue
+        returncode = output.get("returncode")
+        command_output = output.get("output")
+        exception_info = output.get("exception_info")
+        receipt = {
+            "returncode": returncode if type(returncode) is int else None,
+            "output": command_output if isinstance(command_output, str) else None,
+            "exception_info": (
+                exception_info if isinstance(exception_info, str) else None
+            ),
+        }
+        capture["commands"][name] = receipt
+        reasons = []
+        for key in receipt:
+            if key not in output:
+                reasons.append(f"missing_{key}")
+        if type(returncode) is not int:
+            reasons.append("invalid_returncode")
+        elif returncode != 0:
+            reasons.append("nonzero_returncode")
+        if not isinstance(command_output, str):
+            reasons.append("invalid_output")
+        if not isinstance(exception_info, str):
+            reasons.append("invalid_exception_info")
+        elif exception_info:
+            reasons.append("exception_info_present")
+        if reasons:
+            capture["failures"].append({"command": name, "reasons": reasons})
+    capture["capture_status"] = "failed" if capture["failures"] else "complete"
+    destination = out / "terminal_captures" / f"{iid}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_json(destination, capture)
+    if capture["failures"]:
+        raise TerminalCaptureError("Terminal capture contains failed commands")
+
+
 def _validate_selection(data: dict) -> tuple[dict, list[dict]]:
     if (
         not isinstance(data, dict)
@@ -180,7 +321,8 @@ def select(args) -> int:
         "dataset_revision": args.revision,
         "split": args.split,
         "ids": args.ids,
-        "limit": args.limit,
+        "limit": None if args.ids else args.limit,
+        "requested_task_count": len(args.ids) if args.ids else args.limit,
     }
     if not args.execute:
         print(json.dumps(plan, indent=2))
@@ -193,6 +335,7 @@ def select(args) -> int:
     if len(set(ids)) != len(ids) or set(ids) - by_id.keys():
         raise ValueError("IDs must be unique and present in the pinned dataset")
     plan["instances"] = [by_id[iid] for iid in ids]
+    plan["effective_task_count"] = len(ids)
     _validate_selection(plan)
     # Retain grading fields in the snapshot; only problem_statement reaches the agent.
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -205,13 +348,16 @@ def select(args) -> int:
 def make_config(args, checkout: Path, server: dict | None = None) -> dict:
     import yaml
 
-    from .quality_profiles import render_instance_template
+    from .quality_profiles import apply_observation_protocol, render_instance_template
 
     config = yaml.safe_load(
         (checkout / "src/minisweagent/config/benchmarks/swebench.yaml").read_text()
     )
     config["agent"]["instance_template"] = render_instance_template(
         config["agent"]["instance_template"], args.arm
+    )
+    config["model"]["observation_template"] = apply_observation_protocol(
+        config["model"]["observation_template"], args.arm
     )
     config["agent"].update(
         step_limit=args.steps, wall_time_limit_seconds=args.task_seconds, cost_limit=0
@@ -330,7 +476,7 @@ def run_task(
         "model_patch": "",
         "error_type": None,
     }
-    env = recorder = None
+    agent = env = recorder = None
     try:
         model = model_factory(config=copy.deepcopy(config["model"]))
         recorder = attach_recorder(
@@ -364,6 +510,16 @@ def run_task(
     finally:
         if env is not None:
             try:
+                capture_terminal_state(
+                    env,
+                    out,
+                    iid,
+                    result,
+                    getattr(agent, "messages", []) if agent is not None else [],
+                )
+            except Exception as exc:
+                result["terminal_capture_error_type"] = type(exc).__name__
+            try:
                 env.cleanup()
             except Exception as exc:
                 result["cleanup_error_type"] = type(exc).__name__
@@ -389,7 +545,9 @@ def run(args) -> int:
         )
     config = make_config(args, checkout, provenance)
     quality_profile = quality_profile_receipt(
-        config["agent"]["instance_template"], args.arm
+        config["agent"]["instance_template"],
+        args.arm,
+        config["model"]["observation_template"],
     )
     if args.out.exists():
         raise FileExistsError(args.out)
@@ -498,6 +656,7 @@ def run(args) -> int:
             r["error_type"]
             or r.get("cleanup_error_type")
             or r.get("recording_error_type")
+            or r.get("terminal_capture_error_type")
         )
         for r in ordered
     )
@@ -608,6 +767,7 @@ def parser() -> argparse.ArgumentParser:
             "stable-prefix",
             "clear",
             "clear-stable-prefix",
+            "finish-protocol",
         ],
         default="stock",
     )

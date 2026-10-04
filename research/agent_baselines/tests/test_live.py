@@ -178,7 +178,8 @@ class LiveTests(unittest.TestCase):
         template = checkout / "src/minisweagent/config/benchmarks"
         template.mkdir(parents=True)
         (template / "swebench.yaml").write_text(
-            "agent:\n  instance_template: task\nmodel:\n  model_kwargs: {}\n"
+            "agent:\n  instance_template: task\n"
+            "model:\n  observation_template: result\n  model_kwargs: {}\n"
         )
         config = live.make_config(args, checkout, provenance)
         extra = config["model"]["model_kwargs"]["extra_body"]
@@ -262,6 +263,9 @@ class LiveTests(unittest.TestCase):
             )
         frozen = json.loads((self.root / "frozen.json").read_text())
         self.assertEqual(frozen["instances"], rows[::-1])
+        self.assertIsNone(frozen["limit"])
+        self.assertEqual(frozen["requested_task_count"], 2)
+        self.assertEqual(frozen["effective_task_count"], 2)
         (self.root / "frozen.json").unlink()
         with patch.dict(
             "sys.modules", {"datasets": types.SimpleNamespace(load_dataset=loader)}
@@ -276,6 +280,7 @@ class LiveTests(unittest.TestCase):
         cleanup_fail=False,
         finalize_fail=False,
         environment_fatal=False,
+        terminal_capture_failure=None,
     ):
         response = {
             "prompt_token_ids": [1, 2],
@@ -288,6 +293,33 @@ class LiveTests(unittest.TestCase):
             _query=Mock(return_value=response),
         )
         environment = Mock()
+        terminal_outputs = {
+            "git status --short --untracked-files=all": " M source.py\n?? scratch.py\n",
+            "git diff --name-only -- .": "source.py\n",
+            "git ls-files --others --exclude-standard": "scratch.py\n",
+            "git diff --no-ext-diff --binary -- .": "diff --git a/source.py b/source.py\n",
+            "git diff --cached --name-only -- .": "staged.py\n",
+            "git diff --cached --no-ext-diff --binary -- .": (
+                "diff --git a/staged.py b/staged.py\n"
+            ),
+        }
+
+        def execute(action, **kwargs):
+            result = {
+                "output": terminal_outputs[action["command"]],
+                "returncode": 0,
+                "exception_info": "",
+            }
+            if action["command"] == live.TERMINAL_CAPTURE_COMMANDS["status"]:
+                if terminal_capture_failure == "nonzero":
+                    result["returncode"] = 128
+                elif terminal_capture_failure == "timeout":
+                    result.update(returncode=-1, exception_info="timeout exception")
+                elif terminal_capture_failure == "missing":
+                    result.pop("returncode")
+            return result
+
+        environment.execute.side_effect = execute
         if cleanup_fail:
             environment.cleanup.side_effect = OSError("private error details")
         received = {}
@@ -301,6 +333,26 @@ class LiveTests(unittest.TestCase):
             def run(self, task):
                 received["task"] = task
                 self.model._query([{"role": "user", "content": task}])
+                self.messages.extend(
+                    [
+                        {
+                            "role": "assistant",
+                            "extra": {
+                                "actions": [
+                                    {
+                                        "command": "python -m pytest -q",
+                                        "tool_call_id": "verification-call",
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "verification-call",
+                            "content": "<returncode>0</returncode>\n1 passed",
+                        },
+                    ]
+                )
                 if fail:
                     raise RuntimeError("private exception details")
                 if environment_fatal:
@@ -348,6 +400,58 @@ class LiveTests(unittest.TestCase):
         task = json.loads((self.root / "tasks/repo__issue-1.json").read_text())
         self.assertTrue(task["recording_complete"])
         self.assertEqual(task["verified_calls"], 1)
+        capture = json.loads(
+            (self.root / "terminal_captures/repo__issue-1.json").read_text()
+        )
+        self.assertTrue(capture["submitted"])
+        self.assertEqual(capture["commands"]["changed_paths"]["output"], "source.py\n")
+        self.assertEqual(capture["capture_status"], "complete")
+        self.assertEqual(capture["failures"], [])
+        self.assertEqual(capture["commands"]["staged_paths"]["output"], "staged.py\n")
+        self.assertEqual(
+            capture["command_scopes"]["source_diff"], "unstaged tracked changes"
+        )
+        self.assertEqual(
+            capture["last_verification_result"]["command"], "python -m pytest -q"
+        )
+
+    def test_nonzero_terminal_capture_is_infrastructure_failure(self):
+        result = self.task(terminal_capture_failure="nonzero")
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], "diff --git a/f b/f")
+        self.assertIsNone(result["error_type"])
+        self.assertEqual(result["terminal_capture_error_type"], "TerminalCaptureError")
+        capture = json.loads(
+            (self.root / "terminal_captures/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(capture["capture_status"], "failed")
+        self.assertEqual(capture["commands"]["status"]["returncode"], 128)
+        self.assertIn("nonzero_returncode", capture["failures"][0]["reasons"])
+
+    def test_timeout_terminal_capture_is_infrastructure_failure(self):
+        result = self.task(terminal_capture_failure="timeout")
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], "diff --git a/f b/f")
+        self.assertIsNone(result["error_type"])
+        self.assertEqual(result["terminal_capture_error_type"], "TerminalCaptureError")
+        capture = json.loads(
+            (self.root / "terminal_captures/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(capture["capture_status"], "failed")
+        self.assertEqual(capture["commands"]["status"]["returncode"], -1)
+        self.assertIn("exception_info_present", capture["failures"][0]["reasons"])
+
+    def test_missing_terminal_capture_status_is_infrastructure_failure(self):
+        result = self.task(terminal_capture_failure="missing")
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], "diff --git a/f b/f")
+        self.assertEqual(result["terminal_capture_error_type"], "TerminalCaptureError")
+        capture = json.loads(
+            (self.root / "terminal_captures/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(capture["capture_status"], "failed")
+        self.assertIsNone(capture["commands"]["status"]["returncode"])
+        self.assertIn("missing_returncode", capture["failures"][0]["reasons"])
 
     def test_task_exception_cleans_up_and_records_failure(self):
         result = self.task(fail=True)
