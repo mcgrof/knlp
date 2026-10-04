@@ -564,6 +564,9 @@ def run(args) -> int:
             "primary_objective": "official tasks resolved within fixed budgets",
             "instruction_profile": quality_profile["instruction_profile"],
             "layout": quality_profile["layout"],
+            "evidence_state": quality_profile["evidence_state"],
+            "finish_window": quality_profile["finish_window"],
+            "execution_protocol": quality_profile["execution_protocol"],
             "profile_receipt": quality_profile,
             "budgets": {
                 "steps_per_task": args.steps,
@@ -767,6 +770,8 @@ def parser() -> argparse.ArgumentParser:
             "stable-prefix",
             "clear",
             "clear-stable-prefix",
+            "evidence-state",
+            "finish-window",
             "finish-protocol",
         ],
         default="stock",
