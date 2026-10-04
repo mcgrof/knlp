@@ -367,16 +367,42 @@ order before grading, repeat with a counterbalanced order, and report protocol
 adherence alongside official task success.
 
 Every live task writes `terminal_captures/<instance>.json` before its container
-is removed. This read-only capture records separate unstaged and staged tracked
-diffs, changed and untracked path lists, exit reason, submission identity, last
+is removed. Capture schema v4 records the terminal commit, the combined tracked
+diff from `HEAD`, and separate unstaged and staged diffs. When terminal export
+is enabled, it also records the combined tracked diff from the immutable task
+base which the runner verified before the agent started. The receipt includes
+changed and untracked path lists, exit reason, submission identity, last
 command result and the last command selected by an explicit
 verification-command heuristic. Untracked contents are not captured. The
 capture is never added to model context or the submitted patch. Missing,
 nonzero, timeout-shaped or malformed capture-command results retain the partial
 receipt, fail the run as infrastructure, and do not replace the original patch
-or submission status. Treat grading a captured but unsubmitted worktree as a
-separate diagnostic protocol; it does not change the explicit-submission
-benchmark score.
+or submission status.
+
+`--terminal-export terminal-export-v1` enables an optional zero-model-call
+runner protocol. Before agent execution, the runner resolves the dataset's
+40-character base commit and keeps that identity outside agent control. It
+preserves a nonempty explicit Git diff that applies to a clean index at that
+base. If the agent instead reaches its call or time limit, or submits proven
+invalid content, it validates and exports the final tracked diff from the same
+base. This includes committed, staged and unstaged tracked changes while it
+excludes untracked files.
+
+Validation has three states. `valid` means the complete patch check succeeded.
+`invalid` means a completed check rejected the patch content. `unavailable`
+means the base, clean index, tool response or validation operation failed. An
+unavailable check never permits replacement of an explicit submission. The
+validator first checks the frozen base tree for missing objects. It treats only
+recognized Git content diagnostics, such as an inapplicable hunk or malformed
+patch, as `invalid`; ambiguous nonzero checks remain `unavailable`. The task
+receipt exposes that outcome, and the campaign summary counts it as an
+infrastructure failure independently of the agent's original terminal reason.
+The protocol does not search earlier checkpoints, repair code, retry the agent,
+add model calls, or use hidden grades. The runner keeps the original exit
+reason and records task and dataset identity, frozen base, terminal commit,
+patch hashes, validation states, model-call count and timings in
+`terminal_exports/<instance>.json`. This is a separately named reliability
+protocol; it does not revise historical explicit-submission scores.
 
 For a useful first matrix, compare stock with prefix caching disabled, stock
 with prefix caching enabled, and stable-prefix with prefix caching enabled.
