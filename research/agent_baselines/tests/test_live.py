@@ -281,6 +281,13 @@ class LiveTests(unittest.TestCase):
         finalize_fail=False,
         environment_fatal=False,
         terminal_capture_failure=None,
+        exit_status="Submitted",
+        submission="diff --git a/f b/f",
+        head_diff="diff --git a/source.py b/source.py\n",
+        terminal_export_protocol=None,
+        validation_returncodes=None,
+        validation_responses=None,
+        base_response=None,
     ):
         response = {
             "prompt_token_ids": [1, 2],
@@ -297,14 +304,48 @@ class LiveTests(unittest.TestCase):
             "git status --short --untracked-files=all": " M source.py\n?? scratch.py\n",
             "git diff --name-only -- .": "source.py\n",
             "git ls-files --others --exclude-standard": "scratch.py\n",
-            "git diff --no-ext-diff --binary -- .": "diff --git a/source.py b/source.py\n",
+            "git diff --no-ext-diff --binary -- .": (
+                "diff --git a/source.py b/source.py\n"
+            ),
             "git diff --cached --name-only -- .": "staged.py\n",
             "git diff --cached --no-ext-diff --binary -- .": (
                 "diff --git a/staged.py b/staged.py\n"
             ),
+            "git diff HEAD --no-ext-diff --binary -- .": head_diff,
+            "git rev-parse --verify HEAD^{commit}": f"{'c' * 40}\n",
+            f"git diff {'b' * 40} --no-ext-diff --binary -- .": head_diff,
         }
+        validation_returncodes = list(validation_returncodes or [])
+        validation_responses = list(validation_responses or [])
+        if base_response is None:
+            base_response = {
+                "output": f"{'b' * 40}\n",
+                "returncode": 0,
+                "exception_info": "",
+            }
 
         def execute(action, **kwargs):
+            if action["command"] == f"git rev-parse --verify {'b' * 40}^{{commit}}":
+                if isinstance(base_response, BaseException):
+                    raise base_response
+                return base_response
+            if action["command"].startswith("terminal_dir="):
+                if validation_responses:
+                    response = validation_responses.pop(0)
+                    if isinstance(response, BaseException):
+                        raise response
+                    return response
+                returncode = validation_returncodes.pop(0)
+                return {
+                    "output": (
+                        "error: patch failed: source.py:1\n"
+                        "error: source.py: patch does not apply\n"
+                        if returncode == 1
+                        else ""
+                    ),
+                    "returncode": returncode,
+                    "exception_info": "",
+                }
             result = {
                 "output": terminal_outputs[action["command"]],
                 "returncode": 0,
@@ -366,7 +407,7 @@ class LiveTests(unittest.TestCase):
                             ),
                         }
                     )
-                return {"exit_status": "Submitted", "submission": "diff --git a/f b/f"}
+                return {"exit_status": exit_status, "submission": submission}
 
         config = {"model": {"model_name": "openai/test"}, "agent": {"step_limit": 2}}
         original = copy.deepcopy(config)
@@ -381,16 +422,23 @@ class LiveTests(unittest.TestCase):
         )
         with finalize:
             result = live.run_task(
-                row(), config, self.root, model_factory, environment_factory, Agent
+                row(),
+                config,
+                self.root,
+                model_factory,
+                environment_factory,
+                Agent,
+                terminal_export_protocol=terminal_export_protocol,
             )
         self.assertEqual(config, original)
         environment.cleanup.assert_called_once()
-        self.assertEqual(received["task"], "Fix the issue")
-        self.assertNotIn("test_patch", received["config"])
-        self.assertEqual(
-            received["config"]["output_path"],
-            self.root / "trajectories/repo__issue-1.json",
-        )
+        if received:
+            self.assertEqual(received["task"], "Fix the issue")
+            self.assertNotIn("test_patch", received["config"])
+            self.assertEqual(
+                received["config"]["output_path"],
+                self.root / "trajectories/repo__issue-1.json",
+            )
         return result
 
     def test_task_success_records_exact_calls_and_finishes(self):
@@ -407,6 +455,7 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(capture["commands"]["changed_paths"]["output"], "source.py\n")
         self.assertEqual(capture["capture_status"], "complete")
         self.assertEqual(capture["failures"], [])
+        self.assertEqual(capture["terminal_head"], "c" * 40)
         self.assertEqual(capture["commands"]["staged_paths"]["output"], "staged.py\n")
         self.assertEqual(
             capture["command_scopes"]["source_diff"], "unstaged tracked changes"
@@ -452,6 +501,599 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(capture["capture_status"], "failed")
         self.assertIsNone(capture["commands"]["status"]["returncode"])
         self.assertIn("missing_returncode", capture["failures"][0]["reasons"])
+
+    def test_terminal_export_preserves_valid_explicit_submission(self):
+        result = self.task(
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[0],
+        )
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], "diff --git a/f b/f")
+        self.assertEqual(result["terminal_export_decision"], "preserve_explicit")
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertFalse(receipt["exported"])
+        self.assertEqual(receipt["original_exit_status"], "Submitted")
+        self.assertEqual(receipt["task_base"]["resolved_base"], "b" * 40)
+        self.assertEqual(receipt["terminal_head"], "c" * 40)
+        self.assertEqual(receipt["model_calls"], 1)
+
+    def test_terminal_export_recovers_final_diff_after_limit(self):
+        final_diff = "diff --git a/source.py b/source.py\n+fixed\n"
+        result = self.task(
+            exit_status="LimitsExceeded",
+            submission="",
+            head_diff=final_diff,
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[0],
+        )
+        self.assertEqual(result["exit_status"], "LimitsExceeded")
+        self.assertEqual(result["model_patch"], final_diff)
+        self.assertEqual(result["terminal_export_decision"], "export_final_tracked")
+
+    def test_terminal_export_replaces_malformed_submission_not_valid_one(self):
+        final_diff = "diff --git a/source.py b/source.py\n+fixed\n"
+        result = self.task(
+            submission="bare source text",
+            head_diff=final_diff,
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[0],
+        )
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], final_diff)
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(receipt["original_submission"], "bare source text")
+        self.assertEqual(receipt["decision"], "export_final_tracked")
+
+    def test_terminal_export_rejects_empty_and_invalid_final_diffs(self):
+        empty = self.task(
+            exit_status="LimitsExceeded",
+            submission="",
+            head_diff="",
+            terminal_export_protocol="terminal-export-v1",
+        )
+        self.assertEqual(empty["model_patch"], "")
+        self.assertEqual(empty["terminal_export_decision"], "no_candidate")
+        self.root = self.root / "invalid"
+        self.root.mkdir()
+        invalid = self.task(
+            exit_status="TimeExceeded",
+            submission="",
+            head_diff="diff --git a/source.py b/source.py\n+bad\n",
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[1],
+        )
+        self.assertEqual(invalid["exit_status"], "TimeExceeded")
+        self.assertEqual(invalid["model_patch"], "")
+        self.assertEqual(invalid["terminal_export_decision"], "no_candidate")
+
+    def test_terminal_export_uses_combined_head_diff_and_excludes_untracked(self):
+        combined = (
+            "diff --git a/staged.py b/staged.py\n+staged\n"
+            "diff --git a/source.py b/source.py\n+unstaged\n"
+        )
+        result = self.task(
+            exit_status="LimitsExceeded",
+            submission="",
+            head_diff=combined,
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[0],
+        )
+        self.assertEqual(result["model_patch"], combined)
+        self.assertNotIn("scratch.py", result["model_patch"])
+
+    def test_terminal_export_does_not_export_capture_failure(self):
+        result = self.task(
+            exit_status="LimitsExceeded",
+            submission="",
+            terminal_capture_failure="nonzero",
+            terminal_export_protocol="terminal-export-v1",
+        )
+        self.assertEqual(result["model_patch"], "")
+        self.assertEqual(result["terminal_export_decision"], "unavailable")
+        self.assertEqual(result["terminal_capture_error_type"], "TerminalCaptureError")
+
+    def test_terminal_export_rejects_nonexportable_terminal_reason(self):
+        result = self.task(
+            exit_status="RepeatedFormatError",
+            submission="",
+            terminal_export_protocol="terminal-export-v1",
+        )
+        self.assertEqual(result["exit_status"], "RepeatedFormatError")
+        self.assertEqual(result["model_patch"], "")
+        self.assertEqual(result["terminal_export_decision"], "not_exportable")
+
+    def test_terminal_export_preserves_explicit_on_validation_timeout(self):
+        original = "diff --git a/source.py b/source.py\n+explicit\n"
+        result = self.task(
+            submission=original,
+            head_diff="diff --git a/source.py b/source.py\n+different\n",
+            terminal_export_protocol="terminal-export-v1",
+            validation_responses=[TimeoutError("validation timed out")],
+        )
+        self.assertEqual(result["model_patch"], original)
+        self.assertEqual(result["terminal_export_decision"], "unavailable")
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(receipt["explicit_validation"]["state"], "unavailable")
+        self.assertNotIn("final_validation", receipt)
+
+    def test_terminal_export_reports_unavailable_final_validation(self):
+        original = "not a Git diff"
+        result = self.task(
+            exit_status="Submitted",
+            submission=original,
+            head_diff="diff --git a/source.py b/source.py\n+candidate\n",
+            terminal_export_protocol="terminal-export-v1",
+            validation_responses=[TimeoutError("validation timed out")],
+        )
+        self.assertEqual(result["model_patch"], original)
+        self.assertEqual(result["terminal_export_decision"], "unavailable")
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(receipt["final_validation"]["state"], "unavailable")
+
+    def test_terminal_export_requires_verified_base_before_agent(self):
+        result = self.task(
+            exit_status="LimitsExceeded",
+            submission="",
+            terminal_export_protocol="terminal-export-v1",
+            base_response={
+                "returncode": 128,
+                "output": "unknown revision",
+                "exception_info": "",
+            },
+        )
+        self.assertEqual(result["error_type"], "TerminalBaseError")
+        self.assertEqual(result["model_patch"], "")
+        self.assertEqual(result["terminal_export_decision"], "unavailable")
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(receipt["task_base"]["state"], "unavailable")
+        self.assertEqual(receipt["model_calls"], 0)
+
+    def test_terminal_validation_has_three_states(self):
+        base = {"state": "valid", "resolved_base": "b" * 40}
+
+        class Environment:
+            def __init__(self, response):
+                self.response = response
+
+            def execute(self, action, **kwargs):
+                if isinstance(self.response, BaseException):
+                    raise self.response
+                return self.response
+
+        candidate = "diff --git a/source.py b/source.py\n+candidate\n"
+        cases = [
+            (
+                {"returncode": 0, "output": "", "exception_info": ""},
+                "valid",
+                "valid",
+            ),
+            (
+                {
+                    "returncode": 1,
+                    "output": (
+                        "error: patch failed: source.py:1\n"
+                        "error: source.py: patch does not apply\n"
+                    ),
+                    "exception_info": "",
+                },
+                "invalid",
+                "patch_content_rejected",
+            ),
+            (
+                {
+                    "returncode": 128,
+                    "output": (
+                        "error: No valid patches in input "
+                        '(allow with "--allow-empty")\n'
+                    ),
+                    "exception_info": "",
+                },
+                "invalid",
+                "patch_content_rejected",
+            ),
+            (
+                {
+                    "returncode": 128,
+                    "output": "fatal: cannot create temporary file\n",
+                    "exception_info": "",
+                },
+                "unavailable",
+                "ambiguous_patch_check_failure",
+            ),
+            (
+                {"returncode": 200, "output": "", "exception_info": ""},
+                "unavailable",
+                "clean_index_setup_failed",
+            ),
+            (
+                {
+                    "returncode": 201,
+                    "output": "missing blob deadbeef\n",
+                    "exception_info": "",
+                },
+                "unavailable",
+                "base_objects_unavailable",
+            ),
+            (
+                {"returncode": 126, "output": "", "exception_info": ""},
+                "unavailable",
+                "validation_returncode_unavailable",
+            ),
+            (
+                {"returncode": True, "output": "", "exception_info": ""},
+                "unavailable",
+                "validation_response_unavailable",
+            ),
+            (
+                {"returncode": 0, "exception_info": ""},
+                "unavailable",
+                "validation_response_unavailable",
+            ),
+            (
+                {"returncode": 0, "output": None, "exception_info": ""},
+                "unavailable",
+                "validation_response_unavailable",
+            ),
+            (
+                {"returncode": 0, "output": "", "exception_info": "timeout"},
+                "unavailable",
+                "validation_response_unavailable",
+            ),
+            (
+                TimeoutError("timeout"),
+                "unavailable",
+                "validation_exception",
+            ),
+        ]
+        for response, state, reason in cases:
+            with self.subTest(response=response):
+                receipt = live._validate_terminal_patch(
+                    Environment(response), candidate, base
+                )
+                self.assertEqual(receipt["state"], state)
+                self.assertEqual(receipt["reason"], reason)
+
+    def test_terminal_export_unavailable_is_infrastructure_failure(self):
+        self.assertTrue(
+            live._task_infrastructure_failed(
+                {
+                    "error_type": None,
+                    "terminal_export_unavailable": True,
+                }
+            )
+        )
+        self.assertFalse(
+            live._task_infrastructure_failed(
+                {
+                    "error_type": None,
+                    "terminal_export_unavailable": False,
+                }
+            )
+        )
+
+    def test_terminal_export_uses_final_diff_only_after_proven_invalid(self):
+        final_diff = "diff --git a/source.py b/source.py\n+fixed\n"
+        result = self.task(
+            submission="diff --git a/missing b/missing\n+bad\n",
+            head_diff=final_diff,
+            terminal_export_protocol="terminal-export-v1",
+            validation_returncodes=[1, 0],
+        )
+        self.assertEqual(result["model_patch"], final_diff)
+        self.assertEqual(result["terminal_export_decision"], "export_final_tracked")
+        receipt = json.loads(
+            (self.root / "terminal_exports/repo__issue-1.json").read_text()
+        )
+        self.assertEqual(receipt["explicit_validation"]["state"], "invalid")
+        self.assertEqual(receipt["final_validation"]["state"], "valid")
+
+    def test_terminal_patch_validation_uses_clean_head_without_mutation(self):
+        repository = self.root / "repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=repository, check=True
+        )
+        source = repository / "source.py"
+        source.write_text("old = 1\n")
+        subprocess.run(["git", "add", "source.py"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "base"], cwd=repository, check=True
+        )
+        source.write_text("new = 2\n")
+        candidate = subprocess.check_output(
+            ["git", "diff", "HEAD", "--binary", "--", "."],
+            cwd=repository,
+            text=True,
+        )
+
+        class LocalEnvironment:
+            def execute(self, action, **kwargs):
+                completed = subprocess.run(
+                    action["command"],
+                    cwd=repository,
+                    shell=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                return {
+                    "returncode": completed.returncode,
+                    "output": completed.stdout,
+                    "exception_info": "",
+                }
+
+        base = {
+            "state": "valid",
+            "resolved_base": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+            ).strip(),
+        }
+        receipt = live._validate_terminal_patch(LocalEnvironment(), candidate, base)
+        self.assertEqual(receipt["state"], "valid")
+        self.assertEqual(
+            subprocess.check_output(
+                ["git", "status", "--short"], cwd=repository, text=True
+            ),
+            " M source.py\n",
+        )
+        invalid = candidate.replace("old = 1", "not present")
+        self.assertEqual(
+            live._validate_terminal_patch(LocalEnvironment(), invalid, base)["state"],
+            "invalid",
+        )
+
+    def test_runner_preserves_explicit_patch_when_base_blob_is_missing(self):
+        repository = self.root / "missing-object-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "a").write_text("a0\n")
+        (repository / "b").write_text("b0\n")
+        subprocess.run(["git", "add", "."], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "base"],
+            cwd=repository,
+            check=True,
+        )
+        base = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+        ).strip()
+        missing_blob = subprocess.check_output(
+            ["git", "rev-parse", "HEAD:a"], cwd=repository, text=True
+        ).strip()
+        blob_path = repository / ".git/objects" / missing_blob[:2] / missing_blob[2:]
+        blob_contents = blob_path.read_bytes()
+
+        class LocalEnvironment:
+            def execute(self, action, **kwargs):
+                if action["command"].startswith("terminal_dir="):
+                    blob_path.unlink(missing_ok=True)
+                completed = subprocess.run(
+                    action["command"],
+                    cwd=repository,
+                    shell=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                return {
+                    "returncode": completed.returncode,
+                    "output": completed.stdout,
+                    "exception_info": "",
+                }
+
+            def cleanup(self):
+                if not blob_path.exists():
+                    blob_path.parent.mkdir(parents=True, exist_ok=True)
+                    blob_path.write_bytes(blob_contents)
+
+        explicit = {}
+
+        class Agent:
+            def __init__(self, model, env, **kwargs):
+                self.messages = []
+
+            def run(self, task):
+                (repository / "a").write_text("a1\n")
+                explicit["patch"] = subprocess.check_output(
+                    ["git", "diff", "HEAD", "--binary", "--", "a"],
+                    cwd=repository,
+                    text=True,
+                )
+                (repository / "a").write_text("a0\n")
+                (repository / "b").write_text("b1\n")
+                return {"exit_status": "Submitted", "submission": explicit["patch"]}
+
+        model = types.SimpleNamespace(
+            config=types.SimpleNamespace(model_kwargs={}),
+            abort_exceptions=[],
+            _query=Mock(),
+        )
+        result = live.run_task(
+            {**row(), "base_commit": base},
+            {"model": {"model_name": "openai/test"}, "agent": {}},
+            self.root / "missing-object-output",
+            Mock(return_value=model),
+            Mock(return_value=LocalEnvironment()),
+            Agent,
+            terminal_export_protocol="terminal-export-v1",
+            dataset={"dataset": "test/dataset", "dataset_revision": "a" * 40},
+        )
+        self.assertEqual(result["exit_status"], "Submitted")
+        self.assertEqual(result["model_patch"], explicit["patch"])
+        self.assertEqual(result["terminal_export_decision"], "unavailable")
+        self.assertEqual(
+            result["terminal_export_reason"], "explicit_validation_unavailable"
+        )
+        self.assertEqual(result["terminal_export_error"], "base_objects_unavailable")
+        self.assertTrue(result["terminal_export_unavailable"])
+        self.assertTrue(live._task_infrastructure_failed(result))
+        receipt = json.loads(
+            (
+                self.root / "missing-object-output/terminal_exports/repo__issue-1.json"
+            ).read_text()
+        )
+        self.assertEqual(receipt["explicit_validation"]["state"], "unavailable")
+        self.assertEqual(
+            receipt["explicit_validation"]["reason"], "base_objects_unavailable"
+        )
+        self.assertEqual(receipt["explicit_validation"]["base_apply_returncode"], 201)
+        self.assertNotIn("final_validation", receipt)
+        self.assertTrue(blob_path.exists())
+
+    def test_runner_exports_frozen_base_after_committed_and_dirty_edits(self):
+        repository = self.root / "runner-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "source.py").write_text("value = 1\n")
+        (repository / "committed.py").write_text("value = 1\n")
+        subprocess.run(["git", "add", "."], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "base"],
+            cwd=repository,
+            check=True,
+        )
+        base = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+        ).strip()
+
+        class LocalEnvironment:
+            cleanup_status = None
+
+            def execute(self, action, **kwargs):
+                completed = subprocess.run(
+                    action["command"],
+                    cwd=repository,
+                    shell=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                return {
+                    "returncode": completed.returncode,
+                    "output": completed.stdout,
+                    "exception_info": "",
+                }
+
+            def cleanup(self):
+                self.cleanup_status = subprocess.check_output(
+                    ["git", "status", "--porcelain", "--untracked-files=all"],
+                    cwd=repository,
+                    text=True,
+                )
+
+        environment = LocalEnvironment()
+        status_before_return = {}
+
+        class Agent:
+            def __init__(self, model, env, **kwargs):
+                self.messages = []
+
+            def run(self, task):
+                (repository / "source.py").write_text("value = 2\n")
+                (repository / "committed.py").write_text("value = 2\n")
+                subprocess.run(["git", "add", "."], cwd=repository, check=True)
+                subprocess.run(
+                    ["git", "commit", "-q", "-m", "agent commit"],
+                    cwd=repository,
+                    check=True,
+                )
+                (repository / "source.py").write_text("value = 3\n")
+                subprocess.run(["git", "add", "source.py"], cwd=repository, check=True)
+                (repository / "source.py").write_text("value = 4\n")
+                (repository / "helper.py").write_text("untracked = True\n")
+                status_before_return["value"] = subprocess.check_output(
+                    ["git", "status", "--porcelain", "--untracked-files=all"],
+                    cwd=repository,
+                    text=True,
+                )
+                return {"exit_status": "LimitsExceeded", "submission": ""}
+
+        model = types.SimpleNamespace(
+            config=types.SimpleNamespace(model_kwargs={}),
+            abort_exceptions=[],
+            _query=Mock(),
+        )
+        result = live.run_task(
+            {**row(), "base_commit": base},
+            {"model": {"model_name": "openai/test"}, "agent": {}},
+            self.root / "runner-output",
+            Mock(return_value=model),
+            Mock(return_value=environment),
+            Agent,
+            terminal_export_protocol="terminal-export-v1",
+            dataset={"dataset": "test/dataset", "dataset_revision": "a" * 40},
+        )
+        self.assertEqual(result["exit_status"], "LimitsExceeded")
+        self.assertEqual(result["terminal_export_decision"], "export_final_tracked")
+        self.assertIn("+value = 4", result["model_patch"])
+        self.assertIn("diff --git a/committed.py b/committed.py", result["model_patch"])
+        self.assertNotIn("helper.py", result["model_patch"])
+        self.assertEqual(environment.cleanup_status, status_before_return["value"])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / "index"
+            index_environment = {**os.environ, "GIT_INDEX_FILE": str(index)}
+            subprocess.run(
+                ["git", "read-tree", base],
+                cwd=repository,
+                env=index_environment,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "apply", "--cached", "--check", "--whitespace=nowarn", "-"],
+                cwd=repository,
+                env=index_environment,
+                input=result["model_patch"],
+                text=True,
+                check=True,
+            )
+
+        receipt = json.loads(
+            (
+                self.root / "runner-output/terminal_exports/repo__issue-1.json"
+            ).read_text()
+        )
+        self.assertEqual(receipt["task_base"]["resolved_base"], base)
+        self.assertNotEqual(receipt["terminal_head"], base)
+        self.assertEqual(receipt["original_exit_status"], "LimitsExceeded")
+        self.assertEqual(receipt["model_calls"], 0)
+        self.assertEqual(receipt["dataset"]["dataset"], "test/dataset")
 
     def test_task_exception_cleans_up_and_records_failure(self):
         result = self.task(fail=True)

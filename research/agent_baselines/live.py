@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures
 import copy
 import hashlib
@@ -32,7 +33,7 @@ FATAL_ENVIRONMENT_ERRORS = (
     ),
 )
 
-TERMINAL_CAPTURE_SCHEMA = "knlp.agent_baselines.terminal_capture.v2"
+TERMINAL_CAPTURE_SCHEMA = "knlp.agent_baselines.terminal_capture.v4"
 TERMINAL_CAPTURE_COMMANDS = {
     "status": "git status --short --untracked-files=all",
     "changed_paths": "git diff --name-only -- .",
@@ -40,7 +41,23 @@ TERMINAL_CAPTURE_COMMANDS = {
     "source_diff": "git diff --no-ext-diff --binary -- .",
     "staged_paths": "git diff --cached --name-only -- .",
     "staged_diff": "git diff --cached --no-ext-diff --binary -- .",
+    "head_diff": "git diff HEAD --no-ext-diff --binary -- .",
+    "terminal_head": "git rev-parse --verify HEAD^{commit}",
 }
+TERMINAL_EXPORT_SCHEMA = "knlp.agent_baselines.terminal_export.v2"
+TERMINAL_EXPORT_REASONS = frozenset({"LimitsExceeded", "TimeExceeded"})
+GIT_APPLY_CONTENT_ERRORS = (
+    re.compile(r"error: patch failed: .+:\d+$"),
+    re.compile(r"error: .+: patch does not apply$"),
+    re.compile(r'error: No valid patches in input \(allow with "--allow-empty"\)$'),
+    re.compile(r"error: corrupt patch at line \d+$"),
+    re.compile(r"error: patch fragment without header at line \d+:.+$"),
+    re.compile(r"error: git diff header lacks filename information.+$"),
+    re.compile(r"error: .+: does not exist in index$"),
+    re.compile(r"error: .+: already exists in (?:index|working directory)$"),
+    re.compile(r"error: .+: does not match index$"),
+    re.compile(r"error: .+: wrong type$"),
+)
 VERIFICATION_COMMAND = re.compile(
     r"(?:^|[;&|\n]\s*|\b)(?:pytest|tox|nox|make\s+(?:test|check)|"
     r"python\S*\s+-m\s+(?:pytest|unittest|compileall)|"
@@ -52,6 +69,10 @@ VERIFICATION_COMMAND = re.compile(
 
 class TerminalCaptureError(RuntimeError):
     """A terminal-state receipt is present but incomplete or invalid."""
+
+
+class TerminalBaseError(RuntimeError):
+    """The immutable task base cannot be verified before agent execution."""
 
 
 def write_json(path: Path, value) -> None:
@@ -167,8 +188,89 @@ def command_observations(messages: list[dict]) -> list[dict]:
     return observations
 
 
-def capture_terminal_state(env, out: Path, iid: str, result: dict, messages) -> None:
+def _strict_tool_result(result) -> tuple[dict, list[str]]:
+    """Normalize the tool contract and list every malformed field."""
+    receipt = {
+        "returncode": None,
+        "output": None,
+        "exception_info": None,
+    }
+    if not isinstance(result, dict):
+        return receipt, ["invalid_result"]
+    returncode = result.get("returncode")
+    output = result.get("output")
+    exception_info = result.get("exception_info")
+    receipt.update(
+        returncode=returncode if type(returncode) is int else None,
+        output=output if isinstance(output, str) else None,
+        exception_info=(exception_info if isinstance(exception_info, str) else None),
+    )
+    reasons = [f"missing_{key}" for key in receipt if key not in result]
+    if type(returncode) is not int:
+        reasons.append("invalid_returncode")
+    if not isinstance(output, str):
+        reasons.append("invalid_output")
+    if not isinstance(exception_info, str):
+        reasons.append("invalid_exception_info")
+    elif exception_info:
+        reasons.append("exception_info_present")
+    return receipt, reasons
+
+
+def resolve_terminal_base(env, declared_base: str) -> dict:
+    """Resolve an immutable dataset base before the agent can change HEAD."""
+    start_ns = time.monotonic_ns()
+    receipt = {
+        "declared_base": declared_base,
+        "resolved_base": None,
+        "state": "unavailable",
+        "reason": None,
+        "command_result": None,
+    }
+    command = f"git rev-parse --verify {declared_base}^{{commit}}"
+    try:
+        result = env.execute({"command": command}, timeout=60)
+    except Exception as exc:
+        receipt.update(
+            reason="base_lookup_exception",
+            error_type=type(exc).__name__,
+        )
+    else:
+        normalized, reasons = _strict_tool_result(result)
+        receipt["command_result"] = normalized
+        if reasons:
+            receipt.update(reason="base_lookup_response_unavailable", errors=reasons)
+        elif normalized["returncode"] != 0:
+            receipt["reason"] = "base_lookup_failed"
+        else:
+            resolved = normalized["output"].strip()
+            if not re.fullmatch(r"[0-9a-f]{40}", resolved):
+                receipt["reason"] = "base_identity_invalid"
+            elif resolved != declared_base:
+                receipt.update(
+                    reason="base_identity_mismatch",
+                    resolved_base=resolved,
+                )
+            else:
+                receipt.update(
+                    state="valid",
+                    reason="base_verified",
+                    resolved_base=resolved,
+                )
+    receipt["resolution_ns"] = time.monotonic_ns() - start_ns
+    return receipt
+
+
+def capture_terminal_state(
+    env,
+    out: Path,
+    iid: str,
+    result: dict,
+    messages,
+    task_base: dict | None = None,
+) -> dict:
     """Capture final worktree evidence without returning it to the model."""
+    start_ns = time.monotonic_ns()
     observations = command_observations(messages)
     verification = next(
         (
@@ -193,17 +295,26 @@ def capture_terminal_state(env, out: Path, iid: str, result: dict, messages) -> 
         "last_command_result": observations[-1] if observations else None,
         "last_verification_result": verification,
         "verification_selector": VERIFICATION_COMMAND.pattern,
+        "task_base": task_base,
         "command_scopes": {
             "changed_paths": "unstaged tracked paths",
             "source_diff": "unstaged tracked changes",
             "staged_paths": "staged tracked paths",
             "staged_diff": "staged tracked changes",
+            "head_diff": "all staged and unstaged tracked changes from HEAD",
+            "base_diff": "all final tracked changes from the frozen task base",
+            "terminal_head": "terminal commit identity for diagnosis",
             "untracked_paths": "untracked path names only; contents are not captured",
         },
         "commands": {},
         "failures": [],
     }
-    for name, command in TERMINAL_CAPTURE_COMMANDS.items():
+    commands = dict(TERMINAL_CAPTURE_COMMANDS)
+    if task_base is not None and task_base.get("state") == "valid":
+        commands["base_diff"] = (
+            f"git diff {task_base['resolved_base']} " "--no-ext-diff --binary -- ."
+        )
+    for name, command in commands.items():
         try:
             output = env.execute({"command": command}, timeout=60)
         except Exception as exc:
@@ -217,47 +328,274 @@ def capture_terminal_state(env, out: Path, iid: str, result: dict, messages) -> 
                 {"command": name, "reasons": ["execute_exception"]}
             )
             continue
-        if not isinstance(output, dict):
-            capture["commands"][name] = {
-                "returncode": None,
-                "output": None,
-                "exception_info": None,
-            }
-            capture["failures"].append({"command": name, "reasons": ["invalid_result"]})
-            continue
-        returncode = output.get("returncode")
-        command_output = output.get("output")
-        exception_info = output.get("exception_info")
-        receipt = {
-            "returncode": returncode if type(returncode) is int else None,
-            "output": command_output if isinstance(command_output, str) else None,
-            "exception_info": (
-                exception_info if isinstance(exception_info, str) else None
-            ),
-        }
+        receipt, reasons = _strict_tool_result(output)
         capture["commands"][name] = receipt
-        reasons = []
-        for key in receipt:
-            if key not in output:
-                reasons.append(f"missing_{key}")
-        if type(returncode) is not int:
-            reasons.append("invalid_returncode")
-        elif returncode != 0:
+        if not reasons and receipt["returncode"] != 0:
             reasons.append("nonzero_returncode")
-        if not isinstance(command_output, str):
-            reasons.append("invalid_output")
-        if not isinstance(exception_info, str):
-            reasons.append("invalid_exception_info")
-        elif exception_info:
-            reasons.append("exception_info_present")
         if reasons:
             capture["failures"].append({"command": name, "reasons": reasons})
+    terminal_head = capture["commands"].get("terminal_head", {}).get("output")
+    if isinstance(terminal_head, str):
+        terminal_head = terminal_head.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", terminal_head or ""):
+        capture["failures"].append(
+            {"command": "terminal_head", "reasons": ["invalid_commit_identity"]}
+        )
+        capture["terminal_head"] = None
+    else:
+        capture["terminal_head"] = terminal_head
     capture["capture_status"] = "failed" if capture["failures"] else "complete"
+    capture["capture_ns"] = time.monotonic_ns() - start_ns
     destination = out / "terminal_captures" / f"{iid}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     write_json(destination, capture)
     if capture["failures"]:
         raise TerminalCaptureError("Terminal capture contains failed commands")
+    return capture
+
+
+def _validate_terminal_patch(env, patch: str, task_base: dict) -> dict:
+    """Classify a Git diff against an index read from the frozen task base."""
+    start_ns = time.monotonic_ns()
+    receipt = {
+        "characters": len(patch),
+        "sha256": hashlib.sha256(patch.encode()).hexdigest() if patch else None,
+        "unified_git_diff": patch.startswith("diff --git "),
+        "base_apply_returncode": None,
+        "base_apply_output": None,
+        "state": None,
+        "base_object_check_state": "not_run",
+        "clean_index_setup_state": "not_run",
+        "patch_check_state": "not_run",
+    }
+    if task_base.get("state") != "valid":
+        receipt.update(state="unavailable", reason="task_base_unavailable")
+    elif not patch:
+        receipt.update(state="invalid", reason="empty")
+    elif not receipt["unified_git_diff"]:
+        receipt.update(state="invalid", reason="not_unified_git_diff")
+    else:
+        encoded = base64.b64encode(patch.encode()).decode()
+        base = task_base["resolved_base"]
+        command = (
+            "terminal_dir=$(mktemp -d) || exit 202; "
+            "trap 'rm -rf \"$terminal_dir\"' EXIT; "
+            'terminal_index="$terminal_dir/index"; '
+            'terminal_patch="$terminal_dir/candidate.patch"; '
+            'terminal_objects="$terminal_dir/base-objects"; '
+            f"printf '%s' '{encoded}' | base64 -d >\"$terminal_patch\" "
+            "|| exit 202; "
+            f"LC_ALL=C GIT_OPTIONAL_LOCKS=0 git fsck --connectivity-only "
+            f"--no-dangling '{base}^{{tree}}' >\"$terminal_objects\" 2>&1 "
+            '|| { cat "$terminal_objects"; exit 201; }; '
+            f'GIT_INDEX_FILE="$terminal_index" git read-tree {base} '
+            ">/dev/null 2>&1 || exit 200; "
+            'LC_ALL=C GIT_INDEX_FILE="$terminal_index" git apply --cached --check '
+            '--whitespace=nowarn "$terminal_patch"'
+        )
+        try:
+            result = env.execute({"command": command}, timeout=60)
+        except Exception as exc:
+            receipt.update(
+                state="unavailable",
+                reason="validation_exception",
+                error_type=type(exc).__name__,
+            )
+        else:
+            normalized, reasons = _strict_tool_result(result)
+            receipt["base_apply_returncode"] = normalized["returncode"]
+            receipt["base_apply_output"] = normalized["output"]
+            if reasons:
+                receipt.update(
+                    state="unavailable",
+                    reason="validation_response_unavailable",
+                    errors=reasons,
+                )
+            elif normalized["returncode"] == 0:
+                receipt.update(
+                    state="valid",
+                    reason="valid",
+                    base_object_check_state="valid",
+                    clean_index_setup_state="valid",
+                    patch_check_state="valid",
+                )
+            elif normalized["returncode"] in {1, 128} and _git_apply_content_error(
+                normalized["output"]
+            ):
+                receipt.update(
+                    state="invalid",
+                    reason="patch_content_rejected",
+                    base_object_check_state="valid",
+                    clean_index_setup_state="valid",
+                    patch_check_state="invalid",
+                )
+            elif normalized["returncode"] in {1, 128}:
+                receipt.update(
+                    state="unavailable",
+                    reason="ambiguous_patch_check_failure",
+                    base_object_check_state="valid",
+                    clean_index_setup_state="valid",
+                    patch_check_state="unavailable",
+                )
+            elif normalized["returncode"] == 200:
+                receipt.update(
+                    state="unavailable",
+                    reason="clean_index_setup_failed",
+                    base_object_check_state="valid",
+                    clean_index_setup_state="unavailable",
+                )
+            elif normalized["returncode"] == 201:
+                receipt.update(
+                    state="unavailable",
+                    reason="base_objects_unavailable",
+                    base_object_check_state="unavailable",
+                )
+            elif normalized["returncode"] == 202:
+                receipt.update(
+                    state="unavailable",
+                    reason="validation_workspace_setup_failed",
+                )
+            else:
+                receipt.update(
+                    state="unavailable",
+                    reason="validation_returncode_unavailable",
+                )
+    receipt["validation_ns"] = time.monotonic_ns() - start_ns
+    return receipt
+
+
+def _git_apply_content_error(output: str) -> bool:
+    """Return true only for recognized, content-only Git apply diagnostics."""
+    lines = [line for line in output.splitlines() if line]
+    return bool(lines) and all(
+        any(pattern.fullmatch(line) for pattern in GIT_APPLY_CONTENT_ERRORS)
+        for line in lines
+    )
+
+
+def terminal_export(
+    env,
+    out: Path,
+    iid: str,
+    result: dict,
+    capture: dict,
+    task_base: dict,
+    *,
+    task: dict,
+    dataset: dict | None,
+    model_calls: int,
+) -> dict:
+    """Apply terminal-export-v1 without changing the recorded terminal reason."""
+    start_ns = time.monotonic_ns()
+    original_patch = result["model_patch"]
+    receipt = {
+        "schema": TERMINAL_EXPORT_SCHEMA,
+        "instance_id": iid,
+        "protocol": "terminal-export-v1",
+        "original_exit_status": result["exit_status"],
+        "original_submission": original_patch,
+        "original_submission_sha256": (
+            hashlib.sha256(original_patch.encode()).hexdigest()
+            if original_patch
+            else None
+        ),
+        "capture_status": capture["capture_status"],
+        "task": task,
+        "dataset": dataset,
+        "task_base": task_base,
+        "terminal_head": capture.get("terminal_head"),
+        "capture_ns": capture.get("capture_ns"),
+        "model_calls": model_calls,
+        "decision": None,
+        "candidate_origin": None,
+        "candidate_sha256": None,
+        "exported": False,
+        "error": None,
+    }
+    if task_base.get("state") != "valid":
+        receipt.update(
+            decision="unavailable",
+            reason="task_base_unavailable",
+            error=task_base.get("reason"),
+        )
+    elif capture["capture_status"] != "complete":
+        receipt.update(
+            decision="unavailable",
+            reason="terminal_capture_failed",
+            error="terminal_capture_failed",
+        )
+    else:
+        explicit = _validate_terminal_patch(env, original_patch, task_base)
+        receipt["explicit_validation"] = explicit
+        if explicit["state"] == "valid":
+            receipt.update(
+                decision="preserve_explicit",
+                reason="explicit_submission_valid",
+                candidate_origin="explicit_submission",
+                candidate_sha256=explicit["sha256"],
+            )
+        elif explicit["state"] == "unavailable":
+            receipt.update(
+                decision="unavailable",
+                reason="explicit_validation_unavailable",
+                error=explicit["reason"],
+            )
+        else:
+            malformed_submission = result["exit_status"] == "Submitted"
+            limit_reached = result["exit_status"] in TERMINAL_EXPORT_REASONS
+            if not (malformed_submission or limit_reached):
+                receipt.update(
+                    decision="not_exportable",
+                    reason="terminal_reason_not_exportable",
+                )
+            else:
+                candidate = capture["commands"]["base_diff"]["output"] or ""
+                final_validation = _validate_terminal_patch(env, candidate, task_base)
+                receipt["final_validation"] = final_validation
+                if final_validation["state"] == "valid":
+                    result["model_patch"] = candidate
+                    receipt.update(
+                        decision="export_final_tracked",
+                        reason="valid_final_tracked_diff",
+                        candidate_origin="final_tracked_diff",
+                        candidate_sha256=final_validation["sha256"],
+                        exported=True,
+                    )
+                elif final_validation["state"] == "invalid":
+                    receipt.update(
+                        decision="no_candidate",
+                        reason=f"final_diff_{final_validation['reason']}",
+                    )
+                else:
+                    receipt.update(
+                        decision="unavailable",
+                        reason="final_validation_unavailable",
+                        error=final_validation["reason"],
+                    )
+    receipt["export_ns"] = time.monotonic_ns() - start_ns
+    destination = out / "terminal_exports" / f"{iid}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    write_json(destination, receipt)
+    result.update(
+        terminal_export_decision=receipt["decision"],
+        terminal_export_sha256=receipt["candidate_sha256"],
+        terminal_export_reason=receipt.get("reason"),
+        terminal_export_error=receipt["error"],
+        terminal_export_unavailable=receipt["decision"] == "unavailable",
+    )
+    return receipt
+
+
+def _task_infrastructure_failed(result: dict) -> bool:
+    """Return whether a task has any recorded infrastructure failure."""
+    return bool(
+        result["error_type"]
+        or result.get("cleanup_error_type")
+        or result.get("recording_error_type")
+        or result.get("terminal_capture_error_type")
+        or result.get("terminal_export_error_type")
+        or result.get("terminal_export_unavailable")
+    )
 
 
 def _validate_selection(data: dict) -> tuple[dict, list[dict]]:
@@ -466,6 +804,8 @@ def run_task(
     token_protocol="vllm",
     sglang_receipt=None,
     cache_scope=None,
+    terminal_export_protocol=None,
+    dataset=None,
 ):
     from .recording_model import attach_recorder
 
@@ -477,6 +817,7 @@ def run_task(
         "error_type": None,
     }
     agent = env = recorder = None
+    task_base = None
     try:
         model = model_factory(config=copy.deepcopy(config["model"]))
         recorder = attach_recorder(
@@ -488,6 +829,10 @@ def run_task(
             cache_scope=cache_scope,
         )
         env = environment_factory(copy.deepcopy(config), row)
+        if terminal_export_protocol == "terminal-export-v1":
+            task_base = resolve_terminal_base(env, row["base_commit"])
+            if task_base["state"] != "valid":
+                raise TerminalBaseError("Task base is unavailable")
         agent_config = copy.deepcopy(config["agent"])
         agent_config["output_path"] = out / "trajectories" / f"{iid}.json"
         agent = agent_class(model, env, **agent_config)
@@ -509,16 +854,47 @@ def run_task(
         result["error_type"] = type(exc).__name__
     finally:
         if env is not None:
+            capture = None
             try:
-                capture_terminal_state(
+                capture = capture_terminal_state(
                     env,
                     out,
                     iid,
                     result,
                     getattr(agent, "messages", []) if agent is not None else [],
+                    task_base,
                 )
             except Exception as exc:
                 result["terminal_capture_error_type"] = type(exc).__name__
+            if terminal_export_protocol == "terminal-export-v1":
+                try:
+                    if capture is None:
+                        capture_path = out / "terminal_captures" / f"{iid}.json"
+                        if capture_path.is_file():
+                            capture = json.loads(capture_path.read_text())
+                    if capture is not None:
+                        terminal_export(
+                            env,
+                            out,
+                            iid,
+                            result,
+                            capture,
+                            task_base,
+                            task={
+                                "instance_id": iid,
+                                "repo": row["repo"],
+                                "version": row["version"],
+                                "base_commit": row["base_commit"],
+                            },
+                            dataset=dataset,
+                            model_calls=(
+                                recorder.sequence if recorder is not None else 0
+                            ),
+                        )
+                    else:
+                        raise TerminalCaptureError("Terminal capture is unavailable")
+                except Exception as exc:
+                    result["terminal_export_error_type"] = type(exc).__name__
             try:
                 env.cleanup()
             except Exception as exc:
@@ -567,6 +943,7 @@ def run(args) -> int:
             "evidence_state": quality_profile["evidence_state"],
             "finish_window": quality_profile["finish_window"],
             "execution_protocol": quality_profile["execution_protocol"],
+            "terminal_export_protocol": args.terminal_export,
             "profile_receipt": quality_profile,
             "budgets": {
                 "steps_per_task": args.steps,
@@ -631,6 +1008,8 @@ def run(args) -> int:
                 token_protocol=provenance["backend"],
                 sglang_receipt=provenance.get("capability_receipt"),
                 cache_scope=provenance.get("cache_scope"),
+                terminal_export_protocol=args.terminal_export,
+                dataset=metadata,
             )
             for row in rows
         ]
@@ -654,22 +1033,21 @@ def run(args) -> int:
                 )
                 + "\n"
             )
-    failed = sum(
-        bool(
-            r["error_type"]
-            or r.get("cleanup_error_type")
-            or r.get("recording_error_type")
-            or r.get("terminal_capture_error_type")
-        )
-        for r in ordered
-    )
+    failed = sum(_task_infrastructure_failed(r) for r in ordered)
     write_json(
         args.out / "summary.json",
         {
             "finished_ns": time.time_ns(),
             "tasks": len(rows),
             "infrastructure_failures": failed,
+            "terminal_export_unavailable": sum(
+                r.get("terminal_export_unavailable", False) for r in ordered
+            ),
             "submitted": sum(r["exit_status"] == "Submitted" for r in ordered),
+            "terminal_exported": sum(
+                r.get("terminal_export_decision") == "export_final_tracked"
+                for r in ordered
+            ),
             "quality": "ungraded",
             "resolved": None,
             "metrics_coverage": "interval_only; final stats flush not verified",
@@ -782,6 +1160,12 @@ def parser() -> argparse.ArgumentParser:
     run_p.add_argument("--request-seconds", type=positive, default=120)
     run_p.add_argument("--max-tokens", type=positive, default=2048)
     run_p.add_argument("--seed", type=int, default=0)
+    run_p.add_argument(
+        "--terminal-export",
+        choices=["terminal-export-v1"],
+        default=None,
+        help="Optional zero-model-call terminal patch export protocol",
+    )
     run_p.set_defaults(func=run)
     eval_p = commands.add_parser(
         "evaluate", help="Grade patches using frozen dataset rows"
