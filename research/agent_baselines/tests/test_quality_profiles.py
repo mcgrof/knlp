@@ -16,22 +16,62 @@ Current instructions.
 
 
 class QualityProfileTests(unittest.TestCase):
-    def test_two_by_two_arm_map_and_finish_protocol_are_explicit(self):
+    def test_quality_arms_and_protocol_factors_are_explicit(self):
         self.assertEqual(
             {
                 (
                     spec["instruction_profile"],
                     spec["layout"],
                     spec["execution_protocol"],
+                    spec["evidence_state"],
+                    spec["finish_window"],
                 )
                 for spec in quality_profiles.ARM_SPECS.values()
             },
             {
-                ("current", "current", "current"),
-                ("current", "stable-prefix", "current"),
-                ("clear-technical-v1", "current", "current"),
-                ("clear-technical-v1", "stable-prefix", "current"),
-                ("current", "current", "finish-protocol-v1"),
+                ("current", "current", "current", "current", "current"),
+                (
+                    "current",
+                    "stable-prefix",
+                    "current",
+                    "current",
+                    "current",
+                ),
+                (
+                    "clear-technical-v1",
+                    "current",
+                    "current",
+                    "current",
+                    "current",
+                ),
+                (
+                    "clear-technical-v1",
+                    "stable-prefix",
+                    "current",
+                    "current",
+                    "current",
+                ),
+                (
+                    "current",
+                    "current",
+                    "evidence-state-v1",
+                    "evidence-state-v1",
+                    "current",
+                ),
+                (
+                    "current",
+                    "current",
+                    "finish-window-v1",
+                    "current",
+                    "finish-window-v1",
+                ),
+                (
+                    "current",
+                    "current",
+                    "finish-protocol-v1",
+                    "evidence-state-v1",
+                    "finish-window-v1",
+                ),
             },
         )
 
@@ -76,7 +116,7 @@ class QualityProfileTests(unittest.TestCase):
             receipts[arm] = quality_profiles.quality_profile_receipt(
                 rendered, arm, observation
             )
-        self.assertEqual(len({row["template_sha256"] for row in receipts.values()}), 5)
+        self.assertEqual(len({row["template_sha256"] for row in receipts.values()}), 7)
         self.assertEqual(
             receipts["clear"]["instructions_sha256"],
             receipts["clear-stable-prefix"]["instructions_sha256"],
@@ -106,6 +146,35 @@ class QualityProfileTests(unittest.TestCase):
         self.assertIn("required=Create patch.txt in this call.", rendered)
         with self.assertRaisesRegex(ValueError, "live observation state"):
             quality_profiles.quality_profile_receipt(finish, "finish-protocol")
+
+    def test_finish_protocol_decomposition_is_factor_specific(self):
+        from jinja2 import Template
+
+        evidence = quality_profiles.render_instance_template(TEMPLATE, "evidence-state")
+        finish = quality_profiles.render_instance_template(TEMPLATE, "finish-window")
+        combined = quality_profiles.render_instance_template(
+            TEMPLATE, "finish-protocol"
+        )
+        self.assertIn("Observed facts", evidence)
+        self.assertIn("executable", evidence)
+        self.assertNotIn("Reserve the final three", evidence)
+        self.assertNotIn("model-call budget", evidence)
+        self.assertIn("Reserve the final three", finish)
+        self.assertIn("model-call budget", finish)
+        self.assertNotIn("Observed facts", finish)
+        self.assertNotIn("executable assertions", finish)
+        self.assertIn("Observed facts", combined)
+        self.assertIn("Reserve the final three", combined)
+
+        plain_observation = quality_profiles.apply_observation_protocol(
+            "<output>result</output>", "evidence-state"
+        )
+        self.assertEqual(plain_observation, "<output>result</output>")
+        budget_observation = quality_profiles.apply_observation_protocol(
+            "<output>result</output>", "finish-window"
+        )
+        rendered = Template(budget_observation).render(step_limit=30, n_model_calls=25)
+        self.assertIn("model_calls_remaining=5", rendered)
 
     def test_malformed_template_and_receipt_drift_fail_closed(self):
         with self.assertRaises(ValueError):

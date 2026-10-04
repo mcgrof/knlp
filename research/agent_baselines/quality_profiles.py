@@ -12,8 +12,10 @@ import hashlib
 import re
 from copy import deepcopy
 
-QUALITY_PROFILE_SCHEMA = "knlp.agent_baselines.quality_profile.v2"
+QUALITY_PROFILE_SCHEMA = "knlp.agent_baselines.quality_profile.v3"
 CLEAR_TECHNICAL_PROFILE = "clear-technical-v1"
+EVIDENCE_STATE_PROFILE = "evidence-state-v1"
+FINISH_WINDOW_PROFILE = "finish-window-v1"
 FINISH_PROTOCOL_PROFILE = "finish-protocol-v1"
 
 ARM_SPECS = {
@@ -21,28 +23,83 @@ ARM_SPECS = {
         "instruction_profile": "current",
         "layout": "current",
         "execution_protocol": "current",
+        "evidence_state": "current",
+        "finish_window": "current",
     },
     "stable-prefix": {
         "instruction_profile": "current",
         "layout": "stable-prefix",
         "execution_protocol": "current",
+        "evidence_state": "current",
+        "finish_window": "current",
     },
     "clear": {
         "instruction_profile": CLEAR_TECHNICAL_PROFILE,
         "layout": "current",
         "execution_protocol": "current",
+        "evidence_state": "current",
+        "finish_window": "current",
     },
     "clear-stable-prefix": {
         "instruction_profile": CLEAR_TECHNICAL_PROFILE,
         "layout": "stable-prefix",
         "execution_protocol": "current",
+        "evidence_state": "current",
+        "finish_window": "current",
+    },
+    "evidence-state": {
+        "instruction_profile": "current",
+        "layout": "current",
+        "execution_protocol": EVIDENCE_STATE_PROFILE,
+        "evidence_state": EVIDENCE_STATE_PROFILE,
+        "finish_window": "current",
+    },
+    "finish-window": {
+        "instruction_profile": "current",
+        "layout": "current",
+        "execution_protocol": FINISH_WINDOW_PROFILE,
+        "evidence_state": "current",
+        "finish_window": FINISH_WINDOW_PROFILE,
     },
     "finish-protocol": {
         "instruction_profile": "current",
         "layout": "current",
         "execution_protocol": FINISH_PROTOCOL_PROFILE,
+        "evidence_state": EVIDENCE_STATE_PROFILE,
+        "finish_window": FINISH_WINDOW_PROFILE,
     },
 }
+
+EVIDENCE_STATE_INSTRUCTIONS = """
+
+## Evidence and state protocol
+
+Keep a short state in your reasoning with these headings:
+
+- `Observed facts`: results established by commands that used the real code.
+- `Unresolved checks`: hypotheses, failures, or acceptance criteria not yet
+  established.
+- `Next action`: the single most useful next command.
+
+Do not describe a hypothesis as verified. An edit is not established until
+you inspect the real diff and exercise the changed code. Use executable
+assertions for properties that support correctness; a print-only script or a
+mock that manually implements the proposed fix is not acceptance evidence.
+"""
+
+FINISH_WINDOW_INSTRUCTIONS = """
+
+## Budget and finish protocol
+
+After each command, the runner reports the exact model-call budget.
+
+When five calls remain, decide which unresolved checks are essential. Do not
+start optional exploration after that checkpoint. Reserve the final three
+calls, in order, to create `patch.txt`, inspect it, and submit it with the
+exact required command. If an earlier check failed, keep that failure visible
+and make the safest justified submission decision within the remaining
+budget.
+"""
 
 FINISH_PROTOCOL_INSTRUCTIONS = """
 
@@ -188,9 +245,16 @@ def render_instance_template(template: str, arm: str) -> str:
         if spec["instruction_profile"] == "current"
         else CLEAR_TECHNICAL_INSTRUCTIONS
     )
+    protocol = ""
     if spec["execution_protocol"] == FINISH_PROTOCOL_PROFILE:
+        protocol = FINISH_PROTOCOL_INSTRUCTIONS
+    elif spec["evidence_state"] == EVIDENCE_STATE_PROFILE:
+        protocol = EVIDENCE_STATE_INSTRUCTIONS
+    elif spec["finish_window"] == FINISH_WINDOW_PROFILE:
+        protocol = FINISH_WINDOW_INSTRUCTIONS
+    if protocol:
         instructions = instructions.replace(
-            "</instructions>", FINISH_PROTOCOL_INSTRUCTIONS + "\n</instructions>"
+            "</instructions>", protocol + "\n</instructions>"
         )
     if spec["layout"] == "stable-prefix":
         return instructions + separator + task + trailing
@@ -198,9 +262,9 @@ def render_instance_template(template: str, arm: str) -> str:
 
 
 def apply_observation_protocol(observation_template: str, arm: str) -> str:
-    """Append live budget facts only for the frozen finish protocol."""
+    """Append live budget facts only for arms with a finish window."""
     spec = arm_spec(arm)
-    if spec["execution_protocol"] != FINISH_PROTOCOL_PROFILE:
+    if spec["finish_window"] != FINISH_WINDOW_PROFILE:
         return observation_template
     return observation_template.rstrip() + "\n" + FINISH_PROTOCOL_OBSERVATION
 
@@ -227,7 +291,7 @@ def quality_profile_receipt(
         "template_characters": len(template),
         "instruction_characters": len(instructions),
     }
-    if spec["execution_protocol"] == FINISH_PROTOCOL_PROFILE:
+    if spec["finish_window"] == FINISH_WINDOW_PROFILE:
         if (
             observation_template is None
             or "<finish_protocol_state>" not in observation_template

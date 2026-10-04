@@ -356,6 +356,16 @@ left, and reserves the last three calls for creating, inspecting and submitting
 next-action state. Freeze those thresholds before running; do not tune them per
 task.
 
+The next diagnostic decomposes that combined treatment at a fixed 30-call
+budget. Run `stock`, `evidence-state`, `finish-window`, and `finish-protocol`
+as a two-by-two matrix. `evidence-state` adds only the observed-fact,
+unresolved-check, next-action, and executable-assertion guidance.
+`finish-window` adds only the live remaining-call state, five-call checkpoint,
+and final create/inspect/submit window. The combined arm remains byte-identical
+to the earlier `finish-protocol-v1` treatment. Freeze task selection and arm
+order before grading, repeat with a counterbalanced order, and report protocol
+adherence alongside official task success.
+
 Every live task writes `terminal_captures/<instance>.json` before its container
 is removed. This read-only capture records separate unstaged and staged tracked
 diffs, changed and untracked path lists, exit reason, submission identity, last
