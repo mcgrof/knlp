@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+
+menu "KV-Lingo cross-model cache translation"
+
+config KV_LINGO
+	bool "Enable the experimental KV-Lingo reproduction"
+	default n
+	help
+	  Select the independent Qwen3-4B/8B KV-Lingo research harness. The
+	  default target is an offline CPU regression suite. It does not fetch
+	  models, allocate a GPU, or start training. Full fitting and evaluation
+	  require explicit commands and caller-supplied paths; see
+	  research/kv_translate/published/README.md.
+
+config KV_LINGO_PYTHON
+	string "Python interpreter for KV-Lingo checks"
+	depends on KV_LINGO
+	default "python3"
+	help
+	  Python environment with pytest, NumPy, and CPU PyTorch installed.
+
+endmenu
