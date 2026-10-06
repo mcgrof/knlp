@@ -1,0 +1,231 @@
+{
+  "Generated-by": "OpenAI Codex (GPT-5)",
+  "component_source_commits": {
+    "checkpoint_audit_and_selection": "ff961d1f087b42353bb63951480f2f3e570cbf75",
+    "provider_migration_control": "6b8e3658866a03dd44040b8990074a865e8754b5",
+    "training_and_inference": "7222b884e0bf52ef8fa5f147894c21becff845c5"
+  },
+  "executed_source_commit": "6b8e3658866a03dd44040b8990074a865e8754b5",
+  "files": [
+    {
+      "byte_identical": true,
+      "executed_sha256": "fcf726b1be4e6ebd0f0940f2d7b3dc8914154021bdf18186cfbc2db7cbe3017e",
+      "path": "research/kv_translate/published/__init__.py",
+      "public_sha256": "fcf726b1be4e6ebd0f0940f2d7b3dc8914154021bdf18186cfbc2db7cbe3017e"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "5e79d51168c5044edc4cff586ff9b0a99c9caaa7c41a0bfaf59ba7a08406787e",
+      "path": "research/kv_translate/published/analyze_kv_lingo_checkpoint_grid.py",
+      "public_sha256": "50849685e4275665a93a2e6be91f482e0599296e2e332e4620574e8d5ff46ccb"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "e835d59a441ca785640257cc17e0a7d8c0f713e33eb8d56796e43e2778f95e07",
+      "path": "research/kv_translate/published/attn_repair.py",
+      "public_sha256": "e835d59a441ca785640257cc17e0a7d8c0f713e33eb8d56796e43e2778f95e07"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "83d3e75c24f6658df2a2f59d428b545876f39204e1cecb62f1df2b7337e1c992",
+      "path": "research/kv_translate/published/audit_kv_lingo_checkpoint_pairs.py",
+      "public_sha256": "ffbc5998d55b674ec08d933e3099b8ae829aac9886b064c1a3465b391327ba95"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "c56bba9b63b48f72e79c0e60e18e1f65b4fe18769876114c14065281f19bafd4",
+      "path": "research/kv_translate/published/capture.py",
+      "public_sha256": "05d0c1c127cf073fefb79bb254c2fa529b645aa038e7ed3d5b4c2a9d2cbeadbb"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "5e532ff95e1ee488bd26756c1920da27803150194fe28bb673b2f224ea1b3f8a",
+      "path": "research/kv_translate/published/compare_kv_lingo_checkpoints.py",
+      "public_sha256": "5e532ff95e1ee488bd26756c1920da27803150194fe28bb673b2f224ea1b3f8a"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "41f57fffb782d78cbdee32b229fa38c3564b3fc775ceed781117b28c63091200",
+      "path": "research/kv_translate/published/coqa.py",
+      "public_sha256": "41f57fffb782d78cbdee32b229fa38c3564b3fc775ceed781117b28c63091200"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "e3be2fca5e77ce7631e271d33270cd99f3daf8264f6b015f646c7b2f735bc0ae",
+      "path": "research/kv_translate/published/coqa_reuse.py",
+      "public_sha256": "e3be2fca5e77ce7631e271d33270cd99f3daf8264f6b015f646c7b2f735bc0ae"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "d5fb923cdaab92cfe2f25157fc5d7f2f2f29e09de5691688cf270b7e4b88a674",
+      "path": "research/kv_translate/published/coqa_runner.py",
+      "public_sha256": "d5fb923cdaab92cfe2f25157fc5d7f2f2f29e09de5691688cf270b7e4b88a674"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "3a2ced57c13d61df9e78677034e7461aa8a1c2def35a8919a475f6b1a798472f",
+      "path": "research/kv_translate/published/economics.py",
+      "public_sha256": "3a2ced57c13d61df9e78677034e7461aa8a1c2def35a8919a475f6b1a798472f"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "c6fe5099f48868b23af95c0d0f16cd1f0786f66ea15b41d2888fac11d3bfa4f0",
+      "path": "research/kv_translate/published/fit_pair.py",
+      "public_sha256": "e4edd2ff267fea96e43fb517038cc46366b4f5e99cfe1364c2b1f2656db30cb3"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "79d850ef416f6a8d6ca6894a60af5471bd9d4ecd9bf9d27106c52f9c75a3a910",
+      "path": "research/kv_translate/published/freeze_kv_lingo.py",
+      "public_sha256": "9d5953578cc9388d2208bc9655a8eccd2fd78fc4805355a3d0f6269ba7bef2e8"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "ff6f76ca4a3fde1073d76a0c7f240c93fbd695563f12883aefa2a9a0a9631c4b",
+      "path": "research/kv_translate/published/freeze_kv_lingo_coqa.py",
+      "public_sha256": "efe791261f3d579a2f35a29993301c44f738790a6ec3124305b25cef0084c19d"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "d969819e4d514ee93557c04d1c160347c2af81a0868581ec04dd5cae779be2c8",
+      "path": "research/kv_translate/published/freeze_kv_lingo_onehop.py",
+      "public_sha256": "d969819e4d514ee93557c04d1c160347c2af81a0868581ec04dd5cae779be2c8"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "3ed217f02d212a599acbb44e4de50a4527f60abd12034b426ff10a8b80f628e6",
+      "path": "research/kv_translate/published/kv_lingo.py",
+      "public_sha256": "3ed217f02d212a599acbb44e4de50a4527f60abd12034b426ff10a8b80f628e6"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "0f22509b84132b7f974d2b8eea59e2ad6584c47b46da8dff3cfeeef7a3a658e5",
+      "path": "research/kv_translate/published/kv_lingo_census.py",
+      "public_sha256": "b1088c9eba96d13b683cfe6d20ca69d20ec1e12c6f5c325680013431ce359cce"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "7a410d66fd7b49486f138d35989fc8857950422b3b2e0925fc43e5b5f29d9a8f",
+      "path": "research/kv_translate/published/kv_lingo_coqa_runner.py",
+      "public_sha256": "d1b21c225aa4f9686ddf0e51b44e1ffc5b25d43af80e18ce5092f30fcb9b70a8"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "ec425ada5ad714f59911ba401da80a78d9e0699a00ddc1f8a873723740d6fa77",
+      "path": "research/kv_translate/published/kv_lingo_data.py",
+      "public_sha256": "5e7a697441f63015d1d4a9d5b2e56ddcb9787f1c775468073cdf7d3e45bd86a9"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "16b1828e79d00894c7c445193b1ea8333dea60d3d251eb6d1b24c56961990b1d",
+      "path": "research/kv_translate/published/kv_lingo_eval.py",
+      "public_sha256": "2a3140d651d2c1c47bb2add7a031eb6d61090e5cfcb134f3974a12ed0d18ca9e"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "42818b9d206e2dcfab745ca0d3a19f2b7b3a091e9d8a8a4b5344a7b6bbc752f1",
+      "path": "research/kv_translate/published/kv_lingo_migration_control.py",
+      "public_sha256": "4b3afd956f9baafad0b6f7ab58645ff949aa1fb24a507c376a24eb2b1cd43c80"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "b38857032bb017b9f8dbd360ac4e968c8a39a4a597a0682a44de44f41f08b228",
+      "path": "research/kv_translate/published/kv_lingo_onehop_runner.py",
+      "public_sha256": "e549a5d92723ae563d4392d31302119d3276605ab87431db3fcf9105eea32589"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "5e85ad6b8b1f580718ce36f49e1b972db80cadbef6edd561e2be9077b440debf",
+      "path": "research/kv_translate/published/kv_lingo_preflight.py",
+      "public_sha256": "5e85ad6b8b1f580718ce36f49e1b972db80cadbef6edd561e2be9077b440debf"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "4d0ce0dab3505d314d99e9f6755b97c14205c316fa86d7d968f7b9ea333c6423",
+      "path": "research/kv_translate/published/kv_lingo_retained.py",
+      "public_sha256": "55bff36abd747b5111b969f9086db310a688656a6cba3fd3f78d7982a666142b"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "1354b2c8199508615e75d3b1be3fd8ae1e7597e8b2927739a476619da9fb4e86",
+      "path": "research/kv_translate/published/kv_lingo_train.py",
+      "public_sha256": "1354b2c8199508615e75d3b1be3fd8ae1e7597e8b2927739a476619da9fb4e86"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "432cec4a495f8327fd5c9f3423403d77e48bbc1a85c49e114a7ef70168585485",
+      "path": "research/kv_translate/published/make_kv_lingo_resume_contract.py",
+      "public_sha256": "432cec4a495f8327fd5c9f3423403d77e48bbc1a85c49e114a7ef70168585485"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "dfd03afc4a3ee960877aecd21e434bac4e0ee13f30f335441cf56ba70b3aab16",
+      "path": "research/kv_translate/published/methods.py",
+      "public_sha256": "dfd03afc4a3ee960877aecd21e434bac4e0ee13f30f335441cf56ba70b3aab16"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "7262b7ae5538e83269c25218aad7bfcb9205d5f8bc1eecdbb8003699387c6a23",
+      "path": "research/kv_translate/published/paired.py",
+      "public_sha256": "7262b7ae5538e83269c25218aad7bfcb9205d5f8bc1eecdbb8003699387c6a23"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "45c7f202e7b187ece85a2c9e1fdd9df33ebd3b698b4972bfe2d939523cdbb5d3",
+      "path": "research/kv_translate/published/parity.py",
+      "public_sha256": "45c7f202e7b187ece85a2c9e1fdd9df33ebd3b698b4972bfe2d939523cdbb5d3"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "9e79c344e5c348f2b9192c90ecb4853aa1e3d27279019f424cb769f8a493ad74",
+      "path": "research/kv_translate/published/ridge.py",
+      "public_sha256": "9e79c344e5c348f2b9192c90ecb4853aa1e3d27279019f424cb769f8a493ad74"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "14edb4d4649eee36c8a53fe4d376a5ab82c6e327f0091654f53bec8f8bb9b966",
+      "path": "research/kv_translate/published/run_pair.py",
+      "public_sha256": "14edb4d4649eee36c8a53fe4d376a5ab82c6e327f0091654f53bec8f8bb9b966"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "fbccf9a588dd0155342f206380b625d4502415b98a9df521fca9a427222f2ef7",
+      "path": "research/kv_translate/published/scoring.py",
+      "public_sha256": "fbccf9a588dd0155342f206380b625d4502415b98a9df521fca9a427222f2ef7"
+    },
+    {
+      "byte_identical": false,
+      "executed_sha256": "7e391a8684d98db62b0a64d92749369171e6574dea206835c14f79702fbbb166",
+      "path": "research/kv_translate/published/select_kv_lingo_checkpoint_pair.py",
+      "public_sha256": "4290e2894c4ed88bd370d8375eca3fd5ed2edf29663848d3f618b67bd49a5df2"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "a9f33c27948a11adfd99990a75861f3dd16ea50c527d611bfbbfe28996eb0275",
+      "path": "research/kv_translate/published/support.py",
+      "public_sha256": "a9f33c27948a11adfd99990a75861f3dd16ea50c527d611bfbbfe28996eb0275"
+    },
+    {
+      "byte_identical": true,
+      "executed_sha256": "711e9473dbfd62a317ef5e0f1d079eb51d72eca4184954b49c28227fd478b3ed",
+      "path": "research/kv_translate/published/torch_ops.py",
+      "public_sha256": "711e9473dbfd62a317ef5e0f1d079eb51d72eca4184954b49c28227fd478b3ed"
+    }
+  ],
+  "not_released": [
+    "trained translator checkpoints",
+    "raw conversation text",
+    "raw model outputs",
+    "full frozen token stream"
+  ],
+  "packaging_changes": [
+    "Renamed opaque four-grid labels to forward/reverse training-step names.",
+    "Replaced a host-specific audit root with a required command-line path.",
+    "Removed private resource reconciliation and provider launch wrappers.",
+    "Applied Black and lint-only local-name and unused-import fixes.",
+    "Added a CPU-tested terminal-state receipt wrapper and public aggregate verifier."
+  ],
+  "public_source_commit": "8bb7f320e8c14c4654509d530e3709db24dd6a25",
+  "schema": "kv_lingo_public_source_manifest_v1",
+  "scientific_contract": "No translator math, dtype, retained-cache ownership rule, scorer, or acceptance threshold was changed during packaging."
+}

@@ -1,0 +1,1139 @@
+{
+  "schema": "knlp_kv_lingo_closeout_aggregate_v1",
+  "scope": "Final single-provider development grid; independent implementation, not exact paper reproduction.",
+  "paper": "https://arxiv.org/abs/2609.32610",
+  "models": [
+    "Qwen/Qwen3-4B",
+    "Qwen/Qwen3-8B"
+  ],
+  "protocol": "Fixed alternation; retain a cache line per model and translate only missing spans.",
+  "dataset": "CoQA",
+  "development_conversations": 32,
+  "conversations_per_domain": {
+    "cnn": 6,
+    "gutenberg": 7,
+    "mctest": 7,
+    "race": 6,
+    "wikipedia": 6
+  },
+  "turns_per_conversation": 10,
+  "training_seeds": 1,
+  "decoding": "Greedy, reasoning off",
+  "confirmation_run": false,
+  "units": "F1 scores and deficits use the 0-to-100 scale; unhealthy-rate differences use percentage points.",
+  "deficit_sign": "Reference minus translated; positive means the translated treatment is worse.",
+  "overall_aggregation": "Equal weight for each of the five domains; late-turn gate is a pooled mean.",
+  "acceptance": {
+    "overall_deficit_f1_points_max": 3,
+    "each_domain_deficit_f1_points_max": 5,
+    "pooled_turn6_10_deficit_f1_points_max": 5,
+    "unhealthy_rate_excess_percentage_points_max": 2,
+    "requirement": "All gates for both starts and both references; decisions use point estimates, not bootstrap bounds."
+  },
+  "references": {
+    "same_transcript_native": "Native receiver re-prefill on the translated run's exact history.",
+    "alternating_native_trajectory": "Independently evolving native alternation under the same starting schedule."
+  },
+  "uncertainty": "Intervals are descriptive conversation bootstraps within domains on an exposed development cohort. They do not correct for selection or provide independent confirmation.",
+  "audit_scope": "Scalar metrics and all 16 gates independently reaggregated from archived per-row scores; no gold-answer rescore or GPU rerun in the publication audit. Bootstrap intervals are from the archived summaries.",
+  "reproduction_limit": "This aggregate supports figure and gate reproduction. Full model reproduction additionally requires source, environment, data construction and trained translator artifacts.",
+  "pairs": [
+    {
+      "forward_4b_to_8b_training_steps": 1000,
+      "reverse_8b_to_4b_training_steps": 1000,
+      "passes_all_start_reference_comparisons": false,
+      "absolute_unhealthy_rows_all_starts": {
+        "alternating_native": 0,
+        "same_transcript_native": 0,
+        "translated": 0
+      },
+      "comparisons": [
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 53.65375049390866,
+          "equal_domain_reference_f1_points": 57.33444171576194,
+          "equal_domain_deficit_f1_points": 3.680691221853283,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              1.3704029136687381,
+              5.8482689402315335
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "race",
+          "worst_domain_deficit_f1_points": 5.7234742381801045,
+          "pooled_turn6_10_deficit_f1_points": 1.3574018901485583,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 14.322480011818248,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 52.90437411082435,
+              "reference_f1_points": 54.053469273467,
+              "deficit_f1_points": 1.1490951626426549
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 52.34175344106694,
+              "reference_f1_points": 56.9323841136525,
+              "deficit_f1_points": 4.590630672585561
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 52.03827491308143,
+              "reference_f1_points": 56.131460331648306,
+              "deficit_f1_points": 4.093185418566881
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.041808613499796,
+              "reference_f1_points": 67.7652828516799,
+              "deficit_f1_points": 5.7234742381801045
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 48.94254139107079,
+              "reference_f1_points": 51.789612008362006,
+              "deficit_f1_points": 2.847070617291214
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 53.65375049390866,
+          "equal_domain_reference_f1_points": 59.25169226623973,
+          "equal_domain_deficit_f1_points": 5.5979417723310725,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              2.4729796118961884,
+              8.752131846847117
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "gutenberg",
+          "worst_domain_deficit_f1_points": 7.22090784599726,
+          "pooled_turn6_10_deficit_f1_points": 3.483674931251257,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 14.322480011818248,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 52.90437411082435,
+              "reference_f1_points": 55.58009965558741,
+              "deficit_f1_points": 2.6757255447630635
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 52.34175344106694,
+              "reference_f1_points": 59.5626612870642,
+              "deficit_f1_points": 7.22090784599726
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 52.03827491308143,
+              "reference_f1_points": 56.77356968428398,
+              "deficit_f1_points": 4.735294771202547
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.041808613499796,
+              "reference_f1_points": 68.19049414637651,
+              "deficit_f1_points": 6.148685532876719
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 48.94254139107079,
+              "reference_f1_points": 56.15163655788656,
+              "deficit_f1_points": 7.2090951668157714
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 66.43111451526457,
+          "equal_domain_reference_f1_points": 66.0548522941442,
+          "equal_domain_deficit_f1_points": -0.37626222112036256,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -2.594324896359932,
+              1.8191719054299442
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "gutenberg",
+          "worst_domain_deficit_f1_points": 3.327158004977082,
+          "pooled_turn6_10_deficit_f1_points": -0.957498876220062,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -4.722841066540359,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 55.60952943643872,
+              "reference_f1_points": 57.09403950018685,
+              "deficit_f1_points": 1.4845100637481345
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 60.534470188196885,
+              "reference_f1_points": 63.86162819317397,
+              "deficit_f1_points": 3.327158004977082
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 68.08985100577172,
+              "reference_f1_points": 65.48029042312544,
+              "deficit_f1_points": -2.6095605826462753
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 71.05609220528575,
+              "reference_f1_points": 68.87047311802215,
+              "deficit_f1_points": -2.1856190872636017
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 76.86562974062974,
+              "reference_f1_points": 74.96783023621259,
+              "deficit_f1_points": -1.8977995044171525
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 66.43111451526457,
+          "equal_domain_reference_f1_points": 65.7405800192566,
+          "equal_domain_deficit_f1_points": -0.6905344960079551,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -4.044358657787544,
+              2.626622229335781
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "cnn",
+          "worst_domain_deficit_f1_points": 2.794929436223681,
+          "pooled_turn6_10_deficit_f1_points": -0.28278228886855206,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -4.722841066540359,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 55.60952943643872,
+              "reference_f1_points": 58.4044588726624,
+              "deficit_f1_points": 2.794929436223681
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 60.534470188196885,
+              "reference_f1_points": 60.63932663299647,
+              "deficit_f1_points": 0.10485644479958367
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 68.08985100577172,
+              "reference_f1_points": 66.10289258097077,
+              "deficit_f1_points": -1.9869584248009442
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 71.05609220528575,
+              "reference_f1_points": 72.19719269474172,
+              "deficit_f1_points": 1.1411004894559706
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 76.86562974062974,
+              "reference_f1_points": 71.35902931491167,
+              "deficit_f1_points": -5.506600425718067
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "forward_4b_to_8b_training_steps": 1000,
+      "reverse_8b_to_4b_training_steps": 5000,
+      "passes_all_start_reference_comparisons": false,
+      "absolute_unhealthy_rows_all_starts": {
+        "alternating_native": 0,
+        "same_transcript_native": 0,
+        "translated": 0
+      },
+      "comparisons": [
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 54.680979484163416,
+          "equal_domain_reference_f1_points": 58.31892748391171,
+          "equal_domain_deficit_f1_points": 3.6379479997482993,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              1.6924466821713156,
+              5.593517472418945
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "race",
+          "worst_domain_deficit_f1_points": 5.7234742381801045,
+          "pooled_turn6_10_deficit_f1_points": 2.1533829843252787,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 14.322480011818248,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 54.11166534828199,
+              "reference_f1_points": 53.70085767846115,
+              "deficit_f1_points": -0.41080766982084516
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 54.951201136228924,
+              "reference_f1_points": 59.472066653335034,
+              "deficit_f1_points": 4.52086551710611
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 53.74745806493374,
+              "reference_f1_points": 57.9561039420062,
+              "deficit_f1_points": 4.208645877072459
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.041808613499796,
+              "reference_f1_points": 67.7652828516799,
+              "deficit_f1_points": 5.7234742381801045
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 48.55276425787262,
+              "reference_f1_points": 52.700326294076284,
+              "deficit_f1_points": 4.1475620362036665
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 54.680979484163416,
+          "equal_domain_reference_f1_points": 59.25169226623973,
+          "equal_domain_deficit_f1_points": 4.5707127820763205,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              1.649819434548906,
+              7.542792533340098
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "wikipedia",
+          "worst_domain_deficit_f1_points": 7.598872300013948,
+          "pooled_turn6_10_deficit_f1_points": 2.1537276251066793,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 14.322480011818248,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 54.11166534828199,
+              "reference_f1_points": 55.58009965558741,
+              "deficit_f1_points": 1.4684343073054218
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 54.951201136228924,
+              "reference_f1_points": 59.5626612870642,
+              "deficit_f1_points": 4.611460150835278
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 53.74745806493374,
+              "reference_f1_points": 56.77356968428398,
+              "deficit_f1_points": 3.0261116193502358
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.041808613499796,
+              "reference_f1_points": 68.19049414637651,
+              "deficit_f1_points": 6.148685532876719
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 48.55276425787262,
+              "reference_f1_points": 56.15163655788656,
+              "deficit_f1_points": 7.598872300013948
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 63.521824844640605,
+          "equal_domain_reference_f1_points": 62.907354768386035,
+          "equal_domain_deficit_f1_points": -0.614470076254563,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -2.7690607056351753,
+              1.6549432483688942
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "cnn",
+          "worst_domain_deficit_f1_points": 3.277826517059712,
+          "pooled_turn6_10_deficit_f1_points": -2.213771705708526,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -2.1476274401021738,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 51.325981435847204,
+              "reference_f1_points": 54.60380795290691,
+              "deficit_f1_points": 3.277826517059712
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 59.21346474025646,
+              "reference_f1_points": 59.92459883597654,
+              "deficit_f1_points": 0.7111340957200785
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 67.74265359952538,
+              "reference_f1_points": 65.43719471594306,
+              "deficit_f1_points": -2.305458883582323
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 65.97085308482367,
+              "reference_f1_points": 63.18453636958539,
+              "deficit_f1_points": -2.7863167152382906
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 73.35617136275032,
+              "reference_f1_points": 71.38663596751832,
+              "deficit_f1_points": -1.9695353952319916
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 63.521824844640605,
+          "equal_domain_reference_f1_points": 65.7405800192566,
+          "equal_domain_deficit_f1_points": 2.2187551746160006,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -1.61923610150351,
+              6.497054743377239
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "cnn",
+          "worst_domain_deficit_f1_points": 7.0784774368152,
+          "pooled_turn6_10_deficit_f1_points": 2.380233773248978,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -2.1476274401021738,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 51.325981435847204,
+              "reference_f1_points": 58.4044588726624,
+              "deficit_f1_points": 7.0784774368152
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 59.21346474025646,
+              "reference_f1_points": 60.63932663299647,
+              "deficit_f1_points": 1.4258618927400102
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 67.74265359952538,
+              "reference_f1_points": 66.10289258097077,
+              "deficit_f1_points": -1.6397610185546085
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 65.97085308482367,
+              "reference_f1_points": 72.19719269474172,
+              "deficit_f1_points": 6.226339609918041
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 73.35617136275032,
+              "reference_f1_points": 71.35902931491167,
+              "deficit_f1_points": -1.9971420478386404
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        }
+      ]
+    },
+    {
+      "forward_4b_to_8b_training_steps": 5000,
+      "reverse_8b_to_4b_training_steps": 1000,
+      "passes_all_start_reference_comparisons": false,
+      "absolute_unhealthy_rows_all_starts": {
+        "alternating_native": 0,
+        "same_transcript_native": 0,
+        "translated": 0
+      },
+      "comparisons": [
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 54.8385061070305,
+          "equal_domain_reference_f1_points": 57.996080638271394,
+          "equal_domain_deficit_f1_points": 3.157574531240912,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              0.9133504213397295,
+              5.469075630625525
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "wikipedia",
+          "worst_domain_deficit_f1_points": 6.229886326008782,
+          "pooled_turn6_10_deficit_f1_points": 2.4444735974520007,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 8.097543119621923,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 53.76552908169041,
+              "reference_f1_points": 54.361952438611475,
+              "deficit_f1_points": 0.5964233569210609
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 60.11169732157583,
+              "reference_f1_points": 60.54544722013665,
+              "deficit_f1_points": 0.43374989856082014
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 52.77614544775092,
+              "reference_f1_points": 55.796111157013414,
+              "deficit_f1_points": 3.0199657092624954
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 63.74747100666218,
+              "reference_f1_points": 69.25531837211358,
+              "deficit_f1_points": 5.5078473654514015
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 43.791687677473114,
+              "reference_f1_points": 50.021574003481895,
+              "deficit_f1_points": 6.229886326008782
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 54.8385061070305,
+          "equal_domain_reference_f1_points": 59.25169226623973,
+          "equal_domain_deficit_f1_points": 4.413186159209241,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              1.5418832608611523,
+              7.441173211827554
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "wikipedia",
+          "worst_domain_deficit_f1_points": 12.359948880413452,
+          "pooled_turn6_10_deficit_f1_points": 3.952127205523944,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 8.097543119621923,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 53.76552908169041,
+              "reference_f1_points": 55.58009965558741,
+              "deficit_f1_points": 1.8145705738970008
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 60.11169732157583,
+              "reference_f1_points": 59.5626612870642,
+              "deficit_f1_points": -0.5490360345116296
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 52.77614544775092,
+              "reference_f1_points": 56.77356968428398,
+              "deficit_f1_points": 3.9974242365330537
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 63.74747100666218,
+              "reference_f1_points": 68.19049414637651,
+              "deficit_f1_points": 4.443023139714331
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 43.791687677473114,
+              "reference_f1_points": 56.15163655788656,
+              "deficit_f1_points": 12.359948880413452
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 67.3871228787441,
+          "equal_domain_reference_f1_points": 66.46496296420189,
+          "equal_domain_deficit_f1_points": -0.9221599145421866,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -2.692578972814415,
+              0.7240893532550056
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "gutenberg",
+          "worst_domain_deficit_f1_points": 1.4731484422992436,
+          "pooled_turn6_10_deficit_f1_points": -2.3922368079056606,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -4.740506136498776,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 56.62267120945368,
+              "reference_f1_points": 57.9340173891535,
+              "deficit_f1_points": 1.3113461796998238
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 62.83003819243316,
+              "reference_f1_points": 64.3031866347324,
+              "deficit_f1_points": 1.4731484422992436
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 68.59199035091892,
+              "reference_f1_points": 65.16940817548955,
+              "deficit_f1_points": -3.4225821754293673
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 68.89697802197801,
+              "reference_f1_points": 69.9915048640539,
+              "deficit_f1_points": 1.0945268420758825
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 79.99393661893663,
+              "reference_f1_points": 74.9266977575801,
+              "deficit_f1_points": -5.067238861356516
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 67.3871228787441,
+          "equal_domain_reference_f1_points": 65.7405800192566,
+          "equal_domain_deficit_f1_points": -1.646542859487472,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -4.570754704331381,
+              1.2618421372356854
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "race",
+          "worst_domain_deficit_f1_points": 3.3002146727637016,
+          "pooled_turn6_10_deficit_f1_points": -2.286187647762642,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -4.740506136498776,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 56.62267120945368,
+              "reference_f1_points": 58.4044588726624,
+              "deficit_f1_points": 1.7817876632087226
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 62.83003819243316,
+              "reference_f1_points": 60.63932663299647,
+              "deficit_f1_points": -2.1907115594366866
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 68.59199035091892,
+              "reference_f1_points": 66.10289258097077,
+              "deficit_f1_points": -2.4890977699481454
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 68.89697802197801,
+              "reference_f1_points": 72.19719269474172,
+              "deficit_f1_points": 3.3002146727637016
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 79.99393661893663,
+              "reference_f1_points": 71.35902931491167,
+              "deficit_f1_points": -8.634907304024953
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        }
+      ]
+    },
+    {
+      "forward_4b_to_8b_training_steps": 5000,
+      "reverse_8b_to_4b_training_steps": 5000,
+      "passes_all_start_reference_comparisons": false,
+      "absolute_unhealthy_rows_all_starts": {
+        "alternating_native": 0,
+        "same_transcript_native": 0,
+        "translated": 0
+      },
+      "comparisons": [
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 55.978630123989014,
+          "equal_domain_reference_f1_points": 57.89620225751829,
+          "equal_domain_deficit_f1_points": 1.9175721335292728,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -0.8421823488657746,
+              4.6881044325273695
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "race",
+          "worst_domain_deficit_f1_points": 6.553582141155745,
+          "pooled_turn6_10_deficit_f1_points": 0.16545516391170903,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 8.152354137408485,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 53.92011151616416,
+              "reference_f1_points": 54.278619105278146,
+              "deficit_f1_points": 0.3585075891139877
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 62.133163023547944,
+              "reference_f1_points": 60.54544722013665,
+              "deficit_f1_points": -1.5877158034112937
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 54.949630152637674,
+              "reference_f1_points": 56.65033274995681,
+              "deficit_f1_points": 1.700702597319137
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.18009720399426,
+              "reference_f1_points": 68.73367934515,
+              "deficit_f1_points": 6.553582141155745
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 46.71014872360107,
+              "reference_f1_points": 49.272932867069855,
+              "deficit_f1_points": 2.562784143468788
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-4B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 55.978630123989014,
+          "equal_domain_reference_f1_points": 59.25169226623973,
+          "equal_domain_deficit_f1_points": 3.273062142250712,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -0.5972187722974307,
+              7.206436489563715
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "wikipedia",
+          "worst_domain_deficit_f1_points": 9.441487834285494,
+          "pooled_turn6_10_deficit_f1_points": 1.6594224418923231,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": 8.152354137408485,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 53.92011151616416,
+              "reference_f1_points": 55.58009965558741,
+              "deficit_f1_points": 1.6599881394232519
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 62.133163023547944,
+              "reference_f1_points": 59.5626612870642,
+              "deficit_f1_points": -2.5705017364837435
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 54.949630152637674,
+              "reference_f1_points": 56.77356968428398,
+              "deficit_f1_points": 1.8239395316463014
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 62.18009720399426,
+              "reference_f1_points": 68.19049414637651,
+              "deficit_f1_points": 6.010396942382257
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 46.71014872360107,
+              "reference_f1_points": 56.15163655788656,
+              "deficit_f1_points": 9.441487834285494
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": false,
+            "each_domain_deficit_at_most_5pp": false,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [
+            "overall_deficit_at_most_3pp",
+            "each_domain_deficit_at_most_5pp"
+          ],
+          "passed": false
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "same_transcript_native",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 64.04376755441106,
+          "equal_domain_reference_f1_points": 63.72572261055419,
+          "equal_domain_deficit_f1_points": -0.31804494385687665,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -2.1272041512365627,
+              1.4253009797816218
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "gutenberg",
+          "worst_domain_deficit_f1_points": 2.662201050828872,
+          "pooled_turn6_10_deficit_f1_points": -1.5789286391807427,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -2.1476274401021738,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 54.02438931522714,
+              "reference_f1_points": 55.49077619049434,
+              "deficit_f1_points": 1.4663868752672005
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 59.19199310812535,
+              "reference_f1_points": 61.85419415895422,
+              "deficit_f1_points": 2.662201050828872
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 66.51568431291223,
+              "reference_f1_points": 65.43719471594306,
+              "deficit_f1_points": -1.0784895969691677
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 67.84579472814767,
+              "reference_f1_points": 66.27736946241848,
+              "deficit_f1_points": -1.5684252657291897
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 72.64097630764297,
+              "reference_f1_points": 69.56907852496087,
+              "deficit_f1_points": -3.071897782682098
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        },
+        {
+          "starting_model": "Qwen3-8B",
+          "reference": "alternating_native_trajectory",
+          "rows": 320,
+          "equal_domain_treatment_f1_points": 64.04376755441106,
+          "equal_domain_reference_f1_points": 65.7405800192566,
+          "equal_domain_deficit_f1_points": 1.6968124648455363,
+          "descriptive_bootstrap": {
+            "deficit_interval_95_f1_points": [
+              -1.679841193204646,
+              5.631757917995504
+            ],
+            "cluster": "complete conversations resampled within domain",
+            "estimand": "equal-domain mean deficit",
+            "draws": 10000,
+            "seed": 20261002
+          },
+          "worst_domain": "cnn",
+          "worst_domain_deficit_f1_points": 4.380069557435262,
+          "pooled_turn6_10_deficit_f1_points": 2.136823142311086,
+          "unhealthy_rate_excess_percentage_points": 0.0,
+          "turn2_diagnostic_pooled_deficit_f1_points": -2.1476274401021738,
+          "turn2_diagnostic_rows": 32,
+          "domains": {
+            "cnn": {
+              "rows": 60,
+              "treatment_f1_points": 54.02438931522714,
+              "reference_f1_points": 58.4044588726624,
+              "deficit_f1_points": 4.380069557435262
+            },
+            "gutenberg": {
+              "rows": 70,
+              "treatment_f1_points": 59.19199310812535,
+              "reference_f1_points": 60.63932663299647,
+              "deficit_f1_points": 1.4473335248711194
+            },
+            "mctest": {
+              "rows": 70,
+              "treatment_f1_points": 66.51568431291223,
+              "reference_f1_points": 66.10289258097077,
+              "deficit_f1_points": -0.41279173194145313
+            },
+            "race": {
+              "rows": 60,
+              "treatment_f1_points": 67.84579472814767,
+              "reference_f1_points": 72.19719269474172,
+              "deficit_f1_points": 4.3513979665940505
+            },
+            "wikipedia": {
+              "rows": 60,
+              "treatment_f1_points": 72.64097630764297,
+              "reference_f1_points": 71.35902931491167,
+              "deficit_f1_points": -1.2819469927312976
+            }
+          },
+          "gates": {
+            "overall_deficit_at_most_3pp": true,
+            "each_domain_deficit_at_most_5pp": true,
+            "turn6_10_deficit_at_most_5pp": true,
+            "unhealthy_excess_at_most_2pp": true
+          },
+          "failed_gates": [],
+          "passed": true
+        }
+      ]
+    }
+  ]
+}
