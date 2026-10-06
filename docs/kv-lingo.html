@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KV-Lingo: cache sharing results and current limits</title>
+<meta name="description" content="An independent Qwen3-4B/8B KV-Lingo study: all four checkpoint pairs fail the full either-model-first rule, while an 8B-first schedule remains an unconfirmed development observation.">
+<link rel="canonical" href="https://knlp.io/kv-lingo.html">
+<style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}a:focus-visible{outline:2px solid var(--cyan);outline-offset:3px;border-radius:3px}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(240,182,92,.46);border-left:4px solid var(--amber);border-radius:10px;background:linear-gradient(110deg,rgba(240,182,92,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--amber);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:970px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.ownership{display:grid;gap:12px}.lane{display:grid;grid-template-columns:80px 1fr;gap:12px;align-items:center}.lane-label{font:700 12px var(--mono);color:var(--text)}.segments{display:flex;min-height:48px;border:1px solid var(--line);border-radius:7px;overflow:hidden}.segment{display:grid;place-items:center;padding:8px;text-align:center;font:700 10px/1.25 var(--mono);letter-spacing:.03em}.native4{background:rgba(98,220,229,.18);color:var(--cyan)}.native8{background:rgba(174,148,255,.18);color:var(--violet)}.translated{background:repeating-linear-gradient(135deg,rgba(240,182,92,.2),rgba(240,182,92,.2) 7px,rgba(240,182,92,.08) 7px,rgba(240,182,92,.08) 14px);color:var(--amber)}
+.legend{display:flex;gap:15px;flex-wrap:wrap;margin-top:13px;color:var(--muted);font:12px var(--mono)}.swatch{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-2px}
+.criteria{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.criterion{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px}.criterion b{display:block;color:var(--green);font:700 13px var(--mono)}.criterion span{display:block;color:var(--muted);margin-top:7px}
+.reference{margin-top:22px;padding:22px;background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:12px}.reference h3{margin:0 0 4px}.reference>p{margin:0 0 20px;color:var(--muted)}
+.charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.plot{margin:0;background:rgba(7,11,9,.55);border:1px solid var(--line);border-radius:9px;padding:17px;overflow:hidden}.plot h4{margin:0 0 4px;font-size:15px}.plot-caption{margin:0 0 13px;color:var(--dim);font-size:12px}.plot-row{display:grid;grid-template-columns:120px minmax(150px,1fr) 178px;gap:9px;align-items:center;margin:8px 0}.row-label{font:700 10px var(--mono);color:var(--muted)}.track{height:13px;position:relative;background:#0a100d;border:1px solid var(--line);border-radius:3px}.zero-line,.limit-line{position:absolute;top:-4px;bottom:-4px;width:1px}.zero-line{left:12.5%;background:var(--dim)}.limit-line.overall{left:31.25%;background:var(--amber)}.limit-line.domain{left:43.75%;background:var(--amber)}.bar{position:absolute;top:2px;height:7px;min-width:2px;border-radius:2px}.bar.pass{background:var(--green)}.bar.fail{background:var(--red)}.plot-value{font:700 10px/1.3 var(--mono);text-align:right}.plot-value.pass{color:var(--green)}.plot-value.fail{color:var(--red)}.axis{display:grid;grid-template-columns:120px minmax(150px,1fr) 178px;gap:9px;color:var(--dim);font:9px var(--mono)}.ticks{position:relative;height:14px}.ticks span{position:absolute;transform:translateX(-50%)}.ticks .min{left:0;transform:none}.ticks .zero{left:12.5%}.ticks .three{left:31.25%;color:var(--amber)}.ticks .five{left:43.75%;color:var(--amber)}.ticks .max{right:0;transform:none}
+.fine{font-size:12px;color:var(--dim)}.links{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.links a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.links a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.links b{display:block;color:var(--text);margin-bottom:5px}.links span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:1000px){.grid4,.criteria{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}.plot-row,.axis{grid-template-columns:110px minmax(120px,1fr) 165px}}
+@media(max-width:700px){main{padding:48px 17px 70px}.grid2,.grid4,.criteria,.flow,.links{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}.reference{padding:14px}.plot{padding:13px;overflow-x:auto}.plot-row,.axis{min-width:580px}.lane{grid-template-columns:64px 1fr}.segment{font-size:9px}}
+</style>
+</head>
+<body>
+<header><nav aria-label="Page sections">
+<a class="logo" href="./">KNLP</a><span class="spacer"></span>
+<a href="#decision">decision</a><a href="#method">method</a><a href="#protocol">protocol</a><a href="#results">results</a><a href="#limits">limits</a><a href="#reproduce">reproduce</a>
+</nav></header>
+<main>
+<div class="hero" id="decision">
+<div class="eyebrow">KV-Lingo · independent reproduction · October 2026</div>
+<h1>Cache translation works selectively.<br>The full sharing rule does not.</h1>
+<p class="lead"><strong>Our tested Qwen3-4B and Qwen3-8B KV-Lingo implementation did not meet the predefined quality limits for a service in which either model can start.</strong> We retain the implementation and evaluation tools as experimental research code.</p>
+<p class="lead">A restricted protocol that always starts with 8B passed both native references for three of four checkpoint pairs on the exposed development set. It has not received independent confirmation and is not a deployment result.</p>
+<div class="decision"><b>Closeout decision</b><span>All four saved checkpoint pairs fail the complete acceptance rule. Checkpoint exploration is closed. Arbitrary either-model-first sharing is unqualified for this model pair and recipe.</span></div>
+<div class="badges"><span class="badge amber">32 DEVELOPMENT CONVERSATIONS</span><span class="badge cyan">10 TURNS</span><span class="badge amber">ONE TRAINING SEED</span><span class="badge amber">CONFIRMATION NOT RUN</span></div>
+</div>
+
+<section aria-labelledby="headline-results">
+<h2 id="headline-results">The complete grid, in four facts</h2>
+<p class="sub">The qualification rule is conjunctive. A checkpoint pair succeeds only when both starting schedules pass against both native references.</p>
+<div class="grid4">
+<div class="card"><div class="kicker">4B starts</div><div class="metric bad">8 / 8 fail</div><p>Every comparison that begins with Qwen3-4B fails at least one quality gate.</p></div>
+<div class="card"><div class="kicker">8B starts</div><div class="metric warn">3 / 4 pairs</div><p>Three checkpoint pairs pass both references when Qwen3-8B owns the first turn.</p></div>
+<div class="card"><div class="kicker">Late turn and health</div><div class="metric good">16 / 16 pass</div><p>Every turns-6-to-10 gate passes. The treatment and controls contain zero unhealthy rows.</p></div>
+<div class="card"><div class="kicker">Full rule</div><div class="metric bad">0 / 4 pairs</div><p>No forward/reverse checkpoint pair passes both starts and both references.</p></div>
+</div>
+</section>
+
+<section id="method">
+<h2>What the translator does</h2>
+<p class="sub">A receiver uses translated cache segments instead of recomputing the whole conversation prefix after a model switch. This study tests output quality. It does not establish an end-to-end latency, cost, or memory saving.</p>
+<div class="flow">
+<div><b>1 · Capture</b><span>Collect source keys before key normalization and collect projected values at corresponding layers.</span></div>
+<div><b>2 · Initialize</b><span>Fit separate token-wise linear key and value maps with closed-form FP64 sufficient statistics.</span></div>
+<div><b>3 · Distill</b><span>Freeze both language models and train the maps against native receiver output distributions.</span></div>
+<div><b>4 · Install</b><span>Apply receiver key normalization and RoPE, then append only spans missing from the receiver's cache line.</span></div>
+</div>
+<div class="card" style="margin-top:20px">
+<div class="kicker">Retained ownership protocol</div>
+<h3>Two model-specific cache lines, not one universal cache</h3>
+<div class="ownership" role="img" aria-label="Two retained cache lines. Each line keeps native spans from its own model and receives translated copies only for spans written by the other model.">
+<div class="lane"><span class="lane-label">4B line</span><div class="segments"><span class="segment native4" style="flex:3">4B native</span><span class="segment translated" style="flex:2">8B span translated once</span><span class="segment native4" style="flex:2">4B native</span></div></div>
+<div class="lane"><span class="lane-label">8B line</span><div class="segments"><span class="segment translated" style="flex:3">4B span translated once</span><span class="segment native8" style="flex:2">8B native</span><span class="segment translated" style="flex:2">4B span translated once</span></div></div>
+</div>
+<div class="legend"><span><i class="swatch native4"></i>4B-native segment</span><span><i class="swatch native8"></i>8B-native segment</span><span><i class="swatch translated"></i>translated segment</span></div>
+<p class="fine">Each line retains its earlier segments. A model translates only the missing spans when it catches up. The protocol does not repeatedly translate the entire accumulated prefix.</p>
+</div>
+<p class="note"><strong>Relation to the paper.</strong> <a href="https://arxiv.org/abs/2609.32610">KV-Lingo</a> motivates cross-model cache translation. This is an independent implementation with a different data construction, an added native-trajectory reference, one seed, and stricter per-domain qualification. It is not an exact reproduction and does not disprove the paper.</p>
+</section>
+
+<section id="protocol">
+<h2>Experiment and acceptance rule</h2>
+<p class="sub">The final comparison uses one provider-local grid because a provider migration changed outputs. Historical and final-provider rows are not mixed.</p>
+<div class="grid2">
+<div class="card"><div class="kicker">Evaluation</div><h3>Qwen3-4B ↔ Qwen3-8B</h3><p>Five CoQA domains, 32 conversations, ten turns, both starting models, greedy decoding, reasoning off, and one training seed. The cohort is exposed development data.</p></div>
+<div class="card"><div class="kicker">Four map pairs</div><h3>1,000 or 5,000 updates per direction</h3><p>Every combination of forward 4B→8B and reverse 8B→4B translators is evaluated. Update count changes the translator, not either language model's size.</p></div>
+<div class="card"><div class="kicker">Reference A</div><h3>Same-transcript native re-prefill</h3><p>The receiving model computes native KV over the exact history generated by the translated arm. This isolates the incoming cache representation on a matched transcript.</p></div>
+<div class="card"><div class="kicker">Reference B</div><h3>Independent native alternation</h3><p>The same models alternate turns, but each receiver natively re-prefills its independently evolving history. Neither reference is an always-8B service.</p></div>
+</div>
+<div class="criteria" style="margin-top:20px">
+<div class="criterion"><b>≤ 3 F1 points</b><span>Equal-domain mean deficit overall.</span></div>
+<div class="criterion"><b>≤ 5 F1 points</b><span>Deficit in every individual domain.</span></div>
+<div class="criterion"><b>≤ 5 F1 points</b><span>Pooled deficit on turns 6 through 10.</span></div>
+<div class="criterion"><b>≤ 2 points</b><span>Unhealthy-output rate excess.</span></div>
+</div>
+<p class="fine" style="margin-top:12px">Positive deficit means translated-cache output scored worse than the reference. Every starting schedule and both references must pass all four gates. Bootstrap intervals are descriptive; point estimates decide the gate.</p>
+</section>
+
+<section id="results">
+<h2>All 16 comparisons</h2>
+<p class="sub">Each reference panel contains all four forward/reverse training-step pairs and both starting models. Bars share a −2 to 14 F1-point scale. The text labels carry the decision, so pass and fail do not depend on color.</p>
+
+<article class="reference">
+<h3>Reference A · same-transcript native re-prefill</h3>
+<p>Native KV is recomputed on the translated arm's exact generated history.</p>
+<div class="charts">
+<figure class="plot" role="img" aria-label="Overall F1 deficit against same-transcript native re-prefill for eight conditions. The limit is three points.">
+<h4>Equal-domain overall deficit</h4><p class="plot-caption">Label: point estimate [descriptive 95% conversation-bootstrap interval] · full condition decision. O+D means overall and domain gates failed.</p>
+<div class="plot-row"><span class="row-label">F1k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:23.00%"></i></span><span class="plot-value fail">+3.68 [1.37, 5.85] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F1k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:10.15%;width:2.35%"></i></span><span class="plot-value pass">−0.38 [−2.59, 1.82] · PASS</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:22.74%"></i></span><span class="plot-value fail">+3.64 [1.69, 5.59] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:8.66%;width:3.84%"></i></span><span class="plot-value pass">−0.61 [−2.77, 1.65] · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:19.73%"></i></span><span class="plot-value fail">+3.16 [0.91, 5.47] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:6.74%;width:5.76%"></i></span><span class="plot-value pass">−0.92 [−2.69, 0.72] · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:11.98%"></i></span><span class="plot-value fail">+1.92 [−0.84, 4.69] · FAIL domain</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:10.51%;width:1.99%"></i></span><span class="plot-value pass">−0.32 [−2.13, 1.43] · PASS</span></div>
+<div class="axis"><span></span><span class="ticks"><span class="min">−2</span><span class="zero">0</span><span class="three">3 limit</span><span class="max">14</span></span><span></span></div>
+</figure>
+<figure class="plot" role="img" aria-label="Worst-domain F1 deficit against same-transcript native re-prefill for eight conditions. The limit is five points.">
+<h4>Worst-domain deficit</h4><p class="plot-caption">The named domain is the maximum deficit. The five-point line is independent of the overall mean.</p>
+<div class="plot-row"><span class="row-label">F1k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:35.77%"></i></span><span class="plot-value fail">5.72 · race · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F1k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:20.79%"></i></span><span class="plot-value pass">3.33 · gutenberg · PASS</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:35.77%"></i></span><span class="plot-value fail">5.72 · race · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:20.49%"></i></span><span class="plot-value pass">3.28 · cnn · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:38.94%"></i></span><span class="plot-value fail">6.23 · wikipedia · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:9.21%"></i></span><span class="plot-value pass">1.47 · gutenberg · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:40.96%"></i></span><span class="plot-value fail">6.55 · race · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:16.64%"></i></span><span class="plot-value pass">2.66 · gutenberg · PASS</span></div>
+<div class="axis"><span></span><span class="ticks"><span class="min">−2</span><span class="zero">0</span><span class="five">5 limit</span><span class="max">14</span></span><span></span></div>
+</figure>
+</div>
+</article>
+
+<article class="reference">
+<h3>Reference B · independent native alternation</h3>
+<p>Each native receiver re-prefills an independently evolving alternating history.</p>
+<div class="charts">
+<figure class="plot" role="img" aria-label="Overall F1 deficit against independent native alternation for eight conditions. The limit is three points.">
+<h4>Equal-domain overall deficit</h4><p class="plot-caption">Label: point estimate [descriptive 95% conversation-bootstrap interval] · full condition decision.</p>
+<div class="plot-row"><span class="row-label">F1k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:34.99%"></i></span><span class="plot-value fail">+5.60 [2.47, 8.75] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F1k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:8.18%;width:4.32%"></i></span><span class="plot-value pass">−0.69 [−4.04, 2.63] · PASS</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:28.57%"></i></span><span class="plot-value fail">+4.57 [1.65, 7.54] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:13.87%"></i></span><span class="plot-value fail">+2.22 [−1.62, 6.50] · FAIL domain</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:27.58%"></i></span><span class="plot-value fail">+4.41 [1.54, 7.44] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:2.21%;width:10.29%"></i></span><span class="plot-value pass">−1.65 [−4.57, 1.26] · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar fail" style="left:12.5%;width:20.46%"></i></span><span class="plot-value fail">+3.27 [−0.60, 7.21] · FAIL O+D</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line overall"></i><i class="bar pass" style="left:12.5%;width:10.61%"></i></span><span class="plot-value pass">+1.70 [−1.68, 5.63] · PASS</span></div>
+<div class="axis"><span></span><span class="ticks"><span class="min">−2</span><span class="zero">0</span><span class="three">3 limit</span><span class="max">14</span></span><span></span></div>
+</figure>
+<figure class="plot" role="img" aria-label="Worst-domain F1 deficit against independent native alternation for eight conditions. The limit is five points.">
+<h4>Worst-domain deficit</h4><p class="plot-caption">An overall value below three can still fail this five-point domain gate.</p>
+<div class="plot-row"><span class="row-label">F1k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:45.13%"></i></span><span class="plot-value fail">7.22 · gutenberg · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F1k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:17.47%"></i></span><span class="plot-value pass">2.79 · cnn · PASS</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:47.49%"></i></span><span class="plot-value fail">7.60 · wikipedia · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F1k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:44.24%"></i></span><span class="plot-value fail">7.08 · cnn · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:77.25%"></i></span><span class="plot-value fail">12.36 · wikipedia · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F5k/R1k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:20.63%"></i></span><span class="plot-value pass">3.30 · race · PASS</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 4B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar fail" style="left:12.5%;width:59.01%"></i></span><span class="plot-value fail">9.44 · wikipedia · FAIL</span></div>
+<div class="plot-row"><span class="row-label">F5k/R5k · 8B</span><span class="track"><i class="zero-line"></i><i class="limit-line domain"></i><i class="bar pass" style="left:12.5%;width:27.38%"></i></span><span class="plot-value pass">4.38 · cnn · PASS</span></div>
+<div class="axis"><span></span><span class="ticks"><span class="min">−2</span><span class="zero">0</span><span class="five">5 limit</span><span class="max">14</span></span><span></span></div>
+</figure>
+</div>
+</article>
+
+<p class="fine" style="margin-top:14px">F = 4B→8B translator training updates. R = 8B→4B translator training updates. Values are rounded labels; the linked JSON retains full precision. All late-turn deficits are within five points. All unhealthy-rate excess values are zero.</p>
+</section>
+
+<section id="diagnostics">
+<h2>The start-model asymmetry is real in this grid, not yet explained</h2>
+<div class="grid2">
+<div class="card rule warn"><strong>FIRST HANDOFF</strong><p>When 4B starts and 8B answers question 2, the mean deficit is 14.32 F1 points with the 1,000-update forward map. It falls to 8.10–8.15 points with the 5,000-update forward map. Each slice contains 32 questions per starting schedule. This is exploratory and does not establish a cause.</p></div>
+<div class="card rule warn"><strong>BEST DEVELOPMENT OBSERVATION</strong><p>With forward 5,000 and reverse 1,000, 8B-start translated conversations score 67.39 F1. Independent native alternation scores 65.74; same-history native re-prefill scores 66.46. This is a development observation, not a demonstrated quality gain.</p></div>
+</div>
+<p class="note"><strong>Confounded schedule.</strong> The first model also determines odd/even question assignment, the first answer, translation order, and later generated history. Large-model initial cache ownership has not been isolated as the cause. Both directions still translate after turn one.</p>
+</section>
+
+<section id="limits">
+<h2>Viability and unresolved issues</h2>
+<div class="grid2">
+<div class="card rule bad"><strong>UNRESTRICTED SHARING</strong><p>Arbitrary either-model-first sharing is unqualified for Qwen3-4B/8B under this recipe and these gates.</p></div>
+<div class="card rule warn"><strong>RESTRICTED 8B-FIRST SCHEDULE</strong><p>The fixed 8B-first schedule is a narrower service hypothesis. It needs a fresh, untouched confirmation and a full-path value measurement.</p></div>
+<div class="card rule warn"><strong>GENERALIZATION</strong><p>One model pair, one seed, 32 exposed development conversations, five domains, and ten turns do not establish arbitrary routing, cross-family transfer, or a long-context guarantee.</p></div>
+<div class="card rule warn"><strong>STORAGE AND VALUE</strong><p>Two retained cache lines do not prove one-cache storage savings. This quality study does not measure useful latency, cost, or memory reduction.</p></div>
+</div>
+<p class="sub" style="margin-top:22px">Provider migration changed deterministic outputs, so the last study replayed a matched grid under one environment. CPU post-processing corrected receipt-state handling after a deadline refusal. Those operational issues do not invalidate the completed provider-local comparison, but they limit claims about hardware causes and portability.</p>
+<p class="sub">The independent stream, one seed, added native-trajectory reference, and strict per-domain gates differ from the paper's aggregate protocol. Multiple explored checkpoint comparisons increase selection risk. No untouched reserve evaluation was run. No result here covers learned-Cartridge reuse.</p>
+</section>
+
+<section id="reproduce">
+<h2>Source, data, and reproduction boundary</h2>
+<p class="sub">The public code is a clean import of the executed snapshot. Provider launch wrappers and private resource records are excluded. A file-hash manifest records the mapping and packaging changes. The aggregate reproduces the 16 decisions; full inference needs models, data, and trained maps.</p>
+<div class="links">
+<a href="https://github.com/mcgrof/knlp/tree/main/research/kv_translate/published"><b>Source and README</b><span>Training, retained inference, controls, scoring, audit, selection, CPU tests, and explicit commands.</span></a>
+<a href="data/kv-lingo-results.json"><b>Aggregate JSON</b><span>Four checkpoint pairs, 16 comparisons, both references, full-precision metrics, gates, and descriptive intervals.</span></a>
+<a href="https://arxiv.org/abs/2609.32610"><b>KV-Lingo paper</b><span>The primary paper that motivates cross-model KV-cache translation.</span></a>
+</div>
+<p class="fine" style="margin-top:15px">Public source integration: <a href="https://github.com/mcgrof/knlp/commit/8bb7f320e8c14c4654509d530e3709db24dd6a25">8bb7f320</a>. Aggregate and guide: <a href="https://github.com/mcgrof/knlp/commit/5cf299ed510b73f968bf9b1315fbbf7a0b41fb1f">5cf299ed</a>. Aggregate SHA-256: <code>2051e9abdb85ad49c38872d7caf15d8488d4e3a3795115d363e5355d238d44b1</code>. Raw outputs and trained maps are not released.</p>
+<div class="decision"><b>Practical status</b><span>Research code merged; checkpoint search closed; unrestricted sharing unqualified; restricted 8B-first use unconfirmed.</span></div>
+</section>
+</main>
+<footer>KNLP · KV-Lingo independent reproduction · complete development grid and current limits</footer>
+</body>
+</html>
