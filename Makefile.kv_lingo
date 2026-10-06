@@ -4,6 +4,7 @@ KV_LINGO_TESTS := \
 	tests/kv_translate/test_analyze_kv_lingo_checkpoint_grid.py \
 	tests/kv_translate/test_audit_kv_lingo_checkpoint_pairs.py \
 	tests/kv_translate/test_kv_lingo_migration_control.py \
+	tests/kv_translate/test_kv_lingo_page.py \
 	tests/kv_translate/test_kv_lingo_public_results.py \
 	tests/kv_translate/test_kv_lingo_run_with_receipt.py \
 	tests/kv_translate/test_published_coqa.py \
