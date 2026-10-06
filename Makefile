@@ -30,6 +30,10 @@ include Makefile.lmcache_snapkv
 # CONFIG_CARTRIDGES_CAS=y this makes the selected CAS phase the default goal.
 include Makefile.cas
 
+# Include the experimental KV-Lingo reproduction. The selected default is a
+# CPU-only, offline regression suite; model fitting remains an explicit action.
+include Makefile.kv_lingo
+
 # Include kvio storage-IO capture/replay targets (kvio-doctor, kvio-fetch,
 # kvio-build, kvio-replay, kvio-report).  When CONFIG_KNLP_REPRODUCE_KVIO=y
 # this overrides .DEFAULT_GOAL.

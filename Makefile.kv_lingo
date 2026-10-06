@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT
+
+KV_LINGO_TESTS := \
+	tests/kv_translate/test_analyze_kv_lingo_checkpoint_grid.py \
+	tests/kv_translate/test_audit_kv_lingo_checkpoint_pairs.py \
+	tests/kv_translate/test_kv_lingo_migration_control.py \
+	tests/kv_translate/test_kv_lingo_run_with_receipt.py \
+	tests/kv_translate/test_published_coqa.py \
+	tests/kv_translate/test_published_coqa_reuse.py \
+	tests/kv_translate/test_published_economics.py \
+	tests/kv_translate/test_published_kv_lingo.py \
+	tests/kv_translate/test_published_kv_lingo_data.py \
+	tests/kv_translate/test_published_methods.py \
+	tests/kv_translate/test_published_paired.py \
+	tests/kv_translate/test_published_parity.py \
+	tests/kv_translate/test_published_runner.py \
+	tests/kv_translate/test_published_scoring.py \
+	tests/kv_translate/test_published_torch.py \
+	tests/kv_translate/test_select_kv_lingo_checkpoint_pair.py
+
+.PHONY: kv-lingo-check
+
+ifeq ($(CONFIG_KV_LINGO),y)
+.DEFAULT_GOAL := kv-lingo-check
+endif
+
+kv-lingo-check:
+	@PYTHONPATH=. $(CONFIG_KV_LINGO_PYTHON) -m pytest -q $(KV_LINGO_TESTS)

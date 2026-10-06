@@ -1,0 +1,5 @@
+# Experimental KV-Lingo reproduction lock.
+# Plain `make` runs only offline CPU tests. Full model fitting and evaluation
+# require explicit commands and caller-supplied model, data, and output paths.
+CONFIG_KV_LINGO=y
+CONFIG_KV_LINGO_PYTHON="python3"
