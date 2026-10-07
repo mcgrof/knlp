@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>KV-Lingo: cache sharing results and current limits</title>
-<meta name="description" content="An independent Qwen3-4B/8B KV-Lingo study: all four checkpoint pairs fail the full either-model-first rule, while an 8B-first schedule remains an unconfirmed development observation.">
+<title>KV-Lingo: what the paper did, what we reproduced, and what failed</title>
+<meta name="description" content="A direct paper-versus-KNLP account of an independent Qwen3-4B/8B KV-Lingo build: same published method and named dataset, independently constructed training rows, one seed, and a failed either-model-first multi-turn qualification.">
 <link rel="canonical" href="https://knlp.io/kv-lingo.html">
 <style>
 :root{
@@ -37,28 +37,65 @@ section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter
 .ownership{display:grid;gap:12px}.lane{display:grid;grid-template-columns:80px 1fr;gap:12px;align-items:center}.lane-label{font:700 12px var(--mono);color:var(--text)}.segments{display:flex;min-height:48px;border:1px solid var(--line);border-radius:7px;overflow:hidden}.segment{display:grid;place-items:center;padding:8px;text-align:center;font:700 10px/1.25 var(--mono);letter-spacing:.03em}.native4{background:rgba(98,220,229,.18);color:var(--cyan)}.native8{background:rgba(174,148,255,.18);color:var(--violet)}.translated{background:repeating-linear-gradient(135deg,rgba(240,182,92,.2),rgba(240,182,92,.2) 7px,rgba(240,182,92,.08) 7px,rgba(240,182,92,.08) 14px);color:var(--amber)}
 .legend{display:flex;gap:15px;flex-wrap:wrap;margin-top:13px;color:var(--muted);font:12px var(--mono)}.swatch{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-2px}
 .criteria{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.criterion{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px}.criterion b{display:block;color:var(--green);font:700 13px var(--mono)}.criterion span{display:block;color:var(--muted);margin-top:7px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card2)}table{width:100%;border-collapse:collapse;min-width:850px}th,td{padding:14px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#0d1712;color:var(--green);font:700 11px var(--mono);letter-spacing:.08em;text-transform:uppercase}td{color:var(--muted)}td:first-child{width:16%;color:var(--text);font-weight:700}tbody tr:last-child td{border-bottom:0}.match{font:700 10px var(--mono);text-transform:uppercase}.match.same{color:var(--green)}.match.partial{color:var(--amber)}.match.no{color:var(--red)}
+.steps{counter-reset:step;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.steps div{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px;color:var(--muted)}.steps div:before{content:"TURN " counter(step);display:block;color:var(--cyan);font:700 10px var(--mono);letter-spacing:.1em;margin-bottom:7px}
 .reference{margin-top:22px;padding:22px;background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:12px}.reference h3{margin:0 0 4px}.reference>p{margin:0 0 20px;color:var(--muted)}
 .charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.plot{margin:0;background:rgba(7,11,9,.55);border:1px solid var(--line);border-radius:9px;padding:17px;overflow:hidden}.plot h4{margin:0 0 4px;font-size:15px}.plot-caption{margin:0 0 13px;color:var(--dim);font-size:12px}.plot-row{display:grid;grid-template-columns:120px minmax(150px,1fr) 178px;gap:9px;align-items:center;margin:8px 0}.row-label{font:700 10px var(--mono);color:var(--muted)}.track{height:13px;position:relative;background:#0a100d;border:1px solid var(--line);border-radius:3px}.zero-line,.limit-line{position:absolute;top:-4px;bottom:-4px;width:1px}.zero-line{left:12.5%;background:var(--dim)}.limit-line.overall{left:31.25%;background:var(--amber)}.limit-line.domain{left:43.75%;background:var(--amber)}.bar{position:absolute;top:2px;height:7px;min-width:2px;border-radius:2px}.bar.pass{background:var(--green)}.bar.fail{background:var(--red)}.plot-value{font:700 10px/1.3 var(--mono);text-align:right}.plot-value.pass{color:var(--green)}.plot-value.fail{color:var(--red)}.axis{display:grid;grid-template-columns:120px minmax(150px,1fr) 178px;gap:9px;color:var(--dim);font:9px var(--mono)}.ticks{position:relative;height:14px}.ticks span{position:absolute;transform:translateX(-50%)}.ticks .min{left:0;transform:none}.ticks .zero{left:12.5%}.ticks .three{left:31.25%;color:var(--amber)}.ticks .five{left:43.75%;color:var(--amber)}.ticks .max{right:0;transform:none}
 .fine{font-size:12px;color:var(--dim)}.links{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.links a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.links a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.links b{display:block;color:var(--text);margin-bottom:5px}.links span{color:var(--muted)}
 code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
-@media(max-width:1000px){.grid4,.criteria{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}.plot-row,.axis{grid-template-columns:110px minmax(120px,1fr) 165px}}
-@media(max-width:700px){main{padding:48px 17px 70px}.grid2,.grid4,.criteria,.flow,.links{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}.reference{padding:14px}.plot{padding:13px;overflow-x:auto}.plot-row,.axis{min-width:580px}.lane{grid-template-columns:64px 1fr}.segment{font-size:9px}}
+@media(max-width:1000px){.grid4,.criteria,.steps{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}.plot-row,.axis{grid-template-columns:110px minmax(120px,1fr) 165px}}
+@media(max-width:700px){main{padding:48px 17px 70px}.grid2,.grid4,.criteria,.flow,.links,.steps{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}.reference{padding:14px}.plot{padding:13px;overflow-x:auto}.plot-row,.axis{min-width:580px}.lane{grid-template-columns:64px 1fr}.segment{font-size:9px}}
 </style>
 </head>
 <body>
 <header><nav aria-label="Page sections">
 <a class="logo" href="./">KNLP</a><span class="spacer"></span>
-<a href="#decision">decision</a><a href="#method">method</a><a href="#protocol">protocol</a><a href="#results">results</a><a href="#limits">limits</a><a href="#reproduce">reproduce</a>
+<a href="#decision">decision</a><a href="#comparison">paper vs us</a><a href="#training">training data</a><a href="#protocol">evaluation</a><a href="#results">results</a><a href="#fairness">fairness</a><a href="#reproduce">reproduce</a>
 </nav></header>
 <main>
 <div class="hero" id="decision">
-<div class="eyebrow">KV-Lingo · independent reproduction · October 2026</div>
-<h1>Cache translation works selectively.<br>The full sharing rule does not.</h1>
-<p class="lead"><strong>Our tested Qwen3-4B and Qwen3-8B KV-Lingo implementation did not meet the predefined quality limits for a service in which either model can start.</strong> We retain the implementation and evaluation tools as experimental research code.</p>
-<p class="lead">A restricted protocol that always starts with 8B passed both native references for three of four checkpoint pairs on the exposed development set. It has not received independent confirmation and is not a deployment result.</p>
-<div class="decision"><b>Closeout decision</b><span>All four saved checkpoint pairs fail the complete acceptance rule. Checkpoint exploration is closed. Arbitrary either-model-first sharing is unqualified for this model pair and recipe.</span></div>
-<div class="badges"><span class="badge amber">32 DEVELOPMENT CONVERSATIONS</span><span class="badge cyan">10 TURNS</span><span class="badge amber">ONE TRAINING SEED</span><span class="badge amber">CONFIRMATION NOT RUN</span></div>
+<div class="eyebrow">KV-Lingo · independent implementation · October 2026</div>
+<h1>We rebuilt the paper's 4B↔8B translator.<br>Our maps did not reproduce its multi-turn result.</h1>
+<p class="lead"><strong>The paper reports that Qwen3-4B and Qwen3-8B can alternate over ten CoQA turns with translated KV caches while staying close to full native re-prefill, regardless of which model starts.</strong> We built and trained the same published class of translator for the same named model pair.</p>
+<p class="lead">The authors did not release their translator weights, exact model revisions, training-row manifest, or loader. We therefore made an independent training stream from the same Nemotron dataset, pinned our model revisions, trained one seed, and tested four saved forward/reverse checkpoint pairs. Every pair failed our rule when 4B started. Three pairs passed both controls when 8B started, but that narrower result is unconfirmed.</p>
+<div class="decision"><b>What this means</b><span>This is a failed independent reproduction under a non-identical protocol. It is not a refutation of the paper, and it is not evidence that KV translation cannot work.</span></div>
+<div class="badges"><span class="badge cyan">SAME QWEN3-4B/8B PAIR</span><span class="badge amber">SAME DATASET, DIFFERENT ROW STREAM</span><span class="badge amber">1 SEED VS PAPER'S 3</span><span class="badge amber">32 VS PAPER'S 256 COQA DIALOGUES</span></div>
 </div>
+
+<section id="comparison">
+<h2>Paper versus KNLP, without hand-waving</h2>
+<p class="sub">We followed the published architecture and main training recipe closely. We did not recover the authors' exact checkpoint. The unavailable artifacts and the evaluation changes are large enough to prevent an exact reproduction claim.</p>
+<div class="table-wrap">
+<table class="crosswalk">
+<thead><tr><th>Item</th><th>KV-Lingo paper</th><th>This KNLP work</th><th>Match</th></tr></thead>
+<tbody>
+<tr><td>Question</td><td>Can cheap learned maps replace target-model re-prefill across many model pairs and tasks?</td><td>Can an independently trained Qwen3-4B↔8B pair meet a fixed quality bar when either model starts a repeated-switch conversation?</td><td><span class="match partial">Related, narrower</span></td></tr>
+<tr><td>Base models</td><td>Released <code>Qwen/Qwen3-4B</code> and <code>Qwen/Qwen3-8B</code>. Exact revisions are not reported.</td><td>The same named models, pinned to revisions <code>1cfa9a72</code> and <code>b968826d</code>.</td><td><span class="match partial">Names match</span></td></tr>
+<tr><td>Translator</td><td>Separate dense linear key and value maps for each corresponding target layer. Capture is before key normalization and RoPE.</td><td>The same map shape and capture point. The receiver applies its own key normalization and RoPE.</td><td><span class="match same">Method match</span></td></tr>
+<tr><td>Stage 1</td><td>FP64 moments over 400 conversations, about 2.8 million prefix positions, followed by an eigensolve at relative tolerance 10<sup>−8</sup>.</td><td>The same solve over 400 independently selected conversations and 3,487,460 prefix positions.</td><td><span class="match partial">Recipe matches; rows differ</span></td></tr>
+<tr><td>Stage 2</td><td>Forward-KL self-distillation for 5,000 updates, batch 8, AdamW, 3×10<sup>−5</sup>, 5% warmup, cosine decay, no weight decay, gradient clip 1.0.</td><td>The same objective and settings. We also retained the 1,000-update maps to test all four 1k/5k direction pairs.</td><td><span class="match same">Main recipe match</span></td></tr>
+<tr><td>Training runs</td><td>Learning rate selected on 64 held-out conversations. Reported Qwen3-4B/8B linear results average seeds 42, 43, and 44.</td><td>Used the paper's selected 3×10<sup>−5</sup> rate and a disjoint 64-conversation validation set. Trained seed 42 only.</td><td><span class="match no">1 seed vs 3</span></td></tr>
+<tr><td>Released artifacts</td><td>No author code, exact row manifest, model revision hashes, or trained translator tensors were available for this study.</td><td>Independent implementation and independently trained maps. Public code and aggregate results are released; trained map tensors are not.</td><td><span class="match no">Not same checkpoint</span></td></tr>
+<tr><td>Multi-turn test</td><td>256 CoQA dialogues, ten alternating turns, both starting models, reasoning off, 128-token answer budget, three translator seeds.</td><td>32 exposed CoQA dialogues, ten alternating turns, both starts, reasoning off, stop at newline/EOS or 64 tokens, one seed, four checkpoint pairs.</td><td><span class="match partial">Core protocol matches</span></td></tr>
+<tr><td>Decision</td><td>The plotted translated condition stays close to full re-prefill through turn ten for both starts.</td><td>No checkpoint pair passed our complete either-model-first rule. All eight 4B-start comparisons failed.</td><td><span class="match no">Result not reproduced</span></td></tr>
+</tbody>
+</table>
+</div>
+<p class="note"><strong>The important distinction:</strong> we reproduced the published method class and its main 4B/8B protocol. We did not reproduce the authors' exact training stream or translator weights. “Independent reproduction” is accurate. “Exact checkpoint reproduction” is not.</p>
+</section>
+
+<section id="training">
+<h2>What “different Nemotron construction” means</h2>
+<p class="sub"><strong>We used the same named dataset, not a different corpus:</strong> <code>nvidia/Nemotron-SFT-Instruction-Following-Chat-v2</code>. We pinned revision <code>1a9454ed054b8544503ab8d8c0a519d141a44c5b</code>. The difference is how conversations and turns were selected and packed into the exact prefix/continuation rows used for fitting.</p>
+<div class="grid2">
+<div class="card"><div class="kicker">Paper construction</div><h3>Published shape; unpublished rows</h3><p>The paper uses a 50/50 mix. Natural prefixes span 10 to 10,000 tokens with an approximately uniform length distribution. Packed prefixes span 12,000 to 16,000 tokens and concatenate natural samples around a focal question and answer. Reasoning-on and reasoning-off samples alternate. The paper chooses an assistant turn and places the switch at the start of its reply. It does not publish the row identities, exact sampler, packing code, or frozen token stream.</p></div>
+<div class="card"><div class="kicker">KNLP construction</div><h3>Same shape; deterministic independent rows</h3><p>We froze a seed-42 stream with 50% natural and 50% packed rows and alternating reasoning status. Natural rows use 32 equal-width length strata from 10 to 10,000 tokens. Packed rows concatenate complete, reasoning-stripped historical conversations before one focal prompt and keep its answer as the continuation. Every packed prefix is 12,000 to 16,000 tokens. Training and validation conversation UUIDs are disjoint.</p></div>
+</div>
+<div class="grid2" style="margin-top:18px">
+<div class="card rule warn"><strong>SAME NOMINAL BUDGET</strong><p>Both recipes use 400 Stage-1 conversations and 5,000 × 8 = 40,000 Stage-2 examples per direction. Our Stage-1 rows contain 3,487,460 prefix positions; the paper reports about 2.8 million. Equal row counts do not make the token weighting equal.</p></div>
+<div class="card rule warn"><strong>WHY THIS CAN MATTER</strong><p>The learned maps see different conversations, selected turns, lengths, and packed neighbors. Any of these can change the cache covariance fit and distillation gradients. We cannot claim that this difference caused the failed result because seed count, exact model revisions, decoding, and evaluation size also differ.</p></div>
+</div>
+</section>
 
 <section aria-labelledby="headline-results">
 <h2 id="headline-results">The complete grid, in four facts</h2>
@@ -90,17 +127,26 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px
 <div class="legend"><span><i class="swatch native4"></i>4B-native segment</span><span><i class="swatch native8"></i>8B-native segment</span><span><i class="swatch translated"></i>translated segment</span></div>
 <p class="fine">Each line retains its earlier segments. A model translates only the missing spans when it catches up. The protocol does not repeatedly translate the entire accumulated prefix.</p>
 </div>
-<p class="note"><strong>Relation to the paper.</strong> <a href="https://arxiv.org/abs/2609.32610">KV-Lingo</a> motivates cross-model cache translation. This is an independent implementation with a different data construction, an added native-trajectory reference, one seed, and stricter per-domain qualification. It is not an exact reproduction and does not disprove the paper.</p>
+<p class="note"><strong>This is the paper's retained-span design.</strong> Both the paper and this work keep one cache line per model and translate only the span that the incoming model lacks. No span passes through more than one translator. This needs about two full cache lines for an equal-shape pair; it is not a universal single cache.</p>
 </section>
 
 <section id="protocol">
-<h2>Experiment and acceptance rule</h2>
-<p class="sub">The final comparison uses one provider-local grid because a provider migration changed outputs. Historical and final-provider rows are not mixed.</p>
+<h2>What the multi-turn test actually did</h2>
+<p class="sub">CoQA is Conversational Question Answering. Each item has one passage and a linked sequence of questions. Later questions can depend on earlier answers. We used 32 complete dialogues: 6 CNN, 7 Gutenberg, 7 MCTest, 6 RACE, and 6 Wikipedia. We evaluated the first ten linked questions, which gives 320 scored answers per starting schedule and per arm.</p>
+<div class="steps">
+<div>The starting model natively reads the passage and question 1, then generates answer 1. No translated cache is used for this answer.</div>
+<div>The other model receives a translated cache for the passage, question 1, and answer 1. It processes question 2 natively and generates answer 2. This is the first translated-cache answer.</div>
+<div>On each later switch, the incoming model keeps its old cache line and translates only the question-and-answer span written since it last ran.</div>
+<div>Token F1 scores each generated answer against the human CoQA references. F1 does not score the cache tensors. A native re-prefill control supplies the comparison.</div>
+</div>
+<p class="note"><strong>What “turn 2” means:</strong> 4B starts, writes the turn-1 history, and 8B answers question 2 from the translated 4B cache plus its native processing of question 2. The turn-2 F1 is the score of 8B's generated answer 2. At this point both native controls have the same turn-1 text, so the first-handoff deficit is not caused by later transcript drift.</p>
+<h3 style="margin-top:30px">Our controls and checkpoint grid</h3>
+<p class="sub">The final comparison uses one provider-local grid because a provider migration changed deterministic outputs. Historical and final-provider rows are not mixed.</p>
 <div class="grid2">
-<div class="card"><div class="kicker">Evaluation</div><h3>Qwen3-4B ↔ Qwen3-8B</h3><p>Five CoQA domains, 32 conversations, ten turns, both starting models, greedy decoding, reasoning off, and one training seed. The cohort is exposed development data.</p></div>
+<div class="card"><div class="kicker">Evaluation cohort</div><h3>32 dialogues × 10 linked questions</h3><p>Both starting models, greedy decoding, reasoning off, one training seed, and five source domains. These 32 dialogues were visible during checkpoint comparison. They are development data, not an untouched test set.</p></div>
 <div class="card"><div class="kicker">Four map pairs</div><h3>1,000 or 5,000 updates per direction</h3><p>Every combination of forward 4B→8B and reverse 8B→4B translators is evaluated. Update count changes the translator, not either language model's size.</p></div>
-<div class="card"><div class="kicker">Reference A</div><h3>Same-transcript native re-prefill</h3><p>The receiving model computes native KV over the exact history generated by the translated arm. This isolates the incoming cache representation on a matched transcript.</p></div>
-<div class="card"><div class="kicker">Reference B</div><h3>Independent native alternation</h3><p>The same models alternate turns, but each receiver natively re-prefills its independently evolving history. Neither reference is an always-8B service.</p></div>
+<div class="card"><div class="kicker">Reference A · added control</div><h3>Same-transcript native re-prefill</h3><p>The receiver computes native KV over the exact text generated by the translated arm. This is the clean comparison for cache representation because the text is identical and only the incoming KV differs.</p></div>
+<div class="card"><div class="kicker">Reference B · closest to paper</div><h3>Independent native alternation</h3><p>The models alternate as in the treatment, but every receiver natively re-prefills its own evolving history. This is a system-level comparison with full re-prefill. Its transcript can diverge after the first differing answer.</p></div>
 </div>
 <div class="criteria" style="margin-top:20px">
 <div class="criterion"><b>≤ 3 F1 points</b><span>Equal-domain mean deficit overall.</span></div>
@@ -108,7 +154,7 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px
 <div class="criterion"><b>≤ 5 F1 points</b><span>Pooled deficit on turns 6 through 10.</span></div>
 <div class="criterion"><b>≤ 2 points</b><span>Unhealthy-output rate excess.</span></div>
 </div>
-<p class="fine" style="margin-top:12px">Positive deficit means translated-cache output scored worse than the reference. Every starting schedule and both references must pass all four gates. Bootstrap intervals are descriptive; point estimates decide the gate.</p>
+<p class="fine" style="margin-top:12px">These are KNLP deployment gates, not thresholds from the paper. Positive deficit means translated-cache output scored worse than the reference. Every starting schedule and both references must pass all four gates. Bootstrap intervals are descriptive; point estimates decide the gate.</p>
 </section>
 
 <section id="results">
@@ -187,10 +233,22 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px
 <div class="card rule warn"><strong>BEST DEVELOPMENT OBSERVATION</strong><p>With forward 5,000 and reverse 1,000, 8B-start translated conversations score 67.39 F1. Independent native alternation scores 65.74; same-history native re-prefill scores 66.46. This is a development observation, not a demonstrated quality gain.</p></div>
 </div>
 <p class="note"><strong>Confounded schedule.</strong> The first model also determines odd/even question assignment, the first answer, translation order, and later generated history. Large-model initial cache ownership has not been isolated as the cause. Both directions still translate after turn one.</p>
+<div class="reference">
+<h3>Separate one-switch diagnostic: ours learned, but did not reach native parity</h3>
+<p>The paper's single-switch CoQA table reports the 4B cache translated once into 8B at 0.746 F1, versus 0.712 for native 8B, on 256 samples and averaged over three translator seeds. Our distinct fixed-history diagnostic used 96 questions: turns 1, 5, and 10 from the same 32 development dialogues. With the 1,000-update 4B→8B map, translated 8B rose from the Stage-1 value of 55.00 to 72.04 F1, but native 8B scored 80.90. The remaining deficit was 8.86 points.</p>
+<p class="fine">This is evidence that our translator learned useful structure but did not match the paper's reported native-level behavior. It is not a numerical head-to-head: the histories, item set, checkpoint, seed count, and decode contract differ. We did not archive a final 5,000-update run of this isolated 96-question diagnostic. The ten-turn grid above supplies the final-map first-handoff evidence.</p>
+</div>
 </section>
 
-<section id="limits">
-<h2>Viability and unresolved issues</h2>
+<section id="fairness">
+<h2>Was this a fair test?</h2>
+<p class="sub"><strong>Yes for our deployment decision. No for an exact claim that the paper is wrong.</strong> Those are different standards.</p>
+<div class="grid2">
+<div class="card rule good"><strong>FAIR FOR THE KNLP GO/NO-GO</strong><p>All four map pairs used the same pinned models, the same 32 dialogue identities, the same scorer, and a complete provider-local replay. We tested both starting models. The same-transcript control holds generated text fixed and changes only native versus translated KV. The gates were frozen before the final mixed-checkpoint grid was interpreted.</p></div>
+<div class="card rule warn"><strong>NOT AN EXACT PAPER REPLICATION</strong><p>The author checkpoints and row loader were unavailable. We used one translator seed instead of three, 32 exposed dialogues instead of 256, a 64-token/newline answer stop instead of the paper's 128-token budget, and our own per-domain gates. The paper also does not report exact base-model revision hashes.</p></div>
+</div>
+<p class="note"><strong>Our thresholds did not create the whole discrepancy.</strong> The paper did not define our 3-point overall or 5-point domain limits, so those limits control our pass/fail label. But the raw first 4B→8B handoff with a 5,000-update map still lost about 8.1 F1 points against native re-prefill. For the 5k/5k pair, the ten-turn 4B-start result lost 1.92 points overall against the same-transcript control but 6.55 in its worst domain; against independent native alternation it lost 3.27 overall and 9.44 in its worst domain. The negative result is not only a threshold artifact.</p>
+<h3 style="margin-top:30px">Viability and unresolved issues</h3>
 <div class="grid2">
 <div class="card rule bad"><strong>UNRESTRICTED SHARING</strong><p>Arbitrary either-model-first sharing is unqualified for Qwen3-4B/8B under this recipe and these gates.</p></div>
 <div class="card rule warn"><strong>RESTRICTED 8B-FIRST SCHEDULE</strong><p>The fixed 8B-first schedule is a narrower service hypothesis. It needs a fresh, untouched confirmation and a full-path value measurement.</p></div>
@@ -198,12 +256,12 @@ code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}footer{border-top:1px
 <div class="card rule warn"><strong>STORAGE AND VALUE</strong><p>Two retained cache lines do not prove one-cache storage savings. This quality study does not measure useful latency, cost, or memory reduction.</p></div>
 </div>
 <p class="sub" style="margin-top:22px">Provider migration changed deterministic outputs, so the last study replayed a matched grid under one environment. CPU post-processing corrected receipt-state handling after a deadline refusal. Those operational issues do not invalidate the completed provider-local comparison, but they limit claims about hardware causes and portability.</p>
-<p class="sub">The independent stream, one seed, added native-trajectory reference, and strict per-domain gates differ from the paper's aggregate protocol. Multiple explored checkpoint comparisons increase selection risk. No untouched reserve evaluation was run. No result here covers learned-Cartridge reuse.</p>
+<p class="sub">Multiple checkpoint comparisons increase selection risk. No untouched reserve evaluation was run because no pair passed every development gate. No result here covers a different model family, learned-Cartridge reuse, production readiness, or the paper's reported latency gains.</p>
 </section>
 
 <section id="reproduce">
 <h2>Source, data, and reproduction boundary</h2>
-<p class="sub">The public code is a clean import of the executed snapshot. Provider launch wrappers and private resource records are excluded. A file-hash manifest records the mapping and packaging changes. The aggregate reproduces the 16 decisions; full inference needs models, data, and trained maps.</p>
+<p class="sub">The public code is a clean import of the executed snapshot. Provider launch wrappers and private resource records are excluded. A file-hash manifest records the mapping and packaging changes. The aggregate reproduces the 16 multi-turn decisions. Full inference needs the public models, the pinned data construction, and trained translator maps; the map tensors are not published.</p>
 <div class="links">
 <a href="https://github.com/mcgrof/knlp/tree/main/research/kv_translate/published"><b>Source and README</b><span>Training, retained inference, controls, scoring, audit, selection, CPU tests, and explicit commands.</span></a>
 <a href="data/kv-lingo-results.json"><b>Aggregate JSON</b><span>Four checkpoint pairs, 16 comparisons, both references, full-precision metrics, gates, and descriptive intervals.</span></a>
