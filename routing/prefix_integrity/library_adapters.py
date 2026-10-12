@@ -38,6 +38,12 @@ LEADERBOARD = {
     "knorm": ("Knorm (key-norm)", "Devoto et al. 2024", "KVPress"),
     "snapkv": ("SnapKV", "Li et al. 2024", "KVPress"),
     "snapstream": ("SnapStream", "Li et al. 2025", "paper"),
+    "hisparse": ("HiSparse host history", "Xie et al. 2026", "arXiv:2608.07009v1 §3"),
+    "hisparse_working_set": (
+        "HiSparse selected reads",
+        "Xie et al. 2026",
+        "arXiv:2608.07009v1 §3",
+    ),
     "expected_attention": ("Expected Attention", "NVIDIA KVPress 2024", "KVPress"),
     "tova": ("TOVA", "Oren et al. 2024", "KVPress"),
     "h2o": ("H2O (heavy-hitter)", "Zhang et al. 2023", "KVPress"),
@@ -279,6 +285,52 @@ class AdaKV(_AdaptiveTokenMethod):
     name = "adakv"
 
 
+class HiSparse(_LibraryMethod):
+    """Model the complete host KV history, not the device working set.
+
+    HiSparse changes residency without discarding historical KV records. This
+    adapter tests the immutable source-prefix portion of that history. It does
+    not implement CUDA resolution, write-through ordering, or indexer restore.
+    """
+
+    name = "hisparse"
+
+    def manifest(self, request, num_blocks, budget_k, block_size=1):
+        return _whole_block_manifest(num_blocks, block_size, range(num_blocks))
+
+
+class HiSparseWorkingSet(_LibraryMethod):
+    """Model explicit logical positions read by one sparse-attention step.
+
+    Positions come from the caller, not an invented sparse indexer. The selected
+    reads are neither the complete host history nor an LRU residency snapshot.
+    Declaring prefix-cache intent supplies a misuse control: saving these reads
+    alone under the source-prefix key loses the history needed by later queries.
+    """
+
+    name = "hisparse_working_set"
+    policy = "routing"
+    query_dependent = True
+    granularity = "token"
+
+    def __init__(self, *, declare_prefix_cache=False):
+        if declare_prefix_cache:
+            self.policy = "prefix_cache"
+
+    def manifest(self, request, num_blocks, budget_k, block_size=1):
+        positions = request["selected_positions"]
+        if not isinstance(positions, list) or any(
+            type(p) is not int or not 0 <= p < num_blocks * block_size
+            for p in positions
+        ):
+            raise ValueError("selected_positions must contain in-range token positions")
+        if len(set(positions)) != len(positions):
+            raise ValueError("selected_positions must be unique")
+        if len(positions) > budget_k * block_size:
+            raise ValueError("selected positions exceed the admitted token budget")
+        return BlockManifest.from_token_mask(num_blocks, block_size, positions)
+
+
 class Quest(_LibraryMethod):
     """Query-aware page selection at decode: keep the full prefix in memory, but
     per query estimate each page's attention upper bound and read only the top
@@ -308,6 +360,8 @@ LIBRARY = {
     "kivi": KIVI,
     "snapkv": SnapKV,
     "snapstream": SnapStream,
+    "hisparse": HiSparse,
+    "hisparse_working_set": HiSparseWorkingSet,
     "expected_attention": ExpectedAttention,
     "tova": TOVA,
     "h2o": H2O,

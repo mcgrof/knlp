@@ -426,15 +426,15 @@
     <!-- LEADERBOARD METHODS -->
     <section class="mb-12">
       <div class="card p-6">
-        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Eleven published methods under the prefix contract</h2>
+        <h2 class="text-2xl font-semibold text-slate-100 mb-2">Twelve published methods under the prefix contract</h2>
         <p class="text-slate-300 leading-8 mb-5">
           The reference adapters prove the harness works. The real question is
-          what it says about methods people actually deploy. We selected eleven from
+          what it says about methods people actually deploy. We selected twelve from
           primary papers and the
           <a class="section-link" href="https://github.com/NVIDIA/kvpress">KVPress</a>
           leaderboard &mdash; StreamingLLM, Knorm, SnapKV,
           Expected Attention, TOVA, H2O, PyramidKV, SnapStream, Quest, Ada-KV,
-          and KIVI
+          KIVI, and HiSparse
           &mdash; and ran each through the same slot. Each method is classified by
           its <em>design</em>: whether it keeps whole blocks or scattered tokens,
           whether the kept set depends on the query, whether heads disagree, and
@@ -465,6 +465,18 @@
             <tr>
               <td class="text-slate-200">Quest</td><td class="text-slate-500 text-xs">paper</td>
               <td class="text-xs">block (pages)</td><td class="warn text-xs">yes</td><td>0%</td>
+              <td class="text-xs"><span class="warn">ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE</span></td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">HiSparse host history</td>
+              <td class="text-slate-500 text-xs"><a class="section-link" href="https://arxiv.org/html/2608.07009v1#S3">paper §3</a></td>
+              <td class="text-xs">complete backing prefix</td><td class="good text-xs">no</td><td>0%</td>
+              <td class="text-xs"><span class="good">SAFE_FOR_PREFIX_OFFLOAD</span></td>
+            </tr>
+            <tr>
+              <td class="text-slate-200">HiSparse selected reads</td>
+              <td class="text-slate-500 text-xs"><a class="section-link" href="https://arxiv.org/html/2608.07009v1#S3">paper §3</a></td>
+              <td class="text-xs">explicit logical token positions</td><td class="warn text-xs">yes</td><td class="text-xs">fixture-dependent</td>
               <td class="text-xs"><span class="warn">ROUTING_ONLY_NOT_PREFIX_CACHE_SAFE</span></td>
             </tr>
             <tr style="background: rgba(251,113,133,0.06);">
@@ -507,8 +519,9 @@
         </table>
         </div>
         <p class="text-slate-300 leading-8">
-          One method &mdash; StreamingLLM, the only purely positional one &mdash;
-          is a clean prefix-cache citizen. Everything adaptive picked a different
+          StreamingLLM's positional selection and HiSparse's complete backing
+          prefix pass the modeled prefix contract. The adaptive compression
+          adapters picked a different
           block set for all sixteen queries, so under a prefix-only key it lands
           <span class="bad">DANGEROUS_FOR_PREFIX_SHARING</span>. That is not a
           knock on the methods; it says they are <em>routers</em>, not
@@ -519,6 +532,19 @@
           partial &mdash; so they need a custom connector, not plain block-hash
           reuse. Quest keeps the whole prefix and only routes reads, so it is
           honestly a router and labeled as one.
+        </p>
+        <p class="text-slate-300 leading-8 mt-4">
+          HiSparse changes where KV records reside, not which historical records
+          remain available. Its host-history adapter retains every source-prefix
+          block under every tested query. A second adapter consumes explicit
+          selected positions as request-time reads, without pretending to reproduce
+          a trained indexer or the device cache's eviction policy. Saving only
+          those query-dependent reads under a prefix-only key fails the misuse
+          control. The fixtures use 64 synthetic tokens, four-token blocks, and
+          16 selection requests repeated three times. These CPU results test
+          block geometry and query dependence, not payload bytes, CUDA events,
+          indexer restoration, generated-token write-through, model quality,
+          or throughput. Mutable continuation state must remain request-local.
         </p>
         <p class="text-slate-300 leading-8 mt-4">
           SnapStream inherits SnapKV-style prompt-tail selection and then packs
