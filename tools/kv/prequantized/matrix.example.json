@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "models": [
+    {"id": "Qwen/Qwen3-8B-AWQ", "activation_dtype": "float16", "max_output_tokens": 256},
+    {"id": "openai/gpt-oss-20b", "activation_dtype": "bfloat16", "max_output_tokens": 512}
+  ],
+  "arms": [
+    {"id": "k16_v16"}, {"id": "k8_v16"},
+    {"id": "k16_v8"}, {"id": "k8_v8"}
+  ],
+  "quantizer": {
+    "format": "fp8_e4m3fn", "finite_max": 448,
+    "rounding": "nearest_ties_even",
+    "scale_granularity": "per_layer_separate_k_v",
+    "scale_arithmetic_dtype": "float32",
+    "scale_method": "calibration_max_abs_div_448", "zero_tensor_scale": 1,
+    "frozen_before_evaluation": true, "write_roundtrip_once": true,
+    "quantize_non_kv_activations": false, "requantize_weights": false,
+    "calibration_prefixes_per_length": 16, "calibration_decode_tokens": 128
+  },
+  "quality": {
+    "input_tokens": [2048, 8192], "nll_documents_per_length": 32,
+    "nll_scored_cached_decode_tokens_per_document": 128,
+    "nll_exclude_prefill_prediction": true,
+    "retrieval_cases_per_length": 100,
+    "retrieval_depth_fractions": [0.1, 0.3, 0.5, 0.7, 0.9],
+    "retrieval_min_native_accuracy": 0.8, "generation_prompts": 32,
+    "bootstrap_resamples": 2000, "bootstrap_unit": "document",
+    "confidence": 0.95, "max_relative_ppl": 1.01,
+    "max_retrieval_loss_absolute": 0.05
+  },
+  "seeds": {"selection": 20261013, "calibration": 20261014, "bootstrap": 20261015}
+}
