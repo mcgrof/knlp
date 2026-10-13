@@ -1,0 +1,10 @@
+accelerate==1.11.0
+autoawq==0.2.9
+datasets==4.4.1
+kernels==0.11.1
+numpy==1.26.4
+pyarrow==21.0.0
+safetensors==0.8.0
+scipy==1.16.2
+tokenizers==0.22.2
+transformers==4.57.6
