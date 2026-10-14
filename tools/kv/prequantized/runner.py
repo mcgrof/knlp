@@ -46,6 +46,16 @@ from tools.kv.prequantized.contract import (
     write_once,
 )
 from tools.kv.prequantized.fixtures import parse_final, prepare_samples
+from tools.kv.prequantized.recipes import manifest_recipe, recipe
+from tools.kv.prequantized.validation import (
+    expected_samples,
+    row_provenance,
+    validate_execution_manifest,
+    validate_gates,
+    validate_results,
+    validate_row,
+    validate_scales,
+)
 
 
 def source_sha():
@@ -172,6 +182,7 @@ def prepare(args):
             pinned(args.kernel_revision) if args.kernel_revision else None
         ),
         "current_token_semantics": "fresh unrounded K/V; previously stored K/V rounded once; prefill reads fresh K/V",
+        "cache_recipe": recipe(),
     }
     validate_manifest(manifest)
     write_once(args.manifest, manifest)
@@ -271,9 +282,12 @@ def load(manifest):
 
 def forward(model, ids, cache=None):
     tokens = torch.tensor([ids], dtype=torch.long, device="cuda")
-    return model(
+    output = model(
         input_ids=tokens, past_key_values=cache, use_cache=True, logits_to_keep=1
     )
+    if not torch.isfinite(output.logits).all():
+        raise RuntimeError("nonfinite model logits")
+    return output
 
 
 def tensors(value, depth=0):
@@ -375,6 +389,17 @@ def error(a, b):
     }
 
 
+def require_packed_dispatch(model, events):
+    if model == "Qwen/Qwen3-8B-AWQ":
+        matched = any("awq_gemm_kernel" in name for name in events)
+    elif model == "openai/gpt-oss-20b":
+        matched = any("_matmul_ogs_" in name and "mxfp4" in name for name in events)
+    else:
+        raise ValueError("no packed-dispatch contract for this model")
+    if not matched:
+        raise RuntimeError("model-specific packed-weight decode kernel is absent")
+
+
 def gate_path(args, gate):
     return Path(args.output) / "gates" / f"{gate}.json"
 
@@ -410,16 +435,19 @@ def provenance(manifest):
 
 
 def require_gates(args, prov):
-    for name in GATES:
-        receipt = read(gate_path(args, name))
-        if receipt["status"] != "passed" or receipt["provenance"] != prov:
-            raise ValueError(f"missing or mismatched gate: {name}")
+    validate_gates({name: read(gate_path(args, name)) for name in GATES}, prov)
 
 
 @torch.inference_mode()
 def generate(model, tokenizer, sample, manifest, observer):
     cache = make_cache(model.config, observer)
-    output = forward(model, sample["token_ids"], cache)
+    split = sample.get("catalogue_tokens")
+    if split:
+        forward(model, sample["token_ids"][:split], cache)
+        # The query is absent from prefill. Its logits must read stored facts.
+        output = forward(model, sample["token_ids"][split:], cache)
+    else:
+        output = forward(model, sample["token_ids"], cache)
     generated = []
     eos = model.generation_config.eos_token_id
     eos = set(eos if isinstance(eos, list) else [eos])
@@ -464,8 +492,7 @@ def doctor(args, manifest):
             for word in ("awq", "mxfp", "matmul", "gemm", "ogs", "triton")
         )
     ]
-    if not kernels_seen:
-        raise RuntimeError("no quantized-weight kernel dispatch receipt")
+    require_packed_dispatch(manifest["model"], kernels_seen)
     gate(
         args,
         "T00",
@@ -484,22 +511,27 @@ def doctor(args, manifest):
     repeated = forward(model, ids[:127])
     repeated_logits = forward(model, [ids[127]], repeated.past_key_values).logits
     # Predeclare tolerances before any quantized arm; bypass should be exact.
-    tolerance = 0.03125 if manifest["activation_dtype"] == "float16" else 0.25
+    tolerance = 0.0
     observer = Observer()
     cache = make_cache(model.config, observer)
     with AttentionReadProof(model, observer):
         forward(model, ids[:127], cache)
         hooked = forward(model, [ids[127]], cache).logits
     bypass_error = error(hooked, native)
+    repeat_error = error(repeated_logits, native)
     if bypass_error["max_logit_error"] > tolerance:
         raise RuntimeError("bypass mismatch")
+    if repeat_error["max_logit_error"] > tolerance:
+        raise RuntimeError("native same-path repeat noise exceeds frozen limit")
     gate(
         args,
         "T01",
         {
             "tolerance_max_logit": tolerance,
             "bypass": bypass_error,
-            "repeat_baseline": error(repeated_logits, native),
+            "repeat_baseline": repeat_error,
+            "tolerance_repeat_max_logit": tolerance,
+            "finite_logits_required": True,
         },
         prov,
     )
@@ -564,7 +596,7 @@ def doctor(args, manifest):
     )
     architecture = []
     for length in lengths:
-        obs = Observer()
+        obs = Observer(cache_recipe=manifest_recipe(manifest)["id"])
         cached = make_cache(model.config, obs)
         forward(model, ids[:length], cached)
         unmodified = forward(model, ids[:length]).past_key_values
@@ -640,7 +672,7 @@ def calibrate(args, manifest):
     prov = provenance(manifest)
     require_gates(args, prov)
     model, _ = load(manifest)
-    observer = Observer(calibrate=True)
+    observer = Observer(calibrate=True, cache_recipe=manifest_recipe(manifest)["id"])
     ids_done = []
     for sample in manifest["samples"]:
         if sample["kind"] != "calibration":
@@ -681,22 +713,16 @@ def quality(args, manifest):
     prov = provenance(manifest)
     require_gates(args, prov)
     scale_file = read(args.scales)
-    if (
-        scale_file["provenance"] != prov
-        or digest(scale_file["scales"]) != scale_file["scale_hash"]
-    ):
-        raise ValueError("frozen calibration provenance/hash mismatch")
-    prov = {
-        **prov,
-        "arm": args.arm,
-        "scale_hash": scale_file["scale_hash"],
-        "measurement_level": "fake_quant_cached_decode",
-        "weights_runtime": "packed",
-        "kv_storage": "16bit_qdq",
-        "activation_dtype": manifest["activation_dtype"],
-    }
+    validate_scales(scale_file, prov, manifest)
+    base = prov
+    prov = row_provenance(base, manifest, args.arm, scale_file["scale_hash"])
     path = Path(args.output) / "runs" / args.run_id / f"{args.arm}.jsonl"
     completed = completed_rows(path, prov)
+    samples = expected_samples(manifest)
+    for key, row in completed.items():
+        if key not in samples:
+            raise ValueError("resume contains an unknown sample")
+        validate_row(row, samples[key], prov)
     model, tokenizer = load(manifest)
     for sample in manifest["samples"]:
         if sample["kind"] not in ("nll", "retrieval", "generation") or sample.get(
@@ -711,7 +737,9 @@ def quality(args, manifest):
             continue
         if sample["id"] in completed:
             continue
-        observer = Observer(args.arm, scale_file["scales"])
+        observer = Observer(
+            args.arm, scale_file["scales"], cache_recipe=manifest_recipe(manifest)["id"]
+        )
         started = time.monotonic()
         row = {
             "sample_id": sample["id"],
@@ -757,6 +785,7 @@ def quality(args, manifest):
         if any(item["nonfinite"] for item in receipt["quantization"].values()):
             raise RuntimeError("nonfinite quantized cache")
         row.update({"cache_receipt": receipt, "seconds": time.monotonic() - started})
+        validate_row(row, sample, prov)
         append_result(path, row, completed)
         print(
             json.dumps(
@@ -795,15 +824,23 @@ def native(args, manifest):
 
 
 def summarize(args, manifest):
+    base = read(gate_path(args, "T00"))["provenance"]
+    if (
+        base["manifest_hash"] != digest(manifest)
+        or base["source_sha"] != manifest["source_sha"]
+        or base["model"] != manifest["model"]
+        or base["model_revision"] != manifest["model_revision"]
+    ):
+        raise ValueError("gate provenance differs from current manifest")
+    require_gates(args, base)
+    if not args.scales:
+        raise ValueError("summarize requires frozen --scales")
+    scale_file = read(args.scales)
+    validate_scales(scale_file, base, manifest)
     rows = []
     for path in (Path(args.output) / "runs").glob("*/*.jsonl"):
         rows.extend(json.loads(line) for line in path.read_text().splitlines())
-    by_arm = {arm: {} for arm in ARMS}
-    for row in rows:
-        arm = row["provenance"]["arm"]
-        if row["sample_id"] in by_arm[arm]:
-            raise ValueError("ambiguous reruns: summarize one selected run directory")
-        by_arm[arm][row["sample_id"]] = row
+    by_arm = validate_results(rows, manifest, base, scale_file)
     comparisons = []
     results = []
     full_matrix = True
@@ -955,8 +992,7 @@ def main():
         prepare(args)
         return
     manifest = read(args.manifest)
-    validate_manifest(manifest)
-    validate_matrix(manifest["matrix"])
+    validate_execution_manifest(manifest, source_sha())
     if args.stage in ("calibrate", "quality") and not args.scales:
         parser.error("calibrate and quality require --scales")
     Path(args.output).mkdir(parents=True, exist_ok=True)

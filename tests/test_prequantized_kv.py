@@ -28,6 +28,23 @@ from tools.kv.prequantized.contract import (
 
 
 class QuantizerTests(unittest.TestCase):
+    def test_write_before_attention_rounds_current_and_chunk_once(self):
+        from tools.kv.prequantized.recipes import WRITE_FIRST
+
+        config = Qwen3Config(num_hidden_layers=1)
+        obs = Observer("k16_v8", {"0.k": 1, "0.v": 1}, cache_recipe=WRITE_FIRST)
+        cache = make_cache(config, obs)
+        initial = torch.tensor([[[[1.07], [2.13]]]])
+        key, value = cache.update(initial, initial, 0)
+        self.assertTrue(torch.equal(key, initial))
+        self.assertTrue(torch.equal(value, qdq(initial, 1)))
+        saved = value.clone()
+        chunk = torch.tensor([[[[1.19], [2.29]]]])
+        _, value = cache.update(chunk, chunk, 0)
+        self.assertTrue(torch.equal(value[..., :2, :], saved))
+        self.assertTrue(torch.equal(value[..., 2:, :], qdq(chunk, 1)))
+        self.assertEqual(obs.diagnostics["0.v"]["elements"], 4)
+
     def test_actual_attention_read_proof_on_tiny_model(self):
         from transformers import Qwen3ForCausalLM
 
@@ -149,6 +166,68 @@ class QuantizerTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_reject_generic_gemm_as_packed_dispatch(self):
+        from tools.kv.prequantized.runner import require_packed_dispatch
+
+        for model in ("Qwen/Qwen3-8B-AWQ", "openai/gpt-oss-20b"):
+            self.assertRaises(
+                RuntimeError, require_packed_dispatch, model, ["aten::matmul", "gemm"]
+            )
+        require_packed_dispatch("Qwen/Qwen3-8B-AWQ", ["awq_gemm_kernel"])
+        require_packed_dispatch(
+            "openai/gpt-oss-20b", ["_matmul_ogs_NNT_bf16xbf16xmxfp4_16x256"]
+        )
+
+    def test_result_validation_rejects_foreign_missing_and_failed_rows(self):
+        import copy
+        from tools.kv.prequantized.validation import row_provenance, validate_results
+        from tools.kv.prequantized.contract import ARMS
+
+        sample = {
+            "id": "nll-one",
+            "kind": "nll",
+            "length": 2048,
+            "prompt_hash": "p",
+            "article_id": "a",
+        }
+        manifest = {"samples": [sample], "activation_dtype": "float16"}
+        scales = {"scale_hash": "s"}
+        rows = []
+        for arm in ARMS:
+            rows.append(
+                {
+                    "sample_id": "nll-one",
+                    "kind": "nll",
+                    "context_tokens": 2048,
+                    "prompt_hash": "p",
+                    "article_id": "a",
+                    "status": "completed",
+                    "scored_tokens": 128,
+                    "mean_nll": 1.0,
+                    "token_nll": [1.0] * 128,
+                    "provenance": row_provenance(
+                        {"source_sha": "a" * 40}, manifest, arm, "s"
+                    ),
+                    "cache_receipt": {
+                        "attention_reads": {"0": 2048},
+                        "quantization": {},
+                    },
+                }
+            )
+        base = {"source_sha": "a" * 40}
+        validate_results(rows, manifest, base, scales)
+        for mutate in (
+            lambda r: r.pop(),
+            lambda r: r.append(r[0]),
+            lambda r: r[0].update(status="failed"),
+            lambda r: r[0]["provenance"].update(source_sha="b" * 40),
+            lambda r: r[0].update(prompt_hash="foreign"),
+            lambda r: r[0].update(token_nll=[float("nan")] * 128),
+        ):
+            bad = copy.deepcopy(rows)
+            mutate(bad)
+            self.assertRaises(ValueError, validate_results, bad, manifest, base, scales)
+
     def test_matrix_rejects_unsupported_sampling_and_recipe(self):
         import copy
         import json

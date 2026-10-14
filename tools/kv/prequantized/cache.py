@@ -4,6 +4,8 @@ import math
 
 import torch
 
+from tools.kv.prequantized.recipes import FRESH, WRITE_FIRST, recipe
+
 
 def reference_e4m3(value):
     """Scalar E4M3FN reference with ties to even and finite saturation."""
@@ -25,7 +27,9 @@ def qdq(tensor, scale):
 
 
 class Observer:
-    def __init__(self, arm="k16_v16", scales=None, calibrate=False):
+    def __init__(self, arm="k16_v16", scales=None, calibrate=False, cache_recipe=FRESH):
+        recipe(cache_recipe)
+        self.cache_recipe = cache_recipe
         self.arm = arm
         self.scales = scales
         self.calibrate = calibrate
@@ -127,6 +131,8 @@ def make_cache(config, observer):
             if old_len:
                 stored_k = torch.cat([old_k, stored_k], dim=-2)
                 stored_v = torch.cat([old_v, stored_v], dim=-2)
+            if observer.cache_recipe == WRITE_FIRST:
+                returned_k, returned_v = stored_k, stored_v
             layer = self.layers[layer_idx]
             retained = layer.keys.shape[-2]
             layer.keys = stored_k[..., -retained:, :]
