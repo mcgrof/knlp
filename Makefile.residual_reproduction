@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT
+RESIDUAL_MOD := research.reproduction.run
+RESIDUAL_OVERRIDES := STUDY SMOKE DEVICE DATA_DIR OUTPUT_DIR CHECKPOINT_DIR \
+	CPU_PYTHON SEEDS MAX_SECONDS CPU_THREADS
+RESIDUAL_ARGS := --config $(CONFIG_FILE) $(foreach v,$(RESIDUAL_OVERRIDES),\
+	$(if $(filter command line environment override,$(origin CONFIG_RESIDUAL_$(v))),\
+	--set '$(v)=$(subst ",,$(CONFIG_RESIDUAL_$(v)))'))
+
+.PHONY: residual-run residual-plan residual-test residual-conflicts
+
+ifeq ($(CONFIG_RESIDUAL_REPRODUCTION),y)
+.DEFAULT_GOAL := residual-run
+endif
+
+RESIDUAL_CONFLICTS := $(strip $(foreach v,SUBLIMINAL_LEARNING \
+	KNLP_REPRODUCE_DECODE KNLP_REPRODUCE_CARTRIDGES KNLP_LMCACHE_SNAPKV \
+	CARTRIDGES_CAS KV_LINGO KNLP_REPRODUCE_PD KNLP_TF_REPRO KNLP_REPRODUCE_KVIO \
+	KVTIDE KNLP_QUANT_FP8 KNLP_MODULAR_REPRO MATCHED_MICRO \
+	KNLP_GOOGLE_MUVERA,$(if $(filter y,$(CONFIG_$(v))),CONFIG_$(v))))
+
+residual-conflicts:
+	@test "$(CONFIG_RESIDUAL_REPRODUCTION)" = y || \
+		{ echo "Select a residual research defconfig first"; exit 1; }
+	@test -z "$(RESIDUAL_CONFLICTS)" || \
+		{ echo "Conflicting workloads: $(RESIDUAL_CONFLICTS)"; exit 1; }
+
+# One supervisor orders preparation, qualification, training and reporting.
+# Parallel make cannot run these stages independently.
+residual-run: residual-conflicts
+	$(PYTHON) -m $(RESIDUAL_MOD) run $(RESIDUAL_ARGS)
+
+residual-plan: residual-conflicts
+	$(PYTHON) -m $(RESIDUAL_MOD) plan $(RESIDUAL_ARGS)
+
+residual-test:
+	$(PYTHON) -m pytest -q research/subliminal_learning/tests \
+		research/supervised_depth/tests research/reproduction/tests

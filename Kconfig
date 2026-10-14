@@ -219,6 +219,7 @@ config TEST_TOKENIZER_METHODS
 endmenu
 
 source "research/subliminal_learning/Kconfig"
+source "research/reproduction/Kconfig"
 source "Kconfig.models"
 source "Kconfig.optimizers"
 source "Kconfig.pruning"

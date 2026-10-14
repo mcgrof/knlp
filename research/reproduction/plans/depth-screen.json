@@ -1,0 +1,1306 @@
+{
+  "tier": "CORE_CHANNELS",
+  "cell_order": "Depth ascending, R,L,M,ML; then ML-O,ML-S,ML-C,M-O D32. LR ascending, then three final seeds ascending.",
+  "cells": [
+    {
+      "id": "R-D4",
+      "arm": "R",
+      "depth": 4,
+      "pilots": [
+        {
+          "id": "pilot-R-D4-seed75201-lr0.0003",
+          "arm": "R",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-R-D4-seed75201-lr0.001",
+          "arm": "R",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-R-D4-seed75201-lr0.003",
+          "arm": "R",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-R-D4-seed75201-lr0.01",
+          "arm": "R",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-R-D4-seed75211",
+          "arm": "R",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D4-seed75212",
+          "arm": "R",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D4-seed75213",
+          "arm": "R",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "L-D4",
+      "arm": "L",
+      "depth": 4,
+      "pilots": [
+        {
+          "id": "pilot-L-D4-seed75201-lr0.0003",
+          "arm": "L",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-L-D4-seed75201-lr0.001",
+          "arm": "L",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-L-D4-seed75201-lr0.003",
+          "arm": "L",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-L-D4-seed75201-lr0.01",
+          "arm": "L",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-L-D4-seed75211",
+          "arm": "L",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D4-seed75212",
+          "arm": "L",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D4-seed75213",
+          "arm": "L",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "M-D4",
+      "arm": "M",
+      "depth": 4,
+      "pilots": [
+        {
+          "id": "pilot-M-D4-seed75201-lr0.0003",
+          "arm": "M",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-M-D4-seed75201-lr0.001",
+          "arm": "M",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-M-D4-seed75201-lr0.003",
+          "arm": "M",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-M-D4-seed75201-lr0.01",
+          "arm": "M",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-M-D4-seed75211",
+          "arm": "M",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D4-seed75212",
+          "arm": "M",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D4-seed75213",
+          "arm": "M",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-D4",
+      "arm": "ML",
+      "depth": 4,
+      "pilots": [
+        {
+          "id": "pilot-ML-D4-seed75201-lr0.0003",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-D4-seed75201-lr0.001",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-D4-seed75201-lr0.003",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-D4-seed75201-lr0.01",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-D4-seed75211",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D4-seed75212",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D4-seed75213",
+          "arm": "ML",
+          "depth": 4,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "R-D16",
+      "arm": "R",
+      "depth": 16,
+      "pilots": [
+        {
+          "id": "pilot-R-D16-seed75201-lr0.0003",
+          "arm": "R",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-R-D16-seed75201-lr0.001",
+          "arm": "R",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-R-D16-seed75201-lr0.003",
+          "arm": "R",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-R-D16-seed75201-lr0.01",
+          "arm": "R",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-R-D16-seed75211",
+          "arm": "R",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D16-seed75212",
+          "arm": "R",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D16-seed75213",
+          "arm": "R",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "L-D16",
+      "arm": "L",
+      "depth": 16,
+      "pilots": [
+        {
+          "id": "pilot-L-D16-seed75201-lr0.0003",
+          "arm": "L",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-L-D16-seed75201-lr0.001",
+          "arm": "L",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-L-D16-seed75201-lr0.003",
+          "arm": "L",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-L-D16-seed75201-lr0.01",
+          "arm": "L",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-L-D16-seed75211",
+          "arm": "L",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D16-seed75212",
+          "arm": "L",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D16-seed75213",
+          "arm": "L",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "M-D16",
+      "arm": "M",
+      "depth": 16,
+      "pilots": [
+        {
+          "id": "pilot-M-D16-seed75201-lr0.0003",
+          "arm": "M",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-M-D16-seed75201-lr0.001",
+          "arm": "M",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-M-D16-seed75201-lr0.003",
+          "arm": "M",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-M-D16-seed75201-lr0.01",
+          "arm": "M",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-M-D16-seed75211",
+          "arm": "M",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D16-seed75212",
+          "arm": "M",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D16-seed75213",
+          "arm": "M",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-D16",
+      "arm": "ML",
+      "depth": 16,
+      "pilots": [
+        {
+          "id": "pilot-ML-D16-seed75201-lr0.0003",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-D16-seed75201-lr0.001",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-D16-seed75201-lr0.003",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-D16-seed75201-lr0.01",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-D16-seed75211",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D16-seed75212",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D16-seed75213",
+          "arm": "ML",
+          "depth": 16,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "R-D32",
+      "arm": "R",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-R-D32-seed75201-lr0.0003",
+          "arm": "R",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-R-D32-seed75201-lr0.001",
+          "arm": "R",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-R-D32-seed75201-lr0.003",
+          "arm": "R",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-R-D32-seed75201-lr0.01",
+          "arm": "R",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-R-D32-seed75211",
+          "arm": "R",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D32-seed75212",
+          "arm": "R",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-R-D32-seed75213",
+          "arm": "R",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "L-D32",
+      "arm": "L",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-L-D32-seed75201-lr0.0003",
+          "arm": "L",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-L-D32-seed75201-lr0.001",
+          "arm": "L",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-L-D32-seed75201-lr0.003",
+          "arm": "L",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-L-D32-seed75201-lr0.01",
+          "arm": "L",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-L-D32-seed75211",
+          "arm": "L",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D32-seed75212",
+          "arm": "L",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-L-D32-seed75213",
+          "arm": "L",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "M-D32",
+      "arm": "M",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-M-D32-seed75201-lr0.0003",
+          "arm": "M",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-M-D32-seed75201-lr0.001",
+          "arm": "M",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-M-D32-seed75201-lr0.003",
+          "arm": "M",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-M-D32-seed75201-lr0.01",
+          "arm": "M",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-M-D32-seed75211",
+          "arm": "M",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D32-seed75212",
+          "arm": "M",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-D32-seed75213",
+          "arm": "M",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-D32",
+      "arm": "ML",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-ML-D32-seed75201-lr0.0003",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-D32-seed75201-lr0.001",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-D32-seed75201-lr0.003",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-D32-seed75201-lr0.01",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-D32-seed75211",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D32-seed75212",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-D32-seed75213",
+          "arm": "ML",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-O-D32",
+      "arm": "ML-O",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-ML-O-D32-seed75201-lr0.0003",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-O-D32-seed75201-lr0.001",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-O-D32-seed75201-lr0.003",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-O-D32-seed75201-lr0.01",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-O-D32-seed75211",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-O-D32-seed75212",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-O-D32-seed75213",
+          "arm": "ML-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-S-D32",
+      "arm": "ML-S",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-ML-S-D32-seed75201-lr0.0003",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-S-D32-seed75201-lr0.001",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-S-D32-seed75201-lr0.003",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-S-D32-seed75201-lr0.01",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-S-D32-seed75211",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-S-D32-seed75212",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-S-D32-seed75213",
+          "arm": "ML-S",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "ML-C-D32",
+      "arm": "ML-C",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-ML-C-D32-seed75201-lr0.0003",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-ML-C-D32-seed75201-lr0.001",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-ML-C-D32-seed75201-lr0.003",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-ML-C-D32-seed75201-lr0.01",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-ML-C-D32-seed75211",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-C-D32-seed75212",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-ML-C-D32-seed75213",
+          "arm": "ML-C",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    },
+    {
+      "id": "M-O-D32",
+      "arm": "M-O",
+      "depth": 32,
+      "pilots": [
+        {
+          "id": "pilot-M-O-D32-seed75201-lr0.0003",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.0003
+        },
+        {
+          "id": "pilot-M-O-D32-seed75201-lr0.001",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.001
+        },
+        {
+          "id": "pilot-M-O-D32-seed75201-lr0.003",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.003
+        },
+        {
+          "id": "pilot-M-O-D32-seed75201-lr0.01",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "pilot",
+          "seed": 75201,
+          "steps": 500,
+          "lr": 0.01
+        }
+      ],
+      "finals": [
+        {
+          "id": "final-M-O-D32-seed75211",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75211,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-O-D32-seed75212",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75212,
+          "steps": 2000
+        },
+        {
+          "id": "final-M-O-D32-seed75213",
+          "arm": "M-O",
+          "depth": 32,
+          "stage": "final",
+          "seed": 75213,
+          "steps": 2000
+        }
+      ]
+    }
+  ],
+  "qualification_jobs": [
+    {
+      "id": "qualification-R-D4-seed75290",
+      "arm": "R",
+      "depth": 4,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-L-D4-seed75290",
+      "arm": "L",
+      "depth": 4,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-M-D4-seed75290",
+      "arm": "M",
+      "depth": 4,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-ML-D4-seed75290",
+      "arm": "ML",
+      "depth": 4,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-R-D32-seed75290",
+      "arm": "R",
+      "depth": 32,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-L-D32-seed75290",
+      "arm": "L",
+      "depth": 32,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-M-D32-seed75290",
+      "arm": "M",
+      "depth": 32,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-ML-D32-seed75290",
+      "arm": "ML",
+      "depth": 32,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    },
+    {
+      "id": "qualification-ML-O-D32-seed75290",
+      "arm": "ML-O",
+      "depth": 32,
+      "stage": "qualification",
+      "seed": 75290,
+      "lr": 0.001,
+      "steps": 50
+    }
+  ],
+  "final_seeds": [
+    75211,
+    75212,
+    75213
+  ],
+  "seed_namespaces": {
+    "pilot": 75201,
+    "final": [
+      75211,
+      75212,
+      75213
+    ],
+    "qualification": 75290
+  },
+  "lr_grid": [
+    0.0003,
+    0.001,
+    0.003,
+    0.01
+  ],
+  "lr_selection": {
+    "metric": "mean curve CE at steps 300,400,500",
+    "tie": "lower LR",
+    "invalid": "ineligible, retain; all invalid is trainability failure; no grid expansion"
+  },
+  "primary_summary": "mean curve CE at 1000,1100,...,2000; fixed endpoint final CE on disjoint final-report half",
+  "targets": {
+    "primary_nats": 3.0,
+    "diagnostic_nats": 4.0,
+    "rule": "two consecutive scheduled evaluations at or below target; crossing confirmed at second evaluation; otherwise censored"
+  },
+  "nomination": {
+    "core_D32": "ML lower primary CE than BOTH M and L in all three paired seeds AND no worse mean endpoint final CE than each",
+    "ordered_D32": "ML-O lower than ML,ML-S,ML-C in all three paired primary summaries AND no worse mean endpoint than each; M-O is LayerRoPE dependence control",
+    "status": "exploratory, not confirmatory"
+  },
+  "model": {
+    "width": 128,
+    "intermediate": 352,
+    "heads": 2,
+    "head_dim": 64,
+    "depths": [
+      4,
+      16,
+      32
+    ],
+    "streams": 4,
+    "dropout": 0,
+    "untied_head": true,
+    "pad_token_id": null,
+    "backbone_norm_eps": 1e-06,
+    "token_rope": true,
+    "layerrope": "author ladder: base100; magnitude/rotation slope-.5, intercept0; gains1; four sites shared across blocks",
+    "mhc": "actual upstream torch ops; repeat20, eps1e-6; routingRMS1e-5/readEPS0/postmult2; FP32 logits/Sinkhorn; BF16 pre/post; transposed carry",
+    "stream_reduction": "arithmetic mean in FP32, BF16 before final backbone norm/head",
+    "channels": "rho.5; global stream slack=min(beta,2-beta); actual output-site phase per decoder index; ML-S nonidentity permutation per site/seed; ML-C middle index; M-O independent four angular scalars"
+  },
+  "precision": "FP32 master/state/norm/gains/routing/Sinkhorn/logits/CE; BF16 block matrix ops and residual states; eager, no TF32 or compile",
+  "optimizer": {
+    "type": "AdamW",
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "weight_decay": 0,
+    "clipping": null,
+    "warmup_steps": 100,
+    "schedule": "linear warmup then constant; qualification constant1e-3"
+  },
+  "diagnostics": {
+    "steps": [
+      0,
+      50,
+      500,
+      2000
+    ],
+    "positions": "16 fixed linspace positions plus max row/column-residual matrix at every routed sublayer; input indices retained",
+    "references": "same-count and converged FP64 per-matrix VJPs; CPU after training; approximation error descriptive, not infinite-projector hard gate",
+    "flops": "multiply-add2; train3x dense-linear+QK/AV+routing forward estimate, excludes elementwise and Sinkhorn"
+  },
+  "checkpoint_policy": {
+    "directory": "configured checkpoint directory",
+    "save": "all pilot, final, qualification endpoints plus routing diagnostic payloads; preserve probes",
+    "state": "FP32 model, AdamW state, CPU/CUDA RNG, metadata",
+    "verification": "file SHA256 and CPU reload; parameter/optimizer/RNG state hashes; outside Git"
+  },
+  "quantization": {
+    "scope": "all completed final checkpoints, all cells and three seeds",
+    "device": "CPU only, after GPU study; CPU unquantized baseline per checkpoint",
+    "bits": [
+      8,
+      4,
+      3,
+      2
+    ],
+    "method": "per-row symmetric nearest-rounded max-absolute scale; signed [-qmax,qmax], qmax=2^(b-1)-1; zero rows map to zero; one signed code unused; INT2 has three levels",
+    "coverage": "all author backbone Linear/Embedding weights, including embedding/head; norms, gains, routing and angular scalars stay FP32; activations unchanged BF16",
+    "max_ce_increase": 0.1,
+    "decision": "lowest tested width whose CE increase over the same CPU unquantized checkpoint is <=.1 nats in all three seeds; missing seed => incomplete",
+    "metric": "same fixed 131072 final-report predicted tokens; CPU/GPU unquantized difference reported",
+    "tuning": "no retraining, calibration, scale optimization or LR selection from quantization results",
+    "interpretation": "weight quantization simulation with dequantized FP32 weights and BF16 matrix ops; ideal packed storage plus FP32 row scales/unquantized parameters, not a packed inference speed test or proof of absolute maximum quantization"
+  },
+  "counts": {
+    "cells": 16,
+    "pilots": 64,
+    "finals": 48,
+    "outcome_trajectories": 112,
+    "optimizer_steps": 128000,
+    "qualification_trajectories": 9,
+    "qualification_steps": 450
+  }
+}

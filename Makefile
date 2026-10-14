@@ -55,6 +55,7 @@ include Makefile.quant
 include Makefile.tensorflow
 include Makefile.modular
 include Makefile.subliminal
+include Makefile.residual_reproduction
 
 # TIME= shorthand for GPT2_MAX_TIME (e.g., make TIME=60)
 ifdef TIME
@@ -70,7 +71,9 @@ endif
 .PHONY: all
 # The GNN workload is not an optimizer/pruning sweep, so model selection
 # wins over the optimizer/model multiple-mode test matrix.
-ifeq ($(CONFIG_SUBLIMINAL_LEARNING),y)
+ifeq ($(CONFIG_RESIDUAL_REPRODUCTION),y)
+all: residual-run
+else ifeq ($(CONFIG_SUBLIMINAL_LEARNING),y)
 all: subliminal-run
 else ifeq ($(CONFIG_MODEL_GNN),y)
 all: check-config gnn-run

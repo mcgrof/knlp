@@ -1,0 +1,14 @@
+# Install the appropriate PyTorch and torchvision wheels separately.
+transformers==5.3.0
+tokenizers==0.22.2
+numpy==2.5.2
+pyarrow==21.0.0
+huggingface_hub>=1.0,<2
+safetensors>=0.8
+matplotlib>=3.10
+scipy>=1.15
+einops>=0.8
+psutil>=7
+packaging>=25
+pytest>=8
+kconfiglib>=14

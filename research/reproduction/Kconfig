@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MIT
+menu "Residual-path research reproduction"
+
+config RESIDUAL_REPRODUCTION
+	bool "Run the configured MNIST or TinyStories study"
+	default n
+
+if RESIDUAL_REPRODUCTION
+
+config RESIDUAL_STUDY
+	string "Study: mnist, null, layerrope, tinystories, depth, confirmation"
+	default "mnist"
+
+config RESIDUAL_SMOKE
+	bool "Bounded smoke test; cannot issue a confirmation verdict"
+	default n
+
+config RESIDUAL_DEVICE
+	string "Requested device: cpu or cuda"
+	default "cuda"
+
+config RESIDUAL_DATA_DIR
+	string "Public dataset cache"
+	default "~/.cache/knlp/residual-data"
+
+config RESIDUAL_OUTPUT_DIR
+	string "New output directory"
+	default "~/knlp-residual-runs"
+
+config RESIDUAL_CHECKPOINT_DIR
+	string "Checkpoint root; empty keeps checkpoints within the run"
+	default ""
+
+config RESIDUAL_CPU_PYTHON
+	string "Python interpreter for independent CPU evaluations"
+	default "python3"
+
+config RESIDUAL_SEEDS
+	string "Optional seeds for a targeted MNIST study"
+	default ""
+	help
+	  Aggregate studies retain their distinct original seed sets.
+	  The seven-row confirmation always uses seeds 76411 through 76418.
+
+config RESIDUAL_MAX_SECONDS
+	int "Total elapsed-time limit; zero disables the limit"
+	default 86400
+	range 0 604800
+
+config RESIDUAL_CPU_THREADS
+	int "CPU thread limit"
+	default 8
+	range 1 64
+
+endif
+endmenu
