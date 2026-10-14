@@ -27,6 +27,10 @@ def render(tokenizer, model, catalogue, key):
         add_generation_prompt=True,
         **options,
     )
+    return tokenize_prompt(tokenizer, text, question)
+
+
+def tokenize_prompt(tokenizer, text, question):
     # Tokenize the combined template once. Offsets select a token boundary;
     # separately encoded strings can merge differently at the split.
     encoded = tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
@@ -118,7 +122,14 @@ def query_variant(tokenizer, model, sample, index, changed_value=None):
             record_text(record["key"], record["value"]),
             record_text(record["key"], changed_value),
         )
-    text, ids, split = render(tokenizer, model, catalogue, record["key"])
+    # Keep the frozen chat frame. Some templates insert today's date, so
+    # rendering again can change the persisted prefix across midnight.
+    previous = sample["catalogue"] + QUESTION.format(key=sample["target_key"])
+    if sample["prompt"].count(previous) != 1:
+        raise ValueError("frozen prompt does not contain one catalogue and question")
+    question = QUESTION.format(key=record["key"])
+    text = sample["prompt"].replace(previous, catalogue + question, 1)
+    text, ids, split = tokenize_prompt(tokenizer, text, question)
     result = {
         **sample,
         "target_key": record["key"],
