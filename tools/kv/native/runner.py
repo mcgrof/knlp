@@ -101,7 +101,13 @@ def make_engine(arm, manifest, performance=False):
             ),
         )
     )
+    core_engine = getattr(engine.llm_engine.engine_core, "engine_core", None)
     engine._study_provenance = {
+        "observation_scope": (
+            "development" if getattr(OPTIONS, "development", False) else "confirmation"
+        ),
+        "resolved_async_scheduling": getattr(core_engine, "async_scheduling", None),
+        "resolved_batch_queue_size": getattr(core_engine, "batch_queue_size", None),
         "model": manifest["model"],
         "model_revision": manifest["model_revision"],
         "manifest_file_sha256": file_hash(ROOT / "qwen.json.gz"),
@@ -573,6 +579,7 @@ def timing_record(llm, prompts, batch, label, out, provenance):
     schedule.label(None)
     llm.generate(prompts, params, use_tqdm=False)
     warm_memory = llm.collective_rpc(callbacks.reset_warm_peak)
+    schedule._completed.clear()
     schedule.label(label)
     started = time.monotonic()
     completion_wall = {}
@@ -594,12 +601,16 @@ def timing_record(llm, prompts, batch, label, out, provenance):
         llm.llm_engine.step = original_step
     ended = time.monotonic()
     schedule.label(None)
+    if len(outputs) != batch:
+        raise RuntimeError("synthetic timing request coverage mismatch")
     metrics = []
     for output in outputs:
         completion = output.outputs[0]
         if len(completion.token_ids) != 128 or output.num_cached_tokens:
             raise RuntimeError("synthetic timing output/cache coverage mismatch")
         m = dict(vars(output.metrics))
+        m["request_id"] = output.request_id
+        m["internal_request_id"] = schedule.internal_ids([output.request_id])[0]
         m["observed_frontend_completion_wall_time"] = completion_wall[output.request_id]
         if not m.get("first_token_ts") or m["last_token_ts"] <= m["first_token_ts"]:
             raise RuntimeError("native request timestamps missing")
@@ -610,6 +621,9 @@ def timing_record(llm, prompts, batch, label, out, provenance):
                 if v is None or isinstance(v, (str, int, float, bool))
             }
         )
+    event_path = OUT / f"schedule-{OPTIONS.stage}-{OPTIONS.arm}-{OPTIONS.repeat}.jsonl"
+    if not event_path.exists():
+        event_path.touch()
     events = [
         json.loads(line)
         for line in (
@@ -640,7 +654,34 @@ def timing_record(llm, prompts, batch, label, out, provenance):
     itl = [(m["last_token_ts"] - m["first_token_ts"]) / 127 for m in metrics]
     memory = llm.collective_rpc(callbacks.native_memory_state)
     driver_peak = max(x["cuda_device_used_bytes"] for x in warm_memory + memory)
+    from .completion import decode_intervals
+
+    completed = list(schedule._completed)
+    linked = decode_intervals(
+        completed, schedule.internal_ids([o.request_id for o in outputs])
+    )
+    save(out.with_suffix(".completions.json"), completed)
+    device = llm.collective_rpc("completion_events")
+    save(out.with_suffix(".device.json"), device)
     row = {
+        "request_id_mapping": {
+            o.request_id: schedule.internal_ids([o.request_id])[0] for o in outputs
+        },
+        "request_output_hashes": [
+            {
+                "request_id": output.request_id,
+                "tokens_sha256": hashlib.sha256(
+                    json.dumps(list(output.outputs[0].token_ids)).encode()
+                ).hexdigest(),
+                "prompt_sha256": hashlib.sha256(
+                    json.dumps(list(output.prompt_token_ids)).encode()
+                ).hexdigest(),
+            }
+            for output in outputs
+        ],
+        "observer_mode": schedule._mode,
+        "completion_linked_decode": linked,
+        "scheduler_rate_note": "Historical full_active_decode field is a scheduler-window rate, not isolated GPU decode.",
         "batch": batch,
         "seconds": ended - started,
         "output_tokens": batch * 128,
@@ -653,7 +694,8 @@ def timing_record(llm, prompts, batch, label, out, provenance):
             batch * len(intervals) / sum(intervals) if intervals else None
         ),
         "full_active_decode_steps": len(intervals),
-        "active_concurrency_qualified": complete,
+        "scheduler_concurrency_qualified": complete,
+        "active_concurrency_qualified": linked["steps"] >= 32,
         "max_active_decode_sequences": max(
             (e["active_decode_sequences"] for e in events), default=0
         ),
@@ -687,7 +729,7 @@ def timing_record(llm, prompts, batch, label, out, provenance):
                 "measurement": label,
                 "batch": batch,
                 "seconds": ended - started,
-                "active_qualified": complete,
+                "active_qualified": row["active_concurrency_qualified"],
                 "e2e_tokens_per_second": row["end_to_end_output_tokens_per_second"],
             }
         ),
@@ -702,10 +744,12 @@ def run_measurement(args, manifest, scales):
 
         qualify(ROOT, OUT)
         return
+    qualification_name = (
+        "development-qualification.json" if args.development else "qualification.json"
+    )
     qualification = (
         read_json(
-            ROOT
-            / ("legacy-qualification.json" if args.legacy else "qualification.json")
+            ROOT / ("legacy-qualification.json" if args.legacy else qualification_name)
         )
         if args.stage in ("timing", "profile", "retrieval-batch")
         else None
@@ -715,7 +759,9 @@ def run_measurement(args, manifest, scales):
             qualification["protocol_sha256"] != file_hash(ROOT / "protocol.json")
             or args.arm not in qualification["qualified_modes"]
         ):
-            raise RuntimeError("matched native/GSM8K quality gate is closed")
+            raise RuntimeError("matched quality gate is closed")
+        if args.development and qualification.get("scope") != "native-development-only":
+            raise RuntimeError("development qualification scope is missing")
     directory = OUT / args.arm / f"{args.stage}-{args.repeat}"
     directory.mkdir(parents=True, exist_ok=True)
     llm = make_engine(args.arm, manifest, performance=True)
@@ -866,8 +912,18 @@ def main():
     parser.add_argument("--repeat", type=int, default=0)
     parser.add_argument("--single", action="store_true")
     parser.add_argument("--legacy", action="store_true")
+    parser.add_argument(
+        "--development",
+        action="store_true",
+        help="require explicit native-only development qualification",
+    )
     parser.add_argument("--utilization", type=float)
     args = parser.parse_args()
+    if (
+        args.stage == "timing"
+        and os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING") != "0"
+    ):
+        parser.error("completion-linked timing requires the in-process engine")
     ROOT = args.inputs.resolve()
     OUT = args.output.resolve()
     OPTIONS = args
