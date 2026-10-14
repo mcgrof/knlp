@@ -70,8 +70,10 @@ After development validates the selected prompt, parser and cap, commit the
 frozen task and protocol. `task-freeze.json` binds its file hash and
 `primary_cases: 1319`; `SCORING-UNLOCKED.json` records that protocol commit.
 Run `--stage gsm8k --subset pilot` in every arm, then `--subset full` in the
-same output directory to append the remaining questions. The fixed 200-case
-pilot is part of the full 1,319, not independent confirmation. Errors,
+same output directory to append the remaining questions. Instrumentation
+uses a distinct atomically reserved dispatch subdirectory per subset and
+invocation, so pilot and interrupted smoke receipts remain intact. The fixed
+200-case pilot is part of the full 1,319, not independent confirmation. Errors,
 truncations and strict parser failures remain incorrect in the denominator.
 Strict and flexible extraction are reported separately. The useful-baseline
 floor is 50%; the primary conservative loss-transition margin is two points.
@@ -101,6 +103,12 @@ Request percentiles are descriptive, and independent process repetitions
 remain the uncertainty units for speed. `--stage profile` collects separate
 Chrome traces and actual GPU kernel names. Finite-logit checks apply to
 quality, not the timed path. Scheduler observation remains enabled.
+
+Cache-read receipts observe the actual FlashInfer wrapper arguments for
+all cache modes, including symmetric storage reinterpreted as FP8. Every
+layer must appear in both prefill and decode with the expected physical
+dtypes and original model storage identities before qualification. No
+asymmetric-only helper is used as a proxy for symmetric cache reads.
 
 Capture continuous external GPU memory telemetry. The saved cold-start
 Torch peak precedes the warm-peak reset. Allocated bytes, reserved pools,

@@ -98,7 +98,7 @@ def summarize(quality, gsm, task_path, protocol_path):
                 raise ValueError(
                     "packed weight implementation differs from the frozen protocol"
                 )
-        from .storage import reconcile
+        from .storage import reconcile, verify_attention_reads
 
         reconcile([t for layer in installed["layers"] for t in layer["cache"]])
         expected_types = (
@@ -116,6 +116,16 @@ def summarize(quality, gsm, task_path, protocol_path):
             raise ValueError(
                 "attention read physical dtypes differ from the selected mode"
             )
+        verify_attention_reads(
+            installed["layers"],
+            [
+                json.loads(line)
+                for line in (directory / "full/kernel-read-events.jsonl")
+                .read_text()
+                .splitlines()
+            ],
+            expected_types,
+        )
         scales = load(inputs / "scales.json")["scales"]
         for index, layer in enumerate(installed["layers"]):
             if layer["k_scale"] != (

@@ -66,10 +66,20 @@ def tensor_inventory(value):
     return []
 
 
-def observe_wrappers(model, trace_dir):
+def observe_wrappers(model, trace_dir, expected_types=None):
     import flashinfer
 
+    if hasattr(model, "_study_wrapper_originals"):
+        raise RuntimeError("wrapper observer already installed")
     model._study_wrapper_originals = []
+    read_seen = set()
+    read_count = [0]
+    backing = {
+        t["storage_pointer"]: name
+        for name, module in model.named_modules()
+        if hasattr(module, "_k_scale") and hasattr(module, "kv_cache")
+        for t in tensor_inventory(module.kv_cache)
+    }
     for kind in (
         "BatchDecodeWithPagedKVCacheWrapper",
         "BatchPrefillWithPagedKVCacheWrapper",
@@ -80,6 +90,32 @@ def observe_wrappers(model, trace_dir):
 
         def observed(self, *args, _original=original, _kind=kind, _seen=seen, **kwargs):
             backend = str(getattr(self, "_backend", None))
+            cache = args[1] if len(args) > 1 else kwargs.get("paged_kv_cache")
+            values = tensor_inventory(cache)
+            if expected_types is not None:
+                if {t["dtype"] for t in values} != expected_types:
+                    raise RuntimeError(
+                        "attention read dtype differs from selected mode"
+                    )
+                if any(t["storage_pointer"] not in backing for t in values):
+                    raise RuntimeError("attention read is outside model cache storage")
+                layer = backing[values[0]["storage_pointer"]]
+                if any(backing[t["storage_pointer"]] != layer for t in values):
+                    raise RuntimeError("attention read mixes different layer storages")
+                key = (_kind, layer)
+                if key not in read_seen:
+                    record = {"wrapper": _kind, "layer": layer, "cache": values}
+                    with (Path(trace_dir) / "kernel-read-events.jsonl").open(
+                        "a"
+                    ) as stream:
+                        stream.write(json.dumps(record) + "\n")
+                    if read_count[0] < 3:
+                        save(
+                            Path(trace_dir) / f"kernel-read-{read_count[0]}.json",
+                            values,
+                        )
+                    read_count[0] += 1
+                    read_seen.add(key)
             if _seen[0] < 4:
                 record = {
                     "wrapper": _kind,
@@ -90,6 +126,7 @@ def observe_wrappers(model, trace_dir):
                         getattr(self, "_use_tensor_cores", None),
                     ),
                     "query": tensor_inventory(args[0]) if args else [],
+                    "cache": values,
                     "cached_module": repr(getattr(self, "_cached_module", None))[:4000],
                 }
                 path = Path(trace_dir) / "wrapper-dispatch.jsonl"
@@ -157,8 +194,6 @@ def native_memory_state(worker):
 
 
 def install(model, scales, arm, trace_dir, packed_expectation=None):
-    import vllm.v1.attention.backends.flashinfer as backend
-
     selected = []
     packed = []
     for name, module in model.named_modules():
@@ -266,26 +301,6 @@ def install(model, scales, arm, trace_dir, packed_expectation=None):
                 raise RuntimeError(
                     "mixed K/V regions are not contiguous disjoint views"
                 )
-    original = backend._prepare_flashinfer_paged_kv_cache
-    model._study_read_original = original
-    seen = [0]
-
-    def read_proof(cache):
-        result = original(cache)
-        actual_reads = {t["dtype"] for t in tensor_inventory(result)}
-        if actual_reads != expected:
-            raise RuntimeError(
-                f"native attention-read dtype gate failed: {actual_reads} != {expected}"
-            )
-        if seen[0] < 3:
-            save(
-                Path(trace_dir) / f"kernel-read-{seen[0]}.json",
-                tensor_inventory(result),
-            )
-        seen[0] += 1
-        return result
-
-    backend._prepare_flashinfer_paged_kv_cache = read_proof
     model._study_profiler = torch.profiler.profile(
         activities=[
             torch.profiler.ProfilerActivity.CPU,
@@ -293,13 +308,11 @@ def install(model, scales, arm, trace_dir, packed_expectation=None):
         ]
     )
     model._study_profiler.__enter__()
-    observe_wrappers(model, trace_dir)
+    observe_wrappers(model, trace_dir, expected_types=expected)
     return {"layers": len(selected), "packed_modules": len(packed)}
 
 
 def finish_profile(model, trace_dir):
-    import vllm.v1.attention.backends.flashinfer as backend
-
     model._study_profiler.__exit__(None, None, None)
     restore_wrappers(model)
     events = [item.key for item in model._study_profiler.key_averages()]
@@ -314,8 +327,6 @@ def finish_profile(model, trace_dir):
     if not matched:
         raise RuntimeError("native model-specific packed AWQ kernel missing")
     model._study_profiler = None
-    backend._prepare_flashinfer_paged_kv_cache = model._study_read_original
-    model._study_read_original = None
     return {"packed_awq_dispatch": matched}
 
 

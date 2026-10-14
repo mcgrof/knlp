@@ -35,3 +35,34 @@ def reconcile(tensors):
         "occupied_payload_bytes": payload,
         "unoccupied_backing_bytes": padding,
     }
+
+
+def verify_attention_reads(layers, events, expected_types):
+    """Require real prefill/decode reads from every recorded model layer."""
+    backing = {
+        layer["name"]: {
+            (t["device"], t["storage_pointer"]): t["storage_bytes"]
+            for t in layer["cache"]
+        }
+        for layer in layers
+    }
+    wrappers = {
+        "BatchPrefillWithPagedKVCacheWrapper",
+        "BatchDecodeWithPagedKVCacheWrapper",
+    }
+    wanted = {(wrapper, name) for wrapper in wrappers for name in backing}
+    seen = set()
+    for event in events:
+        key = (event["wrapper"], event["layer"])
+        if key not in wanted or key in seen:
+            raise ValueError("unexpected or duplicate attention read")
+        if {t["dtype"] for t in event["cache"]} != expected_types:
+            raise ValueError("attention read physical dtype mismatch")
+        for tensor in event["cache"]:
+            identity = (tensor["device"], tensor["storage_pointer"])
+            if backing[event["layer"]].get(identity) != tensor["storage_bytes"]:
+                raise ValueError("attention read storage differs from model cache")
+        seen.add(key)
+    if seen != wanted:
+        raise ValueError("attention read layer/phase coverage is incomplete")
+    return {"layers": len(backing), "layer_phase_reads": len(seen)}
