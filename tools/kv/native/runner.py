@@ -409,13 +409,14 @@ def run_gsm(args, manifest, scales):
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "gsm8k.jsonl"
     llm = make_engine(args.arm, manifest, performance=True)
-    start_instrument(llm, scales, args.arm, directory / "dispatch")
+    dispatch = gsm8k.reserve_dispatch(directory, args.subset)
+    start_instrument(llm, scales, args.arm, dispatch)
     llm.generate(
         [{"prompt_token_ids": [1, 2, 3]}],
         SamplingParams(temperature=0, max_tokens=2),
         use_tqdm=False,
     )
-    stop_instrument(llm, directory / "dispatch")
+    stop_instrument(llm, dispatch)
     llm.apply_model(callbacks.require_finite)
     llm.apply_model(callbacks.ensure_no_teacher)
     provenance = {

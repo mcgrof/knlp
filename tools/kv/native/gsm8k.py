@@ -21,6 +21,22 @@ def digest(value):
     ).hexdigest()
 
 
+def reserve_dispatch(directory, subset):
+    """Keep smoke receipts distinct across pilot, full and resumed invocations."""
+    if subset not in ("development", "pilot", "full"):
+        raise ValueError("unknown GSM8K subset")
+    parent = Path(directory) / "dispatch"
+    parent.mkdir(parents=True, exist_ok=True)
+    attempt = 0
+    while True:
+        path = parent / f"{subset}-{attempt:04d}"
+        try:
+            path.mkdir()
+            return path
+        except FileExistsError:
+            attempt += 1
+
+
 def number(text):
     """Normalize only the numeric representation, without answer guessing."""
     try:
