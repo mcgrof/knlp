@@ -37,7 +37,8 @@ for arm in k16_v16 k8_v16 k16_v8 k8_v8; do
   python runner.py quality --manifest /path/qwen.json.gz \
     --scales /path/scales.json --output /path/output --arm "$arm"
 done
-python runner.py summarize --manifest /path/qwen.json.gz --output /path/output
+python runner.py summarize --manifest /path/qwen.json.gz \
+  --scales /path/scales.json --output /path/output
 python runner.py native --manifest /path/qwen.json.gz --output /path/output
 ```
 
@@ -80,15 +81,24 @@ is not established by this gate. A passing bypass gate does not prove
 full-history numerical equivalence. Both computations retain the selected
 packed-weight backend and kernel settings.
 
-All arms use the same frozen per-layer K and V scales. Prefill and the
-current token attend to fresh 16-bit K/V; past entries are rounded. Cache
-positions and eviction remain controlled by the original DynamicCache.
+All arms use the same frozen per-layer K and V scales. Manifests name the
+complete cache recipe. `fresh_current_qdq_v1` leaves new prefill, chunk and
+decode tokens fresh for their own attention call; past entries are rounded.
+`write_before_attention_qdq_v1` rounds new entries before attention,
+including the current decode token. Both keep physical tensors in the
+activation dtype. Positions and eviction remain controlled by DynamicCache.
 An attention wrapper verifies that its inputs are the exact returned
-cache tensors. These semantics must be matched by any future native path.
+cache tensors. Choose a serving backend's actual recipe before claiming
+that a QDQ experiment models it; neither recipe alone qualifies a backend.
 
-`quality` requires all six receipts from its exact source/environment and
-matching scales. It resumes by completed sample ID, and rejects different
-provenance. Supply a new output directory after a source fix. The NLL
+`doctor` requires the model-specific packed decode kernel, finite logits,
+and exact native repeat and instrumentation bypass results. A generic
+matrix multiplication event cannot pass its packed-dispatch gate.
+`quality` and `summarize` validate the complete current manifest, source,
+gates, calibration sample IDs, scale hash and every result's metadata.
+Missing, failed, duplicate or foreign samples fail closed. Resume also
+validates existing rows. Supply a new output directory after a source fix.
+The NLL
 stage measures negative log likelihood: the mean negative log probability
 of the next ground-truth token. It scores 128 predictions made by real
 one-token cached decode calls,
