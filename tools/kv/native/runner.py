@@ -121,6 +121,11 @@ def make_engine(arm, manifest, performance=False):
         "model_runner": "V2",
         "multiprocessing": os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING"),
     }
+    # JSON rows must compare exactly after a fresh-process resume, including
+    # mixed dtype tuples which JSON represents as lists.
+    engine._study_provenance = json.loads(
+        json.dumps(engine._study_provenance, allow_nan=False)
+    )
     return engine
 
 
