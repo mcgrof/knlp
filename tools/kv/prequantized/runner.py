@@ -76,10 +76,10 @@ def source_sha():
             str(root),
             "ls-files",
             "--error-unmatch",
-            "tools/kv/prequantized/runner.py",
-            "tools/kv/prequantized/cache.py",
-            "tools/kv/prequantized/contract.py",
-            "tools/kv/prequantized/fixtures.py",
+            *(
+                str(p.relative_to(root))
+                for p in sorted((root / "tools/kv/prequantized").glob("*.py"))
+            ),
         ],
         capture_output=True,
         check=False,
@@ -98,6 +98,8 @@ def source_sha():
             "tools/kv/prequantized",
             "tools/kv/fp8_failure/statistics.py",
             "tests/test_prequantized_kv.py",
+            "tests/test_deferred_kv.py",
+            "tests/test_kv_replay_drift.py",
         ],
         check=False,
     )
@@ -438,12 +440,44 @@ def require_gates(args, prov):
     validate_gates({name: read(gate_path(args, name)) for name in GATES}, prov)
 
 
+def require_sensitivity(args, manifest, prov):
+    if manifest["matrix"].get("retrieval_family") != "retrieval_v3_deferred_query":
+        return
+    receipt = read(Path(args.output) / "sensitivity.json")
+    if (
+        receipt.get("status") != "passed"
+        or receipt.get("provenance") != prov
+        or receipt.get("criterion") != manifest["sensitivity_criterion"]
+    ):
+        raise ValueError("deferred-query workload sensitivity is unqualified")
+    rows = [
+        json.loads(line)
+        for line in (Path(args.output) / "sensitivity-rows.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    if digest(rows) != receipt["rows_hash"] or any(
+        row["provenance"] != prov for row in rows
+    ):
+        raise ValueError("sensitivity evidence hash or provenance mismatch")
+    from tools.kv.prequantized.sensitivity import sensitivity_verdict
+
+    recomputed = sensitivity_verdict(rows, manifest["sensitivity_criterion"])
+    if recomputed["status"] != "passed" or recomputed["groups"] != receipt["groups"]:
+        raise ValueError("sensitivity verdict differs from its raw controls")
+
+
 @torch.inference_mode()
-def generate(model, tokenizer, sample, manifest, observer):
-    cache = make_cache(model.config, observer)
+def generate(model, tokenizer, sample, manifest, observer, catalogue_cache=None):
+    cache = (
+        catalogue_cache
+        if catalogue_cache is not None
+        else make_cache(model.config, observer)
+    )
     split = sample.get("catalogue_tokens")
     if split:
-        forward(model, sample["token_ids"][:split], cache)
+        if catalogue_cache is None:
+            forward(model, sample["token_ids"][:split], cache)
         # The query is absent from prefill. Its logits must read stored facts.
         output = forward(model, sample["token_ids"][split:], cache)
     else:
@@ -712,6 +746,7 @@ def calibrate(args, manifest):
 def quality(args, manifest):
     prov = provenance(manifest)
     require_gates(args, prov)
+    require_sensitivity(args, manifest, prov)
     scale_file = read(args.scales)
     validate_scales(scale_file, prov, manifest)
     base = prov
@@ -758,12 +793,14 @@ def quality(args, manifest):
                 cache = make_cache(model.config, observer)
                 forward(model, sample["token_ids"][:length], cache)
                 losses = []
+                top1_ids = []
                 for index in range(128):
                     output = forward(
                         model, [sample["token_ids"][length + index]], cache
                     )
                     target = sample["token_ids"][length + index + 1]
                     losses.append(-output.logits[0, -1].float().log_softmax(-1)[target])
+                    top1_ids.append(output.logits[0, -1].argmax())
                 stacked = torch.stack(losses)
                 if not torch.isfinite(stacked).all():
                     raise RuntimeError("nonfinite cached-decode NLL")
@@ -772,6 +809,7 @@ def quality(args, manifest):
                         "mean_nll": float(stacked.mean()),
                         "scored_tokens": 128,
                         "token_nll": stacked.cpu().tolist(),
+                        "top1_ids": torch.stack(top1_ids).cpu().tolist(),
                         "article_id": sample["article_id"],
                     }
                 )
@@ -833,6 +871,7 @@ def summarize(args, manifest):
     ):
         raise ValueError("gate provenance differs from current manifest")
     require_gates(args, base)
+    require_sensitivity(args, manifest, base)
     if not args.scales:
         raise ValueError("summarize requires frozen --scales")
     scale_file = read(args.scales)

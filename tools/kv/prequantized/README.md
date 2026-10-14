@@ -114,3 +114,51 @@ does not supply a packed mixed-cache serving kernel. Its 16-bit QDQ cache
 must never be reported as native cache bytes or performance. A future
 backend needs its own correctness and per-arm numerical bridge before
 making such claims.
+
+## Deferred queries and replay diagnostics
+
+A deferred query stores a catalogue before the model sees which key to
+retrieve. Every record uses the same random key and value distributions.
+The generator selects the requested record after building the catalogue.
+It tokenizes the complete chat prompt once, then freezes its token IDs
+and catalogue/query split. The two cache calls therefore preserve the
+same prompt and positions as concatenated execution.
+
+`followup.py prepare` reuses frozen document windows and calibration IDs
+from an earlier manifest while generating new independent retrieval
+catalogues. Development uses seed 20261016 and evaluation 20261017.
+The full logical prompts contain exactly 2048 or 8192 tokens. The new
+matrix omits unlabelled generation diagnostics. Prepare only after
+committing all source, and use a new output directory:
+
+```sh
+python followup.py prepare --old-manifest /path/original.json.gz \
+  --manifest /path/deferred.json.gz --output /path/new-output \
+  --recipe write_before_attention_qdq_v1
+python followup.py drift --manifest /path/deferred.json.gz \
+  --output /path/new-output
+python runner.py doctor --manifest /path/deferred.json.gz \
+  --output /path/new-output
+python followup.py sensitivity --manifest /path/deferred.json.gz \
+  --output /path/new-output
+```
+
+Sensitivity controls query three different keys from independent copies
+of each native catalogue cache. They also zero catalogue contents while
+preserving positions, change only the requested value in a reprefilled
+catalogue of the same length, and compare concatenated execution.
+The manifest freezes the acceptance criterion before any quantized
+comparison. A failed sensitivity control closes the quality gate; it
+cannot become evidence that quantization preserves retrieval.
+Then run calibration, all four quality arms and summary as above.
+The fresh-current recipe remains available for quality-only experiments.
+
+The drift diagnostic compares full replay, one-token cached appends and
+four-token chunks at identical positions. It records next-token loss,
+top-1 changes and distribution error on eight fixed documents per length.
+GPT-oss also covers its six sliding-window boundary lengths. Captured
+residuals, projections and router outputs locate early divergence.
+A captured head is replayed in FP32 with absolute causal and sliding
+masks, post-RoPE Q/K, grouped-query head mapping and the original sink
+logit. This diagnostic does not relax the exact same-path bypass gate
+or automatically establish the cause of a discrepancy.

@@ -90,13 +90,21 @@ def validate_matrix(matrix):
         "max_relative_ppl": 1.01,
         "max_retrieval_loss_absolute": 0.05,
     }
+    deferred = matrix.get("retrieval_family") == "retrieval_v3_deferred_query"
+    if deferred:
+        quality["generation_prompts"] = 0
     if any(matrix["quality"].get(key) != value for key, value in quality.items()):
         raise ValueError("matrix changes the implemented sampling or decision rule")
-    if matrix["seeds"] != {
+    expected_seeds = {
         "selection": 20261013,
         "calibration": 20261014,
         "bootstrap": 20261015,
-    }:
+    }
+    if deferred:
+        expected_seeds.update(
+            retrieval_development=20261016, retrieval_evaluation=20261017
+        )
+    if matrix["seeds"] != expected_seeds:
         raise ValueError("matrix changes the implemented seeds")
 
 
