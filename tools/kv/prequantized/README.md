@@ -162,3 +162,7 @@ A captured head is replayed in FP32 with absolute causal and sliding
 masks, post-RoPE Q/K, grouped-query head mapping and the original sink
 logit. This diagnostic does not relax the exact same-path bypass gate
 or automatically establish the cause of a discrepancy.
+
+Query and value interventions reuse the frozen chat frame. This preserves
+inserted dates and other template context across process or day changes;
+each edited combined prompt is then tokenized once before its query split.

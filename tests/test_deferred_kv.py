@@ -23,7 +23,33 @@ class CharacterTokenizer:
         return "<user>" + messages[0]["content"] + "</user><assistant>"
 
 
+class DateTokenizer(CharacterTokenizer):
+    date = "2001-01-01"
+
+    def apply_chat_template(self, messages, **kwargs):
+        return self.date + super().apply_chat_template(messages, **kwargs)
+
+
 class DeferredTests(unittest.TestCase):
+    def test_query_interventions_preserve_the_frozen_chat_frame(self):
+        tokenizer = DateTokenizer()
+        sample = fixture(tokenizer, "example/model", 2048, 0, 20261016, True)
+        tokenizer.date = "2001-01-02"
+        variant = query_variant(tokenizer, "example/model", sample, 0)
+        self.assertIn("2001-01-01<user>", variant["prompt"])
+        self.assertEqual(
+            sample["token_ids"][: sample["catalogue_tokens"]],
+            variant["token_ids"][: variant["catalogue_tokens"]],
+        )
+        changed = query_variant(
+            tokenizer, "example/model", sample, sample["target_index"], "one two three"
+        )
+        self.assertIn("2001-01-01<user>", changed["prompt"])
+        self.assertEqual(
+            sample["token_ids"][sample["catalogue_tokens"] :],
+            changed["token_ids"][changed["catalogue_tokens"] :],
+        )
+
     def test_sensitivity_cannot_pass_a_ceiling_workload_that_ignores_cache(self):
         from tools.kv.prequantized.sensitivity import CRITERION, sensitivity_verdict
 
