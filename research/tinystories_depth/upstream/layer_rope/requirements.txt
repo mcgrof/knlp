@@ -1,0 +1,11 @@
+torch==2.8.0
+transformers==4.31.0
+tokenizers==0.13.3
+datasets==4.1.1
+huggingface_hub==0.35.1
+fsspec==2025.9.0
+safetensors==0.6.2
+numpy==2.2.6
+wandb==0.22.0
+loguru==0.7.3
+tqdm==4.67.1
