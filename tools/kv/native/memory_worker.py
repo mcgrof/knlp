@@ -36,6 +36,45 @@ def snapshot(phase, result=None):
 
 
 class ObservedWorker(Worker):
+    def execute_model(self, scheduler_output):
+        if os.environ.get("KNLP_NATIVE_OBSERVER", "legacy") == "off":
+            return super().execute_model(scheduler_output)
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = super().execute_model(scheduler_output)
+        end.record()
+        if not hasattr(self, "_completion_events"):
+            self._completion_events = []
+        self._completion_events.append(
+            (
+                getattr(scheduler_output, "_knlp_batch_id", None),
+                start,
+                end,
+                dict(scheduler_output.num_scheduled_tokens),
+            )
+        )
+        return result
+
+    def completion_events(self):
+        # Resolve after the measured interval; no per-step synchronization.
+        torch.cuda.synchronize()
+        result = [
+            {
+                "batch_id": bid,
+                "model_execute_cuda_ms": start.elapsed_time(end),
+                "scheduled_tokens": tokens,
+                "endpoint": "worker current-stream execute_model span; excludes later sampling",
+            }
+            for bid, start, end, tokens in getattr(self, "_completion_events", [])
+        ]
+        self._completion_events = []
+        return {
+            "events": result,
+            "async_scheduling": self.vllm_config.scheduler_config.async_scheduling,
+            "executor": self.vllm_config.parallel_config.distributed_executor_backend,
+        }
+
     def init_device(self):
         result = super().init_device()
         limit = os.environ.get("KNLP_NATIVE_TORCH_LIMIT_BYTES")
