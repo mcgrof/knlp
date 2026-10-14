@@ -43,6 +43,11 @@ def test_zero_discordance_does_not_imply_zero_population_risk():
     upper = result["loss_probability_95_one_sided_bounds"][1]
     assert upper == pytest.approx(1 - 0.05 ** (1 / 1319), abs=1e-13)
     assert 0 < upper < 0.02
+    # The net contrast uses two tails for each of two transition risks.
+    net_upper = 1 - (0.05 / 4) ** (1 / 1319)
+    assert result["net_accuracy_change_95_exact_bonferroni"] == pytest.approx(
+        [-net_upper, net_upper], abs=1e-13
+    )
     small = {str(i): True for i in range(100)}
     assert not paired(small, small)["supported_margin"]
 
