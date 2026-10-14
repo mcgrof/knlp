@@ -127,7 +127,13 @@ def make_engine(arm, manifest, performance=False):
 def start_instrument(llm, scales, arm, directory):
     directory.mkdir(parents=True, exist_ok=True)
     llm.apply_model(
-        partial(callbacks.install, scales=scales, arm=arm, trace_dir=str(directory))
+        partial(
+            callbacks.install,
+            scales=scales,
+            arm=arm,
+            trace_dir=str(directory),
+            packed_expectation=PROTOCOL.get("packed_execution"),
+        )
     )
 
 
@@ -205,7 +211,13 @@ def bridge(args, manifest, scales):
     llm = make_engine(arm, manifest)
     save(trace_dir / "provenance.json", llm._study_provenance)
     llm.apply_model(
-        partial(callbacks.install, scales=scales, arm=arm, trace_dir=str(trace_dir))
+        partial(
+            callbacks.install,
+            scales=scales,
+            arm=arm,
+            trace_dir=str(trace_dir),
+            packed_expectation=PROTOCOL.get("packed_execution"),
+        )
     )
     llm.apply_model(callbacks.require_finite)
     sample = next(s for s in manifest["samples"] if s["kind"] == "nll")
