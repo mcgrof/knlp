@@ -55,11 +55,6 @@ def checkpoint():
         ON_CHECKPOINT()
 
 
-def checkpoint():
-    if ON_CHECKPOINT is not None:
-        ON_CHECKPOINT()
-
-
 def read_jsonl(path: Path):
     with open(path, encoding="utf-8") as stream:
         return [json.loads(line) for line in stream if line.strip()]

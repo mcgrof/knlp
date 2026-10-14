@@ -194,32 +194,6 @@ def test_q2_resume_discards_every_part_of_an_incomplete_conversation():
     } == {stories[0]["id"]}
 
 
-def test_q2_resume_discards_every_part_of_an_incomplete_conversation():
-    stories = [story("cnn", 0, turns=2), story("cnn", 1, turns=2)]
-
-    def records(conversation_id, count):
-        return [{"conversation_id": conversation_id, "index": i} for i in range(count)]
-
-    answers = records(stories[0]["id"], 12) + records(stories[1]["id"], 12)
-    provenance = records(stories[0]["id"], 4) + records(stories[1]["id"], 2)
-    analysis = records(stories[0]["id"], 4) + records(stories[1]["id"], 2)
-
-    complete, kept_answers, kept_provenance, kept_analysis = (
-        coqa.retain_complete_q2_conversations(
-            stories, answers, provenance, analysis, 10
-        )
-    )
-    assert complete == {stories[0]["id"]}
-    assert len(kept_answers) == 12
-    assert len(kept_provenance) == 4
-    assert len(kept_analysis) == 4
-    assert {
-        row["conversation_id"]
-        for rows in (kept_answers, kept_provenance, kept_analysis)
-        for row in rows
-    } == {stories[0]["id"]}
-
-
 def test_selection_digest_is_exact_frozen_formula():
     cid = "abc"
     assert (
