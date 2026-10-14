@@ -1,0 +1,17 @@
+{
+  "abseil": {
+    "url": "https://codeload.github.com/abseil/abseil-cpp/tar.gz/refs/tags/20250512.0",
+    "sha256": "7262daa7c1711406248c10f41026d685e88223bc92817d16fb93c19adb57f669",
+    "size": 2221435
+  },
+  "protobuf": {
+    "url": "https://codeload.github.com/protocolbuffers/protobuf/tar.gz/refs/tags/v30.1",
+    "sha256": "1451b03faec83aed17cdc71671d1bbdfd72e54086b827f5f6fd02bf7a4041b68",
+    "size": 9522536
+  },
+  "eigen": {
+    "url": "https://mirror.bazel.build/bitbucket.org/eigen/eigen/get/f3a22f35b044.tar.gz",
+    "sha256": "ca7beac153d4059c02c8fc59816c82d54ea47fe58365e8aded4082ded0b820c4",
+    "size": 2274731
+  }
+}

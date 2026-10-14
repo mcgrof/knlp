@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT
+# Google FDE construction with the knlp retrieval and memory benchmarks.
+GOOGLE_MUVERA_PY ?= python3
+GOOGLE_MUVERA_CONFIG ?= .config
+GOOGLE_MUVERA_BUILD_DIR ?= .cache/google-muvera
+GOOGLE_MUVERA_RUN_DIR ?=
+GOOGLE_MUVERA_DRIVER := benchmarks/google_muvera/scripts/run.py
+GOOGLE_MUVERA_ARGS = --config "$(GOOGLE_MUVERA_CONFIG)" \
+	--build-dir "$(GOOGLE_MUVERA_BUILD_DIR)" \
+	$(if $(GOOGLE_MUVERA_RUN_DIR),--run-dir "$(GOOGLE_MUVERA_RUN_DIR)")
+
+.PHONY: defconfig-google-muvera-small google-muvera-small
+defconfig-google-muvera-small:
+	@cp configs/defconfig-google-muvera-small "$(GOOGLE_MUVERA_CONFIG)"
+	@echo "wrote $(GOOGLE_MUVERA_CONFIG)"
+
+# The driver runs stages in order, including with make -j.
+google-muvera-small:
+	$(GOOGLE_MUVERA_PY) $(GOOGLE_MUVERA_DRIVER) run $(GOOGLE_MUVERA_ARGS)
+
+.PHONY: google-muvera-small-build google-muvera-small-test
+.PHONY: google-muvera-small-setup google-muvera-small-retrieval
+.PHONY: google-muvera-small-systems google-muvera-small-report
+.PHONY: google-muvera-small-smoke
+google-muvera-small-build google-muvera-small-test google-muvera-small-setup \
+google-muvera-small-retrieval google-muvera-small-systems \
+google-muvera-small-report google-muvera-small-smoke:
+	$(GOOGLE_MUVERA_PY) $(GOOGLE_MUVERA_DRIVER) \
+		$(patsubst google-muvera-small-%,%,$@) $(GOOGLE_MUVERA_ARGS)

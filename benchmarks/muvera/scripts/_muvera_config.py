@@ -5,6 +5,7 @@ and exposes per-key access. Also stamps a single run directory under
 CONFIG_MUVERA_OUTPUT_BASE that all scripts in one run share, so the
 report writer at the end can find every artifact.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,9 @@ DEFAULT_OUTPUT_BASE = "/data/results-archive"
 
 
 def _strip_quotes(s):
-    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+    if (s.startswith('"') and s.endswith('"')) or (
+        s.startswith("'") and s.endswith("'")
+    ):
         return s[1:-1]
     return s
 
@@ -51,6 +54,13 @@ def get_run_dir(cfg: dict) -> Path:
     invocation. The first script to touch it stamps a timestamp; later
     scripts reuse the same dir via a sidecar pointer file in /tmp.
     """
+    # A caller can isolate a run without the legacy process-global pointer.
+    explicit = cfg.get("CONFIG_MUVERA_RUN_DIR")
+    if explicit:
+        d = Path(explicit).expanduser().resolve()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "plots").mkdir(exist_ok=True)
+        return d
     base = cfg.get("CONFIG_MUVERA_OUTPUT_BASE") or DEFAULT_OUTPUT_BASE
     base = Path(base)
     base.mkdir(parents=True, exist_ok=True)
@@ -86,8 +96,11 @@ def reset_run_dir():
 
 def standard_argparse(prog_help: str) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=prog_help)
-    ap.add_argument("--config", default=".config",
-                     help="kconfig-style .config file (default: .config)")
+    ap.add_argument(
+        "--config",
+        default=".config",
+        help="kconfig-style .config file (default: .config)",
+    )
     return ap
 
 
@@ -102,47 +115,67 @@ def stamp_environment(cfg: dict, run_dir: Path):
         try:
             uname = subprocess.check_output(["uname", "-a"], text=True).strip()
             lines.append(f"uname: {uname}")
-        except Exception: pass
+        except Exception:
+            pass
         try:
             with open("/proc/cpuinfo") as f:
                 cpuinfo = f.read()
-            model = next((l for l in cpuinfo.splitlines()
-                          if l.startswith("model name")), None)
-            if model: lines.append(f"cpu: {model.split(':',1)[1].strip()}")
-        except Exception: pass
+            model = next(
+                (l for l in cpuinfo.splitlines() if l.startswith("model name")), None
+            )
+            if model:
+                lines.append(f"cpu: {model.split(':',1)[1].strip()}")
+        except Exception:
+            pass
         try:
             mi = subprocess.check_output(["free", "-h"], text=True).strip()
             lines.append("memory:\n  " + mi.replace("\n", "\n  "))
-        except Exception: pass
+        except Exception:
+            pass
         try:
             import torch
+
             lines.append(f"torch: {torch.__version__}")
             lines.append(f"cuda available: {torch.cuda.is_available()}")
             if torch.cuda.is_available():
                 lines.append(f"  device 0 name: {torch.cuda.get_device_name(0)}")
-        except Exception: pass
+        except Exception:
+            pass
         # Python pkgs
         try:
-            for mod in ["sentence_transformers", "pylate", "faiss", "datasets",
-                         "transformers", "numpy", "matplotlib", "psutil"]:
+            for mod in [
+                "sentence_transformers",
+                "pylate",
+                "faiss",
+                "datasets",
+                "transformers",
+                "numpy",
+                "matplotlib",
+                "psutil",
+            ]:
                 try:
                     m = __import__(mod)
                     v = getattr(m, "__version__", "installed")
                     lines.append(f"  {mod}: {v}")
                 except ImportError:
                     lines.append(f"  {mod}: NOT INSTALLED")
-        except Exception: pass
+        except Exception:
+            pass
         env_path.write_text("\n".join(lines) + "\n")
 
     git_path = run_dir / "git_commit.txt"
     if not git_path.exists():
         try:
             sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], text=True,
-                cwd=Path(__file__).resolve().parents[3]).strip()
+                ["git", "rev-parse", "HEAD"],
+                text=True,
+                cwd=Path(__file__).resolve().parents[3],
+            ).strip()
             branch = subprocess.check_output(
-                ["git", "branch", "--show-current"], text=True,
-                cwd=Path(__file__).resolve().parents[3]).strip()
+                ["git", "branch", "--show-current"],
+                text=True,
+                cwd=Path(__file__).resolve().parents[3],
+            ).strip()
             git_path.write_text(f"commit: {sha}\nbranch: {branch}\n")
         except Exception:
             git_path.write_text("(not a git working tree)\n")
@@ -153,12 +186,14 @@ def stamp_environment(cfg: dict, run_dir: Path):
 
 
 def parse_int_list(s: str) -> list[int]:
-    if not s: return []
+    if not s:
+        return []
     return [int(x) for x in s.replace(",", " ").split() if x]
 
 
 def parse_str_list(s: str) -> list[str]:
-    if not s: return []
+    if not s:
+        return []
     return [x for x in s.replace(",", " ").split() if x]
 
 
