@@ -574,7 +574,23 @@ def timing_record(llm, prompts, batch, label, out, provenance):
     warm_memory = llm.collective_rpc(callbacks.reset_warm_peak)
     schedule.label(label)
     started = time.monotonic()
-    outputs = llm.generate(prompts, params, use_tqdm=False)
+    completion_wall = {}
+    original_step = llm.llm_engine.step
+
+    def observed_step(*args, **kwargs):
+        values = original_step(*args, **kwargs)
+        if any(value.finished for value in values):
+            stamp = time.time()
+            for value in values:
+                if value.finished:
+                    completion_wall[value.request_id] = stamp
+        return values
+
+    llm.llm_engine.step = observed_step
+    try:
+        outputs = llm.generate(prompts, params, use_tqdm=False)
+    finally:
+        llm.llm_engine.step = original_step
     ended = time.monotonic()
     schedule.label(None)
     metrics = []
@@ -582,7 +598,8 @@ def timing_record(llm, prompts, batch, label, out, provenance):
         completion = output.outputs[0]
         if len(completion.token_ids) != 128 or output.num_cached_tokens:
             raise RuntimeError("synthetic timing output/cache coverage mismatch")
-        m = vars(output.metrics)
+        m = dict(vars(output.metrics))
+        m["observed_frontend_completion_wall_time"] = completion_wall[output.request_id]
         if not m.get("first_token_ts") or m["last_token_ts"] <= m["first_token_ts"]:
             raise RuntimeError("native request timestamps missing")
         metrics.append(
@@ -608,8 +625,17 @@ def timing_record(llm, prompts, batch, label, out, provenance):
         if i + 1 < len(events)
     ]
     complete = batch == 1 or len(intervals) >= 32
-    latencies = [m["last_token_ts"] - m["arrival_time"] for m in metrics]
-    ttft = [m["first_token_ts"] - m["arrival_time"] for m in metrics]
+    # vLLM arrival_time is wall-clock; core token timestamps are monotonic.
+    # Observe each finished result at the frontend instead of mixing clocks.
+    latencies = [
+        m["observed_frontend_completion_wall_time"] - m["arrival_time"] for m in metrics
+    ]
+    ttft = [m["first_token_latency"] for m in metrics]
+    if any(not 0 <= first <= elapsed for first, elapsed in zip(ttft, latencies)):
+        raise RuntimeError("inconsistent frontend request latency timestamps")
+    prefill_span = max(
+        m["arrival_time"] + m["first_token_latency"] for m in metrics
+    ) - min(m["arrival_time"] for m in metrics)
     itl = [(m["last_token_ts"] - m["first_token_ts"]) / 127 for m in metrics]
     memory = llm.collective_rpc(callbacks.native_memory_state)
     driver_peak = max(x["cuda_device_used_bytes"] for x in warm_memory + memory)
@@ -635,6 +661,12 @@ def timing_record(llm, prompts, batch, label, out, provenance):
         ),
         "preemptions": sum(len(e["preempted"]) for e in events),
         "request_metrics": metrics,
+        "clock_notes": "Frontend arrival/completion use wall-clock; TTFT uses vLLM first_token_latency; mean ITL uses core monotonic first/last token timestamps.",
+        "effective_prefill_input_tokens_per_second": batch
+        * len(prompts[0]["prompt_token_ids"])
+        / prefill_span,
+        "prefill_rate_note": "All input tokens divided by the interval from first arrival to last first token; includes scheduler admissions and host overhead.",
+        "itl_percentile_note": "Percentiles across per-request mean decode intervals, not individual-token tail latency.",
         "request_latency_p50_seconds": float(np.quantile(latencies, 0.5)),
         "request_latency_p95_seconds": float(np.quantile(latencies, 0.95)),
         "ttft_p50_seconds": float(np.quantile(ttft, 0.5)),
@@ -772,6 +804,12 @@ def run_measurement(args, manifest, scales):
         ]
         label = f"{args.stage}-{length}-{batch}"
         if args.stage == "profile":
+            schedule.label(None)
+            llm.generate(
+                prompts,
+                SamplingParams(temperature=0, max_tokens=128, ignore_eos=True),
+                use_tqdm=False,
+            )
             schedule.label(label)
             llm.apply_model(
                 partial(

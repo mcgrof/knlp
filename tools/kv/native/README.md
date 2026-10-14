@@ -93,6 +93,10 @@ shape; the default timing grid uses 2K/8K and batches 1/8/32. Generation is
 synthetic, forced to 128 tokens, with per-shape warmup excluded. Actual
 scheduler admissions and full-active decode steps are recorded. At least
 32 full-active steps are required to qualify multi-request concurrency.
+Request latency uses observed frontend completion minus wall-clock arrival.
+Time to first token uses the engine's frontend latency field; core monotonic
+first/last token timestamps supply per-request mean decode intervals.
+The effective prefill rate includes admissions and host overhead.
 Request percentiles are descriptive, and independent process repetitions
 remain the uncertainty units for speed. `--stage profile` collects separate
 Chrome traces and actual GPU kernel names. Finite-logit checks apply to
