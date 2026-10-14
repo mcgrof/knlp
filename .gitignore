@@ -1,4 +1,5 @@
 # Python cache
+.cache/google-muvera/
 __pycache__/
 *.pyc
 *.pyo

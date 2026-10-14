@@ -10,6 +10,7 @@ SHELL := /bin/bash
 # Include Kconfig support to get CONFIG variables
 include Makefile.kconfig
 include Makefile.muvera
+include Makefile.google_muvera
 include Makefile.trellis
 
 # Include paper-memory-decode reproduction targets (decode-doctor,
