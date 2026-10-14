@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>muvera-small: Is NVMe Read Amplification Inevitable for Tiny Retrieval Records?</title>
+  <title>MUVERA: Official FDE Construction, Retrieval Quality, and Record Sizes</title>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react@16.14.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
@@ -20,6 +20,11 @@
     .tab-inactive:hover { border-color: #22d3ee; color: #22d3ee; }
     .stat-card { background: linear-gradient(145deg, #1e293b, #1a2332); border: 1px solid #334155; }
     code { color: #22d3ee; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .data-table th, .data-table td { padding: 0.75rem; border-bottom: 1px solid #334155; text-align: left; vertical-align: top; }
+    .data-table th { color: #e2e8f0; }
+    .data-table td { color: #cbd5e1; }
+    pre { white-space: pre; }
   </style>
 </head>
 <body class="min-h-screen text-gray-100">
@@ -47,7 +52,7 @@
         {bytes: 8192,  mmap_p50: 1640, h2d: 42.9, proj: 70.7},
         {bytes: 16384, mmap_p50: 1970, h2d: 59.2, proj: 122.0}
       ],
-      // theoretical 4 KiB-page read amplification for a logical record (bytes fetched / record)
+      // Model: one isolated record uses one 4 KiB unit; not a measured device result.
       amp: [
         {bytes: '32 B',   amp: 128}, {bytes: '64 B',  amp: 64}, {bytes: '128 B', amp: 32},
         {bytes: '256 B',  amp: 16},  {bytes: '512 B', amp: 8},  {bytes: '1 KiB', amp: 4},
@@ -57,9 +62,10 @@
         {name: 'pooled-int8',  bytes: 384,    recall: 0.857, fill: C.emerald},
         {name: 'pooled-fp16',  bytes: 768,    recall: 0.857, fill: C.emerald},
         {name: 'pooled-fp32',  bytes: 1536,   recall: 0.857, fill: C.emerald},
-        {name: 'FDE int8 d512',bytes: 512,    recall: 0.393, fill: C.amber},
-        {name: 'FDE d1024',    bytes: 2048,   recall: 0.370, fill: C.amber},
-        {name: 'ColBERTv2 oracle', bytes: 120654, recall: 0.807, fill: C.blue}
+        {name: 'legacy FDE int8 d512',bytes: 512,    recall: 0.393, fill: C.amber},
+        {name: 'legacy FDE fp16 d1024',    bytes: 2048,   recall: 0.370, fill: C.amber},
+        {name: 'best legacy FDE int8', bytes: 20480, recall: 0.510, fill: C.amber},
+        {name: 'exact ColBERTv2', bytes: 120654, recall: 0.807, fill: C.blue}
       ]
     };
 
@@ -88,8 +94,8 @@
     function SystemsChart() {
       return (
         <div className="card rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-1">Cache/Memory-Resident Byte Floor</h3>
-          <p className="text-gray-500 text-sm mb-4">Warm mmap random-read p50 latency (and CPU→GPU H2D transfer) vs logical record size, in a memory-/cache-resident store. Smaller records are genuinely faster to touch, with the knee around <strong>256–512 B</strong>. This is the real win that sub-4096-byte retrieval records promise — <em>as long as the data stays resident.</em></p>
+          <h3 className="text-lg font-semibold mb-1">Recorded Memory-Resident Access Times</h3>
+          <p className="text-gray-500 text-sm mb-4">The historical sample measures warm memory-mapped reads and CPU-to-GPU transfers on an AMD W7900 system. Smaller records reduce memory-read time in this setup. These synthetic record-size measurements do not establish retrieval quality or cold-NVMe performance. H2D means host-to-device transfer; each transfer contains 64 records.</p>
           <ResponsiveContainer width="100%" height={360}>
             <LineChart data={DATA.systems} margin={{top: 8, right: 16, left: 28, bottom: 28}}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
@@ -110,16 +116,16 @@
     function AmpChart() {
       return (
         <div className="card rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-1">NVMe Read Amplification — The Inevitability</h3>
-          <p className="text-gray-500 text-sm mb-4">A storage device reads at <strong>page/block granularity</strong> (4 KiB here). A cold or O_DIRECT random read of a sub-page logical record still fetches a whole page, so the bytes actually read divided by the logical record is the read amplification below. A 32-byte record costs a 4 KiB read — <strong>128×</strong>. The benchmark measured ~4–32× effective amplification on cold/O_DIRECT random reads; the point is the same: <em>the sub-page latency advantage disappears the moment the access path falls through to raw NVMe.</em></p>
+          <h3 className="text-lg font-semibold mb-1">4 KiB Unit Model — Not a Measured NVMe Result</h3>
+          <p className="text-gray-500 text-sm mb-4">Assume one isolated record uses a <strong>4 KiB unit</strong>, with no reuse of other records in that unit. The chart is simply 4096 / record bytes. A drive can expose 512-byte logical blocks while using a 4 KiB indirection unit (IU) internally. That makes 4 KiB a useful storage design point, but an IU size alone does not measure NAND bytes read, host bytes transferred, or latency. The sample cold-NVMe test <strong>was not run</strong>. Packing, access locality, caching, and queue depth need separate measurements.</p>
           <ResponsiveContainer width="100%" height={360}>
             <BarChart data={DATA.amp} margin={{top: 8, right: 16, left: 24, bottom: 28}}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis dataKey="bytes" stroke="#94a3b8" height={50} tickMargin={8} label={{value: 'Logical record size', position: 'insideBottom', offset: -4, fill: '#94a3b8'}} />
-              <YAxis stroke="#94a3b8" width={64} scale="log" domain={[1, 128]} allowDataOverflow label={{value: 'Read amplification (×, log)', angle: -90, position: 'insideLeft', offset: 0, style: {textAnchor: 'middle'}, fill: '#94a3b8'}} />
+              <YAxis stroke="#94a3b8" width={64} scale="log" domain={[1, 128]} allowDataOverflow label={{value: 'Modeled unit / record (×)', angle: -90, position: 'insideLeft', offset: 0, style: {textAnchor: 'middle'}, fill: '#94a3b8'}} />
               <Tooltip content={CustomTooltip} />
               <ReferenceLine y={1} stroke={C.emerald} strokeDasharray="5 5" label={{value: '1× (no amplification)', fill: C.emerald, position: 'right'}} />
-              <Bar dataKey="amp" name="read amplification (x)" radius={[4,4,0,0]}>
+              <Bar dataKey="amp" name="modeled unit-to-record ratio (×)" radius={[4,4,0,0]}>
                 {DATA.amp.map((d, i) => (<Cell key={i} fill={d.amp >= 16 ? C.red : d.amp > 1 ? C.amber : C.emerald} />))}
               </Bar>
             </BarChart>
@@ -131,13 +137,13 @@
     function RetrievalChart() {
       return (
         <div className="card rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-1">Retrieval Quality vs Bytes per Vector</h3>
-          <p className="text-gray-500 text-sm mb-4">BeIR/scifact recall@10 vs stored bytes per record. <strong>Pooled int8 (384 B)</strong> nearly matches the full ColBERTv2 multi-vector oracle (120 KB) at ~1/300th the bytes. MUVERA-style FDE compression of multi-vector queries only earns its complexity at multi-KiB budgets; below that, a pooled single-vector int8 baseline is hard to beat. int8 is effectively free.</p>
+          <h3 className="text-lg font-semibold mb-1">Historical Local Proxy: Quality vs Payload Bytes</h3>
+          <p className="text-gray-500 text-sm mb-4">Selected SciFact results from the original local FDE approximation. The old CSV field called recall@10 counts queries with any relevant hit: it is <strong>hit rate@10</strong>. BGE pooled vectors and ColBERTv2 use different models. No FDE-over-BGE crossover appears in the supplied sample: its best FDE hit rate is 0.510 versus 0.857 for BGE. This is not a benchmark of Google’s FDE code. Precision variants are reconstructed as FP32 before scoring, so payload estimates do not measure compressed-kernel speed or resident memory.</p>
           <ResponsiveContainer width="100%" height={360}>
             <ScatterChart margin={{top: 8, right: 16, left: 28, bottom: 28}}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
               <XAxis type="number" dataKey="bytes" name="bytes/vec" stroke="#94a3b8" scale="log" domain={[256, 200000]} height={50} tickMargin={8} label={{value: 'Bytes per vector (log)', position: 'insideBottom', offset: -4, fill: '#94a3b8'}} />
-              <YAxis type="number" dataKey="recall" name="recall@10" stroke="#94a3b8" width={64} domain={[0.3, 0.95]} label={{value: 'recall@10', angle: -90, position: 'insideLeft', offset: 0, style: {textAnchor: 'middle'}, fill: '#94a3b8'}} />
+              <YAxis type="number" dataKey="recall" name="hit rate@10" stroke="#94a3b8" width={64} domain={[0.3, 0.95]} label={{value: 'hit rate@10', angle: -90, position: 'insideLeft', offset: 0, style: {textAnchor: 'middle'}, fill: '#94a3b8'}} />
               <ZAxis range={[120, 120]} />
               <Tooltip content={CustomTooltip} cursor={{strokeDasharray: '3 3'}} />
               <Scatter data={DATA.retrieval} name="variant">
@@ -150,54 +156,100 @@
       );
     }
 
+    function GooglePanel() {
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <p className="text-cyan-400 text-xs uppercase tracking-wide mb-2">New benchmark path · results still to be collected</p>
+          <h3 className="text-xl font-semibold mb-3">Run Google’s public FDE construction on ColBERT vectors</h3>
+          <p className="text-gray-300 text-sm mb-4">The new target builds a pinned copy of Google’s fixed dimensional encoding (FDE) code and evaluates it with the existing SciFact and ColBERTv2 data path. The original target remains available for comparison. The memory and legacy-quality tabs show that earlier local implementation.</p>
+          <pre className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm overflow-x-auto mb-4"><code>make defconfig-google-muvera-small &amp;&amp; make google-muvera-small</code></pre>
+          <div className="overflow-x-auto mb-5">
+            <table className="data-table">
+              <thead><tr><th>Operation</th><th>Original local approximation</th><th>Google-backed target</th></tr></thead>
+              <tbody>
+                <tr><td>Query / document buckets</td><td>Sum / sum</td><td>Official query / document APIs</td></tr>
+                <tr><td>Document construction</td><td>Empty buckets stay zero</td><td>Average buckets and configured empty-bucket filling</td></tr>
+                <tr><td>FDE ranking</td><td>Cosine similarity</td><td>Inner product without FDE normalization</td></tr>
+                <tr><td>Candidate evaluation</td><td>Direct FDE quality</td><td>Exact Chamfer neighbors, then Chamfer reranking</td></tr>
+                <tr><td>Systems scope</td><td>Recorded memory sample</td><td>Memory microbenchmarks; cold NVMe is a separate follow-up</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-gray-300 text-sm mb-4">Google announced the <a className="text-cyan-400 underline" href="https://research.google/blog/muvera-making-multi-vector-retrieval-as-fast-as-single-vector-search/">public FDE code on June 25, 2025</a>. This target supplies the evaluation harness around that construction. It uses exhaustive FDE scoring for a small corpus; it does not reproduce the paper’s complete DiskANN search pipeline or its latency claims.</p>
+          <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 mb-4">
+            <h4 className="font-semibold text-amber-400 mb-2">What v2 changes about dimension sizing</h4>
+            <p className="text-gray-300 text-sm mb-3">The <a className="text-cyan-400 underline" href="https://arxiv.org/abs/2405.19504v2">June 2026 correction</a> weakens a sufficient worst-case dimension bound. It does not establish the minimum dimension of a document of a given length. Hidden constants prevent a numerical sizing rule. The next tests measure the smallest tested dimension that meets a fixed retrieval target.</p>
+            <p className="text-gray-300 text-sm">For this construction, before any optional final projection, <code>D = R × 2^k × p</code>: R repetitions, k hash bits, and p coordinates per bucket. An FP32 FDE payload uses <code>4D bytes</code>. For example, R=20, k=5, p=16 gives D=10,240 and 40 KiB per document. This is arithmetic, not a quality guarantee. Original token vectors are also retained for reranking.</p>
+          </div>
+          <p className="text-gray-400 text-sm">The earlier systems question was motivated in part by <a className="text-cyan-400 underline" href="https://arxiv.org/html/2509.01092v2">REFRAG v2</a>. REFRAG’s trained chunk embeddings serve generation; these FDEs approximate retrieval similarity. This benchmark does not measure REFRAG answer quality.</p>
+        </div>
+      );
+    }
+
+    function NextTestsPanel() {
+      const tests = [
+        ['Build and verify the adapter', 'Run the CPU fixtures against the compiled Google code. Check query/document asymmetry, empty buckets, deterministic seeds, and dimensions. Stop if those checks fail.'],
+        ['Establish the small-corpus baseline', 'Reuse one frozen SciFact ColBERT cache. Compare exhaustive Chamfer, raw FDE candidates, and Chamfer-reranked candidates. Report neighbor recall against exact Chamfer separately from relevance recall, hit rate, and nDCG. BGE is a separate model baseline.'],
+        ['Find the dimension frontier', 'Sweep repetitions, hash bits, and bucket projection size with base seeds 1, 1001, and 2001. Google seeds each repetition with the base seed plus its index, so base-seed spacing must be at least the largest repetition count. Fix the candidate budget. As an initial criterion, require at least 0.95 recovery of exact top-10 neighbors within 100 candidates in every seed; this is a chosen target, not a paper guarantee.'],
+        ['Resolve document length', 'Inspect the current query groups, which use the length of each query’s exact top-1 document. Extend this to per-neighbor length groups before claiming a document-size rule. Record truncation, use a separate tuning split, and report all seeds, denominators, and uncertainty. An empty group or no passing tested dimension is unresolved.'],
+        ['Measure compression and total cost', 'After FP32 passes, evaluate FP16, INT8, and product quantization with trained codebooks. Measure serialized bytes including metadata, codebooks, index data, and rerank vectors. Keep quality after reconstruction separate from a real compressed-search kernel timing.'],
+        ['Test the SSD hypothesis', 'Use a verified cold workload larger than the available cache. Sweep record sizes, packing, batch size, locality, and queue depth. Read complete records, including those above 4 KiB. Report requested and completed host bytes; report media bytes only when device telemetry actually measures them. Record logical block format and known IU size.']
+      ];
+      return (
+        <div className="card rounded-xl p-6 mb-6">
+          <h3 className="text-xl font-semibold mb-3">Next tests: document length → dimensions → useful bytes</h3>
+          <p className="text-gray-300 text-sm mb-5">The question is how compact a representation can be while preserving a chosen retrieval result. A memory microbenchmark alone cannot answer it. Complete the correctness and quality checks before interpreting storage results.</p>
+          <div className="space-y-4">
+            {tests.map(([title, body], i) => (
+              <div key={title} className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                <h4 className="font-semibold text-cyan-400 mb-2">{i + 1}. {title}</h4>
+                <p className="text-gray-300 text-sm">{body}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-gray-400 text-sm mt-5">A single existing CUDA or ROCm GPU is the starting point for encoding and memory-transfer tests. Google’s FDE construction and its fixture tests run on the CPU. SciFact can expose implementation faults, but longer untruncated corpora are needed before claiming a long-document sizing law.</p>
+        </div>
+      );
+    }
+
     function ReproducePanel() {
       return (
         <div className="card rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-3">Reproduce it</h3>
-          <p className="text-gray-400 text-sm mb-4">The benchmark is a Kconfig-style defconfig + make flow. Three commands:</p>
-          <pre className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm overflow-x-auto mb-4"><code>make defconfig-muvera-small   # writes .config
-make muvera-small             # setup + systems + retrieval + plots
-make muvera-small-report      # writes report.md</code></pre>
-          <p className="text-gray-400 text-sm mb-2">Results land under <code>CONFIG_MUVERA_OUTPUT_BASE</code> (any writable dir) as CSVs, plots, and a <code>report.md</code>. The optional cold-NVMe test — the part that demonstrates the read amplification above — is off by default:</p>
-          <pre className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm overflow-x-auto mb-4"><code>echo 'CONFIG_MUVERA_ENABLE_NVME_COLD_BENCH=y' >> .config
-echo 'CONFIG_MUVERA_NVME_BENCH_PATH=/mnt/nvme/muvera_bench' >> .config
-make muvera-small-nvme-cold</code></pre>
-          <div className="grid md:grid-cols-2 gap-4 mt-4">
-            <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
-              <h4 className="font-semibold text-cyan-400 mb-2">Do I need a GPU?</h4>
-              <p className="text-gray-400 text-sm">Yes, a <strong>single GPU</strong> for the full run: building the ColBERTv2 and BGE embeddings, the CPU→GPU H2D transfer measurement, and the GPU projection cost all use <code>CONFIG_MUVERA_DEVICE</code> (default <code>cuda:0</code>). Validated on one AMD Radeon Pro W7900 (ROCm 6.4); any single CUDA or ROCm GPU on a Linux box works.</p>
-            </div>
-            <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
-              <h4 className="font-semibold text-amber-400 mb-2">What runs without a GPU?</h4>
-              <p className="text-gray-400 text-sm">The systems byte-floor reads (warm mmap random reads) and the optional cold-NVMe / O_DIRECT amplification test are <strong>storage- and CPU-bound</strong> — no GPU involved. Those are the measurements behind the read-amplification story; the GPU is only needed to also produce the retrieval-quality frontier.</p>
-            </div>
-          </div>
+          <h3 className="text-xl font-semibold mb-3">Reproduce the Google-backed benchmark</h3>
+          <p className="text-gray-300 text-sm mb-4">First build the pinned upstream source and run small CPU fixtures. Then prepare the dataset and run retrieval, memory measurements, and the report.</p>
+          <pre className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm overflow-x-auto mb-4"><code>make defconfig-google-muvera-small
+make google-muvera-small-build
+make google-muvera-small-test
+make google-muvera-small-smoke
+make google-muvera-small</code></pre>
+          <p className="text-gray-300 text-sm mb-3">The individual targets are <code>google-muvera-small-setup</code>, <code>google-muvera-small-retrieval</code>, <code>google-muvera-small-systems</code>, and <code>google-muvera-small-report</code>. Consult the <a className="text-cyan-400 underline" href="https://github.com/mcgrof/knlp/tree/main/benchmarks/google_muvera">benchmark README</a> for dependencies, configuration, cache reuse, and output files.</p>
+          <p className="text-gray-300 text-sm mb-4">The original comparison remains available:</p>
+          <pre className="bg-gray-900 border border-gray-700 rounded-lg p-4 text-sm overflow-x-auto mb-4"><code>make defconfig-muvera-small &amp;&amp; make muvera-small</code></pre>
+          <p className="text-gray-400 text-sm">Neither the displayed sample nor the new default target contains cold-NVMe measurements. The legacy optional NVMe script assumes 4 KiB requests and must be revised to read full records and distinguish host bytes from media bytes before using it as evidence for the follow-up test.</p>
         </div>
       );
     }
 
     function App() {
       const [tab, setTab] = useState(0);
-      const tabs = ['Cache Byte Floor', 'NVMe Read Amplification', 'Retrieval Frontier', 'Reproduce'];
+      const tabs = ['Google MUVERA', 'Memory Measurements', '4 KiB Unit Model', 'Legacy Quality', 'Next Tests', 'Reproduce'];
       return (
         <div className="max-w-6xl mx-auto px-6 py-12">
           <header className="text-center mb-12">
             <a href="index.html" className="text-gray-500 text-sm hover:text-gray-300 mb-4 inline-block">&larr; Back to knlp</a>
             <h1 className="text-4xl font-bold mb-3"><span className="gradient-text">muvera-small</span></h1>
             <p className="text-gray-400 max-w-2xl mx-auto">
-              Sub-4096-byte retrieval vectors are real and fast — in a memory- or cache-resident store.
-              The question this reproducible benchmark answers: does that advantage survive when the access path
-              falls through to raw NVMe? It does not. A storage device reads at page granularity, so a tiny
-              logical record still pays a full-page read — read amplification that looks close to inevitable
-              unless the storage stack packs, batches, caches, or filters near storage.
+              How small can a retrieval record be while preserving useful results?
+              Compare the original memory study with a new target built around Google’s public FDE code.
+              Quality, memory access, and SSD behavior need separate evidence.
             </p>
           </header>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
-            <StatCard label="Latency knee" value="256-512" unit="B" sub="mmap random reads" />
-            <StatCard label="Sub-page read amp" value="up to 128" unit="x" sub="32 B on a 4 KiB page" />
-            <StatCard label="pooled-int8" value="384" unit="B" sub="recall@10 0.857" />
-            <StatCard label="ColBERTv2 oracle" value="120" unit="KB" sub="recall@10 0.807" />
+            <StatCard label="Memory sample" value="32–16,384" unit="B" sub="record-size sweep" />
+            <StatCard label="SSD assumption" value="4" unit="KiB" sub="IU model, not a measurement" />
+            <StatCard label="Legacy BGE INT8" value="384" unit="B" sub="hit rate@10 0.857" />
+            <StatCard label="Google FDE results" value="Pending" unit="" sub="run the new target" />
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6 justify-center">
@@ -206,33 +258,35 @@ make muvera-small-nvme-cold</code></pre>
             ))}
           </div>
 
-          {tab === 0 && <SystemsChart />}
-          {tab === 1 && <AmpChart />}
-          {tab === 2 && <RetrievalChart />}
-          {tab === 3 && <ReproducePanel />}
+          {tab === 0 && <GooglePanel />}
+          {tab === 1 && <SystemsChart />}
+          {tab === 2 && <AmpChart />}
+          {tab === 3 && <RetrievalChart />}
+          {tab === 4 && <NextTestsPanel />}
+          {tab === 5 && <ReproducePanel />}
 
           <div className="grid md:grid-cols-3 gap-4 mt-8">
             <div className="card rounded-xl p-5">
-              <h4 className="font-semibold text-cyan-400 mb-2">Resident: tiny records win</h4>
-              <p className="text-gray-400 text-sm">In a cache-/memory-resident store, smaller records are genuinely faster to touch, with most of the gain captured by ~256–512 B. int8 quantization is effectively free here.</p>
+              <h4 className="font-semibold text-cyan-400 mb-2">Measured: memory access</h4>
+              <p className="text-gray-400 text-sm">The historical sample shows lower memory-read latency for smaller records. Its quality curves use a local FDE approximation and a separate BGE model baseline.</p>
             </div>
             <div className="card rounded-xl p-5">
-              <h4 className="font-semibold text-red-400 mb-2">Cold NVMe: the floor bites</h4>
-              <p className="text-gray-400 text-sm">Raw random NVMe reads fetch a whole page regardless of logical record size, so sub-page records suffer 4–32× (up to a theoretical 128×) read amplification. The sub-page advantage evaporates.</p>
+              <h4 className="font-semibold text-red-400 mb-2">Modeled: 4 KiB units</h4>
+              <p className="text-gray-400 text-sm">An isolated 512-byte record occupies one eighth of a 4 KiB unit. Whether that produces extra host traffic, internal reads, or a latency penalty requires a device test.</p>
             </div>
             <div className="card rounded-xl p-5">
-              <h4 className="font-semibold text-amber-400 mb-2">So: design the access path</h4>
-              <p className="text-gray-400 text-sm">To exploit sub-page retrieval records you need packed layouts, batching, caching, or near-storage filtering. MUVERA/FDE only earns its complexity above multi-KiB budgets; a pooled int8 baseline is hard to beat below that.</p>
+              <h4 className="font-semibold text-amber-400 mb-2">Next: quality before size</h4>
+              <p className="text-gray-400 text-sm">Measure exact-neighbor recovery with Google’s FDE code, then inspect dimension and length groups. Include the retained multivector cache in any total-storage comparison.</p>
             </div>
           </div>
 
           <div className="card rounded-xl p-6 mt-8 text-center">
             <h3 className="text-lg font-semibold mb-2">Run it yourself</h3>
             <p className="text-gray-400 text-sm max-w-3xl mx-auto mb-4">
-              <code>make defconfig-muvera-small &amp;&amp; make muvera-small</code> on any Linux box with a single GPU.
-              The code, configs, and a sample report are in the repository.
+              <code>make defconfig-google-muvera-small &amp;&amp; make google-muvera-small</code>
+              adds the official FDE implementation to the existing dataset and systems workflow.
             </p>
-            <a href="https://github.com/mcgrof/knlp/tree/main/benchmarks/muvera" className="text-cyan-400 hover:text-cyan-300 text-sm">Read the muvera-small benchmark &rarr;</a>
+            <a href="https://github.com/mcgrof/knlp/tree/main/benchmarks/google_muvera" className="text-cyan-400 hover:text-cyan-300 text-sm">Read the Google-backed benchmark &rarr;</a>
           </div>
 
           <footer className="text-center text-gray-600 text-sm border-t border-gray-800 pt-8 mt-12">
@@ -241,7 +295,8 @@ make muvera-small-nvme-cold</code></pre>
               <span className="mx-2">&middot;</span>
               <a href="https://github.com/mcgrof/knlp" className="hover:text-gray-400">GitHub</a>
             </p>
-            <p>BeIR/scifact, single GPU (AMD W7900, ROCm 6.4); systems byte-floor + retrieval frontier, sample run</p>
+            <p className="mb-2"><a className="hover:text-gray-400" href="https://github.com/mcgrof/knlp/tree/main/benchmarks/muvera/sample">Historical CSVs and report</a> · <a className="hover:text-gray-400" href="https://github.com/google/graph-mining/tree/main/sketching/point_cloud">Google FDE source</a> · <a className="hover:text-gray-400" href="https://arxiv.org/html/2405.19504v2">MUVERA v2</a></p>
+            <p>Historical sample: May 2, 2026 · SciFact · AMD W7900 · ROCm 6.4 · <a className="hover:text-gray-400" href="https://github.com/mcgrof/knlp/commit/44ff10778ce29cdb6ed493195e8654d69014403e">code 44ff10778ce2</a>. Google-backed results: pending.</p>
           </footer>
         </div>
       );

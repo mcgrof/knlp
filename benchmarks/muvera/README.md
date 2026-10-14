@@ -1,43 +1,41 @@
 # muvera-small — reproducible byte-floor benchmark for retrieval vectors
 
-Measures the systems and quality envelope for sub-4096-byte retrieval
-records. Built from Stage 5 of the REFRAG/MUVERA frontier work, hardened
-into a standalone reproducible suite that anyone can run on a Linux box
-with a single GPU.
+This is the original memory-access benchmark and local fixed dimensional
+encoding (FDE) approximation. It measures the relation between retrieval
+record size and memory access cost. It grew from experiments motivated by
+REFRAG and ColBERT. It is not Google's MUVERA implementation.
 
-An interactive walkthrough of the results — the cache byte floor, the NVMe
-read-amplification story, the retrieval frontier, and how to reproduce it —
-is at [`docs/muvera_visualization.html`](../../docs/muvera_visualization.html).
+For the alternative that calls Google's public FDE code, run:
 
-## What it measures
-
-```
-1. Cache-resident / mmap random reads improve materially below 4096 B.
-2. Most random-access gain is captured around 256-512 B records.
-3. GPU H2D transfer is overhead-bound below ~4096 B unless batch / fusion
-   changes the result.
-4. Cold NVMe / O_DIRECT reads do NOT preserve the sub-4096 advantage
-   because the drive/page layer reads at block/page granularity.
-   (Optional, gated by CONFIG_MUVERA_ENABLE_NVME_COLD_BENCH=y.)
-5. Retrieval-quality side:
-     - pooled int8 is a strong tiny-record baseline,
-     - MUVERA/FDE with ColBERTv2 multi-vector queries beats pooled only
-       at larger byte budgets,
-     - int8 is effectively free in this setup,
-     - PQ requires its own M/nbits/OPQ sweep and must not be assumed free.
+```bash
+make defconfig-google-muvera-small && make google-muvera-small
 ```
 
-## Strategic story
+The [Google-backed benchmark](../google_muvera/README.md) documents its
+construction, metrics, dependencies, and next tests. The
+[interactive page](../../docs/muvera_visualization.html) separates the two
+implementations and labels the storage assumptions.
 
-Sub-4096-byte retrieval records are real and useful for memory- /
-cache-resident vector stores. But if the access path falls through to
-raw NVMe random reads, the latency / read-amplification floor eats most
-of the benefit. The storage stack needs packed layouts, batching,
-caching, or near-storage filtering to actually exploit sub-page AI
-retrieval records.
+## Evidence and limits
 
-This is **not** a REFRAG warm-tier revival. It is a reproducible
-infrastructure benchmark for retrieval vectors.
+The committed [sample](sample/sample_report.md) contains warm memory-mapped
+reads, host-to-device transfers, and local-proxy retrieval results. The
+cold-NVMe test was disabled. It does not establish observed NVMe read
+amplification or a loss of the small-record advantage on an SSD.
+
+The legacy FDE implementation sums both query and document buckets,
+leaves empty buckets zero, and normalizes before scoring. Its quality
+results do not validate the asymmetric construction in the MUVERA paper.
+The sample does not show an FDE-over-BGE quality crossover: the best
+listed FDE hit rate at 10 is 0.510, versus 0.857 for BGE. These are also
+different embedding models, not just different encodings of one model.
+The legacy CSV's `recall_at_10` and `recall_at_100` fields count whether any
+relevant result is present. They therefore measure hit rate.
+
+Quantized vectors are reconstructed as FP32 before scoring. Payload byte
+estimates do not measure actual compressed-format search speed or process
+memory. The historical CSVs and report remain unchanged for provenance;
+the corrections here supersede their broader interpretation.
 
 ## Quick start
 
@@ -78,9 +76,12 @@ echo 'CONFIG_MUVERA_NVME_BENCH_PATH=/mnt/nvme/muvera_bench' >> .config
 make muvera-small-nvme-cold
 ```
 
-Demonstrates that sub-4096-byte logical records suffer ~4-32× read
-amplification when the access path is raw NVMe random reads, regardless
-of how cleverly the records were packed.
+This legacy script assumes 4 KiB requests. It calculates a byte ratio
+from that choice; it does not measure internal media reads. It also needs
+a full-record read fix for records above 4 KiB. Revise it before using its
+output to test the SSD hypothesis. A 4 KiB indirection unit can matter even
+with 512-byte host logical blocks, but host traffic, device work, and
+latency need separate measurements.
 
 ## Targets
 
@@ -101,14 +102,14 @@ The benchmark is considered valid if:
 
   - all configured record sizes produce results in the systems CSV
   - all configured FDE points produce results in the retrieval CSV
-  - chamfer oracle produces a valid recall@10/100 on scifact
+  - exact Chamfer produces valid hit-rate@10/100 results on SciFact
   - pooled int8 / fp16 baselines run
   - all plots are written
   - environment is captured
 
-If `CONFIG_MUVERA_ENABLE_NVME_COLD_BENCH=y`, additionally:
-
-  - the NVMe cold CSV reports physical_read_bytes and read_amplification
+The optional NVMe CSV fields called `physical_read_bytes` and
+`read_amplification` are based on the script's request-size assumption.
+They are not a validation gate for measured device-level amplification.
 
 ## Dependencies
 
@@ -128,15 +129,12 @@ etc.) on first install.
 
 ## Reading the report
 
-The report emphasizes the contrast between memory/cache-resident
-random-access (where sub-4096 wins) and raw NVMe random access (where
-sub-4096 is erased by 4 KiB page reads). Both worlds are measured
-explicitly when the NVMe benchmark is enabled.
-
-The retrieval result emphasizes that pooled int8 at 128 B is a strong
-small-byte baseline; FDE earns its complexity only above ~5 KiB on
-scifact + ColBERTv2. The recipe for production retrieval is FDE for
-fast top-100 candidate generation, chamfer for rerank.
+Read the memory timings as measurements of the tested resident access
+path. Treat the 4 KiB unit-to-record ratio as a model for an isolated
+access, not an observed device result. A cold SSD experiment must verify
+cache state, read complete records, and distinguish host bytes from media
+bytes. The [next-test protocol](../google_muvera/README.md#tests-to-run-next)
+sets out that experiment after a useful retrieval size has been found.
 
 ## License
 
