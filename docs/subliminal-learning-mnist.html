@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subliminal transfer on MNIST | knlp</title><meta name="description" content="A controlled MNIST series on hyper-connections, numerical null tests, and a LayerRoPE adaptation."><style>
+:root{
+  --bg:#070b09;--bg2:#0b120e;--card:#101914;--card2:#0c1410;--line:#203128;
+  --text:#e2ece5;--muted:#93a59a;--dim:#62736a;--green:#2ae6a3;
+  --cyan:#62dce5;--amber:#f0b65c;--red:#f17878;--violet:#ae94ff;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 78% -10%,rgba(42,230,163,.08),transparent 34%),var(--bg);color:var(--text);font:15px/1.67 var(--sans)}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(7,11,9,.94);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+nav{max-width:1180px;margin:auto;padding:13px 24px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.logo{font:700 14px var(--mono);letter-spacing:.1em;color:var(--green)}.spacer{flex:1}nav a{font:12px var(--mono);color:var(--muted)}
+main{max-width:1180px;margin:auto;padding:66px 24px 90px}.hero{padding-bottom:58px}
+.eyebrow{font:700 11px var(--mono);letter-spacing:.15em;text-transform:uppercase;color:var(--green)}
+h1{font-size:clamp(42px,7vw,78px);line-height:.99;letter-spacing:-.05em;max-width:1050px;margin:16px 0 24px}
+.lead{max-width:970px;color:var(--muted);font-size:19px}.lead strong{color:var(--text)}
+.decision{margin-top:30px;padding:22px 24px;border:1px solid rgba(42,230,163,.42);border-left:4px solid var(--green);border-radius:10px;background:linear-gradient(110deg,rgba(42,230,163,.08),rgba(98,220,229,.03))}
+.decision b{display:block;font:700 11px var(--mono);letter-spacing:.12em;color:var(--green);text-transform:uppercase;margin-bottom:8px}.decision span{font-size:18px}
+.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}.badge{padding:5px 9px;border:1px solid var(--line);border-radius:4px;font:700 10px var(--mono);letter-spacing:.06em}.green{color:var(--green);border-color:rgba(42,230,163,.45)}.cyan{color:var(--cyan);border-color:rgba(98,220,229,.45)}.amber{color:var(--amber);border-color:rgba(240,182,92,.45)}
+section{padding:54px 0;border-top:1px solid var(--line)}h2{font-size:29px;letter-spacing:-.02em;margin:0 0 12px}.sub{color:var(--muted);max-width:930px;margin:0 0 28px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.card{background:linear-gradient(145deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:10px;padding:21px}.card h3{margin:4px 0 9px;font-size:18px}.card p{color:var(--muted);margin:8px 0}.kicker{font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--green)}
+.metric{font:700 clamp(26px,4vw,42px)/1.1 var(--mono);margin:11px 0}.metric.good{color:var(--green)}.metric.bad{color:var(--red)}.metric.warn{color:var(--amber)}
+.rule{border-left:3px solid var(--line)}.rule.good{border-left-color:var(--green)}.rule.bad{border-left-color:var(--red)}.rule.warn{border-left-color:var(--amber)}.rule strong{display:block;font:700 11px var(--mono);letter-spacing:.06em;margin-bottom:8px}.rule.good strong{color:var(--green)}.rule.bad strong{color:var(--red)}.rule.warn strong{color:var(--amber)}
+.scroll{overflow-x:auto;border-radius:9px}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);font-variant-numeric:tabular-nums}th,td{padding:12px 13px;border-bottom:1px solid var(--line);text-align:left}th{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}td{color:var(--muted)}td:first-child{color:var(--text);font-weight:650}tr:last-child td{border-bottom:0}.yes{color:var(--green)!important}.no{color:var(--red)!important}.conditional{color:var(--amber)!important}
+.note{margin-top:19px;padding:15px 17px;border-left:3px solid var(--amber);background:rgba(240,182,92,.06);color:var(--muted)}.note strong{color:var(--text)}
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.flow div{position:relative;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:17px}.flow b{display:block;color:var(--green);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.flow span{display:block;color:var(--muted);margin-top:7px}.flow div:not(:last-child):after{content:"→";position:absolute;right:-10px;top:50%;z-index:2;color:var(--dim);background:var(--bg);padding:0 3px}
+.steps{counter-reset:step;display:grid;gap:11px}.step{counter-increment:step;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px 17px 16px 58px;position:relative}.step:before{content:counter(step);position:absolute;left:17px;top:15px;width:25px;height:25px;border:1px solid var(--green);color:var(--green);border-radius:50%;display:grid;place-items:center;font:700 11px var(--mono)}.step strong{display:block;margin-bottom:4px}.step span{color:var(--muted)}
+.tool{display:flex;flex-direction:column}.tool .link{margin-top:auto;padding-top:12px;font:700 12px var(--mono)}
+.map{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.map a{display:block;border:1px solid var(--line);border-radius:9px;padding:17px;background:var(--card)}.map a:hover{border-color:rgba(98,220,229,.5);text-decoration:none}.map b{display:block;color:var(--text);margin-bottom:5px}.map span{color:var(--muted)}
+code{font-family:var(--mono);font-size:.92em;color:#c8b6ff}.fine{font-size:12px;color:var(--dim)}
+footer{border-top:1px solid var(--line);padding:28px 24px;color:var(--dim);font:11px var(--mono)}
+@media(max-width:900px){.grid2,.grid3,.flow,.map{grid-template-columns:1fr}.flow div:not(:last-child):after{content:"↓";right:auto;left:22px;top:auto;bottom:-15px}.spacer{display:none}}
+
+:root{--dim:#91a197}body{font-size:16px}p{max-width:1000px}h3{line-height:1.3}section{scroll-margin-top:96px}
+.skip{position:absolute;left:-9999px}.skip:focus{left:10px;top:10px;background:var(--bg);padding:10px;z-index:20}
+a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--cyan);outline-offset:4px}
+.draft{color:var(--amber)}.byline{font:12px/1.7 var(--mono);color:var(--muted)}
+figure{margin:26px 0;padding:18px;background:var(--card2);border:1px solid var(--line);border-radius:10px}
+figure svg{display:block;width:100%;height:auto}figcaption{font-size:13px;color:var(--muted);margin:12px 4px 0}
+th{color:var(--muted)}caption{text-align:left;padding:0 0 12px;font-size:13px;color:var(--muted)}
+td{vertical-align:top}td.num{font-family:var(--mono);white-space:nowrap}details{background:var(--card2);border:1px solid var(--line);padding:17px;margin:14px 0;border-radius:8px}summary{cursor:pointer;color:var(--cyan);font-weight:650}details[open] summary{margin-bottom:16px}
+pre{padding:18px;overflow:auto;background:var(--bg);border:1px solid var(--line);font:12px/1.8 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:20px 0}select,button{font:14px var(--sans);padding:9px 12px;background:var(--card);color:var(--text);border:1px solid #456153;border-radius:5px}button{cursor:pointer}button:hover{border-color:var(--green)}
+.formula{font:15px/1.9 var(--mono);padding:18px;border-left:3px solid var(--violet);background:var(--card);overflow:auto}
+.refs li{padding:5px 0;overflow-wrap:anywhere}.small{font-size:14px;color:var(--muted)}.release{border-left-color:var(--cyan);background:rgba(98,220,229,.05)}
+.result{font:700 12px var(--mono);color:var(--amber)}.legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px}
+@media(max-width:600px){main{padding:38px 18px 60px}nav{padding:12px 18px;gap:12px}h1{font-size:44px}section{padding:36px 0}th,td{padding:10px}figure{padding:5px}.lead{font-size:18px}header{position:static}section{scroll-margin-top:15px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{body{background:white;color:#17281f;font-size:10pt}header,.controls,.no-print{display:none}main{padding:0;max-width:none}h1{font-size:36pt}.lead,td,.sub,p,.small,.byline,.fine{color:#293e32}.card,table,details,figure,.decision,.note{background:#f2f6f3;color:#17281f;break-inside:avoid}h2,h3{break-after:avoid}a{color:#135f66}section{padding:24px 0}.grid3{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:repeat(2,1fr)}th{color:#263c30}footer{color:#293e32}}
+</style></head>
+<body><a class="skip" href="#main">Skip to content</a><header><nav><a class="logo" href="https://knlp.io/">knlp</a><span class="spacer"></span><a href="#assay">assay</a><a href="#history">findings</a><a href="#layerrope">LayerRoPE</a><a href="#reproduce">reproduce</a><a href="layerrope-mhc-quantization.html">TinyStories</a></nav></header>
+<main id="main"><div class="hero"><div class="eyebrow">MNIST · Subliminal learning</div><h1>Residual paths change<br>subliminal transfer.</h1><p class="lead"><strong>Hyper-connections increased transfer in the tested small networks.</strong> The effect depended on the training horizon. Adding the tested LayerRoPE adaptation did not establish a separate suppression benefit.</p><div class="decision"><b>Research questions</b><span>How do innovations in residual connections affect subliminal learning? Can they suppress it while preserving useful learning?</span></div><div class="badges"><span class="badge green">TRANSFER REPRODUCED</span><span class="badge cyan">EXACT-NULL CONTROL REPAIRED</span><span class="badge amber">NO QUALIFIED SUPPRESSION VARIANT</span></div></div><section id="assay"><h2>What crossed the channel?</h2><p>The assay follows the MNIST experiment in <a href="https://arxiv.org/pdf/2507.14805v1">Subliminal Learning</a> (<a href="https://podcast.do-not-panic.com/episodes/subliminal-learning-hidden-behavioral-traits-transmitted-through-model-generated/">Audio Summary</a>). A teacher has ten digit outputs and three auxiliary outputs. Supervised digit training changes the shared trunk, even though the three auxiliary rows receive no digit supervision.</p><div class="grid2"><div class="card"><div class="kicker">Teacher → student</div><h3>Noise images, three outputs</h3><p>The student sees 60,000 uniform-noise images and the teacher’s three auxiliary outputs. It sees neither MNIST images nor the ten digit outputs during this distillation. The shared trunk can change; the ten unused digit-head rows stay unchanged.</p></div><div class="card"><div class="kicker">Outcome and controls</div><h3>Measure gain over initialization</h3><p>Evaluate MNIST digit accuracy afterward. Transfer gain is auxiliary-student accuracy minus that arm’s own untrained accuracy, W0. Pair seeds and compare shared initialization with independent initialization. Distillation from all 13 outputs is a separate utility control.</p></div></div><p class="note"><strong>Scope:</strong> this is benign digit knowledge in small MLPs. It is not a test of harmful traits, language-model alignment, or a general defense. Changing the architecture changes both teacher and student, so the assay does not isolate the sending and receiving mechanisms.</p></section><section id="history"><h2>A sequence of findings—and corrections</h2><div class="scroll"><table><caption>These are different experiments. Their endpoints and training budgets must not be pooled.</caption><thead><tr><th scope="col">Stage</th><th scope="col">Observed result</th><th scope="col">Interpretation retained</th></tr></thead><tbody><tr><th scope="row">Reproduction</th><td>100 models: 53.29% auxiliary/shared accuracy in the reference and knlp; independent initialization near 10%.</td><td>The basic transfer effect reproduces. Later controls correct an initialization permutation with a fixed point.</td></tr><tr><th scope="row">Early HC comparison</th><td>Four blocks, 20 seeds: transfer gain 30.05 pp residual, 38.42 HC, 32.77 mHC.</td><td>HC adds 8.37 pp [6.94, 9.88]; mHC adds 2.71 pp [2.19, 3.22], using 97.5% bootstrap intervals.</td></tr><tr><th scope="row">Longer/deeper controls</th><td>At 8/16 blocks and 20 student epochs, HC excess shrinks to about 2.2/1.8 pp; mHC to 1.6/1.0 pp.</td><td>Intervals include zero. Early transfer speed is not a universal increase in eventual transfer.</td></tr><tr><th scope="row">Architecture and scale controls</th><td>Some apparent AltUp suppression came from a smaller effective residual update under uniform stream averaging.</td><td>Restoring the summed write restored transfer. Do not describe this as a confirmed architecture-specific defense.</td></tr><tr><th scope="row">Numerical repair</th><td>Identical teacher/student targets still produced tiny nonzero composed-KL gradients in FP32.</td><td>Adam amplified the error. Repair the exact-null path and repeat real-signal controls.</td></tr><tr><th scope="row">Fresh LayerRoPE comparison</th><td>Ten fresh seeds, repaired loss, 80 student epochs.</td><td>HC remains higher-transfer in this assay. LayerRoPE adds no established suppression beyond ordinary residuals.</td></tr></tbody></table></div></section><section id="numerics"><h2>A false null did not explain away real transfer</h2><p>For bit-identical predictions and targets, the distillation gradient should be zero. The original composed KL path left gradients near 10<sup>−9</sup> in FP32. Adam converted these into visible parameter movement; the behavior appeared on both AMD and NVIDIA GPUs. A near-zero loss was therefore not a sufficient null check.</p><p>The repaired first-order backward computes the explicit difference <code>softmax(student) − softmax(target)</code>. Equal inputs cancel exactly. It does not bypass the optimizer. Across the 80-epoch null control, model parameters and optimizer moments stayed unchanged. Active teacher signals still learned, independent-initialization controls remained active, and the unused digit-head rows stayed fixed.</p><div class="grid2"><div class="card"><div class="kicker">Exact-null conclusion</div><div class="metric">Stationary</div><p>The repaired identical-target run has no drift. This is a testable invariant, not a loss-value threshold.</p></div><div class="card"><div class="kicker">Real signal after repair</div><div class="metric">71.440%</div><p>Corrected direct-target residual student accuracy at epoch 80, from 11.1% W0 in the residual-scale study. Transfer remains large.</p></div></div><p class="small">The earlier repair bridge reported 71.814% under a reconstructed-target path. It is a separate bridge result; the direct-target value above comes from the corrected follow-up. The repair supports first-order training and is not a general claim about higher-order derivatives or all KL implementations.</p></section><section id="scale"><h2>Reducing a write can reduce learning too</h2><div class="scroll"><table><caption>Transfer and utility need separate endpoints. Low transfer by itself is not a qualified suppression result.</caption><thead><tr><th scope="col">Five-seed repaired study</th><th scope="col">Transfer-gain change</th><th scope="col">Utility and speed</th><th scope="col">Decision</th></tr></thead><tbody><tr><th scope="row">Residual, quarter-size writes</th><td>−13.640 pp; 95% CI [−17.340, −9.940]</td><td>Teacher −0.466 pp; all-output student −0.422 pp. Epoch-to-95% ratios: teacher 1.50×, student 1.555×.</td><td>Transfer falls, but learning slows. No-go under the speed rule.</td></tr><tr><th scope="row">HC, quarter-size writes</th><td>−5.156 pp; 95% CI [−10.730, +1.516]</td><td>Endpoint utility and speed screens pass, but one seed increases transfer by 6.66 pp.</td><td>No reliable reduction across seeds.</td></tr></tbody></table></div><p>These controls changed the interpretation of the early architecture sweep. A lower auxiliary accuracy can reflect weaker or slower learning. The study required preserved teacher and all-output learning, not just a lower auxiliary endpoint.</p></section><section id="layerrope"><h2>What LayerRoPE changed in this assay</h2><p><a href="https://arxiv.org/pdf/2610.09179v1">LayerRoPE</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>), by Shikhar Srivastava and Christopher Kanan, makes normalization gains depend on depth. In this MNIST adaptation, one shared gain vector and four learned schedule scalars generate the block input LayerNorm gains. The rotation acts on gains, not activations. Centering, bias, final normalization, and HC routing remain in place; no output normalization was added.</p><p>HC and this gain schedule act on different parts of the network and can be composed. That does not imply their learning effects add. This is a vision-style adaptation, <strong>not the paper’s full input/output RMSNorm language-model implementation</strong>.</p><figure><svg role="img" aria-labelledby="mnist-transfer-at-reported-epochs-title" xmlns:xlink="http://www.w3.org/1999/xlink" width="712.433125pt" height="315.99625pt" viewBox="0 0 712.433125 315.99625" xmlns="http://www.w3.org/2000/svg" version="1.1"><title id="mnist-transfer-at-reported-epochs-title">mnist transfer at reported epochs</title>
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-10-15T07:34:14.305158</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.8, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="mnist-transfer-at-reported-epochs-figure_1">
+  <g id="mnist-transfer-at-reported-epochs-patch_1">
+   <path d="M -0 315.99625
+L 712.433125 315.99625
+L 712.433125 0
+L -0 0
+z
+" style="fill: #0c1410"/>
+  </g>
+  <g id="mnist-transfer-at-reported-epochs-axes_1">
+   <g id="mnist-transfer-at-reported-epochs-patch_2">
+    <path d="M 40.603125 278.44
+L 705.233125 278.44
+L 705.233125 7.2
+L 40.603125 7.2
+z
+" style="fill: #0c1410"/>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-matplotlib.axis_1">
+    <g id="mnist-transfer-at-reported-epochs-xtick_1">
+     <g id="mnist-transfer-at-reported-epochs-line2d_1">
+      <defs>
+       <path id="mnist-transfer-at-reported-epochs-mc22e853eb9" d="M 0 0
+L 0 3.5
+" style="stroke: #a9bbb0; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-mc22e853eb9" x="70.81358" y="278.44" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_1">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #a9bbb0" x="70.81358" y="293.038437" transform="rotate(-0 70.81358 293.038437)">5</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-xtick_2">
+     <g id="mnist-transfer-at-reported-epochs-line2d_2">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-mc22e853eb9" x="191.655398" y="278.44" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_2">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #a9bbb0" x="191.655398" y="293.038437" transform="rotate(-0 191.655398 293.038437)">20</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-xtick_3">
+     <g id="mnist-transfer-at-reported-epochs-line2d_3">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-mc22e853eb9" x="675.02267" y="278.44" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_3">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #a9bbb0" x="675.02267" y="293.038437" transform="rotate(-0 675.02267 293.038437)">80</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_4">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #c4d5ca" x="372.918125" y="306.716562" transform="rotate(-0 372.918125 306.716562)">Student epoch</text>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-matplotlib.axis_2">
+    <g id="mnist-transfer-at-reported-epochs-ytick_1">
+     <g id="mnist-transfer-at-reported-epochs-line2d_4">
+      <path d="M 40.603125 251.316
+L 705.233125 251.316
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #294235; stroke-opacity: 0.6; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-line2d_5">
+      <defs>
+       <path id="mnist-transfer-at-reported-epochs-m8948bf0359" d="M 0 0
+L -3.5 0
+" style="stroke: #a9bbb0; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-m8948bf0359" x="40.603125" y="251.316" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_5">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #a9bbb0" x="33.603125" y="255.115219" transform="rotate(-0 33.603125 255.115219)">30</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-ytick_2">
+     <g id="mnist-transfer-at-reported-epochs-line2d_6">
+      <path d="M 40.603125 197.068
+L 705.233125 197.068
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #294235; stroke-opacity: 0.6; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-line2d_7">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-m8948bf0359" x="40.603125" y="197.068" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_6">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #a9bbb0" x="33.603125" y="200.867219" transform="rotate(-0 33.603125 200.867219)">40</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-ytick_3">
+     <g id="mnist-transfer-at-reported-epochs-line2d_8">
+      <path d="M 40.603125 142.82
+L 705.233125 142.82
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #294235; stroke-opacity: 0.6; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-line2d_9">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-m8948bf0359" x="40.603125" y="142.82" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_7">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #a9bbb0" x="33.603125" y="146.619219" transform="rotate(-0 33.603125 146.619219)">50</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-ytick_4">
+     <g id="mnist-transfer-at-reported-epochs-line2d_10">
+      <path d="M 40.603125 88.572
+L 705.233125 88.572
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #294235; stroke-opacity: 0.6; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-line2d_11">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-m8948bf0359" x="40.603125" y="88.572" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_8">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #a9bbb0" x="33.603125" y="92.371219" transform="rotate(-0 33.603125 92.371219)">60</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-ytick_5">
+     <g id="mnist-transfer-at-reported-epochs-line2d_12">
+      <path d="M 40.603125 34.324
+L 705.233125 34.324
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #294235; stroke-opacity: 0.6; stroke-width: 0.8; stroke-linecap: square"/>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-line2d_13">
+      <g>
+       <use xlink:href="#mnist-transfer-at-reported-epochs-m8948bf0359" x="40.603125" y="34.324" style="fill: #a9bbb0; stroke: #a9bbb0; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="mnist-transfer-at-reported-epochs-text_9">
+      <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #a9bbb0" x="33.603125" y="38.123219" transform="rotate(-0 33.603125 38.123219)">70</text>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_10">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #c4d5ca" x="14.798438" y="142.82" transform="rotate(-90 14.798438 142.82)">Transfer gain over own W0 (percentage points)</text>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-line2d_14">
+    <path d="M 70.81358 249.357647
+L 191.655398 135.952203
+L 675.02267 77.71155
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #93a59a; stroke-width: 2; stroke-linecap: square"/>
+    <defs>
+     <path id="mnist-transfer-at-reported-epochs-mee7f33e99c" d="M 0 2.5
+C 0.663008 2.5 1.29895 2.236584 1.767767 1.767767
+C 2.236584 1.29895 2.5 0.663008 2.5 0
+C 2.5 -0.663008 2.236584 -1.29895 1.767767 -1.767767
+C 1.29895 -2.236584 0.663008 -2.5 0 -2.5
+C -0.663008 -2.5 -1.29895 -2.236584 -1.767767 -1.767767
+C -2.236584 -1.29895 -2.5 -0.663008 -2.5 0
+C -2.5 0.663008 -2.236584 1.29895 -1.767767 1.767767
+C -1.29895 2.236584 -0.663008 2.5 0 2.5
+z
+" style="stroke: #93a59a"/>
+    </defs>
+    <g clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)">
+     <use xlink:href="#mnist-transfer-at-reported-epochs-mee7f33e99c" x="70.81358" y="249.357647" style="fill: #93a59a; stroke: #93a59a"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-mee7f33e99c" x="191.655398" y="135.952203" style="fill: #93a59a; stroke: #93a59a"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-mee7f33e99c" x="675.02267" y="77.71155" style="fill: #93a59a; stroke: #93a59a"/>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-line2d_15">
+    <path d="M 70.81358 200.870785
+L 191.655398 91.078258
+L 675.02267 41.92957
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #2ae6a3; stroke-width: 2; stroke-linecap: square"/>
+    <defs>
+     <path id="mnist-transfer-at-reported-epochs-m8ad0485ae5" d="M 0 2.5
+C 0.663008 2.5 1.29895 2.236584 1.767767 1.767767
+C 2.236584 1.29895 2.5 0.663008 2.5 0
+C 2.5 -0.663008 2.236584 -1.29895 1.767767 -1.767767
+C 1.29895 -2.236584 0.663008 -2.5 0 -2.5
+C -0.663008 -2.5 -1.29895 -2.236584 -1.767767 -1.767767
+C -2.236584 -1.29895 -2.5 -0.663008 -2.5 0
+C -2.5 0.663008 -2.236584 1.29895 -1.767767 1.767767
+C -1.29895 2.236584 -0.663008 2.5 0 2.5
+z
+" style="stroke: #2ae6a3"/>
+    </defs>
+    <g clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)">
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m8ad0485ae5" x="70.81358" y="200.870785" style="fill: #2ae6a3; stroke: #2ae6a3"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m8ad0485ae5" x="191.655398" y="91.078258" style="fill: #2ae6a3; stroke: #2ae6a3"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m8ad0485ae5" x="675.02267" y="41.92957" style="fill: #2ae6a3; stroke: #2ae6a3"/>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-line2d_16">
+    <path d="M 70.81358 247.171453
+L 191.655398 137.422324
+L 675.02267 80.836235
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #ae94ff; stroke-width: 2; stroke-linecap: square"/>
+    <defs>
+     <path id="mnist-transfer-at-reported-epochs-md5a65e3e87" d="M 0 2.5
+C 0.663008 2.5 1.29895 2.236584 1.767767 1.767767
+C 2.236584 1.29895 2.5 0.663008 2.5 0
+C 2.5 -0.663008 2.236584 -1.29895 1.767767 -1.767767
+C 1.29895 -2.236584 0.663008 -2.5 0 -2.5
+C -0.663008 -2.5 -1.29895 -2.236584 -1.767767 -1.767767
+C -2.236584 -1.29895 -2.5 -0.663008 -2.5 0
+C -2.5 0.663008 -2.236584 1.29895 -1.767767 1.767767
+C -1.29895 2.236584 -0.663008 2.5 0 2.5
+z
+" style="stroke: #ae94ff"/>
+    </defs>
+    <g clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)">
+     <use xlink:href="#mnist-transfer-at-reported-epochs-md5a65e3e87" x="70.81358" y="247.171453" style="fill: #ae94ff; stroke: #ae94ff"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-md5a65e3e87" x="191.655398" y="137.422324" style="fill: #ae94ff; stroke: #ae94ff"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-md5a65e3e87" x="675.02267" y="80.836235" style="fill: #ae94ff; stroke: #ae94ff"/>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-line2d_17">
+    <path d="M 70.81358 193.558154
+L 191.655398 90.45983
+L 675.02267 46.573198
+" clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)" style="fill: none; stroke: #62dce5; stroke-width: 2; stroke-linecap: square"/>
+    <defs>
+     <path id="mnist-transfer-at-reported-epochs-m9bca7d5a6e" d="M 0 2.5
+C 0.663008 2.5 1.29895 2.236584 1.767767 1.767767
+C 2.236584 1.29895 2.5 0.663008 2.5 0
+C 2.5 -0.663008 2.236584 -1.29895 1.767767 -1.767767
+C 1.29895 -2.236584 0.663008 -2.5 0 -2.5
+C -0.663008 -2.5 -1.29895 -2.236584 -1.767767 -1.767767
+C -2.236584 -1.29895 -2.5 -0.663008 -2.5 0
+C -2.5 0.663008 -2.236584 1.29895 -1.767767 1.767767
+C -1.29895 2.236584 -0.663008 2.5 0 2.5
+z
+" style="stroke: #62dce5"/>
+    </defs>
+    <g clip-path="url(#mnist-transfer-at-reported-epochs-p45001b70d1)">
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m9bca7d5a6e" x="70.81358" y="193.558154" style="fill: #62dce5; stroke: #62dce5"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m9bca7d5a6e" x="191.655398" y="90.45983" style="fill: #62dce5; stroke: #62dce5"/>
+     <use xlink:href="#mnist-transfer-at-reported-epochs-m9bca7d5a6e" x="675.02267" y="46.573198" style="fill: #62dce5; stroke: #62dce5"/>
+    </g>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-patch_3">
+    <path d="M 40.603125 278.44
+L 40.603125 7.2
+" style="fill: none; stroke: #456153; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-patch_4">
+    <path d="M 40.603125 278.44
+L 705.233125 278.44
+" style="fill: none; stroke: #456153; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="mnist-transfer-at-reported-epochs-legend_1">
+    <g id="mnist-transfer-at-reported-epochs-line2d_18">
+     <path d="M 467.819063 249.182187
+L 477.819063 249.182187
+L 487.819063 249.182187
+" style="fill: none; stroke: #93a59a; stroke-width: 2; stroke-linecap: square"/>
+     <g>
+      <use xlink:href="#mnist-transfer-at-reported-epochs-mee7f33e99c" x="477.819063" y="249.182187" style="fill: #93a59a; stroke: #93a59a"/>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_11">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #e2ece5" x="495.819063" y="252.682187" transform="rotate(-0 495.819063 252.682187)">Residual</text>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-line2d_19">
+     <path d="M 467.819063 263.860312
+L 477.819063 263.860312
+L 487.819063 263.860312
+" style="fill: none; stroke: #2ae6a3; stroke-width: 2; stroke-linecap: square"/>
+     <g>
+      <use xlink:href="#mnist-transfer-at-reported-epochs-m8ad0485ae5" x="477.819063" y="263.860312" style="fill: #2ae6a3; stroke: #2ae6a3"/>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_12">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #e2ece5" x="495.819063" y="267.360312" transform="rotate(-0 495.819063 267.360312)">HC</text>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-line2d_20">
+     <path d="M 558.050313 249.182187
+L 568.050313 249.182187
+L 578.050313 249.182187
+" style="fill: none; stroke: #ae94ff; stroke-width: 2; stroke-linecap: square"/>
+     <g>
+      <use xlink:href="#mnist-transfer-at-reported-epochs-md5a65e3e87" x="568.050313" y="249.182187" style="fill: #ae94ff; stroke: #ae94ff"/>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_13">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #e2ece5" x="586.050313" y="252.682187" transform="rotate(-0 586.050313 252.682187)">LayerRoPE adaptation</text>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-line2d_21">
+     <path d="M 558.050313 263.860312
+L 568.050313 263.860312
+L 578.050313 263.860312
+" style="fill: none; stroke: #62dce5; stroke-width: 2; stroke-linecap: square"/>
+     <g>
+      <use xlink:href="#mnist-transfer-at-reported-epochs-m9bca7d5a6e" x="568.050313" y="263.860312" style="fill: #62dce5; stroke: #62dce5"/>
+     </g>
+    </g>
+    <g id="mnist-transfer-at-reported-epochs-text_14">
+     <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #e2ece5" x="586.050313" y="267.360312" transform="rotate(-0 586.050313 267.360312)">HC + adaptation</text>
+    </g>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="mnist-transfer-at-reported-epochs-p45001b70d1">
+   <rect x="40.603125" y="7.2" width="664.63" height="271.24"/>
+  </clipPath>
+ </defs>
+</svg>
+<figcaption>Ten paired seeds. Points show the reported epoch-5, epoch-20, and epoch-80 means, joined only to guide the eye; intermediate trajectories and uncertainty are not reconstructed. Epoch 80 is the frozen primary endpoint.</figcaption></figure><div class="scroll"><table><caption>Ten fresh seeds, same training budget. All percentages are digit accuracy; gain is relative to each arm’s own W0.</caption><thead><tr><th scope="col">Architecture</th><th scope="col">W0 %</th><th scope="col">Teacher %</th><th scope="col">Aux e80 %</th><th scope="col">Gain e80 pp</th><th scope="col">All-output e80 %</th></tr></thead><tbody><tr><th scope="row">Residual</th><td>10.502</td><td>97.274</td><td>72.504</td><td>62.002</td><td>96.789</td></tr><tr><th scope="row">HC</th><td>10.502</td><td>97.332</td><td>79.100</td><td>68.598</td><td>96.723</td></tr><tr><th scope="row">LayerRoPE adaptation</th><td>9.814</td><td>97.313</td><td>71.240</td><td>61.426</td><td>96.775</td></tr><tr><th scope="row">HC + adaptation</th><td>9.814</td><td>97.280</td><td>77.556</td><td>67.742</td><td>96.700</td></tr></tbody></table></div><div class="grid2" style="margin-top:20px"><div class="card"><div class="kicker">Combination vs HC</div><div class="metric">−0.856 pp</div><p>97.5% paired bootstrap interval [−2.356, +1.039]. This misses the predeclared five-point reduction. There is no established suppression benefit from adding LayerRoPE to HC.</p></div><div class="card"><div class="kicker">LayerRoPE vs residual</div><div class="metric">−0.576 pp</div><p>95% interval [−2.343, +1.073]. LayerRoPE alone transfers less than HC, but not clearly less than an ordinary residual network.</p></div></div><p>The supporting factorial interaction is −0.280 pp, with 95% interval [−2.632, +2.500]. The combined model does not show a clear interaction on transfer gain. The independent-initialization gain stays small: +1.411 pp residual, +0.987 HC, −0.211 LayerRoPE, and −0.602 combined.</p><p>Both LayerRoPE candidates preserved endpoint utility but failed to establish the required speed noninferiority. The upper interval bounds for the all-output epoch-to-95% ratio were 1.245 and 1.166, above the 1.10 limit. This is <strong>inconclusive speed preservation</strong>, not proof of a slowdown.</p><details><summary>Frozen MNIST recipe and decision rule</summary><p>Seeds 74001–74010; four width-256 blocks; five teacher epochs and 80 student epochs; batch 1024; Adam at 0.0003; FP32; no weight decay or compilation. Common linear weights, independent-control weights, fixed uniform noise, and named batch orders were paired across arms. Targets came directly from the frozen teacher; loss mode <code>exact_cancel_v1</code>.</p><p>LayerRoPE base 100, initial magnitude slope 0, rotation slope −0.5, and both log intercepts 0. Intercepts are explicit choices in this recipe. The screen required at least five points less transfer, an upper transfer interval below zero, utility lower bounds no worse than −2 points, and epoch-to-95% ratio upper bounds no greater than 1.10. Primary HC contrasts use 97.5% bootstrap intervals; supporting contrasts use 95%.</p></details></section><section id="conclusion"><h2>Conclusions</h2><div class="grid3"><div class="card rule good"><strong>SUPPORTED</strong><p>Subliminal digit transfer reproduces. HC can increase it in this assay. Real transfer survives a strict repair of the exact-null control.</p></div><div class="card rule warn"><strong>NOT ESTABLISHED</strong><p>No tested LayerRoPE or small-write candidate qualified as robust suppression with preserved learning. No general increase from mHC, or suppression from LayerRoPE, follows.</p></div><div class="card rule good"><strong>EXPERIMENTAL CONTROLS</strong><p>Paired initializations, exact-null stationarity, direct-target distillation, unused-head checks, and utility/speed controls help distinguish an architectural effect from numerical drift or slower learning.</p></div></div><p>The negative findings are useful because they separate transfer, training speed, and numerical artifacts. The assay and its controls can be reused to evaluate other architectures without treating slower learning as successful suppression.</p></section><section id="reproduce"><h2>Reproduce the MNIST experiments</h2><p>The aggregate route runs the reference transfer assay, historical cohorts, repaired residual-scale and null controls, and the four-arm LayerRoPE comparison. Each sub-study retains its own seeds, duration and loss convention. Use <code>make defconfig-subliminal-mnist-smoke</code> followed by <code>make</code> for a bounded CPU check on real MNIST.</p><pre>make defconfig-subliminal-mnist
+make</pre><p class="small">Install the dependencies in <a href="https://github.com/mcgrof/knlp/blob/main/research/reproduction/README.md">the reproduction guide</a>. Run a separately named smoke preset first to check your environment. Configure data, output, checkpoints, device and time limits with <code>make menuconfig</code>; each run saves its effective settings and reports incomplete work.</p><p>Before training, qualification must verify exact shared-null stationarity, active teacher signals, active independent-initialization learning, finite gradients, unchanged unused digit-head rows, and teacher immutability. A failed qualification must stop the run.</p><p>Report accuracy and gain over each arm’s W0 separately, with paired seed intervals, teacher/all-output utility, and learning speed. To extend the study, change one factor at a time and keep the baseline controls and original configuration available. A new architecture or schedule is a new comparison, not a replacement for an unfavorable seed.</p></section><section id="references"><h2>References</h2><ol class="refs"><li><a href="https://arxiv.org/pdf/2507.14805v1">Cloud et al. — Subliminal Learning (2025)</a> (<a href="https://podcast.do-not-panic.com/episodes/subliminal-learning-hidden-behavioral-traits-transmitted-through-model-generated/">Audio Summary</a>). <a href="https://github.com/MinhxLe/subliminal-learning/blob/db04f4150edf940559b5f3147f65d808e9313efd/scripts/run_mnist_experiment.py">Pinned MNIST reference script</a>.</li><li><a href="https://arxiv.org/pdf/2409.19606v3">Zhu et al. — Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/hyper-connections-learning-residual-strengths-for-faster-transformer-training/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2512.24880v2">Xie et al. — mHC: Manifold-Constrained Hyper-Connections</a> (<a href="https://podcast.do-not-panic.com/episodes/mhc-manifold-constrained-hyper-connections-stabilize-wider-residual-streams/">Audio Summary</a>).</li><li><a href="https://arxiv.org/pdf/2610.09179v1">Srivastava &amp; Kanan — LayerRoPE: Dynamic Depth-wise Magnitude &amp; Angular Superposition</a> (<a href="https://podcast.do-not-panic.com/episodes/layerrope-treating-transformer-depth-growth-as-a-positional-code/">Audio Summary</a>).</li></ol></section></main><footer>knlp · Methods, results, and conclusions</footer></body></html>
